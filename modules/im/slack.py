@@ -338,8 +338,10 @@ class SlackBot(BaseIMClient):
                 await self._send_unauthorized_message(channel_id)
                 return
 
-            # Check if we require mention in channels (not DMs)
-            if self.config.require_mention and not channel_id.startswith("D"):
+            # Check if we require mention in channels (not DMs or threads)
+            # In threads, we don't require mention even if SLACK_REQUIRE_MENTION is true
+            is_thread_reply = event.get("thread_ts") is not None
+            if self.config.require_mention and not channel_id.startswith("D") and not is_thread_reply:
                 logger.info(f"Ignoring non-mention message in channel: '{text}'")
                 return
 
