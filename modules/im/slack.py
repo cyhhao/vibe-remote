@@ -39,6 +39,13 @@ class SlackBot(BaseIMClient):
         # Store trigger IDs for modal interactions
         self.trigger_ids: Dict[str, str] = {}
 
+        # Settings manager for thread tracking (will be injected later)
+        self.settings_manager = None
+
+    def set_settings_manager(self, settings_manager):
+        """Set the settings manager for thread tracking"""
+        self.settings_manager = settings_manager
+
     def get_default_parse_mode(self) -> str:
         """Get the default parse mode for Slack"""
         return "markdown"
@@ -116,6 +123,14 @@ class SlackBot(BaseIMClient):
             # Send message
             response = await self.web_client.chat_postMessage(**kwargs)
 
+            # Mark thread as active if we sent a message to a thread
+            if self.settings_manager and (context.thread_id or reply_to):
+                thread_ts = context.thread_id or reply_to
+                self.settings_manager.mark_thread_active(
+                    context.user_id, context.channel_id, thread_ts
+                )
+                logger.debug(f"Marked thread {thread_ts} as active after bot message")
+
             return response["ts"]
 
         except SlackApiError as e:
@@ -184,6 +199,14 @@ class SlackBot(BaseIMClient):
                 kwargs["thread_ts"] = context.thread_id
 
             response = await self.web_client.chat_postMessage(**kwargs)
+
+            # Mark thread as active if we sent a message to a thread
+            if self.settings_manager and context.thread_id:
+                self.settings_manager.mark_thread_active(
+                    context.user_id, context.channel_id, context.thread_id
+                )
+                logger.debug(f"Marked thread {context.thread_id} as active after bot message with buttons")
+
             return response["ts"]
 
         except SlackApiError as e:
@@ -338,12 +361,28 @@ class SlackBot(BaseIMClient):
                 await self._send_unauthorized_message(channel_id)
                 return
 
-            # Check if we require mention in channels (not DMs or threads)
-            # In threads, we don't require mention even if SLACK_REQUIRE_MENTION is true
+            # Check if we require mention in channels (not DMs)
+            # For threads: only respond if the bot is active in that thread
             is_thread_reply = event.get("thread_ts") is not None
-            if self.config.require_mention and not channel_id.startswith("D") and not is_thread_reply:
-                logger.info(f"Ignoring non-mention message in channel: '{text}'")
-                return
+
+            if self.config.require_mention and not channel_id.startswith("D"):
+                # In channel main thread: require mention
+                if not is_thread_reply:
+                    logger.info(f"Ignoring non-mention message in channel: '{text}'")
+                    return
+
+                # In thread: check if bot is active in this thread
+                if is_thread_reply:
+                    thread_ts = event.get("thread_ts")
+                    # If we have settings_manager, check if thread is active
+                    if self.settings_manager:
+                        if not self.settings_manager.is_thread_active(user_id, channel_id, thread_ts):
+                            logger.info(f"Ignoring message in inactive thread {thread_ts}: '{text}'")
+                            return
+                    else:
+                        # Without settings_manager, fall back to ignoring non-mention in threads
+                        logger.info(f"No settings_manager, ignoring thread message: '{text}'")
+                        return
 
             # Extract context
             # For Slack: if no thread_ts, use the message's own ts as thread_id (start of thread)
@@ -392,6 +431,13 @@ class SlackBot(BaseIMClient):
                 message_id=event.get("ts"),
                 platform_specific={"team_id": payload.get("team_id"), "event": event},
             )
+
+            # Mark thread as active when bot is @mentioned
+            if self.settings_manager and thread_id:
+                self.settings_manager.mark_thread_active(
+                    event.get("user"), channel_id, thread_id
+                )
+                logger.info(f"Marked thread {thread_id} as active due to @mention")
 
             # Remove the mention from the text
             text = event.get("text", "")
