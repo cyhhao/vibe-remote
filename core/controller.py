@@ -71,6 +71,14 @@ class Controller:
         self.session_manager = SessionManager()
         self.settings_manager = SettingsManager()
 
+        # Inject settings_manager into SlackBot if it's Slack platform
+        if self.config.platform == "slack":
+            # Import here to avoid circular dependency
+            from modules.im.slack import SlackBot
+            if isinstance(self.im_client, SlackBot):
+                self.im_client.set_settings_manager(self.settings_manager)
+                logger.info("Injected settings_manager into SlackBot for thread tracking")
+
     def _init_handlers(self):
         """Initialize all handlers with controller reference"""
         # Initialize session_handler first as other handlers depend on it

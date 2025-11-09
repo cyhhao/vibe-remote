@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, asdict, field
 from typing import Dict, List, Optional, Union
 from pathlib import Path
@@ -19,6 +20,8 @@ class UserSettings:
     custom_cwd: Optional[str] = None  # Custom working directory
     # Nested map: {base_session_id: {working_path: claude_session_id}}
     session_mappings: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # Slack active threads: {channel_id: {thread_ts: last_active_timestamp}}
+    active_slack_threads: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
@@ -64,6 +67,10 @@ class SettingsManager:
                                 if isinstance(value, dict):
                                     cleaned_mappings[key] = value
                             user_data["session_mappings"] = cleaned_mappings
+
+                        # Ensure active_slack_threads exists and is properly formatted
+                        if "active_slack_threads" not in user_data:
+                            user_data["active_slack_threads"] = {}
 
                         # Always keep user_id as string in memory
                         user_id = user_id_str
@@ -214,3 +221,81 @@ class SettingsManager:
             settings.session_mappings.clear()
             logger.info(f"Cleared all {count} session mappings for user {user_id}")
             self.update_user_settings(user_id, settings)
+
+    # ---------------------------------------------
+    # Slack thread management
+    # ---------------------------------------------
+    def mark_thread_active(
+        self, user_id: Union[int, str], channel_id: str, thread_ts: str
+    ):
+        """Mark a Slack thread as active with current timestamp"""
+        settings = self.get_user_settings(user_id)
+
+        if channel_id not in settings.active_slack_threads:
+            settings.active_slack_threads[channel_id] = {}
+
+        settings.active_slack_threads[channel_id][thread_ts] = time.time()
+        self.update_user_settings(user_id, settings)
+        logger.info(
+            f"Marked thread active for user {user_id}: channel={channel_id}, thread={thread_ts}"
+        )
+
+    def is_thread_active(
+        self, user_id: Union[int, str], channel_id: str, thread_ts: str
+    ) -> bool:
+        """Check if a Slack thread is active (within 24 hours)"""
+        settings = self.get_user_settings(user_id)
+
+        # First cleanup expired threads for this channel
+        self._cleanup_expired_threads_for_channel(user_id, channel_id)
+
+        # Then check if thread is active
+        if channel_id in settings.active_slack_threads:
+            if thread_ts in settings.active_slack_threads[channel_id]:
+                return True
+
+        return False
+
+    def _cleanup_expired_threads_for_channel(
+        self, user_id: Union[int, str], channel_id: str
+    ):
+        """Remove threads older than 24 hours for a specific channel"""
+        settings = self.get_user_settings(user_id)
+
+        if channel_id not in settings.active_slack_threads:
+            return
+
+        current_time = time.time()
+        twenty_four_hours_ago = current_time - (24 * 60 * 60)
+
+        # Find expired threads
+        expired_threads = [
+            thread_ts
+            for thread_ts, last_active in settings.active_slack_threads[channel_id].items()
+            if last_active < twenty_four_hours_ago
+        ]
+
+        # Remove expired threads
+        if expired_threads:
+            for thread_ts in expired_threads:
+                del settings.active_slack_threads[channel_id][thread_ts]
+
+            # Clean up empty channel dict
+            if not settings.active_slack_threads[channel_id]:
+                del settings.active_slack_threads[channel_id]
+
+            self.update_user_settings(user_id, settings)
+            logger.info(
+                f"Cleaned up {len(expired_threads)} expired threads for channel {channel_id}"
+            )
+
+    def cleanup_all_expired_threads(self, user_id: Union[int, str]):
+        """Remove all threads older than 24 hours for all channels"""
+        settings = self.get_user_settings(user_id)
+
+        if not settings.active_slack_threads:
+            return
+
+        channels_to_clean = list(settings.active_slack_threads.keys())
+        for channel_id in channels_to_clean:
+            self._cleanup_expired_threads_for_channel(user_id, channel_id)
