@@ -1,7 +1,9 @@
-import os
 import logging
-from dataclasses import dataclass
-from typing import Optional, List, Union
+import os
+import shlex
+import shutil
+from dataclasses import dataclass, field
+from typing import List, Optional, Union
 from modules.im.base import BaseIMConfig
 
 logger = logging.getLogger(__name__)
@@ -85,6 +87,40 @@ class ClaudeConfig:
 
 
 @dataclass
+class CodexConfig:
+    binary: str = "codex"
+    enable_full_auto: bool = False
+    extra_args: List[str] = field(default_factory=list)
+    default_model: Optional[str] = None
+
+    @classmethod
+    def from_env(cls) -> "CodexConfig":
+        binary = os.getenv("CODEX_CLI_PATH", "codex")
+        if not shutil.which(binary):
+            raise ValueError(
+                f"Codex CLI binary '{binary}' not found in PATH. "
+                "Set CODEX_CLI_PATH or install Codex CLI."
+            )
+
+        extra_args_env = os.getenv("CODEX_EXTRA_ARGS", "").strip()
+        extra_args = shlex.split(extra_args_env) if extra_args_env else []
+        enable_full_auto = os.getenv("CODEX_ENABLE_FULL_AUTO", "false").lower() in [
+            "1",
+            "true",
+            "yes",
+            "on",
+        ]
+        default_model = os.getenv("CODEX_DEFAULT_MODEL")
+
+        return cls(
+            binary=binary,
+            enable_full_auto=enable_full_auto,
+            extra_args=extra_args,
+            default_model=default_model,
+        )
+
+
+@dataclass
 class SlackConfig(BaseIMConfig):
     bot_token: str
     app_token: Optional[str] = None  # For Socket Mode
@@ -150,8 +186,10 @@ class AppConfig:
     telegram: Optional[TelegramConfig] = None
     slack: Optional[SlackConfig] = None
     claude: ClaudeConfig = None
+    codex: Optional[CodexConfig] = None
     log_level: str = "INFO"
     cleanup_enabled: bool = False
+    agent_route_file: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -173,11 +211,34 @@ class AppConfig:
         cleanup_enabled_env = os.getenv("CLEANUP_ENABLED", "false").lower()
         cleanup_enabled = cleanup_enabled_env in ["1", "true", "yes", "on"]
 
+        agent_route_env = os.getenv("AGENT_ROUTE_FILE")
+        agent_route_file = agent_route_env
+        if not agent_route_file:
+            candidate = os.path.join(os.getcwd(), "agent_routes.yaml")
+            if os.path.exists(candidate):
+                agent_route_file = candidate
+
+        codex_config = None
+        codex_enabled = os.getenv("CODEX_ENABLED", "true").lower() in [
+            "1",
+            "true",
+            "yes",
+            "on",
+        ]
+        if codex_enabled:
+            try:
+                codex_config = CodexConfig.from_env()
+            except ValueError as exc:
+                logger.warning(f"Codex support disabled: {exc}")
+                codex_config = None
+
         config = cls(
             platform=platform,
             claude=ClaudeConfig.from_env(),
             log_level=log_level,
             cleanup_enabled=cleanup_enabled,
+            codex=codex_config,
+            agent_route_file=agent_route_file,
         )
 
         # Load platform-specific config

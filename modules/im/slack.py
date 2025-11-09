@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Dict, Any, Optional, Callable
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.socket_mode.aiohttp import SocketModeClient
@@ -41,10 +42,26 @@ class SlackBot(BaseIMClient):
 
         # Settings manager for thread tracking (will be injected later)
         self.settings_manager = None
+        self._recent_event_ids: Dict[str, float] = {}
 
     def set_settings_manager(self, settings_manager):
         """Set the settings manager for thread tracking"""
         self.settings_manager = settings_manager
+
+    def _is_duplicate_event(self, event_id: Optional[str]) -> bool:
+        """Deduplicate Slack events using event_id with a short TTL."""
+        if not event_id:
+            return False
+        now = time.time()
+        expiry = now - 30  # retain for 30s
+        for key in list(self._recent_event_ids.keys()):
+            if self._recent_event_ids[key] < expiry:
+                del self._recent_event_ids[key]
+        if event_id in self._recent_event_ids:
+            logger.debug(f"Ignoring duplicate Slack event_id {event_id}")
+            return True
+        self._recent_event_ids[event_id] = now
+        return False
 
     def get_default_parse_mode(self) -> str:
         """Get the default parse mode for Slack"""
@@ -316,6 +333,9 @@ class SlackBot(BaseIMClient):
         """Handle Events API events"""
         event = payload.get("event", {})
         event_type = event.get("type")
+        event_id = payload.get("event_id")
+        if self._is_duplicate_event(event_id):
+            return
 
         if event_type == "message":
             # Ignore bot messages

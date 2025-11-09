@@ -25,7 +25,8 @@ Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack/Telegram 输入意
 
 - **专注 vibe coding**：基于你的意图与约束让 AI 自主推进，你只把控方向与结果。
 - **随时随地**：不被 IDE 束缚，直接在 Slack/Telegram 中远程操控编码会话。
-- **为扩展而生**：目前仅支持 Claude Code，后续可扩展到更多 coding agents/CLIs。
+- **为扩展而生**：目前已支持 Claude Code + Codex，并可扩展到更多 coding agents/CLIs。
+- **多 Agent 路由**：为不同 Slack Channel / Telegram Chat 指定 Agent，互不干扰。
 - **按线程 + 路径持久化**：每个 Slack 线程/Telegram 对话都维持独立 Claude 会话与工作目录，并通过持久化映射自动恢复。
 - **Slack 交互式体验**：`/start` 菜单 + Settings/CWD 模态，按钮优先于命令，更快上手。
 
@@ -108,6 +109,33 @@ python main.py
 - `CLAUDE_PERMISSION_MODE` 例如 `bypassPermissions`
 - `CLAUDE_SYSTEM_PROMPT` 可选
 - `ANTHROPIC_API_KEY`（取决于你的 SDK 设置）
+
+### Codex（可选 Agent）
+
+- 安装并登录 [Codex CLI](https://github.com/openai/codex)（执行 `codex --help` 验证）。
+- `CODEX_ENABLED=true`（默认）启用 Codex；若环境没有 CLI 才需要设为 false。`CODEX_CLI_PATH` 可重定向可执行文件。
+- `CODEX_ENABLE_FULL_AUTO=true` 等同于 `codex exec --full-auto`，允许写操作。
+- `CODEX_DEFAULT_MODEL` / `CODEX_EXTRA_ARGS` 可强制模型或追加命令行参数。
+
+### Agent 路由
+
+- 复制 `agent_routes.example.yaml` 为仓库根目录的 `agent_routes.yaml`（或设置 `AGENT_ROUTE_FILE` 指向自定义 YAML/JSON）。
+- 示例：
+
+```yaml
+default: claude
+slack:
+  default: claude
+  overrides:
+    C01EXAMPLE: codex
+telegram:
+  default: claude
+  overrides:
+    "123456789": codex
+```
+
+- Slack 使用频道 ID，Telegram 使用聊天 ID。未命中的频道会落到平台默认值，然后回退到全局 `default`。`agent_routes.yaml` 已被 `.gitignore` 排除，可在不同环境独立配置。
+- 若未提供文件，则所有渠道继续使用 Claude。参见 [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) 获取更完整的 Codex 配置示例。
 
 ### 应用
 
