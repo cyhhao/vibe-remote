@@ -19,7 +19,6 @@ In `.env` (copied from `.env.example`):
 ```
 CODEX_ENABLED=true        # default; set false only if CLI is unavailable
 CODEX_CLI_PATH=codex      # customise if the binary lives elsewhere
-CODEX_ENABLE_FULL_AUTO=true   # optional, maps to --full-auto
 CODEX_DEFAULT_MODEL=gpt-5-codex  # optional
 CODEX_EXTRA_ARGS=--ask-for-approval never  # optional extra flags
 ```

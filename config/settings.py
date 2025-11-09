@@ -89,7 +89,6 @@ class ClaudeConfig:
 @dataclass
 class CodexConfig:
     binary: str = "codex"
-    enable_full_auto: bool = False
     extra_args: List[str] = field(default_factory=list)
     default_model: Optional[str] = None
 
@@ -104,17 +103,10 @@ class CodexConfig:
 
         extra_args_env = os.getenv("CODEX_EXTRA_ARGS", "").strip()
         extra_args = shlex.split(extra_args_env) if extra_args_env else []
-        enable_full_auto = os.getenv("CODEX_ENABLE_FULL_AUTO", "false").lower() in [
-            "1",
-            "true",
-            "yes",
-            "on",
-        ]
         default_model = os.getenv("CODEX_DEFAULT_MODEL")
 
         return cls(
             binary=binary,
-            enable_full_auto=enable_full_auto,
             extra_args=extra_args,
             default_model=default_model,
         )

@@ -114,7 +114,6 @@ python main.py
 
 - Install the [Codex CLI](https://github.com/openai/codex) (e.g., `brew install codex`) and sign in (`codex --help`).
 - `CODEX_ENABLED=true` (default) enables the agent; set to false only if the Codex CLI is unavailable. `CODEX_CLI_PATH` overrides the binary path.
-- `CODEX_ENABLE_FULL_AUTO=true` maps to `codex exec --full-auto` for write access.
 - `CODEX_DEFAULT_MODEL` / `CODEX_EXTRA_ARGS` customize the underlying model or flags.
 
 ### Agent routing

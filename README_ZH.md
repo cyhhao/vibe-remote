@@ -114,7 +114,6 @@ python main.py
 
 - 安装并登录 [Codex CLI](https://github.com/openai/codex)（执行 `codex --help` 验证）。
 - `CODEX_ENABLED=true`（默认）启用 Codex；若环境没有 CLI 才需要设为 false。`CODEX_CLI_PATH` 可重定向可执行文件。
-- `CODEX_ENABLE_FULL_AUTO=true` 等同于 `codex exec --full-auto`，允许写操作。
 - `CODEX_DEFAULT_MODEL` / `CODEX_EXTRA_ARGS` 可强制模型或追加命令行参数。
 
 ### Agent 路由

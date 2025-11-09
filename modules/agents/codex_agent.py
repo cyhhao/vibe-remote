@@ -107,9 +107,6 @@ class CodexAgent(BaseAgent):
         cmd = [self.codex_config.binary, "exec", "--json"]
         cmd += ["--dangerously-bypass-approvals-and-sandbox"]
 
-        if self.codex_config.enable_full_auto:
-            cmd += ["--full-auto"]
-
         if self.codex_config.default_model:
             cmd += ["--model", self.codex_config.default_model]
 
