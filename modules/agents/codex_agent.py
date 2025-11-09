@@ -93,11 +93,26 @@ class CodexAgent(BaseAgent):
         return terminated
 
     async def handle_stop(self, request: AgentRequest) -> bool:
-        entry = self.active_processes.get(request.composite_session_id)
+        key = request.composite_session_id
+        entry = self.active_processes.get(key)
+        if not entry:
+            # Fall back to any session sharing the same base id
+            prefix = f"{request.base_session_id}:"
+            for candidate, value in self.active_processes.items():
+                if candidate.startswith(prefix):
+                    key = candidate
+                    entry = value
+                    break
         if not entry:
             return False
+
         proc, _ = entry
-        proc.kill()
+        try:
+            proc.kill()
+            await proc.wait()
+        except ProcessLookupError:
+            pass
+        self.active_processes.pop(key, None)
         await self.controller.emit_agent_message(
             request.context, "system", "🛑 Terminated Codex execution."
         )
