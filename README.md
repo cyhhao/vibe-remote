@@ -151,7 +151,7 @@ telegram:
 - `/cwd` show working directory
 - `/set_cwd <path>` change working directory
 - `/settings` configure message visibility
-- `/stop` interrupt current execution
+- `/stop` force-stop the active agent session (Claude interrupt / Codex process kill)
 
 ### Slack
 

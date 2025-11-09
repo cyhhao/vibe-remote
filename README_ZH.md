@@ -149,7 +149,7 @@ telegram:
 - `/cwd` 显示工作目录
 - `/set_cwd <path>` 更改工作目录
 - `/settings` 配置消息可见性
-- `/stop` 中断当前执行
+- `/stop` 强制停止当前 Agent（Claude 发送 interrupt，Codex 直接终止进程）
 
 ### Slack
 

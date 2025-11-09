@@ -90,13 +90,24 @@ class ClaudeAgent(BaseAgent):
 
         client = self.claude_sessions[composite_key]
         await self.controller.emit_agent_message(
-            request.context, "system", "🛑 Sending stop signal to Claude..."
+            request.context, "system", "🛑 Interrupting Claude session..."
         )
-        stop_message = (
-            "Please stop the current execution immediately and wait for further instructions."
-        )
-        await client.query(stop_message, session_id=composite_key)
-        return True
+        try:
+            if hasattr(client, "interrupt"):
+                await client.interrupt()
+            else:
+                # Fallback: disconnect and drop session
+                await client.disconnect()
+                await self.session_handler.cleanup_session(composite_key)
+            return True
+        except Exception as err:
+            logger.error(f"Failed to interrupt Claude session {composite_key}: {err}")
+            await self.controller.emit_agent_message(
+                request.context,
+                "system",
+                "⚠️ Failed to interrupt Claude session. Please try /clear.",
+            )
+            return False
 
     async def _receive_messages(
         self,
