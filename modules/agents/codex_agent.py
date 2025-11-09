@@ -96,14 +96,6 @@ class CodexAgent(BaseAgent):
         key = request.composite_session_id
         entry = self.active_processes.get(key)
         if not entry:
-            # Fall back to any session sharing the same base id
-            prefix = f"{request.base_session_id}:"
-            for candidate, value in self.active_processes.items():
-                if candidate.startswith(prefix):
-                    key = candidate
-                    entry = value
-                    break
-        if not entry:
             return False
 
         proc, _ = entry
