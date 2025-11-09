@@ -19,6 +19,7 @@ class CodexAgent(BaseAgent):
         super().__init__(controller)
         self.codex_config = codex_config
         self.active_processes: Dict[str, Tuple[Process, str]] = {}
+        self.base_process_index: Dict[str, str] = {}
         self._initialized_sessions: set[str] = set()
 
     async def handle_message(self, request: AgentRequest) -> None:
@@ -60,6 +61,7 @@ class CodexAgent(BaseAgent):
             process,
             request.settings_key,
         )
+        self.base_process_index[request.base_session_id] = request.composite_session_id
         logger.info(
             f"Codex session {request.composite_session_id} started (pid={process.pid})"
         )
@@ -76,6 +78,12 @@ class CodexAgent(BaseAgent):
             await asyncio.gather(stdout_task, stderr_task)
         finally:
             self.active_processes.pop(request.composite_session_id, None)
+            if (
+                request.base_session_id in self.base_process_index
+                and self.base_process_index[request.base_session_id]
+                == request.composite_session_id
+            ):
+                self.base_process_index.pop(request.base_session_id, None)
 
         if process.returncode != 0:
             await self.controller.emit_agent_message(
@@ -99,7 +107,10 @@ class CodexAgent(BaseAgent):
         key = request.composite_session_id
         entry = self.active_processes.get(key)
         if not entry:
-            return False
+            key = self.base_process_index.get(request.base_session_id)
+            entry = self.active_processes.get(key) if key else None
+            if not entry:
+                return False
 
         proc, _ = entry
         try:
@@ -108,6 +119,8 @@ class CodexAgent(BaseAgent):
         except ProcessLookupError:
             pass
         self.active_processes.pop(key, None)
+        if request.base_session_id in self.base_process_index:
+            self.base_process_index.pop(request.base_session_id, None)
         await self.controller.emit_agent_message(
             request.context, "system", "🛑 Terminated Codex execution."
         )
