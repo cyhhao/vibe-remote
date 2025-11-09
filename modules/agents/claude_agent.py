@@ -95,11 +95,14 @@ class ClaudeAgent(BaseAgent):
         try:
             if hasattr(client, "interrupt"):
                 await client.interrupt()
+                return True
             else:
-                # Fallback: disconnect and drop session
-                await client.disconnect()
-                await self.session_handler.cleanup_session(composite_key)
-            return True
+                await self.controller.emit_agent_message(
+                    request.context,
+                    "system",
+                    "⚠️ This Claude session cannot be interrupted; consider /clear.",
+                )
+                return False
         except Exception as err:
             logger.error(f"Failed to interrupt Claude session {composite_key}: {err}")
             await self.controller.emit_agent_message(
