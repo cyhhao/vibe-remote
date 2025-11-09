@@ -60,6 +60,9 @@ class CodexAgent(BaseAgent):
             process,
             request.settings_key,
         )
+        logger.info(
+            f"Codex session {request.composite_session_id} started (pid={process.pid})"
+        )
 
         stdout_task = asyncio.create_task(
             self._consume_stdout(process, request)
@@ -108,6 +111,7 @@ class CodexAgent(BaseAgent):
         await self.controller.emit_agent_message(
             request.context, "system", "🛑 Terminated Codex execution."
         )
+        logger.info(f"Codex session {key} terminated via /stop")
         return True
 
     def _build_command(self, request: AgentRequest, resume_id: Optional[str]) -> list:
