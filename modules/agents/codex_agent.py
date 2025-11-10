@@ -21,6 +21,7 @@ class CodexAgent(BaseAgent):
         self.codex_config = codex_config
         self.active_processes: Dict[str, Tuple[Process, str]] = {}
         self.base_process_index: Dict[str, str] = {}
+        self.composite_to_base: Dict[str, str] = {}
         self._initialized_sessions: set[str] = set()
 
     async def handle_message(self, request: AgentRequest) -> None:
@@ -30,10 +31,14 @@ class CodexAgent(BaseAgent):
                 request.context,
                 "notify",
                 "⚠️ Codex is already processing a task in this thread. "
-                "Use /stop or wait for it to finish.",
+                "Cancelling the previous run...",
             )
-            await self._delete_ack(request)
-            return
+            await self._terminate_process(existing)
+            await self.controller.emit_agent_message(
+                request.context,
+                "notify",
+                "⏹ Previous Codex task cancelled. Starting the new request...",
+            )
         resume_id = self.settings_manager.get_agent_session_id(
             request.settings_key,
             request.base_session_id,
@@ -74,6 +79,7 @@ class CodexAgent(BaseAgent):
             request.settings_key,
         )
         self.base_process_index[request.base_session_id] = request.composite_session_id
+        self.composite_to_base[request.composite_session_id] = request.base_session_id
         logger.info(
             f"Codex session {request.composite_session_id} started (pid={process.pid})"
         )
@@ -89,13 +95,7 @@ class CodexAgent(BaseAgent):
             await process.wait()
             await asyncio.gather(stdout_task, stderr_task)
         finally:
-            self.active_processes.pop(request.composite_session_id, None)
-            if (
-                request.base_session_id in self.base_process_index
-                and self.base_process_index[request.base_session_id]
-                == request.composite_session_id
-            ):
-                self.base_process_index.pop(request.base_session_id, None)
+            self._unregister_process(request.composite_session_id)
 
         if process.returncode != 0:
             await self.controller.emit_agent_message(
@@ -108,21 +108,34 @@ class CodexAgent(BaseAgent):
         self.settings_manager.clear_agent_sessions(settings_key, self.name)
         # Terminate any active processes scoped to this settings key
         terminated = 0
-        for key, (proc, stored_key) in list(self.active_processes.items()):
+        for key, (_, stored_key) in list(self.active_processes.items()):
             if stored_key == settings_key:
-                proc.kill()
+                await self._terminate_process(key)
                 terminated += 1
-                self.active_processes.pop(key, None)
         return terminated
 
     async def handle_stop(self, request: AgentRequest) -> bool:
         key = request.composite_session_id
-        entry = self.active_processes.get(key)
-        if not entry:
+        if not await self._terminate_process(key):
             key = self.base_process_index.get(request.base_session_id)
-            entry = self.active_processes.get(key) if key else None
-            if not entry:
+            if not key or not await self._terminate_process(key):
                 return False
+        await self.controller.emit_agent_message(
+            request.context, "notify", "🛑 Terminated Codex execution."
+        )
+        logger.info(f"Codex session {key} terminated via /stop")
+        return True
+
+    def _unregister_process(self, composite_key: str):
+        self.active_processes.pop(composite_key, None)
+        base_id = self.composite_to_base.pop(composite_key, None)
+        if base_id and self.base_process_index.get(base_id) == composite_key:
+            self.base_process_index.pop(base_id, None)
+
+    async def _terminate_process(self, composite_key: str) -> bool:
+        entry = self.active_processes.get(composite_key)
+        if not entry:
+            return False
 
         proc, _ = entry
         try:
@@ -136,13 +149,8 @@ class CodexAgent(BaseAgent):
             await proc.wait()
         except ProcessLookupError:
             pass
-        self.active_processes.pop(key, None)
-        if request.base_session_id in self.base_process_index:
-            self.base_process_index.pop(request.base_session_id, None)
-        await self.controller.emit_agent_message(
-            request.context, "notify", "🛑 Terminated Codex execution."
-        )
-        logger.info(f"Codex session {key} terminated via /stop")
+
+        self._unregister_process(composite_key)
         return True
 
     def _build_command(self, request: AgentRequest, resume_id: Optional[str]) -> list:
