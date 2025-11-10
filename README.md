@@ -25,7 +25,7 @@ Vibe Remote lets you operate coding agents via IM. Type in Slack or Telegram to 
 
 - **Vibe coding, not micromanaging**: Let AI drive based on your intent and constraints; focus on outcomes.
 - **Work from anywhere**: Control coding sessions over Slack/Telegram; no IDE tether.
-- **Extensible by design**: Starts with Claude Code, built to support additional coding agents/CLIs.
+- **Extensible by design**: Starts with Claude Code and Codex, built to support additional coding agents/CLIs.
 - **Multi-agent routing**: Route each Slack channel / Telegram chat to Claude Code or Codex by editing `agent_routes.yaml`.
 - **Session persistence by thread + path**: Each Slack thread/Telegram chat maintains its own Claude session and working dir; auto‑resume via saved mappings.
 - **Interactive Slack UX**: `/start` menu + Settings/CWD modals; buttons over commands for faster flow.
@@ -49,7 +49,9 @@ Vibe Remote lets you operate coding agents via IM. Type in Slack or Telegram to 
 
 ## Prerequisites
 
-- Claude Code CLI (required)
+- At least one coding agent CLI installed (Claude Code CLI or Codex CLI). You can install both to mix and match per channel.
+
+### Claude Code
 
 Install:
 
@@ -110,7 +112,7 @@ python main.py
 - `CLAUDE_SYSTEM_PROMPT` optional
 - `ANTHROPIC_API_KEY` if required by your SDK setup
 
-### Codex (optional agent)
+### Codex
 
 - Install the [Codex CLI](https://github.com/openai/codex) (e.g., `brew install codex`) and sign in (`codex --help`).
 - `CODEX_ENABLED=true` (default) enables the agent; set to false only if the Codex CLI is unavailable. `CODEX_CLI_PATH` overrides the binary path.
@@ -189,6 +191,6 @@ MIT. See `LICENSE`.
 
 - **Secrets**: Never commit tokens. Use `.env`. Rotate regularly.
 - **Whitelists**: Restrict access via `SLACK_TARGET_CHANNEL` (channels only, `C…`) or `TELEGRAM_TARGET_CHAT_ID`. `null` accepts all; empty list limits to DMs/groups accordingly (Slack DMs currently unsupported).
-- **Logs**: Runtime logs at `logs/claude_proxy.log`.
+- **Logs**: Runtime logs at `logs/vibe_remote.log`.
 - **Session persistence**: `user_settings.json` stores per‑thread/chat session mappings and preferences; persist this file in production.
 - **Cleanup**: Set `CLEANUP_ENABLED=true` to safely prune completed receiver tasks during message handling for long‑running processes.

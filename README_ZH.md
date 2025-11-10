@@ -49,7 +49,9 @@ Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack/Telegram 输入意
 
 ## 先决条件
 
-- 必须安装 Claude Code CLI
+- 至少安装一个 Agent CLI（Claude Code 或 Codex）。建议同时安装，方便在不同频道切换。
+
+### Claude Code
 
 安装：
 
@@ -110,7 +112,7 @@ python main.py
 - `CLAUDE_SYSTEM_PROMPT` 可选
 - `ANTHROPIC_API_KEY`（取决于你的 SDK 设置）
 
-### Codex（可选 Agent）
+### Codex
 
 - 安装并登录 [Codex CLI](https://github.com/openai/codex)（执行 `codex --help` 验证）。
 - `CODEX_ENABLED=true`（默认）启用 Codex；若环境没有 CLI 才需要设为 false。`CODEX_CLI_PATH` 可重定向可执行文件。
@@ -187,6 +189,6 @@ MIT，详见 `LICENSE`。
 
 - **Secrets**：不要提交 Token；使用 `.env`，并定期轮换。
 - **Whitelists**：通过 `SLACK_TARGET_CHANNEL`（仅频道，`C…`）或 `TELEGRAM_TARGET_CHAT_ID` 限制访问。`null` 允许全部；空列表则只在相应上下文生效（Slack DM 当前不支持）。
-- **Logs**：运行日志位于 `logs/claude_proxy.log`。
+- **Logs**：运行日志位于 `logs/vibe_remote.log`。
 - **会话持久化**：`user_settings.json` 存储每个线程/聊天的会话映射与偏好；生产环境请持久化此文件。
 - **清理**：设置 `CLEANUP_ENABLED=true`，在消息处理入口安全清理已完成的接收任务，适合长时间运行。
