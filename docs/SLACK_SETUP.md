@@ -309,11 +309,11 @@ The bot supports multiple ways to interact:
 
 - `/stop` - Stop the current Vibe Remote session
 
-#### Sending Messages to Claude
+#### Sending Messages to Your Agent
 
 After using `/start`, simply type your message in the channel. The bot will:
 
-1. Send your message to Claude Code
+1. Send your message to the configured coding agent
 2. Stream the response back in real-time
 3. Maintain conversation context for follow-ups
 
@@ -322,7 +322,7 @@ After using `/start`, simply type your message in the channel. The bot will:
 The Slack bot automatically uses threads to organize conversations:
 
 - Each user's messages are grouped in a thread
-- Responses from Claude Code appear in the same thread
+- Responses from the configured agent appear in the same thread
 - This keeps channel history clean and organized
 
 ## Troubleshooting

@@ -1,6 +1,7 @@
 """Settings and configuration handlers"""
 
 import logging
+from modules.agents import get_agent_display_name
 from modules.im import MessageContext, InlineKeyboard, InlineButton
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,15 @@ class SettingsHandler:
     def _get_settings_key(self, context: MessageContext) -> str:
         """Get settings key - delegate to controller"""
         return self.controller._get_settings_key(context)
+
+    def _get_agent_display_name(self, context: MessageContext) -> str:
+        """Return a friendly agent name for the current context."""
+        settings_key = self._get_settings_key(context)
+        agent_name = self.controller.agent_router.resolve(
+            self.config.platform, settings_key
+        )
+        default_agent = getattr(self.controller.agent_service, "default_agent", None)
+        return get_agent_display_name(agent_name, fallback=default_agent)
 
     async def handle_settings(self, context: MessageContext, args: str = ""):
         """Handle settings command - show settings menu"""
@@ -74,9 +84,10 @@ class SettingsHandler:
         keyboard = InlineKeyboard(buttons=buttons)
 
         # Send settings message with escaped dash
+        agent_label = self._get_agent_display_name(context)
         await self.im_client.send_message_with_buttons(
             context,
-            "⚙️ *Settings \\- Message Visibility*\n\nSelect which message types to hide from Claude output:",
+            f"⚙️ *Settings \\- Message Visibility*\n\nSelect which message types to hide from {agent_label} output:",
             keyboard,
         )
 
@@ -123,7 +134,7 @@ class SettingsHandler:
 
             await self.im_client.send_message_with_buttons(
                 context,
-                "⚙️ *Personalization Settings*\n\nConfigure how Claude Code messages appear in your Slack workspace.",
+                f"⚙️ *Personalization Settings*\n\nConfigure how {self._get_agent_display_name(context)} messages appear in your Slack workspace.",
                 keyboard,
             )
 
@@ -205,7 +216,7 @@ class SettingsHandler:
                 items=[
                     ("System", "System initialization and status messages"),
                     ("Response", "Tool execution responses and results"),
-                    ("Assistant", "Claude's messages and explanations"),
+                    ("Assistant", "Agent responses and explanations"),
                     ("Result", "Final execution results and summaries"),
                 ],
                 footer="Hidden messages won't be sent to your IM platform.",
@@ -225,19 +236,20 @@ class SettingsHandler:
         """Show information about how the bot works"""
         try:
             formatter = self.im_client.formatter
+            agent_label = self._get_agent_display_name(context)
 
             # Use format_info_message for clean, platform-agnostic formatting
             info_text = formatter.format_info_message(
                 title="How Vibe Remote Works:",
                 emoji="📚",
                 items=[
-                    ("Real-time", "Messages are immediately sent to Claude Code"),
+                    ("Real-time", f"Messages are immediately sent to {agent_label}"),
                     ("Persistent", "Each chat maintains its own conversation context"),
                     ("Commands", "Use /start for menu, /clear to reset session"),
                     ("Work Dir", "Change working directory with /set_cwd or via menu"),
                     ("Settings", "Customize message visibility in Settings"),
                 ],
-                footer="Just type normally to chat with Claude Code!",
+                footer=f"Just type normally to chat with {agent_label}!",
             )
 
             # Send as new message

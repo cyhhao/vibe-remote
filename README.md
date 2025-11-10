@@ -27,7 +27,7 @@ Vibe Remote lets you operate coding agents via IM. Type in Slack or Telegram to 
 - **Work from anywhere**: Control coding sessions over Slack/Telegram; no IDE tether.
 - **Extensible by design**: Starts with Claude Code and Codex, built to support additional coding agents/CLIs.
 - **Multi-agent routing**: Route each Slack channel / Telegram chat to Claude Code or Codex by editing `agent_routes.yaml`.
-- **Session persistence by thread + path**: Each Slack thread/Telegram chat maintains its own Claude session and working dir; auto‑resume via saved mappings.
+- **Session persistence by thread + path**: Each Slack thread/Telegram chat maintains its own agent session and working dir; auto‑resume via saved mappings.
 - **Interactive Slack UX**: `/start` menu + Settings/CWD modals; buttons over commands for faster flow.
 
 > Recommendation: Prefer Slack as the primary platform. Threaded conversations enable parallel subtasks and keep channel history tidy — each subtask stays in its own thread.
@@ -138,7 +138,7 @@ telegram:
 - Slack routes use channel IDs; Telegram routes use chat IDs. Unlisted channels fall back to the per-platform default (then to the global `default`). `agent_routes.yaml` is gitignored so each environment can customize it safely.
 
 - See [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) for a step‑by‑step guide to installing Codex CLI and configuring routing.
-- No file? Everything routes to Claude.
+- No file? Everything routes to the global default agent (Claude unless overridden).
 
 ### App
 
@@ -174,7 +174,7 @@ telegram:
 
 ## Roadmap
 
-- Additional coding CLIs/agents beyond Claude Code
+- Additional coding CLIs/agents beyond the current built-in set
 - More IM platforms (Discord, Teams)
 - File upload/attachments piping to coding sessions
 - Advanced session policies & permissions

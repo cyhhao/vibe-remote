@@ -165,7 +165,7 @@ Usage Hint: 启动 Vibe Remote 并显示菜单
 2. 填写 **"Command"** 字段：`/start`
 3. **"Request URL"** 留空
 4. 填写 **"Short Description"**：`打开带有交互按钮的主菜单`
-5. 填写 **"Usage Hint"**：`启动 Claude Code 机器人并显示菜单`
+5. 填写 **"Usage Hint"**：`启动 Agent 会话并显示菜单`
 6. ✅ 勾选"Escape channels, users, and links"
 7. 点击 **"Save"**
 8. 返回 Slash Commands 页面
@@ -184,7 +184,7 @@ Usage Hint: 停止当前机器人会话
 1. 点击 **"Create New Command"**
 2. 填写 **"Command"** 字段：`/stop`
 3. **"Request URL"** 留空
-4. 填写 **"Short Description"**：`停止 Claude Code 机器人会话`
+4. 填写 **"Short Description"**：`停止当前 Agent 会话`
 5. 填写 **"Usage Hint"**：`停止当前机器人会话`
 6. ✅ 勾选"Escape channels, users, and links"
 7. 点击 **"Save"**
@@ -309,11 +309,11 @@ python main.py
 
 - `/stop` - 停止当前 Vibe Remote 会话
 
-#### 向 Claude 发送消息
+#### 向 Agent 发送消息
 
 使用 `/start` 后，只需在频道中输入你的消息。机器人将：
 
-1. 将你的消息发送到 Claude Code
+1. 将你的消息发送到已配置的 Agent
 2. 实时流式传输响应
 3. 为后续消息维护对话上下文
 
@@ -322,7 +322,7 @@ python main.py
 Slack 机器人自动使用线程来组织对话：
 
 - 每个用户的消息都分组在一个线程中
-- Claude Code 的响应出现在同一线程中
+- Agent 的响应出现在同一线程中
 - 这使频道历史记录保持整洁有序
 
 ## 故障排除

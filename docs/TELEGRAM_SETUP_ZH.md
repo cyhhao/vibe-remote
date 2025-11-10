@@ -82,7 +82,7 @@ TELEGRAM_BOT_TOKEN=your-bot-token-here
 # 可选：白名单特定聊天 ID（null = 允许所有聊天）
 TELEGRAM_CHAT_ID=[-1001234567890,987654321]
 
-# Claude Code 的工作目录
+# 编码 Agent 的默认工作目录
 CLAUDE_CWD=/path/to/your/project
 ```
 
@@ -140,11 +140,11 @@ python main.py
 - `/set_cwd <路径>` - 更改工作目录
 - `/settings` - 配置消息可见性和偏好设置
 
-### 向 Claude 发送消息
+### 向 Agent 发送消息
 
-启动机器人后，只需发送任何消息，它就会被转发到 Claude Code。机器人将：
+启动机器人后，只需发送任何消息，它就会被转发到已配置的 Agent。机器人将：
 
-1. 将你的消息发送到 Claude Code
+1. 将你的消息发送到已配置的 Agent
 2. 实时流式传输响应
 3. 为后续消息维护对话上下文
 
@@ -153,7 +153,7 @@ python main.py
 在群组中使用机器人时：
 
 - 消息必须以 `/` 开头才能作为命令处理
-- 常规消息作为 Claude 查询处理
+- 常规消息作为 Agent 查询处理
 - 机器人为每个聊天维护独立的会话
 
 ## 功能特性
@@ -171,14 +171,14 @@ python main.py
 
 设置命令提供内联键盘按钮：
 
-- 显示/隐藏原始 Claude 输出
+- 显示/隐藏原始 Agent 输出
 - 显示/隐藏思考过程
 - 重置会话
 - 返回主菜单
 
 ### 实时流式传输
 
-来自 Claude 的消息实时流式传输：
+来自 Agent 的消息实时流式传输：
 
 - 长消息自动分割
 - 代码块正确格式化

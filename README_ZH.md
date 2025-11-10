@@ -27,7 +27,7 @@ Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack/Telegram 输入意
 - **随时随地**：不被 IDE 束缚，直接在 Slack/Telegram 中远程操控编码会话。
 - **为扩展而生**：目前已支持 Claude Code + Codex，并可扩展到更多 coding agents/CLIs。
 - **多 Agent 路由**：为不同 Slack Channel / Telegram Chat 指定 Agent，互不干扰。
-- **按线程 + 路径持久化**：每个 Slack 线程/Telegram 对话都维持独立 Claude 会话与工作目录，并通过持久化映射自动恢复。
+- **按线程 + 路径持久化**：每个 Slack 线程/Telegram 对话都维持独立 Agent 会话与工作目录，并通过持久化映射自动恢复。
 - **Slack 交互式体验**：`/start` 菜单 + Settings/CWD 模态，按钮优先于命令，更快上手。
 
 > 推荐：优先使用 Slack 作为主要平台。其线程模型更适合并行子任务，也能保持频道历史整洁（每个子任务都在各自的线程里）。
@@ -136,7 +136,7 @@ telegram:
 ```
 
 - Slack 使用频道 ID，Telegram 使用聊天 ID。未命中的频道会落到平台默认值，然后回退到全局 `default`。`agent_routes.yaml` 已被 `.gitignore` 排除，可在不同环境独立配置。
-- 若未提供文件，则所有渠道继续使用 Claude。参见 [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) 获取更完整的 Codex 配置示例。
+- 若未提供文件，则所有渠道沿用全局默认 Agent（默认是 Claude）。参见 [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) 获取更完整的 Codex 配置示例。
 
 ### 应用
 
@@ -172,7 +172,7 @@ telegram:
 
 ## Roadmap
 
-- 扩展到更多编码 CLI/agents（超越 Claude Code）
+- 扩展到更多编码 CLI/agents（超越当前内置 Agent）
 - 更多 IM 平台（Discord、Teams）
 - 文件上传/附件到编码会话的管道化
 - 更细粒度的会话策略与权限
