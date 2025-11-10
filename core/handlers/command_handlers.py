@@ -3,6 +3,7 @@
 import os
 import logging
 from typing import Optional
+from modules.agents import AgentRequest
 from modules.im import MessageContext, InlineKeyboard, InlineButton
 
 logger = logging.getLogger(__name__)
@@ -133,53 +134,19 @@ Use the buttons below to manage your Claude Code sessions, or simply type any me
             # Get the correct settings key (channel_id for Slack, not user_id)
             settings_key = self.controller._get_settings_key(context)
 
-            # Get current session mappings before clearing them
-            settings = self.settings_manager.get_user_settings(settings_key)
-            session_bases_to_clear = set(settings.session_mappings.keys())
-
-            # Clear ALL session mappings for this user/channel
-            self.settings_manager.clear_all_session_mappings(settings_key)
-
-            # Clear all Claude sessions from memory that belong to this channel/user
-            sessions_to_clear = []
-            for session_key in self.controller.claude_sessions.keys():
-                # Session keys format: "base_session_id:working_path"
-                base_part = (
-                    session_key.split(":")[0] if ":" in session_key else session_key
-                )
-
-                # Check if this session should be cleared
-                if base_part in session_bases_to_clear:
-                    sessions_to_clear.append(session_key)
-
-            # Clear identified sessions
-            for session_key in sessions_to_clear:
-                try:
-                    client = self.controller.claude_sessions[session_key]
-                    if hasattr(client, "close"):
-                        await client.close()
-                    del self.controller.claude_sessions[session_key]
-                    logger.info(f"Cleared Claude session: {session_key}")
-                except Exception as e:
-                    logger.warning(f"Error clearing session {session_key}: {e}")
-
-            # Clear session and disconnect clients (legacy)
-            legacy_response = await self.session_manager.clear_session(settings_key)
-            logger.info(
-                f"User {context.user_id} cleared all sessions for {settings_key}"
-            )
-
-            # Build response message based on what was actually cleared
-            if len(sessions_to_clear) > 0:
-                full_response = f"✅ Cleared {len(sessions_to_clear)} active Claude session(s).\n🔄 All sessions have been reset."
-            elif session_bases_to_clear:
-                full_response = f"✅ Cleared {len(session_bases_to_clear)} stored session mapping(s).\n🔄 All sessions have been reset."
-            else:
+            cleared = await self.controller.agent_service.clear_sessions(settings_key)
+            if not cleared:
                 full_response = (
                     "📋 No active sessions to clear.\n🔄 Session state has been reset."
                 )
+            else:
+                details = "\n".join(
+                    f"• {agent} → {count} session(s)" for agent, count in cleared.items()
+                )
+                full_response = (
+                    "✅ Cleared active sessions for:\n" f"{details}\n🔄 All sessions reset."
+                )
 
-            # Send the complete response
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(channel_context, full_response)
             logger.info(f"Sent clear response to user {context.user_id}")
@@ -330,68 +297,31 @@ Use the buttons below to manage your Claude Code sessions, or simply type any me
     async def handle_stop(self, context: MessageContext, args: str = ""):
         """Handle /stop command - send interrupt message to Claude"""
         try:
-            # Get the session handler directly from controller
             session_handler = self.controller.session_handler
-            if not session_handler:
-                channel_context = self._get_channel_context(context)
-                await self.im_client.send_message(
-                    channel_context, "❌ Session handler not available"
-                )
-                return
-
-            # Get session info for the current context
             base_session_id, working_path, composite_key = (
                 session_handler.get_session_info(context)
             )
-
-            # Check if there's an active Claude session
-            if composite_key not in self.controller.claude_sessions:
-                channel_context = self._get_channel_context(context)
-
-                # Provide helpful guidance based on platform
-                if self.config.platform == "slack":
-                    formatter = self.im_client.formatter
-                    help_text = (
-                        f"ℹ️ {formatter.format_bold('No active Claude session to stop')}\n\n"
-                        f"The stop command interrupts Claude during execution.\n\n"
-                        f"{formatter.format_bold('How to use in Slack:')}\n"
-                        f"• In channel: `/stop`\n"
-                        f"• In thread: Type `stop` or `@bot /stop`\n"
-                        f"  _(Slack doesn't support slash commands in threads)_\n\n"
-                        f"{formatter.format_bold('Steps:')}\n"
-                        f"1. Send a message to Claude in a thread\n"
-                        f"2. While Claude is processing, send `stop` in the thread\n"
-                        f"3. Claude will stop but keep the session active\n\n"
-                        f"💡 Tip: Start a conversation with Claude first, then use stop if needed."
-                    )
-                else:
-                    help_text = (
-                        "ℹ️ **No active Claude session to stop**\n\n"
-                        "The `/stop` command interrupts Claude during execution.\n\n"
-                        "**How to use:**\n"
-                        "1. Send a message to Claude\n"
-                        "2. While Claude is processing, send `/stop`\n"
-                        "3. Claude will stop execution but keep the session active\n\n"
-                        "💡 Tip: Start a conversation with Claude first, then use `/stop` if needed."
-                    )
-
-                await self.im_client.send_message(channel_context, help_text)
-                return
-
-            # Get the Claude client for this session
-            client = self.controller.claude_sessions[composite_key]
-
-            # Send acknowledgment - use original context to send to thread if applicable
-            await self.im_client.send_message(
-                context,  # Use original context, not channel_context
-                "🛑 Sending stop signal to Claude...",
+            settings_key = self.controller._get_settings_key(context)
+            agent_name = self.controller.agent_router.resolve(
+                self.config.platform, settings_key
+            )
+            request = AgentRequest(
+                context=context,
+                message="stop",
+                working_path=working_path,
+                base_session_id=base_session_id,
+                composite_session_id=composite_key,
+                settings_key=settings_key,
             )
 
-            # Send interrupt message to Claude through the same session
-            stop_message = "Please stop the current execution immediately and wait for further instructions."
-            await client.query(stop_message, session_id=composite_key)
-
-            logger.info(f"Sent stop command to Claude session {composite_key}")
+            handled = await self.controller.agent_service.handle_stop(
+                agent_name, request
+            )
+            if not handled:
+                channel_context = self._get_channel_context(context)
+                await self.im_client.send_message(
+                    channel_context, "ℹ️ No active session to stop for this channel."
+                )
 
         except Exception as e:
             logger.error(f"Error sending stop command: {e}", exc_info=True)

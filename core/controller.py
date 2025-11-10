@@ -7,6 +7,8 @@ from typing import Optional, Dict, Any
 from config.settings import AppConfig
 from modules.im import BaseIMClient, MessageContext, IMFactory
 from modules.im.formatters import TelegramFormatter, SlackFormatter
+from modules.agent_router import AgentRouter
+from modules.agents import AgentService, ClaudeAgent, CodexAgent
 from modules.claude_client import ClaudeClient
 from modules.session_manager import SessionManager
 from modules.settings_manager import SettingsManager
@@ -37,6 +39,9 @@ class Controller:
 
         # Initialize handlers
         self._init_handlers()
+
+        # Initialize agents (depends on handlers/session handler)
+        self._init_agents()
 
         # Setup callbacks
         self._setup_callbacks()
@@ -71,6 +76,11 @@ class Controller:
         self.session_manager = SessionManager()
         self.settings_manager = SettingsManager()
 
+        # Agent routing (service initialized later after handlers)
+        self.agent_router = AgentRouter.from_file(
+            self.config.agent_route_file, platform=self.config.platform
+        )
+
         # Inject settings_manager into SlackBot if it's Slack platform
         if self.config.platform == "slack":
             # Import here to avoid circular dependency
@@ -89,6 +99,16 @@ class Controller:
 
         # Set cross-references between handlers
         self.message_handler.set_session_handler(self.session_handler)
+
+    def _init_agents(self):
+        """Initialize agent implementations (requires handlers ready)."""
+        self.agent_service = AgentService(self)
+        self.agent_service.register(ClaudeAgent(self))
+        if self.config.codex:
+            try:
+                self.agent_service.register(CodexAgent(self, self.config.codex))
+            except Exception as e:
+                logger.error(f"Failed to initialize Codex agent: {e}")
 
     def _setup_callbacks(self):
         """Setup callback connections between modules"""
@@ -160,6 +180,30 @@ class Controller:
                 platform_specific=context.platform_specific,
             )
         return context
+
+    async def emit_agent_message(
+        self,
+        context: MessageContext,
+        message_type: str,
+        text: str,
+        parse_mode: str = "markdown",
+    ):
+        """Centralized dispatch for agent messages with filtering."""
+        if not text or not text.strip():
+            return
+        settings_key = self._get_settings_key(context)
+        if (
+            message_type != "notify"
+            and self.settings_manager.is_message_type_hidden(settings_key, message_type)
+        ):
+            logger.info(
+                f"Skipping {message_type} message for settings {settings_key} (hidden)"
+            )
+            return
+        target_context = self._get_target_context(context)
+        await self.im_client.send_message(
+            target_context, text, parse_mode=parse_mode
+        )
 
     # Settings update handler (for Slack modal)
     async def handle_settings_update(

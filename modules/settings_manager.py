@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, asdict, field
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
 
 
@@ -18,8 +18,10 @@ class UserSettings:
         default_factory=list
     )  # Message types to hide
     custom_cwd: Optional[str] = None  # Custom working directory
-    # Nested map: {base_session_id: {working_path: claude_session_id}}
-    session_mappings: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # Nested map: {agent_name: {base_session_id: {working_path: session_id}}}
+    session_mappings: Dict[str, Dict[str, Dict[str, str]]] = field(
+        default_factory=dict
+    )
     # Slack active threads: {channel_id: {thread_ts: last_active_timestamp}}
     active_slack_threads: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
@@ -59,14 +61,13 @@ class SettingsManager:
                 with open(self.settings_file, "r") as f:
                     data = json.load(f)
                     for user_id_str, user_data in data.items():
-                        # Clean up old format session mappings, only keep nested dict format
+                        # Normalize session mappings to agent-aware structure
                         if "session_mappings" in user_data:
-                            cleaned_mappings = {}
-                            for key, value in user_data["session_mappings"].items():
-                                # Only keep nested dictionary format
-                                if isinstance(value, dict):
-                                    cleaned_mappings[key] = value
-                            user_data["session_mappings"] = cleaned_mappings
+                            user_data["session_mappings"] = (
+                                self._normalize_session_mappings(
+                                    user_data["session_mappings"]
+                                )
+                            )
 
                         # Ensure active_slack_threads exists and is properly formatted
                         if "active_slack_threads" not in user_data:
@@ -81,6 +82,39 @@ class SettingsManager:
         except Exception as e:
             logger.error(f"Error loading settings: {e}")
             self.settings = {}
+
+    def _normalize_session_mappings(
+        self, mappings: Dict[str, Any]
+    ) -> Dict[str, Dict[str, Dict[str, str]]]:
+        """Normalize legacy session mapping schema into agent-aware structure."""
+        normalized: Dict[str, Dict[str, Dict[str, str]]] = {}
+
+        if not isinstance(mappings, dict):
+            return normalized
+
+        def is_path_map(value) -> bool:
+            return isinstance(value, dict) and all(
+                isinstance(v, str) for v in value.values()
+            )
+
+        # Detect new-format structure: {agent: {base_session_id: {path: session_id}}}
+        is_new_format = all(
+            isinstance(agent_map, dict) and all(is_path_map(path_map) for path_map in agent_map.values())
+            for agent_map in mappings.values()
+        )
+        if is_new_format:
+            return mappings
+
+        # Legacy structure: {base_session_id: {path: session_id}}
+        legacy_entries = {}
+        for base_session_id, path_map in mappings.items():
+            if is_path_map(path_map):
+                legacy_entries[base_session_id] = path_map
+
+        if legacy_entries:
+            normalized["claude"] = legacy_entries
+
+        return normalized
 
     def _save_settings(self):
         """Save settings to JSON file"""
@@ -163,6 +197,103 @@ class SettingsManager:
             "result": "Result",
         }
 
+    def _ensure_agent_namespace(
+        self, settings: UserSettings, agent_name: str
+    ) -> Dict[str, Dict[str, str]]:
+        """Ensure nested dict for an agent exists."""
+        if agent_name not in settings.session_mappings:
+            settings.session_mappings[agent_name] = {}
+        return settings.session_mappings[agent_name]
+
+    def set_agent_session_mapping(
+        self,
+        user_id: Union[int, str],
+        agent_name: str,
+        base_session_id: str,
+        working_path: str,
+        session_id: str,
+    ):
+        """Store mapping between base session ID, working path, and agent session ID"""
+        settings = self.get_user_settings(user_id)
+        agent_map = self._ensure_agent_namespace(settings, agent_name)
+        if base_session_id not in agent_map:
+            agent_map[base_session_id] = {}
+        agent_map[base_session_id][working_path] = session_id
+        self.update_user_settings(user_id, settings)
+        logger.info(
+            f"Stored {agent_name} session mapping for user {user_id}: "
+            f"{base_session_id}[{working_path}] -> {session_id}"
+        )
+
+    def get_agent_session_id(
+        self,
+        user_id: Union[int, str],
+        base_session_id: str,
+        working_path: str,
+        agent_name: str,
+    ) -> Optional[str]:
+        """Get agent session ID for given base session ID and working path"""
+        settings = self.get_user_settings(user_id)
+        agent_map = settings.session_mappings.get(agent_name, {})
+        if base_session_id in agent_map:
+            return agent_map[base_session_id].get(working_path)
+        return None
+
+    def clear_agent_session_mapping(
+        self,
+        user_id: Union[int, str],
+        agent_name: str,
+        base_session_id: str,
+        working_path: Optional[str] = None,
+    ):
+        """Clear session mapping for given base session ID and optionally working path"""
+        settings = self.get_user_settings(user_id)
+        agent_map = settings.session_mappings.get(agent_name, {})
+        if base_session_id in agent_map:
+            if working_path:
+                if working_path in agent_map[base_session_id]:
+                    del agent_map[base_session_id][working_path]
+                    logger.info(
+                        f"Cleared {agent_name} session mapping for user {user_id}: "
+                        f"{base_session_id}[{working_path}]"
+                    )
+            else:
+                del agent_map[base_session_id]
+                logger.info(
+                    f"Cleared all {agent_name} session mappings for user {user_id}: {base_session_id}"
+                )
+            self.update_user_settings(user_id, settings)
+
+    def clear_agent_sessions(self, user_id: Union[int, str], agent_name: str):
+        """Clear every session mapping for the specified agent."""
+        settings = self.get_user_settings(user_id)
+        if agent_name in settings.session_mappings:
+            del settings.session_mappings[agent_name]
+            logger.info(
+                f"Cleared all {agent_name} session namespaces for user {user_id}"
+            )
+            self.update_user_settings(user_id, settings)
+
+    def clear_all_session_mappings(self, user_id: Union[int, str]):
+        """Clear all session mappings for a user across agents"""
+        settings = self.get_user_settings(user_id)
+        if settings.session_mappings:
+            count = sum(len(agent_map) for agent_map in settings.session_mappings.values())
+            settings.session_mappings.clear()
+            logger.info(
+                f"Cleared all session mappings ({count} bases) for user {user_id}"
+            )
+            self.update_user_settings(user_id, settings)
+
+    def list_agent_session_bases(
+        self, user_id: Union[int, str], agent_name: str
+    ) -> Dict[str, Dict[str, str]]:
+        """Get copy of session mappings for an agent."""
+        settings = self.get_user_settings(user_id)
+        agent_map = settings.session_mappings.get(agent_name, {})
+        return {base: paths.copy() for base, paths in agent_map.items()}
+
+    # Backwards-compatible helpers for Claude-specific call sites
     def set_session_mapping(
         self,
         user_id: Union[int, str],
@@ -170,24 +301,16 @@ class SettingsManager:
         working_path: str,
         claude_session_id: str,
     ):
-        """Store mapping between base session ID, working path, and Claude session ID"""
-        settings = self.get_user_settings(user_id)
-        if base_session_id not in settings.session_mappings:
-            settings.session_mappings[base_session_id] = {}
-        settings.session_mappings[base_session_id][working_path] = claude_session_id
-        self.update_user_settings(user_id, settings)
-        logger.info(
-            f"Stored session mapping for user {user_id}: {base_session_id}[{working_path}] -> {claude_session_id}"
+        self.set_agent_session_mapping(
+            user_id, "claude", base_session_id, working_path, claude_session_id
         )
 
     def get_claude_session_id(
         self, user_id: Union[int, str], base_session_id: str, working_path: str
     ) -> Optional[str]:
-        """Get Claude session ID for given base session ID and working path"""
-        settings = self.get_user_settings(user_id)
-        if base_session_id in settings.session_mappings:
-            return settings.session_mappings[base_session_id].get(working_path)
-        return None
+        return self.get_agent_session_id(
+            user_id, base_session_id, working_path, agent_name="claude"
+        )
 
     def clear_session_mapping(
         self,
@@ -195,32 +318,9 @@ class SettingsManager:
         base_session_id: str,
         working_path: Optional[str] = None,
     ):
-        """Clear session mapping for given base session ID and optionally working path"""
-        settings = self.get_user_settings(user_id)
-        if base_session_id in settings.session_mappings:
-            if working_path:
-                # Clear specific path mapping
-                if working_path in settings.session_mappings[base_session_id]:
-                    del settings.session_mappings[base_session_id][working_path]
-                    logger.info(
-                        f"Cleared session mapping for user {user_id}: {base_session_id}[{working_path}]"
-                    )
-            else:
-                # Clear all mappings for this base session
-                del settings.session_mappings[base_session_id]
-                logger.info(
-                    f"Cleared all session mappings for user {user_id}: {base_session_id}"
-                )
-            self.update_user_settings(user_id, settings)
-
-    def clear_all_session_mappings(self, user_id: Union[int, str]):
-        """Clear all session mappings for a user"""
-        settings = self.get_user_settings(user_id)
-        if settings.session_mappings:
-            count = len(settings.session_mappings)
-            settings.session_mappings.clear()
-            logger.info(f"Cleared all {count} session mappings for user {user_id}")
-            self.update_user_settings(user_id, settings)
+        self.clear_agent_session_mapping(
+            user_id, "claude", base_session_id, working_path
+        )
 
     # ---------------------------------------------
     # Slack thread management

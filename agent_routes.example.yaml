@@ -1,0 +1,9 @@
+default: claude
+slack:
+  default: claude
+  overrides:
+    C01EXAMPLE: codex
+telegram:
+  default: claude
+  overrides:
+    "123456789": codex

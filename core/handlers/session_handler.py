@@ -190,13 +190,21 @@ class SessionHandler:
         
         restored_count = 0
         for user_id, user_settings in all_settings.items():
-            if hasattr(user_settings, 'session_mappings') and user_settings.session_mappings:
-                # Only handle new nested structure: {base_session_id: {path: claude_session_id}}
-                for base_session_id, path_mappings in user_settings.session_mappings.items():
+            if (
+                hasattr(user_settings, "session_mappings")
+                and user_settings.session_mappings
+                and "claude" in user_settings.session_mappings
+            ):
+                claude_map = user_settings.session_mappings["claude"]
+                for base_session_id, path_mappings in claude_map.items():
                     if isinstance(path_mappings, dict):
-                        logger.info(f"Found {len(path_mappings)} path mappings for {base_session_id} (user {user_id})")
+                        logger.info(
+                            f"Found {len(path_mappings)} path mappings for {base_session_id} (user {user_id})"
+                        )
                         for path, claude_session_id in path_mappings.items():
-                            logger.info(f"  - {base_session_id}[{path}] -> {claude_session_id}")
+                            logger.info(
+                                f"  - {base_session_id}[{path}] -> {claude_session_id}"
+                            )
                             restored_count += 1
-        
+
         logger.info(f"Session restoration complete. Restored {restored_count} session mappings.")

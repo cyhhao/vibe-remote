@@ -1,0 +1,83 @@
+import json
+import logging
+import os
+from dataclasses import dataclass, field
+from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PlatformRoute:
+    default: str = "claude"
+    overrides: Dict[str, str] = field(default_factory=dict)
+
+
+class AgentRouter:
+    """Resolve which agent should serve a given message context."""
+
+    def __init__(
+        self,
+        platform_routes: Dict[str, PlatformRoute],
+        global_default: str = "claude",
+    ):
+        self.platform_routes = platform_routes
+        self.global_default = global_default
+
+    @classmethod
+    def from_file(
+        cls, file_path: Optional[str], *, platform: str
+    ) -> "AgentRouter":
+        routes: Dict[str, PlatformRoute] = {}
+        global_default = "claude"
+
+        if file_path and os.path.exists(file_path):
+            try:
+                data = cls._load_file(file_path)
+                global_default = data.get("default", global_default)
+                for key, value in data.items():
+                    if key == "default":
+                        continue
+                    if not isinstance(value, dict):
+                        continue
+                    routes[key] = PlatformRoute(
+                        default=value.get("default", global_default),
+                        overrides=value.get("overrides", {}) or {},
+                    )
+                logger.info(
+                    f"Loaded agent routing config from {file_path} "
+                    f"(platforms: {list(routes.keys())})"
+                )
+            except Exception as e:
+                logger.error(f"Failed to parse agent route config {file_path}: {e}")
+        else:
+            if file_path:
+                logger.warning(
+                    f"Agent route config file not found at {file_path}, using defaults"
+                )
+
+        # Ensure platform entry exists
+        routes.setdefault(platform, PlatformRoute(default=global_default))
+        return cls(routes, global_default=global_default)
+
+    @staticmethod
+    def _load_file(path: str) -> Dict:
+        _, ext = os.path.splitext(path)
+        if ext.lower() in {".yaml", ".yml"}:
+            try:
+                import yaml  # type: ignore
+            except ImportError as exc:
+                raise RuntimeError(
+                    "PyYAML is required to parse YAML agent route files. "
+                    "Install with `pip install pyyaml` or use JSON."
+                ) from exc
+            with open(path, "r") as f:
+                return yaml.safe_load(f) or {}
+        with open(path, "r") as f:
+            return json.load(f)
+
+    def resolve(self, platform: str, channel_id: str) -> str:
+        platform_route = self.platform_routes.get(platform)
+        if not platform_route:
+            return self.global_default
+        return platform_route.overrides.get(channel_id, platform_route.default)

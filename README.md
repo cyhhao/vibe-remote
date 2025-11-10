@@ -26,6 +26,7 @@ Vibe Remote lets you operate coding agents via IM. Type in Slack or Telegram to 
 - **Vibe coding, not micromanaging**: Let AI drive based on your intent and constraints; focus on outcomes.
 - **Work from anywhere**: Control coding sessions over Slack/Telegram; no IDE tether.
 - **Extensible by design**: Starts with Claude Code, built to support additional coding agents/CLIs.
+- **Multi-agent routing**: Route each Slack channel / Telegram chat to Claude Code or Codex by editing `agent_routes.yaml`.
 - **Session persistence by thread + path**: Each Slack thread/Telegram chat maintains its own Claude session and working dir; auto‑resume via saved mappings.
 - **Interactive Slack UX**: `/start` menu + Settings/CWD modals; buttons over commands for faster flow.
 
@@ -109,6 +110,34 @@ python main.py
 - `CLAUDE_SYSTEM_PROMPT` optional
 - `ANTHROPIC_API_KEY` if required by your SDK setup
 
+### Codex (optional agent)
+
+- Install the [Codex CLI](https://github.com/openai/codex) (e.g., `brew install codex`) and sign in (`codex --help`).
+- `CODEX_ENABLED=true` (default) enables the agent; set to false only if the Codex CLI is unavailable. `CODEX_CLI_PATH` overrides the binary path.
+- `CODEX_DEFAULT_MODEL` / `CODEX_EXTRA_ARGS` customize the underlying model or flags.
+
+### Agent routing
+
+- Copy `agent_routes.example.yaml` → `agent_routes.yaml` (repository root) to configure per-channel routing, or point `AGENT_ROUTE_FILE` to any YAML/JSON file.
+- File schema:
+
+```yaml
+default: claude
+slack:
+  default: claude
+  overrides:
+    C01EXAMPLE: codex
+telegram:
+  default: claude
+  overrides:
+    "123456789": codex
+```
+
+- Slack routes use channel IDs; Telegram routes use chat IDs. Unlisted channels fall back to the per-platform default (then to the global `default`). `agent_routes.yaml` is gitignored so each environment can customize it safely.
+
+- See [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) for a step‑by‑step guide to installing Codex CLI and configuring routing.
+- No file? Everything routes to Claude.
+
 ### App
 
 - `LOG_LEVEL` default `INFO`
@@ -122,7 +151,7 @@ python main.py
 - `/cwd` show working directory
 - `/set_cwd <path>` change working directory
 - `/settings` configure message visibility
-- `/stop` interrupt current execution
+- `/stop` force-stop the active agent session (Claude interrupt / Codex process kill)
 
 ### Slack
 
