@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 from asyncio.subprocess import Process
 from typing import Dict, Optional, Tuple
 
@@ -23,6 +24,16 @@ class CodexAgent(BaseAgent):
         self._initialized_sessions: set[str] = set()
 
     async def handle_message(self, request: AgentRequest) -> None:
+        existing = self.base_process_index.get(request.base_session_id)
+        if existing and existing in self.active_processes:
+            await self.controller.emit_agent_message(
+                request.context,
+                "notify",
+                "⚠️ Codex is already processing a task in this thread. "
+                "Use /stop or wait for it to finish.",
+            )
+            await self._delete_ack(request)
+            return
         resume_id = self.settings_manager.get_agent_session_id(
             request.settings_key,
             request.base_session_id,
@@ -40,18 +51,19 @@ class CodexAgent(BaseAgent):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=request.working_path,
+                **({"preexec_fn": os.setsid} if hasattr(os, "setsid") else {}),
             )
         except FileNotFoundError:
             await self.controller.emit_agent_message(
                 request.context,
-                "system",
+                "notify",
                 "❌ Codex CLI not found. Please install it or set CODEX_CLI_PATH.",
             )
             return
         except Exception as e:
             logger.error(f"Failed to launch Codex CLI: {e}", exc_info=True)
             await self.controller.emit_agent_message(
-                request.context, "system", f"❌ Failed to start Codex CLI: {e}"
+                request.context, "notify", f"❌ Failed to start Codex CLI: {e}"
             )
             return
 
@@ -88,7 +100,7 @@ class CodexAgent(BaseAgent):
         if process.returncode != 0:
             await self.controller.emit_agent_message(
                 request.context,
-                "system",
+                "notify",
                 "⚠️ Codex exited with a non-zero status. Review stderr for details.",
             )
 
@@ -114,7 +126,13 @@ class CodexAgent(BaseAgent):
 
         proc, _ = entry
         try:
-            proc.kill()
+            if hasattr(os, "getpgid"):
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                proc.kill()
             await proc.wait()
         except ProcessLookupError:
             pass
@@ -122,7 +140,7 @@ class CodexAgent(BaseAgent):
         if request.base_session_id in self.base_process_index:
             self.base_process_index.pop(request.base_session_id, None)
         await self.controller.emit_agent_message(
-            request.context, "system", "🛑 Terminated Codex execution."
+            request.context, "notify", "🛑 Terminated Codex execution."
         )
         logger.info(f"Codex session {key} terminated via /stop")
         return True

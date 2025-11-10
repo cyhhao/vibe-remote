@@ -192,7 +192,10 @@ class Controller:
         if not text or not text.strip():
             return
         settings_key = self._get_settings_key(context)
-        if self.settings_manager.is_message_type_hidden(settings_key, message_type):
+        if (
+            message_type != "notify"
+            and self.settings_manager.is_message_type_hidden(settings_key, message_type)
+        ):
             logger.info(
                 f"Skipping {message_type} message for settings {settings_key} (hidden)"
             )

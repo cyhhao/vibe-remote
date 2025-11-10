@@ -90,7 +90,7 @@ class ClaudeAgent(BaseAgent):
 
         client = self.claude_sessions[composite_key]
         await self.controller.emit_agent_message(
-            request.context, "system", "🛑 Interrupting Claude session..."
+            request.context, "notify", "🛑 Interrupting Claude session..."
         )
         try:
             if hasattr(client, "interrupt"):
@@ -99,7 +99,7 @@ class ClaudeAgent(BaseAgent):
             else:
                 await self.controller.emit_agent_message(
                     request.context,
-                    "system",
+                    "notify",
                     "⚠️ This Claude session cannot be interrupted; consider /clear.",
                 )
                 return False
@@ -107,7 +107,7 @@ class ClaudeAgent(BaseAgent):
             logger.error(f"Failed to interrupt Claude session {composite_key}: {err}")
             await self.controller.emit_agent_message(
                 request.context,
-                "system",
+                "notify",
                 "⚠️ Failed to interrupt Claude session. Please try /clear.",
             )
             return False
