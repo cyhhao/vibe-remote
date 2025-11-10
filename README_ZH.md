@@ -49,7 +49,9 @@ Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack/Telegram 输入意
 
 ## 先决条件
 
-- 必须安装 Claude Code CLI
+- 至少安装一个 Agent CLI（Claude Code 或 Codex）。建议同时安装，方便在不同频道切换。
+
+### Claude Code
 
 安装：
 
@@ -110,7 +112,7 @@ python main.py
 - `CLAUDE_SYSTEM_PROMPT` 可选
 - `ANTHROPIC_API_KEY`（取决于你的 SDK 设置）
 
-### Codex（可选 Agent）
+### Codex
 
 - 安装并登录 [Codex CLI](https://github.com/openai/codex)（执行 `codex --help` 验证）。
 - `CODEX_ENABLED=true`（默认）启用 Codex；若环境没有 CLI 才需要设为 false。`CODEX_CLI_PATH` 可重定向可执行文件。

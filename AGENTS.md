@@ -23,7 +23,8 @@ Commits follow the `type(scope): summary` pattern visible in history (`fix(slack
 Never commit `.env`, tokens, or Slack/Telegram secrets; rely on `.env.example` plus local overrides. Validate IM scopes (`SLACK_REQUIRE_MENTION`, `TELEGRAM_TARGET_CHAT_ID`) through `config/settings.py` before shipping, and document any new flags. Keep `CLAUDE_DEFAULT_CWD` scoped to `_tmp/` or another sanitized path so that remote agents cannot escape the intended workspace. Logs may contain sensitive thread context—rotate `logs/claude_proxy.log` in production and scrub before sharing.
 
 ## Agent Routing & Codex Notes
-- Enable Codex (on by default) via `CODEX_ENABLED=true` and ensure the CLI is reachable (`CODEX_CLI_PATH`); `CODEX_ENABLE_FULL_AUTO` propagates to `codex exec`.
+- Enable Codex (on by default) via `CODEX_ENABLED=true` and ensure the CLI is reachable (`CODEX_CLI_PATH`).
 - Copy `agent_routes.example.yaml` → `agent_routes.yaml` to map Slack channel / Telegram chat IDs to agents; see `docs/CODEX_SETUP.md` for a full walkthrough.
+- The `modules/agents` architecture is ready for additional backends; add a new agent class, register it in `core/controller.py`, then expose it via the routing file.
 - Route Slack channel IDs or Telegram chat IDs in `AGENT_ROUTE_FILE` (`agent_routes.yaml` at repo root by default; copy from `agent_routes.example.yaml`). Keys map to agent names (`claude`, `codex`, future backends). Missing entries fall back to the platform default, then to the global default.
 - Session mappings inside `user_settings.json` are now namespaced per agent; avoid manual edits unless you know the nested structure `{agent -> base_session_id -> cwd -> session_id}`.
