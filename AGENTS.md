@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`main.py` is the entry point that wires `config.AppConfig` into the runtime `Controller`. Core orchestration和 handlers live under `core/` (e.g., `core/controller.py`, `core/handlers/*`). Agent integrations now live in `modules/agents/` (shared base, Claude/Codex backends, registry), while IM transports stay in `modules/im/`. Configuration defaults live in `config/` (`agent_routes.example.yaml` + gitignored `agent_routes.yaml` at repo root control per-channel routing), reference docs in `docs/`, static assets in `assets/`, and `_tmp/` is the default remote working directory for agent sessions. Keep runtime logs inside `logs/claude_proxy.log` and persist chat state in `user_settings.json`.
+`main.py` is the entry point that wires `config.AppConfig` into the runtime `Controller`. Core orchestration和 handlers live under `core/` (e.g., `core/controller.py`, `core/handlers/*`). Agent integrations now live in `modules/agents/` (shared base, Claude/Codex backends, registry), while IM transports stay in `modules/im/`. Configuration defaults live in `config/` (`agent_routes.example.yaml` + gitignored `agent_routes.yaml` at repo root control per-channel routing), reference docs in `docs/`, static assets in `assets/`, and `_tmp/` is the default remote working directory for agent sessions. Keep runtime logs inside `logs/vibe_remote.log` and persist chat state in `user_settings.json`.
 
 ## Build, Test, and Development Commands
 - `python -m venv .venv && source .venv/bin/activate` – create an isolated environment before installing dependencies.
@@ -20,7 +20,7 @@ There is no committed automated test suite yet; favor fast pytest-style modules 
 Commits follow the `type(scope): summary` pattern visible in history (`fix(slack): …`, `feat(status): …`). Keep them small and focused on a single concern, referencing issues when relevant. Every PR must describe intent, list functional changes, attach logs or screenshots for UX-affecting updates, and call out config impacts (new env vars, migrations). Update README/docs whenever behavior or setup steps change, and ensure `pip install -r requirements.txt && ./start.sh` still works from a clean clone.
 
 ## Security & Configuration Tips
-Never commit `.env`, tokens, or Slack/Telegram secrets; rely on `.env.example` plus local overrides. Validate IM scopes (`SLACK_REQUIRE_MENTION`, `TELEGRAM_TARGET_CHAT_ID`) through `config/settings.py` before shipping, and document any new flags. Keep `CLAUDE_DEFAULT_CWD` scoped to `_tmp/` or another sanitized path so that remote agents cannot escape the intended workspace. Logs may contain sensitive thread context—rotate `logs/claude_proxy.log` in production and scrub before sharing.
+Never commit `.env`, tokens, or Slack/Telegram secrets; rely on `.env.example` plus local overrides. Validate IM scopes (`SLACK_REQUIRE_MENTION`, `TELEGRAM_TARGET_CHAT_ID`) through `config/settings.py` before shipping, and document any new flags. Keep `CLAUDE_DEFAULT_CWD` scoped to `_tmp/` or another sanitized path so that remote agents cannot escape the intended workspace. Logs may contain sensitive thread context—rotate `logs/vibe_remote.log` in production and scrub before sharing.
 
 ## Agent Routing & Codex Notes
 - Enable Codex (on by default) via `CODEX_ENABLED=true` and ensure the CLI is reachable (`CODEX_CLI_PATH`).

@@ -196,8 +196,12 @@ class Controller:
             message_type != "notify"
             and self.settings_manager.is_message_type_hidden(settings_key, message_type)
         ):
+            preview = text if len(text) <= 500 else f"{text[:500]}…"
             logger.info(
-                f"Skipping {message_type} message for settings {settings_key} (hidden)"
+                "Skipping %s message for settings %s (hidden). Preview: %s",
+                message_type,
+                settings_key,
+                preview,
             )
             return
         target_context = self._get_target_context(context)

@@ -32,8 +32,8 @@ def setup_logging(level: str = "INFO"):
         format=log_format,
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler(f'{logs_dir}/claude_proxy.log')
-        ]
+            logging.FileHandler(f"{logs_dir}/vibe_remote.log"),
+        ],
     )
 
 
@@ -47,7 +47,7 @@ def main():
         setup_logging(config.log_level)
         logger = logging.getLogger(__name__)
         
-        logger.info("Starting Claude Proxy...")
+        logger.info("Starting vibe-remote service...")
         logger.info(f"Working directory: {config.claude.cwd}")
         
         # Create and run controller

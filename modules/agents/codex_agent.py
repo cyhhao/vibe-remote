@@ -156,6 +156,7 @@ class CodexAgent(BaseAgent):
     def _build_command(self, request: AgentRequest, resume_id: Optional[str]) -> list:
         cmd = [self.codex_config.binary, "exec", "--json"]
         cmd += ["--dangerously-bypass-approvals-and-sandbox"]
+        cmd += ["--skip-git-repo-check"]
 
         if self.codex_config.default_model:
             cmd += ["--model", self.codex_config.default_model]
@@ -202,8 +203,8 @@ class CodexAgent(BaseAgent):
             joined = "\n".join(buffer[-10:])
             await self.controller.emit_agent_message(
                 request.context,
-                "system",
-                f"```stderr\n{joined}\n```",
+                "notify",
+                f"❗️ Codex stderr:\n```stderr\n{joined}\n```",
                 parse_mode="markdown",
             )
 
@@ -274,14 +275,14 @@ class CodexAgent(BaseAgent):
         if event_type == "error":
             message = event.get("message", "Unknown error")
             await self.controller.emit_agent_message(
-                request.context, "system", f"❌ Codex error: {message}"
+                request.context, "notify", f"❌ Codex error: {message}"
             )
             return
 
         if event_type == "turn.failed":
             error = event.get("error", {}).get("message", "Turn failed.")
             await self.controller.emit_agent_message(
-                request.context, "system", f"⚠️ Codex turn failed: {error}"
+                request.context, "notify", f"⚠️ Codex turn failed: {error}"
             )
             request.last_agent_message = None
             return

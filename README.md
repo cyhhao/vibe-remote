@@ -191,6 +191,6 @@ MIT. See `LICENSE`.
 
 - **Secrets**: Never commit tokens. Use `.env`. Rotate regularly.
 - **Whitelists**: Restrict access via `SLACK_TARGET_CHANNEL` (channels only, `C…`) or `TELEGRAM_TARGET_CHAT_ID`. `null` accepts all; empty list limits to DMs/groups accordingly (Slack DMs currently unsupported).
-- **Logs**: Runtime logs at `logs/claude_proxy.log`.
+- **Logs**: Runtime logs at `logs/vibe_remote.log`.
 - **Session persistence**: `user_settings.json` stores per‑thread/chat session mappings and preferences; persist this file in production.
 - **Cleanup**: Set `CLEANUP_ENABLED=true` to safely prune completed receiver tasks during message handling for long‑running processes.

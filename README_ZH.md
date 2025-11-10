@@ -189,6 +189,6 @@ MIT，详见 `LICENSE`。
 
 - **Secrets**：不要提交 Token；使用 `.env`，并定期轮换。
 - **Whitelists**：通过 `SLACK_TARGET_CHANNEL`（仅频道，`C…`）或 `TELEGRAM_TARGET_CHAT_ID` 限制访问。`null` 允许全部；空列表则只在相应上下文生效（Slack DM 当前不支持）。
-- **Logs**：运行日志位于 `logs/claude_proxy.log`。
+- **Logs**：运行日志位于 `logs/vibe_remote.log`。
 - **会话持久化**：`user_settings.json` 存储每个线程/聊天的会话映射与偏好；生产环境请持久化此文件。
 - **清理**：设置 `CLEANUP_ENABLED=true`，在消息处理入口安全清理已完成的接收任务，适合长时间运行。
