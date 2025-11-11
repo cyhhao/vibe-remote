@@ -21,6 +21,7 @@ class AgentRequest:
     settings_key: str
     ack_message_id: Optional[str] = None
     last_agent_message: Optional[str] = None
+    last_agent_message_parse_mode: Optional[str] = None
 
 
 @dataclass
