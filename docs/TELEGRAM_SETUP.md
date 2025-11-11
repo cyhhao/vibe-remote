@@ -82,7 +82,7 @@ TELEGRAM_BOT_TOKEN=your-bot-token-here
 # Optional: Whitelist specific chat IDs (null = all chats allowed)
 TELEGRAM_CHAT_ID=[-1001234567890,987654321]
 
-# Working directory for Claude Code
+# Default working directory for the coding agent
 CLAUDE_CWD=/path/to/your/project
 ```
 
@@ -140,11 +140,11 @@ The bot should now be running and ready to accept commands.
 - `/set_cwd <path>` - Change working directory
 - `/settings` - Configure message visibility and preferences
 
-### Sending Messages to Claude
+### Sending Messages to Your Agent
 
-After starting the bot, simply send any message and it will be forwarded to Claude Code. The bot will:
+After starting the bot, simply send any message and it will be forwarded to your configured agent. The bot will:
 
-1. Send your message to Claude Code
+1. Send your message to the configured agent
 2. Stream the response back in real-time
 3. Maintain conversation context for follow-ups
 
@@ -153,7 +153,7 @@ After starting the bot, simply send any message and it will be forwarded to Clau
 When using the bot in groups:
 
 - Messages must start with `/` to be processed as commands
-- Regular messages are processed as Claude queries
+- Regular messages are processed as agent queries
 - The bot maintains separate sessions for each chat
 
 ## Features
@@ -171,14 +171,14 @@ The bot supports Telegram's MarkdownV2 format:
 
 The settings command provides inline keyboard buttons for:
 
-- Show/hide raw Claude output
+- Show/hide raw agent output
 - Show/hide thinking process
 - Reset session
 - Return to main menu
 
 ### Real-time Streaming
 
-Messages from Claude are streamed in real-time:
+Messages from your agent are streamed in real-time:
 
 - Long messages are automatically split
 - Code blocks are properly formatted

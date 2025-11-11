@@ -802,7 +802,7 @@ class SlackBot(BaseIMClient):
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "Choose which message types to *hide* from Claude Code output. Hidden messages won't appear in your Slack workspace.",
+                        "text": "Choose which message types to *hide* from agent output. Hidden messages won't appear in your Slack workspace.",
                     },
                 },
                 {"type": "divider"},
@@ -840,7 +840,7 @@ class SlackBot(BaseIMClient):
         descriptions = {
             "system": "System initialization and status messages",
             "response": "Tool execution responses and results",
-            "assistant": "Claude's messages and explanations",
+            "assistant": "Agent responses and explanations",
             "result": "Final execution results and summaries",
         }
         return descriptions.get(msg_type, f"{msg_type} messages")

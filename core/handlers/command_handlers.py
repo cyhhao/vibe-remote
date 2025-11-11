@@ -3,7 +3,7 @@
 import os
 import logging
 from typing import Optional
-from modules.agents import AgentRequest
+from modules.agents import AgentRequest, get_agent_display_name
 from modules.im import MessageContext, InlineKeyboard, InlineButton
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,15 @@ class CommandHandlers:
                 ),
             }
 
+        settings_key = self.controller._get_settings_key(context)
+        agent_name = self.controller.agent_router.resolve(
+            self.config.platform, settings_key
+        )
+        default_agent = getattr(self.controller.agent_service, "default_agent", None)
+        agent_display_name = get_agent_display_name(
+            agent_name, fallback=default_agent or "Unknown"
+        )
+
         # For non-Slack platforms, use traditional text message
         if self.config.platform != "slack":
             formatter = self.im_client.formatter
@@ -66,6 +75,7 @@ class CommandHandlers:
                 formatter.format_bold("Welcome to Vibe Remote!"),
                 "",
                 f"Platform: {formatter.format_text(platform_name)}",
+                f"Agent: {formatter.format_text(agent_display_name)}",
                 f"User ID: {formatter.format_code_inline(context.user_id)}",
                 f"Channel/Chat ID: {formatter.format_code_inline(context.channel_id)}",
                 "",
@@ -75,11 +85,13 @@ class CommandHandlers:
                 formatter.format_text("/cwd - Show current working directory"),
                 formatter.format_text("/set_cwd <path> - Set working directory"),
                 formatter.format_text("/settings - Personalization settings"),
-                formatter.format_text("/stop - Interrupt Claude execution"),
+                formatter.format_text(
+                    f"/stop - Interrupt {agent_display_name} execution"
+                ),
                 "",
                 formatter.format_bold("How it works:"),
                 formatter.format_text(
-                    "• Send any message and it's immediately sent to Claude Code"
+                    f"• Send any message and it's immediately sent to {agent_display_name}"
                 ),
                 formatter.format_text(
                     "• Each chat maintains its own conversation context"
@@ -117,10 +129,11 @@ class CommandHandlers:
 
 👋 Hello **{user_name}**!
 🔧 Platform: **{platform_name}**
+🤖 Agent: **{agent_display_name}**
 📍 Channel: **{channel_info.get('name', 'Unknown')}**
 
 **Quick Actions:**
-Use the buttons below to manage your Claude Code sessions, or simply type any message to start chatting with Claude!"""
+Use the buttons below to manage your {agent_display_name} sessions, or simply type any message to start chatting with {agent_display_name}!"""
 
         # Send command response to channel (not in thread)
         channel_context = self._get_channel_context(context)
@@ -129,7 +142,7 @@ Use the buttons below to manage your Claude Code sessions, or simply type any me
         )
 
     async def handle_clear(self, context: MessageContext, args: str = ""):
-        """Handle clear command - clears all sessions and disconnects all Claude clients"""
+        """Handle clear command - clears all sessions across configured agents"""
         try:
             # Get the correct settings key (channel_id for Slack, not user_id)
             settings_key = self.controller._get_settings_key(context)
@@ -182,7 +195,7 @@ Use the buttons below to manage your Claude Code sessions, or simply type any me
             else:
                 status_lines.append("⚠️ Directory does not exist")
 
-            status_lines.append("💡 This is where Claude Code will execute commands")
+            status_lines.append("💡 This is where Agent will execute commands")
 
             # Combine all parts
             response_text = path_line + "\n" + "\n".join(status_lines)
@@ -295,7 +308,7 @@ Use the buttons below to manage your Claude Code sessions, or simply type any me
             )
 
     async def handle_stop(self, context: MessageContext, args: str = ""):
-        """Handle /stop command - send interrupt message to Claude"""
+        """Handle /stop command - send interrupt message to the active agent"""
         try:
             session_handler = self.controller.session_handler
             base_session_id, working_path, composite_key = (
