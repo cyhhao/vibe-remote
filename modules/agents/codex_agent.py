@@ -12,6 +12,7 @@ from modules.agents.base import AgentRequest, BaseAgent
 
 logger = logging.getLogger(__name__)
 
+STREAM_BUFFER_LIMIT = 8 * 1024 * 1024  # 8MB cap for Codex stdout/stderr streams
 
 class CodexAgent(BaseAgent):
     """Codex CLI integration via codex exec JSON streaming mode."""
@@ -63,6 +64,7 @@ class CodexAgent(BaseAgent):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=request.working_path,
+                limit=STREAM_BUFFER_LIMIT,
                 **({"preexec_fn": os.setsid} if hasattr(os, "setsid") else {}),
             )
         except FileNotFoundError:
@@ -181,19 +183,32 @@ class CodexAgent(BaseAgent):
 
     async def _consume_stdout(self, process: Process, request: AgentRequest):
         assert process.stdout is not None
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            line = line.decode().strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                logger.debug(f"Codex emitted non-JSON line: {line}")
-                continue
-            await self._handle_event(event, request)
+        try:
+            while True:
+                try:
+                    line = await process.stdout.readline()
+                except (asyncio.LimitOverrunError, ValueError) as err:
+                    await self._notify_stream_error(
+                        request, f"Codex 输出过长导致流解码失败：{err}"
+                    )
+                    logger.exception("Codex stdout exceeded buffer limit")
+                    break
+                if not line:
+                    break
+                line = line.decode().strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.debug(f"Codex emitted non-JSON line: {line}")
+                    continue
+                await self._handle_event(event, request)
+        except Exception as err:
+            await self._notify_stream_error(
+                request, f"Codex stdout 读取异常：{err}"
+            )
+            logger.exception("Unexpected Codex stdout error")
 
     async def _consume_stderr(self, process: Process, request: AgentRequest):
         assert process.stderr is not None
@@ -332,3 +347,11 @@ class CodexAgent(BaseAgent):
         if self._slack_markdown_converter:
             return self._slack_markdown_converter.convert(text), None
         return text, "markdown"
+
+    async def _notify_stream_error(self, request: AgentRequest, message: str) -> None:
+        """Emit a notify message when Codex stdout handling fails."""
+        await self.controller.emit_agent_message(
+            request.context,
+            "notify",
+            f"⚠️ {message}\n请查看 `logs/vibe_remote.log` 获取更多细节。",
+        )
