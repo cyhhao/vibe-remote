@@ -38,6 +38,10 @@ class UserSettings:
 class SettingsManager:
     """Manages user personalization settings with JSON persistence"""
 
+    MESSAGE_TYPE_ALIASES = {
+        "response": "user",
+    }
+
     def __init__(self, settings_file: str = "user_settings.json"):
         self.settings_file = Path(settings_file)
         self.settings: Dict[Union[int, str], UserSettings] = {}
@@ -150,6 +154,7 @@ class SettingsManager:
         self, user_id: Union[int, str], message_type: str
     ) -> bool:
         """Toggle a message type in hidden list, returns new state"""
+        message_type = self._canonicalize_message_type(message_type)
         settings = self.get_user_settings(user_id)
 
         if message_type in settings.hidden_message_types:
@@ -177,6 +182,7 @@ class SettingsManager:
         self, user_id: Union[int, str], message_type: str
     ) -> bool:
         """Check if a message type is hidden for user"""
+        message_type = self._canonicalize_message_type(message_type)
         settings = self.get_user_settings(user_id)
         return message_type in settings.hidden_message_types
 
@@ -238,6 +244,10 @@ class SettingsManager:
         if base_session_id in agent_map:
             return agent_map[base_session_id].get(working_path)
         return None
+
+    def _canonicalize_message_type(self, message_type: str) -> str:
+        """Normalize message type to canonical form to support aliases."""
+        return self.MESSAGE_TYPE_ALIASES.get(message_type, message_type)
 
     def clear_agent_session_mapping(
         self,

@@ -6,10 +6,13 @@ import signal
 from asyncio.subprocess import Process
 from typing import Dict, Optional, Tuple
 
+from markdown_to_mrkdwn import SlackMarkdownConverter
+
 from modules.agents.base import AgentRequest, BaseAgent
 
 logger = logging.getLogger(__name__)
 
+STREAM_BUFFER_LIMIT = 8 * 1024 * 1024  # 8MB cap for Codex stdout/stderr streams
 
 class CodexAgent(BaseAgent):
     """Codex CLI integration via codex exec JSON streaming mode."""
@@ -23,6 +26,11 @@ class CodexAgent(BaseAgent):
         self.base_process_index: Dict[str, str] = {}
         self.composite_to_base: Dict[str, str] = {}
         self._initialized_sessions: set[str] = set()
+        self._slack_markdown_converter = (
+            SlackMarkdownConverter()
+            if getattr(self.controller.config, "platform", None) == "slack"
+            else None
+        )
 
     async def handle_message(self, request: AgentRequest) -> None:
         existing = self.base_process_index.get(request.base_session_id)
@@ -56,6 +64,7 @@ class CodexAgent(BaseAgent):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=request.working_path,
+                limit=STREAM_BUFFER_LIMIT,
                 **({"preexec_fn": os.setsid} if hasattr(os, "setsid") else {}),
             )
         except FileNotFoundError:
@@ -174,19 +183,32 @@ class CodexAgent(BaseAgent):
 
     async def _consume_stdout(self, process: Process, request: AgentRequest):
         assert process.stdout is not None
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            line = line.decode().strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                logger.debug(f"Codex emitted non-JSON line: {line}")
-                continue
-            await self._handle_event(event, request)
+        try:
+            while True:
+                try:
+                    line = await process.stdout.readline()
+                except (asyncio.LimitOverrunError, ValueError) as err:
+                    await self._notify_stream_error(
+                        request, f"Codex 输出过长导致流解码失败：{err}"
+                    )
+                    logger.exception("Codex stdout exceeded buffer limit")
+                    break
+                if not line:
+                    break
+                line = line.decode().strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.debug(f"Codex emitted non-JSON line: {line}")
+                    continue
+                await self._handle_event(event, request)
+        except Exception as err:
+            await self._notify_stream_error(
+                request, f"Codex stdout 读取异常：{err}"
+            )
+            logger.exception("Unexpected Codex stdout error")
 
     async def _consume_stderr(self, process: Process, request: AgentRequest):
         assert process.stderr is not None
@@ -246,7 +268,10 @@ class CodexAgent(BaseAgent):
                     await self.controller.emit_agent_message(
                         request.context, "assistant", text, parse_mode="markdown"
                     )
-                    request.last_agent_message = text
+                    (
+                        request.last_agent_message,
+                        request.last_agent_message_parse_mode,
+                    ) = self._prepare_last_message_payload(text)
             elif item_type == "command_execution":
                 command = details.get("command")
                 output = details.get("aggregated_output", "")
@@ -285,17 +310,22 @@ class CodexAgent(BaseAgent):
                 request.context, "notify", f"⚠️ Codex turn failed: {error}"
             )
             request.last_agent_message = None
+            request.last_agent_message_parse_mode = None
             return
 
         if event_type == "turn.completed":
             if request.last_agent_message:
+                parse_mode = request.last_agent_message_parse_mode
+                if parse_mode is None and not self._slack_markdown_converter:
+                    parse_mode = "markdown"
                 await self.controller.emit_agent_message(
                     request.context,
                     "result",
                     request.last_agent_message,
-                    parse_mode="markdown",
+                    parse_mode=parse_mode,
                 )
                 request.last_agent_message = None
+                request.last_agent_message_parse_mode = None
             return
 
     async def _delete_ack(self, request: AgentRequest):
@@ -309,3 +339,19 @@ class CodexAgent(BaseAgent):
                 logger.debug(f"Could not delete ack message: {err}")
             finally:
                 request.ack_message_id = None
+
+    def _prepare_last_message_payload(
+        self, text: str
+    ) -> Tuple[str, Optional[str]]:
+        """Prepare cached assistant text for reuse in result messages."""
+        if self._slack_markdown_converter:
+            return self._slack_markdown_converter.convert(text), None
+        return text, "markdown"
+
+    async def _notify_stream_error(self, request: AgentRequest, message: str) -> None:
+        """Emit a notify message when Codex stdout handling fails."""
+        await self.controller.emit_agent_message(
+            request.context,
+            "notify",
+            f"⚠️ {message}\n请查看 `logs/vibe_remote.log` 获取更多细节。",
+        )
