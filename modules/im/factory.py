@@ -1,7 +1,7 @@
 """Factory for creating IM platform clients"""
 
 import logging
-from typing import Union, TYPE_CHECKING
+from typing import Union, TYPE_CHECKING, List
 
 from .base import BaseIMClient
 
@@ -50,9 +50,9 @@ class IMFactory:
             raise ValueError(f"Unsupported IM platform: {platform}")
     
     @staticmethod
-    def get_supported_platforms() -> list[str]:
+    def get_supported_platforms() -> List[str]:
         """Get list of supported platforms
-        
+
         Returns:
             List of supported platform names
         """

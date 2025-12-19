@@ -2,7 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class InlineButton:
 @dataclass
 class InlineKeyboard:
     """Platform-agnostic inline keyboard"""
-    buttons: list[list[InlineButton]]  # 2D array for row/column layout
+    buttons: List[List[InlineButton]]  # 2D array for row/column layout
 
 
 # Configuration base class

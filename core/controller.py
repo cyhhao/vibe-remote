@@ -120,6 +120,15 @@ class Controller:
             "set_cwd": self.command_handler.handle_set_cwd,
             "settings": self.settings_handler.handle_settings,
             "stop": self.command_handler.handle_stop,
+            # Topic management commands
+            "create_topic": self.command_handler.handle_create_topic,
+            "clone": self.command_handler.handle_clone,
+            "list_topics": self.command_handler.handle_list_topics,
+            "show_topic": self.command_handler.handle_show_topic,
+            "set_manager_topic": self.command_handler.handle_set_manager_topic,
+            "delete_topic": self.command_handler.handle_delete_topic,
+            "project_info": self.command_handler.handle_project_info,
+            "git_status": self.command_handler.handle_git_status,
         }
 
         # Register callbacks with the IM client

@@ -57,13 +57,13 @@ class TelegramBot(BaseIMClient):
         return "MarkdownV2"
     
     def should_use_thread_for_reply(self) -> bool:
-        """Telegram doesn't use threads for replies"""
-        return False
+        """Telegram supports Group Topics (message_thread_id)"""
+        return True
 
     async def handle_telegram_message(
         self, update: Update, tg_context: ContextTypes.DEFAULT_TYPE
     ):
-        """Handle incoming text messages from Telegram"""
+        """Handle incoming text messages from Telegram with topic support"""
         chat_id = update.effective_chat.id
         chat_type = update.effective_chat.type
 
@@ -73,11 +73,20 @@ class TelegramBot(BaseIMClient):
             await self._send_unauthorized_message(chat_id)
             return
 
-        # Create MessageContext
+        # Extract thread_id from topic message (if present)
+        thread_id = None
+        if hasattr(update.message, 'message_thread_id') and update.message.message_thread_id:
+            thread_id = str(update.message.message_thread_id)
+            logger.info(f"Message from topic: {thread_id} in chat: {chat_id}")
+        else:
+            logger.info(f"Message from chat: {chat_id} (no topic)")
+
+        # Create MessageContext with topic support
         context = MessageContext(
             user_id=str(update.effective_user.id),
             channel_id=str(chat_id),
             message_id=str(update.message.message_id),
+            thread_id=thread_id,  # Support for Group Topics
             platform_specific={"update": update, "tg_context": tg_context},
         )
 
@@ -97,12 +106,12 @@ class TelegramBot(BaseIMClient):
     async def handle_telegram_callback(
         self, update: Update, tg_context: ContextTypes.DEFAULT_TYPE
     ):
-        """Handle callback queries from inline keyboards"""
+        """Handle callback queries from inline keyboards with topic support"""
         query = update.callback_query
         chat_id = query.message.chat_id
         chat_type = query.message.chat.type
-        
-        logger.info(f"Telegram callback received: data='{query.data}', user={query.from_user.id}, chat={chat_id}")
+
+        logger.info(f"Telegram callback: data='{query.data}', user={query.from_user.id}, chat={chat_id}")
 
         # Check if callback is authorized based on whitelist
         if not self._is_authorized_chat(chat_id, chat_type):
@@ -113,14 +122,21 @@ class TelegramBot(BaseIMClient):
             )
             return
 
+        # Extract thread_id from topic message (if present)
+        thread_id = None
+        if hasattr(query.message, 'message_thread_id') and query.message.message_thread_id:
+            thread_id = str(query.message.message_thread_id)
+            logger.info(f"Callback from topic: {thread_id} in chat: {chat_id}")
+
         # Store the query for later use in answer_callback
         self._callback_queries[query.id] = query
 
-        # Create MessageContext
+        # Create MessageContext with topic support
         context = MessageContext(
             user_id=str(query.from_user.id),
             channel_id=str(chat_id),
             message_id=str(query.message.message_id),
+            thread_id=thread_id,  # Support for Group Topics
             platform_specific={
                 "query": query,
                 "update": update,
@@ -135,7 +151,7 @@ class TelegramBot(BaseIMClient):
             logger.info(f"Finished on_callback_query_callback for data: {query.data}")
         else:
             logger.warning("No on_callback_query_callback registered!")
-        
+
         # Always answer the callback to stop loading animation
         try:
             await query.answer()
@@ -257,7 +273,7 @@ class TelegramBot(BaseIMClient):
         parse_mode: Optional[str] = None,  # Kept for interface compatibility, but ignored
         reply_to: Optional[str] = None,
     ) -> str:
-        """Send a text message - BaseIMClient implementation"""
+        """Send a text message with topic support - BaseIMClient implementation"""
         bot = self.application.bot
 
         # Convert MessageContext to Telegram chat_id
@@ -265,13 +281,19 @@ class TelegramBot(BaseIMClient):
 
         # Convert markdown to MarkdownV2 for better compatibility
         markdownv2_text = self._convert_to_markdownv2(text)
-        kwargs = {"chat_id": chat_id, "text": markdownv2_text}
+        kwargs = {
+            "chat_id": chat_id,
+            "text": markdownv2_text,
+            "parse_mode": "MarkdownV2"
+        }
 
-        # Always use MarkdownV2 since we converted with markdownify
-        kwargs["parse_mode"] = "MarkdownV2"
+        # Support Group Topics - use message_thread_id for topic messages
+        if context.thread_id:
+            kwargs["message_thread_id"] = int(context.thread_id)
 
-        if reply_to or context.thread_id:
-            kwargs["reply_to_message_id"] = int(reply_to or context.thread_id)
+        # Reply support - use reply_to_message_id for direct replies
+        if reply_to:
+            kwargs["reply_to_message_id"] = int(reply_to)
 
         try:
             message = await bot.send_message(**kwargs)
@@ -287,7 +309,7 @@ class TelegramBot(BaseIMClient):
         keyboard: InlineKeyboard,
         parse_mode: Optional[str] = None,
     ) -> str:
-        """Send a message with inline buttons - BaseIMClient implementation"""
+        """Send a message with inline buttons and topic support - BaseIMClient implementation"""
         bot = self.application.bot
 
         # Convert markdown to MarkdownV2 for better compatibility
@@ -307,14 +329,19 @@ class TelegramBot(BaseIMClient):
         reply_markup = TGInlineKeyboardMarkup(tg_keyboard)
 
         chat_id = int(context.channel_id)
+        kwargs = {
+            "chat_id": chat_id,
+            "text": markdownv2_text,
+            "parse_mode": "MarkdownV2",
+            "reply_markup": reply_markup,
+        }
+
+        # Support Group Topics
+        if context.thread_id:
+            kwargs["message_thread_id"] = int(context.thread_id)
 
         try:
-            message = await bot.send_message(
-                chat_id=chat_id,
-                text=markdownv2_text,
-                parse_mode="MarkdownV2",
-                reply_markup=reply_markup,
-            )
+            message = await bot.send_message(**kwargs)
             return str(message.message_id)
         except TelegramError as e:
             logger.error(f"Error sending message with buttons: {e}")

@@ -19,6 +19,9 @@ class CommandHandlers:
         self.im_client = controller.im_client
         self.session_manager = controller.session_manager
         self.settings_manager = controller.settings_manager
+        # Get reference to session_handler which has topic_manager
+        self.session_handler = controller.session_handler
+        self.topic_manager = self.session_handler.topic_manager
 
     def _get_channel_context(self, context: MessageContext) -> MessageContext:
         """Get context for channel messages (no thread)"""
@@ -88,6 +91,25 @@ class CommandHandlers:
                 formatter.format_text(
                     f"/stop - Interrupt {agent_display_name} execution"
                 ),
+            ]
+
+            # Add Topic-specific commands for Telegram
+            if self._is_telegram_with_topics():
+                lines.extend([
+                    "",
+                    formatter.format_bold("Topic Commands (Telegram Topics):"),
+                    formatter.format_text("/list_topics - List all topics"),
+                    formatter.format_text("/project_info - Show current project"),
+                    formatter.format_text("/git_status - Show git status"),
+                    formatter.format_text(
+                        "/create_topic <name> - Create new project (manager only)"
+                    ),
+                    formatter.format_text(
+                        "/clone <url> - Clone repo (manager only)"
+                    ),
+                ])
+
+            lines.extend([
                 "",
                 formatter.format_bold("How it works:"),
                 formatter.format_text(
@@ -97,7 +119,7 @@ class CommandHandlers:
                     "• Each chat maintains its own conversation context"
                 ),
                 formatter.format_text("• Use /clear to reset the conversation"),
-            ]
+            ])
 
             message_text = formatter.format_message(*lines)
             channel_context = self._get_channel_context(context)
@@ -194,6 +216,16 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 status_lines.append("✅ Directory exists")
             else:
                 status_lines.append("⚠️ Directory does not exist")
+
+            # Add Topic information if in Telegram with Topics
+            if self._is_telegram_with_topics() and context.thread_id:
+                # Check if this topic has a worktree
+                worktree_path = self.topic_manager.get_worktree_for_topic(
+                    context.channel_id, context.thread_id
+                )
+                if worktree_path and worktree_path == absolute_path:
+                    status_lines.append(f"💬 Topic: {context.thread_id}")
+                    status_lines.append("🗂️ Using Topic worktree")
 
             status_lines.append("💡 This is where Agent will execute commands")
 
@@ -343,3 +375,414 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 context,  # Use original context
                 f"❌ Error sending stop command: {str(e)}",
             )
+
+    # ---------------------------------------------
+    # Topic Management Commands (Telegram Topics)
+    # ---------------------------------------------
+
+    def _is_telegram_with_topics(self) -> bool:
+        """Check if current platform is Telegram with Topics support"""
+        return self.config.platform == "telegram"
+
+    def _check_manager权限(self, context: MessageContext) -> bool:
+        """Check if command is executed in manager topic"""
+        if not self._is_telegram_with_topics():
+            return False
+
+        if not context.thread_id:
+            return False
+
+        # Check if this topic is set as manager topic
+        settings_key = self.controller._get_settings_key(context)
+        manager_topic = self.settings_manager.get_manager_topic(settings_key, context.channel_id)
+
+        return manager_topic == context.thread_id
+
+    async def handle_create_topic(self, context: MessageContext, args: str):
+        """Handle /create_topic command - create new project topic"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not args:
+                await self.im_client.send_message(
+                    context, "Usage: /create_topic <project_name>\nExample: /create_topic my-awesome-project"
+                )
+                return
+
+            # Check if executed in manager topic
+            if not self._check_manager权限(context):
+                await self.im_client.send_message(
+                    context, "❌ This command can only be used in the manager topic."
+                )
+                return
+
+            project_name = args.strip()
+
+            # Create empty project with worktree
+            main_repo_path, worktree_path = self.topic_manager.create_empty_project(
+                chat_id=context.channel_id,
+                topic_id=context.thread_id,
+                project_name=project_name
+            )
+
+            # Save to settings
+            settings_key = self.controller._get_settings_key(context)
+            self.settings_manager.set_topic_worktree(
+                settings_key, context.channel_id, context.thread_id, worktree_path
+            )
+
+            response = (
+                f"✅ Created new project topic:\n"
+                f"📂 Project: {project_name}\n"
+                f"🆔 Topic ID: {context.thread_id}\n"
+                f"📁 Worktree: {worktree_path}\n\n"
+                f"💡 You can now use this topic for development work."
+            )
+
+            await self.im_client.send_message(context, response)
+
+        except ValueError as e:
+            logger.error(f"Error creating topic: {e}")
+            await self.im_client.send_message(context, f"❌ Failed to create topic: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error creating topic: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Unexpected error: {str(e)}")
+
+    async def handle_clone(self, context: MessageContext, args: str):
+        """Handle /clone command - clone repository and create topic"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not args:
+                await self.im_client.send_message(
+                    context, "Usage: /clone <git_url>\nExample: /clone https://github.com/user/repo.git"
+                )
+                return
+
+            # Check if executed in manager topic
+            if not self._check_manager权限(context):
+                await self.im_client.send_message(
+                    context, "❌ This command can only be used in the manager topic."
+                )
+                return
+
+            git_url = args.strip()
+
+            # Clone project with worktree
+            main_repo_path, worktree_path = self.topic_manager.clone_project(
+                chat_id=context.channel_id,
+                topic_id=context.thread_id,
+                git_url=git_url
+            )
+
+            # Save to settings
+            settings_key = self.controller._get_settings_key(context)
+            self.settings_manager.set_topic_worktree(
+                settings_key, context.channel_id, context.thread_id, worktree_path
+            )
+
+            response = (
+                f"✅ Cloned repository and created topic:\n"
+                f"🔗 Repository: {git_url}\n"
+                f"🆔 Topic ID: {context.thread_id}\n"
+                f"📁 Worktree: {worktree_path}\n\n"
+                f"💡 You can now use this topic for development work."
+            )
+
+            await self.im_client.send_message(context, response)
+
+        except ValueError as e:
+            logger.error(f"Error cloning repository: {e}")
+            await self.im_client.send_message(context, f"❌ Failed to clone repository: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error cloning repository: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Unexpected error: {str(e)}")
+
+    async def handle_list_topics(self, context: MessageContext, args: str):
+        """Handle /list_topics command - list all topics"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            # Get all topics for this chat
+            topics = self.topic_manager.list_topics(context.channel_id)
+
+            if not topics:
+                await self.im_client.send_message(
+                    context, "📭 No topics found. Use /create_topic or /clone to create a new project."
+                )
+                return
+
+            # Build response
+            lines = ["📋 **Topics List:**\n"]
+
+            for topic_id, topic_info in topics.items():
+                name = topic_info.get("name", "Unknown")
+                lines.append(f"• **Topic {topic_id}**: {name}")
+
+                # Mark manager topic
+                settings_key = self.controller._get_settings_key(context)
+                manager_topic = self.settings_manager.get_manager_topic(settings_key, context.channel_id)
+                if manager_topic == topic_id:
+                    lines[-1] += " 🔑 (Manager)"
+
+            response = "\n".join(lines)
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error listing topics: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error listing topics: {str(e)}")
+
+    async def handle_show_topic(self, context: MessageContext, args: str):
+        """Handle /show_topic command - show topic details"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not args:
+                await self.im_client.send_message(
+                    context, "Usage: /show_topic <topic_id>\nExample: /show_topic 123"
+                )
+                return
+
+            topic_id = args.strip()
+
+            # Get topic info
+            topics = self.topic_manager.list_topics(context.channel_id)
+
+            if topic_id not in topics:
+                await self.im_client.send_message(context, f"❌ Topic {topic_id} not found.")
+                return
+
+            topic_info = topics[topic_id]
+            name = topic_info.get("name", "Unknown")
+
+            # Get worktree path
+            worktree_path = self.topic_manager.get_worktree_for_topic(
+                context.channel_id, topic_id
+            )
+
+            # Build response
+            lines = [
+                f"📋 **Topic Details**",
+                f"🆔 Topic ID: {topic_id}",
+                f"📂 Project: {name}",
+                f"📁 Worktree: {worktree_path or 'Not found'}",
+            ]
+
+            # Check if this is manager topic
+            settings_key = self.controller._get_settings_key(context)
+            manager_topic = self.settings_manager.get_manager_topic(settings_key, context.channel_id)
+            if manager_topic == topic_id:
+                lines.append("🔑 Type: Manager Topic")
+
+            response = "\n".join(lines)
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error showing topic: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error showing topic: {str(e)}")
+
+    async def handle_set_manager_topic(self, context: MessageContext, args: str):
+        """Handle /set_manager_topic command - set manager topic"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not args:
+                await self.im_client.send_message(
+                    context, "Usage: /set_manager_topic <topic_id>\nExample: /set_manager_topic 123"
+                )
+                return
+
+            topic_id = args.strip()
+
+            # Check if topic exists
+            topics = self.topic_manager.list_topics(context.channel_id)
+            if topic_id not in topics:
+                await self.im_client.send_message(context, f"❌ Topic {topic_id} not found.")
+                return
+
+            # Set manager topic
+            settings_key = self.controller._get_settings_key(context)
+            self.settings_manager.set_manager_topic(
+                settings_key, context.channel_id, topic_id
+            )
+
+            topic_name = topics[topic_id].get("name", "Unknown")
+
+            response = (
+                f"✅ Manager topic set successfully!\n"
+                f"🆔 Topic {topic_id}: {topic_name}\n\n"
+                f"💡 Only this topic can use management commands like /create_topic and /clone."
+            )
+
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error setting manager topic: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error setting manager topic: {str(e)}")
+
+    async def handle_delete_topic(self, context: MessageContext, args: str):
+        """Handle /delete_topic command - delete a topic"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            # Check if executed in manager topic
+            if not self._check_manager权限(context):
+                await self.im_client.send_message(
+                    context, "❌ This command can only be used in the manager topic."
+                )
+                return
+
+            if not args:
+                await self.im_client.send_message(
+                    context, "Usage: /delete_topic <topic_id>\nExample: /delete_topic 123"
+                )
+                return
+
+            topic_id = args.strip()
+
+            # Delete topic
+            success = self.topic_manager.delete_topic(context.channel_id, topic_id)
+
+            if not success:
+                await self.im_client.send_message(context, f"❌ Failed to delete topic {topic_id}.")
+                return
+
+            # Remove from settings
+            settings_key = self.controller._get_settings_key(context)
+            self.settings_manager.remove_topic_worktree(
+                settings_key, context.channel_id, topic_id
+            )
+
+            response = f"✅ Deleted topic {topic_id} and its worktree."
+
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error deleting topic: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error deleting topic: {str(e)}")
+
+    async def handle_project_info(self, context: MessageContext, args: str):
+        """Handle /project_info command - show current project info"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not context.thread_id:
+                await self.im_client.send_message(
+                    context, "ℹ️ This command must be used in a topic."
+                )
+                return
+
+            # Get worktree path
+            worktree_path = self.topic_manager.get_worktree_for_topic(
+                context.channel_id, context.thread_id
+            )
+
+            if not worktree_path:
+                await self.im_client.send_message(
+                    context, "ℹ️ No project found for this topic. Use /clone or /create_topic to set up a project."
+                )
+                return
+
+            # Get topic info
+            topics = self.topic_manager.list_topics(context.channel_id)
+            topic_info = topics.get(str(context.thread_id), {})
+            project_name = topic_info.get("name", "Unknown")
+
+            # Build response
+            lines = [
+                f"📋 **Project Information**",
+                f"🆔 Topic ID: {context.thread_id}",
+                f"📂 Project: {project_name}",
+                f"📁 Worktree: {worktree_path}",
+            ]
+
+            response = "\n".join(lines)
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error getting project info: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error getting project info: {str(e)}")
+
+    async def handle_git_status(self, context: MessageContext, args: str):
+        """Handle /git_status command - show git status"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not context.thread_id:
+                await self.im_client.send_message(
+                    context, "ℹ️ This command must be used in a topic."
+                )
+                return
+
+            # Get worktree path
+            worktree_path = self.topic_manager.get_worktree_for_topic(
+                context.channel_id, context.thread_id
+            )
+
+            if not worktree_path:
+                await self.im_client.send_message(
+                    context, "ℹ️ No project found for this topic. Use /clone or /create_topic to set up a project."
+                )
+                return
+
+            # Run git status
+            import subprocess
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                await self.im_client.send_message(
+                    context, f"❌ Failed to get git status: {result.stderr}"
+                )
+                return
+
+            output = result.stdout.strip()
+
+            if not output:
+                response = "✅ Git status: Clean (no changes)"
+            else:
+                lines = output.split("\n")
+                response = "📊 **Git Status:**\n" + "\n".join(f"• {line}" for line in lines)
+
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error getting git status: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error getting git status: {str(e)}")
+

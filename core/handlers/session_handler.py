@@ -5,6 +5,7 @@ import logging
 from typing import Optional, Dict, Any, Tuple
 from modules.im import MessageContext
 from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
+from modules.topic_manager import TopicManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +24,26 @@ class SessionHandler:
         self.claude_sessions = controller.claude_sessions
         self.receiver_tasks = controller.receiver_tasks
         self.stored_session_mappings = controller.stored_session_mappings
+
+        # Initialize TopicManager for Telegram Topics support
+        self.topic_manager = TopicManager(
+            workspaces_root=os.getenv("CLAUDE_WORKSPACES_ROOT", "./workspaces")
+        )
     
     def _get_settings_key(self, context: MessageContext) -> str:
         """Get settings key - delegate to controller"""
         return self.controller._get_settings_key(context)
     
     def get_base_session_id(self, context: MessageContext) -> str:
-        """Get base session ID based on platform and context (without path)"""
+        """Get base session ID based on platform and context (with topic support)"""
         if self.config.platform == "telegram":
-            # For Telegram, use channel/chat ID
-            return f"telegram_{context.channel_id}"
+            # For Telegram, support Group Topics
+            if context.thread_id:
+                # Use chat_id + thread_id for topic messages
+                return f"telegram_{context.channel_id}_{context.thread_id}"
+            else:
+                # Use chat_id for non-topic messages (DMs, regular groups)
+                return f"telegram_{context.channel_id}"
         elif self.config.platform == "slack":
             # For Slack, always use thread ID (now always available)
             return f"slack_{context.thread_id}"
@@ -41,7 +52,19 @@ class SessionHandler:
             return f"{self.config.platform}_{context.user_id}"
     
     def get_working_path(self, context: MessageContext) -> str:
-        """Get working directory - delegate to controller's get_cwd"""
+        """Get working directory with Topic-Worktree support"""
+        # For Telegram with topics, use worktree if available
+        if self.config.platform == "telegram" and context.thread_id:
+            worktree_path = self.topic_manager.get_worktree_for_topic(
+                context.channel_id, context.thread_id
+            )
+            if worktree_path:
+                logger.info(
+                    f"Using worktree for topic {context.thread_id}: {worktree_path}"
+                )
+                return worktree_path
+
+        # Fall back to controller's get_cwd (custom_cwd or default)
         return self.controller.get_cwd(context)
     
     def get_session_info(self, context: MessageContext) -> Tuple[str, str, str]:

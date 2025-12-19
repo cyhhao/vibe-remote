@@ -25,6 +25,12 @@ class UserSettings:
     # Slack active threads: {channel_id: {thread_ts: last_active_timestamp}}
     active_slack_threads: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
+    # Telegram Topics support: {chat_id: {topic_id: worktree_path}}
+    topic_worktrees: Dict[str, Dict[str, str]] = field(default_factory=dict)
+
+    # Manager topic ID for each chat: {chat_id: topic_id}
+    manager_topic_ids: Dict[str, str] = field(default_factory=dict)
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
         return asdict(self)
@@ -409,3 +415,114 @@ class SettingsManager:
         channels_to_clean = list(settings.active_slack_threads.keys())
         for channel_id in channels_to_clean:
             self._cleanup_expired_threads_for_channel(user_id, channel_id)
+
+    # ---------------------------------------------
+    # Topic-Worktree management (Telegram Topics)
+    # ---------------------------------------------
+
+    def set_topic_worktree(
+        self,
+        user_id: Union[int, str],
+        chat_id: Union[int, str],
+        topic_id: Union[int, str],
+        worktree_path: str,
+    ):
+        """Associate a topic with a worktree path"""
+        settings = self.get_user_settings(user_id)
+        chat_key = self._normalize_user_id(chat_id)
+        topic_key = str(topic_id)
+
+        if chat_key not in settings.topic_worktrees:
+            settings.topic_worktrees[chat_key] = {}
+
+        settings.topic_worktrees[chat_key][topic_key] = worktree_path
+        self.update_user_settings(user_id, settings)
+        logger.info(
+            f"Set worktree for user {user_id}, chat {chat_key}, topic {topic_key}: {worktree_path}"
+        )
+
+    def get_topic_worktree(
+        self,
+        user_id: Union[int, str],
+        chat_id: Union[int, str],
+        topic_id: Union[int, str],
+    ) -> Optional[str]:
+        """Get worktree path for a topic"""
+        settings = self.get_user_settings(user_id)
+        chat_key = self._normalize_user_id(chat_id)
+        topic_key = str(topic_id)
+
+        return settings.topic_worktrees.get(chat_key, {}).get(topic_key)
+
+    def list_topics_for_chat(
+        self, user_id: Union[int, str], chat_id: Union[int, str]
+    ) -> Dict[str, str]:
+        """List all topics and their worktrees for a chat"""
+        settings = self.get_user_settings(user_id)
+        chat_key = self._normalize_user_id(chat_id)
+
+        return settings.topic_worktrees.get(chat_key, {}).copy()
+
+    def remove_topic_worktree(
+        self,
+        user_id: Union[int, str],
+        chat_id: Union[int, str],
+        topic_id: Union[int, str],
+    ):
+        """Remove topic-worktree association"""
+        settings = self.get_user_settings(user_id)
+        chat_key = self._normalize_user_id(chat_id)
+        topic_key = str(topic_id)
+
+        if chat_key in settings.topic_worktrees:
+            if topic_key in settings.topic_worktrees[chat_key]:
+                del settings.topic_worktrees[chat_key][topic_key]
+                logger.info(
+                    f"Removed worktree for user {user_id}, chat {chat_key}, topic {topic_key}"
+                )
+
+                # Clean up empty chat entry
+                if not settings.topic_worktrees[chat_key]:
+                    del settings.topic_worktrees[chat_key]
+
+                self.update_user_settings(user_id, settings)
+
+    def set_manager_topic(
+        self,
+        user_id: Union[int, str],
+        chat_id: Union[int, str],
+        topic_id: Union[int, str],
+    ):
+        """Set manager topic ID for a chat"""
+        settings = self.get_user_settings(user_id)
+        chat_key = self._normalize_user_id(chat_id)
+        topic_key = str(topic_id)
+
+        settings.manager_topic_ids[chat_key] = topic_key
+        self.update_user_settings(user_id, settings)
+        logger.info(
+            f"Set manager topic for user {user_id}, chat {chat_key}: {topic_key}"
+        )
+
+    def get_manager_topic(
+        self, user_id: Union[int, str], chat_id: Union[int, str]
+    ) -> Optional[str]:
+        """Get manager topic ID for a chat"""
+        settings = self.get_user_settings(user_id)
+        chat_key = self._normalize_user_id(chat_id)
+
+        return settings.manager_topic_ids.get(chat_key)
+
+    def is_manager_topic(
+        self,
+        user_id: Union[int, str],
+        chat_id: Union[int, str],
+        topic_id: Union[int, str],
+    ) -> bool:
+        """Check if a topic is the manager topic"""
+        settings = self.get_user_settings(user_id)
+        chat_key = self._normalize_user_id(chat_id)
+        topic_key = str(topic_id)
+
+        manager_topic = settings.manager_topic_ids.get(chat_key)
+        return manager_topic == topic_key
