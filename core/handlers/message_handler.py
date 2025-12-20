@@ -68,6 +68,10 @@ class MessageHandler:
                 if await self._handle_inline_stop(context):
                     return
 
+            # Check for branch selection input
+            if await self._handle_branch_selection_input(context, message):
+                return
+
             base_session_id, working_path, composite_key = (
                 self.session_handler.get_session_info(context)
             )
@@ -171,6 +175,12 @@ class MessageHandler:
             elif callback_data.startswith("newtask_repo:"):
                 token = callback_data.split(":", 1)[1]
                 await command_handlers.handle_newtask_callback(context, token)
+            elif callback_data.startswith("newtask_branch:"):
+                token = callback_data.split(":", 1)[1]
+                await command_handlers.handle_newtask_branch_callback(context, token)
+            elif callback_data.startswith("newtask_branch_page:"):
+                token = callback_data.split(":", 1)[1]
+                await command_handlers.handle_newtask_branch_page_callback(context, token)
             elif callback_data.startswith("delete_topic_confirm:"):
                 parts = callback_data.split(":", 3)
                 if len(parts) == 4:
@@ -242,6 +252,66 @@ class MessageHandler:
             "if this channel is routed to Codex."
         )
         await self.im_client.send_message(context, msg)
+
+    async def _handle_branch_selection_input(self, context: MessageContext, message: str) -> bool:
+        """Check if user is selecting a branch and handle it"""
+        try:
+            # Get command handlers
+            command_handlers = getattr(self.controller, "command_handler", None)
+            if command_handlers is None:
+                from .command_handlers import CommandHandlers
+                command_handlers = CommandHandlers(self.controller)
+
+            # Check if there's a pending branch selection for this user
+            pending_data = None
+            for token, data in command_handlers.pending_newtask_branch_requests.items():
+                if data.get("chat_id") == context.channel_id and data.get("user_id") == context.user_id and "branches" in data:
+                    pending_data = data
+                    pending_token = token
+                    break
+
+            if not pending_data:
+                return False
+
+            branches = pending_data.get("branches", [])
+            user_input = message.strip()
+
+            # Check if input is a number
+            try:
+                index = int(user_input) - 1  # Convert to 0-based index
+                if 0 <= index < len(branches):
+                    selected_branch = branches[index]
+                    # Create a fake callback data
+                    await command_handlers.handle_newtask_branch_callback_direct(
+                        context, pending_token, selected_branch
+                    )
+                    return True
+            except ValueError:
+                pass
+
+            # Check if input matches a branch name (exact or partial)
+            matched_branches = [b for b in branches if user_input.lower() in b.lower() or b.lower() == user_input.lower()]
+            if len(matched_branches) == 1:
+                selected_branch = matched_branches[0]
+                await command_handlers.handle_newtask_branch_callback_direct(
+                    context, pending_token, selected_branch
+                )
+                return True
+            elif len(matched_branches) > 1:
+                # Ambiguous - show matches
+                matches_text = "\n".join(f"• {b}" for b in matched_branches)
+                await self.im_client.send_message(
+                    context,
+                    f"⚠️ 匹配到多个分支，请更具体一些：\n{matches_text}",
+                    parse_mode="plain"
+                )
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error handling branch selection input: {e}")
+            return False
 
     async def _delete_ack(self, channel_id: str, request: AgentRequest):
         """Delete acknowledgement message if it still exists."""

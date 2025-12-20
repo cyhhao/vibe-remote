@@ -29,6 +29,8 @@ class CommandHandlers:
         self.topic_manager = self.session_handler.topic_manager
         # Cache pending /newtask selections (token -> data)
         self.pending_newtask_requests: Dict[str, Dict[str, Any]] = {}
+        # Cache pending /newtask branch selections (token -> data)
+        self.pending_newtask_branch_requests: Dict[str, Dict[str, Any]] = {}
 
     @staticmethod
     def _escape_md_v2(text: str) -> str:
@@ -629,6 +631,208 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             logger.error(f"Error listing topics: {e}", exc_info=True)
             await self.im_client.send_message(context, f"❌ Error listing topics: {str(e)}")
 
+    async def _send_branch_selection_message(
+        self,
+        context: MessageContext,
+        token: str,
+        page: int = 1,
+        items_per_page: int = 10,
+    ):
+        """Send branch selection message with clickable links"""
+        data = self.pending_newtask_branch_requests.get(token)
+        if not data:
+            return
+
+        branches = data.get("branches", [])
+        total_pages = (len(branches) + items_per_page - 1) // items_per_page
+
+        # Get branches for this page
+        start_idx = (page - 1) * items_per_page
+        end_idx = min(start_idx + items_per_page, len(branches))
+        page_branches = branches[start_idx:end_idx]
+
+        # Build message text
+        lines = [
+            f"📝 需求：{data['task_desc']}",
+            f"📚 仓库：{data['repo_name']}",
+            "",
+            "请选择要基于的分支（点击链接或直接输入分支名/编号）：",
+            ""
+        ]
+
+        # Add branch list
+        for i, branch in enumerate(page_branches, start=start_idx + 1):
+            branch_token = uuid.uuid4().hex[:12]
+            self.pending_newtask_branch_requests[branch_token] = {
+                "chat_id": data["chat_id"],
+                "user_id": data["user_id"],
+                "task_desc": data["task_desc"],
+                "repo_name": data["repo_name"],
+                "repo_info": data["repo_info"],
+                "source_branch": branch,
+            }
+            lines.append(f"{i}. [{branch}](newtask_branch:{branch_token})")
+
+        # Add pagination info
+        if total_pages > 1:
+            lines.append("")
+            lines.append(f"📄 第 {page} 页，共 {total_pages} 页")
+
+            # Add pagination buttons
+            buttons = []
+            if page > 1:
+                prev_token = uuid.uuid4().hex[:12]
+                self.pending_newtask_branch_requests[prev_token] = {
+                    "chat_id": data["chat_id"],
+                    "user_id": data["user_id"],
+                    "task_desc": data["task_desc"],
+                    "repo_name": data["repo_name"],
+                    "repo_info": data["repo_info"],
+                    "page": page - 1,
+                }
+                buttons.append([InlineButton(text="⬅️ 上一页", callback_data=f"newtask_branch_page:{prev_token}")])
+
+            if page < total_pages:
+                next_token = uuid.uuid4().hex[:12]
+                self.pending_newtask_branch_requests[next_token] = {
+                    "chat_id": data["chat_id"],
+                    "user_id": data["user_id"],
+                    "task_desc": data["task_desc"],
+                    "repo_name": data["repo_name"],
+                    "repo_info": data["repo_info"],
+                    "page": page + 1,
+                }
+                buttons.append([InlineButton(text="➡️ 下一页", callback_data=f"newtask_branch_page:{next_token}")])
+
+            if buttons:
+                keyboard = InlineKeyboard(buttons=buttons)
+                message_text = "\n".join(lines)
+                await self.im_client.send_message_with_buttons(context, message_text, keyboard)
+            else:
+                message_text = "\n".join(lines)
+                await self.im_client.send_message(context, message_text, parse_mode="MarkdownV2")
+        else:
+            message_text = "\n".join(lines)
+            await self.im_client.send_message(context, message_text, parse_mode="MarkdownV2")
+
+    async def handle_newtask_branch_callback(self, context: MessageContext, token: str):
+        """Handle branch selection for /newtask"""
+        try:
+            data = self.pending_newtask_branch_requests.pop(token, None)
+
+            if not data:
+                await self.im_client.send_message(context, "⚠️ 该分支选择已失效，请重新使用 /newtask。", parse_mode="plain")
+                return
+
+            if data.get("chat_id") != context.channel_id:
+                await self.im_client.send_message(context, "⚠️ 该选项不属于当前会话。", parse_mode="plain")
+                return
+
+            if data.get("user_id") and data["user_id"] != context.user_id:
+                await self.im_client.send_message(context, "⚠️ 仅任务发起人可以选择分支。", parse_mode="plain")
+                return
+
+            # Clean up other pending selections for this user/chat
+            tokens_to_remove = [
+                key
+                for key, value in self.pending_newtask_branch_requests.items()
+                if value.get("user_id") == context.user_id
+                and value.get("chat_id") == context.channel_id
+            ]
+            for key in tokens_to_remove:
+                self.pending_newtask_branch_requests.pop(key, None)
+
+            source_branch = data.get("source_branch")
+            if not source_branch:
+                await self.im_client.send_message(context, "⚠️ 未选择分支。", parse_mode="plain")
+                return
+
+            await self._create_topic_for_task(
+                context,
+                data["task_desc"],
+                data["repo_name"],
+                data["repo_info"],
+                source_branch=source_branch,
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling newtask branch callback: {e}", exc_info=True)
+
+    async def handle_newtask_branch_callback_direct(
+        self,
+        context: MessageContext,
+        token: str,
+        selected_branch: str,
+    ):
+        """Handle branch selection via direct input (not callback)"""
+        try:
+            data = self.pending_newtask_branch_requests.get(token)
+            if not data:
+                await self.im_client.send_message(context, "⚠️ 该分支选择已失效，请重新使用 /newtask。", parse_mode="plain")
+                return
+
+            if data.get("chat_id") != context.channel_id:
+                await self.im_client.send_message(context, "⚠️ 该选项不属于当前会话。", parse_mode="plain")
+                return
+
+            if data.get("user_id") and data["user_id"] != context.user_id:
+                await self.im_client.send_message(context, "⚠️ 仅任务发起人可以选择分支。", parse_mode="plain")
+                return
+
+            # Clean up other pending selections for this user/chat
+            tokens_to_remove = [
+                key
+                for key, value in self.pending_newtask_branch_requests.items()
+                if value.get("user_id") == context.user_id
+                and value.get("chat_id") == context.channel_id
+            ]
+            for key in tokens_to_remove:
+                self.pending_newtask_branch_requests.pop(key, None)
+
+            # Use the selected branch
+            await self._create_topic_for_task(
+                context,
+                data["task_desc"],
+                data["repo_name"],
+                data["repo_info"],
+                source_branch=selected_branch,
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling newtask branch callback direct: {e}", exc_info=True)
+
+    async def handle_newtask_branch_page_callback(self, context: MessageContext, token: str):
+        """Handle pagination for branch selection"""
+        try:
+            data = self.pending_newtask_branch_requests.get(token)
+            if not data:
+                await self.im_client.send_message(context, "⚠️ 分页信息已失效，请重新使用 /newtask。", parse_mode="plain")
+                return
+
+            if data.get("chat_id") != context.channel_id:
+                await self.im_client.send_message(context, "⚠️ 该选项不属于当前会话。", parse_mode="plain")
+                return
+
+            if data.get("user_id") and data["user_id"] != context.user_id:
+                await self.im_client.send_message(context, "⚠️ 仅任务发起人可以翻页。", parse_mode="plain")
+                return
+
+            page = data.get("page", 1)
+            original_token = None
+            for tok, val in self.pending_newtask_branch_requests.items():
+                if val.get("chat_id") == data["chat_id"] and val.get("user_id") == data["user_id"] and "branches" in val:
+                    original_token = tok
+                    break
+
+            if original_token:
+                # Remove the pagination token
+                self.pending_newtask_branch_requests.pop(token, None)
+                # Send new page
+                await self._send_branch_selection_message(context, original_token, page)
+
+        except Exception as e:
+            logger.error(f"Error handling newtask branch page callback: {e}", exc_info=True)
+
     async def handle_newtask_callback(self, context: MessageContext, token: str):
         """Handle repo selection for /newtask"""
         try:
@@ -656,12 +860,67 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             for key in tokens_to_remove:
                 self.pending_newtask_requests.pop(key, None)
 
-            await self._create_topic_for_task(
-                context,
-                data["task_desc"],
-                data["repo_name"],
-                data["repo_info"],
-            )
+            # Get available branches for the selected repository
+            repo_path = data["repo_info"].get("path")
+            if not repo_path:
+                await self.im_client.send_message(context, f"❌ 仓库路径不存在，无法获取分支列表。", parse_mode="plain")
+                return
+
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["git", "branch", "-a", "--format=%(refname:short)"],
+                    cwd=repo_path,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                branches = []
+                for line in result.stdout.splitlines():
+                    branch = line.strip()
+                    # Filter out HEAD and duplicate entries
+                    if branch and branch != "HEAD" and branch not in branches:
+                        branches.append(branch)
+
+                # Prioritize common branches
+                priority = ["main", "master", "develop", "dev"]
+                prioritized_branches = []
+                for p in priority:
+                    if p in branches:
+                        prioritized_branches.append(p)
+                # Add remaining branches
+                for b in branches:
+                    if b not in prioritized_branches:
+                        prioritized_branches.append(b)
+
+                # If no branches found, use default
+                if not prioritized_branches:
+                    prioritized_branches = ["main", "master"]
+
+                # Store branches in pending requests for input handling
+                branch_token = uuid.uuid4().hex[:12]
+                self.pending_newtask_branch_requests[branch_token] = {
+                    "chat_id": context.channel_id,
+                    "user_id": context.user_id,
+                    "task_desc": data["task_desc"],
+                    "repo_name": data["repo_name"],
+                    "repo_info": data["repo_info"],
+                    "branches": prioritized_branches,
+                    "page": 1,
+                }
+
+                # Send branch selection message
+                await self._send_branch_selection_message(context, branch_token, 1)
+
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Failed to get branches: {e}")
+                # Fallback: create with default branch
+                await self._create_topic_for_task(
+                    context,
+                    data["task_desc"],
+                    data["repo_name"],
+                    data["repo_info"],
+                )
 
         except Exception as e:
             logger.error(f"Error handling newtask callback: {e}", exc_info=True)
@@ -673,6 +932,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
         task_desc: str,
         repo_name: str,
         repo_info: Dict[str, Any],
+        source_branch: Optional[str] = None,
     ):
         """Create a new Telegram topic and git worktree for the selected repo"""
         git_url = repo_info.get("git_url")
@@ -699,11 +959,12 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
 
         # Create worktree for the new topic
         try:
-            main_repo_path, worktree_path, worktree_branch, source_branch = self.topic_manager.clone_project(
+            main_repo_path, worktree_path, worktree_branch, actual_source_branch = self.topic_manager.clone_project(
                 chat_id=context.channel_id,
                 git_url=git_url,
                 project_name=repo_name,
                 topic_id=thread_id,
+                source_branch=source_branch,
             )
         except Exception as e:
             logger.error(f"Failed to prepare worktree: {e}", exc_info=True)
@@ -719,7 +980,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
 
         # Get the branch info for display
         worktree_branch = worktree_branch or "unknown"
-        source_branch = source_branch or "unknown"
+        display_source_branch = actual_source_branch or source_branch or "unknown"
 
         # Send confirmation in manager topic
         safe_task_desc = self._escape_md_v2(task_desc)
@@ -731,7 +992,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 f"📝 需求: {safe_task_desc}\n"
                 f"📚 仓库: `{repo_name}`\n"
                 f"🌿 工作分支: `{worktree_branch}`\n"
-                f"📌 源分支: `{source_branch}`\n"
+                f"📌 源分支: `{display_source_branch}`\n"
                 f"📁 Worktree: `{worktree_path}`"
             )
         )
@@ -750,7 +1011,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 f"📚 仓库: `{repo_name}`\n"
                 f"📂 主仓库: `{main_repo_path}`\n"
                 f"🌿 工作分支: `{worktree_branch}`\n"
-                f"📌 源分支: `{source_branch}`\n"
+                f"📌 源分支: `{display_source_branch}`\n"
                 f"📁 Worktree: `{worktree_path}`\n\n"
                 "现在可以在该话题中开始协作啦～"
             )

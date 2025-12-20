@@ -260,6 +260,7 @@ class TopicManager:
         chat_id: str,
         topic_id: str,
         project_name: str,
+        source_branch: Optional[str] = None,
     ) -> Tuple[str, str]:
         """Create a new empty Git project with worktree
 
@@ -267,6 +268,7 @@ class TopicManager:
             chat_id: Telegram chat ID
             topic_id: Topic ID
             project_name: Name of the project
+            source_branch: Specific branch to use for worktree creation
 
         Returns:
             Tuple of (main_repo_path, worktree_path)
@@ -295,7 +297,7 @@ class TopicManager:
         if main_repo_path.exists():
             logger.info(f"[TOPIC] Main repository already exists, creating worktree from existing repo")
             # Create worktree from existing repo
-            return self._create_worktree_from_existing(chat_id, topic_id, str(main_repo_path), project_name)
+            return self._create_worktree_from_existing(chat_id, topic_id, str(main_repo_path), project_name, source_branch)
 
         try:
             # Create main repository
@@ -362,8 +364,16 @@ class TopicManager:
         git_url: str,
         project_name: Optional[str] = None,
         topic_id: Optional[str] = None,
+        source_branch: Optional[str] = None,
     ) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
         """Clone a Git repository. If topic_id provided, also create worktree; otherwise clone only.
+
+        Args:
+            chat_id: Telegram chat ID
+            git_url: Git repository URL
+            project_name: Project name (derived from URL if not provided)
+            topic_id: Topic ID for worktree creation
+            source_branch: Specific branch to use for worktree creation
 
         Returns:
             Tuple of (main_repo_path, worktree_path, worktree_branch, source_branch)
@@ -412,15 +422,26 @@ class TopicManager:
             if topic_id:
                 short_topic_id = self._shorten_topic_id(topic_id)
                 worktree_path = (worktrees_dir / f"{sanitized_name}-{short_topic_id}").resolve()
-                candidates = self._determine_branch_candidates(main_repo_path)
                 branch_name = f"topic/{sanitized_name}-{short_topic_id}"
                 commit_fallback = self._get_head_commit(main_repo_path)
-                worktree_branch, source_branch = self._add_worktree_with_fallback(
+
+                # Use specified branch or determine candidates
+                if source_branch:
+                    # Verify the source branch exists
+                    candidates = [source_branch]
+                    # Add common fallbacks if the specified branch doesn't work
+                    for fallback in ["main", "master", "develop"]:
+                        if fallback not in candidates:
+                            candidates.append(fallback)
+                else:
+                    candidates = self._determine_branch_candidates(main_repo_path)
+
+                worktree_branch, actual_source_branch = self._add_worktree_with_fallback(
                     main_repo_path, worktree_path, candidates, branch_name, commit_fallback
                 )
                 self._save_topic_metadata(chat_id, topic_id, project_name)
-                logger.info(f"Cloned project: {project_name} (branch used: {worktree_branch}, source: {source_branch})")
-                return str(main_repo_path), str(worktree_path), worktree_branch, source_branch
+                logger.info(f"Cloned project: {project_name} (branch used: {worktree_branch}, source: {actual_source_branch})")
+                return str(main_repo_path), str(worktree_path), worktree_branch, actual_source_branch
 
             logger.info(f"Cloned repository: {project_name}")
             return str(main_repo_path), None, None, None
@@ -474,6 +495,7 @@ class TopicManager:
         topic_id: str,
         main_repo_path: str,
         project_name: str,
+        source_branch: Optional[str] = None,
     ) -> Tuple[str, str, str, str]:
         """Create a new worktree from existing repository
 
@@ -482,6 +504,7 @@ class TopicManager:
             topic_id: Topic ID
             main_repo_path: Path to main repository
             project_name: Project name
+            source_branch: Specific branch to use for worktree creation
 
         Returns:
             Tuple of (main_repo_path, worktree_path, worktree_branch, source_branch)
@@ -501,17 +524,28 @@ class TopicManager:
 
         try:
             repo_path = Path(main_repo_path)
-            candidates = self._determine_branch_candidates(repo_path)
             commit_fallback = self._get_head_commit(repo_path)
-            worktree_branch, source_branch = self._add_worktree_with_fallback(
+
+            # Use specified branch or determine candidates
+            if source_branch:
+                # Verify the source branch exists
+                candidates = [source_branch]
+                # Add common fallbacks if the specified branch doesn't work
+                for fallback in ["main", "master", "develop"]:
+                    if fallback not in candidates:
+                        candidates.append(fallback)
+            else:
+                candidates = self._determine_branch_candidates(repo_path)
+
+            worktree_branch, actual_source_branch = self._add_worktree_with_fallback(
                 repo_path, worktree_path, candidates, branch_name, commit_fallback
             )
 
             # Save metadata if not already saved
             self._save_topic_metadata(chat_id, topic_id, project_name)
 
-            logger.info(f"Created worktree for existing project: {project_name} (branch used: {worktree_branch}, source: {source_branch})")
-            return main_repo_path, str(worktree_path), worktree_branch, source_branch
+            logger.info(f"Created worktree for existing project: {project_name} (branch used: {worktree_branch}, source: {actual_source_branch})")
+            return main_repo_path, str(worktree_path), worktree_branch, actual_source_branch
 
         except (subprocess.CalledProcessError, ValueError) as e:
             logger.error(f"Git command failed: {e}")
