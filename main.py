@@ -4,21 +4,20 @@ import sys
 import logging
 import asyncio
 from dotenv import load_dotenv
+from rich.console import Console
+from rich.logging import RichHandler
 from config.settings import AppConfig
 from core.controller import Controller
 
 # Load environment variables from .env file
 load_dotenv()
 
+# Create console for rich output
+console = Console()
+
 
 def setup_logging(level: str = "INFO"):
-    """Setup logging configuration with file location and line numbers"""
-    # Create a custom formatter with file location
-    log_format = '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(funcName)s() - %(message)s'
-    
-    # For development, you can use this more detailed format:
-    # log_format = '%(asctime)s - %(name)s - %(levelname)s - [%(pathname)s:%(lineno)d] - %(funcName)s() - %(message)s'
-    
+    """Setup logging configuration with RichHandler for pretty console output"""
     # Ensure logs directory exists
     logs_dir = 'logs'
     try:
@@ -27,11 +26,12 @@ def setup_logging(level: str = "INFO"):
         # Fallback to current directory if logs dir cannot be created
         logs_dir = '.'
 
+    # Configure logging with Rich handler for pretty console output
     logging.basicConfig(
         level=getattr(logging, level.upper()),
-        format=log_format,
+        format="%(message)s",
         handlers=[
-            logging.StreamHandler(sys.stdout),
+            RichHandler(console=console, rich_tracebacks=True),
             logging.FileHandler(f"{logs_dir}/vibe_remote.log"),
         ],
     )
@@ -42,20 +42,20 @@ def main():
     try:
         # Load configuration
         config = AppConfig.from_env()
-        
-        # Setup logging
+
+        # Setup logging with Rich handler
         setup_logging(config.log_level)
         logger = logging.getLogger(__name__)
-        
-        logger.info("Starting vibe-remote service...")
-        logger.info(f"Working directory: {config.claude.cwd}")
-        
+
+        logger.info("[bold green]Starting vibe-remote service...[/]")
+        logger.info(f"Working directory: [cyan]{config.claude.cwd}[/]")
+
         # Create and run controller
         controller = Controller(config)
         controller.run()
-        
+
     except Exception as e:
-        logging.error(f"Failed to start: {e}")
+        logger.error(f"[bold red]Failed to start: {e}[/]")
         sys.exit(1)
 
 

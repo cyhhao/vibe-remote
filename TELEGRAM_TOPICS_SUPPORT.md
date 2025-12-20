@@ -158,8 +158,10 @@ CLAUDE_WORKSPACES/
 | `/list_topics` | 列出所有Topic | `/list_topics` |
 | `/show_topic <topic_id>` | 显示Topic详情 | `/show_topic 123` |
 | `/set_manager_topic <topic_id>` | 设置主Topic | `/set_manager_topic 123` |
-| `/delete_topic <topic_id>` | 删除Topic | `/delete_topic 123` |
+| `/delete_topic <topic_id>` | 删除Topic（在任意话题直接输入 `/delete_topic` 会弹出确认，删除当前话题及其 worktree） | `/delete_topic 123` |
 | `/rename_topic <topic_id> <new_name>` | 重命名Topic | `/rename_topic 123 new-name` |
+
+当管理员在 Telegram 内直接删除某个 forum topic 时，Bot 会监听删除事件并自动清理本地 topics.json 记录与对应的 worktree（同时移除 manager topic 绑定），无需额外执行 `/delete_topic`。
 
 ### 项目Topic命令（开发使用）
 

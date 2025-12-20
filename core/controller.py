@@ -91,11 +91,12 @@ class Controller:
 
     def _init_handlers(self):
         """Initialize all handlers with controller reference"""
-        # Initialize session_handler first as other handlers depend on it
+        # Message handler first so CommandHandlers can reference it
+        self.message_handler = MessageHandler(self)
+        # Session handler needed by others
         self.session_handler = SessionHandler(self)
         self.command_handler = CommandHandlers(self)
         self.settings_handler = SettingsHandler(self)
-        self.message_handler = MessageHandler(self)
 
         # Set cross-references between handlers
         self.message_handler.set_session_handler(self.session_handler)
@@ -123,6 +124,8 @@ class Controller:
             # Topic management commands
             "create_topic": self.command_handler.handle_create_topic,
             "clone": self.command_handler.handle_clone,
+            "newtask": self.command_handler.handle_newtask,
+            "list_repo": self.command_handler.handle_list_repo,
             "list_topics": self.command_handler.handle_list_topics,
             "show_topic": self.command_handler.handle_show_topic,
             "set_manager_topic": self.command_handler.handle_set_manager_topic,
@@ -138,7 +141,37 @@ class Controller:
             on_callback_query=self.message_handler.handle_callback_query,
             on_settings_update=self.handle_settings_update,
             on_change_cwd=self.handle_change_cwd_submission,
+            on_topic_deleted=self.handle_topic_deleted,
         )
+
+    async def handle_topic_deleted(self, context: MessageContext):
+        """Cleanup when a topic is deleted (if platform supports callbacks)."""
+        try:
+            topic_id = context.thread_id
+            if not topic_id:
+                logger.warning("Topic deleted callback received without thread_id")
+                return
+
+            # Remove worktree mapping
+            settings_key = self._get_settings_key(context)
+            self.settings_manager.remove_topic_worktree(
+                settings_key, context.channel_id, topic_id
+            )
+            # Clear manager topic binding if needed
+            self.settings_manager.clear_manager_topic(
+                settings_key, context.channel_id, topic_id
+            )
+
+            # Delete topic metadata/worktree on disk
+            self.session_handler.topic_manager.delete_topic(
+                context.channel_id, topic_id
+            )
+
+            logger.info(
+                f"Topic deleted cleanup done for chat={context.channel_id}, topic={topic_id}"
+            )
+        except Exception as e:
+            logger.error(f"Error handling topic deletion: {e}", exc_info=True)
 
     # Utility methods used by handlers
 
@@ -293,6 +326,60 @@ class Controller:
             )
             await self.im_client.send_message(
                 context, f"❌ Failed to change working directory: {str(e)}"
+            )
+
+    async def handle_topic_deleted(self, context: MessageContext):
+        """Handle Telegram topic deletion events and clean up related data"""
+        if self.config.platform != "telegram":
+            return
+
+        if not context.thread_id:
+            logger.warning(
+                "Received topic deletion event without thread_id for chat %s",
+                context.channel_id,
+            )
+            return
+
+        chat_id = context.channel_id
+        topic_id = context.thread_id
+        settings_key = self._get_settings_key(context)
+
+        try:
+            worktree_path = self.session_handler.topic_manager.get_worktree_for_topic(
+                chat_id, topic_id
+            )
+            deleted = self.session_handler.topic_manager.delete_topic(chat_id, topic_id)
+
+            # Clean up persisted mappings
+            self.settings_manager.remove_topic_worktree(
+                settings_key, chat_id, topic_id
+            )
+            self.settings_manager.clear_manager_topic(
+                settings_key, chat_id, topic_id
+            )
+
+            notify_lines = [
+                f"🧹 检测到话题 {topic_id} 已删除，已清理本地记录。"
+            ]
+            if worktree_path:
+                notify_lines.append(f"📁 工作目录: {worktree_path}")
+            if not deleted:
+                notify_lines.append("ℹ️ 未找到本地话题元数据，已同步移除设置绑定。")
+
+            # Send notification到总群（不绑定已删除的 thread）
+            notify_context = MessageContext(
+                user_id=context.user_id,
+                channel_id=chat_id,
+                thread_id=None,
+                platform_specific=context.platform_specific,
+            )
+            await self.im_client.send_message(
+                notify_context, "\n".join(notify_lines)
+            )
+        except Exception as e:
+            logger.error(
+                f"Error cleaning up after topic deletion chat={chat_id}, topic={topic_id}: {e}",
+                exc_info=True,
             )
 
     # Main run method

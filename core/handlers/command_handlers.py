@@ -1,10 +1,14 @@
 """Command handlers for bot commands like /start, /clear, /cwd, etc."""
 
 import os
+import uuid
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
+
+from telegram.helpers import escape_markdown
 from modules.agents import AgentRequest, get_agent_display_name
 from modules.im import MessageContext, InlineKeyboard, InlineButton
+from modules.topic_manager import RepositoryExistsError
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +21,22 @@ class CommandHandlers:
         self.controller = controller
         self.config = controller.config
         self.im_client = controller.im_client
+        self.message_handler = controller.message_handler
         self.session_manager = controller.session_manager
         self.settings_manager = controller.settings_manager
         # Get reference to session_handler which has topic_manager
         self.session_handler = controller.session_handler
         self.topic_manager = self.session_handler.topic_manager
+        # Cache pending /newtask selections (token -> data)
+        self.pending_newtask_requests: Dict[str, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _escape_md_v2(text: str) -> str:
+        """Escape user-provided text for Telegram MarkdownV2."""
+        try:
+            return escape_markdown(text, version=2)
+        except Exception:
+            return text
 
     def _get_channel_context(self, context: MessageContext) -> MessageContext:
         """Get context for channel messages (no thread)"""
@@ -99,6 +114,8 @@ class CommandHandlers:
                     "",
                     formatter.format_bold("Topic Commands (Telegram Topics):"),
                     formatter.format_text("/list_topics - List all topics"),
+                    formatter.format_text("/list_repo - List cloned repositories"),
+                    formatter.format_text("/newtask <需求> - 创建新话题并初始化 worktree (管理话题)"),
                     formatter.format_text("/project_info - Show current project"),
                     formatter.format_text("/git_status - Show git status"),
                     formatter.format_text(
@@ -392,6 +409,10 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
         if not context.thread_id:
             return False
 
+        # General forum topic (thread_id == "1") 始终视为管理话题
+        if context.thread_id == "1":
+            return True
+
         # Check if this topic is set as manager topic
         settings_key = self.controller._get_settings_key(context)
         manager_topic = self.settings_manager.get_manager_topic(settings_key, context.channel_id)
@@ -453,7 +474,8 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             await self.im_client.send_message(context, f"❌ Unexpected error: {str(e)}")
 
     async def handle_clone(self, context: MessageContext, args: str):
-        """Handle /clone command - clone repository and create topic"""
+        """Handle /clone command - clone repository into chat workspace"""
+        progress_message_id: Optional[str] = None
         try:
             if not self._is_telegram_with_topics():
                 await self.im_client.send_message(
@@ -476,35 +498,98 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
 
             git_url = args.strip()
 
-            # Clone project with worktree
-            main_repo_path, worktree_path = self.topic_manager.clone_project(
-                chat_id=context.channel_id,
-                topic_id=context.thread_id,
-                git_url=git_url
+            # Notify user before starting clone
+            progress_message_id = await self.im_client.send_message(
+                context, "⏳ 正在克隆仓库，请稍等...", parse_mode="plain"
             )
 
-            # Save to settings
-            settings_key = self.controller._get_settings_key(context)
-            self.settings_manager.set_topic_worktree(
-                settings_key, context.channel_id, context.thread_id, worktree_path
+            # Clone project only (worktree will be created by /newtask)
+            main_repo_path, _ = self.topic_manager.clone_project(
+                chat_id=context.channel_id,
+                git_url=git_url,
             )
 
             response = (
-                f"✅ Cloned repository and created topic:\n"
-                f"🔗 Repository: {git_url}\n"
-                f"🆔 Topic ID: {context.thread_id}\n"
-                f"📁 Worktree: {worktree_path}\n\n"
-                f"💡 You can now use this topic for development work."
+                f"✅ 已克隆仓库\n"
+                f"🔗 Repo: {git_url}\n"
+                f"📂 Path: {main_repo_path}\n\n"
+                f"💡 在管理话题用 /newtask <需求> 选择该仓库，机器人会自动创建新话题和 worktree。"
             )
 
-            await self.im_client.send_message(context, response)
+            await self.im_client.send_message(context, response, reply_to=progress_message_id, parse_mode="plain")
 
+        except RepositoryExistsError as e:
+            logger.info(f"Clone skipped, repo exists: {e.path}")
+            await self.im_client.send_message(
+                context,
+                f"ℹ️ 仓库已存在，无需重新克隆。\n📂 Path: {e.path}",
+                reply_to=progress_message_id,
+                parse_mode="plain",
+            )
         except ValueError as e:
             logger.error(f"Error cloning repository: {e}")
-            await self.im_client.send_message(context, f"❌ Failed to clone repository: {str(e)}")
+            await self.im_client.send_message(context, f"❌ Failed to clone repository: {str(e)}", parse_mode="plain")
         except Exception as e:
             logger.error(f"Unexpected error cloning repository: {e}", exc_info=True)
-            await self.im_client.send_message(context, f"❌ Unexpected error: {str(e)}")
+            await self.im_client.send_message(context, f"❌ Unexpected error: {str(e)}", parse_mode="plain")
+
+    async def handle_newtask(self, context: MessageContext, args: str):
+        """Handle /newtask command - create new topic/worktree for a repo"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not self._check_manager权限(context):
+                await self.im_client.send_message(
+                    context, "❌ This command can only be used in the manager topic."
+                )
+                return
+
+            task_desc = args.strip()
+            if not task_desc:
+                await self.im_client.send_message(
+                    context, "用法：/newtask <需求>\n示例：/newtask 更新 README", parse_mode="plain"
+                )
+                return
+            task_desc = " ".join(task_desc.split())
+
+            repos = self.topic_manager.list_repositories(context.channel_id)
+
+            if not repos:
+                await self.im_client.send_message(
+                    context, "📭 还没有可用仓库，请先用 /clone <git_url> 克隆仓库。", parse_mode="plain"
+                )
+                return
+
+            # Only one repo, create directly
+            if len(repos) == 1:
+                repo_name, repo_info = next(iter(repos.items()))
+                await self._create_topic_for_task(context, task_desc, repo_name, repo_info)
+                return
+
+            # Multiple repos: ask user to pick via inline keyboard
+            buttons = []
+            for repo_name, repo_info in repos.items():
+                token = uuid.uuid4().hex[:12]
+                self.pending_newtask_requests[token] = {
+                    "chat_id": context.channel_id,
+                    "user_id": context.user_id,
+                    "task_desc": task_desc,
+                    "repo_name": repo_name,
+                    "repo_info": repo_info,
+                }
+                buttons.append([InlineButton(text=repo_name, callback_data=f"newtask_repo:{token}")])
+
+            prompt = f"请选择要为任务创建新话题的仓库：\n📝 需求：{task_desc}"
+            keyboard = InlineKeyboard(buttons=buttons)
+            await self.im_client.send_message_with_buttons(context, prompt, keyboard)
+
+        except Exception as e:
+            logger.error(f"Error creating new task: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error creating new task: {str(e)}", parse_mode="plain")
 
     async def handle_list_topics(self, context: MessageContext, args: str):
         """Handle /list_topics command - list all topics"""
@@ -543,6 +628,175 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
         except Exception as e:
             logger.error(f"Error listing topics: {e}", exc_info=True)
             await self.im_client.send_message(context, f"❌ Error listing topics: {str(e)}")
+
+    async def handle_newtask_callback(self, context: MessageContext, token: str):
+        """Handle repo selection for /newtask"""
+        try:
+            data = self.pending_newtask_requests.pop(token, None)
+
+            if not data:
+                await self.im_client.send_message(context, "⚠️ 该任务选择已失效，请重新使用 /newtask。", parse_mode="plain")
+                return
+
+            if data.get("chat_id") != context.channel_id:
+                await self.im_client.send_message(context, "⚠️ 该选项不属于当前会话。", parse_mode="plain")
+                return
+
+            if data.get("user_id") and data["user_id"] != context.user_id:
+                await self.im_client.send_message(context, "⚠️ 仅任务发起人可以选择仓库。", parse_mode="plain")
+                return
+
+            # Clean up other pending selections for this user/chat to avoid duplicates
+            tokens_to_remove = [
+                key
+                for key, value in self.pending_newtask_requests.items()
+                if value.get("user_id") == context.user_id
+                and value.get("chat_id") == context.channel_id
+            ]
+            for key in tokens_to_remove:
+                self.pending_newtask_requests.pop(key, None)
+
+            await self._create_topic_for_task(
+                context,
+                data["task_desc"],
+                data["repo_name"],
+                data["repo_info"],
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling newtask callback: {e}", exc_info=True)
+            # await self.im_client.send_message(context, f"❌ Error processing selection: {str(e)}", parse_mode="plain")
+
+    async def _create_topic_for_task(
+        self,
+        context: MessageContext,
+        task_desc: str,
+        repo_name: str,
+        repo_info: Dict[str, Any],
+    ):
+        """Create a new Telegram topic and git worktree for the selected repo"""
+        git_url = repo_info.get("git_url")
+        if not git_url:
+            await self.im_client.send_message(
+                context,
+                f"❌ 仓库 {repo_name} 缺少 remote.origin.url，无法创建 worktree。",
+            )
+            return
+
+        # Compose topic name within Telegram limits (1-128 chars)
+        topic_title = f"{task_desc} | {repo_name}"
+        topic_title = topic_title.replace("\n", " ")
+        topic_title = topic_title[:120]
+
+        # Create forum topic
+        try:
+            thread_id = await self.im_client.create_topic(int(context.channel_id), topic_title)
+        except Exception as e:
+            logger.error(f"Failed to create forum topic: {e}", exc_info=True)
+            safe_error = self._escape_md_v2(str(e))
+            await self.im_client.send_message(context, f"❌ 创建话题失败：{safe_error}")
+            return
+
+        # Create worktree for the new topic
+        try:
+            main_repo_path, worktree_path = self.topic_manager.clone_project(
+                chat_id=context.channel_id,
+                git_url=git_url,
+                project_name=repo_name,
+                topic_id=thread_id,
+            )
+        except Exception as e:
+            logger.error(f"Failed to prepare worktree: {e}", exc_info=True)
+            safe_error = self._escape_md_v2(str(e))
+            await self.im_client.send_message(context, f"❌ 创建工作区失败：{safe_error}")
+            return
+
+        # Persist mapping
+        settings_key = self.controller._get_settings_key(context)
+        self.settings_manager.set_topic_worktree(
+            settings_key, context.channel_id, thread_id, worktree_path
+        )
+
+        branch = self.topic_manager.get_worktree_branch(worktree_path) or "unknown"
+
+        # Send confirmation in manager topic
+        safe_task_desc = self._escape_md_v2(task_desc)
+        await self.im_client.send_message(
+            context,
+            (
+                "✅ 已创建新话题并准备工作区。\n"
+                f"🧵 Topic ID: `{thread_id}`\n"
+                f"📝 需求: {safe_task_desc}\n"
+                f"📚 仓库: `{repo_name}`\n"
+                f"🌿 分支: `{branch}`\n"
+                f"📁 Worktree: `{worktree_path}`"
+            )
+        )
+
+        # Send detail message inside the new topic
+        new_topic_context = MessageContext(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            thread_id=thread_id,
+            platform_specific=context.platform_specific,
+        )
+        await self.im_client.send_message(
+            new_topic_context,
+            (
+                f"🎯 任务: {safe_task_desc}\n"
+                f"📚 仓库: `{repo_name}`\n"
+                f"📂 主仓库: `{main_repo_path}`\n"
+                f"🌿 分支: `{branch}`\n"
+                f"📁 Worktree: `{worktree_path}`\n\n"
+                "现在可以在该话题中开始协作啦～"
+            )
+        )
+
+        # Kick off AI with the task description in the new topic
+        try:
+            kickoff_context = MessageContext(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                thread_id=thread_id,
+                platform_specific=context.platform_specific,
+            )
+            await self.message_handler.handle_user_message(kickoff_context, task_desc)
+        except Exception as e:
+            logger.error(f"Failed to kickoff AI message: {e}", exc_info=True)
+
+    async def handle_list_repo(self, context: MessageContext, args: str):
+        """Handle /list_repo command - list all cloned repositories for the chat"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not self._check_manager权限(context):
+                await self.im_client.send_message(
+                    context, "❌ This command can only be used in the manager topic."
+                )
+                return
+
+            repos = self.topic_manager.list_repositories(context.channel_id)
+
+            if not repos:
+                await self.im_client.send_message(context, "📭 还没有克隆任何仓库。使用 /clone <git_url> 进行克隆。")
+                return
+
+            lines = ["📚 已克隆的仓库：\n"]
+            for name, info in repos.items():
+                git_url = info.get("git_url")
+                lines.append(f"• {name}\n  📂 {info.get('path')}")
+                if git_url:
+                    lines.append(f"  🔗 {git_url}")
+
+            await self.im_client.send_message(context, "\n".join(lines))
+
+        except Exception as e:
+            logger.error(f"Error listing repositories: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error listing repositories: {str(e)}")
 
     async def handle_show_topic(self, context: MessageContext, args: str):
         """Handle /show_topic command - show topic details"""
@@ -649,7 +903,46 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 )
                 return
 
-            # Check if executed in manager topic
+            # 无参数且当前在话题里，弹出确认按钮删除当前话题
+            if not args and context.thread_id:
+                topic_id = context.thread_id
+
+                topics = self.topic_manager.list_topics(context.channel_id)
+                topic_info = topics.get(str(topic_id), {})
+                topic_name = topic_info.get("name", "Unknown")
+                worktree_path = self.topic_manager.get_worktree_for_topic(
+                    context.channel_id, topic_id
+                )
+
+                lines = [
+                    "⚠️ 确认删除当前话题及工作区？",
+                    f"🧵 Topic ID: {topic_id}",
+                    f"📂 项目: {topic_name}",
+                ]
+                if worktree_path:
+                    lines.append(f"📁 Worktree: {worktree_path}")
+
+                keyboard = InlineKeyboard(
+                    buttons=[
+                        [
+                            InlineButton(
+                                text="✅ 删除本话题和工作区",
+                                callback_data=f"delete_topic_confirm:{context.channel_id}:{topic_id}:yes",
+                            ),
+                            InlineButton(
+                                text="❌ 取消",
+                                callback_data=f"delete_topic_confirm:{context.channel_id}:{topic_id}:no",
+                            ),
+                        ]
+                    ]
+                )
+
+                await self.im_client.send_message_with_buttons(
+                    context, "\n".join(lines), keyboard
+                )
+                return
+
+            # 以下逻辑：管理话题在命令中指定 topic_id
             if not self._check_manager权限(context):
                 await self.im_client.send_message(
                     context, "❌ This command can only be used in the manager topic."
@@ -676,6 +969,10 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             self.settings_manager.remove_topic_worktree(
                 settings_key, context.channel_id, topic_id
             )
+            # Clear manager topic mapping if this was the manager topic
+            self.settings_manager.clear_manager_topic(
+                settings_key, context.channel_id, topic_id
+            )
 
             response = f"✅ Deleted topic {topic_id} and its worktree."
 
@@ -684,6 +981,48 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
         except Exception as e:
             logger.error(f"Error deleting topic: {e}", exc_info=True)
             await self.im_client.send_message(context, f"❌ Error deleting topic: {str(e)}")
+
+    async def handle_delete_topic_confirmation(
+        self, context: MessageContext, chat_id: str, topic_id: str, confirmed: bool
+    ):
+        """Process inline confirmation for deleting the current topic"""
+        try:
+            if not self._is_telegram_with_topics():
+                return
+
+            # 仅允许在对应话题的回调中操作
+            if not context.thread_id or str(context.thread_id) != str(topic_id):
+                await self.im_client.send_message(
+                    context, "⚠️ 请在要删除的话题内确认。"
+                )
+                return
+
+            if not confirmed:
+                await self.im_client.send_message(context, "操作已取消，不删除该话题。", parse_mode="plain")
+                return
+
+            success = self.topic_manager.delete_topic(chat_id, topic_id)
+            settings_key = self.controller._get_settings_key(context)
+            self.settings_manager.remove_topic_worktree(
+                settings_key, chat_id, topic_id
+            )
+            self.settings_manager.clear_manager_topic(
+                settings_key, chat_id, topic_id
+            )
+
+            if success:
+                await self.im_client.send_message(
+                    context, f"✅ 已删除话题 {topic_id} 及对应工作区。", parse_mode="plain"
+                )
+            else:
+                await self.im_client.send_message(
+                    context, f"ℹ️ 本地未找到话题 {topic_id} 的记录，已清理设置绑定。", parse_mode="plain"
+                )
+        except Exception as e:
+            logger.error(f"Error in delete topic confirmation: {e}", exc_info=True)
+            await self.im_client.send_message(
+                context, f"❌ 删除失败：{str(e)}", parse_mode="plain"
+            )
 
     async def handle_project_info(self, context: MessageContext, args: str):
         """Handle /project_info command - show current project info"""
@@ -785,4 +1124,3 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
         except Exception as e:
             logger.error(f"Error getting git status: {e}", exc_info=True)
             await self.im_client.send_message(context, f"❌ Error getting git status: {str(e)}")
-

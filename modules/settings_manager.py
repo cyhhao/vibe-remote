@@ -513,6 +513,27 @@ class SettingsManager:
 
         return settings.manager_topic_ids.get(chat_key)
 
+    def clear_manager_topic(
+        self,
+        user_id: Union[int, str],
+        chat_id: Union[int, str],
+        topic_id: Union[int, str] = None,
+    ):
+        """Clear manager topic mapping when a topic is deleted"""
+        settings = self.get_user_settings(user_id)
+        chat_key = self._normalize_user_id(chat_id)
+        current = settings.manager_topic_ids.get(chat_key)
+
+        if not current:
+            return
+
+        if topic_id is None or current == str(topic_id):
+            del settings.manager_topic_ids[chat_key]
+            self.update_user_settings(user_id, settings)
+            logger.info(
+                f"Cleared manager topic for user {user_id}, chat {chat_key}"
+            )
+
     def is_manager_topic(
         self,
         user_id: Union[int, str],

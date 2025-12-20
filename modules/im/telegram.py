@@ -16,7 +16,7 @@ from telegram.ext import (
     ContextTypes,
     CallbackQueryHandler,
 )
-from telegram.error import TelegramError
+from telegram.error import TelegramError, RetryAfter
 from config.settings import TelegramConfig
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton
 from .formatters import TelegramFormatter
@@ -35,6 +35,9 @@ class TelegramBot(BaseIMClient):
 
         # Store callback queries for answering
         self._callback_queries: Dict[str, Any] = {}
+        # Batching to mitigate flood control
+        self._batch_buffers: Dict[tuple, list] = {}
+        self._batch_tasks: Dict[tuple, asyncio.Task] = {}
     
     def _convert_to_markdownv2(self, text: str) -> str:
         """Convert markdown text to Telegram MarkdownV2 format"""
@@ -66,6 +69,14 @@ class TelegramBot(BaseIMClient):
         """Handle incoming text messages from Telegram with topic support"""
         chat_id = update.effective_chat.id
         chat_type = update.effective_chat.type
+        message_text = update.message.text if update.message else ""
+
+        logger.info(
+            "Received Telegram message chat=%s user=%s text=%s",
+            chat_id,
+            update.effective_user.id if update.effective_user else "unknown",
+            message_text,
+        )
 
         # Check if message is authorized based on whitelist
         if not self._is_authorized_chat(chat_id, chat_type):
@@ -89,8 +100,6 @@ class TelegramBot(BaseIMClient):
             thread_id=thread_id,  # Support for Group Topics
             platform_specific={"update": update, "tg_context": tg_context},
         )
-
-        message_text = update.message.text
 
         # Check if it's a command
         if message_text.startswith("/"):
@@ -167,6 +176,21 @@ class TelegramBot(BaseIMClient):
 
         chat_id = update.effective_chat.id
         chat_type = update.effective_chat.type
+        message_text = update.message.text if update.message else ""
+
+        logger.info(
+            "Received Telegram command chat=%s user=%s text=%s",
+            chat_id,
+            update.effective_user.id if update.effective_user else "unknown",
+            message_text,
+        )
+
+        # Extract thread_id for forum topics (commands may be in general topic)
+        thread_id = None
+        if getattr(update.message, "message_thread_id", None):
+            thread_id = str(update.message.message_thread_id)
+        elif getattr(update.effective_chat, "is_forum", False):
+            thread_id = "1"
 
         # Check if command is authorized based on whitelist
         if not self._is_authorized_chat(chat_id, chat_type):
@@ -184,10 +208,112 @@ class TelegramBot(BaseIMClient):
             user_id=str(update.effective_user.id),
             channel_id=str(update.effective_chat.id),
             message_id=str(update.message.message_id),
+            thread_id=thread_id,
             platform_specific={"update": update, "tg_context": tg_context},
         )
 
         await self.on_command_callbacks[command_name](context, args)
+
+    async def handle_command_as_message(
+        self, update: Update, tg_context: ContextTypes.DEFAULT_TYPE
+    ):
+        """Handle slash commands as regular messages when no specific handler exists"""
+        if not update.message or not update.message.text:
+            return
+
+        chat_id = update.effective_chat.id
+        chat_type = update.effective_chat.type
+        message_text = update.message.text
+
+        logger.info(
+            "Handling Telegram slash command as message chat=%s user=%s text=%s",
+            chat_id,
+            update.effective_user.id if update.effective_user else "unknown",
+            message_text,
+        )
+
+        if not self._is_authorized_chat(chat_id, chat_type):
+            logger.info(f"Unauthorized command message from chat: {chat_id}")
+            await self._send_unauthorized_message(chat_id)
+            return
+
+        # Extract thread_id for forum topics
+        thread_id = None
+        if getattr(update.message, "message_thread_id", None):
+            thread_id = str(update.message.message_thread_id)
+        elif getattr(update.effective_chat, "is_forum", False):
+            thread_id = "1"
+
+        # Create MessageContext
+        context = MessageContext(
+            user_id=str(update.effective_user.id),
+            channel_id=str(update.effective_chat.id),
+            message_id=str(update.message.message_id),
+            thread_id=thread_id,
+            platform_specific={"update": update, "tg_context": tg_context},
+        )
+
+        # If on_message_callback is registered, treat this command as plain text
+        if self.on_message_callback:
+            await self.on_message_callback(context, message_text)
+
+    async def handle_telegram_status_update(
+        self, update: Update, tg_context: ContextTypes.DEFAULT_TYPE
+    ):
+        """Handle service messages (e.g., forum topic deleted)"""
+        if not update.message:
+            return
+
+        chat_id = update.effective_chat.id
+        chat_type = update.effective_chat.type
+
+        # Respect chat whitelist
+        if not self._is_authorized_chat(chat_id, chat_type):
+            logger.info(f"Unauthorized status update from chat: {chat_id}")
+            return
+
+        message = update.message
+        thread_id = None
+        if getattr(message, "message_thread_id", None):
+            thread_id = str(message.message_thread_id)
+
+        if getattr(message, "forum_topic_deleted", None):
+            logger.info(
+                "Detected forum_topic_deleted: chat=%s thread=%s", chat_id, thread_id
+            )
+
+            if not thread_id:
+                logger.warning(
+                    "forum_topic_deleted received without thread_id for chat %s",
+                    chat_id,
+                )
+                return
+
+            callback = getattr(self, "on_topic_deleted_callback", None)
+            if callback:
+                user_id = (
+                    str(update.effective_user.id)
+                    if update.effective_user
+                    else str(chat_id)
+                )
+                context = MessageContext(
+                    user_id=user_id,
+                    channel_id=str(chat_id),
+                    message_id=str(message.message_id)
+                    if message and getattr(message, "message_id", None)
+                    else None,
+                    thread_id=thread_id,
+                    platform_specific={"update": update, "tg_context": tg_context},
+                )
+                try:
+                    await callback(context)
+                except Exception as e:
+                    logger.error(
+                        f"Error handling forum_topic_deleted callback: {e}",
+                        exc_info=True,
+                    )
+            else:
+                logger.warning("forum_topic_deleted received but no callback registered")
 
     def setup_handlers(self):
         """Setup bot command and message handlers"""
@@ -205,9 +331,19 @@ class TelegramBot(BaseIMClient):
             
             self.application.add_handler(CommandHandler(command, handler))
 
+        # Fallback handler to treat unknown slash commands as regular messages
+        self.application.add_handler(
+            MessageHandler(filters.COMMAND, self.handle_command_as_message)
+        )
+
         # Register callback query handler
         self.application.add_handler(
             CallbackQueryHandler(self.handle_telegram_callback)
+        )
+
+        # Register service/status update handler (forum topic events, etc.)
+        self.application.add_handler(
+            MessageHandler(filters.StatusUpdate.ALL, self.handle_telegram_status_update)
         )
 
         # Register message handler
@@ -228,6 +364,37 @@ class TelegramBot(BaseIMClient):
             parse_mode="MarkdownV2",
             reply_markup=reply_markup,
         )
+
+    async def create_topic(self, chat_id: int, name: str) -> str:
+        """Create a new forum topic and return its thread_id"""
+        bot = self.application.bot
+        try:
+            topic = await bot.create_forum_topic(chat_id=chat_id, name=name)
+            thread_id = str(topic.message_thread_id)
+
+            # 话题创建后，用 thread_id 作为前缀重命名，便于 Telegram 列表识别
+            try:
+                prefix = f"{thread_id}."
+                if not name.startswith(prefix):
+                    # Telegram 限制 1-128 字符，预留前缀长度
+                    max_len = 128
+                    suffix_budget = max_len - len(prefix)
+                    safe_suffix = name[:suffix_budget] if suffix_budget > 0 else ""
+                    new_name = f"{prefix}{safe_suffix}".rstrip(".")
+                    await bot.edit_forum_topic(
+                        chat_id=chat_id,
+                        message_thread_id=topic.message_thread_id,
+                        name=new_name,
+                    )
+            except Exception as rename_error:
+                logger.warning(
+                    f"Failed to rename topic with id prefix (chat={chat_id}, thread={thread_id}): {rename_error}"
+                )
+
+            return thread_id
+        except TelegramError as e:
+            logger.error(f"Error creating topic: {e}")
+            raise
 
 
     def run(self):
@@ -270,7 +437,7 @@ class TelegramBot(BaseIMClient):
         self,
         context: MessageContext,
         text: str,
-        parse_mode: Optional[str] = None,  # Kept for interface compatibility, but ignored
+        parse_mode: Optional[str] = None,  # If "plain", skip MarkdownV2 escaping
         reply_to: Optional[str] = None,
     ) -> str:
         """Send a text message with topic support - BaseIMClient implementation"""
@@ -279,13 +446,12 @@ class TelegramBot(BaseIMClient):
         # Convert MessageContext to Telegram chat_id
         chat_id = int(context.channel_id)
 
-        # Convert markdown to MarkdownV2 for better compatibility
+        kwargs = {"chat_id": chat_id}
+
+        # Always convert to MarkdownV2 format
         markdownv2_text = self._convert_to_markdownv2(text)
-        kwargs = {
-            "chat_id": chat_id,
-            "text": markdownv2_text,
-            "parse_mode": "MarkdownV2"
-        }
+        kwargs["text"] = markdownv2_text
+        kwargs["parse_mode"] = "MarkdownV2"
 
         # Support Group Topics - use message_thread_id for topic messages
         if context.thread_id:
@@ -294,12 +460,56 @@ class TelegramBot(BaseIMClient):
         # Reply support - use reply_to_message_id for direct replies
         if reply_to:
             kwargs["reply_to_message_id"] = int(reply_to)
+            try:
+                message = await bot.send_message(**kwargs)
+                return str(message.message_id)
+            except RetryAfter as e:
+                delay = max(1, min(int(getattr(e, "retry_after", 1)), 3))
+                logger.warning(f"Flood control hit (reply), retrying in {delay}s...")
+                await asyncio.sleep(delay)
+                message = await bot.send_message(**kwargs)
+                return str(message.message_id)
+            except TelegramError as e:
+                # Retry once without thread/reply_to if thread invalid or reply mismatched
+                if kwargs.get("message_thread_id"):
+                    thread_id = kwargs.pop("message_thread_id", None)
+                    kwargs.pop("reply_to_message_id", None)
+                    logger.warning(
+                        f"Reply send failed (chat={chat_id}, thread={thread_id}), retrying without thread/reply_to. Error: {e}"
+                    )
+                    message = await bot.send_message(**kwargs)
+                    return str(message.message_id)
 
+                logger.error(f"Error sending message: {e}")
+                raise
+
+        # For non-reply messages, batch within a short window to avoid flood
+        key = (
+            kwargs["chat_id"],
+            kwargs.get("message_thread_id"),
+            kwargs.get("parse_mode"),
+        )
         try:
-            message = await bot.send_message(**kwargs)
-            return str(message.message_id)
+            return await self._queue_batch_message(key, kwargs, markdownv2_text, delay=1)
+        except RetryAfter as e:
+            delay = max(1, min(int(getattr(e, "retry_after", 1)), 3))
+            logger.warning(f"Flood control hit, batching for {delay}s...")
+            return await self._queue_batch_message(key, kwargs, markdownv2_text, delay=delay)
         except TelegramError as e:
-            logger.error(f"Error sending message: {e}")
+            # If topic id is invalid/missing, retry once without thread binding
+            if kwargs.get("message_thread_id"):
+                thread_id = kwargs.pop("message_thread_id")
+                kwargs.pop("reply_to_message_id", None)  # reply_to only makes sense within the thread
+                logger.warning(
+                    f"Message send failed (chat={chat_id}, thread={thread_id}), retrying without thread. Error: {e}"
+                )
+                try:
+                    message = await bot.send_message(**kwargs)
+                    return str(message.message_id)
+                except TelegramError as retry_error:
+                    logger.error(f"Retry without thread failed: {retry_error}")
+                    raise retry_error
+
             raise
 
     async def send_message_with_buttons(
@@ -343,9 +553,87 @@ class TelegramBot(BaseIMClient):
         try:
             message = await bot.send_message(**kwargs)
             return str(message.message_id)
+        except RetryAfter as e:
+            delay = max(int(getattr(e, "retry_after", 1)), 1)
+            logger.warning(f"Flood control hit for buttons, retrying in {delay}s...")
+            await asyncio.sleep(delay)
+            message = await bot.send_message(**kwargs)
+            return str(message.message_id)
         except TelegramError as e:
             logger.error(f"Error sending message with buttons: {e}")
+
+            # Retry once without thread binding if thread is missing
+            if (
+                kwargs.get("message_thread_id")
+                and "message thread not found" in str(e).lower()
+            ):
+                thread_id = kwargs.pop("message_thread_id")
+                logger.warning(
+                    f"Message thread not found for buttons (chat={chat_id}, thread={thread_id}), retrying without thread"
+                )
+                try:
+                    message = await bot.send_message(**kwargs)
+                    return str(message.message_id)
+                except TelegramError as retry_error:
+                    logger.error(f"Retry without thread failed: {retry_error}")
+                    raise retry_error
+
             raise
+
+    async def _queue_batch_message(
+        self, key: tuple, kwargs: Dict[str, Any], formatted_text: str, delay: int
+    ) -> str:
+        """Batch messages for the same chat/thread to bypass flood control"""
+        # text is already MarkdownV2-converted; keep it as-is to avoid escaping loss
+        self._batch_buffers.setdefault(key, []).append(formatted_text)
+
+        if key in self._batch_tasks:
+            return await self._batch_tasks[key]
+
+        async def flush():
+            await asyncio.sleep(delay)
+            messages = self._batch_buffers.pop(key, [])
+            if not messages:
+                return ""
+
+            merged_text = "\n".join(messages)
+            payload = dict(kwargs)
+            payload["text"] = merged_text
+
+            try:
+                msg = await self.application.bot.send_message(**payload)
+                return str(msg.message_id)
+            except RetryAfter as e:
+                retry_delay = max(1, min(int(getattr(e, "retry_after", 1)), 3))
+                logger.warning(f"Batch resend hit flood control, retrying in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+                msg = await self.application.bot.send_message(**payload)
+                return str(msg.message_id)
+            except TelegramError as e:
+                # Retry once without thread/reply_to if thread missing
+                if (
+                    payload.get("message_thread_id")
+                    and "message thread not found" in str(e).lower()
+                ):
+                    thread_id = payload.pop("message_thread_id", None)
+                    payload.pop("reply_to_message_id", None)
+                    logger.warning(
+                        f"Message thread not found (chat={payload.get('chat_id')}, thread={thread_id}), retrying without thread"
+                    )
+                    msg = await self.application.bot.send_message(**payload)
+                    return str(msg.message_id)
+
+                logger.error(f"Error sending batched message: {e}")
+                raise
+
+        task = asyncio.create_task(flush())
+        self._batch_tasks[key] = task
+
+        def cleanup(_):
+            self._batch_tasks.pop(key, None)
+
+        task.add_done_callback(cleanup)
+        return await task
 
     async def edit_message(
         self,

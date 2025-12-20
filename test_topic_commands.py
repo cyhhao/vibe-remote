@@ -38,6 +38,7 @@ def test_command_registration():
         'handle_show_topic',
         'handle_set_manager_topic',
         'handle_delete_topic',
+        'handle_delete_topic_confirmation',
         'handle_project_info',
         'handle_git_status',
     ]
@@ -103,6 +104,7 @@ def test_settings_manager_methods():
         'remove_topic_worktree',
         'set_manager_topic',
         'get_manager_topic',
+        'clear_manager_topic',
         'is_manager_topic',
     ]
 

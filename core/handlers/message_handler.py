@@ -117,10 +117,13 @@ class MessageHandler:
 
             # Import handlers to avoid circular dependency
             from .settings_handler import SettingsHandler
-            from .command_handlers import CommandHandlers
 
-            settings_handler = SettingsHandler(self.controller)
-            command_handlers = CommandHandlers(self.controller)
+            # Reuse existing handlers to preserve state (e.g., pending newtask selections)
+            settings_handler = getattr(self.controller, "settings_handler", None) or SettingsHandler(self.controller)
+            command_handlers = getattr(self.controller, "command_handler", None)
+            if command_handlers is None:
+                from .command_handlers import CommandHandlers
+                command_handlers = CommandHandlers(self.controller)
 
             # Route based on callback data
             if callback_data.startswith("toggle_msg_"):
@@ -165,12 +168,28 @@ class MessageHandler:
                     footer="This feature is coming soon!",
                 )
                 await self.im_client.send_message(context, info_text)
+            elif callback_data.startswith("newtask_repo:"):
+                token = callback_data.split(":", 1)[1]
+                await command_handlers.handle_newtask_callback(context, token)
+            elif callback_data.startswith("delete_topic_confirm:"):
+                parts = callback_data.split(":", 3)
+                if len(parts) == 4:
+                    _, chat_id, topic_id, decision = parts
+                    confirmed = decision == "yes"
+                    await command_handlers.handle_delete_topic_confirmation(
+                        context, chat_id, topic_id, confirmed
+                    )
+                else:
+                    await self.im_client.send_message(
+                        context, "⚠️ 无效的删除确认参数。", parse_mode="plain"
+                    )
 
             else:
                 logger.warning(f"Unknown callback data: {callback_data}")
                 await self.im_client.send_message(
                     context,
                     self.formatter.format_warning(f"Unknown action: {callback_data}"),
+                    parse_mode="plain",
                 )
 
         except Exception as e:
