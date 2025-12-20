@@ -190,8 +190,12 @@ class TopicManager:
         base_refs: list,
         branch_name: str,
         commit_fallback: Optional[str] = None,
-    ) -> str:
-        """Try to add a worktree using base_refs; fallback to detached HEAD."""
+    ) -> Tuple[str, str]:
+        """Try to add a worktree using base_refs; fallback to detached HEAD.
+
+        Returns:
+            Tuple of (worktree_branch_name, source_branch_name)
+        """
         last_error: Optional[Exception] = None
         branch_exists = self._branch_exists(main_repo_path, branch_name)
 
@@ -218,7 +222,7 @@ class TopicManager:
                     capture_output=True,
                     text=True,
                 )
-                return branch_name
+                return branch_name, base_ref
             except subprocess.CalledProcessError as e:
                 last_error = e
                 stderr = e.stderr.strip() if getattr(e, "stderr", None) else ""
@@ -240,7 +244,7 @@ class TopicManager:
                     capture_output=True,
                     text=True,
                 )
-                return commit_fallback
+                return branch_name, f"detached@{commit_fallback[:8]}"
             except subprocess.CalledProcessError as e:
                 last_error = e
                 if worktree_path.exists():
@@ -358,8 +362,12 @@ class TopicManager:
         git_url: str,
         project_name: Optional[str] = None,
         topic_id: Optional[str] = None,
-    ) -> Tuple[str, Optional[str]]:
-        """Clone a Git repository. If topic_id provided, also create worktree; otherwise clone only."""
+    ) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
+        """Clone a Git repository. If topic_id provided, also create worktree; otherwise clone only.
+
+        Returns:
+            Tuple of (main_repo_path, worktree_path, worktree_branch, source_branch)
+        """
         self._ensure_chat_structure(chat_id)
 
         if not self._is_valid_git_url(git_url):
@@ -407,15 +415,15 @@ class TopicManager:
                 candidates = self._determine_branch_candidates(main_repo_path)
                 branch_name = f"topic/{sanitized_name}-{short_topic_id}"
                 commit_fallback = self._get_head_commit(main_repo_path)
-                used_branch = self._add_worktree_with_fallback(
+                worktree_branch, source_branch = self._add_worktree_with_fallback(
                     main_repo_path, worktree_path, candidates, branch_name, commit_fallback
                 )
                 self._save_topic_metadata(chat_id, topic_id, project_name)
-                logger.info(f"Cloned project: {project_name} (branch used: {used_branch})")
-                return str(main_repo_path), str(worktree_path)
+                logger.info(f"Cloned project: {project_name} (branch used: {worktree_branch}, source: {source_branch})")
+                return str(main_repo_path), str(worktree_path), worktree_branch, source_branch
 
             logger.info(f"Cloned repository: {project_name}")
-            return str(main_repo_path), None
+            return str(main_repo_path), None, None, None
 
         except subprocess.CalledProcessError as e:
             logger.error(f"Git command failed: {e}")
@@ -466,7 +474,7 @@ class TopicManager:
         topic_id: str,
         main_repo_path: str,
         project_name: str,
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str, str, str, str]:
         """Create a new worktree from existing repository
 
         Args:
@@ -476,7 +484,7 @@ class TopicManager:
             project_name: Project name
 
         Returns:
-            Tuple of (main_repo_path, worktree_path)
+            Tuple of (main_repo_path, worktree_path, worktree_branch, source_branch)
         """
         self._ensure_chat_structure(chat_id)
 
@@ -489,21 +497,21 @@ class TopicManager:
         # Check if worktree already exists
         if worktree_path.exists():
             logger.warning(f"Worktree already exists: {worktree_path}")
-            return main_repo_path, str(worktree_path)
+            return main_repo_path, str(worktree_path), branch_name, candidates[0] if candidates else "unknown"
 
         try:
             repo_path = Path(main_repo_path)
             candidates = self._determine_branch_candidates(repo_path)
             commit_fallback = self._get_head_commit(repo_path)
-            used_branch = self._add_worktree_with_fallback(
+            worktree_branch, source_branch = self._add_worktree_with_fallback(
                 repo_path, worktree_path, candidates, branch_name, commit_fallback
             )
 
             # Save metadata if not already saved
             self._save_topic_metadata(chat_id, topic_id, project_name)
 
-            logger.info(f"Created worktree for existing project: {project_name} (branch used: {used_branch})")
-            return main_repo_path, str(worktree_path)
+            logger.info(f"Created worktree for existing project: {project_name} (branch used: {worktree_branch}, source: {source_branch})")
+            return main_repo_path, str(worktree_path), worktree_branch, source_branch
 
         except (subprocess.CalledProcessError, ValueError) as e:
             logger.error(f"Git command failed: {e}")

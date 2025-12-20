@@ -504,7 +504,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             )
 
             # Clone project only (worktree will be created by /newtask)
-            main_repo_path, _ = self.topic_manager.clone_project(
+            main_repo_path, _, _, _ = self.topic_manager.clone_project(
                 chat_id=context.channel_id,
                 git_url=git_url,
             )
@@ -699,7 +699,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
 
         # Create worktree for the new topic
         try:
-            main_repo_path, worktree_path = self.topic_manager.clone_project(
+            main_repo_path, worktree_path, worktree_branch, source_branch = self.topic_manager.clone_project(
                 chat_id=context.channel_id,
                 git_url=git_url,
                 project_name=repo_name,
@@ -717,7 +717,9 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             settings_key, context.channel_id, thread_id, worktree_path
         )
 
-        branch = self.topic_manager.get_worktree_branch(worktree_path) or "unknown"
+        # Get the branch info for display
+        worktree_branch = worktree_branch or "unknown"
+        source_branch = source_branch or "unknown"
 
         # Send confirmation in manager topic
         safe_task_desc = self._escape_md_v2(task_desc)
@@ -728,7 +730,8 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 f"🧵 Topic ID: `{thread_id}`\n"
                 f"📝 需求: {safe_task_desc}\n"
                 f"📚 仓库: `{repo_name}`\n"
-                f"🌿 分支: `{branch}`\n"
+                f"🌿 工作分支: `{worktree_branch}`\n"
+                f"📌 源分支: `{source_branch}`\n"
                 f"📁 Worktree: `{worktree_path}`"
             )
         )
@@ -746,7 +749,8 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 f"🎯 任务: {safe_task_desc}\n"
                 f"📚 仓库: `{repo_name}`\n"
                 f"📂 主仓库: `{main_repo_path}`\n"
-                f"🌿 分支: `{branch}`\n"
+                f"🌿 工作分支: `{worktree_branch}`\n"
+                f"📌 源分支: `{source_branch}`\n"
                 f"📁 Worktree: `{worktree_path}`\n\n"
                 "现在可以在该话题中开始协作啦～"
             )
