@@ -47,6 +47,70 @@ Vibe Remote lets you operate coding agents via IM. Type in Slack or Telegram to 
 - `IMFactory` to construct clients by `IM_PLATFORM`
 - `Controller` orchestrates sessions, formatting, and command routing
 
+## Project Structure
+
+```
+vibe-remote/
+├── main.py                      # 应用入口点
+├── requirements.txt             # Python依赖
+├── pyproject.toml              # 项目配置
+├── .env.example                # 环境变量模板
+├── agent_routes.example.yaml   # 代理路由配置模板
+├── start.sh                    # 启动脚本
+├── stop.sh                     # 停止脚本
+├── status.sh                   # 状态检查脚本
+├── user_settings.json          # 用户设置持久化存储
+│
+├── config/                     # 配置模块
+│   ├── __init__.py
+│   └── settings.py             # 应用配置和验证
+│
+├── core/                       # 核心业务逻辑
+│   ├── __init__.py
+│   ├── controller.py           # 主控制器
+│   └── handlers/               # 处理器模块
+│       ├── __init__.py
+│       ├── command_handlers.py # 命令处理
+│       ├── message_handler.py  # 消息处理
+│       ├── session_handler.py  # 会话处理
+│       └── settings_handler.py # 设置处理
+│
+├── modules/                    # 功能模块
+│   ├── __init__.py
+│   ├── agent_router.py         # 代理路由
+│   ├── claude_client.py        # Claude API客户端
+│   ├── session_manager.py      # 会话管理
+│   ├── settings_manager.py     # 设置管理
+│   ├── topic_manager.py        # 话题管理
+│   └── agents/                 # 代理相关模块
+│
+├── modules/im/                 # IM平台接口
+│   ├── __init__.py
+│   ├── base.py                 # 基础IM客户端抽象
+│   ├── factory.py              # IM工厂模式
+│   ├── slack.py                # Slack平台实现
+│   └── telegram.py             # Telegram平台实现
+│
+├── modules/im/formatters/      # 消息格式化器
+│   ├── __init__.py
+│   ├── base_formatter.py       # 基础格式化器
+│   ├── slack_formatter.py      # Slack格式化器
+│   └── telegram_formatter.py   # Telegram格式化器
+│
+├── assets/                     # 静态资源
+├── docs/                       # 项目文档
+├── logs/                       # 日志文件
+└── workspaces/                 # 工作空间目录
+```
+
+### 核心模块说明
+
+- **config/**: 配置管理模块，负责环境变量解析和验证
+- **core/**: 核心业务逻辑，包含主控制器和各种处理器
+- **modules/im/**: 多平台IM客户端实现，支持Slack和Telegram
+- **modules/im/formatters/**: 平台特定的消息格式化器
+- **modules/agents/**: 支持多种编程代理(Claude Code, Codex等)
+
 ## Prerequisites
 
 - At least one coding agent CLI installed (Claude Code CLI or Codex CLI). You can install both to mix and match per channel.
