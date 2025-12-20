@@ -882,8 +882,11 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                     if branch and branch != "HEAD" and branch not in branches:
                         branches.append(branch)
 
-                # Prioritize common branches
-                priority = ["main", "master", "develop", "dev"]
+                # Prioritize common branches (both local and remote)
+                priority = [
+                    "main", "master", "develop", "dev",
+                    "origin/main", "origin/master", "origin/develop", "origin/dev"
+                ]
                 prioritized_branches = []
                 for p in priority:
                     if p in branches:

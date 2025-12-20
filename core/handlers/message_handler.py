@@ -289,8 +289,20 @@ class MessageHandler:
             except ValueError:
                 pass
 
-            # Check if input matches a branch name (exact or partial)
-            matched_branches = [b for b in branches if user_input.lower() in b.lower() or b.lower() == user_input.lower()]
+            # First, check for exact match
+            exact_match = None
+            for b in branches:
+                if b.lower() == user_input.lower():
+                    exact_match = b
+                    break
+
+            if exact_match:
+                # Exact match found - use it
+                matched_branches = [exact_match]
+            else:
+                # No exact match - find all branches containing the input
+                matched_branches = [b for b in branches if user_input.lower() in b.lower()]
+
             if len(matched_branches) == 1:
                 selected_branch = matched_branches[0]
                 await command_handlers.handle_newtask_branch_callback_direct(
@@ -298,8 +310,19 @@ class MessageHandler:
                 )
                 return True
             elif len(matched_branches) > 1:
-                # Ambiguous - show matches
-                matches_text = "\n".join(f"• {b}" for b in matched_branches)
+                # Ambiguous - prioritize common branches and show matches
+                priority = ["main", "master", "develop", "dev", "origin/main", "origin/master", "origin/develop", "origin/dev"]
+                prioritized_matches = []
+                # First add priority branches that match
+                for p in priority:
+                    if p in matched_branches:
+                        prioritized_matches.append(p)
+                # Then add remaining matches in their original order
+                for b in matched_branches:
+                    if b not in prioritized_matches:
+                        prioritized_matches.append(b)
+
+                matches_text = "\n".join(f"• {b}" for b in prioritized_matches)
                 await self.im_client.send_message(
                     context,
                     f"⚠️ 匹配到多个分支，请更具体一些：\n{matches_text}",
