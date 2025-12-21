@@ -126,6 +126,20 @@ class CommandHandlers:
                     formatter.format_text(
                         "/clone <url> - Clone repo (manager only)"
                     ),
+                    formatter.format_text("/delete_repo <name> - Delete repository (manager only)"),
+                    "",
+                    formatter.format_bold("Repository Management:"),
+                    formatter.format_text("/ls [path] - List directory contents"),
+                    formatter.format_text("/tree [path] - Show directory tree"),
+                    formatter.format_text("/find <pattern> - Search for files"),
+                    formatter.format_text("/grep <pattern> [path] - Search text in files"),
+                    formatter.format_text("/exec <command> - Execute shell command"),
+                    "",
+                    formatter.format_bold("Git Commands:"),
+                    formatter.format_text("/branch - List all git branches"),
+                    formatter.format_text("/switch <branch> - Switch git branch"),
+                    formatter.format_text("/git_log [count] - Show git commit history"),
+                    formatter.format_text("/git_diff [ref] - Show git diff"),
                 ])
 
             lines.extend([
@@ -1392,3 +1406,622 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
         except Exception as e:
             logger.error(f"Error getting git status: {e}", exc_info=True)
             await self.im_client.send_message(context, f"❌ Error getting git status: {str(e)}")
+
+    # ---------------------------------------------
+    # Additional Utility Commands
+    # ---------------------------------------------
+
+    async def handle_delete_repo(self, context: MessageContext, args: str):
+        """Handle /delete_repo command - delete a cloned repository"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not self._check_manager权限(context):
+                await self.im_client.send_message(
+                    context, "❌ This command can only be used in the manager topic."
+                )
+                return
+
+            if not args:
+                await self.im_client.send_message(
+                    context, "Usage: /delete_repo <repo_name>\nExample: /delete_repo my-awesome-project"
+                )
+                return
+
+            repo_name = args.strip()
+
+            # Get repositories list
+            repos = self.topic_manager.list_repositories(context.channel_id)
+
+            if repo_name not in repos:
+                await self.im_client.send_message(
+                    context, f"❌ Repository '{repo_name}' not found.\nUse /list_repo to see available repositories."
+                )
+                return
+
+            # Delete the repository
+            repo_path = repos[repo_name].get("path")
+            if repo_path and os.path.exists(repo_path):
+                import shutil
+                shutil.rmtree(repo_path)
+                logger.info(f"Deleted repository: {repo_path}")
+
+            # Remove from topic manager
+            self.topic_manager.remove_repository(context.channel_id, repo_name)
+
+            response = (
+                f"✅ Deleted repository: {repo_name}\n"
+                f"📂 Path: {repo_path or 'N/A'}"
+            )
+
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error deleting repository: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error deleting repository: {str(e)}")
+
+    async def handle_ls(self, context: MessageContext, args: str):
+        """Handle /ls command - list directory contents"""
+        try:
+            # Determine the path to list
+            if args:
+                target_path = args.strip()
+                # Expand user path
+                expanded_path = os.path.expanduser(target_path)
+                absolute_path = os.path.abspath(expanded_path)
+            else:
+                # Use current working directory for the context
+                absolute_path = self.controller.get_cwd(context)
+
+            if not os.path.exists(absolute_path):
+                await self.im_client.send_message(
+                    context, f"❌ Path does not exist: {absolute_path}"
+                )
+                return
+
+            if not os.path.isdir(absolute_path):
+                await self.im_client.send_message(
+                    context, f"📄 {absolute_path}"
+                )
+                return
+
+            # List directory contents
+            import subprocess
+            result = subprocess.run(
+                ["ls", "-la", "--color=never", absolute_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode != 0:
+                await self.im_client.send_message(
+                    context, f"❌ Failed to list directory: {result.stderr}"
+                )
+                return
+
+            # Parse output
+            lines = result.stdout.strip().split("\n")
+
+            # Build response
+            lines_to_show = lines[:20]  # Limit to 20 lines to avoid too long messages
+            if len(lines) > 20:
+                lines_to_show.append(f"... and {len(lines) - 20} more items")
+
+            response = f"📁 **Directory:** `{absolute_path}`\n\n" + "\n".join(lines_to_show)
+
+            await self.im_client.send_message(context, response)
+
+        except subprocess.TimeoutExpired:
+            await self.im_client.send_message(context, "❌ Command timed out (limit: 10 seconds)")
+        except Exception as e:
+            logger.error(f"Error listing directory: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error listing directory: {str(e)}")
+
+    async def handle_tree(self, context: MessageContext, args: str):
+        """Handle /tree command - show directory tree"""
+        try:
+            # Determine the path to tree
+            if args:
+                target_path = args.strip()
+                expanded_path = os.path.expanduser(target_path)
+                absolute_path = os.path.abspath(expanded_path)
+            else:
+                absolute_path = self.controller.get_cwd(context)
+
+            if not os.path.exists(absolute_path):
+                await self.im_client.send_message(
+                    context, f"❌ Path does not exist: {absolute_path}"
+                )
+                return
+
+            if not os.path.isdir(absolute_path):
+                await self.im_client.send_message(
+                    context, f"📄 {absolute_path}"
+                )
+                return
+
+            # Try to use tree command if available, otherwise fallback to ls
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ["tree", "-L", "2", "-a", absolute_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+
+                if result.returncode == 0:
+                    output = result.stdout.strip()
+                    lines = output.split("\n")
+                    lines_to_show = lines[:30]  # Limit to 30 lines
+
+                    if len(lines) > 30:
+                        lines_to_show.append(f"... and {len(lines) - 30} more items")
+
+                    response = f"🌳 **Directory Tree:** `{absolute_path}`\n\n" + "\n".join(lines_to_show)
+                    await self.im_client.send_message(context, response)
+                    return
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                # tree command not available or timed out, fallback to ls
+                pass
+
+            # Fallback: use ls -R
+            result = subprocess.run(
+                ["ls", "-R", absolute_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode != 0:
+                await self.im_client.send_message(
+                    context, f"❌ Failed to get tree: {result.stderr}"
+                )
+                return
+
+            output = result.stdout.strip()
+            lines = output.split("\n")
+            lines_to_show = lines[:30]  # Limit to 30 lines
+
+            if len(lines) > 30:
+                lines_to_show.append(f"... and {len(lines) - 30} more items")
+
+            response = f"🌳 **Directory Tree:** `{absolute_path}`\n\n" + "\n".join(lines_to_show)
+
+            await self.im_client.send_message(context, response)
+
+        except subprocess.TimeoutExpired:
+            await self.im_client.send_message(context, "❌ Command timed out (limit: 10 seconds)")
+        except Exception as e:
+            logger.error(f"Error getting tree: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error getting tree: {str(e)}")
+
+    async def handle_git_log(self, context: MessageContext, args: str):
+        """Handle /git_log command - show git commit history"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not context.thread_id:
+                await self.im_client.send_message(
+                    context, "ℹ️ This command must be used in a topic."
+                )
+                return
+
+            # Get worktree path
+            worktree_path = self.topic_manager.get_worktree_for_topic(
+                context.channel_id, context.thread_id
+            )
+
+            if not worktree_path:
+                await self.im_client.send_message(
+                    context, "ℹ️ No project found for this topic. Use /clone or /create_topic to set up a project."
+                )
+                return
+
+            # Parse count argument
+            count = 10  # default
+            if args:
+                try:
+                    count = int(args.strip())
+                    count = max(1, min(count, 50))  # Limit between 1 and 50
+                except ValueError:
+                    pass
+
+            # Run git log
+            import subprocess
+            result = subprocess.run(
+                ["git", "log", f"--oneline", "-n", str(count)],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                await self.im_client.send_message(
+                    context, f"❌ Failed to get git log: {result.stderr}"
+                )
+                return
+
+            output = result.stdout.strip()
+
+            if not output:
+                response = "ℹ️ No commits found."
+            else:
+                lines = output.split("\n")
+                response = f"📜 **Git Log (last {len(lines)} commits):**\n\n" + "\n".join(f"• {line}" for line in lines)
+
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error getting git log: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error getting git log: {str(e)}")
+
+    async def handle_git_diff(self, context: MessageContext, args: str):
+        """Handle /git_diff command - show git diff"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not context.thread_id:
+                await self.im_client.send_message(
+                    context, "ℹ️ This command must be used in a topic."
+                )
+                return
+
+            # Get worktree path
+            worktree_path = self.topic_manager.get_worktree_for_topic(
+                context.channel_id, context.thread_id
+            )
+
+            if not worktree_path:
+                await self.im_client.send_message(
+                    context, "ℹ️ No project found for this topic. Use /clone or /create_topic to set up a project."
+                )
+                return
+
+            # Run git diff
+            import subprocess
+            result = subprocess.run(
+                ["git", "diff"] + (args.split() if args else []),
+                cwd=worktree_path,
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                await self.im_client.send_message(
+                    context, f"❌ Failed to get git diff: {result.stderr}"
+                )
+                return
+
+            output = result.stdout.strip()
+
+            if not output:
+                response = "✅ No differences found."
+            else:
+                # Limit diff output to avoid too long messages
+                lines = output.split("\n")
+                if len(lines) > 100:
+                    lines = lines[:100]
+                    lines.append(f"... and {len(output.split('\\n')) - 100} more lines")
+
+                diff_text = "\n".join(lines)
+                response = f"📊 **Git Diff:**\n```diff\n{diff_text}\n```"
+
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error getting git diff: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error getting git diff: {str(e)}")
+
+    async def handle_branch(self, context: MessageContext, args: str = ""):
+        """Handle /branch command - list git branches"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not context.thread_id:
+                await self.im_client.send_message(
+                    context, "ℹ️ This command must be used in a topic."
+                )
+                return
+
+            # Get worktree path
+            worktree_path = self.topic_manager.get_worktree_for_topic(
+                context.channel_id, context.thread_id
+            )
+
+            if not worktree_path:
+                await self.im_client.send_message(
+                    context, "ℹ️ No project found for this topic. Use /clone or /create_topic to set up a project."
+                )
+                return
+
+            # Run git branch
+            import subprocess
+            result = subprocess.run(
+                ["git", "branch", "-a"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                await self.im_client.send_message(
+                    context, f"❌ Failed to get branches: {result.stderr}"
+                )
+                return
+
+            output = result.stdout.strip()
+
+            if not output:
+                response = "ℹ️ No branches found."
+            else:
+                lines = output.split("\n")
+                # Mark current branch
+                marked_lines = []
+                for line in lines:
+                    if line.startswith("* "):
+                        marked_lines.append(f"✅ {line[2:]} (current)")
+                    elif line.strip():
+                        marked_lines.append(f"  {line}")
+
+                response = f"🌿 **Git Branches:**\n\n" + "\n".join(marked_lines)
+
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error getting branches: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error getting branches: {str(e)}")
+
+    async def handle_switch(self, context: MessageContext, args: str):
+        """Handle /switch command - switch git branch"""
+        try:
+            if not self._is_telegram_with_topics():
+                await self.im_client.send_message(
+                    context, "❌ This command is only available on Telegram with Topics support."
+                )
+                return
+
+            if not context.thread_id:
+                await self.im_client.send_message(
+                    context, "ℹ️ This command must be used in a topic."
+                )
+                return
+
+            if not args:
+                await self.im_client.send_message(
+                    context, "Usage: /switch <branch_name>\nExample: /switch main"
+                )
+                return
+
+            branch_name = args.strip()
+
+            # Get worktree path
+            worktree_path = self.topic_manager.get_worktree_for_topic(
+                context.channel_id, context.thread_id
+            )
+
+            if not worktree_path:
+                await self.im_client.send_message(
+                    context, "ℹ️ No project found for this topic. Use /clone or /create_topic to set up a project."
+                )
+                return
+
+            # Run git checkout/switch
+            import subprocess
+            result = subprocess.run(
+                ["git", "switch", branch_name],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                # Try git checkout as fallback
+                result = subprocess.run(
+                    ["git", "checkout", branch_name],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True
+                )
+
+            if result.returncode != 0:
+                await self.im_client.send_message(
+                    context, f"❌ Failed to switch branch: {result.stderr}"
+                )
+                return
+
+            response = f"✅ Switched to branch: `{branch_name}`"
+
+            await self.im_client.send_message(context, response)
+
+        except Exception as e:
+            logger.error(f"Error switching branch: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error switching branch: {str(e)}")
+
+    async def handle_find(self, context: MessageContext, args: str):
+        """Handle /find command - search for files"""
+        try:
+            if not args:
+                await self.im_client.send_message(
+                    context, "Usage: /find <pattern>\nExample: /find *.py"
+                )
+                return
+
+            pattern = args.strip()
+            search_path = self.controller.get_cwd(context)
+
+            # Run find command
+            import subprocess
+            result = subprocess.run(
+                ["find", search_path, "-type", "f", "-name", pattern],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+
+            if result.returncode != 0:
+                await self.im_client.send_message(
+                    context, f"❌ Failed to search files: {result.stderr}"
+                )
+                return
+
+            output = result.stdout.strip()
+
+            if not output:
+                response = f"ℹ️ No files found matching pattern: {pattern}"
+            else:
+                lines = output.split("\n")
+                lines_to_show = lines[:20]  # Limit to 20 results
+
+                if len(lines) > 20:
+                    response = f"🔍 **Search Results:** `{pattern}` (showing first {len(lines_to_show)} of {len(lines)})\n\n" + "\n".join(f"• {line}" for line in lines_to_show)
+                else:
+                    response = f"🔍 **Search Results:** `{pattern}`\n\n" + "\n".join(f"• {line}" for line in lines)
+
+            await self.im_client.send_message(context, response)
+
+        except subprocess.TimeoutExpired:
+            await self.im_client.send_message(context, "❌ Search timed out (limit: 15 seconds)")
+        except Exception as e:
+            logger.error(f"Error searching files: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error searching files: {str(e)}")
+
+    async def handle_grep(self, context: MessageContext, args: str):
+        """Handle /grep command - search for text in files"""
+        try:
+            if not args:
+                await self.im_client.send_message(
+                    context, "Usage: /grep <pattern> [path]\nExample: /grep \"def function\" or /grep \"import\" ./src"
+                )
+                return
+
+            parts = args.split(maxsplit=1)
+            pattern = parts[0]
+            search_path = parts[1] if len(parts) > 1 else self.controller.get_cwd(context)
+
+            # Run grep command
+            import subprocess
+            result = subprocess.run(
+                ["grep", "-r", "--color=never", "-n", pattern, search_path],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+
+            if result.returncode != 0:
+                await self.im_client.send_message(
+                    context, f"❌ Failed to search text: {result.stderr}"
+                )
+                return
+
+            output = result.stdout.strip()
+
+            if not output:
+                response = f"ℹ️ No matches found for pattern: {pattern}"
+            else:
+                lines = output.split("\n")
+                lines_to_show = lines[:20]  # Limit to 20 results
+
+                if len(lines) > 20:
+                    response = f"🔍 **Search Results:** `{pattern}` in `{search_path}` (showing first {len(lines_to_show)} of {len(lines)})\n\n" + "\n".join(f"• {line}" for line in lines_to_show)
+                else:
+                    response = f"🔍 **Search Results:** `{pattern}` in `{search_path}`\n\n" + "\n".join(f"• {line}" for line in lines)
+
+            await self.im_client.send_message(context, response)
+
+        except subprocess.TimeoutExpired:
+            await self.im_client.send_message(context, "❌ Search timed out (limit: 15 seconds)")
+        except Exception as e:
+            logger.error(f"Error grepping: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error grepping: {str(e)}")
+
+    async def handle_exec(self, context: MessageContext, args: str):
+        """Handle /exec command - execute shell command (with safety checks)"""
+        try:
+            if not args:
+                await self.im_client.send_message(
+                    context, "Usage: /exec <command>\nExample: /exec echo \"Hello World\""
+                )
+                return
+
+            command = args.strip()
+
+            # Safety checks
+            dangerous_commands = ['rm -rf', 'sudo', 'su ', 'chmod 777', 'dd if=', 'mkfs', ':(){:|:&};:']
+            for dangerous in dangerous_commands:
+                if dangerous in command:
+                    await self.im_client.send_message(
+                        context, f"❌ Blocked: dangerous command pattern detected: {dangerous}"
+                    )
+                    return
+
+            # Limit command length
+            if len(command) > 200:
+                await self.im_client.send_message(
+                    context, "❌ Command too long (limit: 200 characters)"
+                )
+                return
+
+            # Get working directory
+            working_dir = self.controller.get_cwd(context)
+
+            # Execute command
+            import subprocess
+            result = subprocess.run(
+                command,
+                cwd=working_dir,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            # Build response
+            output_parts = []
+            output_parts.append(f"💻 **Command:** `{command}`")
+            output_parts.append(f"📁 **Working Dir:** `{working_dir}`")
+
+            if result.stdout:
+                stdout_lines = result.stdout.strip().split("\n")
+                stdout_to_show = stdout_lines[:30]  # Limit output
+                if len(stdout_lines) > 30:
+                    output_parts.append(f"\n📤 **Output:** (showing first {len(stdout_to_show)} lines)\n" + "\n".join(stdout_to_show))
+                else:
+                    output_parts.append(f"\n📤 **Output:**\n" + "\n".join(stdout_to_show))
+
+            if result.stderr:
+                stderr_lines = result.stderr.strip().split("\n")
+                stderr_to_show = stderr_lines[:30]
+                if len(stderr_lines) > 30:
+                    output_parts.append(f"\n⚠️ **Error:** (showing first {len(stderr_to_show)} lines)\n" + "\n".join(stderr_to_show))
+                else:
+                    output_parts.append(f"\n⚠️ **Error:**\n" + "\n".join(stderr_to_show))
+
+            output_parts.append(f"\n✅ **Exit Code:** {result.returncode}")
+
+            response = "\n".join(output_parts)
+
+            await self.im_client.send_message(context, response)
+
+        except subprocess.TimeoutExpired:
+            await self.im_client.send_message(context, "❌ Command timed out (limit: 30 seconds)")
+        except Exception as e:
+            logger.error(f"Error executing command: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ Error executing command: {str(e)}")

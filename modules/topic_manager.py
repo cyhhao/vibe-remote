@@ -489,6 +489,50 @@ class TopicManager:
 
         return repos
 
+    def remove_repository(self, chat_id: str, repo_name: str) -> bool:
+        """Remove a cloned repository
+
+        Args:
+            chat_id: Telegram chat ID
+            repo_name: Repository name in format "owner/repo"
+
+        Returns:
+            True if repository was removed, False if not found
+        """
+        try:
+            self._ensure_chat_structure(chat_id)
+            chat_dir = self._get_chat_dir(chat_id)
+            repo_root = chat_dir / "repo"
+
+            # Parse repo_name to get owner and repo
+            if "/" not in repo_name:
+                logger.warning(f"Invalid repo name format: {repo_name}, expected 'owner/repo'")
+                return False
+
+            owner, repo = repo_name.split("/", 1)
+            repo_dir = repo_root / owner / repo
+
+            if not repo_dir.exists():
+                logger.warning(f"Repository not found: {repo_dir}")
+                return False
+
+            # Remove the repository directory
+            import shutil
+            shutil.rmtree(repo_dir)
+            logger.info(f"Removed repository: {repo_dir}")
+
+            # Clean up empty owner directory if it exists
+            owner_dir = repo_root / owner
+            if owner_dir.exists() and not any(owner_dir.iterdir()):
+                owner_dir.rmdir()
+                logger.info(f"Removed empty owner directory: {owner_dir}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error removing repository {repo_name} for chat {chat_id}: {e}", exc_info=True)
+            return False
+
     def _create_worktree_from_existing(
         self,
         chat_id: str,

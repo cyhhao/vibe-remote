@@ -132,6 +132,17 @@ class Controller:
             "delete_topic": self.command_handler.handle_delete_topic,
             "project_info": self.command_handler.handle_project_info,
             "git_status": self.command_handler.handle_git_status,
+            # Additional utility commands
+            "delete_repo": self.command_handler.handle_delete_repo,
+            "ls": self.command_handler.handle_ls,
+            "tree": self.command_handler.handle_tree,
+            "git_log": self.command_handler.handle_git_log,
+            "git_diff": self.command_handler.handle_git_diff,
+            "branch": self.command_handler.handle_branch,
+            "switch": self.command_handler.handle_switch,
+            "find": self.command_handler.handle_find,
+            "grep": self.command_handler.handle_grep,
+            "exec": self.command_handler.handle_exec,
         }
 
         # Register callbacks with the IM client
