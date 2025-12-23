@@ -1,4 +1,4 @@
-claude-code-sdk>=0.0.19
+claude-code-sdk>=0.0.25
 python-telegram-bot>=20.0
 python-dotenv>=1.0.0
 anyio>=4.0.0
