@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from modules.im import MessageContext
@@ -22,6 +23,7 @@ class AgentRequest:
     ack_message_id: Optional[str] = None
     last_agent_message: Optional[str] = None
     last_agent_message_parse_mode: Optional[str] = None
+    started_at: float = field(default_factory=time.monotonic)
 
 
 @dataclass
@@ -44,6 +46,33 @@ class BaseAgent(ABC):
         self.config = controller.config
         self.im_client = controller.im_client
         self.settings_manager = controller.settings_manager
+
+    def _calculate_duration_ms(self, started_at: Optional[float]) -> int:
+        if not started_at:
+            return 0
+        elapsed = time.monotonic() - started_at
+        return max(0, int(elapsed * 1000))
+
+    async def emit_result_message(
+        self,
+        context: MessageContext,
+        result_text: Optional[str],
+        subtype: str = "success",
+        duration_ms: Optional[int] = None,
+        started_at: Optional[float] = None,
+        parse_mode: str = "markdown",
+        suffix: Optional[str] = None,
+    ) -> None:
+        if duration_ms is None:
+            duration_ms = self._calculate_duration_ms(started_at)
+        formatted = self.im_client.formatter.format_result_message(
+            subtype or "", duration_ms, result_text
+        )
+        if suffix:
+            formatted = f"{formatted}\n{suffix}"
+        await self.controller.emit_agent_message(
+            context, "result", formatted, parse_mode=parse_mode
+        )
 
     @abstractmethod
     async def handle_message(self, request: AgentRequest) -> None:
