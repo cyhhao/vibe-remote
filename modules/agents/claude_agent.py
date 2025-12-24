@@ -3,6 +3,8 @@ import logging
 import os
 from typing import Callable, Optional
 
+from claude_code_sdk import TextBlock
+
 from modules.agents.base import AgentRequest, BaseAgent
 from modules.im import MessageContext
 
@@ -21,6 +23,7 @@ class ClaudeAgent(BaseAgent):
         self.receiver_tasks = controller.receiver_tasks
         self.claude_sessions = controller.claude_sessions
         self.claude_client = controller.claude_client
+        self._last_assistant_text: dict[str, str] = {}
 
     async def handle_message(self, request: AgentRequest) -> None:
         context = request.context
@@ -122,6 +125,7 @@ class ClaudeAgent(BaseAgent):
         """Receive messages from Claude SDK client."""
         try:
             settings_key = self.controller._get_settings_key(context)
+            composite_key = f"{base_session_id}:{working_path}"
             async for message in client.receive_messages():
                 try:
                     claude_session_id = self._maybe_capture_session_id(
@@ -136,19 +140,46 @@ class ClaudeAgent(BaseAgent):
                         continue
 
                     message_type = self._detect_message_type(message)
-                    if message_type and self.settings_manager.is_message_type_hidden(
-                        settings_key, message_type
-                    ):
-                        continue
-
-                    formatted_message = self.claude_client.format_message(
-                        message,
-                        get_relative_path=lambda path: self.get_relative_path(
-                            path, context
-                        ),
-                    )
+                    formatted_message = None
+                    if message_type == "assistant":
+                        formatted_message = self.claude_client.format_message(
+                            message,
+                            get_relative_path=lambda path: self.get_relative_path(
+                                path, context
+                            ),
+                        )
+                        assistant_text = self._extract_text_blocks(message)
+                        if assistant_text:
+                            self._last_assistant_text[composite_key] = assistant_text
+                        if self.settings_manager.is_message_type_hidden(
+                            settings_key, message_type
+                        ):
+                            continue
+                    else:
+                        if message_type and self.settings_manager.is_message_type_hidden(
+                            settings_key, message_type
+                        ):
+                            if message_type == "result":
+                                self._last_assistant_text.pop(composite_key, None)
+                            continue
+                        formatted_message = self.claude_client.format_message(
+                            message,
+                            get_relative_path=lambda path: self.get_relative_path(
+                                path, context
+                            ),
+                        )
                     if not formatted_message or not formatted_message.strip():
                         continue
+                    if (
+                        message_type == "result"
+                        and not getattr(message, "result", None)
+                        and self.settings_manager.is_message_type_hidden(
+                            settings_key, "assistant"
+                        )
+                    ):
+                        fallback = self._last_assistant_text.get(composite_key)
+                        if fallback:
+                            formatted_message = f"{formatted_message}\n\n{fallback}"
 
                     if self.config.platform == "slack":
                         formatted_message = formatted_message + "\n---"
@@ -161,6 +192,7 @@ class ClaudeAgent(BaseAgent):
                     )
 
                     if message_type == "result":
+                        self._last_assistant_text.pop(composite_key, None)
                         session = await self.session_manager.get_or_create_session(
                             context.user_id, context.channel_id
                         )
@@ -238,6 +270,16 @@ class ClaudeAgent(BaseAgent):
                 )
                 return session_id
         return None
+
+    def _extract_text_blocks(self, message) -> str:
+        """Extract text-only content blocks for result fallbacks."""
+        parts = []
+        for block in getattr(message, "content", []) or []:
+            if isinstance(block, TextBlock):
+                text = block.text.strip() if block.text else ""
+                if text:
+                    parts.append(self.claude_client.formatter.escape_special_chars(text))
+        return "\n\n".join(parts).strip()
 
     def _detect_message_type(self, message) -> Optional[str]:
         """Infer message type name from Claude SDK class."""
