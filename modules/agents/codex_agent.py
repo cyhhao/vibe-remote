@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import signal
+import time
 from asyncio.subprocess import Process
 from typing import Dict, Optional, Tuple
 
@@ -26,6 +27,7 @@ class CodexAgent(BaseAgent):
         self.base_process_index: Dict[str, str] = {}
         self.composite_to_base: Dict[str, str] = {}
         self._initialized_sessions: set[str] = set()
+        self._run_start_times: Dict[str, float] = {}
         self._slack_markdown_converter = (
             SlackMarkdownConverter()
             if getattr(self.controller.config, "platform", None) == "slack"
@@ -87,6 +89,7 @@ class CodexAgent(BaseAgent):
             process,
             request.settings_key,
         )
+        self._run_start_times[request.composite_session_id] = time.monotonic()
         self.base_process_index[request.base_session_id] = request.composite_session_id
         self.composite_to_base[request.composite_session_id] = request.base_session_id
         logger.info(
@@ -137,9 +140,17 @@ class CodexAgent(BaseAgent):
 
     def _unregister_process(self, composite_key: str):
         self.active_processes.pop(composite_key, None)
+        self._run_start_times.pop(composite_key, None)
         base_id = self.composite_to_base.pop(composite_key, None)
         if base_id and self.base_process_index.get(base_id) == composite_key:
             self.base_process_index.pop(base_id, None)
+
+    def _get_duration_ms(self, composite_key: str) -> int:
+        started_at = self._run_start_times.get(composite_key)
+        if not started_at:
+            return 0
+        elapsed = time.monotonic() - started_at
+        return max(0, int(elapsed * 1000))
 
     async def _terminate_process(self, composite_key: str) -> bool:
         entry = self.active_processes.get(composite_key)
@@ -248,14 +259,17 @@ class CodexAgent(BaseAgent):
             session_key = request.composite_session_id
             if session_key not in self._initialized_sessions:
                 self._initialized_sessions.add(session_key)
-                system_text = (
-                    ":wrench: System init\n"
-                    f":file_folder: Working directory: {request.working_path}\n"
-                    f":link: Session ID: {thread_id}\n"
-                    ":sparkles: Ready to work!\n---"
+                system_text = self.im_client.formatter.format_system_message(
+                    request.working_path, "init", thread_id
                 )
+                if self.config.platform == "slack":
+                    system_text = system_text + "\n---"
+                parse_mode = None if self._slack_markdown_converter else "markdown"
                 await self.controller.emit_agent_message(
-                    request.context, "system", system_text, parse_mode="markdown"
+                    request.context,
+                    "system",
+                    system_text,
+                    parse_mode=parse_mode,
                 )
             return
 
@@ -315,13 +329,17 @@ class CodexAgent(BaseAgent):
 
         if event_type == "turn.completed":
             if request.last_agent_message:
+                duration_ms = self._get_duration_ms(request.composite_session_id)
+                formatted = self.im_client.formatter.format_result_message(
+                    "success", duration_ms, request.last_agent_message
+                )
                 parse_mode = request.last_agent_message_parse_mode
                 if parse_mode is None and not self._slack_markdown_converter:
                     parse_mode = "markdown"
                 await self.controller.emit_agent_message(
                     request.context,
                     "result",
-                    request.last_agent_message,
+                    formatted,
                     parse_mode=parse_mode,
                 )
                 request.last_agent_message = None
