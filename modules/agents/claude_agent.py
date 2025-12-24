@@ -155,6 +155,40 @@ class ClaudeAgent(BaseAgent):
                             settings_key, message_type
                         ):
                             continue
+                    elif message_type == "result":
+                        if self.settings_manager.is_message_type_hidden(
+                            settings_key, message_type
+                        ):
+                            self._last_assistant_text.pop(composite_key, None)
+                            continue
+                        result_text = getattr(message, "result", None)
+                        if (
+                            not result_text
+                            and self.settings_manager.is_message_type_hidden(
+                                settings_key, "assistant"
+                            )
+                        ):
+                            fallback = self._last_assistant_text.get(composite_key)
+                            if fallback:
+                                result_text = fallback
+                        suffix = "---" if self.config.platform == "slack" else None
+                        await self.emit_result_message(
+                            context,
+                            result_text,
+                            subtype=getattr(message, "subtype", "") or "",
+                            duration_ms=getattr(message, "duration_ms", 0),
+                            parse_mode="markdown",
+                            suffix=suffix,
+                        )
+                        self._last_assistant_text.pop(composite_key, None)
+                        session = await self.session_manager.get_or_create_session(
+                            context.user_id, context.channel_id
+                        )
+                        if session:
+                            session.session_active[
+                                f"{base_session_id}:{working_path}"
+                            ] = False
+                        continue
                     else:
                         if message_type and self.settings_manager.is_message_type_hidden(
                             settings_key, message_type
@@ -170,16 +204,6 @@ class ClaudeAgent(BaseAgent):
                         )
                     if not formatted_message or not formatted_message.strip():
                         continue
-                    if (
-                        message_type == "result"
-                        and not getattr(message, "result", None)
-                        and self.settings_manager.is_message_type_hidden(
-                            settings_key, "assistant"
-                        )
-                    ):
-                        fallback = self._last_assistant_text.get(composite_key)
-                        if fallback:
-                            formatted_message = f"{formatted_message}\n\n{fallback}"
 
                     if self.config.platform == "slack":
                         formatted_message = formatted_message + "\n---"

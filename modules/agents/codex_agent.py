@@ -248,14 +248,17 @@ class CodexAgent(BaseAgent):
             session_key = request.composite_session_id
             if session_key not in self._initialized_sessions:
                 self._initialized_sessions.add(session_key)
-                system_text = (
-                    ":wrench: System init\n"
-                    f":file_folder: Working directory: {request.working_path}\n"
-                    f":link: Session ID: {thread_id}\n"
-                    ":sparkles: Ready to work!\n---"
+                system_text = self.im_client.formatter.format_system_message(
+                    request.working_path, "init", thread_id
                 )
+                if self.config.platform == "slack":
+                    system_text = system_text + "\n---"
+                parse_mode = None if self._slack_markdown_converter else "markdown"
                 await self.controller.emit_agent_message(
-                    request.context, "system", system_text, parse_mode="markdown"
+                    request.context,
+                    "system",
+                    system_text,
+                    parse_mode=parse_mode,
                 )
             return
 
@@ -318,10 +321,11 @@ class CodexAgent(BaseAgent):
                 parse_mode = request.last_agent_message_parse_mode
                 if parse_mode is None and not self._slack_markdown_converter:
                     parse_mode = "markdown"
-                await self.controller.emit_agent_message(
+                await self.emit_result_message(
                     request.context,
-                    "result",
                     request.last_agent_message,
+                    subtype="success",
+                    started_at=request.started_at,
                     parse_mode=parse_mode,
                 )
                 request.last_agent_message = None
