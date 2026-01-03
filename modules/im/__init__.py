@@ -20,6 +20,7 @@ from .base import (
     MessageContext,
     InlineButton,
     InlineKeyboard,
+    ImageData,
 )
 
 # Factory for client creation
@@ -35,10 +36,11 @@ __version__ = "1.0.0"
 __all__ = [
     # Core abstractions
     "BaseIMClient",
-    "BaseIMConfig", 
+    "BaseIMConfig",
     "MessageContext",
     "InlineButton",
     "InlineKeyboard",
+    "ImageData",
     # Factory
     "IMFactory",
     # Implementations available via dynamic import

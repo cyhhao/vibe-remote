@@ -5,6 +5,7 @@ from typing import Optional
 
 from modules.agents import AgentRequest
 from modules.im import MessageContext
+from core.status_updater import StatusUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,18 @@ class MessageHandler:
             except Exception as ack_err:
                 logger.debug(f"Failed to send ack message: {ack_err}")
 
+            # Create status updater for periodic progress updates (Slack only)
+            status_updater = None
+            if ack_message_id and hasattr(self.im_client, "edit_message_text"):
+                status_updater = StatusUpdater(
+                    edit_message=self.im_client.edit_message_text,
+                    channel_id=ack_context.channel_id,
+                    message_id=ack_message_id,
+                    thread_id=ack_context.thread_id,
+                    agent_name=agent_name or self.controller.agent_service.default_agent,
+                )
+                status_updater.start()
+
             request = AgentRequest(
                 context=context,
                 message=message,
@@ -94,14 +107,24 @@ class MessageHandler:
                 composite_session_id=composite_key,
                 settings_key=settings_key,
                 ack_message_id=ack_message_id,
+                status_updater=status_updater,
             )
             try:
                 await self.controller.agent_service.handle_message(agent_name, request)
             except KeyError:
                 await self._handle_missing_agent(context, agent_name)
-            finally:
+                # Only stop/cleanup on error - normal flow is handled by agent
+                if request.status_updater:
+                    await request.status_updater.stop(update_final=False)
                 if request.ack_message_id:
                     await self._delete_ack(context.channel_id, request)
+            except Exception:
+                # Stop status updater on any error
+                if request.status_updater:
+                    await request.status_updater.stop(update_final=False)
+                if request.ack_message_id:
+                    await self._delete_ack(context.channel_id, request)
+                raise
         except Exception as e:
             logger.error(f"Error processing user message: {e}", exc_info=True)
             await self.im_client.send_message(
@@ -153,6 +176,18 @@ class MessageHandler:
 
             elif callback_data == "cmd_settings":
                 await settings_handler.handle_settings(context)
+
+            elif callback_data == "cmd_create_pr":
+                await command_handlers.handle_create_pr(context)
+
+            elif callback_data == "cmd_codex_review":
+                await command_handlers.handle_codex_review(context)
+
+            elif callback_data == "cmd_merge_pr":
+                await command_handlers.handle_merge_pr(context)
+
+            elif callback_data == "cmd_close_pr":
+                await command_handlers.handle_close_pr(context)
 
             elif (
                 callback_data.startswith("info_") and callback_data != "info_msg_types"

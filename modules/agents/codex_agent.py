@@ -89,6 +89,8 @@ class CodexAgent(BaseAgent):
         )
         self.base_process_index[request.base_session_id] = request.composite_session_id
         self.composite_to_base[request.composite_session_id] = request.base_session_id
+        # Mark session as active when starting Codex process
+        self.controller.mark_session_active(request.composite_session_id)
         logger.info(
             f"Codex session {request.composite_session_id} started (pid={process.pid})"
         )
@@ -233,6 +235,8 @@ class CodexAgent(BaseAgent):
     async def _handle_event(
         self, event: Dict, request: AgentRequest
     ):
+        # Update activity timestamp on each event received
+        self.controller.mark_session_active(request.composite_session_id)
         event_type = event.get("type")
 
         if event_type == "thread.started":
@@ -314,6 +318,8 @@ class CodexAgent(BaseAgent):
             )
             request.last_agent_message = None
             request.last_agent_message_parse_mode = None
+            # Mark session as idle after turn failed
+            self.controller.mark_session_idle(request.composite_session_id)
             return
 
         if event_type == "turn.completed":
@@ -327,9 +333,13 @@ class CodexAgent(BaseAgent):
                     subtype="success",
                     started_at=request.started_at,
                     parse_mode=parse_mode,
+                    working_path=request.working_path,
+                    composite_session_id=request.composite_session_id,
                 )
                 request.last_agent_message = None
                 request.last_agent_message_parse_mode = None
+            # Mark session as idle after turn is completed
+            self.controller.mark_session_idle(request.composite_session_id)
             return
 
     async def _delete_ack(self, request: AgentRequest):

@@ -129,6 +129,25 @@ Telegram supports traditional slash commands:
 
 The system dynamically loads the appropriate IM client based on `IM_PLATFORM`. Configuration validation ensures required tokens are present for the selected platform.
 
+### Chrome Extension Integration (Screenshots)
+
+The bot supports Chrome extension integration for taking screenshots via the `--chrome` flag. When enabled:
+
+1. **Requirements**:
+   - Install the Claude Chrome extension in your browser
+   - Keep Chrome browser running with the extension enabled
+   - Set `CLAUDE_CHROME_ENABLED=true` in your `.env` file
+
+2. **Usage**:
+   - Ask Claude to take a screenshot (e.g., "go to google.com and take a screenshot")
+   - The screenshot will be automatically sent as an image to your IM channel
+
+3. **How it works**:
+   - When `CLAUDE_CHROME_ENABLED=true`, the bot passes `--chrome` flag to Claude Code
+   - Claude can use browser automation tools via the Chrome extension
+   - Screenshots are captured and sent back as images in the ToolResultBlock
+   - The bot extracts base64-encoded images and sends them via platform-specific image APIs
+
 ## Adding New IM Platforms
 
 To extend support to new platforms (Discord, Teams, etc.):
@@ -285,3 +304,49 @@ Different platforms have unique markdown requirements:
 
 - **Process Management**:
   - 不要直接执行杀进程来重启服务，使用./start.sh 会自动杀掉对应进程并重启
+
+## AI Workflow Instructions
+
+**IMPORTANT**: Claude Code should always follow these workflow instructions by default, without requiring user prompting.
+
+### Git Worktree Strategy for New Threads
+
+When starting work on a new feature or task that requires code changes:
+
+1. **Create a new branch from main/master**:
+   ```bash
+   git fetch origin
+   git branch feature/your-feature-name origin/master
+   ```
+
+2. **Use git worktree to isolate work**:
+   ```bash
+   # Create a worktree in a sibling directory to avoid interfering with other jobs
+   git worktree add ../vibe-remote-<feature-name> feature/your-feature-name
+   cd ../vibe-remote-<feature-name>
+   ```
+
+3. **Benefits of worktrees**:
+   - Multiple features can be developed in parallel without conflicts
+   - Each worktree has its own working directory and index
+   - No need to stash or commit work-in-progress when switching tasks
+   - Other jobs/sessions won't be affected by your changes
+
+4. **Cleanup after merging**:
+   ```bash
+   # After PR is merged, remove the worktree
+   git worktree remove ../vibe-remote-<feature-name>
+   git branch -d feature/your-feature-name
+   ```
+
+### Default AI Behavior
+
+Claude Code should automatically:
+
+- Follow all instructions in this CLAUDE.md file without being prompted
+- Use git worktrees for any new feature work to maintain isolation
+- Base new branches off the main branch (master)
+- Keep commits atomic and well-documented
+- Run tests before committing when applicable
+- Use `./restart.sh` for service restarts (never kill processes directly)
+- Never include `Co-Authored-By` lines in commit messages or PR descriptions

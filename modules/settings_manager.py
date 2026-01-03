@@ -24,6 +24,9 @@ class UserSettings:
     )
     # Slack active threads: {channel_id: {thread_ts: last_active_timestamp}}
     active_slack_threads: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    # Thread-to-branch mapping: {base_session_id: branch_name}
+    # Tracks which git branch is associated with each thread/session
+    thread_branches: Dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
@@ -76,6 +79,10 @@ class SettingsManager:
                         # Ensure active_slack_threads exists and is properly formatted
                         if "active_slack_threads" not in user_data:
                             user_data["active_slack_threads"] = {}
+
+                        # Ensure thread_branches exists
+                        if "thread_branches" not in user_data:
+                            user_data["thread_branches"] = {}
 
                         # Always keep user_id as string in memory
                         user_id = user_id_str
@@ -409,3 +416,45 @@ class SettingsManager:
         channels_to_clean = list(settings.active_slack_threads.keys())
         for channel_id in channels_to_clean:
             self._cleanup_expired_threads_for_channel(user_id, channel_id)
+
+    # ---------------------------------------------
+    # Thread-to-branch mapping management
+    # ---------------------------------------------
+    def set_thread_branch(
+        self, user_id: Union[int, str], base_session_id: str, branch_name: str
+    ):
+        """Associate a git branch with a thread/session.
+
+        This allows tracking which branch work is being done on for each thread,
+        enabling proper isolation between concurrent threads working on different branches.
+        """
+        settings = self.get_user_settings(user_id)
+        settings.thread_branches[base_session_id] = branch_name
+        self.update_user_settings(user_id, settings)
+        logger.info(
+            f"Set thread branch for user {user_id}: {base_session_id} -> {branch_name}"
+        )
+
+    def get_thread_branch(
+        self, user_id: Union[int, str], base_session_id: str
+    ) -> Optional[str]:
+        """Get the git branch associated with a thread/session."""
+        settings = self.get_user_settings(user_id)
+        return settings.thread_branches.get(base_session_id)
+
+    def clear_thread_branch(self, user_id: Union[int, str], base_session_id: str):
+        """Clear the branch association for a thread/session (e.g., after PR merge)."""
+        settings = self.get_user_settings(user_id)
+        if base_session_id in settings.thread_branches:
+            del settings.thread_branches[base_session_id]
+            self.update_user_settings(user_id, settings)
+            logger.info(
+                f"Cleared thread branch for user {user_id}: {base_session_id}"
+            )
+
+    def get_all_thread_branches(
+        self, user_id: Union[int, str]
+    ) -> Dict[str, str]:
+        """Get all thread-to-branch mappings for a user."""
+        settings = self.get_user_settings(user_id)
+        return settings.thread_branches.copy()

@@ -24,12 +24,21 @@ class ClaudeAgent(BaseAgent):
         self.claude_sessions = controller.claude_sessions
         self.claude_client = controller.claude_client
         self._last_assistant_text: dict[str, str] = {}
+        # Track active status updaters per session
+        self._status_updaters: dict[str, "StatusUpdater"] = {}
 
     async def handle_message(self, request: AgentRequest) -> None:
         context = request.context
 
         try:
             client = await self.session_handler.get_or_create_claude_session(context)
+
+            # Track status updater for this session
+            if request.status_updater:
+                self._status_updaters[request.composite_session_id] = request.status_updater
+
+            # Mark session as active when starting to process a message
+            self.controller.mark_session_active(request.composite_session_id)
 
             await client.query(
                 request.message, session_id=request.composite_session_id
@@ -128,6 +137,9 @@ class ClaudeAgent(BaseAgent):
             composite_key = f"{base_session_id}:{working_path}"
             async for message in client.receive_messages():
                 try:
+                    # Update activity timestamp on each message received
+                    self.controller.mark_session_active(composite_key)
+
                     claude_session_id = self._maybe_capture_session_id(
                         message, base_session_id, working_path, settings_key
                     )
@@ -138,6 +150,23 @@ class ClaudeAgent(BaseAgent):
 
                     if self.claude_client._is_skip_message(message):
                         continue
+
+                    # Update status based on message content
+                    self._update_status_from_message(composite_key, message)
+
+                    # Extract and send images first
+                    images = self.claude_client.extract_images_from_message(message)
+                    for image in images:
+                        try:
+                            await self.im_client.send_photo(
+                                self._get_target_context(context),
+                                image_data=image.data,
+                                caption="📸 Screenshot",
+                                filename=image.filename,
+                            )
+                            logger.info(f"Sent image ({image.media_type}) to user")
+                        except Exception as img_err:
+                            logger.error(f"Failed to send image: {img_err}")
 
                     message_type = self._detect_message_type(message)
                     formatted_message = None
@@ -160,6 +189,8 @@ class ClaudeAgent(BaseAgent):
                             settings_key, message_type
                         ):
                             self._last_assistant_text.pop(composite_key, None)
+                            # Mark session as idle even when result is hidden
+                            self.controller.mark_session_idle(composite_key)
                             continue
                         result_text = getattr(message, "result", None)
                         if (
@@ -172,6 +203,10 @@ class ClaudeAgent(BaseAgent):
                             if fallback:
                                 result_text = fallback
                         suffix = "---" if self.config.platform == "slack" else None
+                        # Stop and clean up status updater before result message
+                        status_updater = self._status_updaters.pop(composite_key, None)
+                        if status_updater:
+                            await status_updater.stop()
                         await self.emit_result_message(
                             context,
                             result_text,
@@ -179,8 +214,12 @@ class ClaudeAgent(BaseAgent):
                             duration_ms=getattr(message, "duration_ms", 0),
                             parse_mode="markdown",
                             suffix=suffix,
+                            working_path=working_path,
+                            composite_session_id=composite_key,
                         )
                         self._last_assistant_text.pop(composite_key, None)
+                        # Mark session as idle after result is processed
+                        self.controller.mark_session_idle(composite_key)
                         session = await self.session_manager.get_or_create_session(
                             context.user_id, context.channel_id
                         )
@@ -208,6 +247,12 @@ class ClaudeAgent(BaseAgent):
                     if self.config.platform == "slack":
                         formatted_message = formatted_message + "\n---"
 
+                    # Stop status updater before result message
+                    if message_type == "result":
+                        status_updater = self._status_updaters.pop(composite_key, None)
+                        if status_updater:
+                            await status_updater.stop()
+
                     await self.controller.emit_agent_message(
                         context,
                         message_type or "assistant",
@@ -217,6 +262,8 @@ class ClaudeAgent(BaseAgent):
 
                     if message_type == "result":
                         self._last_assistant_text.pop(composite_key, None)
+                        # Mark session as idle after result is processed
+                        self.controller.mark_session_idle(composite_key)
                         session = await self.session_manager.get_or_create_session(
                             context.user_id, context.channel_id
                         )
@@ -235,6 +282,10 @@ class ClaudeAgent(BaseAgent):
                 f"Error in Claude receiver for session {composite_key}: {e}",
                 exc_info=True,
             )
+            # Clean up status updater on error (don't show completion message)
+            status_updater = self._status_updaters.pop(composite_key, None)
+            if status_updater:
+                await status_updater.stop(update_final=False)
             await self.session_handler.handle_session_error(composite_key, context, e)
 
     async def _delete_ack(self, context: MessageContext, request: AgentRequest):
@@ -317,3 +368,98 @@ class ClaudeAgent(BaseAgent):
             "ResultMessage": "result",
         }
         return mapping.get(class_name)
+
+    def _update_status_from_message(self, composite_key: str, message) -> None:
+        """Update the status updater based on message content."""
+        status_updater = self._status_updaters.get(composite_key)
+        if not status_updater:
+            return
+
+        activity = self._extract_activity_from_message(message)
+        if activity:
+            status_updater.set_activity(activity)
+
+    def _extract_activity_from_message(self, message) -> Optional[str]:
+        """Extract a short activity description from a Claude message."""
+        class_name = getattr(message, "__class__", type(message)).__name__
+
+        # Handle tool use in AssistantMessage
+        if class_name == "AssistantMessage":
+            content = getattr(message, "content", []) or []
+            for block in content:
+                block_type = getattr(block, "__class__", type(block)).__name__
+                if block_type == "ToolUseBlock":
+                    tool_name = getattr(block, "name", None)
+                    if tool_name:
+                        return self._describe_tool(tool_name, block)
+                elif block_type == "TextBlock":
+                    text = getattr(block, "text", "") or ""
+                    if text:
+                        # Get first line or truncate
+                        first_line = text.split("\n")[0].strip()
+                        if len(first_line) > 140:
+                            first_line = first_line[:137] + "..."
+                        return f"Thinking: {first_line}"
+            return "Analyzing request"
+
+        # System messages
+        if class_name == "SystemMessage":
+            subtype = getattr(message, "subtype", None)
+            if subtype == "init":
+                return "Initializing session"
+            return "Processing system event"
+
+        return None
+
+    def _describe_tool(self, tool_name: str, block) -> str:
+        """Generate a human-readable description of a tool invocation."""
+        tool_input = getattr(block, "input", {}) or {}
+
+        descriptions = {
+            "Read": lambda: f"Reading {self._shorten_path(tool_input.get('file_path', 'file'))}",
+            "Write": lambda: f"Writing {self._shorten_path(tool_input.get('file_path', 'file'))}",
+            "Edit": lambda: f"Editing {self._shorten_path(tool_input.get('file_path', 'file'))}",
+            "Bash": lambda: f"Running: {self._shorten_command(tool_input.get('command', 'command'))}",
+            "Glob": lambda: f"Searching for {tool_input.get('pattern', 'files')}",
+            "Grep": lambda: f"Searching for: {self._shorten_text(tool_input.get('pattern', 'pattern'))}",
+            "Task": lambda: f"Running sub-agent: {tool_input.get('description', 'task')}",
+            "WebFetch": lambda: "Fetching web content",
+            "WebSearch": lambda: f"Searching: {self._shorten_text(tool_input.get('query', 'query'))}",
+            "TodoWrite": lambda: "Updating task list",
+        }
+
+        if tool_name in descriptions:
+            try:
+                return descriptions[tool_name]()
+            except Exception:
+                pass
+
+        return f"Using {tool_name}"
+
+    def _shorten_path(self, path: str, max_len: int = 40) -> str:
+        """Shorten a file path for display."""
+        if not path:
+            return "file"
+        if len(path) <= max_len:
+            return path
+        # Show just the filename or last component
+        parts = path.replace("\\", "/").split("/")
+        return parts[-1] if parts else path[:max_len]
+
+    def _shorten_command(self, cmd: str, max_len: int = 40) -> str:
+        """Shorten a command for display."""
+        if not cmd:
+            return "command"
+        # Get first line
+        first_line = cmd.split("\n")[0].strip()
+        if len(first_line) <= max_len:
+            return first_line
+        return first_line[:max_len - 3] + "..."
+
+    def _shorten_text(self, text: str, max_len: int = 30) -> str:
+        """Shorten text for display."""
+        if not text:
+            return ""
+        if len(text) <= max_len:
+            return text
+        return text[:max_len - 3] + "..."

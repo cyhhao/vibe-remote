@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import signal
 from typing import Callable, Optional, Dict, Any
 from telegramify_markdown import markdownify
 from telegram import (
@@ -215,7 +216,7 @@ class TelegramBot(BaseIMClient):
 
 
     def run(self):
-        """Run the bot with infinite retry mechanism"""
+        """Run the bot with infinite retry mechanism and graceful shutdown"""
         import time
 
         self.setup_handlers()
@@ -223,30 +224,80 @@ class TelegramBot(BaseIMClient):
         retry_delay = 5  # seconds
         attempt = 1
 
-        while True:
+        # Flag to track if we should exit
+        self._should_exit = False
+
+        # Setup signal handler for graceful shutdown
+        def signal_handler(signum, frame):
+            sig_name = signal.Signals(signum).name
+            logger.info(f"Received signal {sig_name}, initiating graceful shutdown...")
+            self._should_exit = True
+
+            # Run the async shutdown in a new event loop
             try:
-                logger.info(f"Starting Telegram bot (attempt {attempt})...")
-                self.application.run_polling()
-                break  # If successful, break out of retry loop
-
-            except KeyboardInterrupt:
-                logger.info("Received keyboard interrupt, shutting down...")
-                break
-
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self._graceful_shutdown())
+                loop.close()
             except Exception as e:
-                logger.error(f"Telegram bot failed (attempt {attempt}): {e}")
-                logger.info(f"Retrying in {retry_delay} seconds...")
+                logger.error(f"Error in graceful shutdown: {e}")
 
+            # Stop the application
+            if self.application.running:
+                self.application.stop_running()
+
+        # Register signal handlers
+        original_sigterm = signal.signal(signal.SIGTERM, signal_handler)
+        original_sigint = signal.signal(signal.SIGINT, signal_handler)
+
+        try:
+            while not self._should_exit:
                 try:
-                    time.sleep(retry_delay)
+                    logger.info(f"Starting Telegram bot (attempt {attempt})...")
+                    self.application.run_polling()
+                    break  # If successful, break out of retry loop
+
                 except KeyboardInterrupt:
-                    logger.info(
-                        "Received keyboard interrupt during retry wait, shutting down..."
-                    )
+                    logger.info("Received keyboard interrupt, shutting down...")
                     break
 
-                retry_delay = min(retry_delay * 1.5, 60)  # Exponential backoff, max 60s
-                attempt += 1
+                except Exception as e:
+                    if self._should_exit:
+                        break
+                    logger.error(f"Telegram bot failed (attempt {attempt}): {e}")
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+
+                    try:
+                        time.sleep(retry_delay)
+                    except KeyboardInterrupt:
+                        logger.info(
+                            "Received keyboard interrupt during retry wait, shutting down..."
+                        )
+                        break
+
+                    retry_delay = min(retry_delay * 1.5, 60)  # Exponential backoff, max 60s
+                    attempt += 1
+        finally:
+            # Restore original signal handlers
+            signal.signal(signal.SIGTERM, original_sigterm)
+            signal.signal(signal.SIGINT, original_sigint)
+
+    async def _graceful_shutdown(self):
+        """Perform graceful shutdown with restart notifications."""
+        logger.info("Starting Telegram graceful shutdown sequence...")
+
+        # Call the shutdown callback if registered (sends restart notifications)
+        if self.on_shutdown_callback:
+            try:
+                logger.info("Calling shutdown callback for restart notifications...")
+                await self.on_shutdown_callback()
+            except Exception as e:
+                logger.error(f"Error in shutdown callback: {e}")
+
+        # Give a moment for messages to be sent
+        await asyncio.sleep(0.5)
+
+        logger.info("Telegram graceful shutdown complete")
 
     # Implementation of BaseIMClient abstract methods
 
@@ -438,10 +489,48 @@ class TelegramBot(BaseIMClient):
 
     def format_markdown(self, text: str) -> str:
         """Format markdown text for Telegram using telegramify_markdown
-        
+
         Converts standard markdown to Telegram's MarkdownV2 format
         """
         return self._convert_to_markdownv2(text)
+
+    async def send_photo(
+        self,
+        context: MessageContext,
+        image_data: bytes,
+        caption: Optional[str] = None,
+        filename: Optional[str] = None,
+    ) -> str:
+        """Send a photo/image to Telegram"""
+        bot = self.application.bot
+        chat_id = int(context.channel_id)
+
+        try:
+            import io
+
+            # Prepare file-like object
+            file_obj = io.BytesIO(image_data)
+            file_obj.name = filename or "screenshot.png"
+
+            kwargs = {"chat_id": chat_id, "photo": file_obj}
+
+            # Add caption if provided
+            if caption:
+                # Convert caption to MarkdownV2
+                markdownv2_caption = self._convert_to_markdownv2(caption)
+                kwargs["caption"] = markdownv2_caption
+                kwargs["parse_mode"] = "MarkdownV2"
+
+            # Handle reply
+            if context.thread_id:
+                kwargs["reply_to_message_id"] = int(context.thread_id)
+
+            message = await bot.send_photo(**kwargs)
+            return str(message.message_id)
+
+        except TelegramError as e:
+            logger.error(f"Error sending photo to Telegram: {e}")
+            raise
 
     def _is_authorized_chat(self, chat_id: int, chat_type: str) -> bool:
         """Check if a chat is authorized based on whitelist configuration"""

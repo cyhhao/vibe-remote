@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import signal
 import time
 from typing import Dict, Any, Optional, Callable
 from slack_sdk.web.async_client import AsyncWebClient
@@ -96,6 +97,25 @@ class SlackBot(BaseIMClient):
         try:
             # Use the third-party converter for comprehensive markdown to mrkdwn conversion
             converted_text = self.markdown_converter.convert(text)
+
+            # Fix malformed Slack URLs where formatting characters are inside angle brackets
+            # This can happen when Claude outputs markdown like **text <url**> which becomes
+            # *text <url*> after conversion - we need to move the * outside the <>
+            import re
+
+            # Fix asterisks inside Slack URLs: <url*> -> <url>*
+            converted_text = re.sub(r'<([^>|]+)\*>', r'<\1>*', converted_text)
+            # Fix asterisks at start of Slack URLs: <*url> -> *<url>
+            converted_text = re.sub(r'<\*([^>|]+)>', r'*<\1>', converted_text)
+            # Fix underscores inside Slack URLs: <url_> -> <url>_
+            converted_text = re.sub(r'<([^>|]+)_>', r'<\1>_', converted_text)
+            # Fix underscores at start of Slack URLs: <_url> -> _<url>
+            converted_text = re.sub(r'<_([^>|]+)>', r'_<\1>', converted_text)
+            # Fix tildes inside Slack URLs: <url~> -> <url>~
+            converted_text = re.sub(r'<([^>|]+)~>', r'<\1>~', converted_text)
+            # Fix tildes at start of Slack URLs: <~url> -> ~<url>
+            converted_text = re.sub(r'<~([^>|]+)>', r'~<\1>', converted_text)
+
             return converted_text
         except Exception as e:
             logger.warning(
@@ -280,6 +300,26 @@ class SlackBot(BaseIMClient):
 
         except SlackApiError as e:
             logger.error(f"Error editing Slack message: {e}")
+            return False
+
+    async def edit_message_text(
+        self,
+        channel_id: str,
+        thread_id: Optional[str],
+        message_id: str,
+        text: str,
+    ) -> bool:
+        """Edit a message's text by IDs (simpler interface for status updates)."""
+        self._ensure_clients()
+        try:
+            await self.web_client.chat_update(
+                channel=channel_id,
+                ts=message_id,
+                text=text,
+            )
+            return True
+        except SlackApiError as e:
+            logger.debug(f"Error editing message text: {e}")
             return False
 
     async def answer_callback(
@@ -582,11 +622,19 @@ class SlackBot(BaseIMClient):
                     callback_data = action.get("action_id")
 
                     if self.on_callback_query_callback:
-                        # Create a context for the callback
+                        # Extract thread_ts from the message - this is CRITICAL for proper session tracking
+                        # The message may be in a thread (has thread_ts) or be a top-level message
+                        message = payload.get("message", {})
+                        # thread_ts indicates the parent message of the thread
+                        # If not present, the message's own ts is the thread root
+                        thread_id = message.get("thread_ts") or message.get("ts")
+
+                        # Create a context for the callback with thread_id preserved
                         context = MessageContext(
                             user_id=user.get("id"),
                             channel_id=channel_id,
-                            message_id=payload.get("message", {}).get("ts"),
+                            thread_id=thread_id,  # FIXED: Include thread_id for session tracking
+                            message_id=message.get("ts"),
                             platform_specific={
                                 "trigger_id": payload.get("trigger_id"),
                                 "response_url": payload.get("response_url"),
@@ -656,8 +704,30 @@ class SlackBot(BaseIMClient):
             async def start():
                 self._ensure_clients()
                 self.register_handlers()
+
+                # Setup signal handlers for graceful shutdown
+                loop = asyncio.get_event_loop()
+                shutdown_event = asyncio.Event()
+
+                def create_shutdown_handler(sig):
+                    def handler():
+                        logger.info(f"Received signal {sig.name}, initiating graceful shutdown...")
+                        # Schedule the shutdown sequence
+                        asyncio.ensure_future(self._graceful_shutdown(shutdown_event))
+                    return handler
+
+                for sig in (signal.SIGTERM, signal.SIGINT):
+                    try:
+                        loop.add_signal_handler(sig, create_shutdown_handler(sig))
+                        logger.info(f"Registered signal handler for {sig.name}")
+                    except NotImplementedError:
+                        logger.warning(f"Signal handler for {sig.name} not supported")
+
                 await self.socket_client.connect()
-                await asyncio.sleep(float("inf"))
+
+                # Wait until shutdown signal
+                await shutdown_event.wait()
+                logger.info("Shutdown complete")
 
             asyncio.run(start())
         else:
@@ -669,6 +739,32 @@ class SlackBot(BaseIMClient):
                 asyncio.run(asyncio.sleep(float("inf")))
             except KeyboardInterrupt:
                 logger.info("Shutting down...")
+
+    async def _graceful_shutdown(self, shutdown_event: asyncio.Event):
+        """Perform graceful shutdown with restart notifications."""
+        logger.info("Starting graceful shutdown sequence...")
+
+        # Call the shutdown callback if registered (sends restart notifications)
+        if self.on_shutdown_callback:
+            try:
+                logger.info("Calling shutdown callback for restart notifications...")
+                await self.on_shutdown_callback()
+            except Exception as e:
+                logger.error(f"Error in shutdown callback: {e}")
+
+        # Give a moment for messages to be sent
+        await asyncio.sleep(0.5)
+
+        # Disconnect socket client
+        try:
+            if self.socket_client:
+                await self.socket_client.disconnect()
+                logger.info("Socket client disconnected")
+        except Exception as e:
+            logger.warning(f"Error disconnecting socket client: {e}")
+
+        # Signal that shutdown is complete
+        shutdown_event.set()
 
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
         """Get information about a Slack user"""
@@ -968,6 +1064,45 @@ class SlackBot(BaseIMClient):
         except Exception as e:
             logger.error(f"Error sending slash command response: {e}")
             return False
+
+    async def send_photo(
+        self,
+        context: MessageContext,
+        image_data: bytes,
+        caption: Optional[str] = None,
+        filename: Optional[str] = None,
+    ) -> str:
+        """Send a photo/image to Slack using files_upload_v2"""
+        self._ensure_clients()
+        try:
+            fname = filename or "screenshot.png"
+
+            # files_upload_v2 requires content as bytes directly
+            kwargs = {
+                "channel": context.channel_id,
+                "content": image_data,
+                "filename": fname,
+                "title": fname,
+            }
+
+            # Add caption as initial comment
+            if caption:
+                kwargs["initial_comment"] = caption
+
+            # Handle thread replies
+            if context.thread_id:
+                kwargs["thread_ts"] = context.thread_id
+
+            # Upload file using v2 API
+            response = await self.web_client.files_upload_v2(**kwargs)
+
+            # Return file id
+            file_info = response.get("file", {})
+            return file_info.get("id", "")
+
+        except SlackApiError as e:
+            logger.error(f"Error sending photo to Slack: {e}")
+            raise
 
     async def _is_authorized_channel(self, channel_id: str) -> bool:
         """Check if a channel is authorized based on whitelist configuration"""

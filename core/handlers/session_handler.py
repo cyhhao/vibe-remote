@@ -4,6 +4,7 @@ import os
 import logging
 from typing import Optional, Dict, Any, Tuple
 from modules.im import MessageContext
+from modules.agents.base import checkout_main_branch
 from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
 
 logger = logging.getLogger(__name__)
@@ -76,12 +77,19 @@ class SessionHandler:
                 logger.error(f"Failed to create working directory {working_path}: {e}")
                 working_path = os.getcwd()
         
+        # Build extra_args if chrome is enabled
+        extra_args = {}
+        if getattr(self.config.claude, "chrome_enabled", False):
+            extra_args["chrome"] = None  # --chrome flag (no value needed)
+            logger.info("Chrome extension integration enabled")
+
         # Create options for Claude client
         options = ClaudeCodeOptions(
             permission_mode=self.config.claude.permission_mode,
             cwd=working_path,
             system_prompt=self.config.claude.system_prompt,
-            resume=stored_claude_session_id if stored_claude_session_id else None
+            resume=stored_claude_session_id if stored_claude_session_id else None,
+            extra_args=extra_args if extra_args else {},
         )
         
         # Log session creation details
@@ -95,6 +103,12 @@ class SessionHandler:
             logger.info(f"Attempting to resume Claude session {stored_claude_session_id}")
         else:
             logger.info(f"Creating new Claude session")
+            # For new sessions, ensure we start from main/master branch
+            switched_branch = checkout_main_branch(working_path)
+            if switched_branch:
+                logger.info(f"Switched to {switched_branch} branch for new session")
+            else:
+                logger.info(f"Could not switch to main/master branch (may not be a git repo)")
         
         # Create new Claude client
         client = ClaudeSDKClient(options=options)

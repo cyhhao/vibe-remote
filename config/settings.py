@@ -68,6 +68,7 @@ class ClaudeConfig:
     permission_mode: str
     cwd: str
     system_prompt: Optional[str] = None
+    chrome_enabled: bool = False  # Enable Chrome extension integration
 
     @classmethod
     def from_env(cls) -> "ClaudeConfig":
@@ -79,10 +80,18 @@ class ClaudeConfig:
         if not cwd:
             raise ValueError("CLAUDE_DEFAULT_CWD environment variable is required")
 
+        # Parse chrome enabled flag
+        chrome_enabled = os.getenv("CLAUDE_CHROME_ENABLED", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+
         return cls(
             permission_mode=permission_mode,
             cwd=cwd,
             system_prompt=os.getenv("CLAUDE_SYSTEM_PROMPT"),
+            chrome_enabled=chrome_enabled,
         )
 
 

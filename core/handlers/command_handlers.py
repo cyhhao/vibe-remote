@@ -4,6 +4,7 @@ import os
 import logging
 from typing import Optional
 from modules.agents import AgentRequest, get_agent_display_name
+from modules.agents.base import get_git_branch
 from modules.im import MessageContext, InlineKeyboard, InlineButton
 
 logger = logging.getLogger(__name__)
@@ -343,3 +344,300 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 context,  # Use original context
                 f"❌ Error sending stop command: {str(e)}",
             )
+
+    async def handle_create_pr(self, context: MessageContext, args: str = ""):
+        """Handle Create PR button - send PR creation request to the agent in thread"""
+        try:
+            session_handler = self.controller.session_handler
+            base_session_id, working_path, composite_key = (
+                session_handler.get_session_info(context)
+            )
+            settings_key = self.controller._get_settings_key(context)
+
+            # Validate thread-branch association
+            is_valid, current_branch, tracked_branch = self._validate_thread_branch(
+                context, working_path
+            )
+            if not is_valid:
+                await self._send_branch_mismatch_error(
+                    context, current_branch, tracked_branch
+                )
+                return
+
+            agent_name = self.controller.agent_router.resolve(
+                self.config.platform, settings_key
+            )
+
+            # PR message with branch check and rebase instructions
+            pr_message = (
+                "Before creating a PR, please:\n"
+                "1. Check the current branch with `git branch`\n"
+                "2. Fetch latest main branch with `git fetch origin main`\n"
+                "3. Rebase onto main with `git rebase origin/main`\n"
+                "4. If rebase has conflicts, resolve them\n"
+                "5. Push the changes with `git push -f` if needed\n"
+                "6. Create a pull request using `gh pr create`"
+            )
+
+            request = AgentRequest(
+                context=context,
+                message=pr_message,
+                working_path=working_path,
+                base_session_id=base_session_id,
+                composite_session_id=composite_key,
+                settings_key=settings_key,
+                is_pr_creation=True,
+            )
+
+            # Mark this session as creating PR
+            self.controller.pending_pr_sessions[composite_key] = True
+
+            # Send acknowledgment in thread
+            target_context = self._get_target_context(context)
+            await self.im_client.send_message(
+                target_context, "🚀 Checking branch and preparing pull request..."
+            )
+
+            # Route to agent service
+            await self.controller.agent_service.handle_message(agent_name, request)
+
+        except Exception as e:
+            logger.error(f"Error creating PR: {e}", exc_info=True)
+            target_context = self._get_target_context(context)
+            await self.im_client.send_message(
+                target_context, f"❌ Error creating pull request: {str(e)}"
+            )
+
+    async def handle_codex_review(self, context: MessageContext, args: str = ""):
+        """Handle Codex Review button - request code review from Codex agent"""
+        try:
+            session_handler = self.controller.session_handler
+            base_session_id, working_path, composite_key = (
+                session_handler.get_session_info(context)
+            )
+            settings_key = self.controller._get_settings_key(context)
+
+            # Always use codex agent for review
+            agent_name = "codex"
+
+            # Review message
+            review_message = (
+                "Please review the code changes in this branch. "
+                "Check for:\n"
+                "1. Code quality and best practices\n"
+                "2. Potential bugs or issues\n"
+                "3. Security concerns\n"
+                "4. Performance considerations\n"
+                "5. Any improvements that could be made"
+            )
+
+            request = AgentRequest(
+                context=context,
+                message=review_message,
+                working_path=working_path,
+                base_session_id=base_session_id,
+                composite_session_id=composite_key,
+                settings_key=settings_key,
+            )
+
+            # Send acknowledgment in thread
+            target_context = self._get_target_context(context)
+            await self.im_client.send_message(
+                target_context, "🔍 Starting Codex code review..."
+            )
+
+            # Route to codex agent
+            await self.controller.agent_service.handle_message(agent_name, request)
+
+        except Exception as e:
+            logger.error(f"Error starting Codex review: {e}", exc_info=True)
+            target_context = self._get_target_context(context)
+            await self.im_client.send_message(
+                target_context, f"❌ Error starting code review: {str(e)}"
+            )
+
+    async def handle_merge_pr(self, context: MessageContext, args: str = ""):
+        """Handle Merge PR button - merge the PR"""
+        try:
+            session_handler = self.controller.session_handler
+            base_session_id, working_path, composite_key = (
+                session_handler.get_session_info(context)
+            )
+            settings_key = self.controller._get_settings_key(context)
+
+            # Validate thread-branch association
+            is_valid, current_branch, tracked_branch = self._validate_thread_branch(
+                context, working_path
+            )
+            if not is_valid:
+                await self._send_branch_mismatch_error(
+                    context, current_branch, tracked_branch
+                )
+                return
+
+            agent_name = self.controller.agent_router.resolve(
+                self.config.platform, settings_key
+            )
+
+            # Merge PR message
+            merge_message = (
+                "Please merge the PR that was just created. "
+                "Use `gh pr merge --squash --delete-branch` to merge with squash and delete the branch."
+            )
+
+            request = AgentRequest(
+                context=context,
+                message=merge_message,
+                working_path=working_path,
+                base_session_id=base_session_id,
+                composite_session_id=composite_key,
+                settings_key=settings_key,
+            )
+
+            # Send acknowledgment in thread
+            target_context = self._get_target_context(context)
+            await self.im_client.send_message(
+                target_context, "✅ Merging pull request..."
+            )
+
+            # Route to agent service
+            await self.controller.agent_service.handle_message(agent_name, request)
+
+            # After successful merge, clear the thread-branch association
+            # (the branch will be deleted, so no point tracking it)
+            self.settings_manager.clear_thread_branch(settings_key, base_session_id)
+            logger.info(
+                f"Cleared thread-branch association for {base_session_id} after PR merge"
+            )
+
+        except Exception as e:
+            logger.error(f"Error merging PR: {e}", exc_info=True)
+            target_context = self._get_target_context(context)
+            await self.im_client.send_message(
+                target_context, f"❌ Error merging pull request: {str(e)}"
+            )
+
+    async def handle_close_pr(self, context: MessageContext, args: str = ""):
+        """Handle Close PR button - close the PR without merging"""
+        try:
+            session_handler = self.controller.session_handler
+            base_session_id, working_path, composite_key = (
+                session_handler.get_session_info(context)
+            )
+            settings_key = self.controller._get_settings_key(context)
+
+            # Validate thread-branch association
+            is_valid, current_branch, tracked_branch = self._validate_thread_branch(
+                context, working_path
+            )
+            if not is_valid:
+                await self._send_branch_mismatch_error(
+                    context, current_branch, tracked_branch
+                )
+                return
+
+            agent_name = self.controller.agent_router.resolve(
+                self.config.platform, settings_key
+            )
+
+            # Close PR message
+            close_message = (
+                "Please close the PR that was just created without merging. "
+                "Use `gh pr close` to close the PR."
+            )
+
+            request = AgentRequest(
+                context=context,
+                message=close_message,
+                working_path=working_path,
+                base_session_id=base_session_id,
+                composite_session_id=composite_key,
+                settings_key=settings_key,
+            )
+
+            # Send acknowledgment in thread
+            target_context = self._get_target_context(context)
+            await self.im_client.send_message(
+                target_context, "❌ Closing pull request..."
+            )
+
+            # Route to agent service
+            await self.controller.agent_service.handle_message(agent_name, request)
+
+            # After closing PR, clear the thread-branch association
+            # so the thread can work on a new branch if needed
+            self.settings_manager.clear_thread_branch(settings_key, base_session_id)
+            logger.info(
+                f"Cleared thread-branch association for {base_session_id} after PR close"
+            )
+
+        except Exception as e:
+            logger.error(f"Error closing PR: {e}", exc_info=True)
+            target_context = self._get_target_context(context)
+            await self.im_client.send_message(
+                target_context, f"❌ Error closing pull request: {str(e)}"
+            )
+
+    def _get_target_context(self, context: MessageContext) -> MessageContext:
+        """Get target context for sending messages (respects thread replies)"""
+        if self.config.platform == "slack" and context.thread_id:
+            return MessageContext(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                thread_id=context.thread_id,
+                platform_specific=context.platform_specific,
+            )
+        return context
+
+    def _validate_thread_branch(
+        self, context: MessageContext, working_path: str
+    ) -> tuple[bool, Optional[str], Optional[str]]:
+        """Validate that the current git branch matches the thread's tracked branch.
+
+        Returns:
+            (is_valid, current_branch, tracked_branch)
+            - is_valid: True if branch matches or no branch tracking exists
+            - current_branch: The current git branch (or None if not a git repo)
+            - tracked_branch: The branch tracked for this thread (or None if not tracked)
+        """
+        session_handler = self.controller.session_handler
+        base_session_id = session_handler.get_base_session_id(context)
+        settings_key = self.controller._get_settings_key(context)
+
+        current_branch = get_git_branch(working_path)
+        if not current_branch:
+            # Not a git repo - allow the action
+            return True, None, None
+
+        tracked_branch = self.settings_manager.get_thread_branch(
+            settings_key, base_session_id
+        )
+
+        if not tracked_branch:
+            # No branch tracked for this thread - allow the action
+            return True, current_branch, None
+
+        # Validate branch matches
+        if current_branch != tracked_branch:
+            logger.warning(
+                f"Branch mismatch for session {base_session_id}: "
+                f"expected {tracked_branch}, got {current_branch}"
+            )
+            return False, current_branch, tracked_branch
+
+        return True, current_branch, tracked_branch
+
+    async def _send_branch_mismatch_error(
+        self, context: MessageContext, current_branch: str, tracked_branch: str
+    ):
+        """Send an error message when thread-branch mismatch is detected."""
+        formatter = self.im_client.formatter
+        error_msg = (
+            f"❌ Branch mismatch detected!\n\n"
+            f"This thread was working on branch {formatter.format_code_inline(tracked_branch)}, "
+            f"but the working directory is now on {formatter.format_code_inline(current_branch)}.\n\n"
+            f"This can happen when multiple threads work on different branches in the same working directory.\n"
+            f"Please ensure the correct branch is checked out before proceeding."
+        )
+        target_context = self._get_target_context(context)
+        await self.im_client.send_message(target_context, error_msg)

@@ -1,6 +1,7 @@
+import base64
 import logging
 import os
-from typing import Optional, Callable
+from typing import Optional, Callable, List, Tuple, Any
 from claude_code_sdk import (
     ClaudeCodeOptions,
     SystemMessage,
@@ -13,6 +14,7 @@ from claude_code_sdk import (
 )
 from config import ClaudeConfig
 from modules.im.formatters import BaseMarkdownFormatter, TelegramFormatter
+from modules.im import ImageData
 
 
 logger = logging.getLogger(__name__)
@@ -152,3 +154,103 @@ class ClaudeClient:
             if not message.content:
                 return True
         return False
+
+    def extract_images_from_message(self, message) -> List[ImageData]:
+        """Extract images from a message's content blocks.
+
+        Images are typically found in ToolResultBlock content as:
+        [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}}]
+
+        Args:
+            message: A Claude SDK message (AssistantMessage, UserMessage, etc.)
+
+        Returns:
+            List of ImageData objects
+        """
+        images = []
+
+        # Get content blocks from the message
+        content_blocks = getattr(message, "content", []) or []
+
+        for block in content_blocks:
+            if isinstance(block, ToolResultBlock):
+                # ToolResultBlock.content can be str or list[dict]
+                images.extend(self._extract_images_from_tool_result(block))
+
+        return images
+
+    def _extract_images_from_tool_result(self, block: ToolResultBlock) -> List[ImageData]:
+        """Extract images from a ToolResultBlock.
+
+        Args:
+            block: A ToolResultBlock that may contain images
+
+        Returns:
+            List of ImageData objects
+        """
+        images = []
+        content = block.content
+
+        # If content is a list, look for image blocks
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "image":
+                    image_data = self._parse_image_block(item)
+                    if image_data:
+                        images.append(image_data)
+
+        return images
+
+    def _parse_image_block(self, image_block: dict) -> Optional[ImageData]:
+        """Parse an image block and return ImageData.
+
+        Image block format:
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "base64-encoded-data"
+            }
+        }
+
+        Args:
+            image_block: Dictionary containing image data
+
+        Returns:
+            ImageData object or None if parsing fails
+        """
+        try:
+            source = image_block.get("source", {})
+
+            if source.get("type") != "base64":
+                logger.warning(f"Unsupported image source type: {source.get('type')}")
+                return None
+
+            media_type = source.get("media_type", "image/png")
+            base64_data = source.get("data", "")
+
+            if not base64_data:
+                logger.warning("Empty image data")
+                return None
+
+            # Decode base64 data
+            try:
+                image_bytes = base64.b64decode(base64_data)
+            except Exception as e:
+                logger.error(f"Failed to decode base64 image data: {e}")
+                return None
+
+            # Generate filename based on media type
+            extension = media_type.split("/")[-1] if "/" in media_type else "png"
+            filename = f"screenshot.{extension}"
+
+            return ImageData(
+                data=image_bytes,
+                media_type=media_type,
+                filename=filename,
+            )
+
+        except Exception as e:
+            logger.error(f"Error parsing image block: {e}")
+            return None
