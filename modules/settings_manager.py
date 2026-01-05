@@ -10,19 +10,18 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_HIDDEN_MESSAGE_TYPES = ["system", "assistant", "user"]
+
+
 @dataclass
 class UserSettings:
-    """User personalization settings"""
-
     hidden_message_types: List[str] = field(
-        default_factory=list
-    )  # Message types to hide
-    custom_cwd: Optional[str] = None  # Custom working directory
-    # Nested map: {agent_name: {base_session_id: {working_path: session_id}}}
+        default_factory=lambda: DEFAULT_HIDDEN_MESSAGE_TYPES.copy()
+    )
+    custom_cwd: Optional[str] = None
     session_mappings: Dict[str, Dict[str, Dict[str, str]]] = field(
         default_factory=dict
     )
-    # Slack active threads: {channel_id: {thread_ts: last_active_timestamp}}
     active_slack_threads: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:

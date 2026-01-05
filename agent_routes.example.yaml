@@ -3,7 +3,9 @@ slack:
   default: claude
   overrides:
     C01EXAMPLE: codex
+    C02OPENCODE: opencode
 telegram:
   default: claude
   overrides:
     "123456789": codex
+    "987654321": opencode

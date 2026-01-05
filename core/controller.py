@@ -8,7 +8,7 @@ from config.settings import AppConfig
 from modules.im import BaseIMClient, MessageContext, IMFactory
 from modules.im.formatters import TelegramFormatter, SlackFormatter
 from modules.agent_router import AgentRouter
-from modules.agents import AgentService, ClaudeAgent, CodexAgent
+from modules.agents import AgentService, ClaudeAgent, CodexAgent, OpenCodeAgent
 from modules.claude_client import ClaudeClient
 from modules.session_manager import SessionManager
 from modules.settings_manager import SettingsManager
@@ -101,7 +101,6 @@ class Controller:
         self.message_handler.set_session_handler(self.session_handler)
 
     def _init_agents(self):
-        """Initialize agent implementations (requires handlers ready)."""
         self.agent_service = AgentService(self)
         self.agent_service.register(ClaudeAgent(self))
         if self.config.codex:
@@ -109,6 +108,11 @@ class Controller:
                 self.agent_service.register(CodexAgent(self, self.config.codex))
             except Exception as e:
                 logger.error(f"Failed to initialize Codex agent: {e}")
+        if self.config.opencode:
+            try:
+                self.agent_service.register(OpenCodeAgent(self, self.config.opencode))
+            except Exception as e:
+                logger.error(f"Failed to initialize OpenCode agent: {e}")
 
     def _setup_callbacks(self):
         """Setup callback connections between modules"""
