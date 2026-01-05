@@ -346,4 +346,11 @@ class Controller:
         except Exception:
             pass
 
+        # Stop OpenCode server if running
+        try:
+            from modules.agents.opencode_agent import OpenCodeServerManager
+            OpenCodeServerManager.stop_instance_sync()
+        except Exception as e:
+            logger.debug(f"OpenCode server cleanup skipped: {e}")
+
         logger.info("Controller cleanup (sync) complete")

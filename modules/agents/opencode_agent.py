@@ -146,6 +146,17 @@ class OpenCodeServerManager:
                 logger.info("OpenCode server stopped")
             self._process = None
 
+    def stop_sync(self) -> None:
+        if self._process and self._process.returncode is None:
+            self._process.terminate()
+            logger.info("OpenCode server terminated (sync)")
+        self._process = None
+
+    @classmethod
+    def stop_instance_sync(cls) -> None:
+        if cls._instance:
+            cls._instance.stop_sync()
+
     async def create_session(
         self, directory: str, title: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -234,6 +245,7 @@ class OpenCodeAgent(BaseAgent):
         self._server_manager: Optional[OpenCodeServerManager] = None
         self._active_requests: Dict[str, asyncio.Task] = {}
         self._request_sessions: Dict[str, Tuple[str, str, str]] = {}
+        self._session_locks: Dict[str, asyncio.Lock] = {}
 
     async def _get_server(self) -> OpenCodeServerManager:
         if self._server_manager is None:
@@ -243,32 +255,39 @@ class OpenCodeAgent(BaseAgent):
             )
         return self._server_manager
 
-    async def handle_message(self, request: AgentRequest) -> None:
-        existing_task = self._active_requests.get(request.base_session_id)
-        if existing_task and not existing_task.done():
-            await self.controller.emit_agent_message(
-                request.context,
-                "notify",
-                "OpenCode is already processing a task in this thread. "
-                "Cancelling the previous run...",
-            )
-            req_info = self._request_sessions.get(request.base_session_id)
-            if req_info:
-                server = await self._get_server()
-                await server.abort_session(req_info[0], req_info[1])
-            existing_task.cancel()
-            try:
-                await existing_task
-            except asyncio.CancelledError:
-                pass
-            await self.controller.emit_agent_message(
-                request.context,
-                "notify",
-                "Previous OpenCode task cancelled. Starting the new request...",
-            )
+    def _get_session_lock(self, base_session_id: str) -> asyncio.Lock:
+        if base_session_id not in self._session_locks:
+            self._session_locks[base_session_id] = asyncio.Lock()
+        return self._session_locks[base_session_id]
 
-        task = asyncio.create_task(self._process_message(request))
-        self._active_requests[request.base_session_id] = task
+    async def handle_message(self, request: AgentRequest) -> None:
+        lock = self._get_session_lock(request.base_session_id)
+        async with lock:
+            existing_task = self._active_requests.get(request.base_session_id)
+            if existing_task and not existing_task.done():
+                await self.controller.emit_agent_message(
+                    request.context,
+                    "notify",
+                    "OpenCode is already processing a task in this thread. "
+                    "Cancelling the previous run...",
+                )
+                req_info = self._request_sessions.get(request.base_session_id)
+                if req_info:
+                    server = await self._get_server()
+                    await server.abort_session(req_info[0], req_info[1])
+                existing_task.cancel()
+                try:
+                    await existing_task
+                except asyncio.CancelledError:
+                    pass
+                await self.controller.emit_agent_message(
+                    request.context,
+                    "notify",
+                    "Previous OpenCode task cancelled. Starting the new request...",
+                )
+
+            task = asyncio.create_task(self._process_message(request))
+            self._active_requests[request.base_session_id] = task
 
         try:
             await task

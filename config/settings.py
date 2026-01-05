@@ -132,6 +132,9 @@ class OpenCodeConfig:
         try:
             port = int(port_str)
         except ValueError:
+            logger.warning(
+                f"Invalid OPENCODE_PORT '{port_str}', falling back to 4096"
+            )
             port = 4096
 
         return cls(
