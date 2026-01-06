@@ -101,7 +101,7 @@ class OpenCodeServerManager:
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
             )
         except FileNotFoundError:
             raise RuntimeError(
@@ -117,18 +117,10 @@ class OpenCodeServerManager:
                 return
             await asyncio.sleep(0.5)
 
-        stderr_output = ""
-        if self._process.stderr:
-            try:
-                stderr_output = (
-                    await asyncio.wait_for(self._process.stderr.read(4096), timeout=1)
-                ).decode(errors="ignore")
-            except Exception:
-                pass
-
+        exit_code = self._process.returncode
         raise RuntimeError(
             f"OpenCode server failed to start within {SERVER_START_TIMEOUT}s. "
-            f"Stderr: {stderr_output[:500]}"
+            f"Process exit code: {exit_code}"
         )
 
     async def stop(self) -> None:
