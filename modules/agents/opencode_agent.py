@@ -292,8 +292,9 @@ class OpenCodeAgent(BaseAgent):
         try:
             await task
         finally:
-            self._active_requests.pop(request.base_session_id, None)
-            self._request_sessions.pop(request.base_session_id, None)
+            if self._active_requests.get(request.base_session_id) is task:
+                self._active_requests.pop(request.base_session_id, None)
+                self._request_sessions.pop(request.base_session_id, None)
 
     async def _process_message(self, request: AgentRequest) -> None:
         try:
