@@ -283,6 +283,9 @@ class OpenCodeAgent(BaseAgent):
 
         try:
             await task
+        except asyncio.CancelledError:
+            # Task was cancelled (e.g. by /stop), exit gracefully without bubbling
+            logger.debug(f"OpenCode task cancelled for {request.base_session_id}")
         finally:
             if self._active_requests.get(request.base_session_id) is task:
                 self._active_requests.pop(request.base_session_id, None)
