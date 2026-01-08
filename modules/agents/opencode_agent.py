@@ -290,6 +290,52 @@ class OpenCodeServerManager:
             logger.warning(f"Failed to get default config: {e}")
             return {}
 
+    def _load_opencode_user_config(self) -> Optional[Dict[str, Any]]:
+        """Load and cache opencode.json config file.
+
+        Returns:
+            Parsed config dict, or None if file doesn't exist or is invalid.
+        """
+        import json
+        from pathlib import Path
+
+        config_path = Path.home() / ".config" / "opencode" / "opencode.json"
+        if not config_path.exists():
+            return None
+
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+            if not isinstance(config, dict):
+                logger.warning("opencode.json root is not a dict")
+                return None
+            return config
+        except Exception as e:
+            logger.warning(f"Failed to load opencode.json: {e}")
+            return None
+
+    def _get_agent_config(
+        self, config: Dict[str, Any], agent_name: Optional[str]
+    ) -> Dict[str, Any]:
+        """Get agent-specific config from opencode.json with type safety.
+
+        Args:
+            config: Parsed opencode.json config
+            agent_name: Name of the agent, or None
+
+        Returns:
+            Agent config dict, or empty dict if not found/invalid.
+        """
+        if not agent_name:
+            return {}
+        agents = config.get("agent", {})
+        if not isinstance(agents, dict):
+            return {}
+        agent_config = agents.get(agent_name, {})
+        if not isinstance(agent_config, dict):
+            return {}
+        return agent_config
+
     def get_agent_model_from_config(self, agent_name: Optional[str]) -> Optional[str]:
         """Read agent's default model from user's opencode.json config file.
 
@@ -302,33 +348,23 @@ class OpenCodeServerManager:
         Returns:
             Model string in "provider/model" format, or None if not configured.
         """
-        import json
-        from pathlib import Path
-
-        config_path = Path.home() / ".config" / "opencode" / "opencode.json"
-        if not config_path.exists():
+        config = self._load_opencode_user_config()
+        if not config:
             return None
 
-        try:
-            with open(config_path, "r") as f:
-                config = json.load(f)
-
-            # If agent_name is provided, try to get agent-specific model first
-            if agent_name:
-                agent_config = config.get("agent", {}).get(agent_name, {})
-                model = agent_config.get("model")
-                if model:
-                    logger.debug(f"Found model '{model}' for agent '{agent_name}' in opencode.json")
-                    return model
-
-            # Fall back to global default model
-            model = config.get("model")
-            if model:
-                logger.debug(f"Using global default model '{model}' from opencode.json")
+        # Try agent-specific model first
+        agent_config = self._get_agent_config(config, agent_name)
+        model = agent_config.get("model")
+        if isinstance(model, str) and model:
+            logger.debug(f"Found model '{model}' for agent '{agent_name}' in opencode.json")
             return model
-        except Exception as e:
-            logger.warning(f"Failed to read model from opencode.json: {e}")
-            return None
+
+        # Fall back to global default model
+        model = config.get("model")
+        if isinstance(model, str) and model:
+            logger.debug(f"Using global default model '{model}' from opencode.json")
+            return model
+        return None
 
     def get_agent_reasoning_effort_from_config(
         self, agent_name: Optional[str]
@@ -341,37 +377,36 @@ class OpenCodeServerManager:
         Returns:
             reasoningEffort string (e.g., "low", "medium", "high", "xhigh"), or None if not configured.
         """
-        import json
-        from pathlib import Path
-
-        config_path = Path.home() / ".config" / "opencode" / "opencode.json"
-        if not config_path.exists():
+        config = self._load_opencode_user_config()
+        if not config:
             return None
 
-        try:
-            with open(config_path, "r") as f:
-                config = json.load(f)
+        # Valid reasoning effort values
+        valid_efforts = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
-            # If agent_name is provided, try to get agent-specific reasoningEffort first
-            if agent_name:
-                agent_config = config.get("agent", {}).get(agent_name, {})
-                reasoning_effort = agent_config.get("reasoningEffort")
-                if reasoning_effort:
-                    logger.debug(
-                        f"Found reasoningEffort '{reasoning_effort}' for agent '{agent_name}' in opencode.json"
-                    )
-                    return reasoning_effort
+        # Try agent-specific reasoningEffort first
+        agent_config = self._get_agent_config(config, agent_name)
+        reasoning_effort = agent_config.get("reasoningEffort")
+        if isinstance(reasoning_effort, str) and reasoning_effort:
+            if reasoning_effort in valid_efforts:
+                logger.debug(
+                    f"Found reasoningEffort '{reasoning_effort}' for agent '{agent_name}' in opencode.json"
+                )
+                return reasoning_effort
+            else:
+                logger.debug(f"Ignoring unknown reasoningEffort '{reasoning_effort}' for agent '{agent_name}'")
 
-            # Fall back to global default reasoningEffort
-            reasoning_effort = config.get("reasoningEffort")
-            if reasoning_effort:
+        # Fall back to global default reasoningEffort
+        reasoning_effort = config.get("reasoningEffort")
+        if isinstance(reasoning_effort, str) and reasoning_effort:
+            if reasoning_effort in valid_efforts:
                 logger.debug(
                     f"Using global default reasoningEffort '{reasoning_effort}' from opencode.json"
                 )
-            return reasoning_effort
-        except Exception as e:
-            logger.warning(f"Failed to read reasoningEffort from opencode.json: {e}")
-            return None
+                return reasoning_effort
+            else:
+                logger.debug(f"Ignoring unknown global reasoningEffort '{reasoning_effort}'")
+        return None
 
     def get_default_agent_from_config(self) -> Optional[str]:
         """Read the default agent from user's opencode.json config file.
@@ -382,27 +417,10 @@ class OpenCodeServerManager:
         Returns:
             Default agent name (e.g., "build", "plan"), or None if not configured.
         """
-        import json
-        from pathlib import Path
-
-        config_path = Path.home() / ".config" / "opencode" / "opencode.json"
-        if not config_path.exists():
-            return None
-
-        try:
-            with open(config_path, "r") as f:
-                config = json.load(f)
-
-            # OpenCode uses "agent" key with a default agent, or we look for
-            # a commonly used pattern. The default agent is typically not
-            # explicitly marked, but we can check if there's a single agent
-            # or use "build" as the conventional default.
-            # For now, return None to let OpenCode decide.
-            # Users can override via channel settings or agent_routes.yaml.
-            return None
-        except Exception as e:
-            logger.warning(f"Failed to read default agent from opencode.json: {e}")
-            return None
+        # OpenCode doesn't have an explicit "default agent" config field.
+        # Users can override via channel settings or agent_routes.yaml.
+        # Return None to let OpenCode decide.
+        return None
 
 
 class OpenCodeAgent(BaseAgent):

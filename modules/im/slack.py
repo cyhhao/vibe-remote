@@ -1155,7 +1155,8 @@ class SlackBot(BaseIMClient):
             ]
 
             if model_variants:
-                # Use model-specific variants
+                # Use model-specific variants with stable ordering
+                variant_order = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
                 variant_display_names = {
                     "none": "None",
                     "minimal": "Minimal",
@@ -1165,7 +1166,15 @@ class SlackBot(BaseIMClient):
                     "xhigh": "Extra High",
                     "max": "Max",
                 }
-                for variant_key in model_variants.keys():
+                # Sort variants by predefined order, unknown variants go to end alphabetically
+                sorted_variants = sorted(
+                    model_variants.keys(),
+                    key=lambda x: (
+                        variant_order.index(x) if x in variant_order else len(variant_order),
+                        x,
+                    ),
+                )
+                for variant_key in sorted_variants:
                     display_name = variant_display_names.get(variant_key, variant_key.capitalize())
                     reasoning_effort_options.append({
                         "text": {"type": "plain_text", "text": display_name},

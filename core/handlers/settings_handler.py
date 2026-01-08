@@ -24,10 +24,7 @@ class SettingsHandler:
 
     def _get_agent_display_name(self, context: MessageContext) -> str:
         """Return a friendly agent name for the current context."""
-        settings_key = self._get_settings_key(context)
-        agent_name = self.controller.agent_router.resolve(
-            self.config.platform, settings_key
-        )
+        agent_name = self.controller.resolve_agent_for_context(context)
         default_agent = getattr(self.controller.agent_service, "default_agent", None)
         return get_agent_display_name(agent_name, fallback=default_agent)
 
@@ -260,4 +257,97 @@ class SettingsHandler:
             logger.error(f"Error in handle_info_how_it_works: {e}", exc_info=True)
             await self.im_client.send_message(
                 context, "❌ Error showing help information"
+            )
+
+    async def handle_routing(self, context: MessageContext):
+        """Handle routing command - show agent/model selection"""
+        try:
+            # Only Slack has modal support for now
+            if self.config.platform == "slack":
+                await self._handle_routing_slack(context)
+            else:
+                # For other platforms, show a simple message
+                await self.im_client.send_message(
+                    context,
+                    "🤖 Agent switching is currently only available in Slack. "
+                    "Use agent_routes.yaml to configure routing.",
+                )
+        except Exception as e:
+            logger.error(f"Error showing routing settings: {e}", exc_info=True)
+            await self.im_client.send_message(
+                context, f"❌ Error showing routing settings: {str(e)}"
+            )
+
+    async def _handle_routing_slack(self, context: MessageContext):
+        """Handle routing for Slack using modal dialog"""
+        trigger_id = (
+            context.platform_specific.get("trigger_id")
+            if context.platform_specific
+            else None
+        )
+
+        if not trigger_id:
+            # No trigger_id, show button to open modal
+            buttons = [
+                [
+                    InlineButton(
+                        text="🤖 Open Agent Settings",
+                        callback_data="open_routing_modal",
+                    )
+                ]
+            ]
+            keyboard = InlineKeyboard(buttons=buttons)
+            await self.im_client.send_message_with_buttons(
+                context,
+                "🤖 *Agent & Model Settings*\n\nConfigure which backend to use for this channel.",
+                keyboard,
+            )
+            return
+
+        # Gather data for the modal
+        settings_key = self._get_settings_key(context)
+        current_routing = self.settings_manager.get_channel_routing(settings_key)
+
+        # Get registered backends
+        registered_backends = list(self.controller.agent_service.agents.keys())
+
+        # Get current backend (from routing or default)
+        current_backend = self.controller.resolve_agent_for_context(context)
+
+        # Get OpenCode agents/models if available
+        opencode_agents = []
+        opencode_models = {}
+        opencode_default_config = {}
+
+        if "opencode" in registered_backends:
+            try:
+                # Get OpenCode server manager
+                opencode_agent = self.controller.agent_service.agents.get("opencode")
+                if opencode_agent and hasattr(opencode_agent, "_get_server"):
+                    server = await opencode_agent._get_server()
+                    await server.ensure_running()
+
+                    cwd = self.controller.get_cwd(context)
+                    opencode_agents = await server.get_available_agents(cwd)
+                    opencode_models = await server.get_available_models(cwd)
+                    opencode_default_config = await server.get_default_config(cwd)
+            except Exception as e:
+                logger.warning(f"Failed to fetch OpenCode data: {e}")
+
+        # Open modal
+        try:
+            await self.im_client.open_routing_modal(
+                trigger_id=trigger_id,
+                channel_id=context.channel_id,
+                registered_backends=registered_backends,
+                current_backend=current_backend,
+                current_routing=current_routing,
+                opencode_agents=opencode_agents,
+                opencode_models=opencode_models,
+                opencode_default_config=opencode_default_config,
+            )
+        except Exception as e:
+            logger.error(f"Error opening routing modal: {e}", exc_info=True)
+            await self.im_client.send_message(
+                context, "❌ Failed to open settings. Please try again."
             )
