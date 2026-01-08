@@ -1069,6 +1069,32 @@ class SlackBot(BaseIMClient):
             num_providers = len(providers_data)
             max_per_provider = max(5, (99 // num_providers)) if num_providers > 0 else 99
 
+            def model_sort_key(model_item):
+                """Sort models by release_date (newest first), deprioritize utility models."""
+                model_id, model_info = model_item
+                mid_lower = model_id.lower()
+
+                # Deprioritize embedding and utility models (put them at the end)
+                is_utility = any(
+                    kw in mid_lower
+                    for kw in ["embedding", "tts", "whisper", "ada", "davinci", "turbo-instruct"]
+                )
+                utility_penalty = 1 if is_utility else 0
+
+                # Get release_date for sorting (newest first)
+                # Default to old date if not available, convert to negative int for DESC sort
+                release_date = "1970-01-01"
+                if isinstance(model_info, dict):
+                    release_date = model_info.get("release_date", "1970-01-01") or "1970-01-01"
+                # Convert YYYY-MM-DD to int (e.g., 20250414) and negate for descending order
+                try:
+                    date_int = -int(release_date.replace("-", ""))
+                except (ValueError, AttributeError):
+                    date_int = 0
+
+                # Sort by: utility_penalty ASC, release_date DESC (via negative int), model_id ASC
+                return (utility_penalty, date_int, model_id)
+
             for provider in providers_data:
                 provider_id = provider.get("id", "")
                 provider_name = provider.get("name", provider_id)
@@ -1081,6 +1107,9 @@ class SlackBot(BaseIMClient):
                     model_items = [(m, m) if isinstance(m, str) else (m.get("id", ""), m) for m in models]
                 else:
                     model_items = []
+
+                # Sort models by priority
+                model_items.sort(key=model_sort_key)
 
                 # Limit models per provider
                 provider_model_count = 0
