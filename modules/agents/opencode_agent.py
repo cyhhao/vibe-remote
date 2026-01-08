@@ -5,7 +5,7 @@ import logging
 import os
 import time
 from asyncio.subprocess import Process
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 
@@ -174,6 +174,7 @@ class OpenCodeServerManager:
         text: str,
         agent: Optional[str] = None,
         model: Optional[Dict[str, str]] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Dict[str, Any]:
         session = await self._get_http_session()
 
@@ -184,6 +185,8 @@ class OpenCodeServerManager:
             body["agent"] = agent
         if model:
             body["model"] = model
+        if reasoning_effort:
+            body["reasoningEffort"] = reasoning_effort
 
         async with session.post(
             f"{self.base_url}/session/{session_id}/message",
@@ -223,6 +226,182 @@ class OpenCodeServerManager:
                 return None
         except Exception as e:
             logger.debug(f"Failed to get session {session_id}: {e}")
+            return None
+
+    async def get_available_agents(self, directory: str) -> List[Dict[str, Any]]:
+        """Fetch available agents from OpenCode server.
+
+        Returns:
+            List of agent dicts with 'name', 'mode', 'native', etc.
+        """
+        session = await self._get_http_session()
+        try:
+            async with session.get(
+                f"{self.base_url}/agent",
+                headers={"x-opencode-directory": directory},
+            ) as resp:
+                if resp.status == 200:
+                    agents = await resp.json()
+                    # Filter to primary agents (build, plan), exclude hidden/subagent
+                    return [
+                        a for a in agents
+                        if a.get("mode") == "primary" and not a.get("hidden", False)
+                    ]
+                return []
+        except Exception as e:
+            logger.warning(f"Failed to get available agents: {e}")
+            return []
+
+    async def get_available_models(self, directory: str) -> Dict[str, Any]:
+        """Fetch available models from OpenCode server.
+
+        Returns:
+            Dict with 'providers' list and 'default' dict mapping provider to default model.
+        """
+        session = await self._get_http_session()
+        try:
+            async with session.get(
+                f"{self.base_url}/config/providers",
+                headers={"x-opencode-directory": directory},
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                return {"providers": [], "default": {}}
+        except Exception as e:
+            logger.warning(f"Failed to get available models: {e}")
+            return {"providers": [], "default": {}}
+
+    async def get_default_config(self, directory: str) -> Dict[str, Any]:
+        """Fetch current default config from OpenCode server.
+
+        Returns:
+            Config dict including 'model' (current default), 'agent' configs, etc.
+        """
+        session = await self._get_http_session()
+        try:
+            async with session.get(
+                f"{self.base_url}/config",
+                headers={"x-opencode-directory": directory},
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                return {}
+        except Exception as e:
+            logger.warning(f"Failed to get default config: {e}")
+            return {}
+
+    def get_agent_model_from_config(self, agent_name: Optional[str]) -> Optional[str]:
+        """Read agent's default model from user's opencode.json config file.
+
+        This is a workaround for OpenCode server not using agent-specific models
+        when only the agent parameter is passed to the message API.
+
+        Args:
+            agent_name: Name of the agent (e.g., "build", "plan"), or None for global default
+
+        Returns:
+            Model string in "provider/model" format, or None if not configured.
+        """
+        import json
+        from pathlib import Path
+
+        config_path = Path.home() / ".config" / "opencode" / "opencode.json"
+        if not config_path.exists():
+            return None
+
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+
+            # If agent_name is provided, try to get agent-specific model first
+            if agent_name:
+                agent_config = config.get("agent", {}).get(agent_name, {})
+                model = agent_config.get("model")
+                if model:
+                    logger.debug(f"Found model '{model}' for agent '{agent_name}' in opencode.json")
+                    return model
+
+            # Fall back to global default model
+            model = config.get("model")
+            if model:
+                logger.debug(f"Using global default model '{model}' from opencode.json")
+            return model
+        except Exception as e:
+            logger.warning(f"Failed to read model from opencode.json: {e}")
+            return None
+
+    def get_agent_reasoning_effort_from_config(
+        self, agent_name: Optional[str]
+    ) -> Optional[str]:
+        """Read agent's reasoningEffort from user's opencode.json config file.
+
+        Args:
+            agent_name: Name of the agent (e.g., "build", "plan"), or None for global default
+
+        Returns:
+            reasoningEffort string (e.g., "low", "medium", "high", "xhigh"), or None if not configured.
+        """
+        import json
+        from pathlib import Path
+
+        config_path = Path.home() / ".config" / "opencode" / "opencode.json"
+        if not config_path.exists():
+            return None
+
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+
+            # If agent_name is provided, try to get agent-specific reasoningEffort first
+            if agent_name:
+                agent_config = config.get("agent", {}).get(agent_name, {})
+                reasoning_effort = agent_config.get("reasoningEffort")
+                if reasoning_effort:
+                    logger.debug(
+                        f"Found reasoningEffort '{reasoning_effort}' for agent '{agent_name}' in opencode.json"
+                    )
+                    return reasoning_effort
+
+            # Fall back to global default reasoningEffort
+            reasoning_effort = config.get("reasoningEffort")
+            if reasoning_effort:
+                logger.debug(
+                    f"Using global default reasoningEffort '{reasoning_effort}' from opencode.json"
+                )
+            return reasoning_effort
+        except Exception as e:
+            logger.warning(f"Failed to read reasoningEffort from opencode.json: {e}")
+            return None
+
+    def get_default_agent_from_config(self) -> Optional[str]:
+        """Read the default agent from user's opencode.json config file.
+
+        OpenCode server doesn't automatically use its configured default agent
+        when called via API, so we need to read and pass it explicitly.
+
+        Returns:
+            Default agent name (e.g., "build", "plan"), or None if not configured.
+        """
+        import json
+        from pathlib import Path
+
+        config_path = Path.home() / ".config" / "opencode" / "opencode.json"
+        if not config_path.exists():
+            return None
+
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+
+            # OpenCode uses "agent" key with a default agent, or we look for
+            # a commonly used pattern. The default agent is typically not
+            # explicitly marked, but we can check if there's a single agent
+            # or use "build" as the conventional default.
+            # For now, return None to let OpenCode decide.
+            # Users can override via channel settings or agent_routes.yaml.
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to read default agent from opencode.json: {e}")
             return None
 
 
@@ -386,18 +565,44 @@ class OpenCodeAgent(BaseAgent):
         )
 
         try:
+            # Get per-channel overrides from user_settings.json
+            override_agent, override_model, override_reasoning = (
+                self.controller.get_opencode_overrides(request.context)
+            )
+
+            # Determine agent to use
+            # Priority: 1) channel override, 2) opencode.json default, 3) None (let OpenCode decide)
+            agent_to_use = override_agent
+            if not agent_to_use:
+                agent_to_use = server.get_default_agent_from_config()
+            # If still None, we don't pass agent parameter, letting OpenCode use its default
+
+            # Determine model to use
+            # Priority: 1) channel override, 2) agent's config model, 3) global opencode.json model
             model_dict = None
-            if self.opencode_config.default_model:
-                parts = self.opencode_config.default_model.split("/", 1)
+            model_str = override_model
+            if not model_str:
+                # OpenCode server doesn't use agent's configured model when called via API,
+                # so we read it from opencode.json explicitly
+                model_str = server.get_agent_model_from_config(agent_to_use)
+            if model_str:
+                parts = model_str.split("/", 1)
                 if len(parts) == 2:
                     model_dict = {"providerID": parts[0], "modelID": parts[1]}
+
+            # Determine reasoningEffort to use
+            # Priority: 1) channel override, 2) agent's config, 3) global opencode.json config
+            reasoning_effort = override_reasoning
+            if not reasoning_effort:
+                reasoning_effort = server.get_agent_reasoning_effort_from_config(agent_to_use)
 
             response = await server.send_message(
                 session_id=session_id,
                 directory=request.working_path,
                 text=request.message,
-                agent=self.opencode_config.default_agent,
+                agent=agent_to_use,
                 model=model_dict,
+                reasoning_effort=reasoning_effort,
             )
 
             result_text = self._extract_response_text(response)

@@ -351,12 +351,6 @@ class SlackBot(BaseIMClient):
 
             channel_id = event.get("channel")
 
-            # Check if channel is authorized based on whitelist configuration
-            if not await self._is_authorized_channel(channel_id):
-                logger.info(f"Unauthorized message from channel: {channel_id}")
-                await self._send_unauthorized_message(channel_id)
-                return
-
             # Check if this message contains a bot mention
             # If it does, skip processing as it will be handled by app_mention event
             text = (event.get("text") or "").strip()
@@ -375,20 +369,14 @@ class SlackBot(BaseIMClient):
                 logger.debug("Ignoring Slack message with empty text")
                 return
 
-            # Check if channel is authorized based on whitelist
-            if not await self._is_authorized_channel(channel_id):
-                logger.info(f"Unauthorized message from channel: {channel_id}")
-                await self._send_unauthorized_message(channel_id)
-                return
-
             # Check if we require mention in channels (not DMs)
             # For threads: only respond if the bot is active in that thread
             is_thread_reply = event.get("thread_ts") is not None
 
             if self.config.require_mention and not channel_id.startswith("D"):
-                # In channel main thread: require mention
+                # In channel main thread: require mention (silently ignore)
                 if not is_thread_reply:
-                    logger.info(f"Ignoring non-mention message in channel: '{text}'")
+                    logger.debug(f"Ignoring non-mention message in channel: '{text}'")
                     return
 
                 # In thread: check if bot is active in this thread
@@ -397,12 +385,18 @@ class SlackBot(BaseIMClient):
                     # If we have settings_manager, check if thread is active
                     if self.settings_manager:
                         if not self.settings_manager.is_thread_active(user_id, channel_id, thread_ts):
-                            logger.info(f"Ignoring message in inactive thread {thread_ts}: '{text}'")
+                            logger.debug(f"Ignoring message in inactive thread {thread_ts}: '{text}'")
                             return
                     else:
                         # Without settings_manager, fall back to ignoring non-mention in threads
-                        logger.info(f"No settings_manager, ignoring thread message: '{text}'")
+                        logger.debug(f"No settings_manager, ignoring thread message: '{text}'")
                         return
+
+            # Only check channel authorization for messages we're actually going to process
+            if not await self._is_authorized_channel(channel_id):
+                logger.info(f"Unauthorized message from channel: {channel_id}")
+                await self._send_unauthorized_message(channel_id)
+                return
 
             # Extract context
             # For Slack: if no thread_ts, use the message's own ts as thread_id (start of thread)
@@ -646,6 +640,46 @@ class SlackBot(BaseIMClient):
             # Send success message to the user (via DM or channel)
             # We need to find the right channel to send the message
             # For now, we'll rely on the controller to handle this
+
+        elif callback_id == "routing_modal":
+            # Handle routing modal submission
+            user_id = payload.get("user", {}).get("id")
+            values = view.get("state", {}).get("values", {})
+            channel_id = view.get("private_metadata")
+
+            # Extract backend
+            backend_data = values.get("backend_block", {}).get("backend_select", {})
+            backend = backend_data.get("selected_option", {}).get("value")
+
+            # Extract OpenCode agent (optional)
+            oc_agent_data = values.get("opencode_agent_block", {}).get(
+                "opencode_agent_select", {}
+            )
+            oc_agent = oc_agent_data.get("selected_option", {}).get("value")
+            if oc_agent == "__default__":
+                oc_agent = None
+
+            # Extract OpenCode model (optional)
+            oc_model_data = values.get("opencode_model_block", {}).get(
+                "opencode_model_select", {}
+            )
+            oc_model = oc_model_data.get("selected_option", {}).get("value")
+            if oc_model == "__default__":
+                oc_model = None
+
+            # Extract OpenCode reasoning effort (optional)
+            oc_reasoning_data = values.get("opencode_reasoning_block", {}).get(
+                "opencode_reasoning_select", {}
+            )
+            oc_reasoning = oc_reasoning_data.get("selected_option", {}).get("value")
+            if oc_reasoning == "__default__":
+                oc_reasoning = None
+
+            # Update routing via callback
+            if hasattr(self, "_on_routing_update"):
+                await self._on_routing_update(
+                    user_id, channel_id, backend, oc_agent, oc_model, oc_reasoning
+                )
 
     def run(self):
         """Run the Slack bot"""
@@ -914,6 +948,314 @@ class SlackBot(BaseIMClient):
             logger.error(f"Error opening change CWD modal: {e}")
             raise
 
+    async def open_routing_modal(
+        self,
+        trigger_id: str,
+        channel_id: str,
+        registered_backends: list,
+        current_backend: str,
+        current_routing,  # Optional[ChannelRouting]
+        opencode_agents: list,
+        opencode_models: dict,
+        opencode_default_config: dict,
+    ):
+        """Open a modal dialog for agent/model routing settings"""
+        self._ensure_clients()
+
+        # Build backend options
+        backend_display_names = {
+            "claude": "Claude Code",
+            "codex": "Codex",
+            "opencode": "OpenCode",
+        }
+        backend_options = []
+        for backend in registered_backends:
+            display_name = backend_display_names.get(backend, backend.capitalize())
+            backend_options.append({
+                "text": {"type": "plain_text", "text": display_name},
+                "value": backend,
+            })
+
+        # Find initial backend option
+        initial_backend = None
+        for opt in backend_options:
+            if opt["value"] == current_backend:
+                initial_backend = opt
+                break
+
+        # Backend select element
+        backend_select = {
+            "type": "static_select",
+            "action_id": "backend_select",
+            "placeholder": {"type": "plain_text", "text": "Select backend"},
+            "options": backend_options,
+        }
+        if initial_backend:
+            backend_select["initial_option"] = initial_backend
+
+        # Build blocks
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Current Backend:* {backend_display_names.get(current_backend, current_backend)}",
+                },
+            },
+            {"type": "divider"},
+            {
+                "type": "input",
+                "block_id": "backend_block",
+                "element": backend_select,
+                "label": {"type": "plain_text", "text": "Backend"},
+            },
+        ]
+
+        # OpenCode-specific options (only if opencode is registered)
+        if "opencode" in registered_backends:
+            # Get current opencode settings
+            current_oc_agent = (
+                current_routing.opencode_agent if current_routing else None
+            )
+            current_oc_model = (
+                current_routing.opencode_model if current_routing else None
+            )
+            current_oc_reasoning = (
+                current_routing.opencode_reasoning_effort if current_routing else None
+            )
+
+            # Determine default agent/model from OpenCode config
+            default_model_str = opencode_default_config.get("model")  # e.g., "anthropic/claude-opus-4-5"
+
+            # Build agent options
+            agent_options = [
+                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}
+            ]
+            for agent in opencode_agents:
+                agent_name = agent.get("name", "")
+                if agent_name:
+                    agent_options.append({
+                        "text": {"type": "plain_text", "text": agent_name},
+                        "value": agent_name,
+                    })
+
+            # Find initial agent
+            initial_agent = agent_options[0]  # Default
+            if current_oc_agent:
+                for opt in agent_options:
+                    if opt["value"] == current_oc_agent:
+                        initial_agent = opt
+                        break
+
+            agent_select = {
+                "type": "static_select",
+                "action_id": "opencode_agent_select",
+                "placeholder": {"type": "plain_text", "text": "Select OpenCode agent"},
+                "options": agent_options,
+                "initial_option": initial_agent,
+            }
+
+            # Build model options
+            model_options = [
+                {"text": {"type": "plain_text", "text": f"(Default){' - ' + default_model_str if default_model_str else ''}"}, "value": "__default__"}
+            ]
+
+            # Add models from providers
+            providers_data = opencode_models.get("providers", [])
+            defaults = opencode_models.get("default", {})
+
+            # Calculate max models per provider to fit within Slack's 100 option limit
+            # Reserve 1 for "(Default)" option
+            num_providers = len(providers_data)
+            max_per_provider = max(5, (99 // num_providers)) if num_providers > 0 else 99
+
+            for provider in providers_data:
+                provider_id = provider.get("id", "")
+                provider_name = provider.get("name", provider_id)
+                models = provider.get("models", {})
+
+                # Handle both dict and list formats for models
+                if isinstance(models, dict):
+                    model_items = list(models.items())
+                elif isinstance(models, list):
+                    model_items = [(m, m) if isinstance(m, str) else (m.get("id", ""), m) for m in models]
+                else:
+                    model_items = []
+
+                # Limit models per provider
+                provider_model_count = 0
+                for model_id, model_info in model_items:
+                    if provider_model_count >= max_per_provider:
+                        break
+
+                    # Get model name
+                    if isinstance(model_info, dict):
+                        model_name = model_info.get("name", model_id)
+                    else:
+                        model_name = model_id
+
+                    if model_id:
+                        full_model = f"{provider_id}/{model_id}"
+                        # Mark if this is the provider's default
+                        is_default = defaults.get(provider_id) == model_id
+                        display = f"{provider_name}: {model_name}"
+                        if is_default:
+                            display += " (default)"
+
+                        model_options.append({
+                            "text": {"type": "plain_text", "text": display[:75]},  # Slack limit
+                            "value": full_model,
+                        })
+                        provider_model_count += 1
+
+            # Final safety check for Slack's 100 option limit
+            if len(model_options) > 100:
+                model_options = model_options[:100]
+                logger.warning("Truncated model options to 100 for Slack modal")
+
+            # Find initial model
+            initial_model = model_options[0]  # Default
+            if current_oc_model:
+                for opt in model_options:
+                    if opt["value"] == current_oc_model:
+                        initial_model = opt
+                        break
+
+            model_select = {
+                "type": "static_select",
+                "action_id": "opencode_model_select",
+                "placeholder": {"type": "plain_text", "text": "Select model"},
+                "options": model_options,
+                "initial_option": initial_model,
+            }
+
+            # Build reasoning effort options dynamically based on model variants
+            # Determine target model for variants lookup
+            target_model = current_oc_model or default_model_str
+            model_variants = {}
+
+            if target_model:
+                # Parse provider/model format
+                parts = target_model.split("/", 1)
+                if len(parts) == 2:
+                    target_provider, target_model_id = parts
+                    # Search for this model in providers data
+                    for provider in providers_data:
+                        if provider.get("id") == target_provider:
+                            models = provider.get("models", {})
+                            if isinstance(models, dict):
+                                model_info = models.get(target_model_id, {})
+                                if isinstance(model_info, dict):
+                                    model_variants = model_info.get("variants", {})
+                            break
+
+            # Build options from variants or use fallback
+            reasoning_effort_options = [
+                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}
+            ]
+
+            if model_variants:
+                # Use model-specific variants
+                variant_display_names = {
+                    "none": "None",
+                    "minimal": "Minimal",
+                    "low": "Low",
+                    "medium": "Medium",
+                    "high": "High",
+                    "xhigh": "Extra High",
+                    "max": "Max",
+                }
+                for variant_key in model_variants.keys():
+                    display_name = variant_display_names.get(variant_key, variant_key.capitalize())
+                    reasoning_effort_options.append({
+                        "text": {"type": "plain_text", "text": display_name},
+                        "value": variant_key,
+                    })
+            else:
+                # Fallback to common options
+                reasoning_effort_options.extend([
+                    {"text": {"type": "plain_text", "text": "Low"}, "value": "low"},
+                    {"text": {"type": "plain_text", "text": "Medium"}, "value": "medium"},
+                    {"text": {"type": "plain_text", "text": "High"}, "value": "high"},
+                ])
+
+            # Find initial reasoning effort
+            initial_reasoning = reasoning_effort_options[0]  # Default
+            if current_oc_reasoning:
+                for opt in reasoning_effort_options:
+                    if opt["value"] == current_oc_reasoning:
+                        initial_reasoning = opt
+                        break
+
+            reasoning_select = {
+                "type": "static_select",
+                "action_id": "opencode_reasoning_select",
+                "placeholder": {"type": "plain_text", "text": "Select reasoning effort"},
+                "options": reasoning_effort_options,
+                "initial_option": initial_reasoning,
+            }
+
+            # Add OpenCode section
+            blocks.extend([
+                {"type": "divider"},
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*OpenCode Options* (only applies when backend is OpenCode)",
+                    },
+                },
+                {
+                    "type": "input",
+                    "block_id": "opencode_agent_block",
+                    "optional": True,
+                    "element": agent_select,
+                    "label": {"type": "plain_text", "text": "OpenCode Agent"},
+                },
+                {
+                    "type": "input",
+                    "block_id": "opencode_model_block",
+                    "optional": True,
+                    "element": model_select,
+                    "label": {"type": "plain_text", "text": "Model"},
+                },
+                {
+                    "type": "input",
+                    "block_id": "opencode_reasoning_block",
+                    "optional": True,
+                    "element": reasoning_select,
+                    "label": {"type": "plain_text", "text": "Reasoning Effort (Thinking Mode)"},
+                },
+            ])
+
+        # Add tip
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "_💡 Select (Default) to use OpenCode's configured defaults._",
+                }
+            ],
+        })
+
+        # Create modal view
+        view = {
+            "type": "modal",
+            "callback_id": "routing_modal",
+            "private_metadata": channel_id,
+            "title": {"type": "plain_text", "text": "Agent Settings"},
+            "submit": {"type": "plain_text", "text": "Save"},
+            "close": {"type": "plain_text", "text": "Cancel"},
+            "blocks": blocks,
+        }
+
+        try:
+            await self.web_client.views_open(trigger_id=trigger_id, view=view)
+        except SlackApiError as e:
+            logger.error(f"Error opening routing modal: {e}")
+            raise
+
     def register_callbacks(
         self,
         on_message: Optional[Callable] = None,
@@ -941,6 +1283,10 @@ class SlackBot(BaseIMClient):
         # Register change CWD handler
         if "on_change_cwd" in kwargs:
             self._on_change_cwd = kwargs["on_change_cwd"]
+
+        # Register routing update handler
+        if "on_routing_update" in kwargs:
+            self._on_routing_update = kwargs["on_routing_update"]
 
     async def get_or_create_thread(
         self, channel_id: str, user_id: str

@@ -116,8 +116,6 @@ class CodexConfig:
 class OpenCodeConfig:
     binary: str = "opencode"
     port: int = 4096
-    default_agent: Optional[str] = None
-    default_model: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> "OpenCodeConfig":
@@ -140,8 +138,6 @@ class OpenCodeConfig:
         return cls(
             binary=binary,
             port=port,
-            default_agent=os.getenv("OPENCODE_DEFAULT_AGENT"),
-            default_model=os.getenv("OPENCODE_DEFAULT_MODEL"),
         )
 
 

@@ -57,10 +57,7 @@ class CommandHandlers:
                 ),
             }
 
-        settings_key = self.controller._get_settings_key(context)
-        agent_name = self.controller.agent_router.resolve(
-            self.config.platform, settings_key
-        )
+        agent_name = self.controller.resolve_agent_for_context(context)
         default_agent = getattr(self.controller.agent_service, "default_agent", None)
         agent_display_name = get_agent_display_name(
             agent_name, fallback=default_agent or "Unknown"
@@ -119,7 +116,9 @@ class CommandHandlers:
                 InlineButton(text="🔄 Clear All Session", callback_data="cmd_clear"),
                 InlineButton(text="⚙️ Settings", callback_data="cmd_settings"),
             ],
-            # Row 3: Help
+            # Row 3: Agent/Model switching
+            [InlineButton(text="🤖 Agent Settings", callback_data="cmd_routing")],
+            # Row 4: Help
             [InlineButton(text="ℹ️ How it Works", callback_data="info_how_it_works")],
         ]
 
@@ -315,9 +314,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 session_handler.get_session_info(context)
             )
             settings_key = self.controller._get_settings_key(context)
-            agent_name = self.controller.agent_router.resolve(
-                self.config.platform, settings_key
-            )
+            agent_name = self.controller.resolve_agent_for_context(context)
             request = AgentRequest(
                 context=context,
                 message="stop",
