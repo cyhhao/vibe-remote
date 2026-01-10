@@ -73,9 +73,7 @@ class MessageHandler:
             )
             settings_key = self._get_settings_key(context)
 
-            agent_name = self.controller.agent_router.resolve(
-                self.config.platform, settings_key
-            )
+            agent_name = self.controller.resolve_agent_for_context(context)
             ack_context = self._get_target_context(context)
             ack_text = self._get_ack_text(agent_name)
             ack_message_id = None
@@ -154,6 +152,9 @@ class MessageHandler:
             elif callback_data == "cmd_settings":
                 await settings_handler.handle_settings(context)
 
+            elif callback_data == "cmd_routing":
+                await settings_handler.handle_routing(context)
+
             elif (
                 callback_data.startswith("info_") and callback_data != "info_msg_types"
             ):
@@ -187,9 +188,7 @@ class MessageHandler:
                 self.session_handler.get_session_info(context)
             )
             settings_key = self._get_settings_key(context)
-            agent_name = self.controller.agent_router.resolve(
-                self.config.platform, settings_key
-            )
+            agent_name = self.controller.resolve_agent_for_context(context)
             request = AgentRequest(
                 context=context,
                 message="stop",

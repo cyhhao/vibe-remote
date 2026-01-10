@@ -8,7 +8,7 @@ from config.settings import AppConfig
 from modules.im import BaseIMClient, MessageContext, IMFactory
 from modules.im.formatters import TelegramFormatter, SlackFormatter
 from modules.agent_router import AgentRouter
-from modules.agents import AgentService, ClaudeAgent, CodexAgent
+from modules.agents import AgentService, ClaudeAgent, CodexAgent, OpenCodeAgent
 from modules.claude_client import ClaudeClient
 from modules.session_manager import SessionManager
 from modules.settings_manager import SettingsManager
@@ -101,7 +101,6 @@ class Controller:
         self.message_handler.set_session_handler(self.session_handler)
 
     def _init_agents(self):
-        """Initialize agent implementations (requires handlers ready)."""
         self.agent_service = AgentService(self)
         self.agent_service.register(ClaudeAgent(self))
         if self.config.codex:
@@ -109,6 +108,11 @@ class Controller:
                 self.agent_service.register(CodexAgent(self, self.config.codex))
             except Exception as e:
                 logger.error(f"Failed to initialize Codex agent: {e}")
+        if self.config.opencode:
+            try:
+                self.agent_service.register(OpenCodeAgent(self, self.config.opencode))
+            except Exception as e:
+                logger.error(f"Failed to initialize OpenCode agent: {e}")
 
     def _setup_callbacks(self):
         """Setup callback connections between modules"""
@@ -129,6 +133,7 @@ class Controller:
             on_callback_query=self.message_handler.handle_callback_query,
             on_settings_update=self.handle_settings_update,
             on_change_cwd=self.handle_change_cwd_submission,
+            on_routing_update=self.handle_routing_update,
         )
 
     # Utility methods used by handlers
@@ -180,6 +185,52 @@ class Controller:
                 platform_specific=context.platform_specific,
             )
         return context
+
+    def resolve_agent_for_context(self, context: MessageContext) -> str:
+        """Unified agent resolution with dynamic override support.
+
+        Priority:
+        1. channel_routing.agent_backend (from user_settings.json)
+        2. agent_routes.yaml overrides[channel_id]
+        3. agent_routes.yaml platform.default
+        4. agent_routes.yaml global default
+        5. AgentService.default_agent ("claude")
+        """
+        settings_key = self._get_settings_key(context)
+
+        # Check dynamic override first
+        routing = self.settings_manager.get_channel_routing(settings_key)
+        if routing and routing.agent_backend:
+            # Verify the agent is registered
+            if routing.agent_backend in self.agent_service.agents:
+                return routing.agent_backend
+            else:
+                logger.warning(
+                    f"Channel routing specifies '{routing.agent_backend}' but agent is not registered, "
+                    f"falling back to static routing"
+                )
+
+        # Fall back to static routing
+        return self.agent_router.resolve(self.config.platform, settings_key)
+
+    def get_opencode_overrides(
+        self, context: MessageContext
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Get OpenCode agent, model, and reasoning effort overrides for this channel.
+
+        Returns:
+            Tuple of (opencode_agent, opencode_model, opencode_reasoning_effort)
+            or (None, None, None) if no overrides.
+        """
+        settings_key = self._get_settings_key(context)
+        routing = self.settings_manager.get_channel_routing(settings_key)
+        if routing:
+            return (
+                routing.opencode_agent,
+                routing.opencode_model,
+                routing.opencode_reasoning_effort,
+            )
+        return None, None, None
 
     async def emit_agent_message(
         self,
@@ -286,6 +337,73 @@ class Controller:
                 context, f"❌ Failed to change working directory: {str(e)}"
             )
 
+    # Routing update handler (for Slack modal)
+    async def handle_routing_update(
+        self,
+        user_id: str,
+        channel_id: str,
+        backend: str,
+        opencode_agent: Optional[str],
+        opencode_model: Optional[str],
+        opencode_reasoning_effort: Optional[str] = None,
+    ):
+        """Handle routing update submission (from Slack modal)"""
+        from modules.settings_manager import ChannelRouting
+
+        try:
+            # Create routing object
+            routing = ChannelRouting(
+                agent_backend=backend,
+                opencode_agent=opencode_agent,
+                opencode_model=opencode_model,
+                opencode_reasoning_effort=opencode_reasoning_effort,
+            )
+
+            # Get settings key
+            settings_key = channel_id if channel_id else user_id
+
+            # Save routing
+            self.settings_manager.set_channel_routing(settings_key, routing)
+
+            # Build confirmation message
+            parts = [f"Backend: **{backend}**"]
+            if backend == "opencode":
+                if opencode_agent:
+                    parts.append(f"Agent: **{opencode_agent}**")
+                if opencode_model:
+                    parts.append(f"Model: **{opencode_model}**")
+                if opencode_reasoning_effort:
+                    parts.append(f"Reasoning Effort: **{opencode_reasoning_effort}**")
+
+            # Create context for confirmation message
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id if channel_id else user_id,
+                platform_specific={},
+            )
+
+            await self.im_client.send_message(
+                context,
+                f"✅ Agent routing updated!\n" + "\n".join(parts),
+                parse_mode="markdown",
+            )
+
+            logger.info(
+                f"Routing updated for {settings_key}: backend={backend}, "
+                f"agent={opencode_agent}, model={opencode_model}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error updating routing: {e}")
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id if channel_id else user_id,
+                platform_specific={},
+            )
+            await self.im_client.send_message(
+                context, f"❌ Failed to update routing: {str(e)}"
+            )
+
     # Main run method
     def run(self):
         """Run the controller"""
@@ -341,5 +459,12 @@ class Controller:
                     stop_attr()
         except Exception:
             pass
+
+        # Stop OpenCode server if running
+        try:
+            from modules.agents.opencode_agent import OpenCodeServerManager
+            OpenCodeServerManager.stop_instance_sync()
+        except Exception as e:
+            logger.debug(f"OpenCode server cleanup skipped: {e}")
 
         logger.info("Controller cleanup (sync) complete")

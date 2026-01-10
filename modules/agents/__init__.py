@@ -3,14 +3,15 @@ from typing import Optional
 from .base import BaseAgent, AgentRequest, AgentMessage
 from .claude_agent import ClaudeAgent
 from .codex_agent import CodexAgent
+from .opencode_agent import OpenCodeAgent
 from .service import AgentService
 
 
 def get_agent_display_name(agent_name: Optional[str], fallback: Optional[str] = None) -> str:
-    """Return a friendly, title-cased display name for an agent identifier."""
     normalized_map = {
         "claude": "Claude",
         "codex": "Codex",
+        "opencode": "OpenCode",
     }
 
     candidate = (agent_name or fallback or "Agent").strip()
@@ -24,12 +25,14 @@ def get_agent_display_name(agent_name: Optional[str], fallback: Optional[str] = 
 
     return candidate.replace("_", " ").title()
 
+
 __all__ = [
     "AgentMessage",
     "AgentRequest",
     "BaseAgent",
     "ClaudeAgent",
     "CodexAgent",
+    "OpenCodeAgent",
     "AgentService",
     "get_agent_display_name",
 ]

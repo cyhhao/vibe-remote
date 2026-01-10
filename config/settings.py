@@ -113,6 +113,35 @@ class CodexConfig:
 
 
 @dataclass
+class OpenCodeConfig:
+    binary: str = "opencode"
+    port: int = 4096
+
+    @classmethod
+    def from_env(cls) -> "OpenCodeConfig":
+        binary = os.getenv("OPENCODE_CLI_PATH", "opencode")
+        if not shutil.which(binary):
+            raise ValueError(
+                f"OpenCode CLI binary '{binary}' not found in PATH. "
+                "Install OpenCode or set OPENCODE_CLI_PATH."
+            )
+
+        port_str = os.getenv("OPENCODE_PORT", "4096")
+        try:
+            port = int(port_str)
+        except ValueError:
+            logger.warning(
+                f"Invalid OPENCODE_PORT '{port_str}', falling back to 4096"
+            )
+            port = 4096
+
+        return cls(
+            binary=binary,
+            port=port,
+        )
+
+
+@dataclass
 class SlackConfig(BaseIMConfig):
     bot_token: str
     app_token: Optional[str] = None  # For Socket Mode
@@ -174,11 +203,12 @@ class SlackConfig(BaseIMConfig):
 
 @dataclass
 class AppConfig:
-    platform: str  # 'telegram' or 'slack'
+    platform: str
     telegram: Optional[TelegramConfig] = None
     slack: Optional[SlackConfig] = None
     claude: ClaudeConfig = None
     codex: Optional[CodexConfig] = None
+    opencode: Optional[OpenCodeConfig] = None
     log_level: str = "INFO"
     cleanup_enabled: bool = False
     agent_route_file: Optional[str] = None
@@ -224,12 +254,27 @@ class AppConfig:
                 logger.warning(f"Codex support disabled: {exc}")
                 codex_config = None
 
+        opencode_config = None
+        opencode_enabled = os.getenv("OPENCODE_ENABLED", "false").lower() in [
+            "1",
+            "true",
+            "yes",
+            "on",
+        ]
+        if opencode_enabled:
+            try:
+                opencode_config = OpenCodeConfig.from_env()
+            except ValueError as exc:
+                logger.warning(f"OpenCode support disabled: {exc}")
+                opencode_config = None
+
         config = cls(
             platform=platform,
             claude=ClaudeConfig.from_env(),
             log_level=log_level,
             cleanup_enabled=cleanup_enabled,
             codex=codex_config,
+            opencode=opencode_config,
             agent_route_file=agent_route_file,
         )
 

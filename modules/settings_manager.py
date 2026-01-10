@@ -10,29 +10,64 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class UserSettings:
-    """User personalization settings"""
+DEFAULT_HIDDEN_MESSAGE_TYPES = ["system", "assistant", "user"]
 
-    hidden_message_types: List[str] = field(
-        default_factory=list
-    )  # Message types to hide
-    custom_cwd: Optional[str] = None  # Custom working directory
-    # Nested map: {agent_name: {base_session_id: {working_path: session_id}}}
-    session_mappings: Dict[str, Dict[str, Dict[str, str]]] = field(
-        default_factory=dict
-    )
-    # Slack active threads: {channel_id: {thread_ts: last_active_timestamp}}
-    active_slack_threads: Dict[str, Dict[str, float]] = field(default_factory=dict)
+
+@dataclass
+class ChannelRouting:
+    """Per-channel agent routing configuration."""
+
+    agent_backend: Optional[str] = None  # "claude" | "codex" | "opencode" | None
+    opencode_agent: Optional[str] = None  # "build" | "plan" | ... | None
+    opencode_model: Optional[str] = None  # "provider/model" | None
+    opencode_reasoning_effort: Optional[str] = None  # "low" | "medium" | "high" | "xhigh" | None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
         return asdict(self)
 
     @classmethod
+    def from_dict(cls, data: dict) -> "ChannelRouting":
+        """Create from dictionary"""
+        if data is None:
+            return None
+        return cls(
+            agent_backend=data.get("agent_backend"),
+            opencode_agent=data.get("opencode_agent"),
+            opencode_model=data.get("opencode_model"),
+            opencode_reasoning_effort=data.get("opencode_reasoning_effort"),
+        )
+
+
+@dataclass
+class UserSettings:
+    hidden_message_types: List[str] = field(
+        default_factory=lambda: DEFAULT_HIDDEN_MESSAGE_TYPES.copy()
+    )
+    custom_cwd: Optional[str] = None
+    session_mappings: Dict[str, Dict[str, Dict[str, str]]] = field(
+        default_factory=dict
+    )
+    active_slack_threads: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    channel_routing: Optional[ChannelRouting] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization"""
+        result = asdict(self)
+        # Handle ChannelRouting serialization
+        if self.channel_routing is not None:
+            result["channel_routing"] = self.channel_routing.to_dict()
+        return result
+
+    @classmethod
     def from_dict(cls, data: dict) -> "UserSettings":
         """Create from dictionary"""
-        return cls(**data)
+        # Handle channel_routing deserialization
+        routing_data = data.pop("channel_routing", None)
+        settings = cls(**data)
+        if routing_data:
+            settings.channel_routing = ChannelRouting.from_dict(routing_data)
+        return settings
 
 
 class SettingsManager:
@@ -409,3 +444,35 @@ class SettingsManager:
         channels_to_clean = list(settings.active_slack_threads.keys())
         for channel_id in channels_to_clean:
             self._cleanup_expired_threads_for_channel(user_id, channel_id)
+
+    # ---------------------------------------------
+    # Channel routing management
+    # ---------------------------------------------
+    def get_channel_routing(
+        self, settings_key: Union[int, str]
+    ) -> Optional[ChannelRouting]:
+        """Get channel routing override for the given settings key."""
+        settings = self.get_user_settings(settings_key)
+        return settings.channel_routing
+
+    def set_channel_routing(
+        self, settings_key: Union[int, str], routing: ChannelRouting
+    ):
+        """Set channel routing override."""
+        settings = self.get_user_settings(settings_key)
+        settings.channel_routing = routing
+        self.update_user_settings(settings_key, settings)
+        logger.info(
+            f"Updated channel routing for {settings_key}: "
+            f"backend={routing.agent_backend}, "
+            f"opencode_agent={routing.opencode_agent}, "
+            f"opencode_model={routing.opencode_model}"
+        )
+
+    def clear_channel_routing(self, settings_key: Union[int, str]):
+        """Clear channel routing override (fall back to agent_routes.yaml)."""
+        settings = self.get_user_settings(settings_key)
+        if settings.channel_routing:
+            settings.channel_routing = None
+            self.update_user_settings(settings_key, settings)
+            logger.info(f"Cleared channel routing for {settings_key}")
