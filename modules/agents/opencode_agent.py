@@ -28,7 +28,7 @@ class OpenCodeServerManager:
         self,
         binary: str = "opencode",
         port: int = DEFAULT_OPENCODE_PORT,
-        request_timeout_seconds: int = 30,
+        request_timeout_seconds: int = 60,
     ):
         self.binary = binary
         self.port = port
@@ -44,7 +44,7 @@ class OpenCodeServerManager:
         cls,
         binary: str = "opencode",
         port: int = DEFAULT_OPENCODE_PORT,
-        request_timeout_seconds: int = 30,
+        request_timeout_seconds: int = 60,
     ) -> "OpenCodeServerManager":
         async with cls._class_lock:
             if cls._instance is None:

@@ -116,7 +116,7 @@ class CodexConfig:
 class OpenCodeConfig:
     binary: str = "opencode"
     port: int = 4096
-    request_timeout_seconds: int = 30
+    request_timeout_seconds: int = 60
 
     @classmethod
     def from_env(cls) -> "OpenCodeConfig":
@@ -136,19 +136,9 @@ class OpenCodeConfig:
             )
             port = 4096
 
-        timeout_str = os.getenv("OPENCODE_REQUEST_TIMEOUT", "30")
-        try:
-            request_timeout_seconds = int(timeout_str)
-        except ValueError:
-            logger.warning(
-                f"Invalid OPENCODE_REQUEST_TIMEOUT '{timeout_str}', falling back to 30"
-            )
-            request_timeout_seconds = 30
-
         return cls(
             binary=binary,
             port=port,
-            request_timeout_seconds=request_timeout_seconds,
         )
 
 
