@@ -374,6 +374,47 @@ class BaseMarkdownFormatter(ABC):
 
         return result_info
 
+    def format_toolcall(
+        self,
+        tool_name: str,
+        tool_input: Optional[Dict[str, Any]] = None,
+        get_relative_path: Optional[callable] = None,
+    ) -> str:
+        """Format a single-line tool call summary.
+
+        Intended for compact, append-only logs (Tool name + params).
+        """
+        normalized_input: Dict[str, Any] = {}
+        for key, value in (tool_input or {}).items():
+            if (
+                isinstance(value, str)
+                and get_relative_path
+                and key
+                in {
+                    "file_path",
+                    "filePath",
+                    "path",
+                    "directory",
+                    "cwd",
+                    "workdir",
+                }
+            ):
+                try:
+                    normalized_input[key] = get_relative_path(value)
+                except Exception:
+                    normalized_input[key] = value
+            else:
+                normalized_input[key] = value
+
+        params = json.dumps(
+            normalized_input,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if params == "{}":
+            return f"🔧 {self.format_code_inline(tool_name)}"
+        return f"🔧 {self.format_code_inline(tool_name)} {self.format_code_inline(params)}"
+
     def format_todo_item(
         self, status: str, priority: str, content: str, completed: bool = False
     ) -> str:

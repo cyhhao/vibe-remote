@@ -212,9 +212,9 @@ class SettingsHandler:
                 emoji="📋",
                 items=[
                     ("System", "System initialization and status messages"),
-                    ("Response", "Tool execution responses and results"),
+                    ("Toolcall", "Agent tool name + params (one line)"),
                     ("Assistant", "Agent responses and explanations"),
-                    ("Result", "Final execution results and summaries"),
+                    ("Result", "Final execution result (always sent)"),
                 ],
                 footer="Hidden messages won't be sent to your IM platform.",
             )

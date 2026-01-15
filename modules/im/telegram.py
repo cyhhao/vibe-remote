@@ -326,13 +326,22 @@ class TelegramBot(BaseIMClient):
         message_id: str,
         text: Optional[str] = None,
         keyboard: Optional[InlineKeyboard] = None,
+        parse_mode: Optional[str] = None,
     ) -> bool:
         """Edit an existing message - BaseIMClient implementation"""
         bot = self.application.bot
         chat_id = int(context.channel_id)
 
+        markdownv2_text = None
+        if text is not None:
+            markdownv2_text = (
+                self._convert_to_markdownv2(text)
+                if parse_mode in (None, "markdown")
+                else text
+            )
+
         try:
-            if text and keyboard:
+            if markdownv2_text is not None and keyboard:
                 # Convert keyboard
                 tg_keyboard = []
                 for row in keyboard.buttons:
@@ -349,12 +358,16 @@ class TelegramBot(BaseIMClient):
                 await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=int(message_id),
-                    text=text,
+                    text=markdownv2_text,
+                    parse_mode="MarkdownV2",
                     reply_markup=reply_markup,
                 )
-            elif text:
+            elif markdownv2_text is not None:
                 await bot.edit_message_text(
-                    chat_id=chat_id, message_id=int(message_id), text=text
+                    chat_id=chat_id,
+                    message_id=int(message_id),
+                    text=markdownv2_text,
+                    parse_mode="MarkdownV2",
                 )
             elif keyboard:
                 # Convert keyboard

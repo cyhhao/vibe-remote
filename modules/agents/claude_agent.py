@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Callable, Optional
 
-from claude_code_sdk import TextBlock
+from claude_code_sdk import TextBlock, ToolUseBlock
 
 from modules.agents.base import AgentRequest, BaseAgent
 from modules.im import MessageContext
@@ -24,6 +24,7 @@ class ClaudeAgent(BaseAgent):
         self.claude_sessions = controller.claude_sessions
         self.claude_client = controller.claude_client
         self._last_assistant_text: dict[str, str] = {}
+        self._pending_assistant_message: dict[str, str] = {}
 
     async def handle_message(self, request: AgentRequest) -> None:
         context = request.context
@@ -140,46 +141,97 @@ class ClaudeAgent(BaseAgent):
                         continue
 
                     message_type = self._detect_message_type(message)
-                    formatted_message = None
+                    formatter = self.im_client.formatter
+
                     if message_type == "assistant":
+                        toolcalls = []
+                        text_parts = []
+                        for block in getattr(message, "content", []) or []:
+                            if isinstance(block, ToolUseBlock):
+                                toolcalls.append(
+                                    formatter.format_toolcall(
+                                        block.name,
+                                        block.input,
+                                        get_relative_path=lambda path: self.get_relative_path(
+                                            path, context
+                                        ),
+                                    )
+                                )
+                            elif isinstance(block, TextBlock):
+                                text = block.text.strip() if block.text else ""
+                                if text:
+                                    text_parts.append(text)
+
+                        assistant_text = self._extract_text_blocks(message)
+                        if assistant_text:
+                            self._last_assistant_text[composite_key] = assistant_text
+
+                        pending = self._pending_assistant_message.pop(composite_key, None)
+                        if pending:
+                            await self.controller.emit_agent_message(
+                                context,
+                                "assistant",
+                                pending,
+                                parse_mode="markdown",
+                            )
+
+                        for toolcall in toolcalls:
+                            await self.controller.emit_agent_message(
+                                context,
+                                "toolcall",
+                                toolcall,
+                                parse_mode="markdown",
+                            )
+
+                        if text_parts:
+                            formatted_assistant = formatter.format_assistant_message(
+                                text_parts
+                            )
+                            self._pending_assistant_message[composite_key] = formatted_assistant
+                        continue
+
+                    if message_type == "system":
                         formatted_message = self.claude_client.format_message(
                             message,
                             get_relative_path=lambda path: self.get_relative_path(
                                 path, context
                             ),
                         )
-                        assistant_text = self._extract_text_blocks(message)
-                        if assistant_text:
-                            self._last_assistant_text[composite_key] = assistant_text
-                        if self.settings_manager.is_message_type_hidden(
-                            settings_key, message_type
-                        ):
-                            continue
-                    elif message_type == "result":
-                        if self.settings_manager.is_message_type_hidden(
-                            settings_key, message_type
-                        ):
-                            self._last_assistant_text.pop(composite_key, None)
-                            continue
-                        result_text = getattr(message, "result", None)
-                        if (
-                            not result_text
-                            and self.settings_manager.is_message_type_hidden(
-                                settings_key, "assistant"
+                        if formatted_message and formatted_message.strip():
+                            await self.controller.emit_agent_message(
+                                context,
+                                "system",
+                                formatted_message,
+                                parse_mode="markdown",
                             )
-                        ):
+                        continue
+
+                    if message_type == "result":
+                        pending = self._pending_assistant_message.pop(composite_key, None)
+                        result_text = getattr(message, "result", None)
+                        used_fallback = False
+                        if not result_text:
                             fallback = self._last_assistant_text.get(composite_key)
                             if fallback:
                                 result_text = fallback
-                        suffix = "---" if self.config.platform == "slack" else None
+                                used_fallback = True
+
+                        if pending and not used_fallback:
+                            await self.controller.emit_agent_message(
+                                context,
+                                "assistant",
+                                pending,
+                                parse_mode="markdown",
+                            )
+
                         await self.emit_result_message(
                             context,
                             result_text,
                             subtype=getattr(message, "subtype", "") or "",
                             duration_ms=getattr(message, "duration_ms", 0),
                             parse_mode="markdown",
-                            suffix=suffix,
                         )
+
                         self._last_assistant_text.pop(composite_key, None)
                         session = await self.session_manager.get_or_create_session(
                             context.user_id, context.channel_id
@@ -189,41 +241,9 @@ class ClaudeAgent(BaseAgent):
                                 f"{base_session_id}:{working_path}"
                             ] = False
                         continue
-                    else:
-                        if message_type and self.settings_manager.is_message_type_hidden(
-                            settings_key, message_type
-                        ):
-                            if message_type == "result":
-                                self._last_assistant_text.pop(composite_key, None)
-                            continue
-                        formatted_message = self.claude_client.format_message(
-                            message,
-                            get_relative_path=lambda path: self.get_relative_path(
-                                path, context
-                            ),
-                        )
-                    if not formatted_message or not formatted_message.strip():
-                        continue
 
-                    if self.config.platform == "slack":
-                        formatted_message = formatted_message + "\n---"
-
-                    await self.controller.emit_agent_message(
-                        context,
-                        message_type or "assistant",
-                        formatted_message,
-                        parse_mode="markdown",
-                    )
-
-                    if message_type == "result":
-                        self._last_assistant_text.pop(composite_key, None)
-                        session = await self.session_manager.get_or_create_session(
-                            context.user_id, context.channel_id
-                        )
-                        if session:
-                            session.session_active[
-                                f"{base_session_id}:{working_path}"
-                            ] = False
+                    # Ignore UserMessage/tool results; toolcalls are emitted from ToolUseBlock.
+                    continue
                 except Exception as e:
                     logger.error(
                         f"Error processing message from Claude: {e}", exc_info=True

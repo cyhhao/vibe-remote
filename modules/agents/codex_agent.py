@@ -26,6 +26,7 @@ class CodexAgent(BaseAgent):
         self.base_process_index: Dict[str, str] = {}
         self.composite_to_base: Dict[str, str] = {}
         self._initialized_sessions: set[str] = set()
+        self._pending_assistant_messages: Dict[str, Tuple[str, Optional[str]]] = {}
         self._slack_markdown_converter = (
             SlackMarkdownConverter()
             if getattr(self.controller.config, "platform", None) == "slack"
@@ -137,6 +138,7 @@ class CodexAgent(BaseAgent):
 
     def _unregister_process(self, composite_key: str):
         self.active_processes.pop(composite_key, None)
+        self._pending_assistant_messages.pop(composite_key, None)
         base_id = self.composite_to_base.pop(composite_key, None)
         if base_id and self.base_process_index.get(base_id) == composite_key:
             self.base_process_index.pop(base_id, None)
@@ -251,50 +253,53 @@ class CodexAgent(BaseAgent):
                 system_text = self.im_client.formatter.format_system_message(
                     request.working_path, "init", thread_id
                 )
-                if self.config.platform == "slack":
-                    system_text = system_text + "\n---"
-                parse_mode = None if self._slack_markdown_converter else "markdown"
                 await self.controller.emit_agent_message(
                     request.context,
                     "system",
                     system_text,
-                    parse_mode=parse_mode,
+                    parse_mode="markdown",
                 )
             return
 
         if event_type == "item.completed":
             details = event.get("item", {})
             item_type = details.get("type")
+
             if item_type == "agent_message":
                 text = details.get("text", "")
                 if text:
-                    await self.controller.emit_agent_message(
-                        request.context, "assistant", text, parse_mode="markdown"
-                    )
-                    (
-                        request.last_agent_message,
-                        request.last_agent_message_parse_mode,
-                    ) = self._prepare_last_message_payload(text)
+                    session_key = request.composite_session_id
+                    pending = self._pending_assistant_messages.get(session_key)
+                    if pending:
+                        pending_text, pending_parse_mode = pending
+                        await self.controller.emit_agent_message(
+                            request.context,
+                            "assistant",
+                            pending_text,
+                            parse_mode=pending_parse_mode or "markdown",
+                        )
+
+                    self._pending_assistant_messages[session_key] = self._prepare_last_message_payload(text)
             elif item_type == "command_execution":
                 command = details.get("command")
-                output = details.get("aggregated_output", "")
                 status = details.get("status")
-                message_parts = [f"🛠️ `{command}` → {status}"]
-                if output:
-                    snippet = output[-2000:]
-                    message_parts.append(f"```shell\n{snippet}\n```")
-                await self.controller.emit_agent_message(
-                    request.context,
-                    "assistant",
-                    "\n".join(message_parts),
-                    parse_mode="markdown",
-                )
+                if command:
+                    toolcall = self.im_client.formatter.format_toolcall(
+                        "bash",
+                        {"command": command, "status": status},
+                    )
+                    await self.controller.emit_agent_message(
+                        request.context,
+                        "toolcall",
+                        toolcall,
+                        parse_mode="markdown",
+                    )
             elif item_type == "reasoning":
                 text = details.get("text", "")
                 if text:
                     await self.controller.emit_agent_message(
                         request.context,
-                        "response",
+                        "assistant",
                         f"_🧠 {text}_",
                         parse_mode="markdown",
                     )
@@ -312,24 +317,30 @@ class CodexAgent(BaseAgent):
             await self.controller.emit_agent_message(
                 request.context, "notify", f"⚠️ Codex turn failed: {error}"
             )
-            request.last_agent_message = None
-            request.last_agent_message_parse_mode = None
+            self._pending_assistant_messages.pop(request.composite_session_id, None)
             return
 
         if event_type == "turn.completed":
-            if request.last_agent_message:
-                parse_mode = request.last_agent_message_parse_mode
-                if parse_mode is None and not self._slack_markdown_converter:
-                    parse_mode = "markdown"
+            pending = self._pending_assistant_messages.pop(
+                request.composite_session_id, None
+            )
+            if pending:
+                pending_text, pending_parse_mode = pending
                 await self.emit_result_message(
                     request.context,
-                    request.last_agent_message,
+                    pending_text,
                     subtype="success",
                     started_at=request.started_at,
-                    parse_mode=parse_mode,
+                    parse_mode=pending_parse_mode or "markdown",
                 )
-                request.last_agent_message = None
-                request.last_agent_message_parse_mode = None
+            else:
+                await self.emit_result_message(
+                    request.context,
+                    None,
+                    subtype="success",
+                    started_at=request.started_at,
+                    parse_mode="markdown",
+                )
             return
 
     async def _delete_ack(self, request: AgentRequest):
@@ -348,8 +359,6 @@ class CodexAgent(BaseAgent):
         self, text: str
     ) -> Tuple[str, Optional[str]]:
         """Prepare cached assistant text for reuse in result messages."""
-        if self._slack_markdown_converter:
-            return self._slack_markdown_converter.convert(text), None
         return text, "markdown"
 
     async def _notify_stream_error(self, request: AgentRequest, message: str) -> None:

@@ -156,17 +156,23 @@ class BaseIMClient(ABC):
         pass
     
     @abstractmethod
-    async def edit_message(self, context: MessageContext, message_id: str,
-                          text: Optional[str] = None,
-                          keyboard: Optional[InlineKeyboard] = None) -> bool:
+    async def edit_message(
+        self,
+        context: MessageContext,
+        message_id: str,
+        text: Optional[str] = None,
+        keyboard: Optional[InlineKeyboard] = None,
+        parse_mode: Optional[str] = None,
+    ) -> bool:
         """Edit an existing message
-        
+
         Args:
             context: Message context
             message_id: ID of message to edit
             text: New text (if provided)
             keyboard: New keyboard (if provided)
-            
+            parse_mode: Optional formatting mode (markdown, html, etc)
+
         Returns:
             Success status
         """
