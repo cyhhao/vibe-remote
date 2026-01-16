@@ -10,7 +10,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_HIDDEN_MESSAGE_TYPES = ["system", "assistant", "user"]
+DEFAULT_HIDDEN_MESSAGE_TYPES = ["system", "assistant", "toolcall"]
 
 
 @dataclass
@@ -74,7 +74,12 @@ class SettingsManager:
     """Manages user personalization settings with JSON persistence"""
 
     MESSAGE_TYPE_ALIASES = {
-        "response": "user",
+        # Legacy/compat aliases
+        "response": "toolcall",
+        "user": "toolcall",
+        # Normalize common variants
+        "tool_call": "toolcall",
+        "tool": "toolcall",
     }
 
     def __init__(self, settings_file: str = "user_settings.json"):
@@ -114,7 +119,12 @@ class SettingsManager:
 
                         # Always keep user_id as string in memory
                         user_id = user_id_str
-                        self.settings[user_id] = UserSettings.from_dict(user_data)
+                        settings = UserSettings.from_dict(user_data)
+                        settings.hidden_message_types = self._normalize_hidden_message_types(
+                            settings.hidden_message_types
+                        )
+                        self.settings[user_id] = settings
+
                 logger.info(f"Loaded settings for {len(self.settings)} users")
             else:
                 logger.info("No settings file found, starting with empty settings")
@@ -182,6 +192,10 @@ class SettingsManager:
         """Update settings for a specific user"""
         normalized_id = self._normalize_user_id(user_id)
 
+        settings.hidden_message_types = self._normalize_hidden_message_types(
+            settings.hidden_message_types
+        )
+
         self.settings[normalized_id] = settings
         self._save_settings()
 
@@ -227,15 +241,14 @@ class SettingsManager:
 
     def get_available_message_types(self) -> List[str]:
         """Get list of available message types that can be hidden"""
-        return ["system", "user", "assistant", "result"]
+        return ["system", "assistant", "toolcall"]
 
     def get_message_type_display_names(self) -> Dict[str, str]:
         """Get display names for message types"""
         return {
             "system": "System",
-            "user": "Response",  # Renamed from 'user' for clarity
             "assistant": "Assistant",
-            "result": "Result",
+            "toolcall": "Toolcall",
         }
 
     def _ensure_agent_namespace(
@@ -283,6 +296,23 @@ class SettingsManager:
     def _canonicalize_message_type(self, message_type: str) -> str:
         """Normalize message type to canonical form to support aliases."""
         return self.MESSAGE_TYPE_ALIASES.get(message_type, message_type)
+
+    def _normalize_hidden_message_types(self, hidden_message_types: List[str]) -> List[str]:
+        """Normalize and migrate hidden message types to current canonical schema."""
+        allowed = {"system", "assistant", "toolcall"}
+        normalized: List[str] = []
+        seen = set()
+
+        for msg_type in hidden_message_types or []:
+            canonical = self._canonicalize_message_type(msg_type)
+            if canonical not in allowed:
+                continue
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            normalized.append(canonical)
+
+        return normalized
 
     def clear_agent_session_mapping(
         self,

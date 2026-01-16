@@ -34,6 +34,11 @@ class Controller:
         self.receiver_tasks: Dict[str, asyncio.Task] = {}
         self.stored_session_mappings: Dict[str, str] = {}
 
+        # Consolidated message tracking (system/assistant/toolcall)
+        self._consolidated_message_ids: Dict[str, str] = {}
+        self._consolidated_message_buffers: Dict[str, str] = {}
+        self._consolidated_message_locks: Dict[str, asyncio.Lock] = {}
+
         # Initialize core modules
         self._init_modules()
 
@@ -134,6 +139,7 @@ class Controller:
             on_settings_update=self.handle_settings_update,
             on_change_cwd=self.handle_change_cwd_submission,
             on_routing_update=self.handle_routing_update,
+            on_routing_modal_update=self.handle_routing_modal_update,
         )
 
     # Utility methods used by handlers
@@ -186,6 +192,32 @@ class Controller:
             )
         return context
 
+    def _get_consolidated_message_key(self, context: MessageContext) -> str:
+        settings_key = self._get_settings_key(context)
+        thread_key = context.thread_id or context.channel_id
+        return f"{settings_key}:{thread_key}"
+
+    def _get_consolidated_message_lock(self, key: str) -> asyncio.Lock:
+        if key not in self._consolidated_message_locks:
+            self._consolidated_message_locks[key] = asyncio.Lock()
+        return self._consolidated_message_locks[key]
+
+    def _get_consolidated_max_chars(self) -> int:
+        # Slack max message length is ~40k characters.
+        if self.config.platform == "slack":
+            return 35000
+        # Telegram hard limit is 4096; MarkdownV2 escaping expands.
+        if self.config.platform == "telegram":
+            return 3200
+        return 8000
+
+    def _truncate_consolidated(self, text: str, max_chars: int) -> str:
+        if len(text) <= max_chars:
+            return text
+        prefix = "…(truncated)…\n\n"
+        keep = max(0, max_chars - len(prefix))
+        return f"{prefix}{text[-keep:]}"
+
     def resolve_agent_for_context(self, context: MessageContext) -> str:
         """Unified agent resolution with dynamic override support.
 
@@ -237,28 +269,85 @@ class Controller:
         context: MessageContext,
         message_type: str,
         text: str,
-        parse_mode: str = "markdown",
+        parse_mode: Optional[str] = "markdown",
     ):
-        """Centralized dispatch for agent messages with filtering."""
+        """Centralized dispatch for agent messages.
+
+        - notify: always send immediately
+        - result: always send immediately (not hideable)
+        - system/assistant/toolcall: consolidate into a single editable message per thread
+        """
         if not text or not text.strip():
             return
+
+        canonical_type = self.settings_manager._canonicalize_message_type(
+            message_type or ""
+        )
         settings_key = self._get_settings_key(context)
-        if (
-            message_type != "notify"
-            and self.settings_manager.is_message_type_hidden(settings_key, message_type)
-        ):
+
+        if canonical_type == "notify":
+            target_context = self._get_target_context(context)
+            await self.im_client.send_message(
+                target_context, text, parse_mode=parse_mode
+            )
+            return
+
+        if canonical_type == "result":
+            target_context = self._get_target_context(context)
+            await self.im_client.send_message(
+                target_context, text, parse_mode=parse_mode
+            )
+            return
+
+        if canonical_type not in {"system", "assistant", "toolcall"}:
+            canonical_type = "assistant"
+
+        if self.settings_manager.is_message_type_hidden(settings_key, canonical_type):
             preview = text if len(text) <= 500 else f"{text[:500]}…"
             logger.info(
                 "Skipping %s message for settings %s (hidden). Preview: %s",
-                message_type,
+                canonical_type,
                 settings_key,
                 preview,
             )
             return
-        target_context = self._get_target_context(context)
-        await self.im_client.send_message(
-            target_context, text, parse_mode=parse_mode
-        )
+
+        consolidated_key = self._get_consolidated_message_key(context)
+        lock = self._get_consolidated_message_lock(consolidated_key)
+
+        async with lock:
+            chunk = text.strip()
+            existing = self._consolidated_message_buffers.get(consolidated_key, "")
+            separator = "\n\n---\n\n" if existing else ""
+            updated = f"{existing}{separator}{chunk}" if existing else chunk
+
+            updated = self._truncate_consolidated(updated, self._get_consolidated_max_chars())
+            self._consolidated_message_buffers[consolidated_key] = updated
+
+            target_context = self._get_target_context(context)
+            existing_message_id = self._consolidated_message_ids.get(consolidated_key)
+            if existing_message_id:
+                try:
+                    ok = await self.im_client.edit_message(
+                        target_context,
+                        existing_message_id,
+                        text=updated,
+                        parse_mode="markdown",
+                    )
+                except Exception as err:
+                    logger.warning(f"Failed to edit consolidated message: {err}")
+                    ok = False
+                if ok:
+                    return
+                self._consolidated_message_ids.pop(consolidated_key, None)
+
+            try:
+                new_id = await self.im_client.send_message(
+                    target_context, updated, parse_mode="markdown"
+                )
+                self._consolidated_message_ids[consolidated_key] = new_id
+            except Exception as err:
+                logger.error(f"Failed to send consolidated message: {err}", exc_info=True)
 
     # Settings update handler (for Slack modal)
     async def handle_settings_update(
@@ -336,6 +425,122 @@ class Controller:
             await self.im_client.send_message(
                 context, f"❌ Failed to change working directory: {str(e)}"
             )
+
+    async def handle_routing_modal_update(
+        self,
+        user_id: str,
+        channel_id: str,
+        view: dict,
+        action: dict,
+    ) -> None:
+        """Handle routing modal updates when selections change."""
+        try:
+            view_id = view.get("id")
+            view_hash = view.get("hash")
+            if not view_id or not view_hash:
+                logger.warning("Routing modal update missing view id/hash")
+                return
+
+            resolved_channel_id = channel_id if channel_id else user_id
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=resolved_channel_id,
+                platform_specific={},
+            )
+
+            settings_key = self._get_settings_key(context)
+            current_routing = self.settings_manager.get_channel_routing(settings_key)
+            registered_backends = list(self.agent_service.agents.keys())
+            current_backend = self.resolve_agent_for_context(context)
+
+            values = view.get("state", {}).get("values", {})
+            backend_data = values.get("backend_block", {}).get("backend_select", {})
+            selected_backend = backend_data.get("selected_option", {}).get("value")
+            if not selected_backend:
+                selected_backend = current_backend
+
+            def _selected_value(block_id: str, action_id: str) -> Optional[str]:
+                data = values.get(block_id, {}).get(action_id, {})
+                return data.get("selected_option", {}).get("value")
+
+            def _selected_prefixed_value(
+                block_id: str, action_prefix: str
+            ) -> Optional[str]:
+                block = values.get(block_id, {})
+                if not isinstance(block, dict):
+                    return None
+                for action_id, action_data in block.items():
+                    if (
+                        isinstance(action_id, str)
+                        and action_id.startswith(action_prefix)
+                        and isinstance(action_data, dict)
+                    ):
+                        return action_data.get("selected_option", {}).get("value")
+                return None
+
+            oc_agent = _selected_value("opencode_agent_block", "opencode_agent_select")
+            oc_model = _selected_value("opencode_model_block", "opencode_model_select")
+            oc_reasoning = _selected_prefixed_value(
+                "opencode_reasoning_block", "opencode_reasoning_select"
+            )
+
+            # For block_actions, the latest selection is carried on the `action` payload.
+            action_id = action.get("action_id")
+            selected_value = None
+            selected_option = action.get("selected_option")
+            if isinstance(selected_option, dict):
+                selected_value = selected_option.get("value")
+
+            if isinstance(action_id, str) and isinstance(selected_value, str):
+                if action_id == "opencode_agent_select":
+                    oc_agent = selected_value
+                elif action_id == "opencode_model_select":
+                    oc_model = selected_value
+                elif action_id.startswith("opencode_reasoning_select"):
+                    oc_reasoning = selected_value
+
+            if oc_agent == "__default__":
+                oc_agent = None
+            if oc_model == "__default__":
+                oc_model = None
+            if oc_reasoning == "__default__":
+                oc_reasoning = None
+
+            opencode_agents = []
+            opencode_models = {}
+            opencode_default_config = {}
+
+            if "opencode" in registered_backends:
+                try:
+                    opencode_agent = self.agent_service.agents.get("opencode")
+                    if opencode_agent and hasattr(opencode_agent, "_get_server"):
+                        server = await opencode_agent._get_server()
+                        await server.ensure_running()
+                        cwd = self.get_cwd(context)
+                        opencode_agents = await server.get_available_agents(cwd)
+                        opencode_models = await server.get_available_models(cwd)
+                        opencode_default_config = await server.get_default_config(cwd)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch OpenCode data: {e}")
+
+            if hasattr(self.im_client, "update_routing_modal"):
+                await self.im_client.update_routing_modal(
+                    view_id=view_id,
+                    view_hash=view_hash,
+                    channel_id=resolved_channel_id,
+                    registered_backends=registered_backends,
+                    current_backend=current_backend,
+                    current_routing=current_routing,
+                    opencode_agents=opencode_agents,
+                    opencode_models=opencode_models,
+                    opencode_default_config=opencode_default_config,
+                    selected_backend=selected_backend,
+                    selected_opencode_agent=oc_agent,
+                    selected_opencode_model=oc_model,
+                    selected_opencode_reasoning=oc_reasoning,
+                )
+        except Exception as e:
+            logger.error(f"Error updating routing modal: {e}", exc_info=True)
 
     # Routing update handler (for Slack modal)
     async def handle_routing_update(

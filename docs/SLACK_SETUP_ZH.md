@@ -44,7 +44,7 @@
 - `files:read` - 查看频道中共享的文件（用于未来的文件处理）
 - `files:write` - 上传文件（用于未来的文件上传支持）
 - `reactions:read` - 查看表情反应
-- `reactions:write` - 添加表情反应
+- `reactions:write` - 添加表情反应（`ACK_MODE=reaction` 必需；如需发送文字 ack 可设为 `ACK_MODE=message`）
 - `users:read.email` - 查看电子邮件地址（用于增强用户信息）
 - `team:read` - 查看团队/工作区信息
 
@@ -351,6 +351,15 @@ Slack 机器人自动使用线程来组织对话：
 3. 复制新的 Bot Token 并更新你的 `.env` 文件
 4. 重启机器人
 5. 确保机器人被邀请到私有频道：`/invite @YourBotName`
+
+### 表情/ACK Reaction 问题
+
+如果你看到 `missing_scope` 错误与 `reactions:write`（用于 👀 reaction ack）：
+
+1. 在 **Bot Token Scopes** 下添加 `reactions:write`
+2. 点击 **"Reinstall to Workspace"**（这是强制性的！）
+3. 复制新的 Bot Token 并更新你的 `.env` 文件
+4. 重启机器人
 
 ### 线程回复问题
 

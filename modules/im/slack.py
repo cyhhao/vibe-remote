@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import time
 from typing import Dict, Any, Optional, Callable
@@ -14,6 +15,8 @@ from config.settings import SlackConfig
 from .formatters import SlackFormatter
 
 logger = logging.getLogger(__name__)
+
+_UNSET = object()
 
 
 class SlackBot(BaseIMClient):
@@ -154,6 +157,81 @@ class SlackBot(BaseIMClient):
             logger.error(f"Error sending Slack message: {e}")
             raise
 
+    async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
+        """Add a reaction emoji to a Slack message."""
+        self._ensure_clients()
+
+        name = (emoji or "").strip()
+        if name.startswith(":") and name.endswith(":") and len(name) > 2:
+            name = name[1:-1]
+        if name in ["👀", "eyes", "eye"]:
+            name = "eyes"
+
+        if not name:
+            return False
+
+        try:
+            await self.web_client.reactions_add(
+                channel=context.channel_id,
+                timestamp=message_id,
+                name=name,
+            )
+            return True
+        except SlackApiError as err:
+            try:
+                if getattr(err, "response", None) and err.response.get("error") == "already_reacted":
+                    return True
+            except Exception:
+                pass
+
+            error_code = None
+            needed = None
+            try:
+                if getattr(err, "response", None):
+                    error_code = err.response.get("error")
+                    needed = err.response.get("needed")
+            except Exception:
+                pass
+
+            # NOTE: reaction failures were previously DEBUG-only; surface at INFO/WARN for operability.
+            if error_code in ["missing_scope", "not_in_channel", "channel_not_found"]:
+                logger.warning(
+                    f"Slack reaction add failed: error={error_code}, needed={needed}"
+                )
+            else:
+                logger.info(f"Slack reaction add failed: {err}")
+            return False
+        except Exception as err:
+            logger.debug(f"Failed to add Slack reaction: {err}")
+            return False
+
+    async def remove_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
+        """Remove a reaction emoji from a Slack message."""
+        self._ensure_clients()
+
+        name = (emoji or "").strip()
+        if name.startswith(":") and name.endswith(":") and len(name) > 2:
+            name = name[1:-1]
+        if name in ["👀", "eyes", "eye"]:
+            name = "eyes"
+
+        if not name:
+            return False
+
+        try:
+            await self.web_client.reactions_remove(
+                channel=context.channel_id,
+                timestamp=message_id,
+                name=name,
+            )
+            return True
+        except SlackApiError as err:
+            logger.debug(f"Failed to remove Slack reaction: {err}")
+            return False
+        except Exception as err:
+            logger.debug(f"Failed to remove Slack reaction: {err}")
+            return False
+
     async def send_message_with_buttons(
         self,
         context: MessageContext,
@@ -236,13 +314,17 @@ class SlackBot(BaseIMClient):
         message_id: str,
         text: Optional[str] = None,
         keyboard: Optional[InlineKeyboard] = None,
+        parse_mode: Optional[str] = None,
     ) -> bool:
         """Edit an existing Slack message"""
         self._ensure_clients()
         try:
+            if text and parse_mode == "markdown":
+                text = self._convert_markdown_to_slack_mrkdwn(text)
+
             kwargs = {"channel": context.channel_id, "ts": message_id}
 
-            if text:
+            if text is not None:
                 kwargs["text"] = text
 
             if keyboard:
@@ -250,7 +332,13 @@ class SlackBot(BaseIMClient):
                 blocks = []
                 if text:
                     blocks.append(
-                        {"type": "section", "text": {"type": "mrkdwn", "text": text}}
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
+                                "text": text,
+                            },
+                        }
                     )
 
                 for row_idx, row in enumerate(keyboard.buttons):
@@ -557,10 +645,18 @@ class SlackBot(BaseIMClient):
     async def _handle_interactive(self, payload: Dict[str, Any]):
         """Handle interactive components (buttons, modal submissions, etc.)"""
         if payload.get("type") == "block_actions":
-            # Handle button clicks
+            # Handle button clicks / select changes
             user = payload.get("user", {})
             actions = payload.get("actions", [])
-            channel_id = payload.get("channel", {}).get("id")
+            view = payload.get("view", {})
+
+            # In Slack modals, `channel` is often missing. We store the originating
+            # channel_id in `view.private_metadata` when opening the modal.
+            channel_id = (
+                payload.get("channel", {}).get("id")
+                or payload.get("container", {}).get("channel_id")
+                or (view.get("private_metadata") if isinstance(view, dict) else None)
+            )
 
             # Check if channel is authorized for interactive components
             if not await self._is_authorized_channel(channel_id):
@@ -571,8 +667,10 @@ class SlackBot(BaseIMClient):
                 # The user will just see the button doesn't respond
                 return
 
+            view = payload.get("view", {})
             for action in actions:
-                if action.get("type") == "button":
+                action_type = action.get("type")
+                if action_type == "button":
                     callback_data = action.get("action_id")
 
                     if self.on_callback_query_callback:
@@ -590,6 +688,17 @@ class SlackBot(BaseIMClient):
                         )
 
                         await self.on_callback_query_callback(context, callback_data)
+                elif action_type in {"static_select", "external_select"}:
+                    action_id = action.get("action_id")
+                    if action_id in {"opencode_agent_select", "opencode_model_select"}:
+                        if hasattr(self, "_on_routing_modal_update"):
+                            channel_from_view = view.get("private_metadata")
+                            await self._on_routing_modal_update(
+                                user.get("id"),
+                                channel_from_view or channel_id,
+                                view,
+                                action,
+                            )
 
         elif payload.get("type") == "view_submission":
             # Handle modal submissions
@@ -668,10 +777,17 @@ class SlackBot(BaseIMClient):
                 oc_model = None
 
             # Extract OpenCode reasoning effort (optional)
-            oc_reasoning_data = values.get("opencode_reasoning_block", {}).get(
-                "opencode_reasoning_select", {}
-            )
-            oc_reasoning = oc_reasoning_data.get("selected_option", {}).get("value")
+            oc_reasoning = None
+            reasoning_block = values.get("opencode_reasoning_block", {})
+            if isinstance(reasoning_block, dict):
+                for action_id, action_data in reasoning_block.items():
+                    if (
+                        isinstance(action_id, str)
+                        and action_id.startswith("opencode_reasoning_select")
+                        and isinstance(action_data, dict)
+                    ):
+                        oc_reasoning = action_data.get("selected_option", {}).get("value")
+                        break
             if oc_reasoning == "__default__":
                 oc_reasoning = None
 
@@ -873,9 +989,8 @@ class SlackBot(BaseIMClient):
         """Get description for a message type"""
         descriptions = {
             "system": "System initialization and status messages",
-            "response": "Tool execution responses and results",
+            "toolcall": "Agent tool name + params (one line)",
             "assistant": "Agent responses and explanations",
-            "result": "Final execution results and summaries",
         }
         return descriptions.get(msg_type, f"{msg_type} messages")
 
@@ -948,20 +1063,54 @@ class SlackBot(BaseIMClient):
             logger.error(f"Error opening change CWD modal: {e}")
             raise
 
-    async def open_routing_modal(
+    def _get_default_opencode_agent_name(self, opencode_agents: list) -> Optional[str]:
+        """Resolve the default OpenCode agent name."""
+        for agent in opencode_agents:
+            name = agent.get("name")
+            if name == "build":
+                return name
+        for agent in opencode_agents:
+            name = agent.get("name")
+            if name:
+                return name
+        return None
+
+    def _resolve_opencode_default_model(
         self,
-        trigger_id: str,
+        opencode_default_config: dict,
+        opencode_agents: list,
+        selected_agent: Optional[str],
+    ) -> Optional[str]:
+        """Resolve the default model for a selected OpenCode agent."""
+        agent_name = selected_agent or self._get_default_opencode_agent_name(opencode_agents)
+        if isinstance(opencode_default_config, dict):
+            agents_config = opencode_default_config.get("agent", {})
+            if isinstance(agents_config, dict) and agent_name:
+                agent_config = agents_config.get(agent_name, {})
+                if isinstance(agent_config, dict):
+                    model = agent_config.get("model")
+                    if isinstance(model, str) and model:
+                        return model
+            model = opencode_default_config.get("model")
+            if isinstance(model, str) and model:
+                return model
+        return None
+
+    def _build_routing_modal_view(
+        self,
         channel_id: str,
         registered_backends: list,
         current_backend: str,
-        current_routing,  # Optional[ChannelRouting]
+        current_routing,
         opencode_agents: list,
         opencode_models: dict,
         opencode_default_config: dict,
-    ):
-        """Open a modal dialog for agent/model routing settings"""
-        self._ensure_clients()
-
+        selected_backend: object = _UNSET,
+        selected_opencode_agent: object = _UNSET,
+        selected_opencode_model: object = _UNSET,
+        selected_opencode_reasoning: object = _UNSET,
+    ) -> dict:
+        """Build modal view for agent/model routing settings."""
         # Build backend options
         backend_display_names = {
             "claude": "Claude Code",
@@ -977,23 +1126,26 @@ class SlackBot(BaseIMClient):
             })
 
         # Find initial backend option
+        selected_backend_value = (
+            current_backend if selected_backend is _UNSET else selected_backend
+        )
         initial_backend = None
-        for opt in backend_options:
-            if opt["value"] == current_backend:
-                initial_backend = opt
+        for option in backend_options:
+            if option["value"] == selected_backend_value:
+                initial_backend = option
                 break
+        if initial_backend is None and backend_options:
+            initial_backend = backend_options[0]
 
-        # Backend select element
         backend_select = {
             "type": "static_select",
             "action_id": "backend_select",
             "placeholder": {"type": "plain_text", "text": "Select backend"},
             "options": backend_options,
+            "initial_option": initial_backend,
         }
-        if initial_backend:
-            backend_select["initial_option"] = initial_backend
 
-        # Build blocks
+        # Build modal blocks
         blocks = [
             {
                 "type": "section",
@@ -1014,18 +1166,31 @@ class SlackBot(BaseIMClient):
         # OpenCode-specific options (only if opencode is registered)
         if "opencode" in registered_backends:
             # Get current opencode settings
-            current_oc_agent = (
-                current_routing.opencode_agent if current_routing else None
-            )
-            current_oc_model = (
-                current_routing.opencode_model if current_routing else None
-            )
-            current_oc_reasoning = (
-                current_routing.opencode_reasoning_effort if current_routing else None
-            )
+            if selected_opencode_agent is _UNSET:
+                current_oc_agent = (
+                    current_routing.opencode_agent if current_routing else None
+                )
+            else:
+                current_oc_agent = selected_opencode_agent
+
+            if selected_opencode_model is _UNSET:
+                current_oc_model = (
+                    current_routing.opencode_model if current_routing else None
+                )
+            else:
+                current_oc_model = selected_opencode_model
+
+            if selected_opencode_reasoning is _UNSET:
+                current_oc_reasoning = (
+                    current_routing.opencode_reasoning_effort if current_routing else None
+                )
+            else:
+                current_oc_reasoning = selected_opencode_reasoning
 
             # Determine default agent/model from OpenCode config
-            default_model_str = opencode_default_config.get("model")  # e.g., "anthropic/claude-opus-4-5"
+            default_model_str = self._resolve_opencode_default_model(
+                opencode_default_config, opencode_agents, current_oc_agent
+            )
 
             # Build agent options
             agent_options = [
@@ -1056,8 +1221,11 @@ class SlackBot(BaseIMClient):
             }
 
             # Build model options
+            default_label = "(Default)"
+            if default_model_str:
+                default_label = f"(Default) - {default_model_str}"
             model_options = [
-                {"text": {"type": "plain_text", "text": f"(Default){' - ' + default_model_str if default_model_str else ''}"}, "value": "__default__"}
+                {"text": {"type": "plain_text", "text": default_label}, "value": "__default__"}
             ]
 
             # Add models from providers
@@ -1159,9 +1327,14 @@ class SlackBot(BaseIMClient):
             }
 
             # Build reasoning effort options dynamically based on model variants
-            # Determine target model for variants lookup
             target_model = current_oc_model or default_model_str
-            model_variants = {}
+            model_variants: Dict[str, Any] = {}
+
+            reasoning_model_key = target_model or "__default__"
+            reasoning_action_id = (
+                "opencode_reasoning_select__"
+                + hashlib.sha1(reasoning_model_key.encode("utf-8")).hexdigest()[:8]
+            )
 
             if target_model:
                 # Parse provider/model format
@@ -1170,13 +1343,31 @@ class SlackBot(BaseIMClient):
                     target_provider, target_model_id = parts
                     # Search for this model in providers data
                     for provider in providers_data:
-                        if provider.get("id") == target_provider:
-                            models = provider.get("models", {})
-                            if isinstance(models, dict):
-                                model_info = models.get(target_model_id, {})
-                                if isinstance(model_info, dict):
-                                    model_variants = model_info.get("variants", {})
-                            break
+                        if provider.get("id") != target_provider:
+                            continue
+
+                        models = provider.get("models", {})
+                        model_info: Optional[dict] = None
+
+                        if isinstance(models, dict):
+                            candidate = models.get(target_model_id)
+                            if isinstance(candidate, dict):
+                                model_info = candidate
+                        elif isinstance(models, list):
+                            for entry in models:
+                                if (
+                                    isinstance(entry, dict)
+                                    and entry.get("id") == target_model_id
+                                ):
+                                    model_info = entry
+                                    break
+
+                        if isinstance(model_info, dict):
+                            variants = model_info.get("variants", {})
+                            if isinstance(variants, dict):
+                                model_variants = variants
+
+                        break
 
             # Build options from variants or use fallback
             reasoning_effort_options = [
@@ -1227,7 +1418,7 @@ class SlackBot(BaseIMClient):
 
             reasoning_select = {
                 "type": "static_select",
-                "action_id": "opencode_reasoning_select",
+                "action_id": reasoning_action_id,
                 "placeholder": {"type": "plain_text", "text": "Select reasoning effort"},
                 "options": reasoning_effort_options,
                 "initial_option": initial_reasoning,
@@ -1247,6 +1438,7 @@ class SlackBot(BaseIMClient):
                     "type": "input",
                     "block_id": "opencode_agent_block",
                     "optional": True,
+                    "dispatch_action": True,
                     "element": agent_select,
                     "label": {"type": "plain_text", "text": "OpenCode Agent"},
                 },
@@ -1254,6 +1446,7 @@ class SlackBot(BaseIMClient):
                     "type": "input",
                     "block_id": "opencode_model_block",
                     "optional": True,
+                    "dispatch_action": True,
                     "element": model_select,
                     "label": {"type": "plain_text", "text": "Model"},
                 },
@@ -1277,8 +1470,7 @@ class SlackBot(BaseIMClient):
             ],
         })
 
-        # Create modal view
-        view = {
+        return {
             "type": "modal",
             "callback_id": "routing_modal",
             "private_metadata": channel_id,
@@ -1288,10 +1480,73 @@ class SlackBot(BaseIMClient):
             "blocks": blocks,
         }
 
+    async def open_routing_modal(
+        self,
+        trigger_id: str,
+        channel_id: str,
+        registered_backends: list,
+        current_backend: str,
+        current_routing,  # Optional[ChannelRouting]
+        opencode_agents: list,
+        opencode_models: dict,
+        opencode_default_config: dict,
+    ):
+        """Open a modal dialog for agent/model routing settings"""
+        self._ensure_clients()
+
+        view = self._build_routing_modal_view(
+            channel_id=channel_id,
+            registered_backends=registered_backends,
+            current_backend=current_backend,
+            current_routing=current_routing,
+            opencode_agents=opencode_agents,
+            opencode_models=opencode_models,
+            opencode_default_config=opencode_default_config,
+        )
+
         try:
             await self.web_client.views_open(trigger_id=trigger_id, view=view)
         except SlackApiError as e:
             logger.error(f"Error opening routing modal: {e}")
+            raise
+
+    async def update_routing_modal(
+        self,
+        view_id: str,
+        view_hash: str,
+        channel_id: str,
+        registered_backends: list,
+        current_backend: str,
+        current_routing,
+        opencode_agents: list,
+        opencode_models: dict,
+        opencode_default_config: dict,
+        selected_backend: Optional[str] = None,
+        selected_opencode_agent: Optional[str] = None,
+        selected_opencode_model: Optional[str] = None,
+        selected_opencode_reasoning: Optional[str] = None,
+    ) -> None:
+        """Update routing modal when selections change."""
+        self._ensure_clients()
+
+        view = self._build_routing_modal_view(
+            channel_id=channel_id,
+            registered_backends=registered_backends,
+            current_backend=current_backend,
+            current_routing=current_routing,
+            opencode_agents=opencode_agents,
+            opencode_models=opencode_models,
+            opencode_default_config=opencode_default_config,
+            selected_backend=selected_backend,
+            selected_opencode_agent=selected_opencode_agent,
+            selected_opencode_model=selected_opencode_model,
+            selected_opencode_reasoning=selected_opencode_reasoning,
+        )
+
+        try:
+            await self.web_client.views_update(view_id=view_id, hash=view_hash, view=view)
+        except SlackApiError as e:
+            logger.error(f"Error updating routing modal: {e}")
             raise
 
     def register_callbacks(
@@ -1325,6 +1580,10 @@ class SlackBot(BaseIMClient):
         # Register routing update handler
         if "on_routing_update" in kwargs:
             self._on_routing_update = kwargs["on_routing_update"]
+
+        # Register routing modal update handler
+        if "on_routing_modal_update" in kwargs:
+            self._on_routing_modal_update = kwargs["on_routing_modal_update"]
 
     async def get_or_create_thread(
         self, channel_id: str, user_id: str

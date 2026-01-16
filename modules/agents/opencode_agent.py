@@ -1,10 +1,15 @@
 """OpenCode Server API integration as an agent backend."""
 
 import asyncio
+import json
 import logging
 import os
+import signal
+import socket
+import subprocess
 import time
 from asyncio.subprocess import Process
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
@@ -24,26 +29,49 @@ class OpenCodeServerManager:
     _instance: Optional["OpenCodeServerManager"] = None
     _class_lock: asyncio.Lock = asyncio.Lock()
 
-    def __init__(self, binary: str = "opencode", port: int = DEFAULT_OPENCODE_PORT):
+    def __init__(
+        self,
+        binary: str = "opencode",
+        port: int = DEFAULT_OPENCODE_PORT,
+        request_timeout_seconds: int = 60,
+    ):
         self.binary = binary
         self.port = port
+        self.request_timeout_seconds = request_timeout_seconds
         self.host = DEFAULT_OPENCODE_HOST
         self._process: Optional[Process] = None
         self._base_url: Optional[str] = None
         self._http_session: Optional[aiohttp.ClientSession] = None
         self._lock = asyncio.Lock()
+        self._pid_file = (
+            Path(__file__).resolve().parents[2] / "logs" / "opencode_server.json"
+        )
 
     @classmethod
     async def get_instance(
-        cls, binary: str = "opencode", port: int = DEFAULT_OPENCODE_PORT
+        cls,
+        binary: str = "opencode",
+        port: int = DEFAULT_OPENCODE_PORT,
+        request_timeout_seconds: int = 60,
     ) -> "OpenCodeServerManager":
         async with cls._class_lock:
             if cls._instance is None:
-                cls._instance = cls(binary=binary, port=port)
-            elif cls._instance.binary != binary or cls._instance.port != port:
+                cls._instance = cls(
+                    binary=binary,
+                    port=port,
+                    request_timeout_seconds=request_timeout_seconds,
+                )
+            elif (
+                cls._instance.binary != binary
+                or cls._instance.port != port
+                or cls._instance.request_timeout_seconds != request_timeout_seconds
+            ):
                 logger.warning(
-                    f"OpenCodeServerManager already initialized with binary={cls._instance.binary}, "
-                    f"port={cls._instance.port}; ignoring new params binary={binary}, port={port}"
+                    "OpenCodeServerManager already initialized with "
+                    f"binary={cls._instance.binary}, port={cls._instance.port}, "
+                    f"request_timeout_seconds={cls._instance.request_timeout_seconds}; "
+                    f"ignoring new params binary={binary}, port={port}, "
+                    f"request_timeout_seconds={request_timeout_seconds}"
                 )
             return cls._instance
 
@@ -55,15 +83,192 @@ class OpenCodeServerManager:
 
     async def _get_http_session(self) -> aiohttp.ClientSession:
         if self._http_session is None or self._http_session.closed:
+            total_timeout: Optional[int] = (
+                None
+                if self.request_timeout_seconds <= 0
+                else self.request_timeout_seconds
+            )
             self._http_session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=300)
+                timeout=aiohttp.ClientTimeout(total=total_timeout)
             )
         return self._http_session
 
+    def _read_pid_file(self) -> Optional[Dict[str, Any]]:
+        try:
+            raw = self._pid_file.read_text()
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            logger.debug(f"Failed to read OpenCode pid file: {e}")
+            return None
+
+        try:
+            data = json.loads(raw)
+        except Exception as e:
+            logger.debug(f"Failed to parse OpenCode pid file: {e}")
+            return None
+
+        return data if isinstance(data, dict) else None
+
+    def _write_pid_file(self, pid: int) -> None:
+        try:
+            self._pid_file.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "pid": pid,
+                "port": self.port,
+                "host": self.host,
+                "started_at": time.time(),
+            }
+            self._pid_file.write_text(json.dumps(payload))
+        except Exception as e:
+            logger.debug(f"Failed to write OpenCode pid file: {e}")
+
+    def _clear_pid_file(self) -> None:
+        try:
+            if self._pid_file.exists():
+                self._pid_file.unlink()
+        except Exception as e:
+            logger.debug(f"Failed to clear OpenCode pid file: {e}")
+
+    @staticmethod
+    def _pid_exists(pid: int) -> bool:
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+
+    @staticmethod
+    def _get_pid_command(pid: int) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "command="],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception:
+            return None
+        cmd = (result.stdout or "").strip()
+        return cmd or None
+
+    @staticmethod
+    def _is_opencode_serve_cmd(command: str, port: int) -> bool:
+        if not command:
+            return False
+        return "opencode" in command and " serve" in command and f"--port={port}" in command
+
+    def _is_port_available(self) -> bool:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((self.host, self.port))
+            return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _find_opencode_serve_pids(port: int) -> List[int]:
+        try:
+            result = subprocess.run(
+                ["ps", "-ax", "-o", "pid=,command="],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception:
+            return []
+
+        needle = f"--port={port}"
+        pids: List[int] = []
+        for line in (result.stdout or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                continue
+            pid_str, cmd = parts
+            if "opencode" in cmd and " serve" in cmd and needle in cmd:
+                try:
+                    pids.append(int(pid_str))
+                except ValueError:
+                    continue
+        return pids
+
+    async def _terminate_pid(self, pid: int, reason: str) -> None:
+        logger.info(f"Stopping OpenCode server pid={pid} ({reason})")
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except Exception as e:
+            logger.debug(f"Failed to terminate OpenCode server pid={pid}: {e}")
+            return
+
+        start_time = time.monotonic()
+        while time.monotonic() - start_time < 5:
+            if not self._pid_exists(pid):
+                return
+            await asyncio.sleep(0.25)
+
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except Exception:
+            pass
+
+    async def _cleanup_orphaned_managed_server(self) -> None:
+        info = self._read_pid_file()
+        if not info:
+            return
+
+        pid = info.get("pid")
+        port = info.get("port")
+        if not isinstance(pid, int) or port != self.port:
+            self._clear_pid_file()
+            return
+
+        if self._process and self._process.returncode is None and self._process.pid == pid:
+            return
+
+        cmd = self._get_pid_command(pid)
+        if cmd and self._is_opencode_serve_cmd(cmd, self.port) and self._pid_exists(pid):
+            await self._terminate_pid(pid, reason="orphaned from previous run")
+        self._clear_pid_file()
+
     async def ensure_running(self) -> str:
         async with self._lock:
+            await self._cleanup_orphaned_managed_server()
+
             if await self._is_healthy():
+                # If the server is already running (e.g., started by a previous run),
+                # record its PID so shutdown can clean it up.
+                if not self._read_pid_file():
+                    pids = self._find_opencode_serve_pids(self.port)
+                    if pids:
+                        pid = pids[0]
+                        cmd = self._get_pid_command(pid)
+                        if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                            self._write_pid_file(pid)
+
+                self._base_url = f"http://{self.host}:{self.port}"
                 return self.base_url
+
+            if not self._is_port_available():
+                for pid in self._find_opencode_serve_pids(self.port):
+                    await self._terminate_pid(pid, reason="port occupied but unhealthy")
+                await asyncio.sleep(0.5)
+
+            if not self._is_port_available():
+                raise RuntimeError(
+                    f"OpenCode port {self.port} is already in use but the server is not responding. "
+                    "Stop the process using this port or set OPENCODE_PORT to a free port."
+                )
+
             await self._start_server()
             return self.base_url
 
@@ -88,6 +293,9 @@ class OpenCodeServerManager:
             except Exception:
                 self._process.kill()
 
+        # Ensure any stale pid file is cleared before starting.
+        self._clear_pid_file()
+
         cmd = [
             self.binary,
             "serve",
@@ -97,12 +305,18 @@ class OpenCodeServerManager:
 
         logger.info(f"Starting OpenCode server: {' '.join(cmd)}")
 
+        env = os.environ.copy()
+        env["OPENCODE_ENABLE_EXA"] = "1"
+
         try:
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
+                env=env,
             )
+            if self._process and self._process.pid:
+                self._write_pid_file(self._process.pid)
         except FileNotFoundError:
             raise RuntimeError(
                 f"OpenCode CLI not found at '{self.binary}'. "
@@ -118,6 +332,8 @@ class OpenCodeServerManager:
             await asyncio.sleep(0.5)
 
         exit_code = self._process.returncode
+        self._clear_pid_file()
+        self._process = None
         raise RuntimeError(
             f"OpenCode server failed to start within {SERVER_START_TIMEOUT}s. "
             f"Process exit code: {exit_code}"
@@ -136,18 +352,74 @@ class OpenCodeServerManager:
                 except asyncio.TimeoutError:
                     self._process.kill()
                 logger.info("OpenCode server stopped")
+            else:
+                info = self._read_pid_file()
+                pid = info.get("pid") if isinstance(info, dict) else None
+                port = info.get("port") if isinstance(info, dict) else None
+                if isinstance(pid, int) and port == self.port and self._pid_exists(pid):
+                    cmd = self._get_pid_command(pid)
+                    if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                        await self._terminate_pid(pid, reason="shutdown")
+
+            self._clear_pid_file()
             self._process = None
 
     def stop_sync(self) -> None:
         if self._process and self._process.returncode is None:
             self._process.terminate()
             logger.info("OpenCode server terminated (sync)")
+        else:
+            info = self._read_pid_file()
+            pid = info.get("pid") if isinstance(info, dict) else None
+            port = info.get("port") if isinstance(info, dict) else None
+            if isinstance(pid, int) and port == self.port and self._pid_exists(pid):
+                cmd = self._get_pid_command(pid)
+                if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                        logger.info("OpenCode server terminated (sync via pid file)")
+                    except Exception as e:
+                        logger.debug(f"Failed to terminate OpenCode server pid={pid}: {e}")
+
+        self._clear_pid_file()
         self._process = None
 
     @classmethod
     def stop_instance_sync(cls) -> None:
         if cls._instance:
             cls._instance.stop_sync()
+            return
+
+        pid_file = Path(__file__).resolve().parents[2] / "logs" / "opencode_server.json"
+        try:
+            raw = pid_file.read_text()
+        except FileNotFoundError:
+            return
+        except Exception as e:
+            logger.debug(f"Failed to read OpenCode pid file: {e}")
+            return
+
+        try:
+            info = json.loads(raw)
+        except Exception:
+            info = None
+
+        pid = info.get("pid") if isinstance(info, dict) else None
+        port = info.get("port") if isinstance(info, dict) else None
+
+        if isinstance(pid, int) and isinstance(port, int) and cls._pid_exists(pid):
+            cmd = cls._get_pid_command(pid)
+            if cmd and cls._is_opencode_serve_cmd(cmd, port):
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    logger.info("OpenCode server terminated (sync via pid file)")
+                except Exception as e:
+                    logger.debug(f"Failed to terminate OpenCode server pid={pid}: {e}")
+
+        try:
+            pid_file.unlink()
+        except Exception:
+            pass
 
     async def create_session(
         self, directory: str, title: Optional[str] = None
@@ -200,8 +472,73 @@ class OpenCodeServerManager:
                 )
             return await resp.json()
 
+    async def prompt_async(
+        self,
+        session_id: str,
+        directory: str,
+        text: str,
+        agent: Optional[str] = None,
+        model: Optional[Dict[str, str]] = None,
+        reasoning_effort: Optional[str] = None,
+    ) -> None:
+        """Start a prompt asynchronously without holding the HTTP request open."""
+        session = await self._get_http_session()
+
+        body: Dict[str, Any] = {
+            "parts": [{"type": "text", "text": text}],
+        }
+        if agent:
+            body["agent"] = agent
+        if model:
+            body["model"] = model
+        if reasoning_effort:
+            body["reasoningEffort"] = reasoning_effort
+
+        async with session.post(
+            f"{self.base_url}/session/{session_id}/prompt_async",
+            json=body,
+            headers={"x-opencode-directory": directory},
+        ) as resp:
+            # OpenCode returns 204 when accepted.
+            if resp.status not in (200, 204):
+                error_text = await resp.text()
+                raise RuntimeError(
+                    f"Failed to start async prompt: {resp.status} {error_text}"
+                )
+
+    async def list_messages(
+        self, session_id: str, directory: str
+    ) -> List[Dict[str, Any]]:
+        session = await self._get_http_session()
+        async with session.get(
+            f"{self.base_url}/session/{session_id}/message",
+            headers={"x-opencode-directory": directory},
+        ) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise RuntimeError(
+                    f"Failed to list messages: {resp.status} {error_text}"
+                )
+            return await resp.json()
+
+    async def get_message(
+        self, session_id: str, message_id: str, directory: str
+    ) -> Dict[str, Any]:
+        session = await self._get_http_session()
+        async with session.get(
+            f"{self.base_url}/session/{session_id}/message/{message_id}",
+            headers={"x-opencode-directory": directory},
+        ) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise RuntimeError(
+                    f"Failed to get message: {resp.status} {error_text}"
+                )
+            return await resp.json()
+
     async def abort_session(self, session_id: str, directory: str) -> bool:
         session = await self._get_http_session()
+
         try:
             async with session.post(
                 f"{self.base_url}/session/{session_id}/abort",
@@ -415,12 +752,13 @@ class OpenCodeServerManager:
         when called via API, so we need to read and pass it explicitly.
 
         Returns:
-            Default agent name (e.g., "build", "plan"), or None if not configured.
+            Default agent name (e.g., "build", "plan"), or "build" as fallback.
         """
         # OpenCode doesn't have an explicit "default agent" config field.
         # Users can override via channel settings or agent_routes.yaml.
-        # Return None to let OpenCode decide.
-        return None
+        # Default to "build" agent which uses the agent's configured model,
+        # avoiding fallback to global model which may use restricted credentials.
+        return "build"
 
 
 class OpenCodeAgent(BaseAgent):
@@ -435,12 +773,14 @@ class OpenCodeAgent(BaseAgent):
         self._active_requests: Dict[str, asyncio.Task] = {}
         self._request_sessions: Dict[str, Tuple[str, str, str]] = {}
         self._session_locks: Dict[str, asyncio.Lock] = {}
+        self._initialized_sessions: set[str] = set()
 
     async def _get_server(self) -> OpenCodeServerManager:
         if self._server_manager is None:
             self._server_manager = await OpenCodeServerManager.get_instance(
                 binary=self.opencode_config.binary,
                 port=self.opencode_config.port,
+                request_timeout_seconds=self.opencode_config.request_timeout_seconds,
             )
         return self._server_manager
 
@@ -582,6 +922,18 @@ class OpenCodeAgent(BaseAgent):
             request.settings_key,
         )
 
+        if session_id not in self._initialized_sessions:
+            self._initialized_sessions.add(session_id)
+            system_text = self.im_client.formatter.format_system_message(
+                request.working_path, "init", session_id
+            )
+            await self.controller.emit_agent_message(
+                request.context,
+                "system",
+                system_text,
+                parse_mode="markdown",
+            )
+
         try:
             # Get per-channel overrides from user_settings.json
             override_agent, override_model, override_reasoning = (
@@ -593,7 +945,6 @@ class OpenCodeAgent(BaseAgent):
             agent_to_use = override_agent
             if not agent_to_use:
                 agent_to_use = server.get_default_agent_from_config()
-            # If still None, we don't pass agent parameter, letting OpenCode use its default
 
             # Determine model to use
             # Priority: 1) channel override, 2) agent's config model, 3) global opencode.json model
@@ -614,7 +965,23 @@ class OpenCodeAgent(BaseAgent):
             if not reasoning_effort:
                 reasoning_effort = server.get_agent_reasoning_effort_from_config(agent_to_use)
 
-            response = await server.send_message(
+            # Use OpenCode's async prompt API so long-running turns don't hold a single HTTP request.
+            baseline_message_ids: set[str] = set()
+            try:
+                baseline_messages = await server.list_messages(
+                    session_id=session_id,
+                    directory=request.working_path,
+                )
+                for message in baseline_messages:
+                    message_id = message.get("info", {}).get("id")
+                    if message_id:
+                        baseline_message_ids.add(message_id)
+            except Exception as err:
+                logger.debug(
+                    f"Failed to snapshot OpenCode messages before prompt: {err}"
+                )
+
+            await server.prompt_async(
                 session_id=session_id,
                 directory=request.working_path,
                 text=request.message,
@@ -623,12 +990,89 @@ class OpenCodeAgent(BaseAgent):
                 reasoning_effort=reasoning_effort,
             )
 
-            result_text = self._extract_response_text(response)
+            seen_tool_calls: set[str] = set()
+            emitted_assistant_messages: set[str] = set()
+            poll_interval_seconds = 2.0
+            final_text: Optional[str] = None
 
-            if result_text:
+            def _relative_path(path: str) -> str:
+                return self._to_relative_path(path, request.working_path)
+
+            while True:
+                try:
+                    messages = await server.list_messages(
+                        session_id=session_id,
+                        directory=request.working_path,
+                    )
+                except Exception as poll_err:
+                    logger.warning(f"Failed to poll OpenCode messages: {poll_err}")
+                    await asyncio.sleep(poll_interval_seconds)
+                    continue
+
+                for message in messages:
+                    info = message.get("info", {})
+                    message_id = info.get("id")
+                    if not message_id or message_id in baseline_message_ids:
+                        continue
+                    if info.get("role") != "assistant":
+                        continue
+
+                    for part in message.get("parts", []) or []:
+                        if part.get("type") != "tool":
+                            continue
+                        call_key = part.get("callID") or part.get("id")
+                        if not call_key or call_key in seen_tool_calls:
+                            continue
+                        tool_name = part.get("tool") or "tool"
+                        tool_input = part.get("state", {}).get("input") or {}
+                        toolcall = self.im_client.formatter.format_toolcall(
+                            tool_name,
+                            tool_input,
+                            get_relative_path=_relative_path,
+                        )
+                        await self.controller.emit_agent_message(
+                            request.context,
+                            "toolcall",
+                            toolcall,
+                            parse_mode="markdown",
+                        )
+                        seen_tool_calls.add(call_key)
+
+                    if (
+                        info.get("time", {}).get("completed")
+                        and message_id not in emitted_assistant_messages
+                        and info.get("finish") == "tool-calls"
+                    ):
+                        text = self._extract_response_text(message)
+                        if text:
+                            await self.controller.emit_agent_message(
+                                request.context,
+                                "assistant",
+                                text,
+                                parse_mode="markdown",
+                            )
+                        emitted_assistant_messages.add(message_id)
+
+                if messages:
+                    last_message = messages[-1]
+                    last_info = last_message.get("info", {})
+                    last_id = last_info.get("id")
+                    if (
+                        last_id
+                        and last_id not in baseline_message_ids
+                        and last_info.get("role") == "assistant"
+                        and last_info.get("time", {}).get("completed")
+                        and last_info.get("finish") != "tool-calls"
+                    ):
+                        final_text = self._extract_response_text(last_message)
+                        break
+
+                await asyncio.sleep(poll_interval_seconds)
+
+            if final_text:
                 await self.emit_result_message(
                     request.context,
-                    result_text,
+                    final_text,
                     subtype="success",
                     started_at=request.started_at,
                     parse_mode="markdown",
@@ -645,11 +1089,22 @@ class OpenCodeAgent(BaseAgent):
             logger.info(f"OpenCode request cancelled for {request.base_session_id}")
             raise
         except Exception as e:
-            logger.error(f"OpenCode request failed: {e}", exc_info=True)
+            error_name = type(e).__name__
+            error_details = str(e).strip()
+            error_text = f"{error_name}: {error_details}" if error_details else error_name
+
+            logger.error(f"OpenCode request failed: {error_text}", exc_info=True)
+            try:
+                await server.abort_session(session_id, request.working_path)
+            except Exception as abort_err:
+                logger.warning(
+                    f"Failed to abort OpenCode session after error: {abort_err}"
+                )
+
             await self.controller.emit_agent_message(
                 request.context,
                 "notify",
-                f"OpenCode request failed: {e}",
+                f"OpenCode request failed: {error_text}",
             )
 
     def _extract_response_text(self, response: Dict[str, Any]) -> str:
@@ -669,7 +1124,23 @@ class OpenCodeAgent(BaseAgent):
 
         return "\n\n".join(text_parts).strip()
 
+    def _to_relative_path(self, abs_path: str, cwd: str) -> str:
+        """Convert absolute file paths to relative paths under cwd."""
+        try:
+            abs_path = os.path.abspath(os.path.expanduser(abs_path))
+            cwd = os.path.abspath(os.path.expanduser(cwd))
+            rel_path = os.path.relpath(abs_path, cwd)
+            if rel_path.startswith("../.."):
+                return abs_path
+            if not rel_path.startswith(".") and rel_path != ".":
+                rel_path = "./" + rel_path
+            return rel_path
+        except Exception:
+            return abs_path
+
     async def handle_stop(self, request: AgentRequest) -> bool:
+
+
         task = self._active_requests.get(request.base_session_id)
         if not task or task.done():
             return False

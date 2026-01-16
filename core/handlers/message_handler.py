@@ -74,15 +74,38 @@ class MessageHandler:
             settings_key = self._get_settings_key(context)
 
             agent_name = self.controller.resolve_agent_for_context(context)
-            ack_context = self._get_target_context(context)
-            ack_text = self._get_ack_text(agent_name)
+
             ack_message_id = None
-            try:
-                ack_message_id = await self.im_client.send_message(
-                    ack_context, ack_text
-                )
-            except Exception as ack_err:
-                logger.debug(f"Failed to send ack message: {ack_err}")
+            ack_mode = getattr(self.config, "ack_mode", "reaction")
+            ack_reaction_message_id = None
+            ack_reaction_emoji = None
+
+            if ack_mode == "message":
+                ack_context = self._get_target_context(context)
+                ack_text = self._get_ack_text(agent_name)
+                try:
+                    ack_message_id = await self.im_client.send_message(
+                        ack_context, ack_text
+                    )
+                except Exception as ack_err:
+                    logger.debug(f"Failed to send ack message: {ack_err}")
+            else:
+                # Default: add 👀 / :eyes: reaction to the user's message
+                try:
+                    if context.message_id:
+                        ack_reaction_message_id = context.message_id
+                        ack_reaction_emoji = (
+                            ":eyes:" if self.config.platform == "slack" else "👀"
+                        )
+                        ok = await self.im_client.add_reaction(
+                            context, ack_reaction_message_id, ack_reaction_emoji
+                        )
+                        if not ok:
+                            logger.info(
+                                "Ack reaction not applied (platform returned False)"
+                            )
+                except Exception as ack_err:
+                    logger.debug(f"Failed to add reaction ack: {ack_err}")
 
             request = AgentRequest(
                 context=context,
@@ -100,6 +123,13 @@ class MessageHandler:
             finally:
                 if request.ack_message_id:
                     await self._delete_ack(context.channel_id, request)
+                elif ack_reaction_message_id and ack_reaction_emoji:
+                    try:
+                        await self.im_client.remove_reaction(
+                            context, ack_reaction_message_id, ack_reaction_emoji
+                        )
+                    except Exception as err:
+                        logger.debug(f"Failed to remove reaction ack: {err}")
         except Exception as e:
             logger.error(f"Error processing user message: {e}", exc_info=True)
             await self.im_client.send_message(
