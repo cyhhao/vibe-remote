@@ -172,6 +172,10 @@ telegram:
 - Slack: [English](docs/SLACK_SETUP.md) | [中文](docs/SLACK_SETUP_ZH.md)
 - Telegram: [English](docs/TELEGRAM_SETUP.md) | [中文](docs/TELEGRAM_SETUP_ZH.md)
 
+## Releases
+
+See GitHub Releases: https://github.com/cyhhao/vibe-remote/releases
+
 ## Roadmap
 
 - Additional coding CLIs/agents beyond the current built-in set

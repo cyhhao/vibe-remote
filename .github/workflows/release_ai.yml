@@ -1,0 +1,297 @@
+name: Release (AI Notes)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g., v1.0.0)"
+        required: true
+        type: string
+      model:
+        description: "OpenAI model (default: gpt-4o-mini)"
+        required: false
+        type: string
+        default: "gpt-4o-mini"
+      language:
+        description: "Release notes language (zh|en)"
+        required: false
+        type: string
+        default: "zh"
+      max_commits:
+        description: "Max commits to summarize"
+        required: false
+        type: string
+        default: "200"
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "Tag is empty" >&2
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Compute previous tag
+        id: prev
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+
+          # Find the previous semantic version tag (v*) before current tag.
+          # This assumes tags follow semver-like ordering.
+          PREV=""
+          FOUND="false"
+          while IFS= read -r t; do
+            if [ "$t" = "$TAG" ]; then
+              FOUND="true"
+              break
+            fi
+            PREV="$t"
+          done < <(git tag -l 'v*' --sort=v:refname)
+
+          if [ "$FOUND" != "true" ]; then
+            echo "Current tag '$TAG' not found in git tags" >&2
+            git tag -l 'v*' --sort=v:refname | tail -n 50 >&2
+            exit 1
+          fi
+
+          echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+
+      - name: Collect commits
+        id: commits
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          PREV="${{ steps.prev.outputs.prev }}"
+
+          # workflow_dispatch input is string, keep it robust.
+          MAX_COMMITS="${{ github.event.inputs.max_commits }}"
+          if [ -z "$MAX_COMMITS" ]; then
+            MAX_COMMITS="200"
+          fi
+
+          if [ -z "$PREV" ]; then
+            RANGE="$TAG"
+            echo "No previous tag found. Summarizing commits reachable by $TAG (limited)."
+            git log --first-parent --no-merges --pretty=format:'- %h %s' "$TAG" -n "$MAX_COMMITS" > commits.txt
+          else
+            RANGE="$PREV..$TAG"
+            git log --first-parent --no-merges --pretty=format:'- %h %s' "$RANGE" -n "$MAX_COMMITS" > commits.txt
+          fi
+
+          echo "range=$RANGE" >> "$GITHUB_OUTPUT"
+
+          COUNT=$(wc -l < commits.txt | tr -d ' ')
+          echo "commit_count=$COUNT" >> "$GITHUB_OUTPUT"
+
+          # Best-effort: extract PR numbers.
+          # - Squash merge style: "... (#123)"
+          # - Merge commit style: "Merge pull request #123 from ..."
+          : > prs.txt
+          perl -ne 'while (/\(#(\d+)\)/g) { print "$1\n" }' commits.txt >> prs.txt || true
+
+          if [ -n "$RANGE" ]; then
+            git log --first-parent --merges --pretty=format:'%s' "$RANGE" \
+              | perl -ne 'while (/Merge pull request #(\d+)/g) { print "$1\n" }' \
+              >> prs.txt || true
+          fi
+
+          sort -u prs.txt -o prs.txt || true
+
+          PR_COUNT=$(wc -l < prs.txt | tr -d ' ')
+          echo "pr_count=$PR_COUNT" >> "$GITHUB_OUTPUT"
+
+          echo "Commit count: $COUNT"
+          echo "PR references found: $PR_COUNT"
+          if [ "$COUNT" = "0" ]; then
+            echo "No commits found in range $RANGE" >&2
+          fi
+
+      - name: Generate release notes (OpenAI)
+        id: notes
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ github.event.inputs.model || 'gpt-4o-mini' }}
+          RELEASE_LANG: ${{ github.event.inputs.language || 'zh' }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          RANGE: ${{ steps.commits.outputs.range }}
+          COMMIT_COUNT: ${{ steps.commits.outputs.commit_count }}
+          PR_COUNT: ${{ steps.commits.outputs.pr_count }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "Missing OPENAI_API_KEY secret" >&2
+            exit 1
+          fi
+
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq is required but not installed on runner" >&2
+            exit 1
+          fi
+
+          TAG="$TAG"
+          RANGE="$RANGE"
+          REPO="$REPO"
+
+          if [[ "$RANGE" == *".."* ]]; then
+            COMPARE_PATH="${RANGE/../...}"
+            COMPARE_URL="https://github.com/${REPO}/compare/${COMPARE_PATH}"
+          else
+            COMPARE_URL="https://github.com/${REPO}/commits/${TAG}"
+          fi
+
+          COMMITS=$(cat commits.txt 2>/dev/null || true)
+
+          # Best-effort PR enrichment: fetch PR titles/labels if we can detect PR numbers.
+          PRS_SUMMARY=""
+          if [ -s prs.txt ] && command -v gh >/dev/null 2>&1; then
+            : > prs_summary.txt
+            # Hard limit to avoid rate/time blowups
+            head -n 80 prs.txt | while read -r pr; do
+              [ -z "$pr" ] && continue
+              gh api -H "Accept: application/vnd.github+json" "repos/${REPO}/pulls/${pr}" \
+                --jq '"- #\(.number) \(.title) (@\(.user.login))" + (if (.labels|length) > 0 then " [" + ([.labels[].name]|join(", ")) + "]" else "" end)' \
+                >> prs_summary.txt || true
+            done
+            if [ -s prs_summary.txt ]; then
+              PRS_SUMMARY=$(cat prs_summary.txt)
+            fi
+          fi
+
+          # If we have PR list, reduce commit noise to keep prompts smaller.
+          if [ -n "$PRS_SUMMARY" ] && [ -s commits.txt ]; then
+            COMMITS=$(head -n 80 commits.txt)
+          fi
+
+          : > prompt.txt
+          if [ "$RELEASE_LANG" = "en" ]; then
+            {
+              printf '%s\n' "You are a strict release manager.";
+              printf '%s\n' "";
+              printf '%s\n' "Generate GitHub Release Notes (Markdown) for version ${TAG} based ONLY on the information below.";
+              printf '%s\n' "";
+              printf '%s\n' "Rules:";
+              printf '%s\n' "- Do NOT hallucinate. Use only the provided PRs/commits.";
+              printf '%s\n' "- Prefer PR list if available; otherwise fall back to commit list.";
+              printf '%s\n' "- Output structure:";
+              printf '%s\n' "  - 1-3 bullets in ## Highlights (omit if none)";
+              printf '%s\n' "  - ## Changes grouped by ### Added / ### Changed / ### Fixed / ### Security / ### Breaking (omit empty)";
+              printf '%s\n' "  - Final line: Full Changelog: <URL>";
+              printf '%s\n' "- Keep bullets concise (one line each).";
+              printf '%s\n' "";
+              printf '%s\n' "Context:";
+              printf '%s\n' "- Repo: ${REPO}";
+              printf '%s\n' "- Range: ${RANGE}";
+              printf '%s\n' "- Compare: ${COMPARE_URL}";
+              if [ -n "$PRS_SUMMARY" ]; then
+                printf '%s\n' "";
+                printf '%s\n' "Pull Requests:";
+                printf '%s\n' "$PRS_SUMMARY";
+              fi
+              printf '%s\n' "";
+              printf '%s\n' "Commits (${COMMIT_COUNT}):";
+              printf '%s\n' "${COMMITS}";
+            } >> prompt.txt
+          else
+            {
+              printf '%s\n' "你是一个严格的 Release Manager。";
+              printf '%s\n' "";
+              printf '%s\n' "基于下面提供的信息，为版本 ${TAG} 生成 GitHub Release Notes（Markdown）。";
+              printf '%s\n' "";
+              printf '%s\n' "要求：";
+              printf '%s\n' "- 只能基于提供的 PR/commits 总结，不允许编造不存在的功能。";
+              printf '%s\n' "- 如果提供了 PR 列表，请优先基于 PR 列表总结；否则回退到 commit 列表。";
+              printf '%s\n' "- 输出结构固定：";
+              printf '%s\n' "  - 先给 1-3 条 ## Highlights（如果没有就省略该小节）";
+              printf '%s\n' "  - 然后给 ## Changes，按 ### Added / ### Changed / ### Fixed / ### Security / ### Breaking 分组（空分组省略）";
+              printf '%s\n' "  - 最后给一行：Full Changelog: <URL>";
+              printf '%s\n' "- 每条 bullet 用一行，不要写大段散文。";
+              printf '%s\n' "";
+              printf '%s\n' "上下文：";
+              printf '%s\n' "- Repo: ${REPO}";
+              printf '%s\n' "- Range: ${RANGE}";
+              printf '%s\n' "- Compare: ${COMPARE_URL}";
+              if [ -n "$PRS_SUMMARY" ]; then
+                printf '%s\n' "";
+                printf '%s\n' "Pull Requests:";
+                printf '%s\n' "$PRS_SUMMARY";
+              fi
+              printf '%s\n' "";
+              printf '%s\n' "Commits (${COMMIT_COUNT}):";
+              printf '%s\n' "${COMMITS}";
+            } >> prompt.txt
+          fi
+
+          jq -n \
+            --arg model "$OPENAI_MODEL" \
+            --rawfile prompt prompt.txt \
+            '{
+              model: $model,
+              messages: [
+                {role: "system", content: "You write concise, accurate release notes. You do not hallucinate."},
+                {role: "user", content: $prompt}
+              ],
+              temperature: 0.2
+            }' > request.json
+
+          curl -sS https://api.openai.com/v1/chat/completions \
+            -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d @request.json \
+            -o response.json
+
+          ERROR_MSG=$(jq -r '.error.message // empty' response.json)
+          if [ -n "$ERROR_MSG" ]; then
+            echo "OpenAI API error: $ERROR_MSG" >&2
+            jq -r '.error' response.json >&2 || true
+            exit 1
+          fi
+
+          jq -r '.choices[0].message.content // empty' response.json > release.md
+
+          if [ ! -s release.md ]; then
+            echo "Release notes generation produced empty output" >&2
+            echo "Response:" >&2
+            cat response.json >&2
+            exit 1
+          fi
+
+          if ! grep -q "^Full Changelog:" release.md; then
+            printf "\n\nFull Changelog: %s\n" "$COMPARE_URL" >> release.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          body_path: release.md
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
