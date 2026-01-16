@@ -1,30 +1,93 @@
-# Repository Guidelines
+# Agent Guidelines
 
-## Project Structure & Module Organization
-`main.py` is the entry point that wires `config.AppConfig` into the runtime `Controller`. Core orchestration和 handlers live under `core/` (e.g., `core/controller.py`, `core/handlers/*`). Agent integrations now live in `modules/agents/` (shared base, Claude/Codex backends, registry), while IM transports stay in `modules/im/`. Configuration defaults live in `config/` (`agent_routes.example.yaml` + gitignored `agent_routes.yaml` at repo root control per-channel routing), reference docs in `docs/`, static assets in `assets/`, and `_tmp/` is the default remote working directory for agent sessions. Keep runtime logs inside `logs/vibe_remote.log` and persist chat state in `user_settings.json`.
+This file defines how coding agents should work in this repository.
 
-## Build, Test, and Development Commands
-- `python -m venv .venv && source .venv/bin/activate` – create an isolated environment before installing dependencies.
-- `pip install -r requirements.txt` – install the Slack/Telegram/Claude clients plus Codex routing deps (`PyYAML` for route parsing).
-- `cp .env.example .env` – seed configuration; update IM platform tokens, `CLAUDE_DEFAULT_CWD`, and permission mode.
-- `./start.sh` (or `python main.py`) – run the bot locally; prefers Slack when both tokens exist.
-- `./status.sh` / `./stop.sh` – check or terminate the background process when using the helper scripts.
+## 1) General (Reusable)
 
-## Coding Style & Naming Conventions
-Follow PEP 8 with four-space indentation, descriptive `snake_case` for functions, and `PascalCase` for classes/dataclasses (see `config/settings.py`). Type hints are expected for public functions, and inline logging should use the structured format in `main.py` for traceability. Keep modules small and cohesive; new handlers belong in `core/handlers/`, new IM transports under `modules/im/`. No repo-wide formatter is enforced—run your preferred tool (Black/Ruff) before opening a PR and document deviations.
+### Language
 
-## Testing Guidelines
-There is no committed automated test suite yet; favor fast pytest-style modules named `test_<feature>.py` co-located with the code or under `tests/`. Exercise controller flows by faking IM payloads via lightweight fixtures and assert session state mutations. Run `pytest -q` (add it to your dev extras) before pushing; where live integrations are involved, stub Slack/Telegram clients and verify that outbound payloads match the documented schemas. Treat manual end-to-end checks (start bot, send `/start`) as mandatory until CI is in place.
+- Default to English for all comments, docs, user-facing copy, and logs.
+- Use non-English text only when required for i18n/localization.
 
-## Commit & Pull Request Guidelines
-Commits follow the `type(scope): summary` pattern visible in history (`fix(slack): …`, `feat(status): …`). Keep them small and focused on a single concern, referencing issues when relevant. Every PR must describe intent, list functional changes, attach logs or screenshots for UX-affecting updates, and call out config impacts (new env vars, migrations). Update README/docs whenever behavior or setup steps change, and ensure `pip install -r requirements.txt && ./start.sh` still works from a clean clone.
+### Workflow (Branches + PRs)
 
-## Security & Configuration Tips
-Never commit `.env`, tokens, or Slack/Telegram secrets; rely on `.env.example` plus local overrides. Validate IM scopes (`SLACK_REQUIRE_MENTION`, `TELEGRAM_TARGET_CHAT_ID`) through `config/settings.py` before shipping, and document any new flags. Keep `CLAUDE_DEFAULT_CWD` scoped to `_tmp/` or another sanitized path so that remote agents cannot escape the intended workspace. Logs may contain sensitive thread context—rotate `logs/vibe_remote.log` in production and scrub before sharing.
+- Always branch from the latest `master` when starting a new feature or bug fix.
+- Implement work on a new branch, validate changes, then open a PR to `master` for review.
+- Keep commits small and focused; avoid mixing unrelated changes.
 
-## Agent Routing & Codex Notes
-- Enable Codex (on by default) via `CODEX_ENABLED=true` and ensure the CLI is reachable (`CODEX_CLI_PATH`).
-- Copy `agent_routes.example.yaml` → `agent_routes.yaml` to map Slack channel / Telegram chat IDs to agents; see `docs/CODEX_SETUP.md` for a full walkthrough.
-- The `modules/agents` architecture is ready for additional backends; add a new agent class, register it in `core/controller.py`, then expose it via the routing file.
-- Route Slack channel IDs or Telegram chat IDs in `AGENT_ROUTE_FILE` (`agent_routes.yaml` at repo root by default; copy from `agent_routes.example.yaml`). Keys map to agent names (`claude`, `codex`, future backends). Missing entries fall back to the platform default, then to the global default.
-- Session mappings inside `user_settings.json` are now namespaced per agent; avoid manual edits unless you know the nested structure `{agent -> base_session_id -> cwd -> session_id}`.
+### Planning (When Work Is Non-trivial)
+
+- If the task is complex or ambiguous, propose a short plan and confirm it with the user before large changes.
+- If a plan-related subagent exists, prefer calling it to draft/refine the plan.
+
+### Code Review
+
+- If a review-related subagent exists, call it when the code is ready for review.
+- Address review findings as appropriate until no must-fix issues remain.
+
+### Quality Bar
+
+- Prefer root-cause fixes over defensive patches.
+- Run the smallest relevant checks first (unit tests, targeted scripts), then broader checks when needed.
+- Add tests when there is an existing test pattern; do not introduce a brand-new testing framework unless requested.
+
+### Git Hygiene & Security
+
+- Commit messages: use `type(scope): summary`.
+- Never commit secrets (e.g., `.env`, tokens, credentials files).
+- Avoid destructive git operations unless explicitly requested (e.g., `reset --hard`, force-push).
+
+## 2) Project-Specific (Vibe Remote)
+
+### Structure
+
+- Entry point: `main.py` wires `config.AppConfig` into `core/controller.py`.
+- Core orchestration and handlers: `core/` (notably `core/handlers/`).
+- Agent backends: `modules/agents/` (shared base, Claude/Codex backends, registry).
+- IM transports: `modules/im/` (Slack/Telegram).
+- Config:
+  - Defaults and validation: `config/` (see `config/settings.py`).
+  - Agent routing: `agent_routes.example.yaml` (template) and local `agent_routes.yaml` (gitignored).
+- Runtime data:
+  - Logs: `logs/vibe_remote.log`.
+  - Persisted state: `user_settings.json`.
+  - Default remote working dir: `_tmp/`.
+
+### Common Commands
+
+- Setup:
+  - `python -m venv .venv && source .venv/bin/activate`
+  - `pip install -r requirements.txt`
+  - `cp .env.example .env`
+- Run:
+  - `./start.sh` (preferred) or `python main.py`
+  - `./status.sh` / `./stop.sh`
+
+### Coding Conventions
+
+- Follow PEP 8, 4-space indentation.
+- Naming: `snake_case` for functions, `PascalCase` for classes/dataclasses.
+- Use type hints for public functions.
+- Keep modules cohesive; add new handlers under `core/handlers/`, new IM transports under `modules/im/`.
+- No repo-wide formatter is enforced; use Black/Ruff if you want, keep diffs focused.
+
+### Testing
+
+- No committed automated suite yet.
+- Prefer fast `pytest`-style tests (`test_<feature>.py`) colocated or under `tests/`.
+- For IM integrations, stub Slack/Telegram clients and validate outbound payload schemas.
+- Do a manual E2E sanity check (start bot, send `/start`) until CI exists.
+
+### Agent Routing / Codex
+
+- Codex enablement: `CODEX_ENABLED=true` and `CODEX_CLI_PATH` points to the CLI.
+- Routing file:
+  - Copy `agent_routes.example.yaml` to `agent_routes.yaml` (local).
+  - Controlled by `AGENT_ROUTE_FILE` (defaults to repo-root `agent_routes.yaml`).
+  - Keys are Slack channel IDs / Telegram chat IDs; values are agent names (e.g., `claude`, `codex`).
+  - Missing entries fall back to platform default, then to global default.
+
+### Safety Notes
+
+- Keep `CLAUDE_DEFAULT_CWD` scoped to `_tmp/` (or another sanitized directory).
+- Logs can contain sensitive context; scrub before sharing.
