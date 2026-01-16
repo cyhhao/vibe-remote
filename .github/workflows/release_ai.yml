@@ -11,15 +11,10 @@ on:
         required: true
         type: string
       model:
-        description: "OpenAI model (default: gpt-4o-mini)"
+        description: "OpenAI model (default: gpt-5.2)"
         required: false
         type: string
-        default: "gpt-4o-mini"
-      language:
-        description: "Release notes language (zh|en)"
-        required: false
-        type: string
-        default: "zh"
+        default: "gpt-5.2"
       max_commits:
         description: "Max commits to summarize"
         required: false
@@ -136,8 +131,7 @@ jobs:
         id: notes
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ github.event.inputs.model || 'gpt-4o-mini' }}
-          RELEASE_LANG: ${{ github.event.inputs.language || 'zh' }}
+          OPENAI_MODEL: ${{ github.event.inputs.model || 'gpt-5.2' }}
           TAG: ${{ steps.tag.outputs.tag }}
           RANGE: ${{ steps.commits.outputs.range }}
           COMMIT_COUNT: ${{ steps.commits.outputs.commit_count }}
@@ -191,63 +185,37 @@ jobs:
           fi
 
           : > prompt.txt
-          if [ "$RELEASE_LANG" = "en" ]; then
-            {
-              printf '%s\n' "You are a strict release manager.";
+          {
+            printf '%s\n' "You are a strict release manager.";
+            printf '%s\n' "";
+            printf '%s\n' "Generate GitHub Release Notes (Markdown) for version ${TAG} based ONLY on the information below.";
+            printf '%s\n' "";
+            printf '%s\n' "Rules:";
+            printf '%s\n' "- Do NOT hallucinate. Use only the provided PRs/commits.";
+            printf '%s\n' "- Prefer PR list if available; otherwise fall back to commit list.";
+            printf '%s\n' "- Output MUST be bilingual in this exact order:";
+            printf '%s\n' "  1) English release notes";
+            printf '%s\n' "  2) A single Markdown horizontal rule line: ---";
+            printf '%s\n' "  3) Chinese release notes";
+            printf '%s\n' "- Both language sections must use the same structure:";
+            printf '%s\n' "  - 1-3 bullets in ## Highlights (omit if none)";
+            printf '%s\n' "  - ## Changes grouped by ### Added / ### Changed / ### Fixed / ### Security / ### Breaking (omit empty)";
+            printf '%s\n' "  - Final line in each section: Full Changelog: <URL>";
+            printf '%s\n' "- Keep bullets concise (one line each).";
+            printf '%s\n' "";
+            printf '%s\n' "Context:";
+            printf '%s\n' "- Repo: ${REPO}";
+            printf '%s\n' "- Range: ${RANGE}";
+            printf '%s\n' "- Compare: ${COMPARE_URL}";
+            if [ -n "$PRS_SUMMARY" ]; then
               printf '%s\n' "";
-              printf '%s\n' "Generate GitHub Release Notes (Markdown) for version ${TAG} based ONLY on the information below.";
-              printf '%s\n' "";
-              printf '%s\n' "Rules:";
-              printf '%s\n' "- Do NOT hallucinate. Use only the provided PRs/commits.";
-              printf '%s\n' "- Prefer PR list if available; otherwise fall back to commit list.";
-              printf '%s\n' "- Output structure:";
-              printf '%s\n' "  - 1-3 bullets in ## Highlights (omit if none)";
-              printf '%s\n' "  - ## Changes grouped by ### Added / ### Changed / ### Fixed / ### Security / ### Breaking (omit empty)";
-              printf '%s\n' "  - Final line: Full Changelog: <URL>";
-              printf '%s\n' "- Keep bullets concise (one line each).";
-              printf '%s\n' "";
-              printf '%s\n' "Context:";
-              printf '%s\n' "- Repo: ${REPO}";
-              printf '%s\n' "- Range: ${RANGE}";
-              printf '%s\n' "- Compare: ${COMPARE_URL}";
-              if [ -n "$PRS_SUMMARY" ]; then
-                printf '%s\n' "";
-                printf '%s\n' "Pull Requests:";
-                printf '%s\n' "$PRS_SUMMARY";
-              fi
-              printf '%s\n' "";
-              printf '%s\n' "Commits (${COMMIT_COUNT}):";
-              printf '%s\n' "${COMMITS}";
-            } >> prompt.txt
-          else
-            {
-              printf '%s\n' "你是一个严格的 Release Manager。";
-              printf '%s\n' "";
-              printf '%s\n' "基于下面提供的信息，为版本 ${TAG} 生成 GitHub Release Notes（Markdown）。";
-              printf '%s\n' "";
-              printf '%s\n' "要求：";
-              printf '%s\n' "- 只能基于提供的 PR/commits 总结，不允许编造不存在的功能。";
-              printf '%s\n' "- 如果提供了 PR 列表，请优先基于 PR 列表总结；否则回退到 commit 列表。";
-              printf '%s\n' "- 输出结构固定：";
-              printf '%s\n' "  - 先给 1-3 条 ## Highlights（如果没有就省略该小节）";
-              printf '%s\n' "  - 然后给 ## Changes，按 ### Added / ### Changed / ### Fixed / ### Security / ### Breaking 分组（空分组省略）";
-              printf '%s\n' "  - 最后给一行：Full Changelog: <URL>";
-              printf '%s\n' "- 每条 bullet 用一行，不要写大段散文。";
-              printf '%s\n' "";
-              printf '%s\n' "上下文：";
-              printf '%s\n' "- Repo: ${REPO}";
-              printf '%s\n' "- Range: ${RANGE}";
-              printf '%s\n' "- Compare: ${COMPARE_URL}";
-              if [ -n "$PRS_SUMMARY" ]; then
-                printf '%s\n' "";
-                printf '%s\n' "Pull Requests:";
-                printf '%s\n' "$PRS_SUMMARY";
-              fi
-              printf '%s\n' "";
-              printf '%s\n' "Commits (${COMMIT_COUNT}):";
-              printf '%s\n' "${COMMITS}";
-            } >> prompt.txt
-          fi
+              printf '%s\n' "Pull Requests:";
+              printf '%s\n' "$PRS_SUMMARY";
+            fi
+            printf '%s\n' "";
+            printf '%s\n' "Commits (${COMMIT_COUNT}):";
+            printf '%s\n' "${COMMITS}";
+          } >> prompt.txt
 
           jq -n \
             --arg model "$OPENAI_MODEL" \
