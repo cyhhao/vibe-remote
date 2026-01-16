@@ -280,6 +280,49 @@ class TelegramBot(BaseIMClient):
             logger.error(f"Error sending message: {e}")
             raise
 
+    async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
+        """Add a reaction emoji to a Telegram message."""
+        bot = self.application.bot
+
+        reaction = (emoji or "").strip()
+        if reaction in [":eyes:", "eyes", "👀"]:
+            reaction = "👀"
+
+        if not reaction:
+            return False
+
+        try:
+            await bot.set_message_reaction(
+                chat_id=int(context.channel_id),
+                message_id=int(message_id),
+                reaction=reaction,
+            )
+            return True
+        except TelegramError as e:
+            logger.debug(f"Failed to add Telegram reaction: {e}")
+            return False
+        except Exception as e:
+            logger.debug(f"Failed to add Telegram reaction: {e}")
+            return False
+
+    async def remove_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
+        """Remove a reaction emoji from a Telegram message."""
+        bot = self.application.bot
+
+        try:
+            await bot.set_message_reaction(
+                chat_id=int(context.channel_id),
+                message_id=int(message_id),
+                reaction=None,
+            )
+            return True
+        except TelegramError as e:
+            logger.debug(f"Failed to remove Telegram reaction: {e}")
+            return False
+        except Exception as e:
+            logger.debug(f"Failed to remove Telegram reaction: {e}")
+            return False
+
     async def send_message_with_buttons(
         self,
         context: MessageContext,

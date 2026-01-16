@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import signal
 import sys
 import logging
 import asyncio
@@ -74,6 +75,27 @@ def main():
         
         # Create and run controller
         controller = Controller(config)
+
+        shutdown_initiated = False
+
+        def _handle_shutdown(signum, frame):
+            nonlocal shutdown_initiated
+            if shutdown_initiated:
+                return
+            shutdown_initiated = True
+            try:
+                logger.info(f"Received signal {signum}, shutting down...")
+            except Exception:
+                pass
+            try:
+                controller.cleanup_sync()
+            except Exception as cleanup_err:
+                logger.error(f"Cleanup failed: {cleanup_err}")
+            raise SystemExit(0)
+
+        signal.signal(signal.SIGTERM, _handle_shutdown)
+        signal.signal(signal.SIGINT, _handle_shutdown)
+
         controller.run()
         
     except Exception as e:

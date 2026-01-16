@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import time
 from typing import Dict, Any, Optional, Callable
@@ -155,6 +156,81 @@ class SlackBot(BaseIMClient):
         except SlackApiError as e:
             logger.error(f"Error sending Slack message: {e}")
             raise
+
+    async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
+        """Add a reaction emoji to a Slack message."""
+        self._ensure_clients()
+
+        name = (emoji or "").strip()
+        if name.startswith(":") and name.endswith(":") and len(name) > 2:
+            name = name[1:-1]
+        if name in ["👀", "eyes", "eye"]:
+            name = "eyes"
+
+        if not name:
+            return False
+
+        try:
+            await self.web_client.reactions_add(
+                channel=context.channel_id,
+                timestamp=message_id,
+                name=name,
+            )
+            return True
+        except SlackApiError as err:
+            try:
+                if getattr(err, "response", None) and err.response.get("error") == "already_reacted":
+                    return True
+            except Exception:
+                pass
+
+            error_code = None
+            needed = None
+            try:
+                if getattr(err, "response", None):
+                    error_code = err.response.get("error")
+                    needed = err.response.get("needed")
+            except Exception:
+                pass
+
+            # NOTE: reaction failures were previously DEBUG-only; surface at INFO/WARN for operability.
+            if error_code in ["missing_scope", "not_in_channel", "channel_not_found"]:
+                logger.warning(
+                    f"Slack reaction add failed: error={error_code}, needed={needed}"
+                )
+            else:
+                logger.info(f"Slack reaction add failed: {err}")
+            return False
+        except Exception as err:
+            logger.debug(f"Failed to add Slack reaction: {err}")
+            return False
+
+    async def remove_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
+        """Remove a reaction emoji from a Slack message."""
+        self._ensure_clients()
+
+        name = (emoji or "").strip()
+        if name.startswith(":") and name.endswith(":") and len(name) > 2:
+            name = name[1:-1]
+        if name in ["👀", "eyes", "eye"]:
+            name = "eyes"
+
+        if not name:
+            return False
+
+        try:
+            await self.web_client.reactions_remove(
+                channel=context.channel_id,
+                timestamp=message_id,
+                name=name,
+            )
+            return True
+        except SlackApiError as err:
+            logger.debug(f"Failed to remove Slack reaction: {err}")
+            return False
+        except Exception as err:
+            logger.debug(f"Failed to remove Slack reaction: {err}")
+            return False
 
     async def send_message_with_buttons(
         self,
@@ -569,10 +645,18 @@ class SlackBot(BaseIMClient):
     async def _handle_interactive(self, payload: Dict[str, Any]):
         """Handle interactive components (buttons, modal submissions, etc.)"""
         if payload.get("type") == "block_actions":
-            # Handle button clicks
+            # Handle button clicks / select changes
             user = payload.get("user", {})
             actions = payload.get("actions", [])
-            channel_id = payload.get("channel", {}).get("id")
+            view = payload.get("view", {})
+
+            # In Slack modals, `channel` is often missing. We store the originating
+            # channel_id in `view.private_metadata` when opening the modal.
+            channel_id = (
+                payload.get("channel", {}).get("id")
+                or payload.get("container", {}).get("channel_id")
+                or (view.get("private_metadata") if isinstance(view, dict) else None)
+            )
 
             # Check if channel is authorized for interactive components
             if not await self._is_authorized_channel(channel_id):
@@ -693,10 +777,17 @@ class SlackBot(BaseIMClient):
                 oc_model = None
 
             # Extract OpenCode reasoning effort (optional)
-            oc_reasoning_data = values.get("opencode_reasoning_block", {}).get(
-                "opencode_reasoning_select", {}
-            )
-            oc_reasoning = oc_reasoning_data.get("selected_option", {}).get("value")
+            oc_reasoning = None
+            reasoning_block = values.get("opencode_reasoning_block", {})
+            if isinstance(reasoning_block, dict):
+                for action_id, action_data in reasoning_block.items():
+                    if (
+                        isinstance(action_id, str)
+                        and action_id.startswith("opencode_reasoning_select")
+                        and isinstance(action_data, dict)
+                    ):
+                        oc_reasoning = action_data.get("selected_option", {}).get("value")
+                        break
             if oc_reasoning == "__default__":
                 oc_reasoning = None
 
@@ -1236,9 +1327,14 @@ class SlackBot(BaseIMClient):
             }
 
             # Build reasoning effort options dynamically based on model variants
-            # Determine target model for variants lookup
             target_model = current_oc_model or default_model_str
-            model_variants = {}
+            model_variants: Dict[str, Any] = {}
+
+            reasoning_model_key = target_model or "__default__"
+            reasoning_action_id = (
+                "opencode_reasoning_select__"
+                + hashlib.sha1(reasoning_model_key.encode("utf-8")).hexdigest()[:8]
+            )
 
             if target_model:
                 # Parse provider/model format
@@ -1247,13 +1343,31 @@ class SlackBot(BaseIMClient):
                     target_provider, target_model_id = parts
                     # Search for this model in providers data
                     for provider in providers_data:
-                        if provider.get("id") == target_provider:
-                            models = provider.get("models", {})
-                            if isinstance(models, dict):
-                                model_info = models.get(target_model_id, {})
-                                if isinstance(model_info, dict):
-                                    model_variants = model_info.get("variants", {})
-                            break
+                        if provider.get("id") != target_provider:
+                            continue
+
+                        models = provider.get("models", {})
+                        model_info: Optional[dict] = None
+
+                        if isinstance(models, dict):
+                            candidate = models.get(target_model_id)
+                            if isinstance(candidate, dict):
+                                model_info = candidate
+                        elif isinstance(models, list):
+                            for entry in models:
+                                if (
+                                    isinstance(entry, dict)
+                                    and entry.get("id") == target_model_id
+                                ):
+                                    model_info = entry
+                                    break
+
+                        if isinstance(model_info, dict):
+                            variants = model_info.get("variants", {})
+                            if isinstance(variants, dict):
+                                model_variants = variants
+
+                        break
 
             # Build options from variants or use fallback
             reasoning_effort_options = [
@@ -1304,7 +1418,7 @@ class SlackBot(BaseIMClient):
 
             reasoning_select = {
                 "type": "static_select",
-                "action_id": "opencode_reasoning_select",
+                "action_id": reasoning_action_id,
                 "placeholder": {"type": "plain_text", "text": "Select reasoning effort"},
                 "options": reasoning_effort_options,
                 "initial_option": initial_reasoning,

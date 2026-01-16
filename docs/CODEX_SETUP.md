@@ -58,7 +58,7 @@ source venv/bin/activate
 ./start.sh
 ```
 
-In a routed Slack channel run `@VibeRemote status` or any question—you should see an acknowledgement like `📨 Codex received, processing...` followed by Codex’s reply. If the CLI is missing, the bot will reply with “Agent `codex` is not configured”.
+In a routed Slack channel run `@VibeRemote status` or any question—you should see the bot react with 👀 (default) or an acknowledgement like `📨 Codex received, processing...` (when `ACK_MODE=message`), followed by Codex’s reply. If the CLI is missing, the bot will reply with “Agent `codex` is not configured”.
 
 ## 5. Troubleshooting
 

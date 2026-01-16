@@ -44,7 +44,7 @@ This guide will walk you through setting up a Slack bot for Vibe Remote.
 - `files:read` - View files shared in channels (for future file handling)
 - `files:write` - Upload files (for future file upload support)
 - `reactions:read` - View emoji reactions
-- `reactions:write` - Add emoji reactions
+- `reactions:write` - Add emoji reactions (required for `ACK_MODE=reaction`; set `ACK_MODE=message` to use text ack instead)
 - `users:read.email` - View email addresses (for enhanced user info)
 - `team:read` - View team/workspace information
 
@@ -351,6 +351,15 @@ If you see `missing_scope` errors with `groups:read`:
 3. Copy the new Bot Token and update your `.env` file
 4. Restart the bot
 5. Ensure bot is invited to the private channel: `/invite @YourBotName`
+
+### Reaction / Ack Reaction Issues
+
+If you see `missing_scope` errors with `reactions:write` (for 👀 reaction acknowledgement):
+
+1. Add `reactions:write` under **Bot Token Scopes**
+2. Click **"Reinstall to Workspace"** (this is mandatory!)
+3. Copy the new Bot Token and update your `.env` file
+4. Restart the bot
 
 ### Thread Reply Issues
 

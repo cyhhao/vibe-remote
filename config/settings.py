@@ -212,6 +212,7 @@ class AppConfig:
     opencode: Optional[OpenCodeConfig] = None
     log_level: str = "INFO"
     cleanup_enabled: bool = False
+    ack_mode: str = "reaction"  # "reaction" (default) | "message"
     agent_route_file: Optional[str] = None
 
     @classmethod
@@ -233,6 +234,16 @@ class AppConfig:
         # Cleanup toggle (safe cleanup of completed tasks only)
         cleanup_enabled_env = os.getenv("CLEANUP_ENABLED", "false").lower()
         cleanup_enabled = cleanup_enabled_env in ["1", "true", "yes", "on"]
+
+        # Acknowledgement behavior before agent processing
+        # - reaction: add 👀/:eyes: to the user's message (default)
+        # - message: send "📨 <agent> received, processing..." as a bot message
+        ack_mode = os.getenv("ACK_MODE", "reaction").strip().lower() or "reaction"
+        if ack_mode not in ["reaction", "message"]:
+            logger.warning(
+                f"Invalid ACK_MODE '{ack_mode}', falling back to 'reaction'"
+            )
+            ack_mode = "reaction"
 
         agent_route_env = os.getenv("AGENT_ROUTE_FILE")
         agent_route_file = agent_route_env
@@ -274,6 +285,7 @@ class AppConfig:
             claude=ClaudeConfig.from_env(),
             log_level=log_level,
             cleanup_enabled=cleanup_enabled,
+            ack_mode=ack_mode,
             codex=codex_config,
             opencode=opencode_config,
             agent_route_file=agent_route_file,

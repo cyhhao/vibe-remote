@@ -463,17 +463,46 @@ class Controller:
                 data = values.get(block_id, {}).get(action_id, {})
                 return data.get("selected_option", {}).get("value")
 
+            def _selected_prefixed_value(
+                block_id: str, action_prefix: str
+            ) -> Optional[str]:
+                block = values.get(block_id, {})
+                if not isinstance(block, dict):
+                    return None
+                for action_id, action_data in block.items():
+                    if (
+                        isinstance(action_id, str)
+                        and action_id.startswith(action_prefix)
+                        and isinstance(action_data, dict)
+                    ):
+                        return action_data.get("selected_option", {}).get("value")
+                return None
+
             oc_agent = _selected_value("opencode_agent_block", "opencode_agent_select")
-            if oc_agent == "__default__":
-                oc_agent = None
-
             oc_model = _selected_value("opencode_model_block", "opencode_model_select")
-            if oc_model == "__default__":
-                oc_model = None
-
-            oc_reasoning = _selected_value(
+            oc_reasoning = _selected_prefixed_value(
                 "opencode_reasoning_block", "opencode_reasoning_select"
             )
+
+            # For block_actions, the latest selection is carried on the `action` payload.
+            action_id = action.get("action_id")
+            selected_value = None
+            selected_option = action.get("selected_option")
+            if isinstance(selected_option, dict):
+                selected_value = selected_option.get("value")
+
+            if isinstance(action_id, str) and isinstance(selected_value, str):
+                if action_id == "opencode_agent_select":
+                    oc_agent = selected_value
+                elif action_id == "opencode_model_select":
+                    oc_model = selected_value
+                elif action_id.startswith("opencode_reasoning_select"):
+                    oc_reasoning = selected_value
+
+            if oc_agent == "__default__":
+                oc_agent = None
+            if oc_model == "__default__":
+                oc_model = None
             if oc_reasoning == "__default__":
                 oc_reasoning = None
 

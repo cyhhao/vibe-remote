@@ -103,7 +103,7 @@ class BaseIMClient(ABC):
         # Platform-specific formatter will be set by subclasses
         self.formatter = None
     
-    def get_default_parse_mode(self) -> str:
+    def get_default_parse_mode(self) -> Optional[str]:
         """Get the default parse mode for this platform
         
         Returns:
@@ -248,7 +248,7 @@ class BaseIMClient(ABC):
         for key, value in kwargs.items():
             setattr(self, f"{key}_callback", value)
     
-    def log_error(self, message: str, exception: Exception = None):
+    def log_error(self, message: str, exception: Optional[Exception] = None):
         """Standardized error logging
         
         Args:
@@ -267,7 +267,25 @@ class BaseIMClient(ABC):
             message: Info message
         """
         logger.info(message)
-    
+
+    async def add_reaction(
+        self, context: MessageContext, message_id: str, emoji: str
+    ) -> bool:
+        """Add a reaction to an existing message.
+
+        Default implementation returns False (unsupported).
+        """
+        return False
+
+    async def remove_reaction(
+        self, context: MessageContext, message_id: str, emoji: str
+    ) -> bool:
+        """Remove a reaction from an existing message.
+
+        Default implementation returns False (unsupported).
+        """
+        return False
+     
     @abstractmethod
     def format_markdown(self, text: str) -> str:
         """Format markdown text for the specific platform
