@@ -536,7 +536,42 @@ class OpenCodeServerManager:
                 )
             return await resp.json()
 
+    async def list_questions(
+        self, directory: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        session = await self._get_http_session()
+        params = {"directory": directory} if directory else None
+        async with session.get(
+            f"{self.base_url}/question",
+            params=params,
+        ) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise RuntimeError(
+                    f"Failed to list questions: {resp.status} {error_text}"
+                )
+            data = await resp.json()
+            return data if isinstance(data, list) else []
+
+    async def reply_question(
+        self, question_id: str, directory: str, answers: List[List[str]]
+    ) -> bool:
+        session = await self._get_http_session()
+        async with session.post(
+            f"{self.base_url}/question/{question_id}/reply",
+            params={"directory": directory},
+            json={"answers": answers},
+        ) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise RuntimeError(
+                    f"Failed to reply question: {resp.status} {error_text}"
+                )
+            data = await resp.json()
+            return bool(data)
+
     async def abort_session(self, session_id: str, directory: str) -> bool:
+
         session = await self._get_http_session()
 
         try:
@@ -774,6 +809,7 @@ class OpenCodeAgent(BaseAgent):
         self._request_sessions: Dict[str, Tuple[str, str, str]] = {}
         self._session_locks: Dict[str, asyncio.Lock] = {}
         self._initialized_sessions: set[str] = set()
+        self._pending_questions: Dict[str, Dict[str, Any]] = {}
 
     async def _get_server(self) -> OpenCodeServerManager:
         if self._server_manager is None:
@@ -815,7 +851,20 @@ class OpenCodeAgent(BaseAgent):
                     "Previous OpenCode task cancelled. Starting the new request...",
                 )
 
-            task = asyncio.create_task(self._process_message(request))
+            pending = self._pending_questions.get(request.base_session_id)
+            if pending and request.message == "opencode_question:open_modal":
+                if hasattr(self.im_client, "open_opencode_question_modal"):
+                    task = asyncio.create_task(self._open_question_modal(request, pending))
+                else:
+                    task = asyncio.create_task(self._process_message(request))
+            elif pending:
+                pending_payload = self._pending_questions.pop(request.base_session_id, None)
+                task = asyncio.create_task(
+                    self._process_question_answer(request, pending_payload or {})
+                )
+            else:
+                task = asyncio.create_task(self._process_message(request))
+
             self._active_requests[request.base_session_id] = task
 
         try:
@@ -827,6 +876,227 @@ class OpenCodeAgent(BaseAgent):
             if self._active_requests.get(request.base_session_id) is task:
                 self._active_requests.pop(request.base_session_id, None)
                 self._request_sessions.pop(request.base_session_id, None)
+
+    async def _open_question_modal(
+        self, request: AgentRequest, pending: Dict[str, Any]
+    ) -> None:
+        trigger_id = None
+        if request.context.platform_specific:
+            trigger_id = request.context.platform_specific.get("trigger_id")
+        if not trigger_id:
+            await self.im_client.send_message(
+                request.context,
+                "Slack did not provide a trigger_id for the modal. Please reply with a custom message.",
+            )
+            return
+
+        if not hasattr(self.im_client, "open_opencode_question_modal"):
+            await self.im_client.send_message(
+                request.context,
+                "Modal UI is not available. Please reply with a custom message.",
+            )
+            return
+
+        try:
+            await self.im_client.open_opencode_question_modal(
+                trigger_id=trigger_id,
+                context=request.context,
+                pending=pending,
+            )
+        except Exception as err:
+            logger.error(f"Failed to open OpenCode question modal: {err}", exc_info=True)
+            await self.im_client.send_message(
+                request.context,
+                f"Failed to open modal: {err}. Please reply with a custom message.",
+            )
+
+    async def _process_question_answer(
+        self, request: AgentRequest, pending: Dict[str, Any]
+    ) -> None:
+        # pending contains: session_id, directory, question_id, questions
+        session_id = pending.get("session_id")
+        directory = pending.get("directory")
+        question_id = pending.get("question_id")
+        option_labels = pending.get("option_labels")
+        option_labels = option_labels if isinstance(option_labels, list) else []
+        question_count = pending.get("question_count")
+        pending_thread_id = pending.get("thread_id")
+        if pending_thread_id and not request.context.thread_id:
+            request.context.thread_id = pending_thread_id
+        try:
+            question_count_int = int(question_count) if question_count is not None else 1
+        except Exception:
+            question_count_int = 1
+        question_count_int = max(1, question_count_int)
+
+        if not session_id or not directory:
+            await self.controller.emit_agent_message(
+                request.context,
+                "notify",
+                "OpenCode question context is missing; please reply with a custom message.",
+            )
+            return
+
+        server = await self._get_server()
+
+        answer_text = None
+        if request.message.startswith("opencode_question:choose:"):
+            try:
+                choice_idx = int(request.message.rsplit(":", 1)[-1]) - 1
+                if 0 <= choice_idx < len(option_labels):
+                    answer_text = str(option_labels[choice_idx]).strip()
+            except Exception:
+                pass
+
+        is_modal_payload = False
+        answers_payload: Optional[List[List[str]]] = None
+        if request.message.startswith("opencode_question:modal:"):
+            is_modal_payload = True
+            try:
+                payload = json.loads(request.message.split(":", 2)[-1])
+                answers = payload.get("answers") if isinstance(payload, dict) else None
+                if isinstance(answers, list) and answers:
+                    normalized: List[List[str]] = []
+                    for answer in answers:
+                        if isinstance(answer, list):
+                            normalized.append([str(x) for x in answer if x])
+                        elif answer:
+                            normalized.append([str(answer)])
+                        else:
+                            normalized.append([])
+                    answers_payload = normalized
+                    if normalized:
+                        answer_text = " ".join(normalized[0])
+            except Exception:
+                pass
+
+        if answer_text is None and request.message.startswith("opencode_question:"):
+            raw_payload = request.message.split(":", 2)[-1]
+            answer_text = raw_payload.strip() if raw_payload else ""
+        # Otherwise user replied with free text.
+        if not answer_text:
+            answer_text = (request.message or "").strip()
+
+        if not answer_text:
+            await self.controller.emit_agent_message(
+                request.context,
+                "notify",
+                "Please reply with an answer.",
+            )
+            return
+
+        if pending:
+            self._pending_questions.pop(request.base_session_id, None)
+
+        if not question_id:
+            # Fallback resolution if the /question listing wasn't available when we first saw the toolcall.
+            call_id = pending.get("call_id")
+            message_id = pending.get("message_id")
+            try:
+                questions = await server.list_questions(directory)
+                if not questions:
+                    questions = await server.list_questions()
+                for item in questions:
+                    tool = item.get("tool") or {}
+                    item_session_id = (
+                        item.get("sessionID")
+                        or item.get("sessionId")
+                        or item.get("session_id")
+                    )
+                    if item_session_id != session_id:
+                        continue
+                    if call_id and tool.get("callID") != call_id:
+                        continue
+                    if message_id and tool.get("messageID") != message_id:
+                        continue
+                    question_id = item.get("id")
+                    questions_obj = item.get("questions")
+                    if isinstance(questions_obj, list):
+                        question_count_int = max(1, len(questions_obj))
+                    break
+            except Exception as err:
+                logger.warning(f"Failed to resolve OpenCode question id: {err}")
+
+        if not question_id:
+            self._pending_questions[request.base_session_id] = pending
+            await self.controller.emit_agent_message(
+                request.context,
+                "notify",
+                "OpenCode is waiting for input, but the question id could not be resolved. Please retry.",
+            )
+            return
+
+        if is_modal_payload and answers_payload is not None:
+            padded = answers_payload[:question_count_int]
+            if len(padded) < question_count_int:
+                padded.extend([[] for _ in range(question_count_int - len(padded))])
+            answers_payload = padded
+        else:
+            answers_payload = [[answer_text] for _ in range(question_count_int)]
+
+        try:
+            ok = await server.reply_question(question_id, directory, answers_payload)
+        except Exception as err:
+            logger.warning(f"Failed to reply OpenCode question: {err}")
+            self._pending_questions[request.base_session_id] = pending
+            await self.controller.emit_agent_message(
+                request.context,
+                "notify",
+                f"Failed to submit answer to OpenCode: {err}",
+            )
+            return
+
+        if not ok:
+            self._pending_questions[request.base_session_id] = pending
+            await self.controller.emit_agent_message(
+                request.context,
+                "notify",
+                "OpenCode did not accept the answer. Please retry.",
+            )
+            return
+
+        # After replying, continue polling for final assistant output.
+        baseline_message_ids: set[str] = set()
+        try:
+            baseline_messages = await server.list_messages(session_id, directory)
+            for m in baseline_messages:
+                mid = m.get("info", {}).get("id")
+                if mid:
+                    baseline_message_ids.add(mid)
+        except Exception:
+            pass
+
+        poll_interval_seconds = 2.0
+        while True:
+            messages = await server.list_messages(session_id, directory)
+            if messages:
+                last = messages[-1]
+                last_info = last.get("info", {})
+                if (
+                    last_info.get("role") == "assistant"
+                    and last_info.get("time", {}).get("completed")
+                    and last_info.get("finish") != "tool-calls"
+                    and last_info.get("id") not in baseline_message_ids
+                ):
+                    text = self._extract_response_text(last)
+                    if text:
+                        await self.emit_result_message(
+                            request.context,
+                            text,
+                            subtype="success",
+                            started_at=request.started_at,
+                            parse_mode="markdown",
+                        )
+                    else:
+                        await self.emit_result_message(
+                            request.context,
+                            "(No response from OpenCode)",
+                            subtype="warning",
+                            started_at=request.started_at,
+                        )
+                    return
+
+            await asyncio.sleep(poll_interval_seconds)
 
     async def _process_message(self, request: AgentRequest) -> None:
         try:
@@ -990,6 +1260,13 @@ class OpenCodeAgent(BaseAgent):
                 reasoning_effort=reasoning_effort,
             )
 
+            logger.info(
+                "Starting OpenCode poll loop for %s (thread=%s, cwd=%s)",
+                session_id,
+                request.base_session_id,
+                request.working_path,
+            )
+
             seen_tool_calls: set[str] = set()
             emitted_assistant_messages: set[str] = set()
             poll_interval_seconds = 2.0
@@ -998,12 +1275,25 @@ class OpenCodeAgent(BaseAgent):
             def _relative_path(path: str) -> str:
                 return self._to_relative_path(path, request.working_path)
 
+            poll_iter = 0
             while True:
+                poll_iter += 1
                 try:
                     messages = await server.list_messages(
                         session_id=session_id,
                         directory=request.working_path,
                     )
+                    if poll_iter % 5 == 0:
+                        last_info = messages[-1].get("info", {}) if messages else {}
+                        logger.info(
+                            "OpenCode poll heartbeat %s iter=%s last=%s role=%s completed=%s finish=%s",
+                            session_id,
+                            poll_iter,
+                            last_info.get("id"),
+                            last_info.get("role"),
+                            bool(last_info.get("time", {}).get("completed")),
+                            last_info.get("finish"),
+                        )
                 except Exception as poll_err:
                     logger.warning(f"Failed to poll OpenCode messages: {poll_err}")
                     await asyncio.sleep(poll_interval_seconds)
@@ -1024,7 +1314,401 @@ class OpenCodeAgent(BaseAgent):
                         if not call_key or call_key in seen_tool_calls:
                             continue
                         tool_name = part.get("tool") or "tool"
-                        tool_input = part.get("state", {}).get("input") or {}
+                        tool_state = part.get("state") or {}
+                        tool_input = tool_state.get("input") or {}
+
+                        if tool_name == "question" and tool_state.get("status") != "completed":
+                            logger.info(
+                                "Detected question toolcall for %s message=%s callID=%s",
+                                session_id,
+                                message_id,
+                                part.get("callID"),
+                            )
+
+                            # Always render the question text from the tool input so the
+                            # user can answer even if /question listing is temporarily empty.
+                            qlist = tool_input.get("questions") if isinstance(tool_input, dict) else None
+                            qlist = qlist if isinstance(qlist, list) else []
+
+                            question_fetch_deadline = time.monotonic() + 60.0
+                            question_fetch_delays = [
+                                1.0,
+                                2.0,
+                                3.0,
+                                4.0,
+                                6.0,
+                                8.0,
+                                10.0,
+                                12.0,
+                                14.0,
+                            ]
+                            max_question_attempts = 10
+
+                            def _question_delay(attempt_index: int) -> float:
+                                if attempt_index >= len(question_fetch_delays):
+                                    return 0.0
+                                remaining = question_fetch_deadline - time.monotonic()
+                                if remaining <= 0:
+                                    return 0.0
+                                return min(question_fetch_delays[attempt_index], remaining)
+
+                            question_id = None
+                            questions_listing: List[Dict[str, Any]] = []
+                            list_attempts = 0
+                            last_list_err: Optional[Exception] = None
+                            for attempt in range(max_question_attempts):
+                                list_attempts = attempt + 1
+                                try:
+                                    questions_listing = await server.list_questions(
+                                        request.working_path
+                                    )
+                                    if not questions_listing:
+                                        questions_listing = await server.list_questions()
+                                    last_list_err = None
+                                except Exception as err:
+                                    last_list_err = err
+                                    questions_listing = []
+                                if questions_listing:
+                                    break
+                                if attempt < max_question_attempts - 1:
+                                    delay = _question_delay(attempt)
+                                    if delay <= 0:
+                                        break
+                                    await asyncio.sleep(delay)
+
+                            if last_list_err and not questions_listing:
+                                logger.warning(
+                                    f"Failed to fetch questions listing for prompt fallback: {last_list_err}"
+                                )
+
+                            logger.info(
+                                "Question list fetch for %s: dir=%s attempts=%s items=%s",
+                                session_id,
+                                request.working_path,
+                                list_attempts,
+                                len(questions_listing),
+                            )
+
+                            if questions_listing:
+                                try:
+                                    item_sessions = [
+                                        (
+                                            item.get("sessionID")
+                                            or item.get("sessionId")
+                                            or item.get("session_id")
+                                        )
+                                        for item in questions_listing
+                                    ]
+                                    logger.info(
+                                        "Question list sessions for %s: %s",
+                                        session_id,
+                                        item_sessions,
+                                    )
+                                except Exception:
+                                    pass
+
+                            if questions_listing and not qlist:
+                                try:
+                                    first_questions = questions_listing[0].get("questions")
+                                    if not isinstance(first_questions, list):
+                                        first_questions = []
+                                    listing_preview = {
+                                        "id": questions_listing[0].get("id"),
+                                        "sessionID": questions_listing[0].get("sessionID"),
+                                        "tool": questions_listing[0].get("tool"),
+                                        "questions_len": len(first_questions),
+                                    }
+                                    logger.info(
+                                        "Question list preview for %s: %s",
+                                        session_id,
+                                        listing_preview,
+                                    )
+                                except Exception:
+                                    pass
+
+                            matched_item = None
+                            if questions_listing:
+                                session_items: List[Dict[str, Any]] = []
+                                for item in questions_listing:
+                                    item_session_id = (
+                                        item.get("sessionID")
+                                        or item.get("sessionId")
+                                        or item.get("session_id")
+                                    )
+                                    if item_session_id == session_id:
+                                        session_items.append(item)
+
+                                for item in session_items:
+                                    tool_meta = item.get("tool") or {}
+                                    if part.get("callID") and tool_meta.get("callID") == part.get("callID"):
+                                        matched_item = item
+                                        break
+                                    if message_id and tool_meta.get("messageID") == message_id:
+                                        matched_item = item
+                                        break
+
+                                if matched_item is None and session_items:
+                                    matched_item = session_items[0]
+
+                                if matched_item is None and part.get("callID"):
+                                    for item in questions_listing:
+                                        tool_meta = item.get("tool") or {}
+                                        if tool_meta.get("callID") == part.get("callID"):
+                                            matched_item = item
+                                            break
+
+                                if matched_item is None and message_id:
+                                    for item in questions_listing:
+                                        tool_meta = item.get("tool") or {}
+                                        if tool_meta.get("messageID") == message_id:
+                                            matched_item = item
+                                            break
+
+                                if matched_item is None and len(questions_listing) == 1:
+                                    matched_item = questions_listing[0]
+
+                            if matched_item:
+                                question_id = matched_item.get("id")
+                                if not qlist:
+                                    q_obj = matched_item.get("questions")
+                                    if isinstance(q_obj, list):
+                                        qlist = q_obj
+
+                            if not qlist and message_id:
+                                msg_attempts = 0
+                                last_msg_err: Optional[Exception] = None
+                                full_message: Optional[Dict[str, Any]] = None
+                                for attempt in range(max_question_attempts):
+                                    msg_attempts = attempt + 1
+                                    try:
+                                        full_message = await server.get_message(
+                                            session_id=session_id,
+                                            message_id=message_id,
+                                            directory=request.working_path,
+                                        )
+                                        last_msg_err = None
+                                    except Exception as err:
+                                        last_msg_err = err
+                                        full_message = None
+
+                                    if full_message:
+                                        for msg_part in full_message.get("parts", []) or []:
+                                            if msg_part.get("type") != "tool":
+                                                continue
+                                            if msg_part.get("tool") != "question":
+                                                continue
+                                            msg_call_id = msg_part.get("callID") or msg_part.get("id")
+                                            if call_key and msg_call_id and msg_call_id != call_key:
+                                                continue
+                                            msg_state = msg_part.get("state") or {}
+                                            msg_input = msg_state.get("input") or {}
+                                            msg_questions = (
+                                                msg_input.get("questions")
+                                                if isinstance(msg_input, dict)
+                                                else None
+                                            )
+                                            if isinstance(msg_questions, list):
+                                                qlist = msg_questions
+                                                break
+                                    if qlist:
+                                        break
+                                    if attempt < max_question_attempts - 1:
+                                        delay = _question_delay(attempt)
+                                        if delay <= 0:
+                                            break
+                                        await asyncio.sleep(delay)
+
+                                if last_msg_err and not qlist:
+                                    logger.warning(
+                                        f"Failed to fetch full question input from message {message_id}: {last_msg_err}"
+                                    )
+                                if full_message is not None:
+                                    parts = full_message.get("parts", []) or []
+                                    tool_parts = [
+                                        p for p in parts if p.get("type") == "tool"
+                                    ]
+                                    logger.info(
+                                        "Question message fetch for %s: attempts=%s parts=%s tool_parts=%s",
+                                        session_id,
+                                        msg_attempts,
+                                        len(parts),
+                                        len(tool_parts),
+                                    )
+
+                            option_labels: list[str] = []
+                            lines: list[str] = []
+                            for q_idx, q in enumerate(qlist or []):
+                                if not isinstance(q, dict):
+                                    continue
+                                title = (q.get("header") or f"Question {q_idx + 1}").strip()
+                                prompt = (q.get("question") or "").strip()
+                                options_raw = q.get("options")
+                                options: List[Dict[str, Any]] = (
+                                    options_raw if isinstance(options_raw, list) else []
+                                )
+
+                                lines.append(f"**{title}**")
+                                if prompt:
+                                    lines.append(prompt)
+
+                                for idx, opt in enumerate(options, start=1):
+                                    if not isinstance(opt, dict):
+                                        continue
+                                    label = (opt.get("label") or f"Option {idx}").strip()
+                                    desc = (opt.get("description") or "").strip()
+                                    if q_idx == 0:
+                                        option_labels.append(label)
+                                    if desc:
+                                        lines.append(f"{idx}. *{label}* - {desc}")
+                                    else:
+                                        lines.append(f"{idx}. *{label}*")
+
+                                if q_idx < len(qlist) - 1:
+                                    lines.append("")
+
+                            first_q = qlist[0] if qlist and isinstance(qlist[0], dict) else {}
+                            multiple = bool(first_q.get("multiple"))
+                            if multiple or (len(qlist) if qlist else 1) != 1:
+                                lines.append(
+                                    "You can either click `Choose...` to select, or reply with any text (recommended)."
+                                )
+                            else:
+                                lines.append("Reply with the option label (recommended), or any custom message.")
+                            text = "\n".join(lines)
+                            logger.info(
+                                "Question prompt built for %s: len=%s preview=%r",
+                                session_id,
+                                len(text),
+                                text[:200],
+                            )
+
+                            logger.info(
+                                "Question prompt data for %s: qlist=%s options=%s question_id=%s call_id=%s",
+                                session_id,
+                                len(qlist),
+                                len(option_labels),
+                                question_id,
+                                part.get("callID"),
+                            )
+
+                            # question_id was resolved via /question listing above when possible.
+                            if not option_labels:
+                                logger.warning(
+                                    "Question toolcall had no options in tool_input; session=%s question_id=%s",
+                                    session_id,
+                                    question_id,
+                                )
+
+                            question_count = len(qlist) if qlist else 1
+                            multiple = bool(first_q.get("multiple"))
+
+                            pending_payload = {
+                                "session_id": session_id,
+                                "directory": request.working_path,
+                                "question_id": question_id,
+                                "call_id": part.get("callID"),
+                                "message_id": message_id,
+                                "option_labels": option_labels,
+                                "question_count": question_count,
+                                "multiple": multiple,
+                                "questions": qlist,
+                                "thread_id": request.context.thread_id,
+                            }
+                            self._pending_questions[request.base_session_id] = pending_payload
+
+                            if multiple or question_count != 1 or len(option_labels) > 10:
+                                # Multi-select or multi-question: show full text + modal button
+                                modal_keyboard = None
+                                if hasattr(self.im_client, "send_message_with_buttons"):
+                                    from modules.im import InlineButton, InlineKeyboard
+
+                                    modal_keyboard = InlineKeyboard(
+                                        buttons=[[InlineButton(text="Choose…", callback_data="opencode_question:open_modal")]]
+                                    )
+
+                                if modal_keyboard:
+                                    try:
+                                        logger.info(
+                                            "Sending modal open button for %s (multiple=%s questions=%s)",
+                                            session_id,
+                                            multiple,
+                                            question_count,
+                                        )
+                                        await self.im_client.send_message_with_buttons(
+                                            request.context,
+                                            text,
+                                            modal_keyboard,
+                                            parse_mode="markdown",
+                                        )
+                                        return
+                                    except Exception as err:
+                                        logger.warning(
+                                            f"Failed to send modal button, falling back to text: {err}",
+                                            exc_info=True,
+                                        )
+
+                                await self.im_client.send_message(
+                                    request.context,
+                                    text,
+                                    parse_mode="markdown",
+                                )
+                                return
+
+                            # single question + single select + <=10 options -> buttons
+                            if (
+                                question_count == 1
+                                and isinstance(first_q, dict)
+                                and not multiple
+                                and len(option_labels) <= 10
+                                and hasattr(self.im_client, "send_message_with_buttons")
+                            ):
+                                from modules.im import InlineButton, InlineKeyboard
+
+                                buttons: list[list[InlineButton]] = []
+                                row: list[InlineButton] = []
+                                for idx, label in enumerate(option_labels, start=1):
+                                    callback = f"opencode_question:choose:{idx}"
+                                    row.append(InlineButton(text=label, callback_data=callback))
+                                    if len(row) == 5:
+                                        buttons.append(row)
+                                        row = []
+                                if row:
+                                    buttons.append(row)
+
+                                keyboard = InlineKeyboard(buttons=buttons)
+                                try:
+                                    logger.info(
+                                        "Sending single-select buttons for %s (options=%s)",
+                                        session_id,
+                                        len(option_labels),
+                                    )
+                                    await self.im_client.send_message_with_buttons(
+                                        request.context,
+                                        text,
+                                        keyboard,
+                                        parse_mode="markdown",
+                                    )
+                                    return
+                                except Exception as err:
+                                    logger.warning(
+                                        f"Failed to send Slack buttons, falling back to text: {err}",
+                                        exc_info=True,
+                                    )
+
+                            # fallback: text-only
+                            try:
+                                await self.im_client.send_message(
+                                    request.context,
+                                    text,
+                                    parse_mode="markdown",
+                                )
+                            except Exception as err:
+                                logger.error(
+                                    f"Failed to send question prompt to Slack: {err}",
+                                    exc_info=True,
+                                )
+                            return
+
                         toolcall = self.im_client.formatter.format_toolcall(
                             tool_name,
                             tool_input,

@@ -158,8 +158,9 @@ class MessageHandler:
             elif callback_data.startswith("toggle_"):
                 # Legacy toggle handler (if any)
                 setting_type = callback_data.replace("toggle_", "")
-                if hasattr(settings_handler, "handle_toggle_setting"):
-                    await settings_handler.handle_toggle_setting(context, setting_type)
+                handler = getattr(settings_handler, "handle_toggle_setting", None)
+                if handler:
+                    await handler(context, setting_type)
 
             elif callback_data == "info_msg_types":
                 logger.info(
@@ -197,6 +198,24 @@ class MessageHandler:
                 )
                 await self.im_client.send_message(context, info_text)
 
+            elif callback_data.startswith("opencode_question:"):
+                if not self.session_handler:
+                    raise RuntimeError("Session handler not initialized")
+
+                base_session_id, working_path, composite_key = (
+                    self.session_handler.get_session_info(context)
+                )
+                settings_key = self._get_settings_key(context)
+                request = AgentRequest(
+                    context=context,
+                    message=callback_data,
+                    working_path=working_path,
+                    base_session_id=base_session_id,
+                    composite_session_id=composite_key,
+                    settings_key=settings_key,
+                )
+                await self.controller.agent_service.handle_message("opencode", request)
+
             else:
                 logger.warning(f"Unknown callback data: {callback_data}")
                 await self.im_client.send_message(
@@ -214,6 +233,9 @@ class MessageHandler:
     async def _handle_inline_stop(self, context: MessageContext) -> bool:
         """Route inline 'stop' messages to the active agent."""
         try:
+            if not self.session_handler:
+                raise RuntimeError("Session handler not initialized")
+
             base_session_id, working_path, composite_key = (
                 self.session_handler.get_session_info(context)
             )
