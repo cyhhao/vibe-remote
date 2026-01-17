@@ -17,7 +17,7 @@
 
 </div>
 
-_在 Slack/Telegram 里通过聊天远程操控 AI 代理（如 Claude Code、Codex、Cursor），进行 Vibe Coding。_
+_在 Slack/Telegram 里通过聊天远程操控 AI 代理（如 OpenCode、Claude Code、Codex、Cursor），进行 Vibe Coding。_
 
 Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack/Telegram 输入意图与约束，它会驱动相应的 AI agent 执行并反馈；结果实时流式返回，无需本地 IDE，随时随地推进任务。
 
@@ -25,8 +25,8 @@ Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack/Telegram 输入意
 
 - **专注 vibe coding**：基于你的意图与约束让 AI 自主推进，你只把控方向与结果。
 - **随时随地**：不被 IDE 束缚，直接在 Slack/Telegram 中远程操控编码会话。
-- **为扩展而生**：目前已支持 Claude Code + Codex，并可扩展到更多 coding agents/CLIs。
-- **多 Agent 路由**：为不同 Slack Channel / Telegram Chat 指定 Agent，互不干扰。
+- **为扩展而生**：OpenCode 优先，同时支持 Claude Code + Codex；并可扩展到更多 coding agents/CLIs。
+- **多 Agent 路由**：为不同 Slack Channel / Telegram Chat 指定 OpenCode / Claude Code / Codex，互不干扰。
 - **按线程 + 路径持久化**：每个 Slack 线程/Telegram 对话都维持独立 Agent 会话与工作目录，并通过持久化映射自动恢复。
 - **Slack 交互式体验**：`/start` 菜单 + Settings/CWD 模态，按钮优先于命令，更快上手。
 
@@ -49,7 +49,32 @@ Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack/Telegram 输入意
 
 ## 先决条件
 
-- 至少安装一个 Agent CLI（Claude Code 或 Codex）。建议同时安装，方便在不同频道切换。
+- 至少安装一个 Agent CLI。推荐优先使用 OpenCode（`opencode`），同时也支持 Claude Code 与 Codex，方便在不同频道切换。
+
+### OpenCode（推荐）
+
+安装（Homebrew）：
+
+```bash
+brew install opencode
+```
+
+安装（脚本）：
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+验证：
+
+```bash
+opencode --help
+```
+
+在 Vibe Remote 中启用：
+
+- `OPENCODE_ENABLED=true`
+- 可选：`OPENCODE_CLI_PATH=opencode`、`OPENCODE_PORT=4096`
 
 ### Claude Code
 
@@ -107,7 +132,8 @@ python main.py
 
 ### Claude Code
 
-- `CLAUDE_DEFAULT_CWD` 例如 `./_tmp`
+- `AGENT_DEFAULT_CWD` 例如 `./_tmp`（推荐）
+- 兼容别名：`CLAUDE_DEFAULT_CWD`（仍支持）
 - `CLAUDE_PERMISSION_MODE` 例如 `bypassPermissions`
 - `CLAUDE_SYSTEM_PROMPT` 可选
 - `ANTHROPIC_API_KEY`（取决于你的 SDK 设置）
@@ -118,25 +144,34 @@ python main.py
 - `CODEX_ENABLED=true`（默认）启用 Codex；若环境没有 CLI 才需要设为 false。`CODEX_CLI_PATH` 可重定向可执行文件。
 - `CODEX_DEFAULT_MODEL` / `CODEX_EXTRA_ARGS` 可强制模型或追加命令行参数。
 
+### OpenCode
+
+- 通过 `OPENCODE_ENABLED=true` 启用 OpenCode（默认 false），并确保已安装 `opencode`。
+- Vibe Remote 会启动本地 OpenCode HTTP Server（`opencode serve --hostname=127.0.0.1 --port=4096`）。
+- OpenCode 的默认 agent/model 配置读取自 `~/.config/opencode/opencode.json`；在 Slack 下也可通过 Agent Settings 对每个 channel 单独覆盖。
+
 ### Agent 路由
 
-- 复制 `agent_routes.example.yaml` 为仓库根目录的 `agent_routes.yaml`（或设置 `AGENT_ROUTE_FILE` 指向自定义 YAML/JSON）。
-- 示例：
+- Slack：推荐直接使用内置的 **Agent Settings** 弹窗，为每个 channel 选择 backend。
+- 兼容（为老用户保留）：通过 `agent_routes.yaml` 进行文件路由。
+  - 将 `agent_routes.yaml` 放在仓库根目录，或用 `AGENT_ROUTE_FILE` 指向任意 YAML/JSON 文件。
+  - 示例：
 
 ```yaml
-default: claude
+default: opencode
 slack:
-  default: claude
+  default: opencode
   overrides:
     C01EXAMPLE: codex
 telegram:
-  default: claude
+  default: opencode
   overrides:
     "123456789": codex
 ```
 
-- Slack 使用频道 ID，Telegram 使用聊天 ID。未命中的频道会落到平台默认值，然后回退到全局 `default`。`agent_routes.yaml` 已被 `.gitignore` 排除，可在不同环境独立配置。
-- 若未提供文件，则所有渠道沿用全局默认 Agent（默认是 Claude）。参见 [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) 获取更完整的 Codex 配置示例。
+- Slack 使用频道 ID，Telegram 使用聊天 ID。
+- 参见 [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) 获取 Codex 安装与路由说明。
+- 未提供路由文件时：如果启用了 OpenCode，则默认使用 OpenCode；否则回退到 Claude。
 
 ### 应用
 

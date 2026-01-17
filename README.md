@@ -17,7 +17,7 @@
 
 </div>
 
-_Remote vibe coding over chat — control AI coding agents (Claude Code, Codex, Cursor, etc.) from Slack/Telegram._
+_Remote vibe coding over chat — control AI coding agents (OpenCode, Claude Code, Codex, Cursor, etc.) from Slack/Telegram._
 
 Vibe Remote lets you operate coding agents via IM. Type in Slack or Telegram to start and steer agents; describe intent and constraints, receive streaming results, and ship without being tied to a local IDE.
 
@@ -25,8 +25,8 @@ Vibe Remote lets you operate coding agents via IM. Type in Slack or Telegram to 
 
 - **Vibe coding, not micromanaging**: Let AI drive based on your intent and constraints; focus on outcomes.
 - **Work from anywhere**: Control coding sessions over Slack/Telegram; no IDE tether.
-- **Extensible by design**: Starts with Claude Code and Codex, built to support additional coding agents/CLIs.
-- **Multi-agent routing**: Route each Slack channel / Telegram chat to Claude Code or Codex by editing `agent_routes.yaml`.
+- **Extensible by design**: OpenCode-first, and also supports Claude Code + Codex; built to support additional coding agents/CLIs.
+- **Multi-agent routing**: Route each Slack channel / Telegram chat to OpenCode, Claude Code, or Codex via `agent_routes.yaml` (and Slack UI when enabled).
 - **Session persistence by thread + path**: Each Slack thread/Telegram chat maintains its own agent session and working dir; auto‑resume via saved mappings.
 - **Interactive Slack UX**: `/start` menu + Settings/CWD modals; buttons over commands for faster flow.
 
@@ -49,7 +49,32 @@ Vibe Remote lets you operate coding agents via IM. Type in Slack or Telegram to 
 
 ## Prerequisites
 
-- At least one coding agent CLI installed (Claude Code CLI or Codex CLI). You can install both to mix and match per channel.
+- At least one coding agent CLI installed. Recommended: OpenCode (`opencode`). Also supported: Claude Code CLI and Codex CLI.
+
+### OpenCode (Recommended)
+
+Install (Homebrew):
+
+```bash
+brew install opencode
+```
+
+Install (script):
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+Verify:
+
+```bash
+opencode --help
+```
+
+Enable in Vibe Remote:
+
+- `OPENCODE_ENABLED=true`
+- Optional: `OPENCODE_CLI_PATH=opencode`, `OPENCODE_PORT=4096`
 
 ### Claude Code
 
@@ -107,7 +132,8 @@ python main.py
 
 ### Claude Code
 
-- `CLAUDE_DEFAULT_CWD` e.g. `./_tmp`
+- `AGENT_DEFAULT_CWD` e.g. `./_tmp` (recommended)
+- Legacy alias: `CLAUDE_DEFAULT_CWD` (still supported)
 - `CLAUDE_PERMISSION_MODE` e.g. `bypassPermissions`
 - `CLAUDE_SYSTEM_PROMPT` optional
 - `ANTHROPIC_API_KEY` if required by your SDK setup
@@ -118,27 +144,34 @@ python main.py
 - `CODEX_ENABLED=true` (default) enables the agent; set to false only if the Codex CLI is unavailable. `CODEX_CLI_PATH` overrides the binary path.
 - `CODEX_DEFAULT_MODEL` / `CODEX_EXTRA_ARGS` customize the underlying model or flags.
 
+### OpenCode
+
+- OpenCode is enabled by `OPENCODE_ENABLED=true` (default: false). Ensure `opencode` is installed.
+- OpenCode runs as a local HTTP server started by Vibe Remote (`opencode serve --hostname=127.0.0.1 --port=4096`).
+- Default agent/model settings are read from `~/.config/opencode/opencode.json`, and can be overridden per Slack channel via the Agent Settings dialog (if you use Slack).
+
 ### Agent routing
 
-- Copy `agent_routes.example.yaml` → `agent_routes.yaml` (repository root) to configure per-channel routing, or point `AGENT_ROUTE_FILE` to any YAML/JSON file.
-- File schema:
+- Slack: use the built-in **Agent Settings** dialog to select the backend per channel (recommended).
+- Legacy (for backward compatibility): file-based routing via `agent_routes.yaml`.
+  - Place `agent_routes.yaml` in the repo root, or point `AGENT_ROUTE_FILE` to any YAML/JSON file.
+  - File schema:
 
 ```yaml
-default: claude
+default: opencode
 slack:
-  default: claude
+  default: opencode
   overrides:
     C01EXAMPLE: codex
 telegram:
-  default: claude
+  default: opencode
   overrides:
     "123456789": codex
 ```
 
-- Slack routes use channel IDs; Telegram routes use chat IDs. Unlisted channels fall back to the per-platform default (then to the global `default`). `agent_routes.yaml` is gitignored so each environment can customize it safely.
-
-- See [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) for a step‑by‑step guide to installing Codex CLI and configuring routing.
-- No file? Everything routes to the global default agent (Claude unless overridden).
+- Slack routes use channel IDs; Telegram routes use chat IDs.
+- See [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) for Codex install and routing notes.
+- No routing file? If OpenCode is enabled, the bot defaults to OpenCode; otherwise it falls back to Claude.
 
 ### App
 

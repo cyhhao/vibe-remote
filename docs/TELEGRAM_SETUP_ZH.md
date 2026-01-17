@@ -80,10 +80,12 @@ IM_PLATFORM=telegram
 TELEGRAM_BOT_TOKEN=your-bot-token-here
 
 # 可选：白名单特定聊天 ID（null = 允许所有聊天）
-TELEGRAM_CHAT_ID=[-1001234567890,987654321]
+TELEGRAM_TARGET_CHAT_ID=[-1001234567890,987654321]
 
 # 编码 Agent 的默认工作目录
-CLAUDE_CWD=/path/to/your/project
+AGENT_DEFAULT_CWD=/path/to/your/project
+# 兼容别名（仍支持）：
+# CLAUDE_DEFAULT_CWD=/path/to/your/project
 ```
 
 ### 查找聊天 ID
@@ -206,7 +208,7 @@ python main.py
 
 1. 确保隐私模式已禁用（步骤 4）
 2. 检查机器人是否是群组管理员（可选但推荐）
-3. 如果使用 `TELEGRAM_CHAT_ID`，验证群组聊天 ID 是否在白名单中
+3. 如果使用 `TELEGRAM_TARGET_CHAT_ID`，验证群组聊天 ID 是否在白名单中
 
 ### 消息格式问题
 
@@ -234,7 +236,7 @@ Telegram 有速率限制：
 
 ### 聊天白名单
 
-- 使用 `TELEGRAM_CHAT_ID` 限制机器人访问特定聊天
+- 使用 `TELEGRAM_TARGET_CHAT_ID` 限制机器人访问特定聊天
 - 这可以防止未授权用户使用你的机器人
 - 仅在开发/测试时将其设置为 `null`
 

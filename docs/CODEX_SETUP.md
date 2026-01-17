@@ -1,6 +1,6 @@
 # Codex Agent Setup
 
-Vibe Remote can route individual Slack channels / Telegram chats to Codex instead of Claude Code. This guide walks through enabling Codex end-to-end.
+Vibe Remote can route individual Slack channels / Telegram chats to Codex instead of Claude Code. (OpenCode is also supported and recommended; see README for quick enablement.) This guide walks through enabling Codex end-to-end.
 
 ## 1. Install and authenticate Codex CLI
 
@@ -27,11 +27,11 @@ No additional flag is required to bypass approvals—the bot always adds `--dang
 
 ## 3. Route channels to Codex
 
-Copy the example routing file and edit it:
+Configure routing (two options):
 
-```bash
-cp agent_routes.example.yaml agent_routes.yaml
-```
+1) Slack: use the **Agent Settings** dialog to switch a channel to Codex.
+
+2) Legacy (file-based): create `agent_routes.yaml` (repo root) or set `AGENT_ROUTE_FILE`.
 
 Example contents:
 

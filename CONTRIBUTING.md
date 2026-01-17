@@ -14,7 +14,7 @@ Thanks for your interest in contributing!
 - Run locally: `python main.py`
 - Lint before PR (add your linter if used)
 - Write clear commit messages
-- Codex-specific changes: install the Codex CLI, copy `agent_routes.example.yaml` → `agent_routes.yaml`, and route one Slack channel / Telegram chat to `codex` for manual testing (see `docs/CODEX_SETUP.md`).
+- Agent-specific changes: install the relevant CLI (recommended: OpenCode `opencode`; also supported: Codex), then route one Slack channel via Slack **Agent Settings**, or (legacy) create `agent_routes.yaml`, to manually test the backend (`opencode` or `codex`).
 
 ## Pull Requests
 

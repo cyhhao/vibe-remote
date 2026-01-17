@@ -86,6 +86,15 @@ class Controller:
             self.config.agent_route_file, platform=self.config.platform
         )
 
+        # Default backend preference:
+        # If the user didn't provide an agent_routes.yaml, and OpenCode is enabled,
+        # make OpenCode the implicit default backend.
+        if self.config.opencode and not self.config.agent_route_file:
+            self.agent_router.global_default = "opencode"
+            platform_route = self.agent_router.platform_routes.get(self.config.platform)
+            if platform_route:
+                platform_route.default = "opencode"
+
         # Inject settings_manager into SlackBot if it's Slack platform
         if self.config.platform == "slack":
             # Import here to avoid circular dependency
@@ -243,7 +252,9 @@ class Controller:
                 )
 
         # Fall back to static routing
-        return self.agent_router.resolve(self.config.platform, settings_key)
+        resolved = self.agent_router.resolve(self.config.platform, settings_key)
+
+        return resolved
 
     def get_opencode_overrides(
         self, context: MessageContext
