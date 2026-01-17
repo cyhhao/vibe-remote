@@ -825,30 +825,67 @@ class OpenCodeAgent(BaseAgent):
             self._session_locks[base_session_id] = asyncio.Lock()
         return self._session_locks[base_session_id]
 
+    async def _wait_for_session_idle(
+        self,
+        server: OpenCodeServerManager,
+        session_id: str,
+        directory: str,
+        timeout_seconds: float = 15.0,
+    ) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            try:
+                messages = await server.list_messages(session_id, directory)
+            except Exception as err:
+                logger.debug(f"Failed to poll OpenCode session {session_id} for idle: {err}")
+                await asyncio.sleep(1.0)
+                continue
+
+            in_progress = False
+            for message in messages:
+                info = message.get("info", {})
+                if info.get("role") != "assistant":
+                    continue
+                time_info = info.get("time") or {}
+                if not time_info.get("completed"):
+                    in_progress = True
+                    break
+
+            if not in_progress:
+                return
+
+            await asyncio.sleep(1.0)
+
+        logger.warning(
+            "OpenCode session %s did not reach idle state within %.1fs",
+            session_id,
+            timeout_seconds,
+        )
+
     async def handle_message(self, request: AgentRequest) -> None:
         lock = self._get_session_lock(request.base_session_id)
         async with lock:
             existing_task = self._active_requests.get(request.base_session_id)
             if existing_task and not existing_task.done():
-                await self.controller.emit_agent_message(
-                    request.context,
-                    "notify",
-                    "OpenCode is already processing a task in this thread. "
-                    "Cancelling the previous run...",
+                logger.info(
+                    "OpenCode session %s already running; cancelling before new request",
+                    request.base_session_id,
                 )
                 req_info = self._request_sessions.get(request.base_session_id)
                 if req_info:
                     server = await self._get_server()
                     await server.abort_session(req_info[0], req_info[1])
+                    await self._wait_for_session_idle(
+                        server, req_info[0], req_info[1]
+                    )
                 existing_task.cancel()
                 try:
                     await existing_task
                 except asyncio.CancelledError:
                     pass
-                await self.controller.emit_agent_message(
-                    request.context,
-                    "notify",
-                    "Previous OpenCode task cancelled. Starting the new request...",
+                logger.info(
+                    "OpenCode session %s cancelled; continuing with new request",
+                    request.base_session_id,
                 )
 
             pending = self._pending_questions.get(request.base_session_id)

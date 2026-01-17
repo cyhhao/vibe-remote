@@ -154,6 +154,16 @@ class BaseIMClient(ABC):
             Message ID of sent message
         """
         pass
+
+    async def upload_markdown(
+        self,
+        context: MessageContext,
+        title: str,
+        content: str,
+        filetype: str = "markdown",
+    ) -> str:
+        """Upload markdown content as a file (optional per platform)."""
+        raise NotImplementedError
     
     @abstractmethod
     async def edit_message(

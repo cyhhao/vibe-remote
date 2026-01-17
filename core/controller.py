@@ -220,6 +220,21 @@ class Controller:
             return 3200
         return 8000
 
+    def _get_result_max_chars(self) -> int:
+        if self.config.platform == "slack":
+            return 30000
+        if self.config.platform == "telegram":
+            return 3200
+        return 8000
+
+    def _build_result_summary(self, text: str, max_chars: int) -> str:
+        if len(text) <= max_chars:
+            return text
+        prefix = "结果过长，以下为摘要：\n\n"
+        suffix = "\n\n…(已截断，完整内容见附件 result.md)"
+        keep = max(0, max_chars - len(prefix) - len(suffix))
+        return f"{prefix}{text[:keep]}{suffix}"
+
     def _truncate_consolidated(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
             return text
@@ -305,9 +320,32 @@ class Controller:
 
         if canonical_type == "result":
             target_context = self._get_target_context(context)
+            if len(text) <= self._get_result_max_chars():
+                await self.im_client.send_message(
+                    target_context, text, parse_mode=parse_mode
+                )
+                return
+
+            summary = self._build_result_summary(text, self._get_result_max_chars())
             await self.im_client.send_message(
-                target_context, text, parse_mode=parse_mode
+                target_context, summary, parse_mode=parse_mode
             )
+
+            if self.config.platform == "slack" and hasattr(self.im_client, "upload_markdown"):
+                try:
+                    await self.im_client.upload_markdown(
+                        target_context,
+                        title="result.md",
+                        content=text,
+                        filetype="markdown",
+                    )
+                except Exception as err:
+                    logger.warning(f"Failed to upload result attachment: {err}")
+                    await self.im_client.send_message(
+                        target_context,
+                        "无法上传附件（缺少 files:write 权限或上传失败）。需要我改成分条发送吗？",
+                        parse_mode=parse_mode,
+                    )
             return
 
         if canonical_type not in {"system", "assistant", "toolcall"}:

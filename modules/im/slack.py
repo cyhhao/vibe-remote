@@ -117,6 +117,8 @@ class SlackBot(BaseIMClient):
         """Send a message to Slack"""
         self._ensure_clients()
         try:
+            if not text:
+                raise ValueError("Slack send_message requires non-empty text")
             # Convert markdown to Slack mrkdwn if needed
             if parse_mode == "markdown":
                 text = self._convert_markdown_to_slack_mrkdwn(text)
@@ -142,36 +144,16 @@ class SlackBot(BaseIMClient):
 
             # Workaround: ensure multi-line content is preserved. Slack sometimes collapses
             # rich_text rendering for bot messages; sending with blocks+mrkdwn forces line breaks.
-            if "\n" in text and "blocks" not in kwargs:
-                section_blocks = []
-                for idx, line in enumerate(text.split("\n")):
-                    content = line if line.strip() else " "
-                    section_blocks.append(
-                        {
-                            "type": "section",
-                            "block_id": f"line_{idx}",
-                            "text": {
-                                "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
-                                "text": content,
-                                "verbatim": True,
-                            },
-                        }
-                    )
-                    if len(section_blocks) >= 45:
-                        break
-                if len(section_blocks) < len(text.split("\n")):
-                    section_blocks.append(
-                        {
-                            "type": "context",
-                            "elements": [
-                                {
-                                    "type": "plain_text",
-                                    "text": "(内容过长，已截断部分行)",
-                                }
-                            ],
-                        }
-                    )
-                kwargs["blocks"] = section_blocks
+            if "\n" in text and "blocks" not in kwargs and len(text) <= 3000:
+                kwargs["blocks"] = [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
+                            "text": text,
+                        },
+                    }
+                ]
 
             # Send message
             response = await self.web_client.chat_postMessage(**kwargs)
@@ -189,6 +171,27 @@ class SlackBot(BaseIMClient):
         except SlackApiError as e:
             logger.error(f"Error sending Slack message: {e}")
             raise
+
+    async def upload_markdown(
+        self,
+        context: MessageContext,
+        title: str,
+        content: str,
+        filetype: str = "markdown",
+    ) -> str:
+        self._ensure_clients()
+        data = content or ""
+        result = await self.web_client.files_upload_v2(
+            channel=context.channel_id,
+            thread_ts=context.thread_id,
+            filename=title,
+            title=title,
+            content=data,
+        )
+        file_id = result.get("file", {}).get("id")
+        if not file_id:
+            file_id = result.get("files", [{}])[0].get("id")
+        return file_id or ""
 
     async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
         """Add a reaction emoji to a Slack message."""
