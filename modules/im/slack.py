@@ -407,6 +407,41 @@ class SlackBot(BaseIMClient):
             logger.error(f"Error editing Slack message: {e}")
             return False
 
+    async def remove_inline_keyboard(
+        self,
+        context: MessageContext,
+        message_id: str,
+        text: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+    ) -> bool:
+        """Remove interactive buttons from a Slack message."""
+        self._ensure_clients()
+        try:
+            blocks = []
+            fallback_text = text
+            if fallback_text is not None and parse_mode == "markdown":
+                fallback_text = self._convert_markdown_to_slack_mrkdwn(fallback_text)
+
+            if fallback_text:
+                blocks = [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
+                            "text": fallback_text,
+                        },
+                    }
+                ]
+
+            kwargs = {"channel": context.channel_id, "ts": message_id, "blocks": blocks}
+            if fallback_text is not None:
+                kwargs["text"] = fallback_text
+            await self.web_client.chat_update(**kwargs)
+            return True
+        except SlackApiError as e:
+            logger.error(f"Error removing Slack buttons: {e}")
+            return False
+
     async def answer_callback(
         self, callback_id: str, text: Optional[str] = None, show_alert: bool = False
     ) -> bool:

@@ -187,6 +187,24 @@ class BaseIMClient(ABC):
             Success status
         """
         pass
+
+    async def remove_inline_keyboard(
+        self,
+        context: MessageContext,
+        message_id: str,
+        text: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+    ) -> bool:
+        """Remove inline keyboard / actions from a message."""
+        if text is None:
+            return await self.edit_message(context, message_id, keyboard=None)
+        return await self.edit_message(
+            context,
+            message_id,
+            text=text,
+            keyboard=None,
+            parse_mode=parse_mode,
+        )
     
     @abstractmethod
     async def answer_callback(self, callback_id: str, text: Optional[str] = None,

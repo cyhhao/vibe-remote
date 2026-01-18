@@ -437,6 +437,23 @@ class TelegramBot(BaseIMClient):
             logger.error(f"Error editing message: {e}")
             return False
 
+    async def remove_inline_keyboard(
+        self, context: MessageContext, message_id: str, parse_mode: Optional[str] = None
+    ) -> bool:
+        """Remove inline keyboard from a Telegram message."""
+        bot = self.application.bot
+        chat_id = int(context.channel_id)
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=int(message_id),
+                reply_markup=None,
+            )
+            return True
+        except TelegramError as e:
+            logger.error(f"Error removing message keyboard: {e}")
+            return False
+
     async def answer_callback(
         self, callback_id: str, text: Optional[str] = None, show_alert: bool = False
     ) -> bool:

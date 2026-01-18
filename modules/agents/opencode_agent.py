@@ -864,45 +864,76 @@ class OpenCodeAgent(BaseAgent):
 
     async def handle_message(self, request: AgentRequest) -> None:
         lock = self._get_session_lock(request.base_session_id)
+        open_modal_task: Optional[asyncio.Task] = None
+        task: Optional[asyncio.Task] = None
         async with lock:
+            pending = self._pending_questions.get(request.base_session_id)
+            is_modal_open = pending and request.message == "opencode_question:open_modal"
+            is_question_action = pending and request.message.startswith("opencode_question:")
+
             existing_task = self._active_requests.get(request.base_session_id)
             if existing_task and not existing_task.done():
-                logger.info(
-                    "OpenCode session %s already running; cancelling before new request",
-                    request.base_session_id,
-                )
-                req_info = self._request_sessions.get(request.base_session_id)
-                if req_info:
-                    server = await self._get_server()
-                    await server.abort_session(req_info[0], req_info[1])
-                    await self._wait_for_session_idle(
-                        server, req_info[0], req_info[1]
+                if is_modal_open:
+                    logger.info(
+                        "OpenCode session %s running; opening modal without cancel",
+                        request.base_session_id,
                     )
-                existing_task.cancel()
-                try:
-                    await existing_task
-                except asyncio.CancelledError:
-                    pass
-                logger.info(
-                    "OpenCode session %s cancelled; continuing with new request",
-                    request.base_session_id,
-                )
+                elif is_question_action:
+                    logger.info(
+                        "OpenCode session %s running; cancelling poll task for question reply",
+                        request.base_session_id,
+                    )
+                    existing_task.cancel()
+                    try:
+                        await existing_task
+                    except asyncio.CancelledError:
+                        pass
+                else:
+                    logger.info(
+                        "OpenCode session %s already running; cancelling before new request",
+                        request.base_session_id,
+                    )
+                    req_info = self._request_sessions.get(request.base_session_id)
+                    if req_info:
+                        server = await self._get_server()
+                        await server.abort_session(req_info[0], req_info[1])
+                        await self._wait_for_session_idle(
+                            server, req_info[0], req_info[1]
+                        )
+                    existing_task.cancel()
+                    try:
+                        await existing_task
+                    except asyncio.CancelledError:
+                        pass
+                    logger.info(
+                        "OpenCode session %s cancelled; continuing with new request",
+                        request.base_session_id,
+                    )
 
-            pending = self._pending_questions.get(request.base_session_id)
-            if pending and request.message == "opencode_question:open_modal":
+            if is_modal_open:
                 if hasattr(self.im_client, "open_opencode_question_modal"):
-                    task = asyncio.create_task(self._open_question_modal(request, pending))
+                    open_modal_task = asyncio.create_task(
+                        self._open_question_modal(request, pending or {})
+                    )
                 else:
                     task = asyncio.create_task(self._process_message(request))
+                    self._active_requests[request.base_session_id] = task
             elif pending:
                 pending_payload = self._pending_questions.pop(request.base_session_id, None)
                 task = asyncio.create_task(
                     self._process_question_answer(request, pending_payload or {})
                 )
+                self._active_requests[request.base_session_id] = task
             else:
                 task = asyncio.create_task(self._process_message(request))
+                self._active_requests[request.base_session_id] = task
 
-            self._active_requests[request.base_session_id] = task
+        if open_modal_task:
+            await open_modal_task
+            return
+
+        if not task:
+            return
 
         try:
             await task
@@ -913,6 +944,25 @@ class OpenCodeAgent(BaseAgent):
             if self._active_requests.get(request.base_session_id) is task:
                 self._active_requests.pop(request.base_session_id, None)
                 self._request_sessions.pop(request.base_session_id, None)
+
+    def _build_question_selection_note(
+        self, answers_payload: List[List[str]]
+    ) -> str:
+        if not answers_payload:
+            return ""
+
+        if len(answers_payload) == 1:
+            joined = ", ".join([value for value in answers_payload[0] if value])
+            return f"已选择：{joined}" if joined else ""
+
+        lines = []
+        for idx, answers in enumerate(answers_payload, start=1):
+            joined = ", ".join([value for value in answers if value])
+            if joined:
+                lines.append(f"Q{idx}: {joined}")
+        if not lines:
+            return ""
+        return "已选择：\n" + "\n".join(lines)
 
     async def _open_question_modal(
         self, request: AgentRequest, pending: Dict[str, Any]
@@ -958,6 +1008,7 @@ class OpenCodeAgent(BaseAgent):
         option_labels = option_labels if isinstance(option_labels, list) else []
         question_count = pending.get("question_count")
         pending_thread_id = pending.get("thread_id")
+        question_message_id = pending.get("prompt_message_id")
         if pending_thread_id and not request.context.thread_id:
             request.context.thread_id = pending_thread_id
         try:
@@ -1005,7 +1056,7 @@ class OpenCodeAgent(BaseAgent):
                     if normalized:
                         answer_text = " ".join(normalized[0])
             except Exception:
-                pass
+                logger.debug("Failed to parse modal answers payload")
 
         if answer_text is None and request.message.startswith("opencode_question:"):
             raw_payload = request.message.split(":", 2)[-1]
@@ -1070,6 +1121,31 @@ class OpenCodeAgent(BaseAgent):
             answers_payload = padded
         else:
             answers_payload = [[answer_text] for _ in range(question_count_int)]
+
+        if question_message_id:
+            note = self._build_question_selection_note(answers_payload)
+            fallback_text = pending.get("prompt_text") if isinstance(pending, dict) else None
+            if note:
+                try:
+                    updated_text = f"{fallback_text}\n\n{note}" if fallback_text else note
+                    await self.im_client.remove_inline_keyboard(
+                        request.context,
+                        question_message_id,
+                        text=updated_text,
+                        parse_mode="markdown",
+                    )
+                except Exception as err:
+                    logger.debug(f"Failed to update question message: {err}")
+            else:
+                try:
+                    await self.im_client.remove_inline_keyboard(
+                        request.context,
+                        question_message_id,
+                        text=fallback_text,
+                        parse_mode="markdown",
+                    )
+                except Exception as err:
+                    logger.debug(f"Failed to remove question buttons: {err}")
 
         try:
             ok = await server.reply_question(question_id, directory, answers_payload)
@@ -1605,12 +1681,6 @@ class OpenCodeAgent(BaseAgent):
 
                             first_q = qlist[0] if qlist and isinstance(qlist[0], dict) else {}
                             multiple = bool(first_q.get("multiple"))
-                            if multiple or (len(qlist) if qlist else 1) != 1:
-                                lines.append(
-                                    "You can either click `Choose...` to select, or reply with any text (recommended)."
-                                )
-                            else:
-                                lines.append("Reply with the option label (recommended), or any custom message.")
                             text = "\n".join(lines)
                             logger.info(
                                 "Question prompt built for %s: len=%s preview=%r",
@@ -1645,6 +1715,8 @@ class OpenCodeAgent(BaseAgent):
                                 "question_id": question_id,
                                 "call_id": part.get("callID"),
                                 "message_id": message_id,
+                                "prompt_message_id": None,
+                                "prompt_text": text,
                                 "option_labels": option_labels,
                                 "question_count": question_count,
                                 "multiple": multiple,
@@ -1671,12 +1743,14 @@ class OpenCodeAgent(BaseAgent):
                                             multiple,
                                             question_count,
                                         )
-                                        await self.im_client.send_message_with_buttons(
+                                        question_message_id = await self.im_client.send_message_with_buttons(
                                             request.context,
                                             text,
                                             modal_keyboard,
                                             parse_mode="markdown",
                                         )
+                                        if question_message_id:
+                                            pending_payload["prompt_message_id"] = question_message_id
                                         return
                                     except Exception as err:
                                         logger.warning(
@@ -1719,12 +1793,14 @@ class OpenCodeAgent(BaseAgent):
                                         session_id,
                                         len(option_labels),
                                     )
-                                    await self.im_client.send_message_with_buttons(
+                                    question_message_id = await self.im_client.send_message_with_buttons(
                                         request.context,
                                         text,
                                         keyboard,
                                         parse_mode="markdown",
                                     )
+                                    if question_message_id:
+                                        pending_payload["prompt_message_id"] = question_message_id
                                     return
                                 except Exception as err:
                                     logger.warning(
