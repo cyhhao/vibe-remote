@@ -53,7 +53,7 @@ class UserSettings:
 ## Routing Resolution Priority
 
 ```
-1. channel_routing.agent_backend (from user_settings.json)
+1. channel_routing.agent_backend (from `~/.vibe_remote/state/settings.json`)
    ↓ if null
 2. agent_routes.yaml overrides[channel_id]
    ↓ if not found

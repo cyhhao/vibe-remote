@@ -69,8 +69,8 @@ Keep one repo for fast iteration. Add a `cloud/` module:
 
 Split into two repos after V2 stabilizes:
 
-- `vibe-remote-gateway` (client)
-- `vibe-remote-cloud` (server)
+- `vibe-gateway` (client)
+- `vibe-cloud` (server)
 
 ## Notes
 

@@ -21,6 +21,10 @@ class SlackConfig(BaseIMConfig):
     require_mention: bool = False
     target_channels: Optional[List[str]] = None
 
+    @classmethod
+    def from_env(cls):
+        raise RuntimeError("V2 does not support env-based config")
+
     def validate(self) -> None:
         if not self.bot_token or not self.bot_token.startswith("xoxb-"):
             raise ValueError("Invalid Slack bot token format (should start with xoxb-)")

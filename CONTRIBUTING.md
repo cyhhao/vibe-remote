@@ -5,9 +5,8 @@ Thanks for your interest in contributing!
 ## Getting Started
 
 - Fork the repo and create a feature branch
-- Create and activate a virtualenv
-- Install deps: `pip install -r requirements.txt`
-- Copy `.env.example` to `.env` and fill values
+- Install the CLI with `uv tool install vibe`
+- Run `vibe` to complete the setup UI
 
 ## Development
 

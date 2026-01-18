@@ -4,7 +4,7 @@ This document defines the local setup UI flow, covering SaaS and self-host modes
 
 ## Entry
 
-- CLI command: `vibe-remote setup`
+- CLI command: `vibe`
 - Starts a local web server and opens the browser.
 
 ## Page Outline

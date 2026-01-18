@@ -34,7 +34,7 @@ This file defines how coding agents should work in this repository.
 ### Git Hygiene & Security
 
 - Commit messages: use `type(scope): summary`.
-- Never commit secrets (e.g., `.env`, tokens, credentials files).
+- Never commit secrets (tokens, credentials files).
 - Avoid destructive git operations unless explicitly requested (e.g., `reset --hard`, force-push).
 
 ## 2) Project-Specific (Vibe Remote)

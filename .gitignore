@@ -148,6 +148,7 @@ demolog.log
 _tmp/
 .DS_Store
 logs/
+.vibe_remote/
 .bot.pid
 user_settings.json
 agent_routes.yaml

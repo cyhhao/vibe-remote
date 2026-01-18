@@ -61,11 +61,3 @@ def get_supported_platforms():
     return IMFactory.get_supported_platforms()
 
 
-# Version info
-def get_version():
-    """Get package version
-    
-    Returns:
-        Version string
-    """
-    return __version__

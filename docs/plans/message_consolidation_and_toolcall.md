@@ -69,5 +69,5 @@ Toolcall 是“Agent 调用工具”的简洁表示：
 
 ## 配置 / 兼容性
 
-- OpenCode 单次 HTTP 请求超时固定为 60s（目前不通过 `.env` 配置），用于轮询等请求，不限制任务运行时长。
+- OpenCode 单次 HTTP 请求超时固定为 60s（目前不通过 config.json 配置），用于轮询等请求，不限制任务运行时长。
 - 历史配置兼容：旧的 `response/user` message type 会 canonicalize 为 `toolcall`。

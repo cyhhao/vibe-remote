@@ -29,11 +29,10 @@ Proposed structure:
 
 - One-line install (Bash + `uv` tooling).
 - CLI commands:
-  - `vibe-remote setup` (launch local config UI)
-  - `vibe-remote start` (run service)
-  - `vibe-remote status` (runtime status)
-  - `vibe-remote stop` (stop runtime)
-  - `vibe-remote doctor` (self-check)
+  - `vibe` (smart entrypoint for setup/start)
+  - `vibe status` (runtime status)
+  - `vibe stop` (stop runtime)
+  - `vibe doctor` (self-check)
 
 ### M3: Local Web UI (Setup Wizard)
 

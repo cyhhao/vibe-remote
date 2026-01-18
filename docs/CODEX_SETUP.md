@@ -14,13 +14,18 @@ Codex CLI must be available on the PATH of the host running Vibe Remote. The bot
 
 ## 2. Configure environment variables
 
-In `.env` (copied from `.env.example`):
+In `~/.vibe_remote/config/config.json`:
 
-```
-CODEX_ENABLED=true        # default; set false only if CLI is unavailable
-CODEX_CLI_PATH=codex      # customise if the binary lives elsewhere
-CODEX_DEFAULT_MODEL=gpt-5-codex  # optional
-CODEX_EXTRA_ARGS=--ask-for-approval never  # optional extra flags
+```json
+{
+  "agents": {
+    "codex": {
+      "enabled": true,
+      "cli_path": "codex",
+      "default_model": "gpt-5-codex"
+    }
+  }
+}
 ```
 
 No additional flag is required to bypass approvals—the bot always adds `--dangerously-bypass-approvals-and-sandbox`.
@@ -50,8 +55,7 @@ Each Slack channel ID (starts with `C`) gets its own agent. Routes fall back to 
 ## 4. Restart the bot and test
 
 ```bash
-source venv/bin/activate
-./start.sh
+vibe
 ```
 
 In a routed Slack channel run `@VibeRemote status` or any question—you should see the bot react with 👀 (default) or an acknowledgement like `📨 Codex received, processing...` (when `ACK_MODE=message`), followed by Codex’s reply. If the CLI is missing, the bot will reply with “Agent `codex` is not configured”.
