@@ -230,8 +230,8 @@ class Controller:
     def _build_result_summary(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
             return text
-        prefix = "结果过长，以下为摘要：\n\n"
-        suffix = "\n\n…(已截断，完整内容见附件 result.md)"
+        prefix = "Result too long; showing a summary.\n\n"
+        suffix = "\n\n…(truncated; see result.md for full output)"
         keep = max(0, max_chars - len(prefix) - len(suffix))
         return f"{prefix}{text[:keep]}{suffix}"
 

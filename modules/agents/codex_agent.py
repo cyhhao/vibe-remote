@@ -191,7 +191,7 @@ class CodexAgent(BaseAgent):
                     line = await process.stdout.readline()
                 except (asyncio.LimitOverrunError, ValueError) as err:
                     await self._notify_stream_error(
-                        request, f"Codex 输出过长导致流解码失败：{err}"
+                        request, f"Codex output too long; stream decode failed: {err}"
                     )
                     logger.exception("Codex stdout exceeded buffer limit")
                     break
