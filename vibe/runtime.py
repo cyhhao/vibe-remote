@@ -123,8 +123,9 @@ def start_service():
 
 
 def start_ui(port):
+    command = "from vibe.ui_server import run_ui_server; run_ui_server({})".format(port)
     return spawn_background(
-        [sys.executable, "-m", "vibe", "ui", "--port", str(port)],
+        [sys.executable, "-c", command],
         paths.get_runtime_ui_pid_path(),
     )
 

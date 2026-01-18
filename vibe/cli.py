@@ -17,7 +17,7 @@ from config.v2_config import (
     SlackConfig,
     V2Config,
 )
-from vibe.ui_server import run_ui_server
+from vibe import runtime
 
 
 def _write_json(path, payload):
@@ -156,38 +156,26 @@ def _doctor():
 
 def _run_background_service():
     python = sys.executable
-    return _spawn_background([python, "-m", "vibe", "run"], paths.get_runtime_pid_path())
-
-
-def _run_background_ui(port):
-    python = sys.executable
-    return _spawn_background(
-        [python, "-m", "vibe", "ui", "--port", str(port)],
-        paths.get_runtime_ui_pid_path(),
-    )
-
-
-def cmd_run():
-    os.execv(sys.executable, [sys.executable, "main.py"])
-    return 0
-
-
-def cmd_ui(port):
-    run_ui_server(port)
-    return 0
+    command = "import runpy; runpy.run_path('main.py', run_name='__main__')"
+    return _spawn_background([python, "-c", command], paths.get_runtime_pid_path())
 
 
 def cmd_vibe():
     paths.ensure_data_dirs()
     config = _ensure_config()
+
+    # Always restart both processes
+    runtime.stop_service()
+    runtime.stop_ui()
+
     if not config.slack.bot_token:
         _write_status("setup", "missing Slack bot token")
     else:
         _write_status("starting")
 
     service_pid = _run_background_service()
-    _run_background_ui(config.ui.setup_port)
-    _write_status("running", "pid={}".format(service_pid))
+    ui_pid = runtime.start_ui(config.ui.setup_port)
+    runtime.write_status("running", "pid={}".format(service_pid), service_pid, ui_pid)
 
     ui_url = "http://127.0.0.1:{}".format(config.ui.setup_port)
     if config.ui.open_browser:
@@ -196,13 +184,12 @@ def cmd_vibe():
     return 0
 
 
+
 def cmd_stop():
-    stopped = _stop_process(paths.get_runtime_pid_path())
-    _stop_process(paths.get_runtime_ui_pid_path())
-    if stopped:
-        _write_status("stopped")
-        return 0
-    return 1
+    runtime.stop_service()
+    runtime.stop_ui()
+    _write_status("stopped")
+    return 0
 
 
 def cmd_status():
@@ -223,10 +210,6 @@ def build_parser():
     subparsers.add_parser("stop")
     subparsers.add_parser("status")
     subparsers.add_parser("doctor")
-    subparsers.add_parser("run")
-
-    ui_parser = subparsers.add_parser("ui")
-    ui_parser.add_argument("--port", type=int, default=5123)
     return parser
 
 
@@ -240,9 +223,4 @@ def main():
         sys.exit(cmd_status())
     if args.command == "doctor":
         sys.exit(cmd_doctor())
-    if args.command == "run":
-        sys.exit(cmd_run())
-    if args.command == "ui":
-        sys.exit(cmd_ui(args.port))
-
     sys.exit(cmd_vibe())

@@ -149,6 +149,9 @@ _tmp/
 .DS_Store
 logs/
 .vibe_remote/
+ui/node_modules/
+ui/dist/
+tmp/
 .bot.pid
 user_settings.json
 agent_routes.yaml

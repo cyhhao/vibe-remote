@@ -1,35 +1,63 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Wizard } from './components/Wizard';
+import { AppShell } from './components/AppShell';
+import { Dashboard } from './components/Dashboard';
+import { ChannelList } from './components/steps/ChannelList';
+import { DoctorPanel } from './components/steps/DoctorPanel';
+import { StatusProvider } from './context/StatusContext';
+import { ApiProvider, useApi } from './context/ApiContext';
+import { useEffect, useState } from 'react';
 
-function App() {
-  const [count, setCount] = useState(0)
+// Wrapper to check if setup is needed
+const AuthGuard = ({ children }: { children: any }) => {
+    const { getConfig } = useApi();
+    const [loading, setLoading] = useState(true);
+    const [needsSetup, setNeedsSetup] = useState(false);
 
+    useEffect(() => {
+        getConfig().then(config => {
+            // Check if minimal config exists
+            // For now, if no mode is set, we assume setup is needed
+            if (!config || !config.mode) {
+                setNeedsSetup(true);
+            }
+            setLoading(false);
+        }).catch(() => {
+             // If fetch fails (e.g. config doesn't exist), setup is needed
+             setNeedsSetup(true);
+             setLoading(false);
+        });
+    }, []);
+
+    if (loading) return <div className="min-h-screen flex items-center justify-center bg-bg text-text">Loading...</div>;
+    if (needsSetup) return <Navigate to="/setup" replace />;
+    return children;
+};
+
+function AppRoutes() {
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <Routes>
+      <Route path="/setup" element={<Wizard />} />
+      <Route element={<AuthGuard><AppShell /></AuthGuard>}>
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/channels" element={<ChannelList isPage />} />
+        <Route path="/doctor" element={<DoctorPanel isPage />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      </Route>
+    </Routes>
+  );
 }
 
-export default App
+function App() {
+  return (
+    <StatusProvider>
+      <ApiProvider>
+        <BrowserRouter>
+           <AppRoutes />
+        </BrowserRouter>
+      </ApiProvider>
+    </StatusProvider>
+  );
+}
+
+export default App;

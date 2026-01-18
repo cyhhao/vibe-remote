@@ -10,13 +10,19 @@
 - Modes: Slack-only for V2 (platform abstraction remains for future Vibe app).
 - Migration: no V1 migration; V2 starts clean.
 
+## Progress Legend
+
+- [x] Done
+- [~] In progress
+- [ ] Not started
+
 ## V2 Milestones
 
-### M1: Local Data Directory + Config Model
+### M1: Local Data Directory + Config Model (Status: In progress)
 
-- Establish `~/.vibe_remote/` as the single home for config/state/logs.
-- Split settings and sessions into separate JSON files.
-- Remove `.env` and legacy config paths from the V2 flow.
+- [x] Establish `~/.vibe_remote/` as the single home for config/state/logs.
+- [x] Split settings and sessions into separate JSON files.
+- [~] Remove `.env` and legacy config paths from the V2 flow.
 
 Proposed structure:
 
@@ -25,28 +31,25 @@ Proposed structure:
 - `~/.vibe_remote/state/sessions.json`
 - `~/.vibe_remote/logs/vibe_remote.log`
 
-### M2: CLI Install + Command Surface
+### M2: CLI Install + Command Surface (Status: In progress)
 
-- One-line install (Bash + `uv` tooling).
-- CLI commands:
-  - `vibe` (smart entrypoint for setup/start)
-  - `vibe status` (runtime status)
-  - `vibe stop` (stop runtime)
-  - `vibe doctor` (self-check)
+- [ ] One-line install (Bash + `uv` tooling).
+- [~] CLI commands (`vibe`, `vibe status`, `vibe stop` done; `vibe doctor` basic checks only).
 
-### M3: Local Web UI (Setup Wizard)
+### M3: Local Web UI (Setup Wizard) (Status: In progress)
 
-- UI starts from CLI and opens a browser.
-- Two setup paths:
-  - SaaS: OAuth flow, workspace binding, local gateway pairing.
-  - Self-host: Slack app manifest guidance + token validation.
+- [x] UI starts from CLI and opens a browser.
+- [~] Two setup paths (Self-host token flow present; SaaS OAuth + relay pairing pending).
+- [~] Channel-level settings (enable/disable + routing present; validation/target-channel semantics pending).
+- [~] Validation + finish step (summary + start exists; full validation pending).
+- [~] Doctor panel (UI exists; backend checks are minimal).
 
-### M4: SaaS MVP (No Data Persistence)
+### M4: SaaS MVP (No Data Persistence) (Status: Not started)
 
-- Official Slack App + OAuth install.
-- Events API ingress.
-- Relay to local gateway (WebSocket/gRPC).
-- Cloud stores only workspace binding and connection status.
+- [ ] Official Slack App + OAuth install.
+- [ ] Events API ingress.
+- [ ] Relay to local gateway (WebSocket/gRPC).
+- [ ] Cloud stores only workspace binding and connection status.
 
 ## Non-Goals (V2)
 
