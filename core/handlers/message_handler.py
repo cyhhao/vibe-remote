@@ -129,6 +129,9 @@ class MessageHandler:
 
             if subagent_name and subagent_message:
                 message = subagent_message
+                if agent_name == "claude":
+                    base_session_id = f"{base_session_id}:{subagent_name}"
+                    composite_key = f"{base_session_id}:{working_path}"
 
             ack_message_id = None
             ack_mode = getattr(self.config, "ack_mode", "reaction")
