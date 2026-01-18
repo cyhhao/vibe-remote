@@ -1323,14 +1323,26 @@ class OpenCodeAgent(BaseAgent):
                 self.controller.get_opencode_overrides(request.context)
             )
 
+            override_agent = request.subagent_name or override_agent
+            if request.subagent_name:
+                override_model = request.subagent_model
+                override_reasoning = request.subagent_reasoning_effort
+
+            if request.subagent_name and not override_model:
+                override_model = server.get_agent_model_from_config(request.subagent_name)
+            if request.subagent_name and not override_reasoning:
+                override_reasoning = server.get_agent_reasoning_effort_from_config(
+                    request.subagent_name
+                )
+
             # Determine agent to use
-            # Priority: 1) channel override, 2) opencode.json default, 3) None (let OpenCode decide)
+            # Priority: 1) channel override or prefix subagent, 2) opencode.json default, 3) None (let OpenCode decide)
             agent_to_use = override_agent
             if not agent_to_use:
                 agent_to_use = server.get_default_agent_from_config()
 
             # Determine model to use
-            # Priority: 1) channel override, 2) agent's config model, 3) global opencode.json model
+            # Priority: 1) channel override or prefix subagent, 2) agent's config model, 3) global opencode.json model
             model_dict = None
             model_str = override_model
             if not model_str:
@@ -1343,7 +1355,7 @@ class OpenCodeAgent(BaseAgent):
                     model_dict = {"providerID": parts[0], "modelID": parts[1]}
 
             # Determine reasoningEffort to use
-            # Priority: 1) channel override, 2) agent's config, 3) global opencode.json config
+            # Priority: 1) channel override or prefix subagent, 2) agent's config, 3) global opencode.json config
             reasoning_effort = override_reasoning
             if not reasoning_effort:
                 reasoning_effort = server.get_agent_reasoning_effort_from_config(agent_to_use)

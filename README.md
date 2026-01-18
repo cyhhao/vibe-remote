@@ -188,6 +188,15 @@ telegram:
 - `/settings` configure message visibility
 - `/stop` force-stop the active agent session (Claude interrupt / Codex process kill)
 
+### Subagent Prefix Routing
+
+Use `SubagentName:` or `SubagentName：` at the start of a message (leading spaces/newlines allowed) to invoke a subagent for the channel’s current agent backend.
+
+- Example: `Plan: outline the steps`
+- Matching is case-insensitive; only the channel’s bound agent is searched.
+- The subagent’s default model/reasoning are used automatically.
+- The bot adds a 🤖 reaction to your message when a subagent is matched.
+
 ### Slack
 
 - In channels, run `/start` to open the interactive menu (Current Dir, Change Work Dir, Reset Session, Settings, How it Works)

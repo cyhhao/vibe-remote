@@ -68,12 +68,70 @@ class MessageHandler:
                 if await self._handle_inline_stop(context):
                     return
 
+            if not self.session_handler:
+                raise RuntimeError("Session handler not initialized")
+
             base_session_id, working_path, composite_key = (
                 self.session_handler.get_session_info(context)
             )
             settings_key = self._get_settings_key(context)
 
             agent_name = self.controller.resolve_agent_for_context(context)
+
+            matched_prefix = None
+            subagent_message = None
+            subagent_name = None
+            subagent_model = None
+            subagent_reasoning_effort = None
+
+            if agent_name in ["opencode", "claude"]:
+                from modules.agents.subagent_router import (
+                    load_claude_subagent,
+                    normalize_subagent_name,
+                    parse_subagent_prefix,
+                )
+
+                parsed = parse_subagent_prefix(message)
+                if parsed:
+                    normalized = normalize_subagent_name(parsed.name)
+                    if agent_name == "opencode":
+                        try:
+                            opencode_agent = self.controller.agent_service.agents.get("opencode")
+                            if opencode_agent and hasattr(opencode_agent, "_get_server"):
+                                server = await opencode_agent._get_server()
+                                await server.ensure_running()
+                                opencode_agents = await server.get_available_agents(
+                                    self.controller.get_cwd(context)
+                                )
+                                name_map = {
+                                    normalize_subagent_name(a.get("name", "")): a
+                                    for a in opencode_agents
+                                    if a.get("name")
+                                }
+                                match = name_map.get(normalized)
+                                if match:
+                                    subagent_name = match.get("name")
+                        except Exception as err:
+                            logger.warning(f"Failed to resolve OpenCode subagent: {err}")
+                    else:
+                        try:
+                            subagent_def = load_claude_subagent(normalized)
+                            if subagent_def:
+                                subagent_name = subagent_def.name
+                                subagent_model = subagent_def.model
+                                subagent_reasoning_effort = subagent_def.reasoning_effort
+                        except Exception as err:
+                            logger.warning(f"Failed to resolve Claude subagent: {err}")
+
+                    if subagent_name:
+                        matched_prefix = parsed.name
+                        subagent_message = parsed.message
+
+            if subagent_name and subagent_message:
+                message = subagent_message
+                if agent_name == "claude":
+                    base_session_id = f"{base_session_id}:{subagent_name}"
+                    composite_key = f"{base_session_id}:{working_path}"
 
             ack_message_id = None
             ack_mode = getattr(self.config, "ack_mode", "reaction")
@@ -107,6 +165,27 @@ class MessageHandler:
                 except Exception as ack_err:
                     logger.debug(f"Failed to add reaction ack: {ack_err}")
 
+            if subagent_name and context.message_id:
+                try:
+                    reaction = ":robot_face:" if self.config.platform == "slack" else "🤖"
+                    await self.im_client.add_reaction(
+                        context,
+                        context.message_id,
+                        reaction,
+                    )
+                except Exception as err:
+                    logger.debug(f"Failed to add subagent reaction: {err}")
+                if ack_reaction_message_id and ack_reaction_emoji:
+                    try:
+                        await self.im_client.remove_reaction(
+                            context, ack_reaction_message_id, ack_reaction_emoji
+                        )
+                    except Exception as err:
+                        logger.debug(
+                            f"Failed to remove reaction ack for subagent: {err}"
+                        )
+
+
             request = AgentRequest(
                 context=context,
                 message=message,
@@ -115,6 +194,10 @@ class MessageHandler:
                 composite_session_id=composite_key,
                 settings_key=settings_key,
                 ack_message_id=ack_message_id,
+                subagent_name=subagent_name,
+                subagent_key=matched_prefix,
+                subagent_model=subagent_model,
+                subagent_reasoning_effort=subagent_reasoning_effort,
             )
             try:
                 await self.controller.agent_service.handle_message(agent_name, request)
@@ -124,12 +207,13 @@ class MessageHandler:
                 if request.ack_message_id:
                     await self._delete_ack(context.channel_id, request)
                 elif ack_reaction_message_id and ack_reaction_emoji:
-                    try:
-                        await self.im_client.remove_reaction(
-                            context, ack_reaction_message_id, ack_reaction_emoji
-                        )
-                    except Exception as err:
-                        logger.debug(f"Failed to remove reaction ack: {err}")
+                    if not subagent_name:
+                        try:
+                            await self.im_client.remove_reaction(
+                                context, ack_reaction_message_id, ack_reaction_emoji
+                            )
+                        except Exception as err:
+                            logger.debug(f"Failed to remove reaction ack: {err}")
         except Exception as e:
             logger.error(f"Error processing user message: {e}", exc_info=True)
             await self.im_client.send_message(

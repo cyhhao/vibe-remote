@@ -18,12 +18,19 @@ This file defines how coding agents should work in this repository.
 ### Planning (When Work Is Non-trivial)
 
 - If the task is complex or ambiguous, propose a short plan and confirm it with the user before large changes.
+- Before starting complex work, capture background, goal, solution, and todo items in a Markdown plan under `docs/plans/`.
+- Implementations must follow the plan and its todo items; update the plan document when tasks or scope change.
+- If requirements are unclear during planning, ask the user early and proceed only after confirmation.
 - If a plan-related subagent exists, prefer calling it to draft/refine the plan.
 
 ### Code Review
 
 - If a review-related subagent exists, call it when the code is ready for review.
 - Address review findings as appropriate until no must-fix issues remain.
+
+### Documentation Updates
+
+- When adding user-visible features, update the user documentation with usage guidance alongside the code changes.
 
 ### Quality Bar
 
@@ -62,6 +69,7 @@ This file defines how coding agents should work in this repository.
 - Run:
   - `./start.sh` (preferred) or `python main.py`
   - `./status.sh` / `./stop.sh`
+  - Restart: run `./start.sh` directly
 
 ### Coding Conventions
 

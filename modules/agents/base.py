@@ -21,6 +21,10 @@ class AgentRequest:
     composite_session_id: str
     settings_key: str
     ack_message_id: Optional[str] = None
+    subagent_name: Optional[str] = None
+    subagent_key: Optional[str] = None
+    subagent_model: Optional[str] = None
+    subagent_reasoning_effort: Optional[str] = None
     last_agent_message: Optional[str] = None
     last_agent_message_parse_mode: Optional[str] = None
     started_at: float = field(default_factory=time.monotonic)

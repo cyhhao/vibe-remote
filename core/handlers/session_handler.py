@@ -52,21 +52,49 @@ class SessionHandler:
         composite_key = f"{base_session_id}:{working_path}"
         return base_session_id, working_path, composite_key
     
-    async def get_or_create_claude_session(self, context: MessageContext) -> ClaudeSDKClient:
+    async def get_or_create_claude_session(
+        self,
+        context: MessageContext,
+        subagent_name: Optional[str] = None,
+        subagent_model: Optional[str] = None,
+        subagent_reasoning_effort: Optional[str] = None,
+    ) -> ClaudeSDKClient:
         """Get existing Claude session or create a new one"""
         base_session_id, working_path, composite_key = self.get_session_info(context)
-        
-        if composite_key in self.claude_sessions:
-            logger.info(f"Using existing Claude SDK client for {base_session_id} at {working_path}")
-            return self.claude_sessions[composite_key]
-        
-        # Check if we have a stored session mapping
-        # Get correct settings key based on platform
+
         settings_key = self._get_settings_key(context)
         stored_claude_session_id = self.settings_manager.get_claude_session_id(
             settings_key, base_session_id, working_path
         )
-        
+
+        if composite_key in self.claude_sessions and not subagent_name:
+            logger.info(f"Using existing Claude SDK client for {base_session_id} at {working_path}")
+            return self.claude_sessions[composite_key]
+
+        if subagent_name:
+            cached_base = f"{base_session_id}:{subagent_name}"
+            cached_key = f"{cached_base}:{working_path}"
+            cached_session_id = self.settings_manager.get_agent_session_id(
+                settings_key,
+                cached_base,
+                working_path,
+                agent_name="claude",
+            )
+            if cached_key in self.claude_sessions:
+                logger.info(
+                    "Using Claude subagent session for %s at %s", cached_base, working_path
+                )
+                return self.claude_sessions[cached_key]
+            if cached_session_id:
+                stored_claude_session_id = cached_session_id
+                composite_key = cached_key
+                base_session_id = cached_base
+            if composite_key in self.claude_sessions:
+                logger.info(
+                    "Using Claude subagent session for %s at %s", cached_base, working_path
+                )
+                return self.claude_sessions[composite_key]
+
         # Ensure working directory exists
         if not os.path.exists(working_path):
             try:
@@ -77,11 +105,20 @@ class SessionHandler:
                 working_path = os.getcwd()
         
         # Create options for Claude client
+        extra_args = {}
+        if subagent_name:
+            extra_args["agent"] = subagent_name
+        if subagent_model:
+            extra_args["model"] = subagent_model
+        if subagent_reasoning_effort:
+            extra_args["reasoning-effort"] = subagent_reasoning_effort
+
         options = ClaudeCodeOptions(
             permission_mode=self.config.claude.permission_mode,
             cwd=working_path,
             system_prompt=self.config.claude.system_prompt,
-            resume=stored_claude_session_id if stored_claude_session_id else None
+            resume=stored_claude_session_id if stored_claude_session_id else None,
+            extra_args=extra_args,
         )
         
         # Log session creation details
@@ -89,6 +126,8 @@ class SessionHandler:
         logger.info(f"  Working directory: {working_path}")
         logger.info(f"  Resume session ID: {stored_claude_session_id}")
         logger.info(f"  Options.resume: {options.resume}")
+        if subagent_name:
+            logger.info(f"  Subagent: {subagent_name}")
         
         # Log if we're resuming a session
         if stored_claude_session_id:
@@ -98,18 +137,20 @@ class SessionHandler:
         
         # Create new Claude client
         client = ClaudeSDKClient(options=options)
-        
+
         # Log the actual options being used
-        logger.info(f"ClaudeCodeOptions details:")
+        logger.info("ClaudeCodeOptions details:")
         logger.info(f"  - permission_mode: {options.permission_mode}")
         logger.info(f"  - cwd: {options.cwd}")
         logger.info(f"  - system_prompt: {options.system_prompt}")
         logger.info(f"  - resume: {options.resume}")
         logger.info(f"  - continue_conversation: {options.continue_conversation}")
-        
+        if subagent_name:
+            logger.info(f"  - subagent: {subagent_name}")
+
         # Connect the client
         await client.connect()
-        
+
         self.claude_sessions[composite_key] = client
         logger.info(f"Created new Claude SDK client for {base_session_id} at {working_path}")
         
