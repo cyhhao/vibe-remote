@@ -71,6 +71,10 @@ This file defines how coding agents should work in this repository.
   - `./status.sh` / `./stop.sh`
   - Restart: run `./start.sh` directly
 
+### Release Notes
+
+- Tags follow the latest version number +1 (e.g., `v1.0.1` -> `v1.0.2`) and should be pushed; releases are published automatically by workflow.
+
 ### Coding Conventions
 
 - Follow PEP 8, 4-space indentation.
