@@ -154,6 +154,16 @@ class BaseIMClient(ABC):
             Message ID of sent message
         """
         pass
+
+    async def upload_markdown(
+        self,
+        context: MessageContext,
+        title: str,
+        content: str,
+        filetype: str = "markdown",
+    ) -> str:
+        """Upload markdown content as a file (optional per platform)."""
+        raise NotImplementedError
     
     @abstractmethod
     async def edit_message(
@@ -177,6 +187,24 @@ class BaseIMClient(ABC):
             Success status
         """
         pass
+
+    async def remove_inline_keyboard(
+        self,
+        context: MessageContext,
+        message_id: str,
+        text: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+    ) -> bool:
+        """Remove inline keyboard / actions from a message."""
+        if text is None:
+            return await self.edit_message(context, message_id, keyboard=None)
+        return await self.edit_message(
+            context,
+            message_id,
+            text=text,
+            keyboard=None,
+            parse_mode=parse_mode,
+        )
     
     @abstractmethod
     async def answer_callback(self, callback_id: str, text: Optional[str] = None,

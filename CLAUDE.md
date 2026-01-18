@@ -43,11 +43,11 @@ This file defines how coding agents should work in this repository.
 
 - Entry point: `main.py` wires `config.AppConfig` into `core/controller.py`.
 - Core orchestration and handlers: `core/` (notably `core/handlers/`).
-- Agent backends: `modules/agents/` (shared base, Claude/Codex backends, registry).
+- Agent backends: `modules/agents/` (shared base, OpenCode/Claude/Codex backends, registry).
 - IM transports: `modules/im/` (Slack/Telegram).
 - Config:
   - Defaults and validation: `config/` (see `config/settings.py`).
-  - Agent routing: `agent_routes.example.yaml` (template) and local `agent_routes.yaml` (gitignored).
+  - Agent routing: optional local `agent_routes.yaml` (gitignored).
 - Runtime data:
   - Logs: `logs/vibe_remote.log`.
   - Persisted state: `user_settings.json`.
@@ -78,16 +78,17 @@ This file defines how coding agents should work in this repository.
 - For IM integrations, stub Slack/Telegram clients and validate outbound payload schemas.
 - Do a manual E2E sanity check (start bot, send `/start`) until CI exists.
 
-### Agent Routing / Codex
+### Agent Routing
 
-- Codex enablement: `CODEX_ENABLED=true` and `CODEX_CLI_PATH` points to the CLI.
+- OpenCode enablement: `OPENCODE_ENABLED=true` (default: false) and `OPENCODE_CLI_PATH` points to the CLI.
+- Codex enablement: `CODEX_ENABLED=true` (default: true) and `CODEX_CLI_PATH` points to the CLI.
 - Routing file:
-  - Copy `agent_routes.example.yaml` to `agent_routes.yaml` (local).
+  - Create `agent_routes.yaml` (local) only if you prefer file-based routing (legacy).
   - Controlled by `AGENT_ROUTE_FILE` (defaults to repo-root `agent_routes.yaml`).
-  - Keys are Slack channel IDs / Telegram chat IDs; values are agent names (e.g., `claude`, `codex`).
+  - Keys are Slack channel IDs / Telegram chat IDs; values are agent names (e.g., `opencode`, `claude`, `codex`).
   - Missing entries fall back to platform default, then to global default.
 
 ### Safety Notes
 
-- Keep `CLAUDE_DEFAULT_CWD` scoped to `_tmp/` (or another sanitized directory).
+- Keep `AGENT_DEFAULT_CWD` scoped to `_tmp/` (or another sanitized directory).
 - Logs can contain sensitive context; scrub before sharing.

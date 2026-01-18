@@ -117,6 +117,8 @@ class SlackBot(BaseIMClient):
         """Send a message to Slack"""
         self._ensure_clients()
         try:
+            if not text:
+                raise ValueError("Slack send_message requires non-empty text")
             # Convert markdown to Slack mrkdwn if needed
             if parse_mode == "markdown":
                 text = self._convert_markdown_to_slack_mrkdwn(text)
@@ -140,6 +142,19 @@ class SlackBot(BaseIMClient):
             if parse_mode == "markdown":
                 kwargs["mrkdwn"] = True
 
+            # Workaround: ensure multi-line content is preserved. Slack sometimes collapses
+            # rich_text rendering for bot messages; sending with blocks+mrkdwn forces line breaks.
+            if "\n" in text and "blocks" not in kwargs and len(text) <= 3000:
+                kwargs["blocks"] = [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
+                            "text": text,
+                        },
+                    }
+                ]
+
             # Send message
             response = await self.web_client.chat_postMessage(**kwargs)
 
@@ -156,6 +171,27 @@ class SlackBot(BaseIMClient):
         except SlackApiError as e:
             logger.error(f"Error sending Slack message: {e}")
             raise
+
+    async def upload_markdown(
+        self,
+        context: MessageContext,
+        title: str,
+        content: str,
+        filetype: str = "markdown",
+    ) -> str:
+        self._ensure_clients()
+        data = content or ""
+        result = await self.web_client.files_upload_v2(
+            channel=context.channel_id,
+            thread_ts=context.thread_id,
+            filename=title,
+            title=title,
+            content=data,
+        )
+        file_id = result.get("file", {}).get("id")
+        if not file_id:
+            file_id = result.get("files", [{}])[0].get("id")
+        return file_id or ""
 
     async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
         """Add a reaction emoji to a Slack message."""
@@ -257,6 +293,7 @@ class SlackBot(BaseIMClient):
                     "text": {
                         "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
                         "text": text,
+                        "verbatim": True,
                     },
                 }
             ]
@@ -368,6 +405,41 @@ class SlackBot(BaseIMClient):
 
         except SlackApiError as e:
             logger.error(f"Error editing Slack message: {e}")
+            return False
+
+    async def remove_inline_keyboard(
+        self,
+        context: MessageContext,
+        message_id: str,
+        text: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+    ) -> bool:
+        """Remove interactive buttons from a Slack message."""
+        self._ensure_clients()
+        try:
+            blocks = []
+            fallback_text = text
+            if fallback_text is not None and parse_mode == "markdown":
+                fallback_text = self._convert_markdown_to_slack_mrkdwn(fallback_text)
+
+            if fallback_text:
+                blocks = [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
+                            "text": fallback_text,
+                        },
+                    }
+                ]
+
+            kwargs = {"channel": context.channel_id, "ts": message_id, "blocks": blocks}
+            if fallback_text is not None:
+                kwargs["text"] = fallback_text
+            await self.web_client.chat_update(**kwargs)
+            return True
+        except SlackApiError as e:
+            logger.error(f"Error removing Slack buttons: {e}")
             return False
 
     async def answer_callback(
@@ -663,8 +735,10 @@ class SlackBot(BaseIMClient):
                 logger.info(
                     f"Unauthorized interactive action from channel: {channel_id}"
                 )
-                # For interactive components, we can't easily send a message back
-                # The user will just see the button doesn't respond
+                try:
+                    await self._send_unauthorized_message(channel_id)
+                except Exception:
+                    pass
                 return
 
             view = payload.get("view", {})
@@ -674,10 +748,16 @@ class SlackBot(BaseIMClient):
                     callback_data = action.get("action_id")
 
                     if self.on_callback_query_callback:
+                        thread_id = (
+                            payload.get("container", {}).get("thread_ts")
+                            or payload.get("message", {}).get("thread_ts")
+                            or payload.get("message", {}).get("ts")
+                        )
                         # Create a context for the callback
                         context = MessageContext(
                             user_id=user.get("id"),
                             channel_id=channel_id,
+                            thread_id=thread_id,
                             message_id=payload.get("message", {}).get("ts"),
                             platform_specific={
                                 "trigger_id": payload.get("trigger_id"),
@@ -701,8 +781,9 @@ class SlackBot(BaseIMClient):
                             )
 
         elif payload.get("type") == "view_submission":
-            # Handle modal submissions
-            await self._handle_view_submission(payload)
+            # Handle modal submissions asynchronously to avoid Slack timeouts
+            asyncio.create_task(self._handle_view_submission(payload))
+            return
 
     async def _handle_view_submission(self, payload: Dict[str, Any]):
         """Handle modal dialog submissions"""
@@ -749,6 +830,49 @@ class SlackBot(BaseIMClient):
             # Send success message to the user (via DM or channel)
             # We need to find the right channel to send the message
             # For now, we'll rely on the controller to handle this
+
+        elif callback_id == "opencode_question_modal":
+            user_id = payload.get("user", {}).get("id")
+            values = view.get("state", {}).get("values", {})
+            metadata_raw = view.get("private_metadata")
+
+            try:
+                import json
+
+                metadata = json.loads(metadata_raw) if metadata_raw else {}
+            except Exception:
+                metadata = {}
+
+            channel_id = metadata.get("channel_id")
+            thread_id = metadata.get("thread_id")
+
+            answers = []
+            q_count = int(metadata.get("question_count") or 1)
+            for idx in range(q_count):
+                block_id = f"q{idx}"
+                action_id = "select"
+                data = values.get(block_id, {}).get(action_id, {})
+                selected_options = data.get("selected_options")
+                if isinstance(selected_options, list):
+                    answers.append([opt.get("value") for opt in selected_options if opt.get("value")])
+                else:
+                    selected = data.get("selected_option")
+                    if selected and selected.get("value") is not None:
+                        answers.append([str(selected.get("value"))])
+                    else:
+                        answers.append([])
+
+            if self.on_callback_query_callback:
+                context = MessageContext(
+                    user_id=user_id,
+                    channel_id=str(channel_id) if channel_id else "",
+                    thread_id=str(thread_id) if thread_id else None,
+                    platform_specific={"payload": payload},
+                )
+                await self.on_callback_query_callback(
+                    context,
+                    "opencode_question:modal:" + json.dumps({"answers": answers}),
+                )
 
         elif callback_id == "routing_modal":
             # Handle routing modal submission
@@ -1479,6 +1603,115 @@ class SlackBot(BaseIMClient):
             "close": {"type": "plain_text", "text": "Cancel"},
             "blocks": blocks,
         }
+
+    async def open_opencode_question_modal(
+        self,
+        trigger_id: str,
+        context: MessageContext,
+        pending: Dict[str, Any],
+    ):
+        self._ensure_clients()
+
+        questions = pending.get("questions")
+        questions = questions if isinstance(questions, list) else []
+        if not questions:
+            raise ValueError("No questions available")
+
+        import json
+
+        private_metadata = json.dumps(
+            {
+                "channel_id": context.channel_id,
+                "thread_id": context.thread_id,
+                "question_count": len(questions),
+            }
+        )
+
+        blocks: list[Dict[str, Any]] = []
+        for idx, q in enumerate(questions):
+            if not isinstance(q, dict):
+                continue
+            header = (q.get("header") or f"Question {idx + 1}").strip()
+            prompt = (q.get("question") or "").strip()
+            multiple = bool(q.get("multiple"))
+            options = q.get("options") if isinstance(q.get("options"), list) else []
+
+            option_items = []
+            for opt in options:
+                if not isinstance(opt, dict):
+                    continue
+                label = opt.get("label")
+                if label is None:
+                    continue
+                desc = opt.get("description")
+                item: Dict[str, Any] = {
+                    "text": {
+                        "type": "plain_text",
+                        "text": str(label)[:75],
+                        "emoji": True,
+                    },
+                    "value": str(label),
+                }
+                if desc:
+                    item["description"] = {
+                        "type": "plain_text",
+                        "text": str(desc)[:75],
+                        "emoji": True,
+                    }
+                option_items.append(item)
+
+            element: Dict[str, Any]
+            if multiple:
+                element = {
+                    "type": "multi_static_select",
+                    "action_id": "select",
+                    "options": option_items,
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "Select one or more",
+                        "emoji": True,
+                    },
+                }
+            else:
+                element = {
+                    "type": "static_select",
+                    "action_id": "select",
+                    "options": option_items,
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "Select one",
+                        "emoji": True,
+                    },
+                }
+
+            label_text = header
+            if prompt:
+                label_text = f"{header}: {prompt}"[:150]
+
+            blocks.append(
+                {
+                    "type": "input",
+                    "block_id": f"q{idx}",
+                    "label": {
+                        "type": "plain_text",
+                        "text": label_text,
+                        "emoji": True,
+                    },
+                    "element": element,
+                }
+            )
+
+        view = {
+            "type": "modal",
+            "callback_id": "opencode_question_modal",
+            "private_metadata": private_metadata,
+            "title": {"type": "plain_text", "text": "OpenCode", "emoji": True},
+            "submit": {"type": "plain_text", "text": "Submit", "emoji": True},
+            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "blocks": blocks,
+        }
+
+        await self.web_client.views_open(trigger_id=trigger_id, view=view)
 
     async def open_routing_modal(
         self,

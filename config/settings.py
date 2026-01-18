@@ -75,9 +75,11 @@ class ClaudeConfig:
         if not permission_mode:
             raise ValueError("CLAUDE_PERMISSION_MODE environment variable is required")
 
-        cwd = os.getenv("CLAUDE_DEFAULT_CWD")
+        cwd = os.getenv("AGENT_DEFAULT_CWD") or os.getenv("CLAUDE_DEFAULT_CWD")
         if not cwd:
-            raise ValueError("CLAUDE_DEFAULT_CWD environment variable is required")
+            raise ValueError(
+                "AGENT_DEFAULT_CWD (or legacy CLAUDE_DEFAULT_CWD) environment variable is required"
+            )
 
         return cls(
             permission_mode=permission_mode,
@@ -205,9 +207,9 @@ class SlackConfig(BaseIMConfig):
 @dataclass
 class AppConfig:
     platform: str
+    claude: ClaudeConfig
     telegram: Optional[TelegramConfig] = None
     slack: Optional[SlackConfig] = None
-    claude: ClaudeConfig = None
     codex: Optional[CodexConfig] = None
     opencode: Optional[OpenCodeConfig] = None
     log_level: str = "INFO"

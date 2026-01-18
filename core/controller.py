@@ -86,6 +86,15 @@ class Controller:
             self.config.agent_route_file, platform=self.config.platform
         )
 
+        # Default backend preference:
+        # If the user didn't provide an agent_routes.yaml, and OpenCode is enabled,
+        # make OpenCode the implicit default backend.
+        if self.config.opencode and not self.config.agent_route_file:
+            self.agent_router.global_default = "opencode"
+            platform_route = self.agent_router.platform_routes.get(self.config.platform)
+            if platform_route:
+                platform_route.default = "opencode"
+
         # Inject settings_manager into SlackBot if it's Slack platform
         if self.config.platform == "slack":
             # Import here to avoid circular dependency
@@ -211,6 +220,21 @@ class Controller:
             return 3200
         return 8000
 
+    def _get_result_max_chars(self) -> int:
+        if self.config.platform == "slack":
+            return 30000
+        if self.config.platform == "telegram":
+            return 3200
+        return 8000
+
+    def _build_result_summary(self, text: str, max_chars: int) -> str:
+        if len(text) <= max_chars:
+            return text
+        prefix = "Result too long; showing a summary.\n\n"
+        suffix = "\n\n…(truncated; see result.md for full output)"
+        keep = max(0, max_chars - len(prefix) - len(suffix))
+        return f"{prefix}{text[:keep]}{suffix}"
+
     def _truncate_consolidated(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
             return text
@@ -243,7 +267,9 @@ class Controller:
                 )
 
         # Fall back to static routing
-        return self.agent_router.resolve(self.config.platform, settings_key)
+        resolved = self.agent_router.resolve(self.config.platform, settings_key)
+
+        return resolved
 
     def get_opencode_overrides(
         self, context: MessageContext
@@ -294,9 +320,32 @@ class Controller:
 
         if canonical_type == "result":
             target_context = self._get_target_context(context)
+            if len(text) <= self._get_result_max_chars():
+                await self.im_client.send_message(
+                    target_context, text, parse_mode=parse_mode
+                )
+                return
+
+            summary = self._build_result_summary(text, self._get_result_max_chars())
             await self.im_client.send_message(
-                target_context, text, parse_mode=parse_mode
+                target_context, summary, parse_mode=parse_mode
             )
+
+            if self.config.platform == "slack" and hasattr(self.im_client, "upload_markdown"):
+                try:
+                    await self.im_client.upload_markdown(
+                        target_context,
+                        title="result.md",
+                        content=text,
+                        filetype="markdown",
+                    )
+                except Exception as err:
+                    logger.warning(f"Failed to upload result attachment: {err}")
+                    await self.im_client.send_message(
+                        target_context,
+                        "无法上传附件（缺少 files:write 权限或上传失败）。需要我改成分条发送吗？",
+                        parse_mode=parse_mode,
+                    )
             return
 
         if canonical_type not in {"system", "assistant", "toolcall"}:

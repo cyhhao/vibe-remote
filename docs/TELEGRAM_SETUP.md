@@ -80,10 +80,12 @@ IM_PLATFORM=telegram
 TELEGRAM_BOT_TOKEN=your-bot-token-here
 
 # Optional: Whitelist specific chat IDs (null = all chats allowed)
-TELEGRAM_CHAT_ID=[-1001234567890,987654321]
+TELEGRAM_TARGET_CHAT_ID=[-1001234567890,987654321]
 
 # Default working directory for the coding agent
-CLAUDE_CWD=/path/to/your/project
+AGENT_DEFAULT_CWD=/path/to/your/project
+# Legacy alias (still supported):
+# CLAUDE_DEFAULT_CWD=/path/to/your/project
 ```
 
 ### Finding Chat IDs
@@ -206,7 +208,7 @@ Messages from your agent are streamed in real-time:
 
 1. Ensure privacy mode is disabled (Step 4)
 2. Check that the bot is an admin in the group (optional but recommended)
-3. Verify the group chat ID is whitelisted if using `TELEGRAM_CHAT_ID`
+3. Verify the group chat ID is whitelisted if using `TELEGRAM_TARGET_CHAT_ID`
 
 ### Message formatting issues
 
@@ -234,7 +236,7 @@ If you hit rate limits, the bot will automatically retry with delays.
 
 ### Chat Whitelisting
 
-- Use `TELEGRAM_CHAT_ID` to restrict bot access to specific chats
+- Use `TELEGRAM_TARGET_CHAT_ID` to restrict bot access to specific chats
 - This prevents unauthorized users from using your bot
 - Leave it as `null` only for development/testing
 
