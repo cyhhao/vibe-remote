@@ -30,7 +30,12 @@ class ClaudeAgent(BaseAgent):
         context = request.context
 
         try:
-            client = await self.session_handler.get_or_create_claude_session(context)
+            client = await self.session_handler.get_or_create_claude_session(
+                context,
+                subagent_name=request.subagent_name,
+                subagent_model=request.subagent_model,
+                subagent_reasoning_effort=request.subagent_reasoning_effort,
+            )
 
             await client.query(
                 request.message, session_id=request.composite_session_id

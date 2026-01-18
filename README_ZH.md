@@ -188,6 +188,15 @@ telegram:
 - `/settings` 配置消息可见性
 - `/stop` 强制停止当前 Agent（Claude 发送 interrupt，Codex 直接终止进程）
 
+### Subagent 前缀路由
+
+消息开头使用 `SubagentName:` 或 `SubagentName：`（允许前置空格/换行），即可调用当前频道绑定 Agent 的 Subagent。
+
+- 示例：`Plan: 先把实现步骤列出来`
+- 匹配大小写不敏感，仅在当前绑定的 Agent 内查找
+- 自动使用 Subagent 的默认 model / reasoning_effort
+- 命中时机器人会在消息上加 🤖 reaction
+
 ### Slack
 
 - 在频道中运行 `/start` 打开交互菜单（Current Dir、Change Work Dir、Reset Session、Settings、How it Works）
