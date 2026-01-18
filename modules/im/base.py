@@ -37,23 +37,15 @@ class InlineKeyboard:
 class BaseIMConfig(ABC):
     """Abstract base class for IM platform configurations"""
     
-    @classmethod
     @abstractmethod
-    def from_env(cls) -> 'BaseIMConfig':
-        """Create configuration from environment variables"""
-        pass
-    
-    @abstractmethod
-    def validate(self) -> bool:
+    def validate(self) -> None:
         """Validate the configuration
-        
-        Returns:
-            True if configuration is valid
-            
+
         Raises:
             ValueError: If configuration is invalid
         """
         pass
+
     
     def validate_required_string(self, value: Optional[str], field_name: str) -> None:
         """Helper method to validate required string fields
@@ -81,9 +73,9 @@ class BaseIMConfig(ABC):
         Raises:
             ValueError: If value is not a valid integer
         """
-        if not value:
+        if value is None or value == "":
             return None
-        
+
         try:
             return int(value)
         except ValueError:
@@ -101,7 +93,7 @@ class BaseIMClient(ABC):
         self.on_command_callbacks: Dict[str, Callable] = {}
         self.on_callback_query_callback: Optional[Callable] = None
         # Platform-specific formatter will be set by subclasses
-        self.formatter = None
+        self.formatter: Optional[Any] = None
     
     def get_default_parse_mode(self) -> Optional[str]:
         """Get the default parse mode for this platform

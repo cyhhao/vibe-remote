@@ -7,7 +7,7 @@
 [快速开始](#快速开始) · [配置](#配置) · [使用方式](#使用方式) · [安装指南](#setup-guides) · [Roadmap](#roadmap)
 
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB)](https://www.python.org/)
-[![Platforms](https://img.shields.io/badge/platforms-Slack%20%7C%20Telegram-8A2BE2)](#setup-guides)
+[![Platforms](https://img.shields.io/badge/platforms-Slack-4A90E2)](#setup-guides)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
@@ -17,24 +17,24 @@
 
 </div>
 
-_在 Slack/Telegram 里通过聊天远程操控 AI 代理（如 OpenCode、Claude Code、Codex、Cursor），进行 Vibe Coding。_
+_在 Slack 里通过聊天远程操控 AI 代理（如 OpenCode、Claude Code、Codex、Cursor），进行 Vibe Coding。_
 
-Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack/Telegram 输入意图与约束，它会驱动相应的 AI agent 执行并反馈；结果实时流式返回，无需本地 IDE，随时随地推进任务。
+Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack 输入意图与约束，它会驱动相应的 AI agent 执行并反馈；结果实时流式返回，无需本地 IDE，随时随地推进任务。
 
 ## 为什么选择 Vibe Remote
 
 - **专注 vibe coding**：基于你的意图与约束让 AI 自主推进，你只把控方向与结果。
-- **随时随地**：不被 IDE 束缚，直接在 Slack/Telegram 中远程操控编码会话。
+- **随时随地**：不被 IDE 束缚，直接在 Slack 中远程操控编码会话。
 - **为扩展而生**：OpenCode 优先，同时支持 Claude Code + Codex；并可扩展到更多 coding agents/CLIs。
-- **多 Agent 路由**：为不同 Slack Channel / Telegram Chat 指定 OpenCode / Claude Code / Codex，互不干扰。
-- **按线程 + 路径持久化**：每个 Slack 线程/Telegram 对话都维持独立 Agent 会话与工作目录，并通过持久化映射自动恢复。
+- **多 Agent 路由**：为不同 Slack Channel 指定 OpenCode / Claude Code / Codex，互不干扰。
+- **按线程 + 路径持久化**：每个 Slack 线程维持独立 Agent 会话与工作目录，并通过持久化映射自动恢复。
 - **Slack 交互式体验**：`/start` 菜单 + Settings/CWD 模态，按钮优先于命令，更快上手。
 
 > 推荐：优先使用 Slack 作为主要平台。其线程模型更适合并行子任务，也能保持频道历史整洁（每个子任务都在各自的线程里）。
 
 ## 核心特性
 
-- **多平台**：原生支持 Slack 与 Telegram
+- **平台优先**：V2 先聚焦 Slack；平台抽象保留以支持未来 Vibe App
 - **免干预工作流**：最小 review，实时流式回传消息
 - **持久会话**：按聊天/线程维度持久化，可随时恢复
 - **Slack 线程化 UX**：每个会话独立线程，保持频道整洁
@@ -43,8 +43,8 @@ Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack/Telegram 输入意
 
 ## 架构（简述）
 
-- `BaseIMClient` + 平台实现（`modules/im/slack.py`、`modules/im/telegram.py`）
-- `IMFactory` 通过 `IM_PLATFORM` 动态创建客户端
+- `BaseIMClient` + 平台实现（`modules/im/slack.py`）
+- `IMFactory` 通过配置创建客户端
 - `Controller` 统一编排会话、格式化与命令路由
 
 ## 先决条件
@@ -92,43 +92,25 @@ claude --help
 
 ## 快速开始
 
-1. 安装依赖
+1. 安装
 
 ```bash
-pip install -r requirements.txt
+curl -fsSL https://vibe.remote/install.sh | bash
 ```
 
-2. 创建并编辑 `.env`
+2. 运行
 
 ```bash
-cp .env.example .env
-# 设置 IM_PLATFORM 与各自的 Token
-```
-
-3. 运行
-
-```bash
-./start.sh
-# 或
-python main.py
+vibe
 ```
 
 ## 配置
-
-### 平台选择
-
-- `IM_PLATFORM=slack` 或 `IM_PLATFORM=telegram`
 
 ### Slack
 
 - `SLACK_BOT_TOKEN`（xoxb-...）
 - `SLACK_APP_TOKEN`（xapp-...，用于 Socket Mode）
-- `SLACK_TARGET_CHANNEL` 可选的频道 ID 白名单（仅频道，形如 `C...`）。留空或省略为接受所有频道。当前不支持 Slack DM。
-
-### Telegram
-
-- `TELEGRAM_BOT_TOKEN` 来自 @BotFather
-- `TELEGRAM_TARGET_CHAT_ID` 可选的聊天白名单：`[123,...]` | `[]` 仅私聊 | `null` 允许全部
+- `SLACK_TARGET_CHANNELS` 可选的频道 ID 白名单（仅频道，形如 `C...`）。留空或省略为接受所有频道。当前不支持 Slack DM。
 
 ### Claude Code
 
@@ -163,13 +145,9 @@ slack:
   default: opencode
   overrides:
     C01EXAMPLE: codex
-telegram:
-  default: opencode
-  overrides:
-    "123456789": codex
 ```
 
-- Slack 使用频道 ID，Telegram 使用聊天 ID。
+- Slack 使用频道 ID。
 - 参见 [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) 获取 Codex 安装与路由说明。
 - 未提供路由文件时：如果启用了 OpenCode，则默认使用 OpenCode；否则回退到 Claude。
 
@@ -179,7 +157,7 @@ telegram:
 
 ## 使用方式
 
-### Commands（全平台）
+### Commands
 
 - `/start` 打开菜单/欢迎信息
 - `/clear` 重置对话/会话
@@ -204,15 +182,9 @@ telegram:
 - 当前不支持 Slack DM
 - Slash 命令在线程中受限；要在线程内停止，请直接输入 `stop`
 
-### Telegram
-
-- 支持私聊/群组；先运行 `/start` 然后直接对话
-- 支持实时流式输出；长消息自动分割；代码块自动格式化
-
 ## Setup Guides
 
 - Slack： [English](docs/SLACK_SETUP.md) | [中文](docs/SLACK_SETUP_ZH.md)
-- Telegram： [English](docs/TELEGRAM_SETUP.md) | [中文](docs/TELEGRAM_SETUP_ZH.md)
 
 ## Releases
 
@@ -235,8 +207,8 @@ MIT，详见 `LICENSE`。
 
 ## Security & Ops
 
-- **Secrets**：不要提交 Token；使用 `.env`，并定期轮换。
-- **Whitelists**：通过 `SLACK_TARGET_CHANNEL`（仅频道，`C…`）或 `TELEGRAM_TARGET_CHAT_ID` 限制访问。`null` 允许全部；空列表则只在相应上下文生效（Slack DM 当前不支持）。
-- **Logs**：运行日志位于 `logs/vibe_remote.log`。
-- **会话持久化**：`user_settings.json` 存储每个线程/聊天的会话映射与偏好；生产环境请持久化此文件。
+- **Secrets**：不要提交 Token；存储在 `~/.vibe_remote/config/config.json` 或你的密钥管理系统。
+- **Whitelists**：通过 `SLACK_TARGET_CHANNELS`（仅频道，`C…`）限制访问。留空允许全部频道（Slack DM 当前不支持）。
+- **Logs**：运行日志位于 `~/.vibe_remote/logs/vibe_remote.log`。
+- **会话持久化**：`~/.vibe_remote/state/sessions.json` 存储每个线程的会话映射；生产环境请持久化此文件。
 - **清理**：设置 `CLEANUP_ENABLED=true`，在消息处理入口安全清理已完成的接收任务，适合长时间运行。

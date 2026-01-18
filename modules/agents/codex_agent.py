@@ -366,5 +366,5 @@ class CodexAgent(BaseAgent):
         await self.controller.emit_agent_message(
             request.context,
             "notify",
-            f"⚠️ {message}\n请查看 `logs/vibe_remote.log` 获取更多细节。",
+            f"⚠️ {message}\n请查看 `~/.vibe_remote/logs/vibe_remote.log` 获取更多细节。",
         )

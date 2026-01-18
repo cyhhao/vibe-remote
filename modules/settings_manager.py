@@ -6,6 +6,9 @@ from dataclasses import dataclass, asdict, field
 from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
 
+from config import paths
+from config.v2_sessions import SessionsStore
+
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +48,6 @@ class UserSettings:
         default_factory=lambda: DEFAULT_HIDDEN_MESSAGE_TYPES.copy()
     )
     custom_cwd: Optional[str] = None
-    session_mappings: Dict[str, Dict[str, Dict[str, str]]] = field(
-        default_factory=dict
-    )
-    active_slack_threads: Dict[str, Dict[str, float]] = field(default_factory=dict)
     channel_routing: Optional[ChannelRouting] = None
 
     def to_dict(self) -> dict:
@@ -82,9 +81,12 @@ class SettingsManager:
         "tool": "toolcall",
     }
 
-    def __init__(self, settings_file: str = "user_settings.json"):
-        self.settings_file = Path(settings_file)
+    def __init__(self, settings_file: Optional[str] = None):
+        paths.ensure_data_dirs()
+        self.settings_file = Path(settings_file) if settings_file else paths.get_settings_path()
         self.settings: Dict[Union[int, str], UserSettings] = {}
+        self.sessions_store = SessionsStore()
+        self.sessions_store.load()
         self._load_settings()
 
     # ---------------------------------------------
@@ -105,19 +107,6 @@ class SettingsManager:
                 with open(self.settings_file, "r") as f:
                     data = json.load(f)
                     for user_id_str, user_data in data.items():
-                        # Normalize session mappings to agent-aware structure
-                        if "session_mappings" in user_data:
-                            user_data["session_mappings"] = (
-                                self._normalize_session_mappings(
-                                    user_data["session_mappings"]
-                                )
-                            )
-
-                        # Ensure active_slack_threads exists and is properly formatted
-                        if "active_slack_threads" not in user_data:
-                            user_data["active_slack_threads"] = {}
-
-                        # Always keep user_id as string in memory
                         user_id = user_id_str
                         settings = UserSettings.from_dict(user_data)
                         settings.hidden_message_types = self._normalize_hidden_message_types(
@@ -132,38 +121,6 @@ class SettingsManager:
             logger.error(f"Error loading settings: {e}")
             self.settings = {}
 
-    def _normalize_session_mappings(
-        self, mappings: Dict[str, Any]
-    ) -> Dict[str, Dict[str, Dict[str, str]]]:
-        """Normalize legacy session mapping schema into agent-aware structure."""
-        normalized: Dict[str, Dict[str, Dict[str, str]]] = {}
-
-        if not isinstance(mappings, dict):
-            return normalized
-
-        def is_path_map(value) -> bool:
-            return isinstance(value, dict) and all(
-                isinstance(v, str) for v in value.values()
-            )
-
-        # Detect new-format structure: {agent: {base_session_id: {path: session_id}}}
-        is_new_format = all(
-            isinstance(agent_map, dict) and all(is_path_map(path_map) for path_map in agent_map.values())
-            for agent_map in mappings.values()
-        )
-        if is_new_format:
-            return mappings
-
-        # Legacy structure: {base_session_id: {path: session_id}}
-        legacy_entries = {}
-        for base_session_id, path_map in mappings.items():
-            if is_path_map(path_map):
-                legacy_entries[base_session_id] = path_map
-
-        if legacy_entries:
-            normalized["claude"] = legacy_entries
-
-        return normalized
 
     def _save_settings(self):
         """Save settings to JSON file"""
@@ -251,13 +208,9 @@ class SettingsManager:
             "toolcall": "Toolcall",
         }
 
-    def _ensure_agent_namespace(
-        self, settings: UserSettings, agent_name: str
-    ) -> Dict[str, Dict[str, str]]:
-        """Ensure nested dict for an agent exists."""
-        if agent_name not in settings.session_mappings:
-            settings.session_mappings[agent_name] = {}
-        return settings.session_mappings[agent_name]
+    def _ensure_agent_namespace(self, user_id: Union[int, str], agent_name: str) -> Dict[str, Dict[str, str]]:
+        user_key = self._normalize_user_id(user_id)
+        return self.sessions_store.get_agent_map(user_key, agent_name)
 
     def set_agent_session_mapping(
         self,
@@ -268,12 +221,11 @@ class SettingsManager:
         session_id: str,
     ):
         """Store mapping between base session ID, working path, and agent session ID"""
-        settings = self.get_user_settings(user_id)
-        agent_map = self._ensure_agent_namespace(settings, agent_name)
+        agent_map = self._ensure_agent_namespace(user_id, agent_name)
         if base_session_id not in agent_map:
             agent_map[base_session_id] = {}
         agent_map[base_session_id][working_path] = session_id
-        self.update_user_settings(user_id, settings)
+        self.sessions_store.save()
         logger.info(
             f"Stored {agent_name} session mapping for user {user_id}: "
             f"{base_session_id}[{working_path}] -> {session_id}"
@@ -287,8 +239,8 @@ class SettingsManager:
         agent_name: str,
     ) -> Optional[str]:
         """Get agent session ID for given base session ID and working path"""
-        settings = self.get_user_settings(user_id)
-        agent_map = settings.session_mappings.get(agent_name, {})
+        user_key = self._normalize_user_id(user_id)
+        agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         if base_session_id in agent_map:
             return agent_map[base_session_id].get(working_path)
         return None
@@ -322,8 +274,8 @@ class SettingsManager:
         working_path: Optional[str] = None,
     ):
         """Clear session mapping for given base session ID and optionally working path"""
-        settings = self.get_user_settings(user_id)
-        agent_map = settings.session_mappings.get(agent_name, {})
+        user_key = self._normalize_user_id(user_id)
+        agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         if base_session_id in agent_map:
             if working_path:
                 if working_path in agent_map[base_session_id]:
@@ -337,35 +289,37 @@ class SettingsManager:
                 logger.info(
                     f"Cleared all {agent_name} session mappings for user {user_id}: {base_session_id}"
                 )
-            self.update_user_settings(user_id, settings)
+            self.sessions_store.save()
 
     def clear_agent_sessions(self, user_id: Union[int, str], agent_name: str):
         """Clear every session mapping for the specified agent."""
-        settings = self.get_user_settings(user_id)
-        if agent_name in settings.session_mappings:
-            del settings.session_mappings[agent_name]
+        user_key = self._normalize_user_id(user_id)
+        agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
+        if agent_map:
+            self.sessions_store.state.session_mappings[user_key][agent_name] = {}
             logger.info(
                 f"Cleared all {agent_name} session namespaces for user {user_id}"
             )
-            self.update_user_settings(user_id, settings)
+            self.sessions_store.save()
 
     def clear_all_session_mappings(self, user_id: Union[int, str]):
         """Clear all session mappings for a user across agents"""
-        settings = self.get_user_settings(user_id)
-        if settings.session_mappings:
-            count = sum(len(agent_map) for agent_map in settings.session_mappings.values())
-            settings.session_mappings.clear()
+        user_key = self._normalize_user_id(user_id)
+        agent_maps = self.sessions_store.state.session_mappings.get(user_key, {})
+        if agent_maps:
+            count = sum(len(agent_map) for agent_map in agent_maps.values())
+            self.sessions_store.state.session_mappings[user_key] = {}
             logger.info(
                 f"Cleared all session mappings ({count} bases) for user {user_id}"
             )
-            self.update_user_settings(user_id, settings)
+            self.sessions_store.save()
 
     def list_agent_session_bases(
         self, user_id: Union[int, str], agent_name: str
     ) -> Dict[str, Dict[str, str]]:
         """Get copy of session mappings for an agent."""
-        settings = self.get_user_settings(user_id)
-        agent_map = settings.session_mappings.get(agent_name, {})
+        user_key = self._normalize_user_id(user_id)
+        agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         return {base: paths.copy() for base, paths in agent_map.items()}
 
     # Backwards-compatible helpers for Claude-specific call sites
@@ -404,13 +358,10 @@ class SettingsManager:
         self, user_id: Union[int, str], channel_id: str, thread_ts: str
     ):
         """Mark a Slack thread as active with current timestamp"""
-        settings = self.get_user_settings(user_id)
-
-        if channel_id not in settings.active_slack_threads:
-            settings.active_slack_threads[channel_id] = {}
-
-        settings.active_slack_threads[channel_id][thread_ts] = time.time()
-        self.update_user_settings(user_id, settings)
+        user_key = self._normalize_user_id(user_id)
+        channel_map = self.sessions_store.get_thread_map(user_key, channel_id)
+        channel_map[thread_ts] = time.time()
+        self.sessions_store.save()
         logger.info(
             f"Marked thread active for user {user_id}: channel={channel_id}, thread={thread_ts}"
         )
@@ -419,59 +370,54 @@ class SettingsManager:
         self, user_id: Union[int, str], channel_id: str, thread_ts: str
     ) -> bool:
         """Check if a Slack thread is active (within 24 hours)"""
-        settings = self.get_user_settings(user_id)
+        user_key = self._normalize_user_id(user_id)
 
         # First cleanup expired threads for this channel
         self._cleanup_expired_threads_for_channel(user_id, channel_id)
 
-        # Then check if thread is active
-        if channel_id in settings.active_slack_threads:
-            if thread_ts in settings.active_slack_threads[channel_id]:
-                return True
-
-        return False
+        channel_map = self.sessions_store.get_thread_map(user_key, channel_id)
+        return thread_ts in channel_map
 
     def _cleanup_expired_threads_for_channel(
         self, user_id: Union[int, str], channel_id: str
     ):
         """Remove threads older than 24 hours for a specific channel"""
-        settings = self.get_user_settings(user_id)
+        user_key = self._normalize_user_id(user_id)
+        channel_map = self.sessions_store.get_thread_map(user_key, channel_id)
 
-        if channel_id not in settings.active_slack_threads:
+        if not channel_map:
             return
 
         current_time = time.time()
         twenty_four_hours_ago = current_time - (24 * 60 * 60)
 
-        # Find expired threads
         expired_threads = [
             thread_ts
-            for thread_ts, last_active in settings.active_slack_threads[channel_id].items()
+            for thread_ts, last_active in channel_map.items()
             if last_active < twenty_four_hours_ago
         ]
 
-        # Remove expired threads
         if expired_threads:
             for thread_ts in expired_threads:
-                del settings.active_slack_threads[channel_id][thread_ts]
+                del channel_map[thread_ts]
 
-            # Clean up empty channel dict
-            if not settings.active_slack_threads[channel_id]:
-                del settings.active_slack_threads[channel_id]
+            if not channel_map:
+                self.sessions_store.state.active_slack_threads[user_key].pop(channel_id, None)
 
-            self.update_user_settings(user_id, settings)
+            self.sessions_store.save()
             logger.info(
                 f"Cleaned up {len(expired_threads)} expired threads for channel {channel_id}"
             )
 
     def cleanup_all_expired_threads(self, user_id: Union[int, str]):
         """Remove all threads older than 24 hours for all channels"""
-        settings = self.get_user_settings(user_id)
+        user_key = self._normalize_user_id(user_id)
+        channel_map = self.sessions_store.state.active_slack_threads.get(user_key, {})
 
-        if not settings.active_slack_threads:
+        if not channel_map:
             return
 
-        channels_to_clean = list(settings.active_slack_threads.keys())
+        channels_to_clean = list(channel_map.keys())
         for channel_id in channels_to_clean:
             self._cleanup_expired_threads_for_channel(user_id, channel_id)
 

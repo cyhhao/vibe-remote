@@ -4,9 +4,8 @@ import asyncio
 import os
 import logging
 from typing import Optional, Dict, Any
-from config.settings import AppConfig
 from modules.im import BaseIMClient, MessageContext, IMFactory
-from modules.im.formatters import TelegramFormatter, SlackFormatter
+from modules.im.formatters import SlackFormatter
 from modules.agent_router import AgentRouter
 from modules.agents import AgentService, ClaudeAgent, CodexAgent, OpenCodeAgent
 from modules.claude_client import ClaudeClient
@@ -25,7 +24,7 @@ logger = logging.getLogger(__name__)
 class Controller:
     """Main controller that coordinates all bot operations"""
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config):
         """Initialize controller with configuration"""
         self.config = config
 
@@ -63,15 +62,7 @@ class Controller:
         self.im_client: BaseIMClient = IMFactory.create_client(self.config)
 
         # Create platform-specific formatter
-        if self.config.platform == "telegram":
-            formatter = TelegramFormatter()
-        elif self.config.platform == "slack":
-            formatter = SlackFormatter()
-        else:
-            logger.warning(
-                f"Unknown platform: {self.config.platform}, using Telegram formatter"
-            )
-            formatter = TelegramFormatter()
+        formatter = SlackFormatter()
 
         # Inject formatter into clients
         self.im_client.formatter = formatter
@@ -169,7 +160,7 @@ class Controller:
         elif custom_cwd:
             logger.warning(f"Custom CWD does not exist: {custom_cwd}, using default")
 
-        # Fall back to default from .env
+        # Fall back to default from config.json
         default_cwd = self.config.claude.cwd
         if default_cwd:
             return os.path.abspath(os.path.expanduser(default_cwd))
@@ -179,15 +170,8 @@ class Controller:
 
     def _get_settings_key(self, context: MessageContext) -> str:
         """Get settings key based on context"""
-        if self.config.platform == "slack":
-            # For Slack, always use channel_id as the key
-            return context.channel_id
-        elif self.config.platform == "telegram":
-            # For Telegram groups, use channel_id; for DMs use user_id
-            if context.channel_id != context.user_id:
-                return context.channel_id
-            return context.user_id
-        return context.user_id
+        # Slack only in V2
+        return context.channel_id
 
     def _get_target_context(self, context: MessageContext) -> MessageContext:
         """Get target context for sending messages"""
@@ -213,19 +197,10 @@ class Controller:
 
     def _get_consolidated_max_chars(self) -> int:
         # Slack max message length is ~40k characters.
-        if self.config.platform == "slack":
-            return 35000
-        # Telegram hard limit is 4096; MarkdownV2 escaping expands.
-        if self.config.platform == "telegram":
-            return 3200
-        return 8000
+        return 35000
 
     def _get_result_max_chars(self) -> int:
-        if self.config.platform == "slack":
-            return 30000
-        if self.config.platform == "telegram":
-            return 3200
-        return 8000
+        return 30000
 
     def _build_result_summary(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
@@ -400,7 +375,7 @@ class Controller:
 
     # Settings update handler (for Slack modal)
     async def handle_settings_update(
-        self, user_id: str, hidden_message_types: list, channel_id: str = None
+        self, user_id: str, hidden_message_types: list, channel_id: Optional[str] = None
     ):
         """Handle settings update (typically from Slack modal)"""
         try:
@@ -449,7 +424,7 @@ class Controller:
 
     # Working directory change handler (for Slack modal)
     async def handle_change_cwd_submission(
-        self, user_id: str, new_cwd: str, channel_id: str = None
+        self, user_id: str, new_cwd: str, channel_id: Optional[str] = None
     ):
         """Handle working directory change submission (from Slack modal) - reuse command handler logic"""
         try:
@@ -563,7 +538,7 @@ class Controller:
                 try:
                     opencode_agent = self.agent_service.agents.get("opencode")
                     if opencode_agent and hasattr(opencode_agent, "_get_server"):
-                        server = await opencode_agent._get_server()
+                        server = await opencode_agent._get_server()  # type: ignore[attr-defined]
                         await server.ensure_running()
                         cwd = self.get_cwd(context)
                         opencode_agents = await server.get_available_agents(cwd)
@@ -573,7 +548,7 @@ class Controller:
                     logger.warning(f"Failed to fetch OpenCode data: {e}")
 
             if hasattr(self.im_client, "update_routing_modal"):
-                await self.im_client.update_routing_modal(
+                await self.im_client.update_routing_modal(  # type: ignore[attr-defined]
                     view_id=view_id,
                     view_hash=view_hash,
                     channel_id=resolved_channel_id,

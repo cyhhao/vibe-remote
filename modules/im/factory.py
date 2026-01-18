@@ -7,7 +7,7 @@ from .base import BaseIMClient
 
 # Use delayed imports to avoid circular import issues
 if TYPE_CHECKING:
-    from config.settings import AppConfig, TelegramConfig, SlackConfig
+    from config.v2_config import V2Config
 
 logger = logging.getLogger(__name__)
 
@@ -29,34 +29,21 @@ class IMFactory:
             ValueError: If platform is not supported
         """
         # Dynamic imports to avoid circular dependency
-        from .telegram import TelegramBot
         from .slack import SlackBot
-        
-        platform = config.platform.lower()
-        
-        if platform == "telegram":
-            if not config.telegram:
-                raise ValueError("Telegram configuration not found")
-            logger.info("Creating Telegram client")
-            return TelegramBot(config.telegram)
-            
-        elif platform == "slack":
-            if not config.slack:
-                raise ValueError("Slack configuration not found")
-            logger.info("Creating Slack client")
-            return SlackBot(config.slack)
-            
-        else:
-            raise ValueError(f"Unsupported IM platform: {platform}")
+
+        if not config.slack:
+            raise ValueError("Slack configuration not found")
+        logger.info("Creating Slack client")
+        return SlackBot(config.slack)
     
     @staticmethod
     def get_supported_platforms() -> list[str]:
         """Get list of supported platforms
-        
+
         Returns:
             List of supported platform names
         """
-        return ["telegram", "slack"]
+        return ["slack"]
     
     @staticmethod
     def validate_platform_config(config) -> None:
@@ -68,15 +55,6 @@ class IMFactory:
         Raises:
             ValueError: If configuration is invalid
         """
-        platform = config.platform.lower()
-        
-        if platform not in IMFactory.get_supported_platforms():
-            raise ValueError(f"Unsupported platform: {platform}")
-        
-        # Validate platform-specific configuration
-        if platform == "telegram" and config.telegram:
-            config.telegram.validate()
-        elif platform == "slack" and config.slack:
-            config.slack.validate()
-        else:
-            raise ValueError(f"Missing configuration for platform: {platform}")
+        if config.slack is None:
+            raise ValueError("Missing configuration for platform: slack")
+        config.slack.validate()

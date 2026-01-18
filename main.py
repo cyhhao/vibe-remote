@@ -4,12 +4,9 @@ import signal
 import sys
 import logging
 import asyncio
-from dotenv import load_dotenv
-from config.settings import AppConfig
+from config.paths import ensure_data_dirs, get_logs_dir
+from config.v2_config import V2Config
 from core.controller import Controller
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 def setup_logging(level: str = "INFO"):
@@ -20,13 +17,8 @@ def setup_logging(level: str = "INFO"):
     # For development, you can use this more detailed format:
     # log_format = '%(asctime)s - %(name)s - %(levelname)s - [%(pathname)s:%(lineno)d] - %(funcName)s() - %(message)s'
     
-    # Ensure logs directory exists
-    logs_dir = 'logs'
-    try:
-        os.makedirs(logs_dir, exist_ok=True)
-    except Exception:
-        # Fallback to current directory if logs dir cannot be created
-        logs_dir = '.'
+    ensure_data_dirs()
+    logs_dir = str(get_logs_dir())
 
     logging.basicConfig(
         level=getattr(logging, level.upper()),
@@ -62,19 +54,21 @@ def main():
     """Main entry point"""
     try:
         # Load configuration
-        config = AppConfig.from_env()
-        
+        config = V2Config.load()
+
         # Setup logging
-        setup_logging(config.log_level)
+        setup_logging(config.runtime.log_level)
         logger = logging.getLogger(__name__)
 
         apply_claude_sdk_patches()
         
         logger.info("Starting vibe-remote service...")
-        logger.info(f"Working directory: {config.claude.cwd}")
+        logger.info(f"Working directory: {config.runtime.default_cwd}")
         
         # Create and run controller
-        controller = Controller(config)
+        from config.v2_compat import to_app_config
+
+        controller = Controller(to_app_config(config))
 
         shutdown_initiated = False
 

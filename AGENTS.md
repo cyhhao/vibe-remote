@@ -48,28 +48,27 @@ This file defines how coding agents should work in this repository.
 
 ### Structure
 
-- Entry point: `main.py` wires `config.AppConfig` into `core/controller.py`.
+- Entry point: `main.py` wires `config.V2Config` into `core/controller.py`.
 - Core orchestration and handlers: `core/` (notably `core/handlers/`).
 - Agent backends: `modules/agents/` (shared base, OpenCode/Claude/Codex backends, registry).
-- IM transports: `modules/im/` (Slack/Telegram).
+- IM transports: `modules/im/` (Slack-first; platform abstraction retained).
 - Config:
-  - Defaults and validation: `config/` (see `config/settings.py`).
+  - Defaults and validation: `config/` (see `config/v2_config.py`).
   - Agent routing: optional local `agent_routes.yaml` (gitignored).
 - Runtime data:
-  - Logs: `logs/vibe_remote.log`.
-  - Persisted state: `user_settings.json`.
-  - Default remote working dir: `_tmp/`.
+- Logs: `~/.vibe_remote/logs/vibe_remote.log`.
+- Persisted state: `~/.vibe_remote/state/`.
+- Default remote working dir: `_tmp/`.
+
 
 ### Common Commands
 
 - Setup:
-  - `python -m venv .venv && source .venv/bin/activate`
-  - `pip install -r requirements.txt`
-  - `cp .env.example .env`
+  - `uv tool install vibe`
 - Run:
-  - `./start.sh` (preferred) or `python main.py`
-  - `./status.sh` / `./stop.sh`
-  - Restart: run `./start.sh` directly
+  - `vibe`
+  - `vibe status` / `vibe stop`
+  - Restart: run `vibe`
 
 ### Release Notes
 
@@ -87,7 +86,7 @@ This file defines how coding agents should work in this repository.
 
 - No committed automated suite yet.
 - Prefer fast `pytest`-style tests (`test_<feature>.py`) colocated or under `tests/`.
-- For IM integrations, stub Slack/Telegram clients and validate outbound payload schemas.
+- For IM integrations, stub Slack clients and validate outbound payload schemas.
 - Do a manual E2E sanity check (start bot, send `/start`) until CI exists.
 
 ### Agent Routing
@@ -97,7 +96,7 @@ This file defines how coding agents should work in this repository.
 - Routing file:
   - Create `agent_routes.yaml` (local) only if you prefer file-based routing (legacy).
   - Controlled by `AGENT_ROUTE_FILE` (defaults to repo-root `agent_routes.yaml`).
-  - Keys are Slack channel IDs / Telegram chat IDs; values are agent names (e.g., `opencode`, `claude`, `codex`).
+  - Keys are Slack channel IDs; values are agent names (e.g., `opencode`, `claude`, `codex`).
   - Missing entries fall back to platform default, then to global default.
 
 ### Safety Notes

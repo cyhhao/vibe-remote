@@ -45,7 +45,7 @@ class SettingsHandler:
             )
 
     async def _handle_settings_traditional(self, context: MessageContext):
-        """Handle settings for non-Slack platforms (Telegram, etc)"""
+        """Handle settings for non-Slack platforms"""
         # Get current settings
         settings_key = self._get_settings_key(context)
         user_settings = self.settings_manager.get_user_settings(settings_key)
@@ -184,15 +184,9 @@ class SettingsHandler:
             action = "hidden" if is_hidden else "shown"
 
             # Platform-specific callback answering
-            if self.config.platform == "telegram":
-                # For Telegram, we need the actual callback query object
-                # This is handled in the telegram bot handler
-                pass
-            elif self.config.platform == "slack":
-                # For Slack, we might send an ephemeral message
-                await self.im_client.send_message(
-                    context, f"{display_name} messages are now {action}"
-                )
+            await self.im_client.send_message(
+                context, f"{display_name} messages are now {action}"
+            )
 
         except Exception as e:
             logger.error(f"Error toggling message type {msg_type}: {e}")

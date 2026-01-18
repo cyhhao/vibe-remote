@@ -7,7 +7,7 @@
 [Quick Start](#quick-start) · [Configuration](#configuration) · [Usage](#usage) · [Setup Guides](#setup-guides) · [Roadmap](#roadmap)
 
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB)](https://www.python.org/)
-[![Platforms](https://img.shields.io/badge/platforms-Slack%20%7C%20Telegram-8A2BE2)](#setup-guides)
+[![Platforms](https://img.shields.io/badge/platforms-Slack-4A90E2)](#setup-guides)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
@@ -17,24 +17,24 @@
 
 </div>
 
-_Remote vibe coding over chat — control AI coding agents (OpenCode, Claude Code, Codex, Cursor, etc.) from Slack/Telegram._
+_Remote vibe coding over chat — control AI coding agents (OpenCode, Claude Code, Codex, Cursor, etc.) from Slack._
 
-Vibe Remote lets you operate coding agents via IM. Type in Slack or Telegram to start and steer agents; describe intent and constraints, receive streaming results, and ship without being tied to a local IDE.
+Vibe Remote lets you operate coding agents via Slack. Type in Slack to start and steer agents; describe intent and constraints, receive streaming results, and ship without being tied to a local IDE.
 
 ## Why Vibe Remote
 
 - **Vibe coding, not micromanaging**: Let AI drive based on your intent and constraints; focus on outcomes.
-- **Work from anywhere**: Control coding sessions over Slack/Telegram; no IDE tether.
+- **Work from anywhere**: Control coding sessions over Slack; no IDE tether.
 - **Extensible by design**: OpenCode-first, and also supports Claude Code + Codex; built to support additional coding agents/CLIs.
-- **Multi-agent routing**: Route each Slack channel / Telegram chat to OpenCode, Claude Code, or Codex via `agent_routes.yaml` (and Slack UI when enabled).
-- **Session persistence by thread + path**: Each Slack thread/Telegram chat maintains its own agent session and working dir; auto‑resume via saved mappings.
+- **Multi-agent routing**: Route each Slack channel to OpenCode, Claude Code, or Codex via `agent_routes.yaml` (and Slack UI when enabled).
+- **Session persistence by thread + path**: Each Slack thread maintains its own agent session and working dir; auto‑resume via saved mappings.
 - **Interactive Slack UX**: `/start` menu + Settings/CWD modals; buttons over commands for faster flow.
 
 > Recommendation: Prefer Slack as the primary platform. Threaded conversations enable parallel subtasks and keep channel history tidy — each subtask stays in its own thread.
 
 ## Core Features
 
-- **Multi‑platform**: First‑class Slack & Telegram support
+- **Platform-first**: Slack-first today; platform abstraction retained for future Vibe app
 - **Hands‑free flow**: Minimal review; messages stream back in real time
 - **Persistent sessions**: Per chat/thread sessions, easy resume
 - **Threaded Slack UX**: Clean, per‑conversation threads
@@ -43,8 +43,8 @@ Vibe Remote lets you operate coding agents via IM. Type in Slack or Telegram to 
 
 ## Architecture (Brief)
 
-- `BaseIMClient` + platform implementations (`slack.py`, `telegram.py`)
-- `IMFactory` to construct clients by `IM_PLATFORM`
+- `BaseIMClient` + platform implementations (`slack.py`)
+- `IMFactory` to construct clients by platform config
 - `Controller` orchestrates sessions, formatting, and command routing
 
 ## Prerequisites
@@ -92,43 +92,25 @@ claude --help
 
 ## Quick Start
 
-1. Install dependencies
+1. Install
 
 ```bash
-pip install -r requirements.txt
+curl -fsSL https://vibe.remote/install.sh | bash
 ```
 
-2. Create and edit `.env`
+2. Run
 
 ```bash
-cp .env.example .env
-# Set IM_PLATFORM and tokens
-```
-
-3. Run
-
-```bash
-./start.sh
-# or
-python main.py
+vibe
 ```
 
 ## Configuration
-
-### Platform selection
-
-- `IM_PLATFORM=slack` or `IM_PLATFORM=telegram`
 
 ### Slack
 
 - `SLACK_BOT_TOKEN` (xoxb-...)
 - `SLACK_APP_TOKEN` (xapp-..., Socket Mode)
-- `SLACK_TARGET_CHANNEL` optional whitelist of allowed channel IDs (channels only, start with `C`). Leave empty or omit to accept all channels. DMs are not supported currently.
-
-### Telegram
-
-- `TELEGRAM_BOT_TOKEN` from @BotFather
-- `TELEGRAM_TARGET_CHAT_ID` optional whitelist: `[123,...]` | `[]` only DMs | `null` all
+- `SLACK_TARGET_CHANNELS` optional whitelist of allowed channel IDs (channels only, start with `C`). Leave empty or omit to accept all channels. DMs are not supported currently.
 
 ### Claude Code
 
@@ -148,7 +130,7 @@ python main.py
 
 - OpenCode is enabled by `OPENCODE_ENABLED=true` (default: false). Ensure `opencode` is installed.
 - OpenCode runs as a local HTTP server started by Vibe Remote (`opencode serve --hostname=127.0.0.1 --port=4096`).
-- Default agent/model settings are read from `~/.config/opencode/opencode.json`, and can be overridden per Slack channel via the Agent Settings dialog (if you use Slack).
+- Default agent/model settings are read from `~/.config/opencode/opencode.json`, and can be overridden per Slack channel via the Agent Settings dialog.
 
 ### Agent routing
 
@@ -163,13 +145,9 @@ slack:
   default: opencode
   overrides:
     C01EXAMPLE: codex
-telegram:
-  default: opencode
-  overrides:
-    "123456789": codex
 ```
 
-- Slack routes use channel IDs; Telegram routes use chat IDs.
+- Slack routes use channel IDs.
 - See [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) for Codex install and routing notes.
 - No routing file? If OpenCode is enabled, the bot defaults to OpenCode; otherwise it falls back to Claude.
 
@@ -179,7 +157,7 @@ telegram:
 
 ## Usage
 
-### Commands (all platforms)
+### Commands
 
 - `/start` open menu / welcome
 - `/clear` reset conversation/session
@@ -204,15 +182,9 @@ Use `SubagentName:` or `SubagentName：` at the start of a message (leading spac
 - Slack DMs are not supported currently
 - Slash commands are limited in threads; to stop in a thread, type `stop` directly
 
-### Telegram
-
-- DM or group; run `/start` then type naturally
-- Real‑time streaming; long outputs are split and code blocks are formatted
-
 ## Setup Guides
 
 - Slack: [English](docs/SLACK_SETUP.md) | [中文](docs/SLACK_SETUP_ZH.md)
-- Telegram: [English](docs/TELEGRAM_SETUP.md) | [中文](docs/TELEGRAM_SETUP_ZH.md)
 
 ## Releases
 
@@ -235,8 +207,8 @@ MIT. See `LICENSE`.
 
 ## Security & Ops
 
-- **Secrets**: Never commit tokens. Use `.env`. Rotate regularly.
-- **Whitelists**: Restrict access via `SLACK_TARGET_CHANNEL` (channels only, `C…`) or `TELEGRAM_TARGET_CHAT_ID`. `null` accepts all; empty list limits to DMs/groups accordingly (Slack DMs currently unsupported).
-- **Logs**: Runtime logs at `logs/vibe_remote.log`.
-- **Session persistence**: `user_settings.json` stores per‑thread/chat session mappings and preferences; persist this file in production.
+- **Secrets**: Never commit tokens. Store in `~/.vibe_remote/config/config.json` or your secret manager.
+- **Whitelists**: Restrict access via `SLACK_TARGET_CHANNELS` (channels only, `C…`). Leave empty to accept all channels (Slack DMs currently unsupported).
+- **Logs**: Runtime logs at `~/.vibe_remote/logs/vibe_remote.log`.
+- **Session persistence**: `~/.vibe_remote/state/sessions.json` stores per‑thread session mappings; persist this file in production.
 - **Cleanup**: Set `CLEANUP_ENABLED=true` to safely prune completed receiver tasks during message handling for long‑running processes.

@@ -11,7 +11,7 @@ from slack_sdk.errors import SlackApiError
 from markdown_to_mrkdwn import SlackMarkdownConverter
 
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton
-from config.settings import SlackConfig
+from config.v2_config import SlackConfig
 from .formatters import SlackFormatter
 
 logger = logging.getLogger(__name__)
@@ -446,7 +446,7 @@ class SlackBot(BaseIMClient):
         self, callback_id: str, text: Optional[str] = None, show_alert: bool = False
     ) -> bool:
         """Answer a Slack interactive callback"""
-        # In Slack, we don't have a direct equivalent to Telegram's answer_callback_query
+        # Slack does not have a direct equivalent to answer_callback_query
         # Instead, we typically update the message or send an ephemeral message
         # This will be handled in the event processing
         return True
@@ -1847,7 +1847,7 @@ class SlackBot(BaseIMClient):
 
     async def _is_authorized_channel(self, channel_id: str) -> bool:
         """Check if a channel is authorized based on whitelist configuration"""
-        target_channel = self.config.target_channel
+        target_channel = self.config.target_channels
 
         # If None/null, accept all channels
         if target_channel is None:

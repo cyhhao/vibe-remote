@@ -1,6 +1,6 @@
 # Codex Agent Setup
 
-Vibe Remote can route individual Slack channels / Telegram chats to Codex instead of Claude Code. (OpenCode is also supported and recommended; see README for quick enablement.) This guide walks through enabling Codex end-to-end.
+Vibe Remote can route individual Slack channels to Codex instead of Claude Code. (OpenCode is also supported and recommended; see README for quick enablement.) This guide walks through enabling Codex end-to-end.
 
 ## 1. Install and authenticate Codex CLI
 
@@ -41,13 +41,9 @@ slack:
   default: claude
   overrides:
     C01ABCD2EFG: codex          # Slack channel ID
-telegram:
-  default: claude
-  overrides:
-    "123456789": codex          # Telegram chat ID
 ```
 
-Each Slack channel ID (starts with `C`) or Telegram chat ID gets its own agent. Routes fall back to the platform default, then to the global `default`.
+Each Slack channel ID (starts with `C`) gets its own agent. Routes fall back to the platform default, then to the global `default`.
 
 `agent_routes.yaml` is gitignored so you can maintain different mappings per environment. Alternatively, point `AGENT_ROUTE_FILE` to a custom path.
 
@@ -63,5 +59,5 @@ In a routed Slack channel run `@VibeRemote status` or any question—you should 
 ## 5. Troubleshooting
 
 - **“Agent `codex` is not configured”**: ensure `codex` CLI is installed and on PATH; check `CODEX_ENABLED`.
-- **`codex exec` errors**: inspect the Slack/Telegram stderr snippet or tail the latest `logs/bot_*.log`.
-- **Routing not applied**: confirm the channel ID matches Slack’s `C...` value (copy from channel details) or Telegram’s numeric chat ID, and restart the bot after editing `agent_routes.yaml`.
+- **`codex exec` errors**: inspect the Slack stderr snippet or tail the latest `~/.vibe_remote/logs/vibe_remote.log`.
+- **Routing not applied**: confirm the channel ID matches Slack’s `C...` value (copy from channel details), and restart the bot after editing `agent_routes.yaml`.

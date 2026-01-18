@@ -12,7 +12,7 @@
 
 本改动的目标是：
 
-- **System / Assistant / Toolcall**：在同一个 Slack thread / Telegram chat 内，只维护并更新 **一条可编辑消息**（append-only 视角）。
+- **System / Assistant / Toolcall**：在同一个 Slack thread 内，只维护并更新 **一条可编辑消息**（append-only 视角）。
 - **Result**：单独发送一条消息，并且 **永远发送**（不可隐藏）。
 - **Notify**：保持现状（warning/error 及时通知，逐条发送）。
 
@@ -32,11 +32,10 @@
 
 ## Consolidated Message 行为
 
-- Key：按会话上下文聚合（Slack 用 thread_id；Telegram 用 chat_id）。
+- Key：按会话上下文聚合（Slack 用 thread_id）。
 - 追加规则：每条新内容在末尾追加，并以 `---` 分隔。
 - 截断规则：超长时丢弃最早内容，并在开头加 `…(truncated)…`。
   - Slack：默认保留最后 35000 字符
-  - Telegram：默认保留最后 3200 字符（预留 MarkdownV2 转义膨胀空间）
 - Visibility：当 `system/assistant/toolcall` 全部被 hide 时，不发送/不更新 consolidated。
 
 ## Toolcall 定义

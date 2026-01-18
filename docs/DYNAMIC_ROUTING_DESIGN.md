@@ -2,7 +2,7 @@
 
 ## Overview
 
-Replace static `agent_routes.yaml` with dynamic per-channel routing configuration that users can change via Slack/Telegram menus.
+Replace static `agent_routes.yaml` with dynamic per-channel routing configuration that users can change via Slack menus.
 
 ## Requirements
 
@@ -11,14 +11,13 @@ Replace static `agent_routes.yaml` with dynamic per-channel routing configuratio
    - Agent selection (build, plan, etc.) - from `/agent` API
    - Model selection - from `/config/providers` API
 3. **Claude/Codex**: No model selection (use their defaults)
-4. **Fallback**: `agent_routes.yaml` remains as default; UI overrides are persisted in `user_settings.json`
-5. **Entry points**: 
+4. **Fallback**: `agent_routes.yaml` remains as default; UI overrides are persisted in `~/.vibe_remote/state/settings.json`
+5. **Entry points**:
    - Slack: `/start` button "Switch Agent" + `/settings` modal
-   - Telegram: inline keyboard in settings (backend only for now)
 
 ## Data Structure
 
-### UserSettings (in `user_settings.json`)
+### UserSettings (in `~/.vibe_remote/state/settings.json`)
 
 ```python
 @dataclass
@@ -31,10 +30,8 @@ class ChannelRouting:
 class UserSettings:
     hidden_message_types: List[str] = ...
     custom_cwd: Optional[str] = None
-    session_mappings: Dict[...] = ...
-    active_slack_threads: Dict[...] = ...
-    # NEW
-    channel_routing: Optional[ChannelRouting] = None
+     channel_routing: Optional[ChannelRouting] = None
+
 ```
 
 ### JSON Representation
@@ -44,7 +41,6 @@ class UserSettings:
   "C0A6U2GH6P5": {
     "hidden_message_types": ["system", "assistant", "user"],
     "custom_cwd": "/path/to/project",
-    "session_mappings": {...},
     "channel_routing": {
       "agent_backend": "opencode",
       "opencode_agent": "build",
@@ -272,9 +268,9 @@ view = {
 12. [ ] Handle `routing_modal` submission in `_handle_view_submission()`
 13. [ ] Add `cmd_routing` callback handler
 
-### Phase 4: Telegram UI (Optional)
-14. [ ] Add backend switching to Telegram inline keyboard
-15. [ ] (Future) Add OpenCode agent/model selection for Telegram
+### Phase 4: Future App UI (Optional)
+14. [ ] Add backend switching to the Vibe app UI
+15. [ ] (Future) Add OpenCode agent/model selection to the Vibe app UI
 
 ## File Changes Summary
 

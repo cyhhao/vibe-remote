@@ -152,9 +152,7 @@ class MessageHandler:
                 try:
                     if context.message_id:
                         ack_reaction_message_id = context.message_id
-                        ack_reaction_emoji = (
-                            ":eyes:" if self.config.platform == "slack" else "👀"
-                        )
+                        ack_reaction_emoji = ":eyes:"
                         ok = await self.im_client.add_reaction(
                             context, ack_reaction_message_id, ack_reaction_emoji
                         )
@@ -167,7 +165,7 @@ class MessageHandler:
 
             if subagent_name and context.message_id:
                 try:
-                    reaction = ":robot_face:" if self.config.platform == "slack" else "🤖"
+                    reaction = ":robot_face:"
                     await self.im_client.add_reaction(
                         context,
                         context.message_id,
