@@ -242,14 +242,18 @@ export const Dashboard: React.FC = () => {
                         <span className="text-muted">{t('dashboard.defaultBackend')}</span>
                         <span className="font-mono text-xs text-text">{config.agents?.default_backend || 'opencode'}</span>
                     </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.slackWorkspace')}</span>
-                        <span className="text-xs text-text">{config.slack?.team_name || t('common.notLinked')}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.gateway')}</span>
-                        <span className="text-xs text-text">{config.gateway?.relay_url ? t('common.online') : t('common.offline')}</span>
-                    </div>
+                    {showWorkspaceGateway && (
+                        <div className="flex justify-between items-center">
+                            <span className="text-muted">{t('dashboard.slackWorkspace')}</span>
+                            <span className="text-xs text-text">{config.slack?.team_name || t('common.notLinked')}</span>
+                        </div>
+                    )}
+                    {showWorkspaceGateway && (
+                        <div className="flex justify-between items-center">
+                            <span className="text-muted">{t('dashboard.gateway')}</span>
+                            <span className="text-xs text-text">{config.gateway?.relay_url ? t('common.online') : t('common.offline')}</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
