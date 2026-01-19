@@ -11,6 +11,7 @@ export const VersionBadge: React.FC = () => {
   const [isPopupOpen, setIsPopupOpen] = React.useState(false);
   const [checking, setChecking] = React.useState(false);
   const [upgrading, setUpgrading] = React.useState(false);
+  const [restarting, setRestarting] = React.useState(false);
   const [upgradeResult, setUpgradeResult] = React.useState<UpgradeResult | null>(null);
   const popupRef = React.useRef<HTMLDivElement>(null);
 
@@ -51,11 +52,19 @@ export const VersionBadge: React.FC = () => {
       const result = await api.doUpgrade();
       setUpgradeResult(result);
       if (result.ok) {
-        // Refresh version info after upgrade
-        setTimeout(() => checkVersion(), 1000);
+        if (result.restarting) {
+          // Show restarting state and reload page after delay
+          setRestarting(true);
+          setTimeout(() => {
+            window.location.reload();
+          }, 4000);
+        } else {
+          // Refresh version info after upgrade
+          setTimeout(() => checkVersion(), 1000);
+        }
       }
     } catch (e) {
-      setUpgradeResult({ ok: false, message: String(e), output: null });
+      setUpgradeResult({ ok: false, message: String(e), output: null, restarting: false });
     } finally {
       setUpgrading(false);
     }
@@ -154,19 +163,27 @@ export const VersionBadge: React.FC = () => {
                 </span>
               </div>
             )}
+
+            {/* Restarting Status */}
+            {restarting && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 rounded-md text-sm">
+                <RefreshCw size={16} className="animate-spin" />
+                <span>{t('dashboard.restarting')}</span>
+              </div>
+            )}
           </div>
 
           {/* Actions */}
           <div className="px-4 py-3 border-t border-border flex gap-2">
             <button
               onClick={checkVersion}
-              disabled={checking}
+              disabled={checking || restarting}
               className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm bg-neutral-100 hover:bg-neutral-200 rounded-md transition-colors disabled:opacity-50"
             >
               <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
               {checking ? t('dashboard.checking') : t('dashboard.checkUpdate')}
             </button>
-            {hasUpdate && (
+            {hasUpdate && !restarting && (
               <button
                 onClick={handleUpgrade}
                 disabled={upgrading}

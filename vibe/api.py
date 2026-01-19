@@ -345,11 +345,14 @@ def get_version_info() -> dict:
     return result
 
 
-def do_upgrade() -> dict:
+def do_upgrade(auto_restart: bool = True) -> dict:
     """Perform upgrade to latest version.
     
+    Args:
+        auto_restart: If True, restart vibe after successful upgrade
+    
     Returns:
-        {"ok": bool, "message": str, "output": str | None}
+        {"ok": bool, "message": str, "output": str | None, "restarting": bool}
     """
     # Determine upgrade method
     uv_path = shutil.which("uv")
@@ -360,24 +363,43 @@ def do_upgrade() -> dict:
     elif pip_path:
         cmd = [pip_path, "install", "--upgrade", "vibe-remote"]
     else:
-        return {"ok": False, "message": "Neither uv nor pip found", "output": None}
+        return {"ok": False, "message": "Neither uv nor pip found", "output": None, "restarting": False}
     
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode == 0:
+            restarting = False
+            if auto_restart:
+                # Schedule restart in background after response is sent
+                # Use 'vibe' command which will restart both service and UI
+                vibe_path = shutil.which("vibe")
+                if vibe_path:
+                    # Start restart process detached, with delay to allow response to be sent
+                    restart_cmd = f"sleep 2 && {vibe_path}"
+                    subprocess.Popen(
+                        restart_cmd,
+                        shell=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
+                    restarting = True
+            
             return {
                 "ok": True,
-                "message": "Upgrade successful. Please restart vibe.",
+                "message": "Upgrade successful." + (" Restarting..." if restarting else " Please restart vibe."),
                 "output": result.stdout,
+                "restarting": restarting,
             }
         else:
             return {
                 "ok": False,
                 "message": "Upgrade failed",
                 "output": result.stderr or result.stdout,
+                "restarting": False,
             }
     except subprocess.TimeoutExpired:
-        return {"ok": False, "message": "Upgrade timed out", "output": None}
+        return {"ok": False, "message": "Upgrade timed out", "output": None, "restarting": False}
     except Exception as e:
-        return {"ok": False, "message": str(e), "output": None}
+        return {"ok": False, "message": str(e), "output": None, "restarting": False}
 

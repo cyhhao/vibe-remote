@@ -189,9 +189,10 @@
     "upgrading": "更新中...",
     "upToDate": "已是最新版本",
     "checkFailed": "检查失败",
-    "upgradeSuccess": "更新成功！请重启 vibe。",
+    "upgradeSuccess": "更新成功！",
     "upgradeFailed": "更新失败",
-    "updateHint": "从 {{from}} 更新到 {{to}}"
+    "updateHint": "从 {{from}} 更新到 {{to}}",
+    "restarting": "正在重启..."
   },
   "doctor": {
     "title": "系统状态",

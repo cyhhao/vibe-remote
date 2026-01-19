@@ -34,6 +34,7 @@ export type UpgradeResult = {
   ok: boolean;
   message: string;
   output: string | null;
+  restarting: boolean;
 };
 
 const ApiContext = createContext<ApiContextType | undefined>(undefined);

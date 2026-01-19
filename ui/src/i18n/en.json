@@ -189,9 +189,10 @@
     "upgrading": "Upgrading...",
     "upToDate": "You're up to date",
     "checkFailed": "Check failed",
-    "upgradeSuccess": "Upgrade successful! Please restart vibe.",
+    "upgradeSuccess": "Upgrade successful!",
     "upgradeFailed": "Upgrade failed",
-    "updateHint": "Update from {{from}} to {{to}}"
+    "updateHint": "Update from {{from}} to {{to}}",
+    "restarting": "Restarting..."
   },
   "doctor": {
     "title": "System Status",
