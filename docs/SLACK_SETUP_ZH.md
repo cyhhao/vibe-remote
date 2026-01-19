@@ -2,18 +2,41 @@
 
 ## 太长不看
 
-1. 用下面的 manifest 创建 Slack App
-2. 拿到两个 token（`xoxb-` 和 `xapp-`）
-3. 运行 `vibe`，在网页上粘贴
+1. 运行 `vibe` → 浏览器打开设置向导
+2. 跟着向导创建 Slack App 并获取 token
+3. 完事！
 
 ---
 
-## 第 1 步：创建 App
+## 第 1 步：启动设置向导
 
-1. 打开 [api.slack.com/apps](https://api.slack.com/apps)
-2. **Create New App** → **From an app manifest**
-3. 选择工作区
-4. 粘贴这段 YAML：
+```bash
+vibe
+```
+
+浏览器会自动打开设置向导：
+
+![设置向导欢迎页](../assets/screenshots/setup-welcome-zh.png)
+
+点击 **开始设置** 开始。
+
+---
+
+## 第 2 步：创建 Slack App
+
+向导会引导你创建预配置好权限的 Slack App：
+
+![Slack 配置](../assets/screenshots/setup-slack-zh.png)
+
+1. 点击 **创建 Slack 应用** — 打开 Slack 并自动填充配置
+2. 选择你的工作区，点击 **Create**
+3. 按照步骤获取 **Bot Token**（`xoxb-`）和 **App Token**（`xapp-`）
+4. 粘贴到向导中，点击 **验证令牌**
+
+<details>
+<summary><b>手动配置（如需要）</b></summary>
+
+打开 [api.slack.com/apps](https://api.slack.com/apps)，用以下 manifest 创建 App：
 
 ```yaml
 display_information:
@@ -65,42 +88,39 @@ settings:
   interactivity:
     is_enabled: true
 ```
-
-5. 点 **Create**
-
----
-
-## 第 2 步：获取 Token
-
-### Bot Token（`xoxb-`）
-
-1. **OAuth & Permissions** → **Install to Workspace** → **Allow**
-2. 复制 **Bot User OAuth Token**
-
-### App Token（`xapp-`）
-
-1. **Basic Information** → **App-Level Tokens** → **Generate Token**
-2. 名称：`socket-mode`
-3. 添加 scope：`connections:write`
-4. **Generate** → 复制 token
+</details>
 
 ---
 
-## 第 3 步：配置
+## 第 3 步：完成并启动
 
-```bash
-vibe
-```
+确认配置，点击 **完成并启动**：
 
-网页打开。粘贴 token。点验证。完事。
+![完成设置](../assets/screenshots/setup-finish-zh.png)
+
+向导会显示快速上手提示。
 
 ---
 
-## 第 4 步：使用
+## 第 4 步：仪表盘
+
+设置完成后，你会看到仪表盘：
+
+![仪表盘](../assets/screenshots/dashboard-zh.png)
+
+在这里你可以：
+- 启动/停止服务
+- 配置消息处理选项
+- 管理频道设置
+- 查看日志和诊断信息
+
+---
+
+## 第 5 步：在 Slack 中使用
 
 1. 邀请 bot 到频道：`/invite @Vibe Remote`
-2. 输入 `/start`
-3. 开始写代码
+2. 输入 `/start` 或 `@Vibe Remote`
+3. 开始写代码！
 
 ---
 

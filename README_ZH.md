@@ -40,7 +40,17 @@
 curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash && vibe
 ```
 
-完事。浏览器打开。粘贴 Slack token。搞定。
+完事。浏览器打开 → 跟着向导走 → 搞定。
+
+---
+
+## 快速开始
+
+### 1. 安装
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
+```
 
 <details>
 <summary><b>Windows？</b></summary>
@@ -50,61 +60,27 @@ irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | ie
 ```
 </details>
 
----
+### 2. 启动
 
-## 为什么做这个
-
-| 问题 | 解决方案 |
-|------|----------|
-| Claude Code 很强但需要终端 | Slack 就是你的终端 |
-| 上下文切换杀死心流 | 留在一个 App 里 |
-| 手机上没法写代码 | 现在可以了 |
-| 多个 Agent，多套配置 | 一个 Slack，随便切 |
-
-**支持的 Agent：**
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 深度推理，复杂重构
-- [OpenCode](https://opencode.ai) — 快速、可扩展、社区最爱
-- [Codex](https://github.com/openai/codex) — OpenAI 的编码模型
-
----
-
-## 工作原理
-
-```
-┌──────────────┐         ┌──────────────┐         ┌──────────────┐
-│      你      │  Slack  │ Vibe Remote  │  stdio  │  AI Agent    │
-│   (任何地方)  │ ──────▶ │  (你的 Mac)   │ ──────▶ │  (你的代码)   │
-└──────────────┘         └──────────────┘         └──────────────┘
-```
-
-1. **你输入**：*「给设置页加个暗黑模式」*
-2. **Vibe Remote** 路由到你配置的 Agent
-3. **Agent** 读代码、写代码、实时返回
-4. **你审查**，在线程里继续迭代
-
-**你的代码不会离开你的机器。** Vibe Remote 本地运行，通过 Slack Socket Mode 连接。
-
----
-
-## 快速开始
-
-### 1. 安装
-```bash
-curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
-```
-
-### 2. 运行
 ```bash
 vibe
 ```
 
-### 3. 配置 Slack（5 分钟）
-Web UI 会引导你完成所有步骤。或者看[详细指南](docs/SLACK_SETUP_ZH.md)。
+浏览器会自动打开设置向导。
+
+### 3. 跟着向导走
+
+Web UI 会引导你创建 Slack App、获取 token、配置 Agent — 全在一个页面搞定。
+
+查看[详细配置指南](docs/SLACK_SETUP_ZH.md)（含截图）。
 
 ### 4. 开始 Vibe
-```
-/start → 选 Agent → 开始输入
-```
+
+设置完成后，你会看到一个仪表盘来管理一切：
+
+![仪表盘](assets/screenshots/dashboard-zh.png)
+
+在 Slack 里输入 `/start` 或 `@Vibe Remote`。你的 AI 编码助手准备好了。
 
 ---
 
@@ -118,6 +94,25 @@ Web UI 会引导你完成所有步骤。或者看[详细指南](docs/SLACK_SETUP
 | 在线程里回复 | 继续对话 |
 
 **技巧：** 每个 Slack 线程 = 独立会话。开多个线程可以并行任务。
+
+---
+
+## 即时切换 Agent
+
+对话中途想换个 Agent？加个前缀就行：
+
+```
+Plan: 设计一个新的 API 缓存层
+```
+
+就这样。不用菜单，不用命令。输入 `AgentName:` 消息就自动路由到对应 Agent。
+
+```
+Code-Reviewer: 检查我刚开的 PR
+Build: 编译并运行测试
+```
+
+支持 OpenCode agents 和 Claude Code 自定义 agents。大小写不敏感。支持中英文冒号。
 
 ---
 

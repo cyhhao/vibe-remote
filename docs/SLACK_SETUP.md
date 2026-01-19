@@ -2,18 +2,41 @@
 
 ## TL;DR
 
-1. Create Slack App with manifest below
-2. Get two tokens (`xoxb-` and `xapp-`)
-3. Run `vibe` and paste them in the web UI
+1. Run `vibe` → Browser opens the setup wizard
+2. Follow the wizard to create Slack App and get tokens
+3. Done!
 
 ---
 
-## Step 1: Create App
+## Step 1: Launch Setup Wizard
 
-1. Go to [api.slack.com/apps](https://api.slack.com/apps)
-2. **Create New App** → **From an app manifest**
-3. Select workspace
-4. Paste this YAML:
+```bash
+vibe
+```
+
+Your browser opens automatically to the setup wizard:
+
+![Setup Welcome](../assets/screenshots/setup-welcome-en.png)
+
+Click **Get started** to begin.
+
+---
+
+## Step 2: Create Slack App
+
+The wizard guides you through creating a Slack App with pre-configured permissions:
+
+![Setup Slack](../assets/screenshots/setup-slack-en.png)
+
+1. Click **Create Slack App** — opens Slack with manifest pre-filled
+2. Select your workspace and click **Create**
+3. Follow the steps to get your **Bot Token** (`xoxb-`) and **App Token** (`xapp-`)
+4. Paste them in the wizard and click **Validate**
+
+<details>
+<summary><b>Manual Setup (if needed)</b></summary>
+
+Go to [api.slack.com/apps](https://api.slack.com/apps) and create app with this manifest:
 
 ```yaml
 display_information:
@@ -65,42 +88,39 @@ settings:
   interactivity:
     is_enabled: true
 ```
-
-5. Click **Create**
-
----
-
-## Step 2: Get Tokens
-
-### Bot Token (`xoxb-`)
-
-1. **OAuth & Permissions** → **Install to Workspace** → **Allow**
-2. Copy the **Bot User OAuth Token**
-
-### App Token (`xapp-`)
-
-1. **Basic Information** → **App-Level Tokens** → **Generate Token**
-2. Name: `socket-mode`
-3. Add scope: `connections:write`
-4. **Generate** → Copy the token
+</details>
 
 ---
 
-## Step 3: Configure
+## Step 3: Finish & Start
 
-```bash
-vibe
-```
+Review your settings and click **Finish & Start**:
 
-Web UI opens. Paste your tokens. Click validate. Done.
+![Setup Finish](../assets/screenshots/setup-finish-en.png)
+
+The wizard shows you quick tips on how to use Vibe Remote.
 
 ---
 
-## Step 4: Use
+## Step 4: Dashboard
+
+Once setup is complete, you'll see the Dashboard:
+
+![Dashboard](../assets/screenshots/dashboard-en.png)
+
+From here you can:
+- Start/stop the service
+- Configure message handling options
+- Manage channel settings
+- View logs and diagnostics
+
+---
+
+## Step 5: Use in Slack
 
 1. Invite bot to channel: `/invite @Vibe Remote`
-2. Type `/start`
-3. Start coding
+2. Type `/start` or `@Vibe Remote`
+3. Start coding!
 
 ---
 
