@@ -302,8 +302,11 @@ class SettingsHandler:
         settings_key = self._get_settings_key(context)
         current_routing = self.settings_manager.get_channel_routing(settings_key)
 
-        # Get registered backends
-        registered_backends = list(self.controller.agent_service.agents.keys())
+        # Get registered backends, prioritize opencode first
+        all_backends = list(self.controller.agent_service.agents.keys())
+        registered_backends = sorted(
+            all_backends, key=lambda x: (x != "opencode", x)
+        )
 
         # Get current backend (from routing or default)
         current_backend = self.controller.resolve_agent_for_context(context)

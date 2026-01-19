@@ -469,7 +469,10 @@ class Controller:
 
             settings_key = self._get_settings_key(context)
             current_routing = self.settings_manager.get_channel_routing(settings_key)
-            registered_backends = list(self.agent_service.agents.keys())
+            all_backends = list(self.agent_service.agents.keys())
+            registered_backends = sorted(
+                all_backends, key=lambda x: (x != "opencode", x)
+            )
             current_backend = self.resolve_agent_for_context(context)
 
             values = view.get("state", {}).get("values", {})
