@@ -13,7 +13,7 @@ interface SummaryProps {
   isLast: boolean;
 }
 
-export const Summary: React.FC<SummaryProps> = ({ data, onBack, onNext }) => {
+export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { control } = useStatus();
