@@ -150,7 +150,7 @@ _tmp/
 logs/
 .vibe_remote/
 ui/node_modules/
-ui/dist/
+# ui/dist/ is committed for packaging (pre-built UI assets)
 tmp/
 .bot.pid
 user_settings.json
