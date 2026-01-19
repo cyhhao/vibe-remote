@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from config import paths
+from vibe.runtime import get_ui_dist_path, get_working_dir
 
 
 class UiHandler(http.server.BaseHTTPRequestHandler):
@@ -104,7 +105,7 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(api.detect_cli(binary))
             return
 
-        ui_dist = Path("ui/dist")
+        ui_dist = get_ui_dist_path()
         requested_path = self.path.lstrip("/")
         if requested_path.startswith("assets/"):
             file_path = ui_dist / requested_path
@@ -192,9 +193,9 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
                 import subprocess
                 import sys
                 import time
-                from pathlib import Path
                 from config import paths as config_paths
-                root_dir = Path(__file__).resolve().parents[1]
+                from vibe.runtime import get_working_dir
+                working_dir = get_working_dir()
                 # Start new UI server process first (it will retry until port is available)
                 command = f"from vibe.ui_server import run_ui_server; run_ui_server('{host}', {port})"
                 stdout_path = config_paths.get_runtime_dir() / "ui_stdout.log"
@@ -206,7 +207,7 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
                     stdout=stdout,
                     stderr=stderr,
                     start_new_session=True,
-                    cwd=str(root_dir),
+                    cwd=str(working_dir),
                     close_fds=True,
                 )
                 stdout.close()

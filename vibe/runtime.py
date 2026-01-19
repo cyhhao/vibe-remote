@@ -18,8 +18,63 @@ from config.v2_config import (
 )
 
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-MAIN_PATH = ROOT_DIR / "main.py"
+def get_package_root() -> Path:
+    """Get the root directory of the vibe package."""
+    return Path(__file__).resolve().parent
+
+
+def get_project_root() -> Path:
+    """Get the project root directory (for development mode)."""
+    return Path(__file__).resolve().parents[1]
+
+
+def get_ui_dist_path() -> Path:
+    """Get the path to UI dist directory."""
+    # First check if we're in development mode (ui/dist exists at project root)
+    project_root = get_project_root()
+    dev_ui_path = project_root / "ui" / "dist"
+    if dev_ui_path.exists():
+        return dev_ui_path
+    
+    # Then check if UI is bundled with the package
+    package_ui_path = get_package_root() / "ui" / "dist"
+    if package_ui_path.exists():
+        return package_ui_path
+    
+    # Fallback to development path
+    return dev_ui_path
+
+
+def get_service_main_path() -> Path:
+    """Get the path to the main service entry point."""
+    # First check if we're in development mode (main.py exists at project root)
+    project_root = get_project_root()
+    dev_main_path = project_root / "main.py"
+    if dev_main_path.exists():
+        return dev_main_path
+    
+    # Then check if service_main.py is bundled with the package
+    package_main_path = get_package_root() / "service_main.py"
+    if package_main_path.exists():
+        return package_main_path
+    
+    # Fallback to development path
+    return dev_main_path
+
+
+def get_working_dir() -> Path:
+    """Get the working directory for subprocess execution."""
+    # In development mode, use project root
+    project_root = get_project_root()
+    if (project_root / "main.py").exists():
+        return project_root
+    
+    # In installed mode, use package root
+    return get_package_root()
+
+
+ROOT_DIR = get_project_root()  # For backward compatibility
+MAIN_PATH = get_service_main_path()
 
 
 def ensure_dirs():
@@ -31,7 +86,7 @@ def default_config():
         mode="self_host",
         version="v2",
         slack=SlackConfig(bot_token="", app_token=""),
-        runtime=RuntimeConfig(default_cwd=str(ROOT_DIR / "_tmp")),
+        runtime=RuntimeConfig(default_cwd=str(Path.cwd())),
         agents=AgentsConfig(
             default_backend="opencode",
             opencode=OpenCodeConfig(enabled=True, cli_path="opencode"),
@@ -82,7 +137,7 @@ def spawn_background(args, pid_path, stdout_name: str, stderr_name: str):
         stdout=stdout,
         stderr=stderr,
         start_new_session=True,
-        cwd=str(ROOT_DIR),
+        cwd=str(get_working_dir()),
         close_fds=True,
     )
     stdout.close()
@@ -129,8 +184,9 @@ def render_status():
 
 
 def start_service():
+    main_path = get_service_main_path()
     return spawn_background(
-        [sys.executable, str(MAIN_PATH)],
+        [sys.executable, str(main_path)],
         paths.get_runtime_pid_path(),
         "service_stdout.log",
         "service_stderr.log",
