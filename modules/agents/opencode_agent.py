@@ -1340,7 +1340,6 @@ class OpenCodeAgent(BaseAgent):
         session_id = self.settings_manager.get_agent_session_id(
             request.settings_key,
             request.base_session_id,
-            request.working_path,
             agent_name=self.name,
         )
 
@@ -1356,7 +1355,6 @@ class OpenCodeAgent(BaseAgent):
                         request.settings_key,
                         self.name,
                         request.base_session_id,
-                        request.working_path,
                         session_id,
                     )
                     logger.info(
@@ -1384,7 +1382,6 @@ class OpenCodeAgent(BaseAgent):
                             request.settings_key,
                             self.name,
                             request.base_session_id,
-                            request.working_path,
                             session_id,
                         )
                         logger.info(

@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SessionState:
-    session_mappings: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = field(
+    # session_mappings: user_id -> agent_name -> thread_id -> session_id
+    session_mappings: Dict[str, Dict[str, Dict[str, str]]] = field(
         default_factory=dict
     )
     active_slack_threads: Dict[str, Dict[str, Dict[str, float]]] = field(
@@ -45,7 +46,8 @@ class SessionsStore:
         if user_id not in self.state.active_slack_threads:
             self.state.active_slack_threads[user_id] = {}
 
-    def get_agent_map(self, user_id: str, agent_name: str) -> Dict[str, Dict[str, str]]:
+    def get_agent_map(self, user_id: str, agent_name: str) -> Dict[str, str]:
+        """Get mapping of thread_id -> session_id for a user and agent."""
         self._ensure_user_namespace(user_id)
         agent_map = self.state.session_mappings[user_id].get(agent_name)
         if agent_map is None:

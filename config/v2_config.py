@@ -103,41 +103,81 @@ class V2Config:
 
     @classmethod
     def from_payload(cls, payload: dict) -> "V2Config":
-        slack_payload = payload.get("slack") or {}
+        if not isinstance(payload, dict):
+            raise ValueError("Config payload must be an object")
+
+        mode = payload.get("mode")
+        if mode not in {"self_host", "saas"}:
+            raise ValueError("Config 'mode' must be 'self_host' or 'saas'")
+
+        slack_payload = payload.get("slack")
+        if not isinstance(slack_payload, dict):
+            raise ValueError("Config 'slack' must be an object")
+
         if "require_mention" not in slack_payload:
             slack_payload = dict(slack_payload)
             slack_payload["require_mention"] = False
-        if "target_channels" in slack_payload:
-            slack_payload = dict(slack_payload)
-            slack_payload.pop("target_channels", None)
+
         slack = SlackConfig(**slack_payload)
+        slack.validate()
         gateway_payload = payload.get("gateway")
+        if gateway_payload is not None and not isinstance(gateway_payload, dict):
+            raise ValueError("Config 'gateway' must be an object")
         gateway = GatewayConfig(**gateway_payload) if gateway_payload else None
-        runtime_payload = payload.get("runtime") or {}
-        if "target_channels" in runtime_payload:
-            runtime_payload = dict(runtime_payload)
-            runtime_payload.pop("target_channels", None)
+
+        runtime_payload = payload.get("runtime")
+        if not isinstance(runtime_payload, dict):
+            raise ValueError("Config 'runtime' must be an object")
         runtime = RuntimeConfig(**runtime_payload)
-        agents_payload = payload.get("agents") or {}
-        opencode = OpenCodeConfig(**(agents_payload.get("opencode") or {}))
-        claude = ClaudeConfig(**(agents_payload.get("claude") or {}))
-        codex = CodexConfig(**(agents_payload.get("codex") or {}))
+
+        agents_payload = payload.get("agents")
+        if not isinstance(agents_payload, dict):
+            raise ValueError("Config 'agents' must be an object")
+
+        opencode_payload = agents_payload.get("opencode") or {}
+        if not isinstance(opencode_payload, dict):
+            raise ValueError("Config 'agents.opencode' must be an object")
+
+        claude_payload = agents_payload.get("claude") or {}
+        if not isinstance(claude_payload, dict):
+            raise ValueError("Config 'agents.claude' must be an object")
+
+        codex_payload = agents_payload.get("codex") or {}
+        if not isinstance(codex_payload, dict):
+            raise ValueError("Config 'agents.codex' must be an object")
+
+        opencode = OpenCodeConfig(**opencode_payload)
+        claude = ClaudeConfig(**claude_payload)
+        codex = CodexConfig(**codex_payload)
+
+        default_backend = agents_payload.get("default_backend", "opencode")
+        if default_backend not in {"opencode", "claude", "codex"}:
+            raise ValueError("Config 'agents.default_backend' must be 'opencode', 'claude', or 'codex'")
+
         agents = AgentsConfig(
-            default_backend=agents_payload.get("default_backend", "opencode"),
+            default_backend=default_backend,
             opencode=opencode,
             claude=claude,
             codex=codex,
         )
-        ui = UiConfig(**(payload.get("ui") or {}))
+
+        ui_payload = payload.get("ui") or {}
+        if not isinstance(ui_payload, dict):
+            raise ValueError("Config 'ui' must be an object")
+        ui = UiConfig(**ui_payload)
+        ack_mode = payload.get("ack_mode", "reaction")
+        if ack_mode not in {"reaction", "message"}:
+            raise ValueError("Config 'ack_mode' must be 'reaction' or 'message'")
+
         return cls(
-            mode=payload.get("mode", "self_host"),
+            mode=mode,
             version=payload.get("version", "v2"),
             slack=slack,
             runtime=runtime,
             agents=agents,
             gateway=gateway,
             ui=ui,
-            ack_mode=payload.get("ack_mode", "reaction"),
+            ack_mode=ack_mode,
         )
 
     def save(self, config_path: Optional[Path] = None) -> None:

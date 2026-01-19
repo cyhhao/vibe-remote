@@ -304,7 +304,7 @@ class SettingsManager:
             "toolcall": "Toolcall",
         }
 
-    def _ensure_agent_namespace(self, user_id: Union[int, str], agent_name: str) -> Dict[str, Dict[str, str]]:
+    def _ensure_agent_namespace(self, user_id: Union[int, str], agent_name: str) -> Dict[str, str]:
         user_key = self._normalize_user_id(user_id)
         return self.sessions_store.get_agent_map(user_key, agent_name)
 
@@ -312,34 +312,28 @@ class SettingsManager:
         self,
         user_id: Union[int, str],
         agent_name: str,
-        base_session_id: str,
-        working_path: str,
+        thread_id: str,
         session_id: str,
     ):
-        """Store mapping between base session ID, working path, and agent session ID"""
+        """Store mapping between thread ID and agent session ID"""
         agent_map = self._ensure_agent_namespace(user_id, agent_name)
-        if base_session_id not in agent_map:
-            agent_map[base_session_id] = {}
-        agent_map[base_session_id][working_path] = session_id
+        agent_map[thread_id] = session_id
         self.sessions_store.save()
         logger.info(
             f"Stored {agent_name} session mapping for {user_id}: "
-            f"{base_session_id}[{working_path}] -> {session_id}"
+            f"{thread_id} -> {session_id}"
         )
 
     def get_agent_session_id(
         self,
         user_id: Union[int, str],
-        base_session_id: str,
-        working_path: str,
+        thread_id: str,
         agent_name: str,
     ) -> Optional[str]:
-        """Get agent session ID for given base session ID and working path"""
+        """Get agent session ID for given thread ID"""
         user_key = self._normalize_user_id(user_id)
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
-        if base_session_id in agent_map:
-            return agent_map[base_session_id].get(working_path)
-        return None
+        return agent_map.get(thread_id)
 
     def _canonicalize_message_type(self, message_type: str) -> str:
         """Normalize message type to canonical form to support aliases."""
@@ -368,25 +362,16 @@ class SettingsManager:
         self,
         user_id: Union[int, str],
         agent_name: str,
-        base_session_id: str,
-        working_path: Optional[str] = None,
+        thread_id: str,
     ):
-        """Clear session mapping for given base session ID and optionally working path"""
+        """Clear session mapping for given thread ID"""
         user_key = self._normalize_user_id(user_id)
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
-        if base_session_id in agent_map:
-            if working_path:
-                if working_path in agent_map[base_session_id]:
-                    del agent_map[base_session_id][working_path]
-                    logger.info(
-                        f"Cleared {agent_name} session mapping for user {user_id}: "
-                        f"{base_session_id}[{working_path}]"
-                    )
-            else:
-                del agent_map[base_session_id]
-                logger.info(
-                    f"Cleared all {agent_name} session mappings for user {user_id}: {base_session_id}"
-                )
+        if thread_id in agent_map:
+            del agent_map[thread_id]
+            logger.info(
+                f"Cleared {agent_name} session mapping for user {user_id}: {thread_id}"
+            )
             self.sessions_store.save()
 
     def clear_agent_sessions(self, user_id: Union[int, str], agent_name: str):
@@ -412,41 +397,39 @@ class SettingsManager:
             )
             self.sessions_store.save()
 
-    def list_agent_session_bases(
+    def list_agent_sessions(
         self, user_id: Union[int, str], agent_name: str
-    ) -> Dict[str, Dict[str, str]]:
-        """Get copy of session mappings for an agent."""
+    ) -> Dict[str, str]:
+        """Get copy of session mappings (thread_id -> session_id) for an agent."""
         user_key = self._normalize_user_id(user_id)
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
-        return {base: paths.copy() for base, paths in agent_map.items()}
+        return dict(agent_map)
 
     # Backwards-compatible helpers for Claude-specific call sites
     def set_session_mapping(
         self,
         user_id: Union[int, str],
-        base_session_id: str,
-        working_path: str,
+        thread_id: str,
         claude_session_id: str,
     ):
         self.set_agent_session_mapping(
-            user_id, "claude", base_session_id, working_path, claude_session_id
+            user_id, "claude", thread_id, claude_session_id
         )
 
     def get_claude_session_id(
-        self, user_id: Union[int, str], base_session_id: str, working_path: str
+        self, user_id: Union[int, str], thread_id: str
     ) -> Optional[str]:
         return self.get_agent_session_id(
-            user_id, base_session_id, working_path, agent_name="claude"
+            user_id, thread_id, agent_name="claude"
         )
 
     def clear_session_mapping(
         self,
         user_id: Union[int, str],
-        base_session_id: str,
-        working_path: Optional[str] = None,
+        thread_id: str,
     ):
         self.clear_agent_session_mapping(
-            user_id, "claude", base_session_id, working_path
+            user_id, "claude", thread_id
         )
 
     # ---------------------------------------------

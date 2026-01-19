@@ -51,7 +51,6 @@ class CodexAgent(BaseAgent):
         resume_id = self.settings_manager.get_agent_session_id(
             request.settings_key,
             request.base_session_id,
-            request.working_path,
             agent_name=self.name,
         )
 
@@ -244,7 +243,6 @@ class CodexAgent(BaseAgent):
                     request.settings_key,
                     self.name,
                     request.base_session_id,
-                    request.working_path,
                     thread_id,
                 )
             session_key = request.composite_session_id
