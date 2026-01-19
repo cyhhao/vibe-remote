@@ -1,19 +1,20 @@
-import json
 import logging
-import os
+import hashlib
+import logging
 import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
 
 from config import paths
 from config.v2_sessions import SessionsStore
+from config.v2_settings import SettingsStore, ChannelSettings, RoutingSettings
 
 
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_HIDDEN_MESSAGE_TYPES = ["system", "assistant", "toolcall"]
+DEFAULT_SHOW_MESSAGE_TYPES: List[str] = []
 
 
 @dataclass
@@ -44,27 +45,40 @@ class ChannelRouting:
 
 @dataclass
 class UserSettings:
-    hidden_message_types: List[str] = field(
-        default_factory=lambda: DEFAULT_HIDDEN_MESSAGE_TYPES.copy()
+    show_message_types: List[str] = field(
+        default_factory=lambda: DEFAULT_SHOW_MESSAGE_TYPES.copy()
     )
     custom_cwd: Optional[str] = None
     channel_routing: Optional[ChannelRouting] = None
+    enabled: bool = True
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
-        result = asdict(self)
-        # Handle ChannelRouting serialization
+        result = {
+            "show_message_types": self.show_message_types,
+            "custom_cwd": self.custom_cwd,
+        }
         if self.channel_routing is not None:
-            result["channel_routing"] = self.channel_routing.to_dict()
+            result["routing"] = self.channel_routing.to_dict()
         return result
 
     @classmethod
     def from_dict(cls, data: dict) -> "UserSettings":
         """Create from dictionary"""
-        # Handle channel_routing deserialization
-        routing_data = data.pop("channel_routing", None)
-        settings = cls(**data)
-        if routing_data:
+        if data is None:
+            return cls()
+        payload = dict(data)
+        routing_data = payload.pop("routing", None)
+        show_message_types = payload.get("show_message_types")
+        settings = cls(
+            show_message_types=(
+                show_message_types
+                if show_message_types is not None
+                else DEFAULT_SHOW_MESSAGE_TYPES.copy()
+            ),
+            custom_cwd=payload.get("custom_cwd"),
+        )
+        if routing_data is not None:
             settings.channel_routing = ChannelRouting.from_dict(routing_data)
         return settings
 
@@ -73,10 +87,6 @@ class SettingsManager:
     """Manages user personalization settings with JSON persistence"""
 
     MESSAGE_TYPE_ALIASES = {
-        # Legacy/compat aliases
-        "response": "toolcall",
-        "user": "toolcall",
-        # Normalize common variants
         "tool_call": "toolcall",
         "tool": "toolcall",
     }
@@ -84,7 +94,10 @@ class SettingsManager:
     def __init__(self, settings_file: Optional[str] = None):
         paths.ensure_data_dirs()
         self.settings_file = Path(settings_file) if settings_file else paths.get_settings_path()
+        self._settings_mtime_ns: Optional[int] = None
+        self._settings_fingerprint: Optional[str] = None
         self.settings: Dict[Union[int, str], UserSettings] = {}
+        self.store = SettingsStore(self.settings_file)
         self.sessions_store = SessionsStore()
         self.sessions_store.load()
         self._load_settings()
@@ -100,37 +113,106 @@ class SettingsManager:
         """
         return str(user_id)
 
+    def _from_channel_settings(self, channel_settings: ChannelSettings) -> UserSettings:
+        routing = ChannelRouting(
+            agent_backend=channel_settings.routing.agent_backend,
+            opencode_agent=channel_settings.routing.opencode_agent,
+            opencode_model=channel_settings.routing.opencode_model,
+            opencode_reasoning_effort=channel_settings.routing.opencode_reasoning_effort,
+        )
+        return UserSettings(
+            show_message_types=self._normalize_show_message_types(
+                channel_settings.show_message_types
+            ),
+            custom_cwd=channel_settings.custom_cwd,
+            channel_routing=routing,
+            enabled=channel_settings.enabled,
+        )
+
+    def _to_channel_settings(self, settings: UserSettings) -> ChannelSettings:
+        routing = settings.channel_routing or ChannelRouting()
+        return ChannelSettings(
+            enabled=settings.enabled,
+            show_message_types=self._normalize_show_message_types(
+                settings.show_message_types
+            ),
+            custom_cwd=settings.custom_cwd,
+            routing=RoutingSettings(
+                agent_backend=routing.agent_backend,
+                opencode_agent=routing.opencode_agent,
+                opencode_model=routing.opencode_model,
+                opencode_reasoning_effort=routing.opencode_reasoning_effort,
+            ),
+        )
+
     def _load_settings(self):
         """Load settings from JSON file"""
+        self.store = SettingsStore(self.settings_file)
+        self.settings = {}
+
+        if not self.store.settings.channels:
+            logger.info("No settings file found, starting with empty settings")
+            return
+
+        for channel_id, channel_settings in self.store.settings.channels.items():
+            self.settings[str(channel_id)] = self._from_channel_settings(channel_settings)
+
         try:
-            if self.settings_file.exists():
-                with open(self.settings_file, "r") as f:
-                    data = json.load(f)
-                    for user_id_str, user_data in data.items():
-                        user_id = user_id_str
-                        settings = UserSettings.from_dict(user_data)
-                        settings.hidden_message_types = self._normalize_hidden_message_types(
-                            settings.hidden_message_types
-                        )
-                        self.settings[user_id] = settings
+            self._settings_mtime_ns = self.settings_file.stat().st_mtime_ns
+            self._settings_fingerprint = self._compute_settings_fingerprint()
+        except FileNotFoundError:
+            self._settings_mtime_ns = None
+            self._settings_fingerprint = None
 
-                logger.info(f"Loaded settings for {len(self.settings)} users")
-            else:
-                logger.info("No settings file found, starting with empty settings")
-        except Exception as e:
-            logger.error(f"Error loading settings: {e}")
-            self.settings = {}
+        logger.info(f"Loaded settings for {len(self.settings)} channels")
 
+
+    def _compute_settings_fingerprint(self) -> Optional[str]:
+        try:
+            data = self.settings_file.read_bytes()
+        except FileNotFoundError:
+            return None
+        return hashlib.sha256(data).hexdigest()
+
+    def _reload_if_changed(self) -> None:
+        if not self.settings_file.exists():
+            return
+        try:
+            mtime_ns = self.settings_file.stat().st_mtime_ns
+        except FileNotFoundError:
+            return
+        fingerprint = None
+        if self._settings_mtime_ns is None or mtime_ns != self._settings_mtime_ns:
+            fingerprint = self._compute_settings_fingerprint()
+        elif self._settings_fingerprint is None:
+            fingerprint = self._compute_settings_fingerprint()
+        if fingerprint and fingerprint != self._settings_fingerprint:
+            logger.info("Settings file changed on disk, reloading")
+            self._load_settings()
+        elif fingerprint:
+            self._settings_fingerprint = fingerprint
+            self._settings_mtime_ns = mtime_ns
+        else:
+            self._settings_mtime_ns = mtime_ns
 
     def _save_settings(self):
         """Save settings to JSON file"""
         try:
-            data = {
-                str(user_id): settings.to_dict()
-                for user_id, settings in self.settings.items()
-            }
-            with open(self.settings_file, "w") as f:
-                json.dump(data, f, indent=2)
+            channels: Dict[str, ChannelSettings] = {}
+            for settings_key, settings in self.settings.items():
+                existing = self.store.settings.channels.get(str(settings_key))
+                channel_settings = self._to_channel_settings(settings)
+                if existing is not None:
+                    channel_settings.enabled = existing.enabled
+                channels[str(settings_key)] = channel_settings
+            self.store.settings.channels = channels
+            self.store.save()
+            try:
+                self._settings_mtime_ns = self.settings_file.stat().st_mtime_ns
+                self._settings_fingerprint = self._compute_settings_fingerprint()
+            except FileNotFoundError:
+                self._settings_mtime_ns = None
+                self._settings_fingerprint = None
             logger.info("Settings saved successfully")
         except Exception as e:
             logger.error(f"Error saving settings: {e}")
@@ -139,9 +221,16 @@ class SettingsManager:
         """Get settings for a specific user"""
         normalized_id = self._normalize_user_id(user_id)
 
+        self._reload_if_changed()
+
         # Return existing or create new
         if normalized_id not in self.settings:
-            self.settings[normalized_id] = UserSettings()
+            settings = UserSettings()
+            if normalized_id in self.store.settings.channels:
+                settings = self._from_channel_settings(
+                    self.store.settings.channels[normalized_id]
+                )
+            self.settings[normalized_id] = settings
             self._save_settings()
         return self.settings[normalized_id]
 
@@ -149,29 +238,29 @@ class SettingsManager:
         """Update settings for a specific user"""
         normalized_id = self._normalize_user_id(user_id)
 
-        settings.hidden_message_types = self._normalize_hidden_message_types(
-            settings.hidden_message_types
+        settings.show_message_types = self._normalize_show_message_types(
+            settings.show_message_types
         )
 
         self.settings[normalized_id] = settings
         self._save_settings()
 
-    def toggle_hidden_message_type(
+    def toggle_show_message_type(
         self, user_id: Union[int, str], message_type: str
     ) -> bool:
-        """Toggle a message type in hidden list, returns new state"""
+        """Toggle a message type in show list, returns new state (True if now shown)"""
         message_type = self._canonicalize_message_type(message_type)
         settings = self.get_user_settings(user_id)
 
-        if message_type in settings.hidden_message_types:
-            settings.hidden_message_types.remove(message_type)
-            is_hidden = False
+        if message_type in settings.show_message_types:
+            settings.show_message_types.remove(message_type)
+            is_shown = False
         else:
-            settings.hidden_message_types.append(message_type)
-            is_hidden = True
+            settings.show_message_types.append(message_type)
+            is_shown = True
 
         self.update_user_settings(user_id, settings)
-        return is_hidden
+        return is_shown
 
     def set_custom_cwd(self, user_id: Union[int, str], cwd: str):
         """Set custom working directory for user"""
@@ -184,13 +273,20 @@ class SettingsManager:
         settings = self.get_user_settings(user_id)
         return settings.custom_cwd
 
+    def get_channel_settings(self, channel_id: Union[int, str]) -> Optional[ChannelSettings]:
+        """Get raw ChannelSettings for a channel without creating defaults."""
+        self._reload_if_changed()
+        key = str(channel_id)
+        return self.store.settings.channels.get(key)
+
     def is_message_type_hidden(
         self, user_id: Union[int, str], message_type: str
     ) -> bool:
-        """Check if a message type is hidden for user"""
+        """Check if a message type is hidden for user (not in show_message_types)"""
+        self._reload_if_changed()
         message_type = self._canonicalize_message_type(message_type)
         settings = self.get_user_settings(user_id)
-        return message_type in settings.hidden_message_types
+        return message_type not in settings.show_message_types
 
     def save_user_settings(self, user_id: Union[int, str], settings: UserSettings):
         """Save settings for a specific user (alias for update_user_settings)"""
@@ -227,7 +323,7 @@ class SettingsManager:
         agent_map[base_session_id][working_path] = session_id
         self.sessions_store.save()
         logger.info(
-            f"Stored {agent_name} session mapping for user {user_id}: "
+            f"Stored {agent_name} session mapping for {user_id}: "
             f"{base_session_id}[{working_path}] -> {session_id}"
         )
 
@@ -249,13 +345,15 @@ class SettingsManager:
         """Normalize message type to canonical form to support aliases."""
         return self.MESSAGE_TYPE_ALIASES.get(message_type, message_type)
 
-    def _normalize_hidden_message_types(self, hidden_message_types: List[str]) -> List[str]:
-        """Normalize and migrate hidden message types to current canonical schema."""
+    def _normalize_show_message_types(self, show_message_types: Optional[List[str]]) -> List[str]:
+        """Normalize and migrate show message types to current canonical schema."""
         allowed = {"system", "assistant", "toolcall"}
+        if show_message_types is None:
+            return DEFAULT_SHOW_MESSAGE_TYPES.copy()
         normalized: List[str] = []
         seen = set()
 
-        for msg_type in hidden_message_types or []:
+        for msg_type in show_message_types or []:
             canonical = self._canonicalize_message_type(msg_type)
             if canonical not in allowed:
                 continue
@@ -428,6 +526,7 @@ class SettingsManager:
         self, settings_key: Union[int, str]
     ) -> Optional[ChannelRouting]:
         """Get channel routing override for the given settings key."""
+        self._reload_if_changed()
         settings = self.get_user_settings(settings_key)
         return settings.channel_routing
 
@@ -446,7 +545,7 @@ class SettingsManager:
         )
 
     def clear_channel_routing(self, settings_key: Union[int, str]):
-        """Clear channel routing override (fall back to agent_routes.yaml)."""
+        """Clear channel routing override (fall back to default backend)."""
         settings = self.get_user_settings(settings_key)
         if settings.channel_routing:
             settings.channel_routing = None

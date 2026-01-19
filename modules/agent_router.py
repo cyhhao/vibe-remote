@@ -31,32 +31,7 @@ class AgentRouter:
         routes: Dict[str, PlatformRoute] = {}
         global_default = "claude"
 
-        if file_path and os.path.exists(file_path):
-            try:
-                data = cls._load_file(file_path)
-                global_default = data.get("default", global_default)
-                for key, value in data.items():
-                    if key == "default":
-                        continue
-                    if not isinstance(value, dict):
-                        continue
-                    routes[key] = PlatformRoute(
-                        default=value.get("default", global_default),
-                        overrides=value.get("overrides", {}) or {},
-                    )
-                logger.info(
-                    f"Loaded agent routing config from {file_path} "
-                    f"(platforms: {list(routes.keys())})"
-                )
-            except Exception as e:
-                logger.error(f"Failed to parse agent route config {file_path}: {e}")
-        else:
-            if file_path:
-                logger.warning(
-                    f"Agent route config file not found at {file_path}, using defaults"
-                )
-
-        # Ensure platform entry exists
+        # File-based routing removed; keep defaults only.
         routes.setdefault(platform, PlatformRoute(default=global_default))
         return cls(routes, global_default=global_default)
 

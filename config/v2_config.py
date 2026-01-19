@@ -2,7 +2,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from config import paths
 from modules.im.base import BaseIMConfig
@@ -19,11 +19,6 @@ class SlackConfig(BaseIMConfig):
     team_name: Optional[str] = None
     app_id: Optional[str] = None
     require_mention: bool = False
-    target_channels: Optional[List[str]] = None
-
-    @classmethod
-    def from_env(cls):
-        raise RuntimeError("V2 does not support env-based config")
 
     def validate(self) -> None:
         if not self.bot_token or not self.bot_token.startswith("xoxb-"):
@@ -45,8 +40,7 @@ class GatewayConfig:
 class RuntimeConfig:
     default_cwd: str
     log_level: str = "INFO"
-    require_mention: bool = False
-    target_channels: Optional[List[str]] = None
+
 
 
 @dataclass
@@ -82,6 +76,7 @@ class AgentsConfig:
 
 @dataclass
 class UiConfig:
+    setup_host: str = "127.0.0.1"
     setup_port: int = 5123
     open_browser: bool = True
 
@@ -96,8 +91,6 @@ class V2Config:
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
     ack_mode: str = "reaction"
-    cleanup_enabled: bool = False
-    agent_route_file: Optional[str] = None
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "V2Config":
@@ -111,10 +104,19 @@ class V2Config:
     @classmethod
     def from_payload(cls, payload: dict) -> "V2Config":
         slack_payload = payload.get("slack") or {}
+        if "require_mention" not in slack_payload:
+            slack_payload = dict(slack_payload)
+            slack_payload["require_mention"] = False
+        if "target_channels" in slack_payload:
+            slack_payload = dict(slack_payload)
+            slack_payload.pop("target_channels", None)
         slack = SlackConfig(**slack_payload)
         gateway_payload = payload.get("gateway")
         gateway = GatewayConfig(**gateway_payload) if gateway_payload else None
         runtime_payload = payload.get("runtime") or {}
+        if "target_channels" in runtime_payload:
+            runtime_payload = dict(runtime_payload)
+            runtime_payload.pop("target_channels", None)
         runtime = RuntimeConfig(**runtime_payload)
         agents_payload = payload.get("agents") or {}
         opencode = OpenCodeConfig(**(agents_payload.get("opencode") or {}))
@@ -136,8 +138,6 @@ class V2Config:
             gateway=gateway,
             ui=ui,
             ack_mode=payload.get("ack_mode", "reaction"),
-            cleanup_enabled=payload.get("cleanup_enabled", False),
-            agent_route_file=payload.get("agent_route_file"),
         )
 
     def save(self, config_path: Optional[Path] = None) -> None:
@@ -150,8 +150,6 @@ class V2Config:
             "runtime": {
                 "default_cwd": self.runtime.default_cwd,
                 "log_level": self.runtime.log_level,
-                "require_mention": self.runtime.require_mention,
-                "target_channels": self.runtime.target_channels,
             },
             "agents": {
                 "default_backend": self.agents.default_backend,
@@ -162,7 +160,5 @@ class V2Config:
             "gateway": self.gateway.__dict__ if self.gateway else None,
             "ui": self.ui.__dict__,
             "ack_mode": self.ack_mode,
-            "cleanup_enabled": self.cleanup_enabled,
-            "agent_route_file": self.agent_route_file,
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

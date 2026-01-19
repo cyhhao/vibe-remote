@@ -98,7 +98,7 @@
     "workingDirectory": "Working Directory",
     "useGlobalDefault": "Use global default",
     "backend": "Backend",
-    "hiddenMessageTypes": "Hidden Message Types",
+    "showMessageTypes": "Show Message Types",
     "opencodeSettings": "OpenCode Settings",
     "agent": "Agent",
     "model": "Model",

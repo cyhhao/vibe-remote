@@ -154,7 +154,6 @@ ui/dist/
 tmp/
 .bot.pid
 user_settings.json
-agent_routes.yaml
 
 # Config files with secrets
 config/secrets.py

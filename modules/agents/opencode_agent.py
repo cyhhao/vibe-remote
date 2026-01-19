@@ -23,6 +23,99 @@ DEFAULT_OPENCODE_HOST = "127.0.0.1"
 SERVER_START_TIMEOUT = 15
 
 
+_REASONING_FALLBACK_OPTIONS = [
+    {"value": "low", "label": "Low"},
+    {"value": "medium", "label": "Medium"},
+    {"value": "high", "label": "High"},
+]
+
+_REASONING_VARIANT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+_REASONING_VARIANT_LABELS = {
+    "none": "None",
+    "minimal": "Minimal",
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "xhigh": "Extra High",
+    "max": "Max",
+}
+
+
+def _parse_model_key(model_key: Optional[str]) -> tuple[str, str]:
+    if not model_key:
+        return "", ""
+    parts = model_key.split("/", 1)
+    if len(parts) != 2:
+        return "", ""
+    return parts[0], parts[1]
+
+
+def _find_model_variants(opencode_models: dict, target_model: Optional[str]) -> Dict[str, Any]:
+    target_provider, target_model_id = _parse_model_key(target_model)
+    if not target_provider or not target_model_id or not isinstance(opencode_models, dict):
+        return {}
+    providers_data = opencode_models.get("providers", [])
+    for provider in providers_data:
+        provider_id = provider.get("id") or provider.get("provider_id") or provider.get("name")
+        if provider_id != target_provider:
+            continue
+
+        models = provider.get("models", {})
+        model_info: Optional[dict] = None
+        if isinstance(models, dict):
+            candidate = models.get(target_model_id)
+            if isinstance(candidate, dict):
+                model_info = candidate
+        elif isinstance(models, list):
+            for entry in models:
+                if isinstance(entry, dict) and entry.get("id") == target_model_id:
+                    model_info = entry
+                    break
+
+        if isinstance(model_info, dict):
+            variants = model_info.get("variants", {})
+            if isinstance(variants, dict):
+                return variants
+        break
+    return {}
+
+
+def _build_reasoning_options_from_variants(variants: Dict[str, Any]) -> List[Dict[str, str]]:
+    sorted_variants = sorted(
+        variants.keys(),
+        key=lambda variant: (
+            _REASONING_VARIANT_ORDER.index(variant)
+            if variant in _REASONING_VARIANT_ORDER
+            else len(_REASONING_VARIANT_ORDER),
+            variant,
+        ),
+    )
+    return [
+        {
+            "value": variant_key,
+            "label": _REASONING_VARIANT_LABELS.get(
+                variant_key, variant_key.capitalize()
+            ),
+        }
+        for variant_key in sorted_variants
+    ]
+
+
+def build_reasoning_effort_options(
+    opencode_models: dict,
+    target_model: Optional[str],
+) -> List[Dict[str, str]]:
+    """Build reasoning effort options from OpenCode model metadata."""
+    options = [{"value": "__default__", "label": "(Default)"}]
+    variants = _find_model_variants(opencode_models, target_model)
+    if variants:
+        options.extend(_build_reasoning_options_from_variants(variants))
+        return options
+    options.extend(_REASONING_FALLBACK_OPTIONS)
+    return options
+
+
 class OpenCodeServerManager:
     """Manages a singleton OpenCode server process shared across all working directories."""
 
@@ -42,6 +135,7 @@ class OpenCodeServerManager:
         self._process: Optional[Process] = None
         self._base_url: Optional[str] = None
         self._http_session: Optional[aiohttp.ClientSession] = None
+        self._http_session_loop: Optional[asyncio.AbstractEventLoop] = None
         self._lock = asyncio.Lock()
         self._pid_file = (
             Path(__file__).resolve().parents[2] / "logs" / "opencode_server.json"
@@ -91,6 +185,7 @@ class OpenCodeServerManager:
             self._http_session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=total_timeout)
             )
+            self._http_session_loop = asyncio.get_running_loop()
         return self._http_session
 
     def _read_pid_file(self) -> Optional[Dict[str, Any]]:
@@ -344,6 +439,7 @@ class OpenCodeServerManager:
             if self._http_session:
                 await self._http_session.close()
                 self._http_session = None
+                self._http_session_loop = None
 
             if self._process and self._process.returncode is None:
                 self._process.terminate()
@@ -365,6 +461,18 @@ class OpenCodeServerManager:
             self._process = None
 
     def stop_sync(self) -> None:
+        if self._http_session and self._http_session_loop:
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._http_session.close(), self._http_session_loop
+                )
+                future.result(timeout=5)
+            except Exception as e:
+                logger.debug(f"Failed to close OpenCode HTTP session: {e}")
+            finally:
+                self._http_session = None
+                self._http_session_loop = None
+
         if self._process and self._process.returncode is None:
             self._process.terminate()
             logger.info("OpenCode server terminated (sync)")
@@ -790,7 +898,7 @@ class OpenCodeServerManager:
             Default agent name (e.g., "build", "plan"), or "build" as fallback.
         """
         # OpenCode doesn't have an explicit "default agent" config field.
-        # Users can override via channel settings or agent_routes.yaml.
+        # Users can override via channel settings.
         # Default to "build" agent which uses the agent's configured model,
         # avoiding fallback to global model which may use restricted credentials.
         return "build"
@@ -1318,7 +1426,7 @@ class OpenCodeAgent(BaseAgent):
             )
 
         try:
-            # Get per-channel overrides from user_settings.json
+            # Get per-channel overrides from settings.json
             override_agent, override_model, override_reasoning = (
                 self.controller.get_opencode_overrides(request.context)
             )

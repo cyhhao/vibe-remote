@@ -77,13 +77,25 @@ def _write_status(state, detail=None):
     _write_json(paths.get_runtime_status_path(), payload)
 
 
-def _spawn_background(args, pid_path):
+def _spawn_background(
+    args,
+    pid_path,
+    stdout_name: str = "service_stdout.log",
+    stderr_name: str = "service_stderr.log",
+):
+    stdout_path = paths.get_runtime_dir() / stdout_name
+    stderr_path = paths.get_runtime_dir() / stderr_name
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stdout = stdout_path.open("ab")
+    stderr = stderr_path.open("ab")
     process = subprocess.Popen(
         args,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=stderr,
         start_new_session=True,
     )
+    stdout.close()
+    stderr.close()
     pid_path.write_text(str(process.pid), encoding="utf-8")
     return process.pid
 
@@ -157,7 +169,12 @@ def _doctor():
 def _run_background_service():
     python = sys.executable
     command = "import runpy; runpy.run_path('main.py', run_name='__main__')"
-    return _spawn_background([python, "-c", command], paths.get_runtime_pid_path())
+    return _spawn_background(
+        [python, "-c", command],
+        paths.get_runtime_pid_path(),
+        "service_stdout.log",
+        "service_stderr.log",
+    )
 
 
 def cmd_vibe():
@@ -174,10 +191,10 @@ def cmd_vibe():
         _write_status("starting")
 
     service_pid = _run_background_service()
-    ui_pid = runtime.start_ui(config.ui.setup_port)
+    ui_pid = runtime.start_ui(config.ui.setup_host, config.ui.setup_port)
     runtime.write_status("running", "pid={}".format(service_pid), service_pid, ui_pid)
 
-    ui_url = "http://127.0.0.1:{}".format(config.ui.setup_port)
+    ui_url = "http://{}:{}".format(config.ui.setup_host, config.ui.setup_port)
     if config.ui.open_browser:
         _open_browser(ui_url)
 

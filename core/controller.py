@@ -72,15 +72,12 @@ class Controller:
         self.session_manager = SessionManager()
         self.settings_manager = SettingsManager()
 
-        # Agent routing (service initialized later after handlers)
-        self.agent_router = AgentRouter.from_file(
-            self.config.agent_route_file, platform=self.config.platform
-        )
+        # Agent routing
+        self.agent_router = AgentRouter.from_file(None, platform=self.config.platform)
 
         # Default backend preference:
-        # If the user didn't provide an agent_routes.yaml, and OpenCode is enabled,
-        # make OpenCode the implicit default backend.
-        if self.config.opencode and not self.config.agent_route_file:
+        # If OpenCode is enabled, make it the implicit default backend.
+        if self.config.opencode:
             self.agent_router.global_default = "opencode"
             platform_route = self.agent_router.platform_routes.get(self.config.platform)
             if platform_route:
@@ -154,7 +151,7 @@ class Controller:
         # Get custom CWD from settings
         custom_cwd = self.settings_manager.get_custom_cwd(settings_key)
 
-        # Use custom CWD if available, otherwise use default from .env
+        # Use custom CWD if available, otherwise use default from config
         if custom_cwd and os.path.exists(custom_cwd):
             return os.path.abspath(custom_cwd)
         elif custom_cwd:
@@ -221,11 +218,9 @@ class Controller:
         """Unified agent resolution with dynamic override support.
 
         Priority:
-        1. channel_routing.agent_backend (from user_settings.json)
-        2. agent_routes.yaml overrides[channel_id]
-        3. agent_routes.yaml platform.default
-        4. agent_routes.yaml global default
-        5. AgentService.default_agent ("claude")
+        1. channel_routing.agent_backend (from settings.json)
+        2. AgentRouter platform default (configured in code)
+        3. AgentService.default_agent ("claude")
         """
         settings_key = self._get_settings_key(context)
 
@@ -375,7 +370,7 @@ class Controller:
 
     # Settings update handler (for Slack modal)
     async def handle_settings_update(
-        self, user_id: str, hidden_message_types: list, channel_id: Optional[str] = None
+        self, user_id: str, show_message_types: list, channel_id: Optional[str] = None
     ):
         """Handle settings update (typically from Slack modal)"""
         try:
@@ -389,13 +384,13 @@ class Controller:
 
             # Update settings
             user_settings = self.settings_manager.get_user_settings(settings_key)
-            user_settings.hidden_message_types = hidden_message_types
+            user_settings.show_message_types = show_message_types
 
             # Save settings - using the correct method name
             self.settings_manager.update_user_settings(settings_key, user_settings)
 
             logger.info(
-                f"Updated settings for {settings_key}: hidden types = {hidden_message_types}"
+                f"Updated settings for {settings_key}: show types = {show_message_types}"
             )
 
             # Create context for sending confirmation (without 'message' field)
@@ -642,7 +637,6 @@ class Controller:
 
         # 不再创建额外事件循环，避免与 IM 客户端的内部事件循环冲突
         # 清理职责改为：
-        # - 仅当收到消息且开启 cleanup_enabled 时，在消息入口清理已完成任务（见 MessageHandler）
         # - 进程退出时做一次同步的 best-effort 取消（不跨循环 await）
 
         try:
@@ -686,6 +680,22 @@ class Controller:
 
                 if not inspect.iscoroutinefunction(stop_attr):
                     stop_attr()
+        except Exception:
+            pass
+
+        # Best-effort async shutdown for IM clients
+        try:
+            shutdown_attr = getattr(self.im_client, "shutdown", None)
+            if callable(shutdown_attr):
+                import inspect
+
+                if inspect.iscoroutinefunction(shutdown_attr):
+                    try:
+                        asyncio.run(shutdown_attr())
+                    except RuntimeError:
+                        pass
+                else:
+                    shutdown_attr()
         except Exception:
             pass
 

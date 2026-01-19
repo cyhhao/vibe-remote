@@ -18,11 +18,13 @@
 
 ## V2 Milestones
 
-### M1: Local Data Directory + Config Model (Status: In progress)
+### M1: Local Data Directory + Config Model (Status: Done)
 
 - [x] Establish `~/.vibe_remote/` as the single home for config/state/logs.
 - [x] Split settings and sessions into separate JSON files.
-- [~] Remove `.env` and legacy config paths from the V2 flow.
+- [x] Remove `.env` and legacy config paths from the V2 flow.
+- [~] Align defaults with `docs/plans/v2/05_config_model.md` (settings defaults and enablement).
+- [~] Drop V1 compatibility paths/aliases in settings and routing.
 
 Proposed structure:
 

@@ -10,6 +10,14 @@ export type ApiContextType = {
   slackChannels: (botToken: string) => Promise<any>;
   doctor: () => Promise<any>;
   opencodeOptions: (cwd: string) => Promise<any>;
+  getLogs: (lines?: number) => Promise<{ logs: LogEntry[]; total: number }>;
+};
+
+export type LogEntry = {
+  timestamp: string;
+  level: string;
+  logger: string;
+  message: string;
 };
 
 const ApiContext = createContext<ApiContextType | undefined>(undefined);
@@ -49,6 +57,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     slackChannels: (botToken) => postJson('/slack/channels', { bot_token: botToken }),
     doctor: () => postJson('/doctor', {}),
     opencodeOptions: (cwd) => postJson('/opencode/options', { cwd }),
+    getLogs: (lines = 500) => postJson('/logs', { lines }),
   };
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;

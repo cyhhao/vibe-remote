@@ -14,7 +14,7 @@ interface ChannelListProps {
 
 interface ChannelConfig {
   enabled: boolean;
-  hidden_message_types: string[];
+  show_message_types: string[];
   custom_cwd: string;
   routing: {
     agent_backend: string | null;
@@ -132,8 +132,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const updateConfig = (channelId: string, patch: Partial<ChannelConfig>) => {
     const base = configs[channelId] || defaultConfig();
     const next = { ...base, ...patch };
-    if (!next.hidden_message_types || next.hidden_message_types.length === 0) {
-      next.hidden_message_types = defaultConfig().hidden_message_types;
+    if (!next.show_message_types) {
+      next.show_message_types = defaultConfig().show_message_types;
     }
     if (!next.routing || typeof next.routing !== 'object') {
       next.routing = { agent_backend: config.agents?.default_backend || 'opencode' };
@@ -145,7 +145,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   const defaultConfig = (): ChannelConfig => ({
     enabled: false,
-    hidden_message_types: ['system', 'assistant', 'toolcall'],
+    show_message_types: [],
     custom_cwd: '',
     routing: {
       agent_backend: config.agents?.default_backend || 'opencode',
@@ -212,7 +212,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             ...def,
             ...rawConfig,
             enabled: isChannelEnabled(channel.id),
-            hidden_message_types: rawConfig.hidden_message_types || def.hidden_message_types,
+            show_message_types: rawConfig.show_message_types || def.show_message_types,
             routing: {
               ...def.routing,
               ...(rawConfig.routing || {}),
@@ -280,12 +280,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     </div>
                   </div>
 
-                  {/* Hidden Message Types */}
+                  {/* Show Message Types */}
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-muted uppercase">{t('channelList.hiddenMessageTypes')}</div>
+                    <div className="text-xs font-medium text-muted uppercase">{t('channelList.showMessageTypes')}</div>
                     <div className="flex flex-wrap gap-3 text-sm">
                       {['system', 'assistant', 'toolcall'].map((msgType) => {
-                        const checked = channelConfig.hidden_message_types.includes(msgType);
+                        const checked = channelConfig.show_message_types.includes(msgType);
                         return (
                           <label key={msgType} className="flex items-center gap-2 text-text">
                             <input
@@ -293,9 +293,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                               checked={checked}
                               onChange={() => {
                                 const next = checked
-                                  ? channelConfig.hidden_message_types.filter((value) => value !== msgType)
-                                  : [...channelConfig.hidden_message_types, msgType];
-                                updateConfig(channel.id, { hidden_message_types: next });
+                                  ? channelConfig.show_message_types.filter((value) => value !== msgType)
+                                  : [...channelConfig.show_message_types, msgType];
+                                updateConfig(channel.id, { show_message_types: next });
                               }}
                               className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
                             />

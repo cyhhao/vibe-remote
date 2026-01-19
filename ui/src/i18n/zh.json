@@ -98,7 +98,7 @@
     "workingDirectory": "工作目录",
     "useGlobalDefault": "使用全局默认值",
     "backend": "后端",
-    "hiddenMessageTypes": "隐藏的消息类型",
+    "showMessageTypes": "显示的消息类型",
     "opencodeSettings": "OpenCode 设置",
     "agent": "Agent",
     "model": "模型",

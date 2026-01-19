@@ -59,11 +59,11 @@ class SettingsHandler:
         row = []
 
         for i, msg_type in enumerate(message_types):
-            is_hidden = msg_type in user_settings.hidden_message_types
-            checkbox = "☑️" if is_hidden else "⬜"
+            is_shown = msg_type in user_settings.show_message_types
+            checkbox = "☑️" if is_shown else "⬜"
             display_name = display_names.get(msg_type, msg_type)
             button = InlineButton(
-                text=f"{checkbox} Hide {display_name}",
+                text=f"{checkbox} Show {display_name}",
                 callback_data=f"toggle_msg_{msg_type}",
             )
             row.append(button)
@@ -140,7 +140,7 @@ class SettingsHandler:
         try:
             # Toggle message type visibility
             settings_key = self._get_settings_key(context)
-            is_hidden = self.settings_manager.toggle_hidden_message_type(
+            is_shown = self.settings_manager.toggle_show_message_type(
                 settings_key, msg_type
             )
 
@@ -153,11 +153,11 @@ class SettingsHandler:
             row = []
 
             for i, mt in enumerate(message_types):
-                is_hidden_now = mt in user_settings.hidden_message_types
-                checkbox = "☑️" if is_hidden_now else "⬜"
+                is_shown_now = mt in user_settings.show_message_types
+                checkbox = "☑️" if is_shown_now else "⬜"
                 display_name = display_names.get(mt, mt)
                 button = InlineButton(
-                    text=f"{checkbox} Hide {display_name}",
+                    text=f"{checkbox} Show {display_name}",
                     callback_data=f"toggle_msg_{mt}",
                 )
                 row.append(button)
@@ -181,7 +181,7 @@ class SettingsHandler:
 
             # Answer callback (for Telegram)
             display_name = display_names.get(msg_type, msg_type)
-            action = "hidden" if is_hidden else "shown"
+            action = "shown" if is_shown else "hidden"
 
             # Platform-specific callback answering
             await self.im_client.send_message(
@@ -264,7 +264,7 @@ class SettingsHandler:
                 await self.im_client.send_message(
                     context,
                     "🤖 Agent switching is currently only available in Slack. "
-                    "Use agent_routes.yaml to configure routing.",
+                    "Use Slack Agent Settings to configure routing.",
                 )
         except Exception as e:
             logger.error(f"Error showing routing settings: {e}", exc_info=True)

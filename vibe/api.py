@@ -1,14 +1,31 @@
 import json
+import asyncio
+import logging
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from config import paths
 from config.v2_config import V2Config
-from config.v2_settings import SettingsStore, ChannelSettings, RoutingSettings
+from config.v2_settings import (
+    SettingsStore,
+    ChannelSettings,
+    RoutingSettings,
+    normalize_show_message_types,
+)
 from config.v2_sessions import SessionsStore
+
+
+logger = logging.getLogger(__name__)
+
+_OPENCODE_OPTIONS_CACHE: dict[str, Optional[object]] = {
+    "data": None,
+    "updated_at": 0.0,
+}
+_OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
 
 def load_config() -> V2Config:
@@ -25,12 +42,17 @@ def config_to_payload(config: V2Config) -> dict:
     payload = {
         "mode": config.mode,
         "version": config.version,
-        "slack": config.slack.__dict__,
+        "slack": {
+            **config.slack.__dict__,
+            "require_mention": config.slack.require_mention,
+        },
         "runtime": {
             "default_cwd": config.runtime.default_cwd,
             "log_level": config.runtime.log_level,
-            "require_mention": config.runtime.require_mention,
-            "target_channels": config.runtime.target_channels,
+        },
+        "slack": {
+            **config.slack.__dict__,
+            "require_mention": config.slack.require_mention,
         },
         "agents": {
             "default_backend": config.agents.default_backend,
@@ -41,8 +63,6 @@ def config_to_payload(config: V2Config) -> dict:
         "gateway": config.gateway.__dict__ if config.gateway else None,
         "ui": config.ui.__dict__,
         "ack_mode": config.ack_mode,
-        "cleanup_enabled": config.cleanup_enabled,
-        "agent_route_file": config.agent_route_file,
     }
     return payload
 
@@ -65,8 +85,8 @@ def save_settings(payload: dict) -> dict:
         )
         channels[channel_id] = ChannelSettings(
             enabled=channel_payload.get("enabled", True),
-            hidden_message_types=channel_payload.get(
-                "hidden_message_types", ["system", "assistant", "toolcall"]
+            show_message_types=normalize_show_message_types(
+                channel_payload.get("show_message_types")
             ),
             custom_cwd=channel_payload.get("custom_cwd"),
             routing=routing,
@@ -142,23 +162,84 @@ def list_channels(bot_token: str) -> dict:
 
 def opencode_options(cwd: str) -> dict:
     try:
-        import asyncio
+        return asyncio.run(opencode_options_async(cwd))
+    except Exception as exc:
+        logger.warning("OpenCode options fetch failed: %s", exc, exc_info=True)
+        return {"ok": False, "error": str(exc)}
+
+
+async def opencode_options_async(cwd: str) -> dict:
+    cache_data = _OPENCODE_OPTIONS_CACHE.get("data")
+    updated_at = _OPENCODE_OPTIONS_CACHE.get("updated_at")
+    updated_at_value = updated_at if isinstance(updated_at, float) else 0.0
+    cache_age = time.monotonic() - updated_at_value
+    if cache_data and cache_age < _OPENCODE_OPTIONS_TTL_SECONDS:
+        return {"ok": True, "data": cache_data, "cached": True}
+
+    try:
         from config.v2_compat import to_app_config
-        from modules.agents.opencode_agent import OpenCodeAgent
+        from modules.agents.opencode_agent import (
+            OpenCodeServerManager,
+            build_reasoning_effort_options,
+        )
 
         config = to_app_config(V2Config.load())
-        agent = OpenCodeAgent(None, config.opencode)
+        if not config.opencode:
+            return {"ok": False, "error": "opencode disabled"}
+        opencode_config = config.opencode
+        timeout_seconds = min(10.0, float(opencode_config.request_timeout_seconds or 10))
 
-        async def _fetch() -> dict:
-            server = await agent._get_server()
-            await server.ensure_running()
-            agents = await server.get_available_agents(cwd)
-            models = await server.get_available_models(cwd)
-            defaults = await server.get_default_config(cwd)
-            return {"agents": agents, "models": models, "defaults": defaults}
+        def _build_reasoning_options(
+            models: dict,
+            builder,
+        ) -> dict:
+            options: dict = {}
+            for provider in models.get("providers", []):
+                provider_id = (
+                    provider.get("id")
+                    or provider.get("provider_id")
+                    or provider.get("name")
+                )
+                if not provider_id:
+                    continue
+                model_ids = []
+                provider_models = provider.get("models", {})
+                if isinstance(provider_models, dict):
+                    model_ids = list(provider_models.keys())
+                elif isinstance(provider_models, list):
+                    model_ids = [
+                        model.get("id")
+                        for model in provider_models
+                        if isinstance(model, dict) and model.get("id")
+                    ]
+                for model_id in model_ids:
+                    model_key = f"{provider_id}/{model_id}"
+                    options[model_key] = builder(models, model_key)
+            return options
 
-        return {"ok": True, "data": asyncio.run(_fetch())}
+        server = await OpenCodeServerManager.get_instance(
+            binary=opencode_config.binary,
+            port=opencode_config.port,
+            request_timeout_seconds=opencode_config.request_timeout_seconds,
+        )
+        await asyncio.wait_for(server.ensure_running(), timeout=timeout_seconds)
+        agents = await asyncio.wait_for(server.get_available_agents(cwd), timeout=timeout_seconds)
+        models = await asyncio.wait_for(server.get_available_models(cwd), timeout=timeout_seconds)
+        defaults = await asyncio.wait_for(server.get_default_config(cwd), timeout=timeout_seconds)
+        reasoning_options = _build_reasoning_options(models, build_reasoning_effort_options)
+        data = {
+            "agents": agents,
+            "models": models,
+            "defaults": defaults,
+            "reasoning_options": reasoning_options,
+        }
+        _OPENCODE_OPTIONS_CACHE["data"] = data
+        _OPENCODE_OPTIONS_CACHE["updated_at"] = time.monotonic()
+        return {"ok": True, "data": data}
     except Exception as exc:
+        logger.warning("OpenCode options fetch failed: %s", exc, exc_info=True)
+        if cache_data:
+            return {"ok": True, "data": cache_data, "cached": True, "warning": str(exc)}
         return {"ok": False, "error": str(exc)}
 
 
@@ -167,7 +248,9 @@ def _settings_to_payload(store: SettingsStore) -> dict:
     for channel_id, settings in store.settings.channels.items():
         payload["channels"][channel_id] = {
             "enabled": settings.enabled,
-            "hidden_message_types": settings.hidden_message_types,
+            "show_message_types": normalize_show_message_types(
+                settings.show_message_types
+            ),
             "custom_cwd": settings.custom_cwd,
             "routing": {
                 "agent_backend": settings.routing.agent_backend,

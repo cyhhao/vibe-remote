@@ -65,9 +65,10 @@ class ClaudeAgent(BaseAgent):
 
     async def clear_sessions(self, settings_key: str) -> int:
         """Clear Claude sessions scoped to the provided settings key."""
-        settings = self.settings_manager.get_user_settings(settings_key)
-        claude_map = settings.session_mappings.get(self.name, {})
-        session_bases_to_clear = set(claude_map.keys())
+        agent_map = self.settings_manager.sessions_store.get_agent_map(
+            settings_key, self.name
+        )
+        session_bases_to_clear = set(agent_map.keys())
 
         self.settings_manager.clear_agent_sessions(settings_key, self.name)
 

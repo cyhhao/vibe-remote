@@ -2,12 +2,43 @@ import http.server
 import json
 import socketserver
 import mimetypes
+import threading
 from pathlib import Path
+from typing import Any
 
 from config import paths
 
 
 class UiHandler(http.server.BaseHTTPRequestHandler):
+    server_version = "VibeUI"
+
+    def log_message(self, format: str, *args):
+        return
+
+    def _run_async(self, coro, timeout: float = 10.0):
+        result: dict[str, Any] = {}
+        error: str | None = None
+        lock = threading.Event()
+
+        def _runner():
+            nonlocal result, error
+            try:
+                import asyncio
+
+                result = asyncio.run(coro)
+            except Exception as exc:
+                error = str(exc)
+            finally:
+                lock.set()
+
+        threading.Thread(target=_runner, daemon=True).start()
+        lock.wait(timeout=timeout)
+        if not lock.is_set():
+            return {"ok": False, "error": "OpenCode options request timed out"}
+        if error:
+            return {"ok": False, "error": error}
+        return result
+
     def _send_json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -26,10 +57,21 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"status": "ok"})
             return
         if self.path == "/status":
-            payload = {}
-            status_path = paths.get_runtime_status_path()
-            if status_path.exists():
-                payload = json.loads(status_path.read_text(encoding="utf-8"))
+            from vibe import runtime
+
+            payload = runtime.read_status()
+            pid_path = paths.get_runtime_pid_path()
+            pid = pid_path.read_text(encoding="utf-8").strip() if pid_path.exists() else None
+            running = bool(pid and pid.isdigit() and runtime.pid_alive(int(pid)))
+            payload["running"] = running
+            payload["pid"] = int(pid) if pid and pid.isdigit() else None
+            if running:
+                payload["service_pid"] = payload.get("service_pid") or payload["pid"]
+            elif payload.get("state") == "running":
+                runtime.write_status("stopped", "process not running", None, payload.get("ui_pid"))
+                payload = runtime.read_status()
+                payload["running"] = False
+                payload["pid"] = None
             self._send_json(payload)
             return
         if self.path == "/doctor":
@@ -129,6 +171,62 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
             api.init_sessions()
             self._send_json(api.config_to_payload(config))
             return
+        if self.path == "/ui/reload":
+            from vibe import runtime
+
+            payload = self._read_json()
+            host = payload.get("host")
+            port = payload.get("port")
+            if not host or not port:
+                self._send_json({"error": "host_and_port_required"}, status=400)
+                return
+            try:
+                port = int(port)
+            except (TypeError, ValueError):
+                self._send_json({"error": "invalid_port"}, status=400)
+                return
+            status = runtime.read_status()
+            self._send_json({"ok": True, "host": host, "port": port})
+
+            def _restart():
+                import subprocess
+                import sys
+                import time
+                from pathlib import Path
+                from config import paths as config_paths
+                root_dir = Path(__file__).resolve().parents[1]
+                # Start new UI server process first (it will retry until port is available)
+                command = f"from vibe.ui_server import run_ui_server; run_ui_server('{host}', {port})"
+                stdout_path = config_paths.get_runtime_dir() / "ui_stdout.log"
+                stderr_path = config_paths.get_runtime_dir() / "ui_stderr.log"
+                stdout = stdout_path.open("ab")
+                stderr = stderr_path.open("ab")
+                process = subprocess.Popen(
+                    [sys.executable, "-c", command],
+                    stdout=stdout,
+                    stderr=stderr,
+                    start_new_session=True,
+                    cwd=str(root_dir),
+                    close_fds=True,
+                )
+                stdout.close()
+                stderr.close()
+                # Write new PID
+                config_paths.get_runtime_ui_pid_path().write_text(str(process.pid), encoding="utf-8")
+                runtime.write_status(
+                    status.get("state", "running"),
+                    status.get("detail"),
+                    status.get("service_pid"),
+                    process.pid,
+                )
+                # Give the new process a moment to start attempting connection
+                time.sleep(0.2)
+                # Now shutdown current server - new process will retry until port is free
+                self.server.shutdown()
+                self.server.server_close()
+
+            threading.Thread(target=_restart).start()
+            return
         if self.path == "/settings":
             from vibe import api
 
@@ -154,18 +252,75 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
             result = _doctor()
             self._send_json(result)
             return
+        if self.path == "/logs":
+            from config import paths
+            import re
+
+            payload = self._read_json()
+            lines = payload.get("lines", 500)
+            log_path = paths.get_logs_dir() / "vibe_remote.log"
+            if not log_path.exists():
+                self._send_json({"logs": [], "total": 0})
+                return
+            # Read last N lines
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    all_lines = f.readlines()
+                    recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                # Parse log lines
+                # Format: 2026-01-19 18:46:42,292 - slack_sdk.socket_mode.aiohttp - DEBUG - [__init__.py:246] - message
+                log_pattern = re.compile(
+                    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$"
+                )
+                logs = []
+                for line in recent_lines:
+                    line = line.rstrip("\n")
+                    match = log_pattern.match(line)
+                    if match:
+                        logs.append({
+                            "timestamp": match.group(1),
+                            "logger": match.group(2),
+                            "level": match.group(3),
+                            "message": match.group(4),
+                        })
+                    elif logs and line:
+                        # Continuation of previous log (multiline)
+                        logs[-1]["message"] += "\n" + line
+                self._send_json({"logs": logs, "total": len(all_lines)})
+            except Exception as e:
+                self._send_json({"error": str(e)}, status=500)
+            return
         if self.path == "/opencode/options":
             from vibe import api
 
             payload = self._read_json()
-            self._send_json(api.opencode_options(payload.get("cwd", ".")))
+            result = self._run_async(
+                api.opencode_options_async(payload.get("cwd", ".")),
+                timeout=12.0,
+            )
+            self._send_json(result)
             return
         self._send_json({"error": "not_found"}, status=404)
 
 
-def run_ui_server(port: int) -> None:
+class ThreadingHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def run_ui_server(host: str, port: int) -> None:
+    import time
     paths.ensure_data_dirs()
-    print(f"UI Server running at http://127.0.0.1:{port}")
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", port), UiHandler) as httpd:
-        httpd.serve_forever()
+    print(f"UI Server running at http://{host}:{port}")
+    # Retry binding in case of TIME_WAIT
+    for attempt in range(10):
+        try:
+            with ThreadingHTTPServer((host, port), UiHandler) as httpd:
+                httpd.serve_forever()
+            break
+        except OSError as e:
+            if e.errno == 48 and attempt < 9:  # Address already in use
+                print(f"Port {port} in use, retrying in 1s... (attempt {attempt + 1})")
+                time.sleep(1)
+            else:
+                raise

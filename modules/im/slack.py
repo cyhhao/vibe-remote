@@ -1,4 +1,5 @@
 import asyncio
+import asyncio
 import hashlib
 import logging
 import time
@@ -25,8 +26,8 @@ class SlackBot(BaseIMClient):
     def __init__(self, config: SlackConfig):
         super().__init__(config)
         self.config = config
-        self.web_client = None
-        self.socket_client = None
+        self.web_client: Optional[AsyncWebClient] = None
+        self.socket_client: Optional[SocketModeClient] = None
 
         # Initialize Slack formatter
         self.formatter = SlackFormatter()
@@ -46,6 +47,8 @@ class SlackBot(BaseIMClient):
         # Settings manager for thread tracking (will be injected later)
         self.settings_manager = None
         self._recent_event_ids: Dict[str, float] = {}
+        self._stop_event: Optional[asyncio.Event] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def set_settings_manager(self, settings_manager):
         """Set the settings manager for thread tracking"""
@@ -795,21 +798,21 @@ class SlackBot(BaseIMClient):
             user_id = payload.get("user", {}).get("id")
             values = view.get("state", {}).get("values", {})
 
-            # Extract selected hidden message types
-            hidden_types_data = values.get("hidden_message_types", {}).get(
-                "hidden_types_select", {}
+            # Extract selected show message types
+            show_types_data = values.get("show_message_types", {}).get(
+                "show_types_select", {}
             )
-            selected_options = hidden_types_data.get("selected_options", [])
+            selected_options = show_types_data.get("selected_options", [])
 
             # Get the values from selected options
-            hidden_types = [opt.get("value") for opt in selected_options]
+            show_types = [opt.get("value") for opt in selected_options]
 
             # Get channel_id from the view's private_metadata if available
             channel_id = view.get("private_metadata")
 
             # Update settings - need access to settings manager
             if hasattr(self, "_on_settings_update"):
-                await self._on_settings_update(user_id, hidden_types, channel_id)
+                await self._on_settings_update(user_id, show_types, channel_id)
 
         elif callback_id == "change_cwd_modal":
             # Handle change CWD modal submission
@@ -930,19 +933,81 @@ class SlackBot(BaseIMClient):
             async def start():
                 self._ensure_clients()
                 self.register_handlers()
+                self._loop = asyncio.get_running_loop()
+                self._stop_event = asyncio.Event()
                 await self.socket_client.connect()
-                await asyncio.sleep(float("inf"))
+                await self._stop_event.wait()
+                await self._async_close()
 
             asyncio.run(start())
         else:
             # Web API only mode (for development/testing)
             logger.warning("No app token provided, running in Web API only mode")
-            # In this mode, you would typically run a web server to receive events
-            # For now, just keep the program running
+
+            async def start():
+                self._ensure_clients()
+                self._loop = asyncio.get_running_loop()
+                self._stop_event = asyncio.Event()
+                await self._stop_event.wait()
+                await self._async_close()
+
             try:
-                asyncio.run(asyncio.sleep(float("inf")))
+                asyncio.run(start())
             except KeyboardInterrupt:
                 logger.info("Shutting down...")
+
+    def stop(self) -> None:
+        if self._stop_event is None:
+            return
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._stop_event.set)
+        else:
+            self._stop_event.set()
+
+    async def shutdown(self) -> None:
+        """Best-effort async shutdown for Slack clients."""
+        if self._stop_event is not None:
+            self._stop_event.set()
+
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._loop and self._loop.is_running() and self._loop is not current_loop:
+            try:
+                future = asyncio.run_coroutine_threadsafe(self._async_close(), self._loop)
+                future.result(timeout=5)
+            except Exception as exc:
+                logger.debug(f"Slack shutdown dispatch failed: {exc}")
+            return
+
+        await self._async_close()
+
+    async def _async_close(self) -> None:
+        if self.socket_client is not None:
+            try:
+                disconnect = getattr(self.socket_client, "disconnect", None)
+                if callable(disconnect):
+                    result = disconnect()
+                    if asyncio.iscoroutine(result):
+                        await result
+            except Exception as exc:
+                logger.debug(f"Socket mode disconnect failed: {exc}")
+            try:
+                close = getattr(self.socket_client, "close", None)
+                if callable(close):
+                    result = close()
+                    if asyncio.iscoroutine(result):
+                        await result
+            except Exception as exc:
+                logger.debug(f"Socket mode close failed: {exc}")
+
+        if self.web_client is not None:
+            try:
+                await self.web_client.close()
+            except Exception as exc:
+                logger.debug(f"Slack web client close failed: {exc}")
 
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
         """Get information about a Slack user"""
@@ -1024,14 +1089,14 @@ class SlackBot(BaseIMClient):
             }
             options.append(option)
 
-            # If this type is hidden, add THE SAME option object to selected options
-            if msg_type in user_settings.hidden_message_types:
+            # If this type is shown, add THE SAME option object to selected options
+            if msg_type in user_settings.show_message_types:
                 selected_options.append(option)  # Same object reference!
 
         logger.info(
             f"Creating modal with {len(options)} options, {len(selected_options)} selected"
         )
-        logger.info(f"Hidden types: {user_settings.hidden_message_types}")
+        logger.info(f"Show types: {user_settings.show_message_types}")
 
         # Debug: Log the actual data being sent
         import json
@@ -1044,11 +1109,11 @@ class SlackBot(BaseIMClient):
             "type": "multi_static_select",
             "placeholder": {
                 "type": "plain_text",
-                "text": "Select message types to hide",
+                "text": "Select message types to show",
                 "emoji": True,
             },
             "options": options,
-            "action_id": "hidden_types_select",
+            "action_id": "show_types_select",
         }
 
         # Only add initial_options if there are selected options
@@ -1076,17 +1141,17 @@ class SlackBot(BaseIMClient):
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "Choose which message types to *hide* from agent output. Hidden messages won't appear in your Slack workspace.",
+                        "text": "Choose which message types to *show* from agent output. Unselected types won't appear in your Slack workspace.",
                     },
                 },
                 {"type": "divider"},
                 {
                     "type": "input",
-                    "block_id": "hidden_message_types",
+                    "block_id": "show_message_types",
                     "element": multi_select_element,
                     "label": {
                         "type": "plain_text",
-                        "text": "Hide these message types:",
+                        "text": "Show these message types:",
                         "emoji": True,
                     },
                     "optional": True,
@@ -1847,20 +1912,19 @@ class SlackBot(BaseIMClient):
 
     async def _is_authorized_channel(self, channel_id: str) -> bool:
         """Check if a channel is authorized based on whitelist configuration"""
-        target_channel = self.config.target_channels
+        if not self.settings_manager:
+            logger.warning("No settings_manager configured; rejecting by default")
+            return False
 
-        # If None/null, accept all channels
-        if target_channel is None:
+        settings = self.settings_manager.get_channel_settings(channel_id)
+        if settings is None:
+            logger.warning("No channel settings found; rejecting by default")
+            return False
+
+        if settings.enabled:
             return True
 
-        # If list with IDs, check whitelist
-        if isinstance(target_channel, list):
-            return channel_id in target_channel
-
-        # Unexpected type: be conservative and reject
-        logger.warning(
-            f"Unexpected target_channel type: {type(target_channel)}; rejecting by default"
-        )
+        logger.info("Channel not enabled in settings.json: %s", channel_id)
         return False
 
     async def _send_unauthorized_message(self, channel_id: str):

@@ -54,7 +54,7 @@ This file defines how coding agents should work in this repository.
 - IM transports: `modules/im/` (Slack-first; platform abstraction retained).
 - Config:
   - Defaults and validation: `config/` (see `config/v2_config.py`).
-  - Agent routing: optional local `agent_routes.yaml` (gitignored).
+  - Agent routing: configured via Slack Agent Settings.
 - Runtime data:
 - Logs: `~/.vibe_remote/logs/vibe_remote.log`.
 - Persisted state: `~/.vibe_remote/state/`.
@@ -93,11 +93,7 @@ This file defines how coding agents should work in this repository.
 
 - OpenCode enablement: `OPENCODE_ENABLED=true` (default: false) and `OPENCODE_CLI_PATH` points to the CLI.
 - Codex enablement: `CODEX_ENABLED=true` (default: true) and `CODEX_CLI_PATH` points to the CLI.
-- Routing file:
-  - Create `agent_routes.yaml` (local) only if you prefer file-based routing (legacy).
-  - Controlled by `AGENT_ROUTE_FILE` (defaults to repo-root `agent_routes.yaml`).
-  - Keys are Slack channel IDs; values are agent names (e.g., `opencode`, `claude`, `codex`).
-  - Missing entries fall back to platform default, then to global default.
+- Routing is configured per channel via Slack **Agent Settings**.
 
 ### Safety Notes
 

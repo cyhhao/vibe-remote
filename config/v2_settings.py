@@ -1,4 +1,5 @@
 import json
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,6 +8,15 @@ from typing import Dict, List, Optional
 from config import paths
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_SHOW_MESSAGE_TYPES: List[str] = []
+ALLOWED_MESSAGE_TYPES = {"system", "assistant", "toolcall"}
+
+
+def normalize_show_message_types(show_message_types: Optional[List[str]]) -> List[str]:
+    if show_message_types is None:
+        return DEFAULT_SHOW_MESSAGE_TYPES.copy()
+    return [msg for msg in show_message_types if msg in ALLOWED_MESSAGE_TYPES]
 
 
 @dataclass
@@ -19,9 +29,9 @@ class RoutingSettings:
 
 @dataclass
 class ChannelSettings:
-    enabled: bool = True
-    hidden_message_types: List[str] = field(
-        default_factory=lambda: ["system", "assistant", "toolcall"]
+    enabled: bool = False
+    show_message_types: List[str] = field(
+        default_factory=lambda: DEFAULT_SHOW_MESSAGE_TYPES.copy()
     )
     custom_cwd: Optional[str] = None
     routing: RoutingSettings = field(default_factory=RoutingSettings)
@@ -46,8 +56,17 @@ class SettingsStore:
         except Exception as exc:
             logger.error("Failed to load settings: %s", exc)
             return
+        raw_channels = payload.get("channels") if isinstance(payload, dict) else None
+        if raw_channels is None:
+            logger.error("Failed to load settings: invalid format")
+            return
+        if not isinstance(raw_channels, dict):
+            logger.error("Failed to load settings: channels must be an object")
+            return
         channels = {}
-        for channel_id, channel_payload in (payload.get("channels") or {}).items():
+        for channel_id, channel_payload in raw_channels.items():
+            if not isinstance(channel_payload, dict):
+                continue
             routing_payload = channel_payload.get("routing") or {}
             routing = RoutingSettings(
                 agent_backend=routing_payload.get("agent_backend"),
@@ -56,9 +75,9 @@ class SettingsStore:
                 opencode_reasoning_effort=routing_payload.get("opencode_reasoning_effort"),
             )
             channels[channel_id] = ChannelSettings(
-                enabled=channel_payload.get("enabled", True),
-                hidden_message_types=channel_payload.get(
-                    "hidden_message_types", ["system", "assistant", "toolcall"]
+                enabled=channel_payload.get("enabled", False),
+                show_message_types=normalize_show_message_types(
+                    channel_payload.get("show_message_types")
                 ),
                 custom_cwd=channel_payload.get("custom_cwd"),
                 routing=routing,
@@ -71,7 +90,7 @@ class SettingsStore:
         for channel_id, settings in self.settings.channels.items():
             payload["channels"][channel_id] = {
                 "enabled": settings.enabled,
-                "hidden_message_types": settings.hidden_message_types,
+                "show_message_types": settings.show_message_types,
                 "custom_cwd": settings.custom_cwd,
                 "routing": {
                     "agent_backend": settings.routing.agent_backend,

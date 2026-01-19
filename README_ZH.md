@@ -26,7 +26,7 @@ Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack 输入意图与约
 - **专注 vibe coding**：基于你的意图与约束让 AI 自主推进，你只把控方向与结果。
 - **随时随地**：不被 IDE 束缚，直接在 Slack 中远程操控编码会话。
 - **为扩展而生**：OpenCode 优先，同时支持 Claude Code + Codex；并可扩展到更多 coding agents/CLIs。
-- **多 Agent 路由**：为不同 Slack Channel 指定 OpenCode / Claude Code / Codex，互不干扰。
+- **多 Agent 路由**：通过 Slack UI 为不同 Channel 选择 OpenCode / Claude Code / Codex。
 - **按线程 + 路径持久化**：每个 Slack 线程维持独立 Agent 会话与工作目录，并通过持久化映射自动恢复。
 - **Slack 交互式体验**：`/start` 菜单 + Settings/CWD 模态，按钮优先于命令，更快上手。
 
@@ -39,7 +39,7 @@ Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack 输入意图与约
 - **持久会话**：按聊天/线程维度持久化，可随时恢复
 - **Slack 线程化 UX**：每个会话独立线程，保持频道整洁
 - **工作目录控制**：随时查看与更改 `cwd`
-- **个性化**：自定义隐藏的消息类型
+- **个性化**：按频道自定义隐藏消息类型（默认隐藏 system/toolcall）
 
 ## 架构（简述）
 
@@ -135,21 +135,9 @@ vibe
 ### Agent 路由
 
 - Slack：推荐直接使用内置的 **Agent Settings** 弹窗，为每个 channel 选择 backend。
-- 兼容（为老用户保留）：通过 `agent_routes.yaml` 进行文件路由。
-  - 将 `agent_routes.yaml` 放在仓库根目录，或用 `AGENT_ROUTE_FILE` 指向任意 YAML/JSON 文件。
-  - 示例：
-
-```yaml
-default: opencode
-slack:
-  default: opencode
-  overrides:
-    C01EXAMPLE: codex
-```
-
 - Slack 使用频道 ID。
 - 参见 [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) 获取 Codex 安装与路由说明。
-- 未提供路由文件时：如果启用了 OpenCode，则默认使用 OpenCode；否则回退到 Claude。
+- 如果启用了 OpenCode，则默认使用 OpenCode；否则回退到 Claude。
 
 ### 应用
 

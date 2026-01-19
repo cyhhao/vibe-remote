@@ -4,8 +4,10 @@ import { AppShell } from './components/AppShell';
 import { Dashboard } from './components/Dashboard';
 import { ChannelList } from './components/steps/ChannelList';
 import { DoctorPanel } from './components/steps/DoctorPanel';
+import { LogsPanel } from './components/steps/LogsPanel';
 import { StatusProvider } from './context/StatusContext';
 import { ApiProvider, useApi } from './context/ApiContext';
+import { ToastProvider } from './context/ToastContext';
 import { useEffect, useState } from 'react';
 
 // Wrapper to check if setup is needed
@@ -42,6 +44,7 @@ function AppRoutes() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/channels" element={<ChannelList isPage />} />
         <Route path="/doctor" element={<DoctorPanel isPage />} />
+        <Route path="/doctor/logs" element={<LogsPanel />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
@@ -52,9 +55,11 @@ function App() {
   return (
     <StatusProvider>
       <ApiProvider>
-        <BrowserRouter>
-           <AppRoutes />
-        </BrowserRouter>
+        <ToastProvider>
+          <BrowserRouter>
+             <AppRoutes />
+          </BrowserRouter>
+        </ToastProvider>
       </ApiProvider>
     </StatusProvider>
   );

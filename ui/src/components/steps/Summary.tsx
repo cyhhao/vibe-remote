@@ -153,7 +153,7 @@ const buildSettingsPayload = (data: any) => {
         id,
         {
           enabled: cfg.enabled,
-          hidden_message_types: cfg.hidden_message_types || ['system', 'toolcall'],
+          show_message_types: cfg.show_message_types || [],
           custom_cwd: cfg.custom_cwd || null,
           routing: {
             agent_backend: cfg.routing?.agent_backend || null,

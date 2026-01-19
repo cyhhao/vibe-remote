@@ -37,8 +37,7 @@ V2 stores all user data under `~/.vibe_remote/` as JSON files. The model preserv
 
 - `default_cwd`: default working directory
 - `log_level`: `"DEBUG" | "INFO" | "WARNING" | "ERROR"`
-- `require_mention`: bool (channel messages require @mention)
-- `target_channels`: list of channel IDs or `"*"` for all
+- `require_mention`: bool (channel messages require @mention; stored under `slack`)
 
 ### agents
 
@@ -60,6 +59,7 @@ V2 stores all user data under `~/.vibe_remote/` as JSON files. The model preserv
 
 ### ui
 
+- `setup_host`: hostname/interface for local setup UI
 - `setup_port`: port for local setup UI
 - `open_browser`: bool
 
@@ -68,7 +68,7 @@ V2 stores all user data under `~/.vibe_remote/` as JSON files. The model preserv
 Settings are stored per channel and preserve existing functionality.
 
 - `channels`: map keyed by `channel_id`
-  - `hidden_message_types`: list (default: `system`, `assistant`, `toolcall`)
+  - `show_message_types`: list (default: `[]` - hide all message types)
   - `custom_cwd`: optional cwd override
   - `routing`:
     - `agent_backend`: `"opencode" | "claude" | "codex" | null`

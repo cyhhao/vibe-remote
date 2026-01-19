@@ -37,9 +37,7 @@ class AppCompatConfig:
     codex: Optional[CodexCompatConfig]
     opencode: Optional[OpenCodeCompatConfig]
     log_level: str
-    cleanup_enabled: bool
     ack_mode: str
-    agent_route_file: Optional[str]
 
 
 def to_app_config(v2: V2Config) -> AppCompatConfig:
@@ -62,14 +60,13 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
             port=4096,
             request_timeout_seconds=60,
         )
+    slack = SlackConfig(**v2.slack.__dict__)
     return AppCompatConfig(
         platform="slack",
-        slack=v2.slack,
+        slack=slack,
         claude=claude,
         codex=codex,
         opencode=opencode,
         log_level=v2.runtime.log_level,
-        cleanup_enabled=v2.cleanup_enabled,
         ack_mode=v2.ack_mode,
-        agent_route_file=v2.agent_route_file,
     )

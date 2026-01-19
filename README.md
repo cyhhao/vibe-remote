@@ -26,7 +26,7 @@ Vibe Remote lets you operate coding agents via Slack. Type in Slack to start and
 - **Vibe coding, not micromanaging**: Let AI drive based on your intent and constraints; focus on outcomes.
 - **Work from anywhere**: Control coding sessions over Slack; no IDE tether.
 - **Extensible by design**: OpenCode-first, and also supports Claude Code + Codex; built to support additional coding agents/CLIs.
-- **Multi-agent routing**: Route each Slack channel to OpenCode, Claude Code, or Codex via `agent_routes.yaml` (and Slack UI when enabled).
+- **Multi-agent routing**: Route each Slack channel to OpenCode, Claude Code, or Codex via Slack UI.
 - **Session persistence by thread + path**: Each Slack thread maintains its own agent session and working dir; auto‑resume via saved mappings.
 - **Interactive Slack UX**: `/start` menu + Settings/CWD modals; buttons over commands for faster flow.
 
@@ -39,7 +39,7 @@ Vibe Remote lets you operate coding agents via Slack. Type in Slack to start and
 - **Persistent sessions**: Per chat/thread sessions, easy resume
 - **Threaded Slack UX**: Clean, per‑conversation threads
 - **Working dir control**: Inspect and change `cwd` on the fly
-- **Personalization**: Toggle which message types to display
+- **Personalization**: Toggle per-channel hidden message types (defaults hide system/toolcall)
 
 ## Architecture (Brief)
 
@@ -135,21 +135,9 @@ vibe
 ### Agent routing
 
 - Slack: use the built-in **Agent Settings** dialog to select the backend per channel (recommended).
-- Legacy (for backward compatibility): file-based routing via `agent_routes.yaml`.
-  - Place `agent_routes.yaml` in the repo root, or point `AGENT_ROUTE_FILE` to any YAML/JSON file.
-  - File schema:
-
-```yaml
-default: opencode
-slack:
-  default: opencode
-  overrides:
-    C01EXAMPLE: codex
-```
-
 - Slack routes use channel IDs.
 - See [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) for Codex install and routing notes.
-- No routing file? If OpenCode is enabled, the bot defaults to OpenCode; otherwise it falls back to Claude.
+- If OpenCode is enabled, the bot defaults to OpenCode; otherwise it falls back to Claude.
 
 ### App
 

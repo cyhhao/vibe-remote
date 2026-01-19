@@ -222,6 +222,10 @@ class BaseIMClient(ABC):
     def run(self):
         """Start the bot/client"""
         pass
+
+    async def shutdown(self) -> None:
+        """Best-effort async shutdown for platform resources."""
+        return None
     
     @abstractmethod
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:

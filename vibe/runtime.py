@@ -67,14 +67,26 @@ def pid_alive(pid):
         return False
 
 
-def spawn_background(args, pid_path):
+def _log_path(name: str) -> Path:
+    return paths.get_runtime_dir() / name
+
+
+def spawn_background(args, pid_path, stdout_name: str, stderr_name: str):
+    stdout_path = _log_path(stdout_name)
+    stderr_path = _log_path(stderr_name)
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stdout = stdout_path.open("ab")
+    stderr = stderr_path.open("ab")
     process = subprocess.Popen(
         args,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=stderr,
         start_new_session=True,
         cwd=str(ROOT_DIR),
+        close_fds=True,
     )
+    stdout.close()
+    stderr.close()
     pid_path.write_text(str(process.pid), encoding="utf-8")
     return process.pid
 
@@ -118,15 +130,22 @@ def render_status():
 
 def start_service():
     return spawn_background(
-        [sys.executable, str(MAIN_PATH)], paths.get_runtime_pid_path()
+        [sys.executable, str(MAIN_PATH)],
+        paths.get_runtime_pid_path(),
+        "service_stdout.log",
+        "service_stderr.log",
     )
 
 
-def start_ui(port):
-    command = "from vibe.ui_server import run_ui_server; run_ui_server({})".format(port)
+def start_ui(host, port):
+    command = "from vibe.ui_server import run_ui_server; run_ui_server('{}', {})".format(
+        host, port
+    )
     return spawn_background(
         [sys.executable, "-c", command],
         paths.get_runtime_ui_pid_path(),
+        "ui_stdout.log",
+        "ui_stderr.log",
     )
 
 
