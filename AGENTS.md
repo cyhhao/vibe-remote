@@ -70,6 +70,23 @@ This file defines how coding agents should work in this repository.
   - `vibe status` / `vibe stop`
   - Restart: run `vibe`
 
+### Frontend (UI)
+
+- Location: `ui/` (React + Vite + TypeScript)
+- Build: `npm run build` (from `ui/` directory)
+- i18n: `ui/src/i18n/en.json` and `zh.json`
+- Output: `ui/dist/` (served by `vibe/ui_server.py`)
+
+**Development workflow:**
+1. Make changes to `ui/src/`
+2. Run `npm run build` in `ui/` directory
+3. For local preview, install in editable mode: `uv tool install --force --editable .`
+4. Restart `vibe` to load new assets
+
+**Important:** The installed `vibe` command uses bundled UI assets from the package, not `ui/dist/`. To test local UI changes, either:
+- Use editable install (`uv tool install --force --editable .`)
+- Or reinstall the package after building
+
 ### Release Notes
 
 - Tags follow the latest version number +1 (e.g., `v1.0.1` -> `v1.0.2`) and should be pushed; releases are published automatically by workflow.
