@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, RefreshCw, CheckCircle, AlertTriangle, XCircle, Copy } from 'lucide-react';
+import { Activity, RefreshCw, CheckCircle, AlertTriangle, XCircle, Copy, FileText } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
+import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 
 interface DoctorPanelProps {
@@ -8,6 +10,7 @@ interface DoctorPanelProps {
 }
 
 export const DoctorPanel: React.FC<DoctorPanelProps> = ({ isPage }) => {
+  const { t } = useTranslation();
   const api = useApi();
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<any>(null);
@@ -40,15 +43,21 @@ export const DoctorPanel: React.FC<DoctorPanelProps> = ({ isPage }) => {
         <div className="flex items-center justify-between mb-6">
              <h2 className={clsx("font-display font-bold flex items-center gap-2", isPage ? "text-3xl" : "text-xl")}>
                 <Activity className="text-accent" />
-                System Status
+                {t('doctor.title')}
              </h2>
              <div className="flex gap-2">
+                 <Link
+                     to="/doctor/logs"
+                     className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm text-muted hover:bg-neutral-50 hover:text-text transition-colors"
+                 >
+                     <FileText size={16} /> {t('common.viewLogs')}
+                 </Link>
                  {results && (
                      <button
                          onClick={() => navigator.clipboard.writeText(JSON.stringify(results, null, 2))}
                          className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm text-muted hover:bg-neutral-50 hover:text-text transition-colors"
                      >
-                         <Copy size={16} /> Copy Report
+                         <Copy size={16} /> {t('doctor.copyReport')}
                      </button>
                  )}
                  <button
@@ -56,7 +65,7 @@ export const DoctorPanel: React.FC<DoctorPanelProps> = ({ isPage }) => {
                     disabled={loading}
                     className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 disabled:opacity-50 transition-colors font-medium shadow-sm"
                  >
-                    <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Run Checks
+                    <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> {t('doctor.runChecks')}
                  </button>
              </div>
         </div>
@@ -89,15 +98,15 @@ export const DoctorPanel: React.FC<DoctorPanelProps> = ({ isPage }) => {
            <div className="grid grid-cols-3 gap-4">
               <div className="bg-success/10 border border-success/20 rounded-lg p-4 text-center">
                   <div className="text-2xl font-bold text-success">{results.summary?.pass || 0}</div>
-                  <div className="text-sm text-success/80 font-medium">Passed</div>
+                  <div className="text-sm text-success/80 font-medium">{t('doctor.passed')}</div>
               </div>
               <div className="bg-warning/10 border border-warning/20 rounded-lg p-4 text-center">
                   <div className="text-2xl font-bold text-warning">{results.summary?.warn || 0}</div>
-                  <div className="text-sm text-warning/80 font-medium">Warnings</div>
+                  <div className="text-sm text-warning/80 font-medium">{t('doctor.warnings')}</div>
               </div>
               <div className="bg-danger/10 border border-danger/20 rounded-lg p-4 text-center">
                   <div className="text-2xl font-bold text-danger">{results.summary?.fail || 0}</div>
-                  <div className="text-sm text-danger/80 font-medium">Failed</div>
+                  <div className="text-sm text-danger/80 font-medium">{t('doctor.failed')}</div>
               </div>
            </div>
         </div>

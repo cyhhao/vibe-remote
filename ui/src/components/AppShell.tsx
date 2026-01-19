@@ -1,8 +1,11 @@
 import React from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { LayoutDashboard, MessageSquare, Activity } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useStatus } from '../context/StatusContext';
+import { LanguageSwitcher } from './LanguageSwitcher';
 import clsx from 'clsx';
+import logoImg from '../assets/logo.png';
 
 const NavItem = ({ to, icon: Icon, children }: { to: string; icon: any; children: React.ReactNode }) => (
   <NavLink
@@ -20,6 +23,7 @@ const NavItem = ({ to, icon: Icon, children }: { to: string; icon: any; children
 );
 
 export const AppShell: React.FC = () => {
+  const { t } = useTranslation();
   const { status } = useStatus();
   const location = useLocation();
 
@@ -35,22 +39,23 @@ export const AppShell: React.FC = () => {
       <aside className="w-64 border-r border-border bg-panel hidden md:flex flex-col">
         <div className="p-6 border-b border-border">
             <h1 className="text-xl font-bold font-display tracking-tight flex items-center gap-2">
-                <div className="w-6 h-6 bg-accent rounded-md"></div>
-                Vibe Remote
+                <img src={logoImg} alt="Vibe Remote Logo" className="w-6 h-6 rounded-md" />
+                {t('appShell.title')}
             </h1>
         </div>
 
         <nav className="flex-1 p-4 space-y-1">
-          <NavItem to="/dashboard" icon={LayoutDashboard}>Dashboard</NavItem>
-          <NavItem to="/channels" icon={MessageSquare}>Channels</NavItem>
-          <NavItem to="/doctor" icon={Activity}>Doctor</NavItem>
+          <NavItem to="/dashboard" icon={LayoutDashboard}>{t('nav.dashboard')}</NavItem>
+          <NavItem to="/channels" icon={MessageSquare}>{t('nav.channels')}</NavItem>
+          <NavItem to="/doctor" icon={Activity}>{t('nav.doctor')}</NavItem>
         </nav>
 
-        <div className="p-4 border-t border-border">
+        <div className="p-4 border-t border-border space-y-3">
+             <LanguageSwitcher />
              <div className="flex items-center justify-between bg-neutral-50 p-3 rounded-lg border border-border">
                 <div className="flex items-center gap-2">
                     <div className={clsx("w-2.5 h-2.5 rounded-full", isRunning ? "bg-success" : "bg-muted")}></div>
-                    <span className="text-sm font-medium">{isRunning ? 'Running' : 'Stopped'}</span>
+                    <span className="text-sm font-medium">{isRunning ? t('common.running') : t('common.stopped')}</span>
                 </div>
              </div>
         </div>

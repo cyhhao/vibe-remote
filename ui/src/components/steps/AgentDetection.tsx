@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Check, X, RefreshCw, Search } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 
@@ -16,6 +17,7 @@ type AgentState = {
 };
 
 export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, onBack }) => {
+  const { t } = useTranslation();
   const api = useApi();
   const [checking, setChecking] = useState(false);
   const [defaultBackend, setDefaultBackend] = useState<string>(data.default_backend || 'opencode');
@@ -69,19 +71,19 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
 
   return (
     <div className="flex flex-col h-full max-w-2xl mx-auto">
-      <h2 className="text-3xl font-display font-bold mb-2 text-text">Agent Configuration</h2>
+      <h2 className="text-3xl font-display font-bold mb-2 text-text">{t('agentDetection.title')}</h2>
       <p className="text-muted mb-6">
-        Detect local CLI paths and choose enabled backends.
+        {t('agentDetection.subtitle')}
       </p>
 
       <div className="mb-6 p-4 border border-border rounded-xl bg-panel shadow-sm">
-        <label className="text-sm font-medium text-muted uppercase">Default Backend</label>
+        <label className="text-sm font-medium text-muted uppercase">{t('agentDetection.defaultBackend')}</label>
         <select
           value={defaultBackend}
           onChange={(e) => setDefaultBackend(e.target.value)}
           className="mt-2 w-full bg-bg border border-border rounded px-3 py-2 text-sm"
         >
-          <option value="opencode">OpenCode (recommended)</option>
+          <option value="opencode">OpenCode {t('agentDetection.recommended')}</option>
           <option value="claude">Claude</option>
           <option value="codex">Codex</option>
         </select>
@@ -92,7 +94,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           onClick={detectAll}
           className="flex items-center gap-2 px-4 py-2 bg-neutral-100 hover:bg-neutral-200 text-text rounded-lg transition-colors font-medium text-sm"
         >
-          <Search size={16} /> Detect all
+          <Search size={16} /> {t('common.detectAll')}
         </button>
       </div>
 
@@ -102,7 +104,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="font-semibold capitalize text-lg text-text font-display">{name}</h3>
-                <p className="text-sm text-muted">CLI path detection and enablement</p>
+                <p className="text-sm text-muted">{t('agentDetection.cliPathDetection')}</p>
               </div>
               <StatusBadge status={agent.status || 'unknown'} loading={checking} />
             </div>
@@ -115,17 +117,17 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                   onChange={(e) => toggle(name, e.target.checked)}
                   className="w-4 h-4 text-accent rounded focus:ring-accent border-gray-300"
                 />
-                Enabled
+                {t('common.enabled')}
               </label>
 
               <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
-                    <label className="text-xs font-medium text-muted uppercase">CLI Path</label>
+                    <label className="text-xs font-medium text-muted uppercase">{t('agentDetection.cliPath')}</label>
                     {isMissing(agent) && (
-                        <span className="text-[10px] text-danger bg-danger/10 px-1.5 py-0.5 rounded border border-danger/20">Not Found</span>
+                        <span className="text-[10px] text-danger bg-danger/10 px-1.5 py-0.5 rounded border border-danger/20">{t('common.notFound')}</span>
                     )}
                      {!isMissing(agent) && agent.status === 'ok' && (
-                         <span className="text-[10px] text-success bg-success/10 px-1.5 py-0.5 rounded border border-success/20">Found</span>
+                         <span className="text-[10px] text-success bg-success/10 px-1.5 py-0.5 rounded border border-success/20">{t('common.found')}</span>
                      )}
                   </div>
                   <div className="flex gap-2">
@@ -136,7 +138,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                             ...prev,
                             [name]: { ...prev[name], cli_path: e.target.value }
                         }))}
-                        placeholder={`Path to ${name} CLI...`}
+                        placeholder={t('agentDetection.cliPathPlaceholder', { name })}
                         className="flex-1 bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent font-mono text-text"
                     />
                     <button
@@ -144,7 +146,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                         disabled={checking}
                         className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 rounded text-sm text-muted hover:text-text font-medium transition-colors border border-border"
                     >
-                        {checking ? <RefreshCw size={14} className="animate-spin" /> : 'Detect'}
+                        {checking ? <RefreshCw size={14} className="animate-spin" /> : t('common.detect')}
                     </button>
                   </div>
               </div>
@@ -159,7 +161,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           onClick={onBack}
           className="px-6 py-2 text-muted hover:text-text font-medium transition-colors"
         >
-          Back
+          {t('common.back')}
         </button>
         <button
           onClick={() => onNext({ agents, default_backend: defaultBackend })}
@@ -171,7 +173,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
               : 'bg-neutral-200 text-muted cursor-not-allowed'
           )}
         >
-          Continue
+          {t('common.continue')}
         </button>
       </div>
     </div>
@@ -179,6 +181,8 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
 };
 
 const StatusBadge = ({ status, loading }: { status: 'unknown' | 'ok' | 'missing'; loading: boolean }) => {
+  const { t } = useTranslation();
+  
   if (loading) {
     return (
       <div className="animate-spin text-muted">
@@ -187,15 +191,15 @@ const StatusBadge = ({ status, loading }: { status: 'unknown' | 'ok' | 'missing'
     );
   }
   if (status === 'unknown') {
-    return <span className="text-sm text-muted italic">Not checked</span>;
+    return <span className="text-sm text-muted italic">{t('common.notChecked')}</span>;
   }
   return status === 'ok' ? (
     <div className="flex items-center gap-2 text-success bg-success/10 px-3 py-1 rounded-full text-sm font-medium border border-success/20">
-      <Check size={14} /> Found
+      <Check size={14} /> {t('common.found')}
     </div>
   ) : (
     <div className="flex items-center gap-2 text-danger bg-danger/10 px-3 py-1 rounded-full text-sm font-medium border border-danger/20">
-      <X size={14} /> Missing
+      <X size={14} /> {t('common.missing')}
     </div>
   );
 };

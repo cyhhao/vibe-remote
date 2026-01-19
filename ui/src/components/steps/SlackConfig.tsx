@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Lock, Shield, RefreshCw } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 
@@ -10,6 +11,7 @@ interface SlackConfigProps {
 }
 
 export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }) => {
+  const { t } = useTranslation();
   const api = useApi();
   const [botToken, setBotToken] = useState(data.slack?.bot_token || data.slackBotToken || '');
   const [appToken, setAppToken] = useState(data.slack?.app_token || data.slackAppToken || '');
@@ -36,26 +38,26 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
 
   return (
     <div className="flex flex-col h-full max-w-2xl mx-auto">
-      <h2 className="text-3xl font-display font-bold mb-2 text-text">Slack Configuration</h2>
+      <h2 className="text-3xl font-display font-bold mb-2 text-text">{t('slackConfig.title')}</h2>
       <p className="text-muted mb-8">
         {mode === 'saas'
-          ? 'Authorize the official Slack app and wait for workspace binding.'
-          : 'Provide bot and app tokens for Socket Mode.'}
+          ? t('slackConfig.saasDescription')
+          : t('slackConfig.selfHostDescription')}
       </p>
 
       {mode === 'saas' ? (
         <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-border rounded-xl bg-neutral-50">
-          <p className="text-muted mb-6 text-center max-w-xs">Open OAuth in your browser to authorize Vibe Remote with your Slack workspace.</p>
+          <p className="text-muted mb-6 text-center max-w-xs">{t('slackConfig.oauthPrompt')}</p>
           <button className="px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent/90 transition-colors shadow-sm">
-            Open Slack OAuth
+            {t('slackConfig.openSlackOAuth')}
           </button>
-          <p className="text-xs text-muted mt-6">After authorization, return here to continue.</p>
+          <p className="text-xs text-muted mt-6">{t('slackConfig.afterAuth')}</p>
         </div>
       ) : (
         <div className="space-y-6">
           <div className="space-y-2">
             <label className="text-sm font-medium text-text flex items-center gap-2">
-              <Shield size={16} className="text-accent" /> Bot User OAuth Token
+              <Shield size={16} className="text-accent" /> {t('slackConfig.botToken')}
             </label>
             <input
               type="password"
@@ -64,12 +66,12 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
               placeholder="xoxb-..."
               className="w-full bg-bg border border-border rounded-lg p-3 text-text focus:outline-none focus:border-accent font-mono transition-colors shadow-sm"
             />
-            <p className="text-xs text-muted pl-1">Starts with <code className="bg-neutral-100 px-1 rounded">xoxb-</code></p>
+            <p className="text-xs text-muted pl-1">{t('slackConfig.botTokenHint')} <code className="bg-neutral-100 px-1 rounded">xoxb-</code></p>
           </div>
 
           <div className="space-y-2">
             <label className="text-sm font-medium text-text flex items-center gap-2">
-              <Lock size={16} className="text-accent" /> App-Level Token
+              <Lock size={16} className="text-accent" /> {t('slackConfig.appToken')}
             </label>
             <input
               type="password"
@@ -78,7 +80,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
               placeholder="xapp-..."
               className="w-full bg-bg border border-border rounded-lg p-3 text-text focus:outline-none focus:border-accent font-mono transition-colors shadow-sm"
             />
-             <p className="text-xs text-muted pl-1">Starts with <code className="bg-neutral-100 px-1 rounded">xapp-</code></p>
+             <p className="text-xs text-muted pl-1">{t('slackConfig.botTokenHint')} <code className="bg-neutral-100 px-1 rounded">xapp-</code></p>
           </div>
 
           <div className="flex items-center gap-3 pt-2">
@@ -87,19 +89,19 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
               className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 text-text rounded-lg flex items-center gap-2 transition-colors font-medium border border-border"
             >
               {checking ? <RefreshCw size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-              Validate Tokens
+              {t('slackConfig.validateTokens')}
             </button>
             {authResult && (
               <span className={clsx('flex items-center gap-2 text-sm font-medium px-3 py-1.5 rounded-lg border', authResult.ok ? 'text-success bg-success/10 border-success/20' : 'text-danger bg-danger/10 border-danger/20')}>
                 {authResult.ok ? (
                     <>
                         <Shield size={14} />
-                        <span>Success: Token Validated</span>
+                        <span>{t('slackConfig.tokenValidated')}</span>
                     </>
                 ) : (
                     <>
                          <Shield size={14} />
-                         <span>Auth failed: {authResult.error}</span>
+                         <span>{t('slackConfig.authFailed')}: {authResult.error}</span>
                     </>
                 )}
               </span>
@@ -113,7 +115,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
           onClick={onBack}
           className="px-6 py-2 text-muted hover:text-text font-medium transition-colors"
         >
-          Back
+          {t('common.back')}
         </button>
         <button
           onClick={() => onNext({ slack: { bot_token: botToken, app_token: appToken }, mode })}
@@ -123,7 +125,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
             isValid ? 'bg-accent hover:bg-accent/90 text-white' : 'bg-neutral-200 text-muted cursor-not-allowed'
           )}
         >
-          Continue
+          {t('common.continue')}
         </button>
       </div>
     </div>

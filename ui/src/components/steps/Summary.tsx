@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { CheckCircle2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useStatus } from '../../context/StatusContext';
 import { useNavigate } from 'react-router-dom';
@@ -13,6 +14,7 @@ interface SummaryProps {
 }
 
 export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
+  const { t } = useTranslation();
   const api = useApi();
   const { control } = useStatus();
   const [saving, setSaving] = useState(false);
@@ -49,17 +51,17 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
           <CheckCircle2 size={32} />
         </div>
         <div>
-          <h2 className="text-2xl font-display font-bold text-text">Review & Finish</h2>
-          <p className="text-muted">Confirm settings and start Vibe Remote.</p>
+          <h2 className="text-2xl font-display font-bold text-text">{t('summary.title')}</h2>
+          <p className="text-muted">{t('summary.subtitle')}</p>
         </div>
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto mb-6">
-        <Section title="Mode" value={data.mode} />
-        <Section title="Slack Bot Token" value={mask(data.slack?.bot_token || '')} />
-        <Section title="Slack App Token" value={mask(data.slack?.app_token || '')} />
-        <Section title="Enabled Agents" value={enabledAgents(data).join(', ')} />
-        <Section title="Channels Configured" value={Object.keys(data.channelConfigs || {}).filter(k => data.channelConfigs[k]?.enabled).length} />
+        <Section title={t('summary.mode')} value={data.mode} />
+        <Section title={t('summary.slackBotToken')} value={mask(data.slack?.bot_token || '')} />
+        <Section title={t('summary.slackAppToken')} value={mask(data.slack?.app_token || '')} />
+        <Section title={t('summary.enabledAgents')} value={enabledAgents(data).join(', ')} />
+        <Section title={t('summary.channelsConfigured')} value={Object.keys(data.channelConfigs || {}).filter(k => data.channelConfigs[k]?.enabled).length} />
       </div>
 
       {error && (
@@ -73,14 +75,14 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
           onClick={onBack}
           className="px-6 py-2 text-muted hover:text-text font-medium transition-colors"
         >
-          Back
+          {t('common.back')}
         </button>
         <button
           onClick={saveAll}
           disabled={saving}
           className="px-8 py-3 bg-success hover:bg-success/90 text-white rounded-lg font-bold transition-colors shadow-sm"
         >
-          {saving ? 'Saving...' : 'Finish & Start'}
+          {saving ? t('common.saving') : t('summary.finishAndStart')}
         </button>
       </div>
     </div>
@@ -109,14 +111,11 @@ const buildConfigPayload = (data: any) => {
     slack: {
       bot_token: data.slack?.bot_token || '',
       app_token: data.slack?.app_token || '',
+      require_mention: data.slack?.require_mention || false,
     },
     runtime: {
       default_cwd: data.default_cwd || '/Users/cyh/PycharmProjects/vibe-remote/_tmp', // Use default if empty
       log_level: 'INFO',
-      require_mention: false,
-      target_channels: Object.keys(data.channelConfigs || {}).filter(
-        (id) => data.channelConfigs[id]?.enabled
-      ),
     },
     agents: {
       default_backend: data.default_backend || 'opencode',
@@ -139,7 +138,8 @@ const buildConfigPayload = (data: any) => {
       },
     },
     ui: {
-      setup_port: 5123,
+      setup_host: data.ui?.setup_host || '127.0.0.1',
+      setup_port: data.ui?.setup_port || 5123,
       open_browser: true,
     },
   };
@@ -153,7 +153,7 @@ const buildSettingsPayload = (data: any) => {
         id,
         {
           enabled: cfg.enabled,
-          hidden_message_types: ['system', 'assistant', 'toolcall'],
+          hidden_message_types: cfg.hidden_message_types || ['system', 'toolcall'],
           custom_cwd: cfg.custom_cwd || null,
           routing: {
             agent_backend: cfg.routing?.agent_backend || null,
