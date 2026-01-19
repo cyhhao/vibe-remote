@@ -6,7 +6,7 @@
 
 ### 你的 AI 编码军团，用 Slack 指挥。
 
-**不用电脑。不用 IDE。只需 vibe。**
+**不用笔记本电脑。不用 IDE。只需 vibe。**
 
 [![GitHub Stars](https://img.shields.io/github/stars/cyhhao/vibe-remote?color=ffcb47&labelColor=black&style=flat-square)](https://github.com/cyhhao/vibe-remote/stargazers)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?labelColor=black&style=flat-square)](https://www.python.org/)
