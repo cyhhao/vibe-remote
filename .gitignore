@@ -151,9 +151,11 @@ logs/
 .vibe_remote/
 ui/node_modules/
 ui/dist/
+ui/.vite/
 tmp/
 .bot.pid
 user_settings.json
+vibe/_version.py
 
 # Config files with secrets
 config/secrets.py
