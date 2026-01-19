@@ -1,12 +1,13 @@
 # Vibe Remote Installation Script for Windows
 # Usage: irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
+#
+# Prerequisites: None! uv will be installed automatically and manages Python for you.
 
 $ErrorActionPreference = "Stop"
 
 # Configuration
 $REPO = "cyhhao/vibe-remote"
 $PACKAGE_NAME = "vibe-remote"
-$MIN_PYTHON_VERSION = [Version]"3.9"
 
 function Write-Banner {
     Write-Host @"
@@ -51,37 +52,13 @@ function Test-Command {
     return $?
 }
 
-function Get-PythonVersion {
-    param([string]$PythonCmd)
-    try {
-        $version = & $PythonCmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
-        return [Version]$version
-    } catch {
-        return $null
-    }
-}
-
-function Find-Python {
-    $candidates = @("python", "python3", "py -3")
-    
-    foreach ($cmd in $candidates) {
-        if (Test-Command $cmd.Split()[0]) {
-            $version = Get-PythonVersion $cmd
-            if ($version -and $version -ge $MIN_PYTHON_VERSION) {
-                return $cmd
-            }
-        }
-    }
-    return $null
-}
-
 function Install-Uv {
     if (Test-Command "uv") {
         Write-Success "uv is already installed"
         return
     }
     
-    Write-Info "Installing uv (Python package manager)..."
+    Write-Info "Installing uv (will also manage Python automatically)..."
     
     try {
         irm https://astral.sh/uv/install.ps1 | iex
@@ -107,26 +84,13 @@ function Install-Uv {
 }
 
 function Install-Vibe {
-    Write-Info "Installing vibe-remote..."
+    Write-Info "Installing vibe-remote (Python will be downloaded automatically if needed)..."
     
-    if (Test-Command "uv") {
-        try {
-            & uv tool install $PACKAGE_NAME --force 2>$null
-        } catch {
-            & uv tool install "git+https://github.com/$REPO.git" --force
-        }
-    } else {
-        $pythonCmd = Find-Python
-        if (-not $pythonCmd) {
-            Write-Error "Python $MIN_PYTHON_VERSION+ is required but not found. Please install Python first."
-        }
-        
-        Write-Info "Using $pythonCmd (uv not found, falling back to pip)"
-        try {
-            & $pythonCmd -m pip install --user $PACKAGE_NAME 2>$null
-        } catch {
-            & $pythonCmd -m pip install --user "git+https://github.com/$REPO.git"
-        }
+    # uv tool install will auto-download Python if not available
+    try {
+        & uv tool install $PACKAGE_NAME --force 2>$null
+    } catch {
+        & uv tool install "git+https://github.com/$REPO.git" --force
     }
     
     Write-Success "vibe-remote installed successfully"
@@ -142,14 +106,13 @@ function Test-Installation {
     if (Test-Command "vibe") {
         Write-Success "vibe command is available"
         Write-Host ""
-        & vibe doctor
+        & vibe --help
         return $true
     }
     
     # Check common install locations
     $vibeLocations = @(
-        "$env:USERPROFILE\.local\bin\vibe.exe",
-        "$env:APPDATA\Python\Scripts\vibe.exe"
+        "$env:USERPROFILE\.local\bin\vibe.exe"
     )
     
     foreach ($loc in $vibeLocations) {
@@ -182,8 +145,7 @@ function Write-NextSteps {
     Write-Host "  vibe doctor   - Run diagnostics"
     Write-Host ""
     Write-Host "Uninstall:" -ForegroundColor Blue
-    Write-Host "  uv tool uninstall vibe-remote    # if installed with uv"
-    Write-Host "  pip uninstall vibe-remote        # if installed with pip"
+    Write-Host "  uv tool uninstall vibe-remote"
     Write-Host "  Remove-Item -Recurse ~\.vibe_remote  # remove config and data"
     Write-Host ""
     Write-Host "Documentation:" -ForegroundColor Blue
@@ -197,16 +159,7 @@ function Main {
     
     Write-Info "Detected OS: Windows"
     
-    # Check Python
-    $pythonCmd = Find-Python
-    if ($pythonCmd) {
-        $version = Get-PythonVersion $pythonCmd
-        Write-Success "Found Python $version ($pythonCmd)"
-    } else {
-        Write-Warning "Python $MIN_PYTHON_VERSION+ not found, will try to use uv's managed Python"
-    }
-    
-    # Install uv
+    # Install uv (which manages Python automatically)
     Install-Uv
     
     # Install vibe-remote

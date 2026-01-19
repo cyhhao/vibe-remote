@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Vibe Remote Installation Script
 # Usage: curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
+#
+# Prerequisites: None! uv will be installed automatically and manages Python for you.
 
 set -e
 
@@ -14,7 +16,6 @@ NC='\033[0m' # No Color
 # Configuration
 REPO="cyhhao/vibe-remote"
 PACKAGE_NAME="vibe-remote"
-MIN_PYTHON_VERSION="3.9"
 
 print_banner() {
     echo -e "${BLUE}"
@@ -63,34 +64,6 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Version comparison: returns 0 if $1 >= $2
-version_gte() {
-    [ "$(printf '%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
-}
-
-# Get Python version
-get_python_version() {
-    local python_cmd="$1"
-    $python_cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null
-}
-
-# Find suitable Python
-find_python() {
-    local python_candidates=("python3" "python" "python3.12" "python3.11" "python3.10" "python3.9")
-    
-    for cmd in "${python_candidates[@]}"; do
-        if command_exists "$cmd"; then
-            local version
-            version=$(get_python_version "$cmd")
-            if [ -n "$version" ] && version_gte "$version" "$MIN_PYTHON_VERSION"; then
-                echo "$cmd"
-                return 0
-            fi
-        fi
-    done
-    return 1
-}
-
 # Install uv if not present
 install_uv() {
     if command_exists uv; then
@@ -98,7 +71,7 @@ install_uv() {
         return 0
     fi
     
-    info "Installing uv (Python package manager)..."
+    info "Installing uv (will also manage Python automatically)..."
     
     local os
     os=$(detect_os)
@@ -133,26 +106,13 @@ install_uv() {
     fi
 }
 
-# Install vibe-remote
+# Install vibe-remote using uv (uv auto-downloads Python if needed)
 install_vibe() {
-    info "Installing vibe-remote..."
+    info "Installing vibe-remote (Python will be downloaded automatically if needed)..."
     
-    if command_exists uv; then
-        # Use uv tool install (recommended)
-        uv tool install "$PACKAGE_NAME" --force 2>/dev/null || \
-        uv tool install "git+https://github.com/${REPO}.git" --force
-    else
-        # Fallback to pip
-        local python_cmd
-        python_cmd=$(find_python)
-        if [ -z "$python_cmd" ]; then
-            error "Python ${MIN_PYTHON_VERSION}+ is required but not found. Please install Python first."
-        fi
-        
-        info "Using $python_cmd (uv not found, falling back to pip)"
-        $python_cmd -m pip install --user "$PACKAGE_NAME" 2>/dev/null || \
-        $python_cmd -m pip install --user "git+https://github.com/${REPO}.git"
-    fi
+    # uv tool install will auto-download Python if not available
+    uv tool install "$PACKAGE_NAME" --force 2>/dev/null || \
+    uv tool install "git+https://github.com/${REPO}.git" --force
     
     success "vibe-remote installed successfully"
 }
@@ -167,7 +127,7 @@ verify_installation() {
     if command_exists vibe; then
         success "vibe command is available"
         echo ""
-        vibe --help 2>/dev/null || vibe doctor
+        vibe --help 2>/dev/null || true
         return 0
     fi
     
@@ -175,7 +135,6 @@ verify_installation() {
     local vibe_locations=(
         "$HOME/.local/bin/vibe"
         "$HOME/.cargo/bin/vibe"
-        "$(python3 -m site --user-base 2>/dev/null)/bin/vibe"
     )
     
     for loc in "${vibe_locations[@]}"; do
@@ -226,18 +185,7 @@ main() {
     os=$(detect_os)
     info "Detected OS: $os"
     
-    # Check Python
-    local python_cmd
-    python_cmd=$(find_python) || true
-    if [ -n "$python_cmd" ]; then
-        local version
-        version=$(get_python_version "$python_cmd")
-        success "Found Python $version ($python_cmd)"
-    else
-        warn "Python ${MIN_PYTHON_VERSION}+ not found, will try to use uv's managed Python"
-    fi
-    
-    # Install uv
+    # Install uv (which manages Python automatically)
     install_uv
     
     # Install vibe-remote
