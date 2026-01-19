@@ -21,7 +21,8 @@ class SlackConfig(BaseIMConfig):
     require_mention: bool = False
 
     def validate(self) -> None:
-        if not self.bot_token or not self.bot_token.startswith("xoxb-"):
+        # Allow empty token for initial setup
+        if self.bot_token and not self.bot_token.startswith("xoxb-"):
             raise ValueError("Invalid Slack bot token format (should start with xoxb-)")
         if self.app_token and not self.app_token.startswith("xapp-"):
             raise ValueError("Invalid Slack app token format (should start with xapp-)")
