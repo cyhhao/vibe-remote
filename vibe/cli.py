@@ -383,16 +383,6 @@ def _doctor():
     return result
 
 
-def _run_background_service():
-    python = sys.executable
-    command = "import runpy; runpy.run_path('main.py', run_name='__main__')"
-    return _spawn_background(
-        [python, "-c", command],
-        paths.get_runtime_pid_path(),
-        "service_stdout.log",
-        "service_stderr.log",
-    )
-
 
 def cmd_vibe():
     paths.ensure_data_dirs()
@@ -407,7 +397,7 @@ def cmd_vibe():
     else:
         _write_status("starting")
 
-    service_pid = _run_background_service()
+    service_pid = runtime.start_service()
     ui_pid = runtime.start_ui(config.ui.setup_host, config.ui.setup_port)
     runtime.write_status("running", "pid={}".format(service_pid), service_pid, ui_pid)
 
