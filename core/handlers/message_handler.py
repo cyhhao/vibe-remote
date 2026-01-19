@@ -47,6 +47,12 @@ class MessageHandler:
     async def handle_user_message(self, context: MessageContext, message: str):
         """Process regular user messages and route to configured agent"""
         try:
+            # If message is empty (e.g., user just @mentioned bot without text),
+            # trigger the /start command instead of sending empty message to agent
+            if not message or not message.strip():
+                await self.controller.command_handler.handle_start(context, "")
+                return
+
             # Skip automatic cleanup; receiver tasks are retained until shutdown
 
             # Allow "stop" shortcut inside Slack threads
