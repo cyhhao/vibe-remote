@@ -662,7 +662,7 @@ class SlackBot(BaseIMClient):
             if response_url:
                 await self.send_slash_response(
                     response_url,
-                    "❌ This channel is not authorized to use bot commands.",
+                    "❌ This channel is not enabled. Please go to the control panel to enable it.",
                 )
             return
 
@@ -1933,7 +1933,7 @@ class SlackBot(BaseIMClient):
             self._ensure_clients()
             await self.web_client.chat_postMessage(
                 channel=channel_id,
-                text="❌ This channel is not authorized to use bot commands.",
+                text="❌ This channel is not enabled. Please go to the control panel to enable it.",
             )
         except Exception as e:
             logger.error(f"Failed to send unauthorized message to {channel_id}: {e}")

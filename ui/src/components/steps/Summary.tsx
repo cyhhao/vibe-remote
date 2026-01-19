@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, MessageSquare, Zap, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useStatus } from '../../context/StatusContext';
@@ -13,21 +13,29 @@ interface SummaryProps {
   isLast: boolean;
 }
 
-export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
+export const Summary: React.FC<SummaryProps> = ({ data, onBack, onNext }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { control } = useStatus();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requireMention, setRequireMention] = useState(data.slack?.require_mention || false);
   const navigate = useNavigate();
 
   const saveAll = async () => {
     setSaving(true);
     setError(null);
     try {
-      const configPayload = buildConfigPayload(data);
+      const updatedData = {
+        ...data,
+        slack: {
+          ...data.slack,
+          require_mention: requireMention,
+        },
+      };
+      const configPayload = buildConfigPayload(updatedData);
       await api.saveConfig(configPayload);
-      await api.saveSettings(buildSettingsPayload(data));
+      await api.saveSettings(buildSettingsPayload(updatedData));
       
       // Start service
       await control('start'); // Use start, fallback to restart if running? Or just start.
@@ -62,6 +70,59 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         <Section title={t('summary.slackAppToken')} value={mask(data.slack?.app_token || '')} />
         <Section title={t('summary.enabledAgents')} value={enabledAgents(data).join(', ')} />
         <Section title={t('summary.channelsConfigured')} value={Object.keys(data.channelConfigs || {}).filter(k => data.channelConfigs[k]?.enabled).length} />
+        
+        {/* Require Mention Setting */}
+        <div className="bg-panel border border-border rounded-lg p-4 shadow-sm">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-sm font-medium text-text">{t('summary.requireMention')}</h3>
+              <p className="text-xs text-muted mt-1">{t('summary.requireMentionHint')}</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={requireMention}
+                onChange={(e) => setRequireMention(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-border rounded-full peer peer-checked:bg-success peer-focus:ring-2 peer-focus:ring-success/20 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+            </label>
+          </div>
+        </div>
+
+        {/* Usage Tips */}
+        <div className="bg-panel border border-border rounded-lg p-4 shadow-sm">
+          <h3 className="text-sm font-medium text-text mb-3">{t('summary.usageTips')}</h3>
+          <div className="space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-primary/10 text-primary rounded-lg flex items-center justify-center flex-shrink-0">
+                <Terminal size={16} />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text">{t('summary.tipStartCommand')}</p>
+                <p className="text-xs text-muted">{t('summary.tipStartCommandDesc')}</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-warning/10 text-warning rounded-lg flex items-center justify-center flex-shrink-0">
+                <Zap size={16} />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text">{t('summary.tipAgentSwitch')}</p>
+                <p className="text-xs text-muted">{t('summary.tipAgentSwitchDesc')}</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-success/10 text-success rounded-lg flex items-center justify-center flex-shrink-0">
+                <MessageSquare size={16} />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text">{t('summary.tipThread')}</p>
+                <p className="text-xs text-muted">{t('summary.tipThreadDesc')}</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {error && (

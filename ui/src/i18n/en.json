@@ -145,6 +145,15 @@
     "slackAppToken": "Slack App Token",
     "enabledAgents": "Enabled Agents",
     "channelsConfigured": "Channels Configured",
+    "requireMention": "Require @Mention",
+    "requireMentionHint": "Bot only responds when @mentioned in channels (DMs always work)",
+    "usageTips": "Quick Start Guide",
+    "tipStartCommand": "Use /start to begin",
+    "tipStartCommandDesc": "Type /start in any enabled channel to open the control panel and start a session.",
+    "tipAgentSwitch": "Switch agents instantly",
+    "tipAgentSwitchDesc": "Prefix your message with AgentName: to route to a specific agent. E.g., \"Plan: Design the API\"",
+    "tipThread": "Thread = Session",
+    "tipThreadDesc": "Each thread is an isolated session. Start multiple threads for parallel tasks.",
     "finishAndStart": "Finish & Start"
   },
   "dashboard": {

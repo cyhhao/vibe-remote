@@ -145,6 +145,15 @@
     "slackAppToken": "Slack App 令牌",
     "enabledAgents": "已启用的 Agent",
     "channelsConfigured": "已配置的频道",
+    "requireMention": "需要 @提及",
+    "requireMentionHint": "机器人仅在被 @提及时响应（私聊始终有效）",
+    "usageTips": "快速上手",
+    "tipStartCommand": "使用 /start 开始",
+    "tipStartCommandDesc": "在任意已启用的频道输入 /start 打开控制面板并开始会话。",
+    "tipAgentSwitch": "即时切换 Agent",
+    "tipAgentSwitchDesc": "在消息前加 AgentName: 前缀即可路由到指定 Agent，如 \"Plan: 设计 API\"",
+    "tipThread": "Thread = 会话",
+    "tipThreadDesc": "每个 Thread 是独立会话，可开多个 Thread 并行执行任务。",
     "finishAndStart": "完成并启动"
   },
   "dashboard": {
