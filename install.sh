@@ -111,10 +111,16 @@ install_vibe() {
     info "Installing vibe-remote (Python will be downloaded automatically if needed)..."
     
     # uv tool install will auto-download Python if not available
-    uv tool install "$PACKAGE_NAME" --force 2>/dev/null || \
-    uv tool install "git+https://github.com/${REPO}.git" --force
-    
-    success "vibe-remote installed successfully"
+    # Try in order: PyPI -> China mirror (tsinghua) -> GitHub
+    if uv tool install "$PACKAGE_NAME" --force 2>/dev/null; then
+        success "vibe-remote installed successfully (from PyPI)"
+    elif uv tool install "$PACKAGE_NAME" --force --index-url https://pypi.tuna.tsinghua.edu.cn/simple 2>/dev/null; then
+        success "vibe-remote installed successfully (from Tsinghua mirror)"
+    elif uv tool install "git+https://github.com/${REPO}.git" --force 2>/dev/null; then
+        success "vibe-remote installed successfully (from GitHub)"
+    else
+        error "Failed to install vibe-remote from all sources"
+    fi
 }
 
 # Verify installation
