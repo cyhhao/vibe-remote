@@ -40,7 +40,15 @@ That's it. That's the product.
 curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash && vibe
 ```
 
-That's it. Browser opens → Follow the wizard → Done.
+That's it. Browser opens -> Follow the wizard -> Done.
+
+<details>
+<summary><b>Windows?</b></summary>
+
+```powershell
+irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
+```
+</details>
 
 ---
 
@@ -62,21 +70,51 @@ That's it. Browser opens → Follow the wizard → Done.
 
 ## Highlights
 
-### Real-Time Streaming
+<table>
+<tr>
+<td width="33%">
 
-Watch your agent think. Code streams into Slack as it's written — no waiting for completion. Smart message merging keeps your channel clean instead of flooding it with updates.
+### Setup Wizard
+
+One-command install, guided configuration. No manual token juggling.
+
+![Setup Wizard](assets/screenshots/setup-slack-en.png)
+
+</td>
+<td width="33%">
+
+### Dashboard
+
+Real-time status, health monitoring, and quick controls.
+
+![Dashboard](assets/screenshots/dashboard-en.png)
+
+</td>
+<td width="33%">
+
+### Channel Routing
+
+Per-channel agent configuration. Different projects, different agents.
+
+![Channels](assets/screenshots/channels-en.png)
+
+</td>
+</tr>
+</table>
+
+### Instant Notifications
+
+Get notified the moment your AI finishes. Like assigning tasks to employees — delegate, go do something else, and come back when the work is done. No need to babysit.
 
 ### Thread = Session
 
-Each Slack thread is an isolated workspace. Open 5 threads, run 5 parallel tasks. Context stays separate. Kill one without affecting others.
+Each Slack thread is an isolated workspace. Open 5 threads, run 5 parallel tasks. Context stays separate.
 
 ### Interactive Prompts
 
 When your agent needs input — file selection, confirmation, options — Slack pops up buttons or a modal. Full CLI interactivity, zero terminal required.
 
-### Session Recovery
-
-Restart Vibe Remote? No problem. Your conversation context persists. Pick up right where you left off.
+![Interactive Prompts](assets/screenshots/question-en.jpg)
 
 ---
 
@@ -95,46 +133,6 @@ Restart Vibe Remote? No problem. Your conversation context persists. Pick up rig
 4. **You review** in Slack, iterate in thread
 
 **Your code never leaves your machine.** Vibe Remote runs locally and connects via Slack's Socket Mode.
-
----
-
-## Quick Start
-
-### 1. Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
-```
-
-<details>
-<summary><b>Windows?</b></summary>
-
-```powershell
-irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
-```
-</details>
-
-### 2. Launch
-
-```bash
-vibe
-```
-
-Your browser opens automatically to the setup wizard.
-
-### 3. Follow the Setup Wizard
-
-The web UI guides you through creating a Slack App, getting tokens, and configuring your agents — all in one place.
-
-See the [detailed setup guide](docs/SLACK_SETUP.md) with screenshots.
-
-### 4. Start Vibing
-
-Once setup is complete, you get a dashboard to manage everything:
-
-![Dashboard](assets/screenshots/dashboard-en.png)
-
-Type `/start` or `@Vibe Remote` in Slack. Your AI coding assistant is ready.
 
 ---
 
@@ -160,13 +158,6 @@ Plan: Design a new caching layer for the API
 ```
 
 That's it. No menus, no commands. Type `AgentName:` and your message routes to that agent instantly.
-
-```
-Code-Reviewer: Check the PR I just opened
-Build: Compile and run the test suite
-```
-
-Works with both OpenCode agents and Claude Code custom agents. Case-insensitive. Supports both colons (`:` and `：`).
 
 ---
 
@@ -253,7 +244,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## Docs
 
-- **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Create your Slack app
+- **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
 - **[中文安装指南](docs/SLACK_SETUP_ZH.md)** — Chinese guide
 
 ---
@@ -262,7 +253,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 **Stop context-switching. Start vibe coding.**
 
-[Install Now](#install-in-10-seconds) · [Setup Slack](docs/SLACK_SETUP.md) · [Report Bug](https://github.com/cyhhao/vibe-remote/issues)
+[Install Now](#install-in-10-seconds) · [Setup Guide](docs/SLACK_SETUP.md) · [Report Bug](https://github.com/cyhhao/vibe-remote/issues)
 
 ---
 

@@ -40,17 +40,7 @@
 curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash && vibe
 ```
 
-完事。浏览器打开 → 跟着向导走 → 搞定。
-
----
-
-## 快速开始
-
-### 1. 安装
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
-```
+完事。浏览器打开 -> 跟着向导走 -> 搞定。
 
 <details>
 <summary><b>Windows？</b></summary>
@@ -60,27 +50,89 @@ irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | ie
 ```
 </details>
 
-### 2. 启动
+---
 
-```bash
-vibe
-```
+## 为什么要用
 
-浏览器会自动打开设置向导。
+| 问题 | 解决 |
+|------|------|
+| Claude Code 很强但需要终端 | Slack 就是你的终端 |
+| 上下文切换太累 | 一个 App 搞定 |
+| 手机上写不了代码 | 现在可以了 |
+| 多个 Agent，多套配置 | 一个 Slack，任意 Agent |
 
-### 3. 跟着向导走
+**支持的 Agent：**
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 深度推理，复杂重构
+- [OpenCode](https://opencode.ai) — 快速，可扩展，社区最爱
+- [Codex](https://github.com/openai/codex) — OpenAI 的编码模型
 
-Web UI 会引导你创建 Slack App、获取 token、配置 Agent — 全在一个页面搞定。
+---
 
-查看[详细配置指南](docs/SLACK_SETUP_ZH.md)（含截图）。
+## 亮点
 
-### 4. 开始 Vibe
+<table>
+<tr>
+<td width="33%">
 
-设置完成后，你会看到一个仪表盘来管理一切：
+### 设置向导
+
+一行命令安装，引导式配置。不用手动折腾 token。
+
+![设置向导](assets/screenshots/setup-slack-zh.png)
+
+</td>
+<td width="33%">
+
+### 仪表盘
+
+实时状态，健康监控，快捷控制。
 
 ![仪表盘](assets/screenshots/dashboard-zh.png)
 
-在 Slack 里输入 `/start` 或 `@Vibe Remote`。你的 AI 编码助手准备好了。
+</td>
+<td width="33%">
+
+### 频道路由
+
+按频道配置 Agent。不同项目，不同 Agent。
+
+![频道](assets/screenshots/channels-zh.png)
+
+</td>
+</tr>
+</table>
+
+### 随时随地接收通知
+
+AI 完成任务的那一刻，你就能收到通知。就像老板给员工布置任务一样 — 分配下去，去忙别的，完成了自然会通知你。不用盯着屏幕等。
+
+### Thread = 会话
+
+每个 Slack 线程是独立工作区。开 5 个线程，跑 5 个并行任务。上下文互不干扰。
+
+### 交互式提示
+
+Agent 需要输入时 — 文件选择、确认、选项 — Slack 弹出按钮或模态框。完整 CLI 交互，零终端。
+
+![交互式提示](assets/screenshots/question-zh.jpg)
+
+---
+
+## 工作原理
+
+```
+┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+│     你       │  Slack  │ Vibe Remote  │  stdio  │  AI Agent    │
+│  (任何地方)  │ ──────▶ │  (你的 Mac)  │ ──────▶ │  (你的代码)  │
+└──────────────┘         └──────────────┘         └──────────────┘
+```
+
+1. **你在 Slack 输入**：*"给设置页加个深色模式"*
+2. **Vibe Remote** 路由到配置的 Agent
+3. **Agent** 读取代码库，写代码，流式返回
+4. **你在 Slack 审查**，在线程里迭代
+
+**你的代码永远不离开你的机器。** Vibe Remote 本地运行，通过 Slack Socket Mode 连接。
 
 ---
 
@@ -106,13 +158,6 @@ Plan: 设计一个新的 API 缓存层
 ```
 
 就这样。不用菜单，不用命令。输入 `AgentName:` 消息就自动路由到对应 Agent。
-
-```
-Code-Reviewer: 检查我刚开的 PR
-Build: 编译并运行测试
-```
-
-支持 OpenCode agents 和 Claude Code 自定义 agents。大小写不敏感。支持中英文冒号。
 
 ---
 
@@ -199,7 +244,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## 文档
 
-- **[Slack 安装指南](docs/SLACK_SETUP_ZH.md)** — 创建你的 Slack App
+- **[Slack 配置指南](docs/SLACK_SETUP_ZH.md)** — 详细配置和截图
 - **[English Setup Guide](docs/SLACK_SETUP.md)** — English guide
 
 ---
@@ -208,7 +253,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 **停止上下文切换。开始 vibe coding。**
 
-[立即安装](#10-秒安装) · [配置 Slack](docs/SLACK_SETUP_ZH.md) · [报告 Bug](https://github.com/cyhhao/vibe-remote/issues)
+[立即安装](#10-秒安装) · [配置指南](docs/SLACK_SETUP_ZH.md) · [报告 Bug](https://github.com/cyhhao/vibe-remote/issues)
 
 ---
 

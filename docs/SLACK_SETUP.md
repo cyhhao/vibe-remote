@@ -1,20 +1,18 @@
-# Slack Setup (5 minutes)
+# Slack Setup Guide
 
 ## TL;DR
-
-1. Run `vibe` → Browser opens the setup wizard
-2. Follow the wizard to create Slack App and get tokens
-3. Done!
-
----
-
-## Step 1: Launch Setup Wizard
 
 ```bash
 vibe
 ```
 
-Your browser opens automatically to the setup wizard:
+Browser opens -> Follow the wizard -> Done!
+
+---
+
+## Step 1: Welcome
+
+Run `vibe` to launch the setup wizard. Your browser opens automatically:
 
 ![Setup Welcome](../assets/screenshots/setup-welcome-en.png)
 
@@ -22,83 +20,100 @@ Click **Get started** to begin.
 
 ---
 
-## Step 2: Create Slack App
+## Step 2: Slack Configuration
 
-The wizard guides you through creating a Slack App with pre-configured permissions:
+The wizard guides you through creating a Slack App:
 
-![Setup Slack](../assets/screenshots/setup-slack-en.png)
+![Slack Configuration](../assets/screenshots/setup-slack-en.png)
 
-1. Click **Create Slack App** — opens Slack with manifest pre-filled
+1. Click **Create Slack App** - opens Slack with manifest pre-filled
 2. Select your workspace and click **Create**
-3. Follow the steps to get your **Bot Token** (`xoxb-`) and **App Token** (`xapp-`)
-4. Paste them in the wizard and click **Validate**
+3. Follow the accordion steps to get **Bot Token** (`xoxb-`) and **App Token** (`xapp-`)
+4. Click **Validate Tokens** to verify
 
 <details>
 <summary><b>Manual Setup (if needed)</b></summary>
 
 Go to [api.slack.com/apps](https://api.slack.com/apps) and create app with this manifest:
 
-```yaml
-display_information:
-  name: Vibe Remote
-  description: AI coding agent for Slack
-  background_color: "#0B1B2B"
-features:
-  bot_user:
-    display_name: Vibe Remote
-    always_online: false
-  slash_commands:
-    - command: /start
-      description: Open main menu
-      should_escape: false
-    - command: /stop
-      description: Stop current session
-      should_escape: false
-oauth_config:
-  scopes:
-    bot:
-      - channels:history
-      - channels:read
-      - chat:write
-      - chat:write.public
-      - app_mentions:read
-      - users:read
-      - commands
-      - groups:read
-      - groups:history
-      - groups:write
-      - files:read
-      - files:write
-      - reactions:read
-      - reactions:write
-      - users:read.email
-      - team:read
-settings:
-  event_subscriptions:
-    bot_events:
-      - message.channels
-      - message.groups
-      - app_mention
-      - member_joined_channel
-      - member_left_channel
-      - channel_created
-      - channel_renamed
-      - team_join
-  socket_mode_enabled: true
-  interactivity:
-    is_enabled: true
+```json
+{
+  "_metadata": {
+    "major_version": 1,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "Vibe Remote",
+    "description": "AI coding agent runtime for Slack",
+    "background_color": "#262626"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Vibe Remote",
+      "always_online": true
+    },
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "app_mentions:read",
+        "users:read",
+        "commands",
+        "groups:read",
+        "groups:history",
+        "im:history",
+        "im:read",
+        "im:write",
+        "mpim:history",
+        "mpim:read",
+        "mpim:write",
+        "files:read",
+        "files:write",
+        "reactions:read",
+        "reactions:write"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.mpim",
+        "app_mention",
+        "reaction_added",
+        "reaction_removed"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": true,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}
 ```
 </details>
 
 ---
 
-## Step 3: Finish & Start
+## Step 3: Review & Finish
 
-Review your settings and click **Finish & Start**:
+Review your configuration and click **Finish & Start**:
 
-![Setup Finish](../assets/screenshots/setup-finish-en.png)
+![Review & Finish](../assets/screenshots/setup-finish-en.png)
 
-The wizard shows you quick tips on how to use Vibe Remote.
+The wizard shows quick tips on how to use Vibe Remote.
 
 ---
 
@@ -112,15 +127,19 @@ From here you can:
 - Start/stop the service
 - Configure message handling options
 - Manage channel settings
-- View logs and diagnostics
 
 ---
 
-## Step 5: Use in Slack
+## Using in Slack
 
 1. Invite bot to channel: `/invite @Vibe Remote`
-2. Type `/start` or `@Vibe Remote`
+2. Type `/start` or `@Vibe Remote` to open control panel
 3. Start coding!
+
+**Tips:**
+- Each Slack thread = isolated session
+- Start multiple threads for parallel tasks
+- Use `AgentName: message` to route to specific agent
 
 ---
 
@@ -128,10 +147,10 @@ From here you can:
 
 | Problem | Fix |
 |---------|-----|
-| Bot not responding | Check `vibe status`, ensure bot is invited |
+| Bot not responding | Check `vibe status`, ensure bot is invited to channel |
 | Permission error | Reinstall app to workspace |
-| Socket error | Verify `xapp-` token has `connections:write` |
+| Socket error | Verify `xapp-` token has `connections:write` scope |
 
-Logs: `~/.vibe_remote/logs/vibe_remote.log`
+**Logs:** `~/.vibe_remote/logs/vibe_remote.log`
 
-Diagnostics: `vibe doctor`
+**Diagnostics:** `vibe doctor`
