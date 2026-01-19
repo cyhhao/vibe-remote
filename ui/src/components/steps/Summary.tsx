@@ -114,7 +114,7 @@ const buildConfigPayload = (data: any) => {
       require_mention: data.slack?.require_mention || false,
     },
     runtime: {
-      default_cwd: data.default_cwd || '/Users/cyh/PycharmProjects/vibe-remote/_tmp', // Use default if empty
+      default_cwd: data.default_cwd || '_tmp',
       log_level: 'INFO',
     },
     agents: {
