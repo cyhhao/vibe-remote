@@ -354,16 +354,21 @@ def do_upgrade(auto_restart: bool = True) -> dict:
     Returns:
         {"ok": bool, "message": str, "output": str | None, "restarting": bool}
     """
-    # Determine upgrade method
-    uv_path = shutil.which("uv")
-    pip_path = shutil.which("pip")
+    import sys
     
-    if uv_path:
+    # Determine upgrade method based on how vibe was installed
+    # Check if running from uv tool environment
+    exe_path = sys.executable
+    is_uv_tool = ".local/share/uv/tools/" in exe_path or "/uv/tools/" in exe_path
+    
+    uv_path = shutil.which("uv")
+    
+    if is_uv_tool and uv_path:
+        # Installed via uv tool, upgrade with uv
         cmd = [uv_path, "tool", "install", "vibe-remote", "--force"]
-    elif pip_path:
-        cmd = [pip_path, "install", "--upgrade", "vibe-remote"]
     else:
-        return {"ok": False, "message": "Neither uv nor pip found", "output": None, "restarting": False}
+        # Installed via pip or other method, use current Python's pip
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "vibe-remote"]
     
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)

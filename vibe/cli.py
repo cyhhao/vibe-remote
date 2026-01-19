@@ -531,20 +531,21 @@ def cmd_upgrade():
     
     print("\nUpgrading...")
     
-    # Determine upgrade method
-    uv_path = shutil.which("uv")
-    pip_path = shutil.which("pip")
+    # Determine upgrade method based on how vibe was installed
+    # Check if running from uv tool environment
+    exe_path = sys.executable
+    is_uv_tool = ".local/share/uv/tools/" in exe_path or "/uv/tools/" in exe_path
     
-    if uv_path:
-        # Prefer uv for upgrade
+    uv_path = shutil.which("uv")
+    
+    if is_uv_tool and uv_path:
+        # Installed via uv tool, upgrade with uv
         cmd = [uv_path, "tool", "install", "vibe-remote", "--force"]
         print(f"Using uv: {' '.join(cmd)}")
-    elif pip_path:
-        cmd = [pip_path, "install", "--upgrade", "vibe-remote"]
-        print(f"Using pip: {' '.join(cmd)}")
     else:
-        print("\033[31mError: Neither uv nor pip found. Cannot upgrade.\033[0m")
-        return 1
+        # Installed via pip or other method, use current Python's pip
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "vibe-remote"]
+        print(f"Using pip: {' '.join(cmd)}")
     
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
