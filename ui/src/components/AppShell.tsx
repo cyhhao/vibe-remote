@@ -42,8 +42,10 @@ export const AppShell: React.FC = () => {
             <h1 className="text-xl font-bold font-display tracking-tight flex items-center gap-2">
                 <img src={logoImg} alt="Vibe Remote Logo" className="w-6 h-6 rounded-md" />
                 {t('appShell.title')}
-                <VersionBadge />
             </h1>
+            <div className="mt-2">
+                <VersionBadge />
+            </div>
         </div>
 
         <nav className="flex-1 p-4 space-y-1">
