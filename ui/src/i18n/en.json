@@ -88,7 +88,7 @@
     "step2Title": "Get Bot Token",
     "step2Description": "Install the app to your workspace and copy the Bot Token.",
     "step2Item1": "In your new app, go to 'OAuth & Permissions'",
-    "step2Item2": "Click 'Install to Workspace'",
+    "step2Item2": "Click 'Install to [Your Workspace]'",
     "step2Item3": "Authorize the app",
     "step2Item4": "Copy the 'Bot User OAuth Token'",
     "step3Title": "Get App Token",

@@ -88,7 +88,7 @@
     "step2Title": "获取 Bot 令牌",
     "step2Description": "将应用安装到工作区并复制 Bot 令牌。",
     "step2Item1": "在新应用中，进入「OAuth & Permissions」",
-    "step2Item2": "点击「Install to Workspace」",
+    "step2Item2": "点击「Install to [你的工作区名称]」",
     "step2Item3": "授权应用",
     "step2Item4": "复制「Bot User OAuth Token」",
     "step3Title": "获取 App 令牌",
