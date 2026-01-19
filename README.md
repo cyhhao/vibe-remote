@@ -39,7 +39,7 @@ Vibe Remote lets you operate coding agents via Slack. Type in Slack to start and
 - **Persistent sessions**: Per chat/thread sessions, easy resume
 - **Threaded Slack UX**: Clean, per‑conversation threads
 - **Working dir control**: Inspect and change `cwd` on the fly
-- **Personalization**: Toggle per-channel hidden message types (defaults hide system/toolcall)
+- **Personalization**: Toggle per-channel show message types (defaults hide all)
 
 ## Architecture (Brief)
 

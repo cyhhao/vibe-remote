@@ -14,7 +14,7 @@ Recent Web UI runs show repeated errors in `~/.vibe_remote/logs/vibe_remote.log`
 - Add lightweight migration/compat logic where needed to avoid breaking older settings payloads.
 
 ## Todo
-- Update `SettingsManager` to wrap `SettingsStore` for channel settings (hidden types, custom CWD, routing).
+- Update `SettingsManager` to wrap `SettingsStore` for channel settings (show message types, custom CWD, routing).
 - Adjust `SettingsManager` serialization/deserialization to tolerate legacy payloads.
 - Add shutdown cleanup to close Slack `AsyncWebClient`/`SocketModeClient` sessions.
 - Verify OpenCode HTTP session is closed on shutdown.
