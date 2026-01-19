@@ -328,7 +328,7 @@ export const Dashboard: React.FC = () => {
                             {t('dashboard.errorRetryLimit')}
                             <span className="relative group">
                                 <Info size={12} className="text-muted/50 cursor-help" />
-                                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-48">
+                                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-56 text-center">
                                     {t('dashboard.errorRetryLimitHint')}
                                 </span>
                             </span>
