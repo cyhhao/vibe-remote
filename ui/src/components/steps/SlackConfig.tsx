@@ -340,7 +340,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
           {t('common.back')}
         </button>
         <button
-          onClick={() => onNext({ slack: { bot_token: botToken, app_token: appToken }, mode })}
+          onClick={() => onNext({ slack: { ...data.slack, bot_token: botToken, app_token: appToken }, mode })}
           disabled={!isValid}
           className={clsx(
             'px-8 py-3 rounded-lg font-medium transition-colors shadow-sm',
