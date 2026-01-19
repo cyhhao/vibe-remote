@@ -12,6 +12,8 @@ export type ApiContextType = {
   doctor: () => Promise<any>;
   opencodeOptions: (cwd: string) => Promise<any>;
   getLogs: (lines?: number) => Promise<{ logs: LogEntry[]; total: number }>;
+  getVersion: () => Promise<VersionInfo>;
+  doUpgrade: () => Promise<UpgradeResult>;
 };
 
 export type LogEntry = {
@@ -19,6 +21,20 @@ export type LogEntry = {
   level: string;
   logger: string;
   message: string;
+};
+
+export type VersionInfo = {
+  current: string;
+  latest: string | null;
+  has_update: boolean;
+  error: string | null;
+};
+
+export type UpgradeResult = {
+  ok: boolean;
+  message: string;
+  output: string | null;
+  restarting: boolean;
 };
 
 const ApiContext = createContext<ApiContextType | undefined>(undefined);
@@ -60,6 +76,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     doctor: () => postJson('/doctor', {}),
     opencodeOptions: (cwd) => postJson('/opencode/options', { cwd }),
     getLogs: (lines = 500) => postJson('/logs', { lines }),
+    getVersion: () => getJson('/version'),
+    doUpgrade: () => postJson('/upgrade', {}),
   };
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;

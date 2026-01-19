@@ -4,6 +4,7 @@ import { LayoutDashboard, MessageSquare, Activity } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStatus } from '../context/StatusContext';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { VersionBadge } from './VersionBadge';
 import clsx from 'clsx';
 import logoImg from '../assets/logo.png';
 
@@ -38,10 +39,15 @@ export const AppShell: React.FC = () => {
       {/* Sidebar */}
       <aside className="w-64 border-r border-border bg-panel hidden md:flex flex-col">
         <div className="p-6 border-b border-border">
-            <h1 className="text-xl font-bold font-display tracking-tight flex items-center gap-2">
-                <img src={logoImg} alt="Vibe Remote Logo" className="w-6 h-6 rounded-md" />
-                {t('appShell.title')}
-            </h1>
+            <div className="flex items-center gap-3">
+                <img src={logoImg} alt="Vibe Remote Logo" className="w-10 h-10 rounded-lg" />
+                <div className="flex flex-col">
+                    <h1 className="text-xl font-bold font-display tracking-tight leading-tight">
+                        {t('appShell.title')}
+                    </h1>
+                    <VersionBadge />
+                </div>
+            </div>
         </div>
 
         <nav className="flex-1 p-4 space-y-1">

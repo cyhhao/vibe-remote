@@ -178,7 +178,21 @@
     "configFile": "Config File",
     "logs": "Logs",
     "uiRestartMessage": "Saved. Restarting UI server...",
-    "mainServiceRestarted": "Saved. Main service restarted."
+    "mainServiceRestarted": "Saved. Main service restarted.",
+    "versionAndUpdate": "Version & Update",
+    "currentVersion": "Current Version",
+    "latestVersion": "Latest Version",
+    "checkUpdate": "Check for Updates",
+    "checking": "Checking...",
+    "updateAvailable": "Update Available",
+    "upgradeNow": "Upgrade Now",
+    "upgrading": "Upgrading...",
+    "upToDate": "You're up to date",
+    "checkFailed": "Check failed",
+    "upgradeSuccess": "Upgrade successful!",
+    "upgradeFailed": "Upgrade failed",
+    "updateHint": "Update from {{from}} to {{to}}",
+    "restarting": "Restarting..."
   },
   "doctor": {
     "title": "System Status",

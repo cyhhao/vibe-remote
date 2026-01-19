@@ -109,6 +109,11 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
 
             self._send_json(api.get_slack_manifest())
             return
+        if self.path == "/version":
+            from vibe import api
+
+            self._send_json(api.get_version_info())
+            return
 
         ui_dist = get_ui_dist_path()
         requested_path = self.path.lstrip("/")
@@ -304,6 +309,12 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
                 api.opencode_options_async(payload.get("cwd", ".")),
                 timeout=12.0,
             )
+            self._send_json(result)
+            return
+        if self.path == "/upgrade":
+            from vibe import api
+
+            result = api.do_upgrade()
             self._send_json(result)
             return
         self._send_json({"error": "not_found"}, status=404)

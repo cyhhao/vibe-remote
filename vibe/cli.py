@@ -1,10 +1,12 @@
 import argparse
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 from config import paths
@@ -17,7 +19,7 @@ from config.v2_config import (
     SlackConfig,
     V2Config,
 )
-from vibe import runtime
+from vibe import __version__, runtime
 
 
 def _write_json(path, payload):
@@ -381,16 +383,6 @@ def _doctor():
     return result
 
 
-def _run_background_service():
-    python = sys.executable
-    command = "import runpy; runpy.run_path('main.py', run_name='__main__')"
-    return _spawn_background(
-        [python, "-c", command],
-        paths.get_runtime_pid_path(),
-        "service_stdout.log",
-        "service_stderr.log",
-    )
-
 
 def cmd_vibe():
     paths.ensure_data_dirs()
@@ -405,7 +397,7 @@ def cmd_vibe():
     else:
         _write_status("starting")
 
-    service_pid = _run_background_service()
+    service_pid = runtime.start_service()
     ui_pid = runtime.start_ui(config.ui.setup_host, config.ui.setup_port)
     runtime.write_status("running", "pid={}".format(service_pid), service_pid, ui_pid)
 
@@ -462,13 +454,124 @@ def cmd_doctor():
     return 0 if result["ok"] else 1
 
 
+def cmd_version():
+    """Show current version."""
+    print(f"vibe-remote {__version__}")
+    return 0
+
+
+def get_latest_version() -> dict:
+    """Fetch latest version info from PyPI.
+    
+    Returns:
+        {"current": str, "latest": str, "has_update": bool, "error": str|None}
+    """
+    current = __version__
+    result = {"current": current, "latest": None, "has_update": False, "error": None}
+    
+    try:
+        url = "https://pypi.org/pypi/vibe-remote/json"
+        req = urllib.request.Request(url, headers={"User-Agent": "vibe-remote"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            latest = data.get("info", {}).get("version", "")
+            result["latest"] = latest
+            
+            # Simple version comparison (works for semver)
+            if latest and latest != current:
+                # Compare version tuples
+                try:
+                    current_parts = [int(x) for x in current.split(".")[:3] if x.isdigit()]
+                    latest_parts = [int(x) for x in latest.split(".")[:3] if x.isdigit()]
+                    result["has_update"] = latest_parts > current_parts
+                except (ValueError, AttributeError):
+                    # If version format is unusual, just check if different
+                    result["has_update"] = latest != current
+    except Exception as e:
+        result["error"] = str(e)
+    
+    return result
+
+
+def cmd_check_update():
+    """Check for available updates."""
+    print(f"Current version: {__version__}")
+    print("Checking for updates...")
+    
+    info = get_latest_version()
+    
+    if info["error"]:
+        print(f"\033[33mFailed to check for updates: {info['error']}\033[0m")
+        return 1
+    
+    if info["has_update"]:
+        print(f"\033[32mNew version available: {info['latest']}\033[0m")
+        print(f"\nRun '\033[1mvibe upgrade\033[0m' to update.")
+    else:
+        print("\033[32mYou are using the latest version.\033[0m")
+    
+    return 0
+
+
+def cmd_upgrade():
+    """Upgrade vibe-remote to the latest version."""
+    print(f"Current version: {__version__}")
+    print("Checking for updates...")
+    
+    info = get_latest_version()
+    
+    if info["error"]:
+        print(f"\033[33mFailed to check for updates: {info['error']}\033[0m")
+        print("Attempting upgrade anyway...")
+    elif not info["has_update"]:
+        print("\033[32mYou are already using the latest version.\033[0m")
+        return 0
+    else:
+        print(f"New version available: {info['latest']}")
+    
+    print("\nUpgrading...")
+    
+    # Determine upgrade method based on how vibe was installed
+    # Check if running from uv tool environment
+    exe_path = sys.executable
+    is_uv_tool = ".local/share/uv/tools/" in exe_path or "/uv/tools/" in exe_path
+    
+    uv_path = shutil.which("uv")
+    
+    if is_uv_tool and uv_path:
+        # Installed via uv tool, upgrade with uv
+        cmd = [uv_path, "tool", "install", "vibe-remote", "--force"]
+        print(f"Using uv: {' '.join(cmd)}")
+    else:
+        # Installed via pip or other method, use current Python's pip
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "vibe-remote"]
+        print(f"Using pip: {' '.join(cmd)}")
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            print("\033[32mUpgrade successful!\033[0m")
+            print("Please restart vibe to use the new version:")
+            print("  vibe stop && vibe")
+            return 0
+        else:
+            print(f"\033[31mUpgrade failed:\033[0m\n{result.stderr}")
+            return 1
+    except Exception as e:
+        print(f"\033[31mUpgrade failed: {e}\033[0m")
+        return 1
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="vibe")
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("stop")
-    subparsers.add_parser("status")
-    subparsers.add_parser("doctor")
+    subparsers.add_parser("stop", help="Stop all services")
+    subparsers.add_parser("status", help="Show service status")
+    subparsers.add_parser("doctor", help="Run diagnostics")
+    subparsers.add_parser("version", help="Show version")
+    subparsers.add_parser("check-update", help="Check for updates")
+    subparsers.add_parser("upgrade", help="Upgrade to latest version")
     return parser
 
 
@@ -482,4 +585,10 @@ def main():
         sys.exit(cmd_status())
     if args.command == "doctor":
         sys.exit(cmd_doctor())
+    if args.command == "version":
+        sys.exit(cmd_version())
+    if args.command == "check-update":
+        sys.exit(cmd_check_update())
+    if args.command == "upgrade":
+        sys.exit(cmd_upgrade())
     sys.exit(cmd_vibe())

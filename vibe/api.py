@@ -305,3 +305,106 @@ def get_slack_manifest() -> dict:
         logger.error("Failed to load Slack manifest: %s", exc)
         return {"ok": False, "error": str(exc)}
 
+
+def get_version_info() -> dict:
+    """Get current version and check for updates.
+    
+    Returns:
+        {
+            "current": str,
+            "latest": str | None,
+            "has_update": bool,
+            "error": str | None
+        }
+    """
+    import urllib.request
+    from vibe import __version__
+    
+    current = __version__
+    result = {"current": current, "latest": None, "has_update": False, "error": None}
+    
+    try:
+        url = "https://pypi.org/pypi/vibe-remote/json"
+        req = urllib.request.Request(url, headers={"User-Agent": "vibe-remote"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            latest = data.get("info", {}).get("version", "")
+            result["latest"] = latest
+            
+            # Simple version comparison (works for semver)
+            if latest and latest != current:
+                try:
+                    current_parts = [int(x) for x in current.split(".")[:3] if x.isdigit()]
+                    latest_parts = [int(x) for x in latest.split(".")[:3] if x.isdigit()]
+                    result["has_update"] = latest_parts > current_parts
+                except (ValueError, AttributeError):
+                    result["has_update"] = latest != current
+    except Exception as e:
+        result["error"] = str(e)
+    
+    return result
+
+
+def do_upgrade(auto_restart: bool = True) -> dict:
+    """Perform upgrade to latest version.
+    
+    Args:
+        auto_restart: If True, restart vibe after successful upgrade
+    
+    Returns:
+        {"ok": bool, "message": str, "output": str | None, "restarting": bool}
+    """
+    import sys
+    
+    # Determine upgrade method based on how vibe was installed
+    # Check if running from uv tool environment
+    exe_path = sys.executable
+    is_uv_tool = ".local/share/uv/tools/" in exe_path or "/uv/tools/" in exe_path
+    
+    uv_path = shutil.which("uv")
+    
+    if is_uv_tool and uv_path:
+        # Installed via uv tool, upgrade with uv
+        cmd = [uv_path, "tool", "install", "vibe-remote", "--force"]
+    else:
+        # Installed via pip or other method, use current Python's pip
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "vibe-remote"]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode == 0:
+            restarting = False
+            if auto_restart:
+                # Schedule restart in background after response is sent
+                # Use 'vibe' command which will restart both service and UI
+                vibe_path = shutil.which("vibe")
+                if vibe_path:
+                    # Start restart process detached, with delay to allow response to be sent
+                    restart_cmd = f"sleep 2 && {vibe_path}"
+                    subprocess.Popen(
+                        restart_cmd,
+                        shell=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
+                    restarting = True
+            
+            return {
+                "ok": True,
+                "message": "Upgrade successful." + (" Restarting..." if restarting else " Please restart vibe."),
+                "output": result.stdout,
+                "restarting": restarting,
+            }
+        else:
+            return {
+                "ok": False,
+                "message": "Upgrade failed",
+                "output": result.stderr or result.stdout,
+                "restarting": False,
+            }
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "message": "Upgrade timed out", "output": None, "restarting": False}
+    except Exception as e:
+        return {"ok": False, "message": str(e), "output": None, "restarting": False}
+
