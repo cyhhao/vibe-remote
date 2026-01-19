@@ -178,7 +178,20 @@
     "configFile": "配置文件",
     "logs": "日志",
     "uiRestartMessage": "已保存，正在重启 UI 服务器...",
-    "mainServiceRestarted": "已保存，主服务已重启"
+    "mainServiceRestarted": "已保存，主服务已重启",
+    "versionAndUpdate": "版本与更新",
+    "currentVersion": "当前版本",
+    "latestVersion": "最新版本",
+    "checkUpdate": "检查更新",
+    "checking": "检查中...",
+    "updateAvailable": "有新版本",
+    "upgradeNow": "立即更新",
+    "upgrading": "更新中...",
+    "upToDate": "已是最新版本",
+    "checkFailed": "检查失败",
+    "upgradeSuccess": "更新成功！请重启 vibe。",
+    "upgradeFailed": "更新失败",
+    "updateHint": "从 {{from}} 更新到 {{to}}"
   },
   "doctor": {
     "title": "系统状态",

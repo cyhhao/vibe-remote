@@ -1,12 +1,14 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStatus } from '../context/StatusContext';
-import { Play, Square, RotateCw, Activity, Terminal, CheckCircle, MessageSquare, Server, Settings, Info } from 'lucide-react';
+import { useApi, type VersionInfo } from '../context/ApiContext';
+import { Play, Square, RotateCw, Activity, Terminal, CheckCircle, MessageSquare, Server, Settings, Info, Download, Package } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export const Dashboard: React.FC = () => {
     const { t } = useTranslation();
     const { status, control } = useStatus();
+    const api = useApi();
     const [loading, setLoading] = React.useState(false);
     const [config, setConfig] = React.useState<any>({});
     const [doctor, setDoctor] = React.useState<any>(null);
@@ -15,6 +17,12 @@ export const Dashboard: React.FC = () => {
     const [uiMessage, setUiMessage] = React.useState<string | null>(null);
     const [diagnosticsSaving, setDiagnosticsSaving] = React.useState(false);
     const [diagnosticsMessage, setDiagnosticsMessage] = React.useState<string | null>(null);
+    
+    // Version and upgrade state
+    const [versionInfo, setVersionInfo] = React.useState<VersionInfo | null>(null);
+    const [versionLoading, setVersionLoading] = React.useState(false);
+    const [upgrading, setUpgrading] = React.useState(false);
+    const [upgradeMessage, setUpgradeMessage] = React.useState<string | null>(null);
 
     const handleAction = async (action: string) => {
         setLoading(true);
@@ -115,12 +123,45 @@ export const Dashboard: React.FC = () => {
                 if (doctorRes.ok) {
                     setDoctor(await doctorRes.json());
                 }
+                // Load version info
+                checkForUpdates();
             } catch {
                 // ignore
             }
         };
         load();
     }, []);
+
+    const checkForUpdates = async () => {
+        setVersionLoading(true);
+        try {
+            const info = await api.getVersion();
+            setVersionInfo(info);
+        } catch {
+            // ignore
+        } finally {
+            setVersionLoading(false);
+        }
+    };
+
+    const handleUpgrade = async () => {
+        setUpgrading(true);
+        setUpgradeMessage(null);
+        try {
+            const result = await api.doUpgrade();
+            if (result.ok) {
+                setUpgradeMessage(t('dashboard.upgradeSuccess'));
+                // Refresh version info after upgrade
+                setTimeout(() => checkForUpdates(), 2000);
+            } else {
+                setUpgradeMessage(result.message || t('dashboard.upgradeFailed'));
+            }
+        } catch (e) {
+            setUpgradeMessage(t('dashboard.upgradeFailed'));
+        } finally {
+            setUpgrading(false);
+        }
+    };
 
     React.useEffect(() => {
         if (!settingsMessage) return;
@@ -457,6 +498,66 @@ export const Dashboard: React.FC = () => {
                     >
                         <RotateCw size={12} /> {diagnosticsSaving ? t('common.saving') : t('common.saveAndRestart')}
                     </button>
+                </div>
+            </div>
+
+            {/* Version & Update Card */}
+            <div className="bg-panel rounded-xl border border-border p-6 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold flex items-center gap-2 text-text"><Package size={18} /> {t('dashboard.versionAndUpdate')}</h3>
+                    <button
+                        onClick={checkForUpdates}
+                        disabled={versionLoading}
+                        className="text-sm text-accent hover:underline font-medium disabled:opacity-50"
+                    >
+                        {versionLoading ? t('dashboard.checking') : t('dashboard.checkUpdate')}
+                    </button>
+                </div>
+                <div className="space-y-3 text-sm">
+                    <div className="flex justify-between items-center">
+                        <span className="text-muted">{t('dashboard.currentVersion')}</span>
+                        <span className="font-mono text-xs text-text">{versionInfo?.current || '-'}</span>
+                    </div>
+                    {versionInfo?.latest && (
+                        <div className="flex justify-between items-center">
+                            <span className="text-muted">{t('dashboard.latestVersion')}</span>
+                            <span className="font-mono text-xs text-text">{versionInfo.latest}</span>
+                        </div>
+                    )}
+                    {versionInfo?.has_update && (
+                        <div className="mt-3 p-3 bg-success/10 border border-success/20 rounded-lg">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Download size={16} className="text-success" />
+                                    <span className="text-success font-medium text-sm">{t('dashboard.updateAvailable')}</span>
+                                </div>
+                                <button
+                                    onClick={handleUpgrade}
+                                    disabled={upgrading}
+                                    className="px-3 py-1.5 bg-success text-white rounded-md text-xs font-semibold disabled:opacity-50 flex items-center gap-1"
+                                >
+                                    <Download size={12} /> {upgrading ? t('dashboard.upgrading') : t('dashboard.upgradeNow')}
+                                </button>
+                            </div>
+                            <p className="text-xs text-success/80 mt-2">
+                                {t('dashboard.updateHint', { from: versionInfo.current, to: versionInfo.latest })}
+                            </p>
+                        </div>
+                    )}
+                    {versionInfo && !versionInfo.has_update && !versionInfo.error && (
+                        <div className="flex items-center gap-2 text-success">
+                            <CheckCircle size={14} />
+                            <span className="text-xs">{t('dashboard.upToDate')}</span>
+                        </div>
+                    )}
+                    {versionInfo?.error && (
+                        <div className="text-xs text-warning">{t('dashboard.checkFailed')}: {versionInfo.error}</div>
+                    )}
+                    {upgradeMessage && (
+                        <div className={`text-xs ${upgradeMessage.includes('success') || upgradeMessage.includes('成功') ? 'text-success' : 'text-warning'}`}>
+                            {upgradeMessage}
+                        </div>
+                    )}
                 </div>
             </div>
        </div>
