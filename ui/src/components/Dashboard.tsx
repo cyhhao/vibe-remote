@@ -142,9 +142,11 @@ export const Dashboard: React.FC = () => {
 
     return (
         <div className="max-w-5xl mx-auto space-y-8">
-            <header>
-                <h2 className="text-3xl font-display font-bold mb-2 text-text">{t('dashboard.title')}</h2>
-                <p className="text-muted">{t('dashboard.subtitle')}</p>
+            <header className="flex items-center justify-between">
+                <div>
+                    <h2 className="text-3xl font-display font-bold mb-2 text-text">{t('dashboard.title')}</h2>
+                    <p className="text-muted">{t('dashboard.subtitle')}</p>
+                </div>
             </header>
 
             {/* Overview Card */}
@@ -316,6 +318,40 @@ export const Dashboard: React.FC = () => {
                             <option value="reaction">{t('dashboard.ackReaction')}</option>
                             <option value="message">{t('dashboard.ackMessage')}</option>
                         </select>
+                    </div>
+                    <div className="flex justify-between items-center">
+                        <span className="text-muted flex items-center gap-1">
+                            {t('dashboard.errorRetryLimit')}
+                            <span className="relative group">
+                                <Info size={12} className="text-muted/50 cursor-help" />
+                                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-48">
+                                    {t('dashboard.errorRetryLimitHint')}
+                                </span>
+                            </span>
+                        </span>
+                        <input
+                            type="number"
+                            min={0}
+                            max={10}
+                            value={config.agents?.opencode?.error_retry_limit ?? 1}
+                            onChange={(e) => {
+                                const limit = Math.max(0, Math.min(10, Number(e.target.value) || 0));
+                                setSettingsMessage(null);
+                                const newConfig = {
+                                    ...config,
+                                    agents: {
+                                        ...(config.agents || {}),
+                                        opencode: {
+                                            ...(config.agents?.opencode || {}),
+                                            error_retry_limit: limit,
+                                        },
+                                    },
+                                };
+                                setConfig(newConfig);
+                                autoSaveMessageConfig(newConfig);
+                            }}
+                            className="w-16 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono text-center"
+                        />
                     </div>
                     <div className="flex justify-between items-center">
                         <span className="text-muted">{t('dashboard.allowedChannels')}</span>

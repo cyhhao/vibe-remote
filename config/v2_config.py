@@ -50,6 +50,7 @@ class OpenCodeConfig:
     default_agent: Optional[str] = None
     default_model: Optional[str] = None
     default_reasoning_effort: Optional[str] = None
+    error_retry_limit: int = 1  # Max retries on LLM stream errors (0 = no retry)
 
 
 @dataclass

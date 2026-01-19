@@ -1502,6 +1502,11 @@ class OpenCodeAgent(BaseAgent):
             poll_interval_seconds = 2.0
             final_text: Optional[str] = None
 
+            # Error retry tracking
+            error_retry_count = 0
+            error_retry_limit = getattr(self.opencode_config, "error_retry_limit", 1)
+            last_error_message_id: Optional[str] = None
+
             def _relative_path(path: str) -> str:
                 return self._to_relative_path(path, request.working_path)
 
@@ -1516,13 +1521,14 @@ class OpenCodeAgent(BaseAgent):
                     if poll_iter % 5 == 0:
                         last_info = messages[-1].get("info", {}) if messages else {}
                         logger.info(
-                            "OpenCode poll heartbeat %s iter=%s last=%s role=%s completed=%s finish=%s",
+                            "OpenCode poll heartbeat %s iter=%s last=%s role=%s completed=%s finish=%s error=%s",
                             session_id,
                             poll_iter,
                             last_info.get("id"),
                             last_info.get("role"),
                             bool(last_info.get("time", {}).get("completed")),
                             last_info.get("finish"),
+                            bool(last_info.get("error")),
                         )
                 except Exception as poll_err:
                     logger.warning(f"Failed to poll OpenCode messages: {poll_err}")
@@ -1971,15 +1977,77 @@ class OpenCodeAgent(BaseAgent):
                     last_message = messages[-1]
                     last_info = last_message.get("info", {})
                     last_id = last_info.get("id")
+
+                    # Check for error in completed message
                     if (
                         last_id
                         and last_id not in baseline_message_ids
                         and last_info.get("role") == "assistant"
                         and last_info.get("time", {}).get("completed")
-                        and last_info.get("finish") != "tool-calls"
                     ):
-                        final_text = self._extract_response_text(last_message)
-                        break
+                        msg_error = last_info.get("error")
+                        if msg_error and last_id != last_error_message_id:
+                            # New error detected
+                            last_error_message_id = last_id
+                            error_name = msg_error.get("name", "UnknownError")
+                            error_data = msg_error.get("data", {})
+                            error_msg = error_data.get("message", "") if isinstance(error_data, dict) else str(error_data)
+
+                            logger.warning(
+                                "OpenCode message error detected for %s: %s - %s (retry %d/%d)",
+                                session_id,
+                                error_name,
+                                error_msg[:200],
+                                error_retry_count,
+                                error_retry_limit,
+                            )
+
+                            if error_retry_count < error_retry_limit:
+                                error_retry_count += 1
+                                logger.info(
+                                    "Auto-retrying OpenCode session %s with 'continue' (attempt %d/%d)",
+                                    session_id,
+                                    error_retry_count,
+                                    error_retry_limit,
+                                )
+
+                                # Send "continue" to retry
+                                try:
+                                    await server.prompt_async(
+                                        session_id=session_id,
+                                        directory=request.working_path,
+                                        text="continue",
+                                        agent=agent_to_use,
+                                        model=model_dict,
+                                        reasoning_effort=reasoning_effort,
+                                    )
+                                    # Continue polling for new messages
+                                    await asyncio.sleep(poll_interval_seconds)
+                                    continue
+                                except Exception as retry_err:
+                                    logger.error(
+                                        "Failed to send retry 'continue' for %s: %s",
+                                        session_id,
+                                        retry_err,
+                                    )
+                                    # Fall through to report error
+                            
+                            # Retry limit reached or retry failed, report error to user
+                            await self.controller.emit_agent_message(
+                                request.context,
+                                "notify",
+                                f"OpenCode error: {error_name} - {error_msg[:500]}",
+                            )
+                            final_text = None
+                            break
+
+                        # No error, check for normal completion
+                        if last_info.get("finish") != "tool-calls":
+                            # Reset retry count on successful non-error message
+                            if not msg_error:
+                                error_retry_count = 0
+                            final_text = self._extract_response_text(last_message)
+                            break
 
                 await asyncio.sleep(poll_interval_seconds)
 
