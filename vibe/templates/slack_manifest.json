@@ -1,0 +1,65 @@
+{
+  "_metadata": {
+    "major_version": 1,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "Vibe Remote",
+    "description": "AI coding agent runtime for Slack",
+    "background_color": "#262626"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Vibe Remote",
+      "always_online": true
+    },
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "app_mentions:read",
+        "users:read",
+        "commands",
+        "groups:read",
+        "groups:history",
+        "im:history",
+        "im:read",
+        "im:write",
+        "mpim:history",
+        "mpim:read",
+        "mpim:write",
+        "files:read",
+        "files:write",
+        "reactions:read",
+        "reactions:write"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.mpim",
+        "app_mention",
+        "reaction_added",
+        "reaction_removed"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": true,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

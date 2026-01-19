@@ -260,3 +260,48 @@ def _settings_to_payload(store: SettingsStore) -> dict:
             },
         }
     return payload
+
+
+def get_slack_manifest() -> dict:
+    """Get Slack App Manifest template for self-host mode.
+    
+    Loads manifest from vibe/templates/slack_manifest.json.
+    
+    Returns:
+        {"ok": True, "manifest": str, "manifest_compact": str} on success
+        {"ok": False, "error": str} on failure
+    """
+    import json
+    import importlib.resources
+    
+    try:
+        manifest = None
+        
+        # Try to load from package resources (installed via pip/uv)
+        try:
+            if hasattr(importlib.resources, 'files'):
+                package_files = importlib.resources.files('vibe')
+                template_path = package_files / 'templates' / 'slack_manifest.json'
+                if hasattr(template_path, 'read_text'):
+                    manifest = json.loads(template_path.read_text(encoding='utf-8'))
+        except (TypeError, FileNotFoundError, AttributeError, json.JSONDecodeError):
+            pass
+        
+        # Fallback: load from file system (development mode)
+        if manifest is None:
+            this_dir = Path(__file__).parent
+            template_file = this_dir / 'templates' / 'slack_manifest.json'
+            if template_file.exists():
+                manifest = json.loads(template_file.read_text(encoding='utf-8'))
+        
+        if manifest is None:
+            return {"ok": False, "error": "Manifest template file not found"}
+        
+        # Pretty JSON for display, compact JSON for URL
+        manifest_pretty = json.dumps(manifest, indent=2)
+        manifest_compact = json.dumps(manifest, separators=(',', ':'))
+        return {"ok": True, "manifest": manifest_pretty, "manifest_compact": manifest_compact}
+    except Exception as exc:
+        logger.error("Failed to load Slack manifest: %s", exc)
+        return {"ok": False, "error": str(exc)}
+

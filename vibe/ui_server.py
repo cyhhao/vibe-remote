@@ -104,6 +104,11 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
             binary = (query.get("binary") or [""])[0]
             self._send_json(api.detect_cli(binary))
             return
+        if self.path == "/slack/manifest":
+            from vibe import api
+
+            self._send_json(api.get_slack_manifest())
+            return
 
         ui_dist = get_ui_dist_path()
         requested_path = self.path.lstrip("/")
