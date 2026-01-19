@@ -4,6 +4,7 @@ import { LayoutDashboard, MessageSquare, Activity } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStatus } from '../context/StatusContext';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { VersionBadge } from './VersionBadge';
 import clsx from 'clsx';
 import logoImg from '../assets/logo.png';
 
@@ -41,6 +42,7 @@ export const AppShell: React.FC = () => {
             <h1 className="text-xl font-bold font-display tracking-tight flex items-center gap-2">
                 <img src={logoImg} alt="Vibe Remote Logo" className="w-6 h-6 rounded-md" />
                 {t('appShell.title')}
+                <VersionBadge />
             </h1>
         </div>
 
