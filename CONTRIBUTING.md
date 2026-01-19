@@ -5,16 +5,15 @@ Thanks for your interest in contributing!
 ## Getting Started
 
 - Fork the repo and create a feature branch
-- Create and activate a virtualenv
-- Install deps: `pip install -r requirements.txt`
-- Copy `.env.example` to `.env` and fill values
+- Install the CLI with `uv tool install vibe`
+- Run `vibe` to complete the setup UI
 
 ## Development
 
 - Run locally: `python main.py`
 - Lint before PR (add your linter if used)
 - Write clear commit messages
-- Agent-specific changes: install the relevant CLI (recommended: OpenCode `opencode`; also supported: Codex), then route one Slack channel via Slack **Agent Settings**, or (legacy) create `agent_routes.yaml`, to manually test the backend (`opencode` or `codex`).
+- Agent-specific changes: install the relevant CLI (recommended: OpenCode `opencode`; also supported: Codex), then route one Slack channel via Slack **Agent Settings** to manually test the backend (`opencode` or `codex`).
 
 ## Pull Requests
 

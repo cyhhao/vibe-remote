@@ -2,7 +2,8 @@ import asyncio
 import os
 from dataclasses import dataclass
 
-from config.settings import AppConfig
+from config.v2_config import V2Config
+from config.v2_compat import to_app_config
 from core.controller import Controller
 from modules.im import MessageContext
 
@@ -16,7 +17,7 @@ async def main() -> None:
     channel_id = os.getenv("TEST_SLACK_CHANNEL_ID") or "C0A6U2GH6P5"
     thread_id = os.getenv("TEST_SLACK_THREAD_TS")
 
-    config = AppConfig.from_env()
+    config = to_app_config(V2Config.load())
     controller = Controller(config)
 
     context = MessageContext(

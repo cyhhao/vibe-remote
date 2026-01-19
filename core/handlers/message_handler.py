@@ -47,21 +47,7 @@ class MessageHandler:
     async def handle_user_message(self, context: MessageContext, message: str):
         """Process regular user messages and route to configured agent"""
         try:
-            # Safe cleanup: only remove completed receiver tasks when enabled
-            if getattr(self.config, "cleanup_enabled", False):
-                try:
-                    completed_keys = [
-                        key
-                        for key, task in list(self.receiver_tasks.items())
-                        if task.done()
-                    ]
-                    for key in completed_keys:
-                        del self.receiver_tasks[key]
-                        logger.info(
-                            f"Safely cleaned completed receiver task for session {key}"
-                        )
-                except Exception as cleanup_err:
-                    logger.debug(f"Safe cleanup skipped due to error: {cleanup_err}")
+            # Skip automatic cleanup; receiver tasks are retained until shutdown
 
             # Allow "stop" shortcut inside Slack threads
             if context.thread_id and message.strip().lower() in ["stop", "/stop"]:
@@ -152,9 +138,7 @@ class MessageHandler:
                 try:
                     if context.message_id:
                         ack_reaction_message_id = context.message_id
-                        ack_reaction_emoji = (
-                            ":eyes:" if self.config.platform == "slack" else "👀"
-                        )
+                        ack_reaction_emoji = ":eyes:"
                         ok = await self.im_client.add_reaction(
                             context, ack_reaction_message_id, ack_reaction_emoji
                         )
@@ -167,7 +151,7 @@ class MessageHandler:
 
             if subagent_name and context.message_id:
                 try:
-                    reaction = ":robot_face:" if self.config.platform == "slack" else "🤖"
+                    reaction = ":robot_face:"
                     await self.im_client.add_reaction(
                         context,
                         context.message_id,

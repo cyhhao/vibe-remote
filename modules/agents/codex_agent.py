@@ -51,7 +51,6 @@ class CodexAgent(BaseAgent):
         resume_id = self.settings_manager.get_agent_session_id(
             request.settings_key,
             request.base_session_id,
-            request.working_path,
             agent_name=self.name,
         )
 
@@ -244,7 +243,6 @@ class CodexAgent(BaseAgent):
                     request.settings_key,
                     self.name,
                     request.base_session_id,
-                    request.working_path,
                     thread_id,
                 )
             session_key = request.composite_session_id
@@ -366,5 +364,5 @@ class CodexAgent(BaseAgent):
         await self.controller.emit_agent_message(
             request.context,
             "notify",
-            f"⚠️ {message}\n请查看 `logs/vibe_remote.log` 获取更多细节。",
+            f"⚠️ {message}\n请查看 `~/.vibe_remote/logs/vibe_remote.log` 获取更多细节。",
         )

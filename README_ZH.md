@@ -1,242 +1,222 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="Vibe Remote" width="40"/>
+<img src="assets/logo.png" alt="Vibe Remote" width="120"/>
 
 # Vibe Remote
 
-[快速开始](#快速开始) · [配置](#配置) · [使用方式](#使用方式) · [安装指南](#setup-guides) · [Roadmap](#roadmap)
+### 你的 AI 编码军团，用 Slack 指挥。
 
-[![Python](https://img.shields.io/badge/python-3.9%2B-3776AB)](https://www.python.org/)
-[![Platforms](https://img.shields.io/badge/platforms-Slack%20%7C%20Telegram-8A2BE2)](#setup-guides)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
+**不用笔记本电脑。不用 IDE。只需 vibe。**
+
+[![GitHub Stars](https://img.shields.io/github/stars/cyhhao/vibe-remote?color=ffcb47&labelColor=black&style=flat-square)](https://github.com/cyhhao/vibe-remote/stargazers)
+[![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?labelColor=black&style=flat-square)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green?labelColor=black&style=flat-square)](LICENSE)
 
 [English](README.md) | [中文](README_ZH.md)
+
+---
 
 ![Banner](assets/banner.jpg)
 
 </div>
 
-_在 Slack/Telegram 里通过聊天远程操控 AI 代理（如 OpenCode、Claude Code、Codex、Cursor），进行 Vibe Coding。_
+## 为什么
 
-Vibe Remote 把 AI 写代码搬到聊天软件。你在 Slack/Telegram 输入意图与约束，它会驱动相应的 AI agent 执行并反馈；结果实时流式返回，无需本地 IDE，随时随地推进任务。
+你在海边。手机响了 — 线上炸了。
 
-## 为什么选择 Vibe Remote
+**以前的你：** 慌了。找 WiFi。开电脑。等 IDE 加载。晒伤了。
 
-- **专注 vibe coding**：基于你的意图与约束让 AI 自主推进，你只把控方向与结果。
-- **随时随地**：不被 IDE 束缚，直接在 Slack/Telegram 中远程操控编码会话。
-- **为扩展而生**：OpenCode 优先，同时支持 Claude Code + Codex；并可扩展到更多 coding agents/CLIs。
-- **多 Agent 路由**：为不同 Slack Channel / Telegram Chat 指定 OpenCode / Claude Code / Codex，互不干扰。
-- **按线程 + 路径持久化**：每个 Slack 线程/Telegram 对话都维持独立 Agent 会话与工作目录，并通过持久化映射自动恢复。
-- **Slack 交互式体验**：`/start` 菜单 + Settings/CWD 模态，按钮优先于命令，更快上手。
+**用了 Vibe Remote：** 打开 Slack。输入「修一下 login.py 的认证 bug」。看着 Claude Code 实时修复。批准。继续喝玛格丽塔。
 
-> 推荐：优先使用 Slack 作为主要平台。其线程模型更适合并行子任务，也能保持频道历史整洁（每个子任务都在各自的线程里）。
-
-## 核心特性
-
-- **多平台**：原生支持 Slack 与 Telegram
-- **免干预工作流**：最小 review，实时流式回传消息
-- **持久会话**：按聊天/线程维度持久化，可随时恢复
-- **Slack 线程化 UX**：每个会话独立线程，保持频道整洁
-- **工作目录控制**：随时查看与更改 `cwd`
-- **个性化**：自定义隐藏的消息类型
-
-## 架构（简述）
-
-- `BaseIMClient` + 平台实现（`modules/im/slack.py`、`modules/im/telegram.py`）
-- `IMFactory` 通过 `IM_PLATFORM` 动态创建客户端
-- `Controller` 统一编排会话、格式化与命令路由
-
-## 先决条件
-
-- 至少安装一个 Agent CLI。推荐优先使用 OpenCode（`opencode`），同时也支持 Claude Code 与 Codex，方便在不同频道切换。
-
-### OpenCode（推荐）
-
-安装（Homebrew）：
-
-```bash
-brew install opencode
+```
+就这样。这就是产品。
 ```
 
-安装（脚本）：
+---
+
+## 10 秒安装
 
 ```bash
-curl -fsSL https://opencode.ai/install | bash
+curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash && vibe
 ```
 
-验证：
+完事。浏览器打开。粘贴 Slack token。搞定。
+
+<details>
+<summary><b>Windows？</b></summary>
+
+```powershell
+irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
+```
+</details>
+
+---
+
+## 为什么做这个
+
+| 问题 | 解决方案 |
+|------|----------|
+| Claude Code 很强但需要终端 | Slack 就是你的终端 |
+| 上下文切换杀死心流 | 留在一个 App 里 |
+| 手机上没法写代码 | 现在可以了 |
+| 多个 Agent，多套配置 | 一个 Slack，随便切 |
+
+**支持的 Agent：**
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 深度推理，复杂重构
+- [OpenCode](https://opencode.ai) — 快速、可扩展、社区最爱
+- [Codex](https://github.com/openai/codex) — OpenAI 的编码模型
+
+---
+
+## 工作原理
+
+```
+┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+│      你      │  Slack  │ Vibe Remote  │  stdio  │  AI Agent    │
+│   (任何地方)  │ ──────▶ │  (你的 Mac)   │ ──────▶ │  (你的代码)   │
+└──────────────┘         └──────────────┘         └──────────────┘
+```
+
+1. **你输入**：*「给设置页加个暗黑模式」*
+2. **Vibe Remote** 路由到你配置的 Agent
+3. **Agent** 读代码、写代码、实时返回
+4. **你审查**，在线程里继续迭代
+
+**你的代码不会离开你的机器。** Vibe Remote 本地运行，通过 Slack Socket Mode 连接。
+
+---
+
+## 快速开始
+
+### 1. 安装
+```bash
+curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
+```
+
+### 2. 运行
+```bash
+vibe
+```
+
+### 3. 配置 Slack（5 分钟）
+Web UI 会引导你完成所有步骤。或者看[详细指南](docs/SLACK_SETUP_ZH.md)。
+
+### 4. 开始 Vibe
+```
+/start → 选 Agent → 开始输入
+```
+
+---
+
+## 命令
+
+| Slack 里 | 干嘛的 |
+|----------|--------|
+| `/start` | 打开控制面板 |
+| `/stop` | 停止当前会话 |
+| 直接打字 | 跟 Agent 对话 |
+| 在线程里回复 | 继续对话 |
+
+**技巧：** 每个 Slack 线程 = 独立会话。开多个线程可以并行任务。
+
+---
+
+## 按频道路由
+
+不同项目，不同 Agent：
+
+```
+#frontend    → OpenCode（快速迭代）
+#backend     → Claude Code（复杂逻辑）
+#prototypes  → Codex（快速实验）
+```
+
+在 Web UI → Channels 配置。
+
+---
+
+## CLI
 
 ```bash
-opencode --help
+vibe          # 启动一切
+vibe status   # 检查运行状态
+vibe stop     # 停止一切
+vibe doctor   # 诊断问题
 ```
 
-在 Vibe Remote 中启用：
+---
 
-- `OPENCODE_ENABLED=true`
-- 可选：`OPENCODE_CLI_PATH=opencode`、`OPENCODE_PORT=4096`
+## 前置条件
 
-### Claude Code
+你需要至少安装一个编码 Agent：
 
-安装：
+<details>
+<summary><b>Claude Code</b>（推荐）</summary>
 
 ```bash
 npm install -g @anthropic-ai/claude-code
 ```
+</details>
 
-验证：
-
-```bash
-claude --help
-```
-
-## 快速开始
-
-1. 安装依赖
+<details>
+<summary><b>OpenCode</b></summary>
 
 ```bash
-pip install -r requirements.txt
+curl -fsSL https://opencode.ai/install | bash
 ```
+</details>
 
-2. 创建并编辑 `.env`
+<details>
+<summary><b>Codex</b></summary>
 
 ```bash
-cp .env.example .env
-# 设置 IM_PLATFORM 与各自的 Token
+npm install -g @openai/codex
 ```
+</details>
 
-3. 运行
+---
+
+## 安全
+
+- **本地优先** — Vibe Remote 跑在你机器上
+- **Socket Mode** — 没有公开 URL，没有 webhook
+- **你的 token** — 存在 `~/.vibe_remote/`，永不上传
+- **你的代码** — 留在你硬盘，只发给你选的 AI 提供商
+
+---
+
+## 卸载
 
 ```bash
-./start.sh
-# 或
-python main.py
+vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 ```
 
-## 配置
+---
 
-### 平台选择
+## 路线图
 
-- `IM_PLATFORM=slack` 或 `IM_PLATFORM=telegram`
+- [ ] Discord & Teams 支持
+- [ ] Slack 文件附件
+- [ ] 多工作区
+- [ ] 云中继模式（可选）
 
-### Slack
+---
 
-- `SLACK_BOT_TOKEN`（xoxb-...）
-- `SLACK_APP_TOKEN`（xapp-...，用于 Socket Mode）
-- `SLACK_TARGET_CHANNEL` 可选的频道 ID 白名单（仅频道，形如 `C...`）。留空或省略为接受所有频道。当前不支持 Slack DM。
+## 文档
 
-### Telegram
+- **[Slack 安装指南](docs/SLACK_SETUP_ZH.md)** — 创建你的 Slack App
+- **[English Setup Guide](docs/SLACK_SETUP.md)** — English guide
 
-- `TELEGRAM_BOT_TOKEN` 来自 @BotFather
-- `TELEGRAM_TARGET_CHAT_ID` 可选的聊天白名单：`[123,...]` | `[]` 仅私聊 | `null` 允许全部
+---
 
-### Claude Code
+<div align="center">
 
-- `AGENT_DEFAULT_CWD` 例如 `./_tmp`（推荐）
-- 兼容别名：`CLAUDE_DEFAULT_CWD`（仍支持）
-- `CLAUDE_PERMISSION_MODE` 例如 `bypassPermissions`
-- `CLAUDE_SYSTEM_PROMPT` 可选
-- `ANTHROPIC_API_KEY`（取决于你的 SDK 设置）
+**停止上下文切换。开始 vibe coding。**
 
-### Codex
+[立即安装](#10-秒安装) · [配置 Slack](docs/SLACK_SETUP_ZH.md) · [报告 Bug](https://github.com/cyhhao/vibe-remote/issues)
 
-- 安装并登录 [Codex CLI](https://github.com/openai/codex)（执行 `codex --help` 验证）。
-- `CODEX_ENABLED=true`（默认）启用 Codex；若环境没有 CLI 才需要设为 false。`CODEX_CLI_PATH` 可重定向可执行文件。
-- `CODEX_DEFAULT_MODEL` / `CODEX_EXTRA_ARGS` 可强制模型或追加命令行参数。
+---
 
-### OpenCode
+*为随时随地写代码的开发者而建。*
 
-- 通过 `OPENCODE_ENABLED=true` 启用 OpenCode（默认 false），并确保已安装 `opencode`。
-- Vibe Remote 会启动本地 OpenCode HTTP Server（`opencode serve --hostname=127.0.0.1 --port=4096`）。
-- OpenCode 的默认 agent/model 配置读取自 `~/.config/opencode/opencode.json`；在 Slack 下也可通过 Agent Settings 对每个 channel 单独覆盖。
-
-### Agent 路由
-
-- Slack：推荐直接使用内置的 **Agent Settings** 弹窗，为每个 channel 选择 backend。
-- 兼容（为老用户保留）：通过 `agent_routes.yaml` 进行文件路由。
-  - 将 `agent_routes.yaml` 放在仓库根目录，或用 `AGENT_ROUTE_FILE` 指向任意 YAML/JSON 文件。
-  - 示例：
-
-```yaml
-default: opencode
-slack:
-  default: opencode
-  overrides:
-    C01EXAMPLE: codex
-telegram:
-  default: opencode
-  overrides:
-    "123456789": codex
-```
-
-- Slack 使用频道 ID，Telegram 使用聊天 ID。
-- 参见 [docs/CODEX_SETUP.md](docs/CODEX_SETUP.md) 获取 Codex 安装与路由说明。
-- 未提供路由文件时：如果启用了 OpenCode，则默认使用 OpenCode；否则回退到 Claude。
-
-### 应用
-
-- `LOG_LEVEL` 默认 `INFO`
-
-## 使用方式
-
-### Commands（全平台）
-
-- `/start` 打开菜单/欢迎信息
-- `/clear` 重置对话/会话
-- `/cwd` 显示工作目录
-- `/set_cwd <path>` 更改工作目录
-- `/settings` 配置消息可见性
-- `/stop` 强制停止当前 Agent（Claude 发送 interrupt，Codex 直接终止进程）
-
-### Subagent 前缀路由
-
-消息开头使用 `SubagentName:` 或 `SubagentName：`（允许前置空格/换行），即可调用当前频道绑定 Agent 的 Subagent。
-
-- 示例：`Plan: 先把实现步骤列出来`
-- 匹配大小写不敏感，仅在当前绑定的 Agent 内查找
-- 自动使用 Subagent 的默认 model / reasoning_effort
-- 命中时机器人会在消息上加 🤖 reaction
-
-### Slack
-
-- 在频道中运行 `/start` 打开交互菜单（Current Dir、Change Work Dir、Reset Session、Settings、How it Works）
-- 机器人会把每次对话组织到各自的线程中；在线程中继续回复即可
-- 当前不支持 Slack DM
-- Slash 命令在线程中受限；要在线程内停止，请直接输入 `stop`
-
-### Telegram
-
-- 支持私聊/群组；先运行 `/start` 然后直接对话
-- 支持实时流式输出；长消息自动分割；代码块自动格式化
-
-## Setup Guides
-
-- Slack： [English](docs/SLACK_SETUP.md) | [中文](docs/SLACK_SETUP_ZH.md)
-- Telegram： [English](docs/TELEGRAM_SETUP.md) | [中文](docs/TELEGRAM_SETUP_ZH.md)
-
-## Releases
-
-统一以 GitHub Releases 作为变更记录：https://github.com/cyhhao/vibe-remote/releases
-
-## Roadmap
-
-- 扩展到更多编码 CLI/agents（超越当前内置 Agent）
-- 更多 IM 平台（Discord、Teams）
-- 文件上传/附件到编码会话的管道化
-- 更细粒度的会话策略与权限
-
-## Contributing
-
-参见 `CONTRIBUTING.md`。参与即代表同意 `CODE_OF_CONDUCT.md`。
-
-## License
-
-MIT，详见 `LICENSE`。
-
-## Security & Ops
-
-- **Secrets**：不要提交 Token；使用 `.env`，并定期轮换。
-- **Whitelists**：通过 `SLACK_TARGET_CHANNEL`（仅频道，`C…`）或 `TELEGRAM_TARGET_CHAT_ID` 限制访问。`null` 允许全部；空列表则只在相应上下文生效（Slack DM 当前不支持）。
-- **Logs**：运行日志位于 `logs/vibe_remote.log`。
-- **会话持久化**：`user_settings.json` 存储每个线程/聊天的会话映射与偏好；生产环境请持久化此文件。
-- **清理**：设置 `CLEANUP_ENABLED=true`，在消息处理入口安全清理已完成的接收任务，适合长时间运行。
+</div>

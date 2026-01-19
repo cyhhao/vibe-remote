@@ -65,9 +65,10 @@ class ClaudeAgent(BaseAgent):
 
     async def clear_sessions(self, settings_key: str) -> int:
         """Clear Claude sessions scoped to the provided settings key."""
-        settings = self.settings_manager.get_user_settings(settings_key)
-        claude_map = settings.session_mappings.get(self.name, {})
-        session_bases_to_clear = set(claude_map.keys())
+        agent_map = self.settings_manager.sessions_store.get_agent_map(
+            settings_key, self.name
+        )
+        session_bases_to_clear = set(agent_map.keys())
 
         self.settings_manager.clear_agent_sessions(settings_key, self.name)
 
@@ -135,7 +136,7 @@ class ClaudeAgent(BaseAgent):
             async for message in client.receive_messages():
                 try:
                     claude_session_id = self._maybe_capture_session_id(
-                        message, base_session_id, working_path, settings_key
+                        message, base_session_id, settings_key
                     )
                     if claude_session_id:
                         logger.info(
@@ -302,7 +303,6 @@ class ClaudeAgent(BaseAgent):
         self,
         message,
         base_session_id: str,
-        working_path: str,
         settings_key: str,
     ) -> Optional[str]:
         """Capture session id from system init messages."""
@@ -315,7 +315,7 @@ class ClaudeAgent(BaseAgent):
             session_id = message.data.get("session_id")
             if session_id:
                 self.session_handler.capture_session_id(
-                    base_session_id, working_path, session_id, settings_key
+                    base_session_id, session_id, settings_key
                 )
                 return session_id
         return None

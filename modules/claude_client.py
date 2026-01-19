@@ -11,8 +11,8 @@ from claude_code_sdk import (
     ToolUseBlock,
     ToolResultBlock,
 )
-from config import ClaudeConfig
-from modules.im.formatters import BaseMarkdownFormatter, TelegramFormatter
+from config.v2_compat import ClaudeCompatConfig
+from modules.im.formatters import BaseMarkdownFormatter, SlackFormatter
 
 
 logger = logging.getLogger(__name__)
@@ -20,17 +20,15 @@ logger = logging.getLogger(__name__)
 
 class ClaudeClient:
     def __init__(
-        self, config: ClaudeConfig, formatter: Optional[BaseMarkdownFormatter] = None
+        self, config: ClaudeCompatConfig, formatter: Optional[BaseMarkdownFormatter] = None
     ):
         self.config = config
-        self.formatter = (
-            formatter or TelegramFormatter()
-        )  # Default to Telegram for backward compatibility
+        self.formatter = formatter or SlackFormatter()
         self.options = ClaudeCodeOptions(
-            permission_mode=config.permission_mode,
+            permission_mode=config.permission_mode,  # type: ignore[arg-type]
             cwd=config.cwd,
             system_prompt=config.system_prompt,
-        )
+        )  # type: ignore[arg-type]
 
     def format_message(
         self, message, get_relative_path: Optional[Callable[[str], str]] = None
@@ -111,7 +109,9 @@ class ClaudeClient:
 
     def _format_tool_result_block(self, block: ToolResultBlock) -> str:
         """Format ToolResultBlock using formatter"""
-        return self.formatter.format_tool_result(block.is_error, block.content)
+        is_error = bool(block.is_error) if block.is_error is not None else False
+        content = block.content if isinstance(block.content, str) else None
+        return self.formatter.format_tool_result(is_error, content)
 
     def _format_system_message(self, message: SystemMessage) -> str:
         """Format SystemMessage using formatter"""

@@ -4,9 +4,8 @@ import asyncio
 import os
 import logging
 from typing import Optional, Dict, Any
-from config.settings import AppConfig
 from modules.im import BaseIMClient, MessageContext, IMFactory
-from modules.im.formatters import TelegramFormatter, SlackFormatter
+from modules.im.formatters import SlackFormatter
 from modules.agent_router import AgentRouter
 from modules.agents import AgentService, ClaudeAgent, CodexAgent, OpenCodeAgent
 from modules.claude_client import ClaudeClient
@@ -25,7 +24,7 @@ logger = logging.getLogger(__name__)
 class Controller:
     """Main controller that coordinates all bot operations"""
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config):
         """Initialize controller with configuration"""
         self.config = config
 
@@ -63,15 +62,7 @@ class Controller:
         self.im_client: BaseIMClient = IMFactory.create_client(self.config)
 
         # Create platform-specific formatter
-        if self.config.platform == "telegram":
-            formatter = TelegramFormatter()
-        elif self.config.platform == "slack":
-            formatter = SlackFormatter()
-        else:
-            logger.warning(
-                f"Unknown platform: {self.config.platform}, using Telegram formatter"
-            )
-            formatter = TelegramFormatter()
+        formatter = SlackFormatter()
 
         # Inject formatter into clients
         self.im_client.formatter = formatter
@@ -81,15 +72,12 @@ class Controller:
         self.session_manager = SessionManager()
         self.settings_manager = SettingsManager()
 
-        # Agent routing (service initialized later after handlers)
-        self.agent_router = AgentRouter.from_file(
-            self.config.agent_route_file, platform=self.config.platform
-        )
+        # Agent routing
+        self.agent_router = AgentRouter.from_file(None, platform=self.config.platform)
 
         # Default backend preference:
-        # If the user didn't provide an agent_routes.yaml, and OpenCode is enabled,
-        # make OpenCode the implicit default backend.
-        if self.config.opencode and not self.config.agent_route_file:
+        # If OpenCode is enabled, make it the implicit default backend.
+        if self.config.opencode:
             self.agent_router.global_default = "opencode"
             platform_route = self.agent_router.platform_routes.get(self.config.platform)
             if platform_route:
@@ -163,13 +151,13 @@ class Controller:
         # Get custom CWD from settings
         custom_cwd = self.settings_manager.get_custom_cwd(settings_key)
 
-        # Use custom CWD if available, otherwise use default from .env
+        # Use custom CWD if available, otherwise use default from config
         if custom_cwd and os.path.exists(custom_cwd):
             return os.path.abspath(custom_cwd)
         elif custom_cwd:
             logger.warning(f"Custom CWD does not exist: {custom_cwd}, using default")
 
-        # Fall back to default from .env
+        # Fall back to default from config.json
         default_cwd = self.config.claude.cwd
         if default_cwd:
             return os.path.abspath(os.path.expanduser(default_cwd))
@@ -179,15 +167,8 @@ class Controller:
 
     def _get_settings_key(self, context: MessageContext) -> str:
         """Get settings key based on context"""
-        if self.config.platform == "slack":
-            # For Slack, always use channel_id as the key
-            return context.channel_id
-        elif self.config.platform == "telegram":
-            # For Telegram groups, use channel_id; for DMs use user_id
-            if context.channel_id != context.user_id:
-                return context.channel_id
-            return context.user_id
-        return context.user_id
+        # Slack only in V2
+        return context.channel_id
 
     def _get_target_context(self, context: MessageContext) -> MessageContext:
         """Get target context for sending messages"""
@@ -213,19 +194,10 @@ class Controller:
 
     def _get_consolidated_max_chars(self) -> int:
         # Slack max message length is ~40k characters.
-        if self.config.platform == "slack":
-            return 35000
-        # Telegram hard limit is 4096; MarkdownV2 escaping expands.
-        if self.config.platform == "telegram":
-            return 3200
-        return 8000
+        return 35000
 
     def _get_result_max_chars(self) -> int:
-        if self.config.platform == "slack":
-            return 30000
-        if self.config.platform == "telegram":
-            return 3200
-        return 8000
+        return 30000
 
     def _build_result_summary(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
@@ -246,11 +218,9 @@ class Controller:
         """Unified agent resolution with dynamic override support.
 
         Priority:
-        1. channel_routing.agent_backend (from user_settings.json)
-        2. agent_routes.yaml overrides[channel_id]
-        3. agent_routes.yaml platform.default
-        4. agent_routes.yaml global default
-        5. AgentService.default_agent ("claude")
+        1. channel_routing.agent_backend (from settings.json)
+        2. AgentRouter platform default (configured in code)
+        3. AgentService.default_agent ("claude")
         """
         settings_key = self._get_settings_key(context)
 
@@ -400,7 +370,7 @@ class Controller:
 
     # Settings update handler (for Slack modal)
     async def handle_settings_update(
-        self, user_id: str, hidden_message_types: list, channel_id: str = None
+        self, user_id: str, show_message_types: list, channel_id: Optional[str] = None
     ):
         """Handle settings update (typically from Slack modal)"""
         try:
@@ -414,13 +384,13 @@ class Controller:
 
             # Update settings
             user_settings = self.settings_manager.get_user_settings(settings_key)
-            user_settings.hidden_message_types = hidden_message_types
+            user_settings.show_message_types = show_message_types
 
             # Save settings - using the correct method name
             self.settings_manager.update_user_settings(settings_key, user_settings)
 
             logger.info(
-                f"Updated settings for {settings_key}: hidden types = {hidden_message_types}"
+                f"Updated settings for {settings_key}: show types = {show_message_types}"
             )
 
             # Create context for sending confirmation (without 'message' field)
@@ -449,7 +419,7 @@ class Controller:
 
     # Working directory change handler (for Slack modal)
     async def handle_change_cwd_submission(
-        self, user_id: str, new_cwd: str, channel_id: str = None
+        self, user_id: str, new_cwd: str, channel_id: Optional[str] = None
     ):
         """Handle working directory change submission (from Slack modal) - reuse command handler logic"""
         try:
@@ -499,7 +469,10 @@ class Controller:
 
             settings_key = self._get_settings_key(context)
             current_routing = self.settings_manager.get_channel_routing(settings_key)
-            registered_backends = list(self.agent_service.agents.keys())
+            all_backends = list(self.agent_service.agents.keys())
+            registered_backends = sorted(
+                all_backends, key=lambda x: (x != "opencode", x)
+            )
             current_backend = self.resolve_agent_for_context(context)
 
             values = view.get("state", {}).get("values", {})
@@ -563,7 +536,7 @@ class Controller:
                 try:
                     opencode_agent = self.agent_service.agents.get("opencode")
                     if opencode_agent and hasattr(opencode_agent, "_get_server"):
-                        server = await opencode_agent._get_server()
+                        server = await opencode_agent._get_server()  # type: ignore[attr-defined]
                         await server.ensure_running()
                         cwd = self.get_cwd(context)
                         opencode_agents = await server.get_available_agents(cwd)
@@ -573,7 +546,7 @@ class Controller:
                     logger.warning(f"Failed to fetch OpenCode data: {e}")
 
             if hasattr(self.im_client, "update_routing_modal"):
-                await self.im_client.update_routing_modal(
+                await self.im_client.update_routing_modal(  # type: ignore[attr-defined]
                     view_id=view_id,
                     view_hash=view_hash,
                     channel_id=resolved_channel_id,
@@ -667,7 +640,6 @@ class Controller:
 
         # 不再创建额外事件循环，避免与 IM 客户端的内部事件循环冲突
         # 清理职责改为：
-        # - 仅当收到消息且开启 cleanup_enabled 时，在消息入口清理已完成任务（见 MessageHandler）
         # - 进程退出时做一次同步的 best-effort 取消（不跨循环 await）
 
         try:
@@ -711,6 +683,22 @@ class Controller:
 
                 if not inspect.iscoroutinefunction(stop_attr):
                     stop_attr()
+        except Exception:
+            pass
+
+        # Best-effort async shutdown for IM clients
+        try:
+            shutdown_attr = getattr(self.im_client, "shutdown", None)
+            if callable(shutdown_attr):
+                import inspect
+
+                if inspect.iscoroutinefunction(shutdown_attr):
+                    try:
+                        asyncio.run(shutdown_attr())
+                    except RuntimeError:
+                        pass
+                else:
+                    shutdown_attr()
         except Exception:
             pass
 

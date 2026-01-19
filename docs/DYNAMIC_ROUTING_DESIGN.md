@@ -2,7 +2,7 @@
 
 ## Overview
 
-Replace static `agent_routes.yaml` with dynamic per-channel routing configuration that users can change via Slack/Telegram menus.
+Replace static file-based routing with dynamic per-channel routing configuration that users can change via Slack menus.
 
 ## Requirements
 
@@ -11,14 +11,13 @@ Replace static `agent_routes.yaml` with dynamic per-channel routing configuratio
    - Agent selection (build, plan, etc.) - from `/agent` API
    - Model selection - from `/config/providers` API
 3. **Claude/Codex**: No model selection (use their defaults)
-4. **Fallback**: `agent_routes.yaml` remains as default; UI overrides are persisted in `user_settings.json`
-5. **Entry points**: 
+4. **Fallback**: channel routing overrides are persisted in `~/.vibe_remote/state/settings.json`
+5. **Entry points**:
    - Slack: `/start` button "Switch Agent" + `/settings` modal
-   - Telegram: inline keyboard in settings (backend only for now)
 
 ## Data Structure
 
-### UserSettings (in `user_settings.json`)
+### UserSettings (in `~/.vibe_remote/state/settings.json`)
 
 ```python
 @dataclass
@@ -29,12 +28,10 @@ class ChannelRouting:
 
 @dataclass
 class UserSettings:
-    hidden_message_types: List[str] = ...
+    show_message_types: List[str] = ...  # empty list means hide all
     custom_cwd: Optional[str] = None
-    session_mappings: Dict[...] = ...
-    active_slack_threads: Dict[...] = ...
-    # NEW
-    channel_routing: Optional[ChannelRouting] = None
+     channel_routing: Optional[ChannelRouting] = None
+
 ```
 
 ### JSON Representation
@@ -42,9 +39,8 @@ class UserSettings:
 ```json
 {
   "C0A6U2GH6P5": {
-    "hidden_message_types": ["system", "assistant", "user"],
+    "show_message_types": ["assistant"],
     "custom_cwd": "/path/to/project",
-    "session_mappings": {...},
     "channel_routing": {
       "agent_backend": "opencode",
       "opencode_agent": "build",
@@ -57,15 +53,11 @@ class UserSettings:
 ## Routing Resolution Priority
 
 ```
-1. channel_routing.agent_backend (from user_settings.json)
+1. channel_routing.agent_backend (from `~/.vibe_remote/state/settings.json`)
    ↓ if null
-2. agent_routes.yaml overrides[channel_id]
+2. AgentRouter platform default
    ↓ if not found
-3. agent_routes.yaml platform.default
-   ↓ if not found
-4. agent_routes.yaml global default
-   ↓ if not found
-5. AgentService.default_agent ("claude")
+3. AgentService.default_agent ("claude")
 ```
 
 ## API Design
@@ -254,51 +246,13 @@ view = {
 ## Implementation Steps
 
 ### Phase 1: Data & Routing
-1. [ ] Add `ChannelRouting` dataclass to `settings_manager.py`
-2. [ ] Add `channel_routing` field to `UserSettings`
-3. [ ] Add `get_channel_routing()` and `set_channel_routing()` methods
-4. [ ] Add `resolve_agent_for_context()` to Controller
-5. [ ] Update all callers of `agent_router.resolve()` to use new method
+1. [x] Add `ChannelRouting` dataclass to `settings_manager.py`
+4. [x] Add `resolve_agent_for_context()` to Controller
+5. [x] Update all callers of `agent_router.resolve()` to use new method
 
-### Phase 2: OpenCode Integration
-6. [ ] Add `get_available_agents()` to OpenCodeServerManager
-7. [ ] Add `get_available_models()` to OpenCodeServerManager  
-8. [ ] Add `get_default_config()` to OpenCodeServerManager
-9. [ ] Modify `OpenCodeAgent._process_message()` to use per-channel overrides
-
-### Phase 3: Slack UI
-10. [ ] Add "Switch Agent" button to `/start` command
-11. [ ] Create `open_routing_modal()` in SlackBot
-12. [ ] Handle `routing_modal` submission in `_handle_view_submission()`
-13. [ ] Add `cmd_routing` callback handler
-
-### Phase 4: Telegram UI (Optional)
-14. [ ] Add backend switching to Telegram inline keyboard
-15. [ ] (Future) Add OpenCode agent/model selection for Telegram
-
-## File Changes Summary
-
-| File | Changes |
-|------|---------|
 | `modules/settings_manager.py` | Add `ChannelRouting`, routing methods |
 | `core/controller.py` | Add `resolve_agent_for_context()`, `get_opencode_overrides()` |
-| `core/handlers/message_handler.py` | Use new resolve method |
-| `core/handlers/command_handlers.py` | Add Switch Agent button, routing callback |
-| `core/handlers/settings_handler.py` | Add routing modal handler |
-| `modules/im/slack.py` | Add `open_routing_modal()`, handle submission |
-| `modules/agents/opencode_agent.py` | Add API methods, use per-channel overrides |
-| `modules/agents/base.py` | Add opencode_agent/model fields to AgentRequest |
 
-## Testing Checklist
+- [x] Clearing routing falls back to default backend
 
-- [ ] `/start` shows "Switch Agent" button
-- [ ] Clicking button opens routing modal
-- [ ] Modal shows only registered backends
-- [ ] Selecting OpenCode shows agent/model dropdowns
-- [ ] Selecting Claude/Codex hides OpenCode options
-- [ ] Default options are marked and pre-selected
-- [ ] Saving updates channel routing
-- [ ] Messages route to selected backend
-- [ ] OpenCode uses selected agent/model
-- [ ] Clearing routing falls back to agent_routes.yaml
 - [ ] Restart preserves routing settings

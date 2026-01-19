@@ -34,34 +34,33 @@ This file defines how coding agents should work in this repository.
 ### Git Hygiene & Security
 
 - Commit messages: use `type(scope): summary`.
-- Never commit secrets (e.g., `.env`, tokens, credentials files).
+- Never commit secrets (tokens, credentials files).
 - Avoid destructive git operations unless explicitly requested (e.g., `reset --hard`, force-push).
 
 ## 2) Project-Specific (Vibe Remote)
 
 ### Structure
 
-- Entry point: `main.py` wires `config.AppConfig` into `core/controller.py`.
+- Entry point: `main.py` wires `config.V2Config` into `core/controller.py`.
 - Core orchestration and handlers: `core/` (notably `core/handlers/`).
 - Agent backends: `modules/agents/` (shared base, OpenCode/Claude/Codex backends, registry).
-- IM transports: `modules/im/` (Slack/Telegram).
+- IM transports: `modules/im/` (Slack-first; platform abstraction retained).
 - Config:
-  - Defaults and validation: `config/` (see `config/settings.py`).
-  - Agent routing: optional local `agent_routes.yaml` (gitignored).
+  - Defaults and validation: `config/` (see `config/v2_config.py`).
+  - Agent routing: configured via Slack Agent Settings.
 - Runtime data:
-  - Logs: `logs/vibe_remote.log`.
-  - Persisted state: `user_settings.json`.
-  - Default remote working dir: `_tmp/`.
+- Logs: `~/.vibe_remote/logs/vibe_remote.log`.
+- Persisted state: `~/.vibe_remote/state/`.
+- Default remote working dir: `_tmp/`.
+
 
 ### Common Commands
 
 - Setup:
-  - `python -m venv .venv && source .venv/bin/activate`
-  - `pip install -r requirements.txt`
-  - `cp .env.example .env`
+  - `uv tool install vibe`
 - Run:
-  - `./start.sh` (preferred) or `python main.py`
-  - `./status.sh` / `./stop.sh`
+  - `vibe`
+  - `vibe status` / `vibe stop`
 
 ### Coding Conventions
 
@@ -75,18 +74,14 @@ This file defines how coding agents should work in this repository.
 
 - No committed automated suite yet.
 - Prefer fast `pytest`-style tests (`test_<feature>.py`) colocated or under `tests/`.
-- For IM integrations, stub Slack/Telegram clients and validate outbound payload schemas.
+- For IM integrations, stub Slack clients and validate outbound payload schemas.
 - Do a manual E2E sanity check (start bot, send `/start`) until CI exists.
 
 ### Agent Routing
 
 - OpenCode enablement: `OPENCODE_ENABLED=true` (default: false) and `OPENCODE_CLI_PATH` points to the CLI.
 - Codex enablement: `CODEX_ENABLED=true` (default: true) and `CODEX_CLI_PATH` points to the CLI.
-- Routing file:
-  - Create `agent_routes.yaml` (local) only if you prefer file-based routing (legacy).
-  - Controlled by `AGENT_ROUTE_FILE` (defaults to repo-root `agent_routes.yaml`).
-  - Keys are Slack channel IDs / Telegram chat IDs; values are agent names (e.g., `opencode`, `claude`, `codex`).
-  - Missing entries fall back to platform default, then to global default.
+- Routing is configured per channel via Slack **Agent Settings**.
 
 ### Safety Notes
 

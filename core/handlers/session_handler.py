@@ -30,15 +30,8 @@ class SessionHandler:
     
     def get_base_session_id(self, context: MessageContext) -> str:
         """Get base session ID based on platform and context (without path)"""
-        if self.config.platform == "telegram":
-            # For Telegram, use channel/chat ID
-            return f"telegram_{context.channel_id}"
-        elif self.config.platform == "slack":
-            # For Slack, always use thread ID (now always available)
-            return f"slack_{context.thread_id}"
-        else:
-            # Default to user ID
-            return f"{self.config.platform}_{context.user_id}"
+        # Slack only in V2; always use thread ID
+        return f"slack_{context.thread_id}"
     
     def get_working_path(self, context: MessageContext) -> str:
         """Get working directory - delegate to controller's get_cwd"""
@@ -64,7 +57,7 @@ class SessionHandler:
 
         settings_key = self._get_settings_key(context)
         stored_claude_session_id = self.settings_manager.get_claude_session_id(
-            settings_key, base_session_id, working_path
+            settings_key, base_session_id
         )
 
         if composite_key in self.claude_sessions and not subagent_name:
@@ -77,7 +70,6 @@ class SessionHandler:
             cached_session_id = self.settings_manager.get_agent_session_id(
                 settings_key,
                 cached_base,
-                working_path,
                 agent_name="claude",
             )
             if cached_key in self.claude_sessions:
@@ -215,37 +207,27 @@ class SessionHandler:
                 self.formatter.format_error(f"An error occurred: {error_msg}")
             )
     
-    def capture_session_id(self, base_session_id: str, working_path: str, claude_session_id: str, settings_key: str):
+    def capture_session_id(self, base_session_id: str, claude_session_id: str, settings_key: str):
         """Capture and store Claude session ID mapping"""
-        # Persist to settings with nested structure (settings_key is channel_id for Slack, user/channel_id for Telegram)
-        self.settings_manager.set_session_mapping(settings_key, base_session_id, working_path, claude_session_id)
+        # Persist to settings (settings_key is channel_id for Slack)
+        self.settings_manager.set_session_mapping(settings_key, base_session_id, claude_session_id)
         
-        logger.info(f"Captured Claude session_id: {claude_session_id} for {base_session_id} at {working_path}")
+        logger.info(f"Captured Claude session_id: {claude_session_id} for {base_session_id}")
     
     def restore_session_mappings(self):
         """Restore session mappings from settings on startup"""
         logger.info("Initializing session mappings from saved settings...")
         
-        # Get all user settings
-        all_settings = self.settings_manager.settings
-        
+        session_state = self.settings_manager.sessions_store.state.session_mappings
+
         restored_count = 0
-        for user_id, user_settings in all_settings.items():
-            if (
-                hasattr(user_settings, "session_mappings")
-                and user_settings.session_mappings
-                and "claude" in user_settings.session_mappings
-            ):
-                claude_map = user_settings.session_mappings["claude"]
-                for base_session_id, path_mappings in claude_map.items():
-                    if isinstance(path_mappings, dict):
-                        logger.info(
-                            f"Found {len(path_mappings)} path mappings for {base_session_id} (user {user_id})"
-                        )
-                        for path, claude_session_id in path_mappings.items():
-                            logger.info(
-                                f"  - {base_session_id}[{path}] -> {claude_session_id}"
-                            )
-                            restored_count += 1
+        for user_id, agent_map in session_state.items():
+            claude_map = agent_map.get("claude", {}) if isinstance(agent_map, dict) else {}
+            for thread_id, claude_session_id in claude_map.items():
+                if isinstance(claude_session_id, str):
+                    logger.info(
+                        f"  - {thread_id} -> {claude_session_id} (user {user_id})"
+                    )
+                    restored_count += 1
 
         logger.info(f"Session restoration complete. Restored {restored_count} session mappings.")

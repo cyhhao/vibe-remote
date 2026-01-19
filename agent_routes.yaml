@@ -1,0 +1,9 @@
+default: opencode
+slack:
+  default: opencode
+  overrides:
+    C09KX3GN118: codex
+telegram:
+  default: claude
+  overrides:
+    "123456789": codex

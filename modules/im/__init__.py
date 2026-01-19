@@ -27,23 +27,15 @@ from .factory import IMFactory
 
 # Platform implementations are available but not imported by default
 # to avoid circular import issues. Import them explicitly if needed:
-# from .telegram import TelegramBot
 # from .slack import SlackBot
 
-# Package metadata
-__version__ = "1.0.0"
 __all__ = [
-    # Core abstractions
     "BaseIMClient",
-    "BaseIMConfig", 
+    "BaseIMConfig",
     "MessageContext",
     "InlineButton",
     "InlineKeyboard",
-    # Factory
     "IMFactory",
-    # Implementations available via dynamic import
-    # "TelegramBot",
-    # "SlackBot",
 ]
 
 # Convenience function for quick client creation
@@ -69,11 +61,3 @@ def get_supported_platforms():
     return IMFactory.get_supported_platforms()
 
 
-# Version info
-def get_version():
-    """Get package version
-    
-    Returns:
-        Version string
-    """
-    return __version__
