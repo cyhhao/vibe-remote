@@ -146,7 +146,7 @@
     "enabledAgents": "Enabled Agents",
     "channelsConfigured": "Channels Configured",
     "requireMention": "Require @Mention",
-    "requireMentionHint": "Bot only responds when @mentioned in channels (DMs always work)",
+    "requireMentionHint": "Bot only responds when @mentioned in channels",
     "usageTips": "Quick Start Guide",
     "tipStartCommand": "Use /start to begin",
     "tipStartCommandDesc": "Type /start in any enabled channel to open the control panel and start a session.",
