@@ -332,9 +332,26 @@ class OpenCodeServerManager:
         # Check if the server is healthy before deciding to kill it.
         # If it's healthy, we should adopt it rather than kill it.
         if await self._is_healthy():
-            logger.info(
-                f"Adopting healthy OpenCode server pid={pid} from previous run"
-            )
+            # Update PID file to reflect the actual running process.
+            # The PID in the file may be stale if OpenCode was restarted externally.
+            actual_pids = self._find_opencode_serve_pids(self.port)
+            if actual_pids:
+                actual_pid = actual_pids[0]
+                if actual_pid != pid:
+                    logger.info(
+                        f"Adopting healthy OpenCode server (updating stale PID {pid} -> {actual_pid})"
+                    )
+                    self._write_pid_file(actual_pid)
+                else:
+                    logger.info(
+                        f"Adopting healthy OpenCode server pid={pid} from previous run"
+                    )
+            else:
+                # Server is healthy but we can't find its PID - clear stale file
+                logger.info(
+                    f"Adopting healthy OpenCode server (clearing stale PID file, pid={pid} not found)"
+                )
+                self._clear_pid_file()
             return
 
         cmd = self._get_pid_command(pid)
