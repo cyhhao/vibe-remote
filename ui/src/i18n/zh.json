@@ -155,6 +155,8 @@
     "channelsConfigured": "已配置的频道",
     "requireMention": "需要 @提及",
     "requireMentionHint": "机器人仅在被 @提及时响应",
+    "autoUpdate": "自动更新",
+    "autoUpdateHint": "系统空闲时自动安装更新",
     "usageTips": "快速上手",
     "tipStartCommand": "使用 @Vibe Remote /start 开始",
     "tipStartCommandDesc": "在任意已启用的频道输入 @Vibe Remote /start 打开控制面板。",
@@ -209,7 +211,9 @@
     "upgradeSuccess": "更新成功！",
     "upgradeFailed": "更新失败",
     "updateHint": "从 {{from}} 更新到 {{to}}",
-    "restarting": "正在重启..."
+    "restarting": "正在重启...",
+    "autoUpdate": "自动更新",
+    "autoUpdateHint": "空闲时自动安装"
   },
   "doctor": {
     "title": "系统状态",

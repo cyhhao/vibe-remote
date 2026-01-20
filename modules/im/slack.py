@@ -46,6 +46,8 @@ class SlackBot(BaseIMClient):
 
         # Settings manager for thread tracking (will be injected later)
         self.settings_manager = None
+        # Controller reference for update button handling (will be injected later)
+        self._controller = None
         self._recent_event_ids: Dict[str, float] = {}
         self._stop_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -54,6 +56,10 @@ class SlackBot(BaseIMClient):
     def set_settings_manager(self, settings_manager):
         """Set the settings manager for thread tracking"""
         self.settings_manager = settings_manager
+
+    def set_controller(self, controller):
+        """Set the controller reference for handling update button clicks"""
+        self._controller = controller
 
     def _is_duplicate_event(self, event_id: Optional[str]) -> bool:
         """Deduplicate Slack events using event_id with a short TTL."""
@@ -732,6 +738,14 @@ class SlackBot(BaseIMClient):
             user = payload.get("user", {})
             actions = payload.get("actions", [])
             view = payload.get("view", {})
+
+            # Check for update button click (handled before channel authorization)
+            for action in actions:
+                if action.get("action_id") == "vibe_update_now":
+                    from core.update_checker import handle_update_button_click
+                    if hasattr(self, "_controller") and self._controller:
+                        await handle_update_button_click(self._controller, payload)
+                    return
 
             # In Slack modals, `channel` is often missing. We store the originating
             # channel_id in `view.private_metadata` when opening the modal.

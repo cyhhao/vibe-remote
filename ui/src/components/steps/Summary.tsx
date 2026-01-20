@@ -20,6 +20,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requireMention, setRequireMention] = useState(data.slack?.require_mention || false);
+  const [autoUpdate, setAutoUpdate] = useState(data.update?.auto_update ?? true);
   const navigate = useNavigate();
 
   const saveAll = async () => {
@@ -31,6 +32,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         slack: {
           ...data.slack,
           require_mention: requireMention,
+        },
+        update: {
+          ...data.update,
+          auto_update: autoUpdate,
         },
       };
       const configPayload = buildConfigPayload(updatedData);
@@ -83,6 +88,25 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
                 type="checkbox"
                 checked={requireMention}
                 onChange={(e) => setRequireMention(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-border rounded-full peer peer-checked:bg-success peer-focus:ring-2 peer-focus:ring-success/20 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+            </label>
+          </div>
+        </div>
+
+        {/* Auto Update Setting */}
+        <div className="bg-panel border border-border rounded-lg p-4 shadow-sm">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-sm font-medium text-text">{t('summary.autoUpdate')}</h3>
+              <p className="text-xs text-muted mt-1">{t('summary.autoUpdateHint')}</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoUpdate}
+                onChange={(e) => setAutoUpdate(e.target.checked)}
                 className="sr-only peer"
               />
               <div className="w-11 h-6 bg-border rounded-full peer peer-checked:bg-success peer-focus:ring-2 peer-focus:ring-success/20 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
@@ -202,6 +226,12 @@ const buildConfigPayload = (data: any) => {
       setup_host: data.ui?.setup_host || '127.0.0.1',
       setup_port: data.ui?.setup_port || 5123,
       open_browser: true,
+    },
+    update: {
+      auto_update: data.update?.auto_update ?? true,
+      check_interval_minutes: data.update?.check_interval_minutes ?? 10,
+      idle_minutes: data.update?.idle_minutes ?? 30,
+      notify_slack: data.update?.notify_slack ?? true,
     },
   };
 };

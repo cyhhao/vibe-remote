@@ -155,6 +155,8 @@
     "channelsConfigured": "Channels Configured",
     "requireMention": "Require @Mention",
     "requireMentionHint": "Bot only responds when @mentioned in channels",
+    "autoUpdate": "Auto Update",
+    "autoUpdateHint": "Automatically install updates when system is idle",
     "usageTips": "Quick Start Guide",
     "tipStartCommand": "Use @Vibe Remote /start to begin",
     "tipStartCommandDesc": "Type @Vibe Remote /start in any enabled channel to open the control panel.",
@@ -209,7 +211,9 @@
     "upgradeSuccess": "Upgrade successful!",
     "upgradeFailed": "Upgrade failed",
     "updateHint": "Update from {{from}} to {{to}}",
-    "restarting": "Restarting..."
+    "restarting": "Restarting...",
+    "autoUpdate": "Auto Update",
+    "autoUpdateHint": "Auto-install when idle"
   },
   "doctor": {
     "title": "System Status",

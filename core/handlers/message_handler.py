@@ -47,6 +47,10 @@ class MessageHandler:
     async def handle_user_message(self, context: MessageContext, message: str):
         """Process regular user messages and route to configured agent"""
         try:
+            # Record user activity for auto-update idle detection
+            if hasattr(self.controller, 'update_checker'):
+                self.controller.update_checker.record_activity()
+
             # If message is empty (e.g., user just @mentioned bot without text),
             # trigger the /start command instead of sending empty message to agent
             if not message or not message.strip():
