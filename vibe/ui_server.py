@@ -363,6 +363,7 @@ def serve_static(path):
 def run_ui_server(host: str, port: int) -> None:
     """Start the Flask UI server."""
     global _server
+    import time
     from werkzeug.serving import make_server
 
     paths.ensure_data_dirs()
@@ -370,5 +371,18 @@ def run_ui_server(host: str, port: int) -> None:
 
     # Use make_server directly for better compatibility with subprocess/multiprocessing
     # app.run() has issues when launched in child processes
-    _server = make_server(host, port, app, threaded=True)
-    _server.serve_forever()
+    # Retry binding in case of TIME_WAIT or port still held by old server during reload
+    for attempt in range(10):
+        try:
+            _server = make_server(host, port, app, threaded=True)
+            _server.serve_forever()
+            break
+        except OSError as e:
+            if e.errno == 48 and attempt < 9:  # Address already in use (macOS)
+                print(f"Port {port} in use, retrying in 1s... (attempt {attempt + 1})")
+                time.sleep(1)
+            elif e.errno == 98 and attempt < 9:  # Address already in use (Linux)
+                print(f"Port {port} in use, retrying in 1s... (attempt {attempt + 1})")
+                time.sleep(1)
+            else:
+                raise
