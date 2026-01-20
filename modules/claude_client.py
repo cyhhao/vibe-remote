@@ -91,8 +91,9 @@ class ClaudeClient:
             else:
                 # If not under cwd, just return the path as is
                 return full_path
-        except:
+        except Exception as e:
             # Fallback to original path if any error
+            logger.debug("Failed to get relative path for %s: %s", full_path, e)
             return full_path
 
     def _format_tool_use_block(

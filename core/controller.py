@@ -743,8 +743,8 @@ class Controller:
 
                 if not inspect.iscoroutinefunction(stop_attr):
                     stop_attr()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to stop IM client: %s", e)
 
         # Best-effort async shutdown for IM clients
         try:
@@ -759,8 +759,8 @@ class Controller:
                         pass
                 else:
                     shutdown_attr()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to shutdown IM client: %s", e)
 
         # Stop OpenCode server if running
         try:

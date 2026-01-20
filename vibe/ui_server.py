@@ -168,6 +168,7 @@ def control():
         runtime.write_status("stopped")
     elif action == "restart":
         runtime.stop_service()
+        _stop_opencode_server()
         runtime.ensure_config()
         service_pid = runtime.start_service()
         runtime.write_status("running", "restarted", service_pid, status.get("ui_pid"))

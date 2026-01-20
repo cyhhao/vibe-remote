@@ -245,7 +245,8 @@ class OpenCodeServerManager:
                 text=True,
                 check=False,
             )
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to get command for pid %s: %s", pid, e)
             return None
         cmd = (result.stdout or "").strip()
         return cmd or None
@@ -274,7 +275,8 @@ class OpenCodeServerManager:
                 text=True,
                 check=False,
             )
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to list processes for finding opencode PIDs: %s", e)
             return []
 
         needle = f"--port={port}"
@@ -312,8 +314,8 @@ class OpenCodeServerManager:
 
         try:
             os.kill(pid, signal.SIGKILL)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to SIGKILL process pid=%s: %s", pid, e)
 
     async def _cleanup_orphaned_managed_server(self) -> None:
         info = self._read_pid_file()
@@ -409,7 +411,8 @@ class OpenCodeServerManager:
             try:
                 self._process.terminate()
                 await asyncio.wait_for(self._process.wait(), timeout=5)
-            except Exception:
+            except Exception as e:
+                logger.warning("Failed to gracefully terminate OpenCode process, forcing kill: %s", e)
                 self._process.kill()
 
         # Ensure any stale pid file is cleared before starting.
@@ -1260,8 +1263,8 @@ class OpenCodeAgent(BaseAgent):
                 mid = m.get("info", {}).get("id")
                 if mid:
                     baseline_message_ids.add(mid)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to get baseline messages for session %s: %s", session_id, e)
 
         poll_interval_seconds = 2.0
         while True:
@@ -2169,8 +2172,8 @@ class OpenCodeAgent(BaseAgent):
                     try:
                         server = await self._get_server()
                         await server.abort_session(req_info[0], req_info[1])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Failed to abort OpenCode session %s: %s", req_info[0], e)
                     task.cancel()
                     try:
                         await task

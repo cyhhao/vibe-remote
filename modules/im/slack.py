@@ -775,8 +775,8 @@ class SlackBot(BaseIMClient):
                 )
                 try:
                     await self._send_unauthorized_message(channel_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to send unauthorized message to channel %s: %s", channel_id, e)
                 return
 
             view = payload.get("view", {})
