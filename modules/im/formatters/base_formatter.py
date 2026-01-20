@@ -1,6 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import Optional, List, Tuple, Any, Dict
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class BaseMarkdownFormatter(ABC):
@@ -614,7 +617,8 @@ class BaseMarkdownFormatter(ABC):
             try:
                 input_json = json.dumps(tool_input, indent=2, ensure_ascii=False)
                 tool_info += f"\n{self.format_code_block(input_json, 'json')}"
-            except:
+            except Exception as e:
+                logger.debug("Failed to serialize tool input as JSON: %s", e)
                 tool_info += f"\n{self.format_code_block(str(tool_input))}"
 
         return tool_info

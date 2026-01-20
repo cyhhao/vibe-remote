@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -7,6 +8,8 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 _PREFIX_PATTERN = re.compile(r"^([^\s:：]+)\s*[:：]\s*(.*)$", re.DOTALL)
@@ -105,7 +108,8 @@ def _find_claude_agent_dirs(root: Path) -> Iterable[Path]:
 def _parse_claude_agent_definition(path: Path) -> Optional[SubagentDefinition]:
     try:
         text = path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception as e:
+        logger.debug("Failed to read subagent definition file %s: %s", path, e)
         return None
 
     if not text.startswith("---"):
@@ -118,7 +122,8 @@ def _parse_claude_agent_definition(path: Path) -> Optional[SubagentDefinition]:
     header = parts[1]
     try:
         data = _yaml_safe_load(header)
-    except Exception:
+    except Exception as e:
+        logger.debug("Failed to parse YAML header in subagent definition %s: %s", path, e)
         return None
 
     name = data.get("name")
