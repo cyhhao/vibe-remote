@@ -583,7 +583,7 @@ def cmd_upgrade():
     
     if is_uv_tool and uv_path:
         # Installed via uv tool, upgrade with uv
-        cmd = [uv_path, "tool", "install", "vibe-remote", "--force"]
+        cmd = [uv_path, "tool", "upgrade", "vibe-remote"]
         print(f"Using uv: {' '.join(cmd)}")
     else:
         # Installed via pip or other method, use current Python's pip

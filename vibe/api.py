@@ -367,7 +367,7 @@ def do_upgrade(auto_restart: bool = True) -> dict:
     
     if is_uv_tool and uv_path:
         # Installed via uv tool, upgrade with uv
-        cmd = [uv_path, "tool", "install", "vibe-remote", "--force"]
+        cmd = [uv_path, "tool", "upgrade", "vibe-remote"]
     else:
         # Installed via pip or other method, use current Python's pip
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "vibe-remote"]
