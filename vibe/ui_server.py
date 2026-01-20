@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder=None)
 
+# Global server instance for graceful shutdown on reload
+_server = None
+
 # Disable Flask's default logging
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.WARNING)
@@ -191,6 +194,7 @@ def ui_reload():
     status = runtime.read_status()
 
     def _restart():
+        global _server
         import subprocess
         import sys
         import time
@@ -220,7 +224,9 @@ def ui_reload():
             process.pid,
         )
         time.sleep(0.2)
-        # Shutdown is handled by the request finishing
+        # Shutdown the old server to release the port
+        if _server:
+            _server.shutdown()
 
     # Schedule restart after response is sent
     threading.Thread(target=_restart).start()
@@ -356,6 +362,7 @@ def serve_static(path):
 
 def run_ui_server(host: str, port: int) -> None:
     """Start the Flask UI server."""
+    global _server
     from werkzeug.serving import make_server
 
     paths.ensure_data_dirs()
@@ -363,5 +370,5 @@ def run_ui_server(host: str, port: int) -> None:
 
     # Use make_server directly for better compatibility with subprocess/multiprocessing
     # app.run() has issues when launched in child processes
-    server = make_server(host, port, app, threaded=True)
-    server.serve_forever()
+    _server = make_server(host, port, app, threaded=True)
+    _server.serve_forever()
