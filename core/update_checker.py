@@ -10,9 +10,10 @@ This module provides:
 import asyncio
 import json
 import logging
+import tempfile
 import time
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -26,6 +27,46 @@ logger = logging.getLogger(__name__)
 
 # Action ID for the update button in Slack
 UPDATE_BUTTON_ACTION_ID = "vibe_update_now"
+
+# Minimum check interval to prevent tight loops (in minutes)
+MIN_CHECK_INTERVAL_MINUTES = 1
+
+
+def _compare_versions(latest: str, current: str) -> bool:
+    """Compare versions using packaging.version for PEP440 compliance."""
+    try:
+        from packaging.version import Version
+        return Version(latest) > Version(current)
+    except Exception:
+        # Fallback: simple comparison if packaging not available or version invalid
+        try:
+            latest_parts = [int(x) for x in latest.split(".")[:3] if x.isdigit()]
+            current_parts = [int(x) for x in current.split(".")[:3] if x.isdigit()]
+            return latest_parts > current_parts
+        except (ValueError, AttributeError):
+            return latest != current
+
+
+def _fetch_pypi_version_sync() -> Dict[str, Any]:
+    """Synchronous PyPI version fetch (to be run in thread)."""
+    from vibe import __version__
+    current = __version__
+    result = {"current": current, "latest": None, "has_update": False, "error": None}
+    
+    try:
+        url = "https://pypi.org/pypi/vibe-remote/json"
+        req = urllib.request.Request(url, headers={"User-Agent": "vibe-remote"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            latest = data.get("info", {}).get("version", "")
+            result["latest"] = latest
+            
+            if latest and latest != current:
+                result["has_update"] = _compare_versions(latest, current)
+    except Exception as e:
+        result["error"] = str(e)
+    
+    return result
 
 
 @dataclass
@@ -54,15 +95,25 @@ class UpdateState:
             return cls()
 
     def save(self) -> None:
-        path = self._get_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "notified_version": self.notified_version,
-            "notified_at": self.notified_at,
-            "last_check_at": self.last_check_at,
-            "last_activity_at": self.last_activity_at,
-        }
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        """Save state atomically using temp file + rename."""
+        try:
+            path = self._get_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "notified_version": self.notified_version,
+                "notified_at": self.notified_at,
+                "last_check_at": self.last_check_at,
+                "last_activity_at": self.last_activity_at,
+            }
+            # Atomic write: write to temp file, then rename
+            with tempfile.NamedTemporaryFile(
+                mode='w', dir=path.parent, suffix='.tmp', delete=False, encoding='utf-8'
+            ) as f:
+                json.dump(data, f, indent=2)
+                temp_path = Path(f.name)
+            temp_path.replace(path)
+        except Exception as e:
+            logger.warning(f"Failed to save update state: {e}")
 
     @staticmethod
     def _get_path() -> Path:
@@ -78,6 +129,8 @@ class UpdateChecker:
         self.state = UpdateState.load()
         self._check_task: Optional[asyncio.Task] = None
         self._running = False
+        self._upgrade_lock = asyncio.Lock()  # Prevent concurrent upgrades
+        self._cached_owner_dm_channel: Optional[str] = None  # Cache DM channel ID
 
     def start(self) -> None:
         """Start the periodic update checker."""
@@ -109,7 +162,7 @@ class UpdateChecker:
     def record_activity(self) -> None:
         """Record user activity (called when a Slack message is received)."""
         self.state.last_activity_at = time.time()
-        self.state.save()
+        self.state.save()  # save() has its own try/except, won't raise
 
     def _reload_config(self) -> None:
         """Reload UpdateConfig from config file (for hot-reload support)."""
@@ -135,15 +188,29 @@ class UpdateChecker:
             except Exception as e:
                 logger.error(f"Update check failed: {e}", exc_info=True)
             
-            # Wait for next check interval
-            await asyncio.sleep(self.config.check_interval_minutes * 60)
+            # Reload config and get interval (with minimum bound to prevent tight loop)
+            self._reload_config()
+            interval = max(self.config.check_interval_minutes, MIN_CHECK_INTERVAL_MINUTES)
+            
+            # If interval is set to 0 (disabled), stop the loop
+            if self.config.check_interval_minutes <= 0:
+                logger.info("Update checker disabled via config, stopping loop")
+                self._running = False
+                break
+            
+            await asyncio.sleep(interval * 60)
 
     async def _do_check(self) -> None:
         """Perform a single update check."""
         # Reload config for hot-reload support (e.g., user toggled auto_update in UI)
         self._reload_config()
         
-        version_info = self._get_version_info()
+        # Skip if disabled
+        if self.config.check_interval_minutes <= 0:
+            return
+        
+        # Fetch version info in a thread to avoid blocking the event loop
+        version_info = await asyncio.to_thread(_fetch_pypi_version_sync)
         
         self.state.last_check_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.state.save()
@@ -172,32 +239,9 @@ class UpdateChecker:
             logger.info("System is idle, performing auto-update...")
             await self._perform_update(latest)
 
-    def _get_version_info(self) -> Dict[str, Any]:
-        """Get current version and check for updates from PyPI."""
-        from vibe import __version__
-        
-        current = __version__
-        result = {"current": current, "latest": None, "has_update": False, "error": None}
-        
-        try:
-            url = "https://pypi.org/pypi/vibe-remote/json"
-            req = urllib.request.Request(url, headers={"User-Agent": "vibe-remote"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                latest = data.get("info", {}).get("version", "")
-                result["latest"] = latest
-                
-                if latest and latest != current:
-                    try:
-                        current_parts = [int(x) for x in current.split(".")[:3] if x.isdigit()]
-                        latest_parts = [int(x) for x in latest.split(".")[:3] if x.isdigit()]
-                        result["has_update"] = latest_parts > current_parts
-                    except (ValueError, AttributeError):
-                        result["has_update"] = latest != current
-        except Exception as e:
-            result["error"] = str(e)
-        
-        return result
+    async def _get_version_info_async(self) -> Dict[str, Any]:
+        """Get version info asynchronously."""
+        return await asyncio.to_thread(_fetch_pypi_version_sync)
 
     def _is_idle(self) -> bool:
         """Check if the system is idle (no active sessions and no recent activity)."""
@@ -250,20 +294,68 @@ class UpdateChecker:
             if not im_client or not hasattr(im_client, 'web_client'):
                 return None
             
-            response = await im_client.web_client.users_list()
-            if not response.get("ok"):
-                return None
+            # Paginate through users to handle large workspaces
+            cursor = None
+            while True:
+                kwargs = {"limit": 200}
+                if cursor:
+                    kwargs["cursor"] = cursor
+                
+                response = await im_client.web_client.users_list(**kwargs)
+                if not response.get("ok"):
+                    return None
+                
+                for member in response.get("members", []):
+                    if member.get("is_primary_owner"):
+                        return member.get("id")
+                
+                # Check for next page
+                cursor = response.get("response_metadata", {}).get("next_cursor")
+                if not cursor:
+                    break
             
-            for member in response.get("members", []):
-                if member.get("is_primary_owner"):
-                    return member.get("id")
-            
-            # Fallback to any owner if no primary owner found
-            for member in response.get("members", []):
-                if member.get("is_owner"):
-                    return member.get("id")
+            # Second pass: fallback to any owner if no primary owner found
+            cursor = None
+            while True:
+                kwargs = {"limit": 200}
+                if cursor:
+                    kwargs["cursor"] = cursor
+                
+                response = await im_client.web_client.users_list(**kwargs)
+                if not response.get("ok"):
+                    return None
+                
+                for member in response.get("members", []):
+                    if member.get("is_owner"):
+                        return member.get("id")
+                
+                cursor = response.get("response_metadata", {}).get("next_cursor")
+                if not cursor:
+                    break
+                    
         except Exception as e:
             logger.warning(f"Failed to get workspace owner: {e}")
+        
+        return None
+
+    async def _open_dm_channel(self, user_id: str) -> Optional[str]:
+        """Open a DM channel with a user and return the channel ID."""
+        # Use cached channel if available
+        if self._cached_owner_dm_channel:
+            return self._cached_owner_dm_channel
+        
+        try:
+            im_client = self.controller.im_client
+            if not im_client or not hasattr(im_client, 'web_client'):
+                return None
+            
+            response = await im_client.web_client.conversations_open(users=[user_id])
+            if response.get("ok"):
+                channel_id = response.get("channel", {}).get("id")
+                self._cached_owner_dm_channel = channel_id
+                return channel_id
+        except Exception as e:
+            logger.warning(f"Failed to open DM channel with user {user_id}: {e}")
         
         return None
 
@@ -272,6 +364,12 @@ class UpdateChecker:
         owner_id = await self._get_workspace_owner_id()
         if not owner_id:
             logger.warning("Cannot send update notification: no workspace owner found")
+            return
+        
+        # Open DM channel first (required for sending messages to users)
+        dm_channel = await self._open_dm_channel(owner_id)
+        if not dm_channel:
+            logger.warning(f"Cannot send update notification: failed to open DM with {owner_id}")
             return
         
         try:
@@ -304,7 +402,7 @@ class UpdateChecker:
             ]
             
             await im_client.web_client.chat_postMessage(
-                channel=owner_id,
+                channel=dm_channel,
                 text=f"Vibe Remote update available: {current} → {latest}",
                 blocks=blocks
             )
@@ -314,44 +412,66 @@ class UpdateChecker:
 
     async def _perform_update(
         self, target_version: str, channel_id: Optional[str] = None, message_ts: Optional[str] = None
-    ) -> None:
-        """Perform the actual update and restart."""
-        logger.info(f"Starting auto-update to version {target_version}")
+    ) -> bool:
+        """Perform the actual update and restart. Returns True if upgrade started."""
+        # Prevent concurrent upgrades
+        if self._upgrade_lock.locked():
+            logger.warning("Upgrade already in progress, skipping")
+            return False
         
-        # Write a marker file so we can send confirmation after restart
-        self._write_update_marker(target_version, channel_id=channel_id, message_ts=message_ts)
-        
-        # Use the same upgrade logic as the API/CLI
-        from vibe.api import do_upgrade
-        result = do_upgrade(auto_restart=True)
-        
-        if result["ok"]:
-            logger.info(f"Upgrade successful: {result['message']}")
-        else:
-            logger.error(f"Upgrade failed: {result['message']}")
-            if result.get("output"):
-                logger.error(f"Output: {result['output']}")
-            self._remove_update_marker()
+        async with self._upgrade_lock:
+            logger.info(f"Starting auto-update to version {target_version}")
+            
+            # Write a marker file so we can send confirmation after restart
+            self._write_update_marker(target_version, channel_id=channel_id, message_ts=message_ts)
+            
+            # Run upgrade in thread to avoid blocking event loop
+            from vibe.api import do_upgrade
+            result = await asyncio.to_thread(do_upgrade, True)
+            
+            if result["ok"]:
+                logger.info(f"Upgrade successful: {result['message']}")
+                return True
+            else:
+                logger.error(f"Upgrade failed: {result['message']}")
+                if result.get("output"):
+                    logger.error(f"Output: {result['output']}")
+                self._remove_update_marker()
+                return False
 
     def _write_update_marker(
         self, version: str, channel_id: Optional[str] = None, message_ts: Optional[str] = None
     ) -> None:
         """Write a marker file to trigger post-update notification."""
-        marker_path = paths.get_state_dir() / "pending_update_notification.json"
-        data = {
-            "version": version,
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        # Store message coordinates for updating the original message after restart
-        if channel_id and message_ts:
-            data["channel_id"] = channel_id
-            data["message_ts"] = message_ts
-        marker_path.write_text(json.dumps(data), encoding="utf-8")
+        try:
+            marker_path = paths.get_state_dir() / "pending_update_notification.json"
+            marker_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "version": version,
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            # Store message coordinates for updating the original message after restart
+            if channel_id and message_ts:
+                data["channel_id"] = channel_id
+                data["message_ts"] = message_ts
+            
+            # Atomic write
+            with tempfile.NamedTemporaryFile(
+                mode='w', dir=marker_path.parent, suffix='.tmp', delete=False, encoding='utf-8'
+            ) as f:
+                json.dump(data, f)
+                temp_path = Path(f.name)
+            temp_path.replace(marker_path)
+        except Exception as e:
+            logger.error(f"Failed to write update marker: {e}")
 
     def _remove_update_marker(self) -> None:
         """Remove the update marker file."""
-        marker_path = paths.get_state_dir() / "pending_update_notification.json"
-        marker_path.unlink(missing_ok=True)
+        try:
+            marker_path = paths.get_state_dir() / "pending_update_notification.json"
+            marker_path.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to remove update marker: {e}")
 
     async def check_and_send_post_update_notification(self) -> None:
         """Check for pending update notification and send it (called on startup)."""
@@ -366,7 +486,6 @@ class UpdateChecker:
             # Use the target version from marker (more reliable than __version__ in edge cases)
             target_version = data.get("version", "unknown")
             
-            owner_id = await self._get_workspace_owner_id()
             im_client = self.controller.im_client
             
             success_text = f":white_check_mark: Vibe Remote has been updated to `{target_version}`"
@@ -389,15 +508,19 @@ class UpdateChecker:
                     text=success_text,
                     blocks=success_blocks
                 )
-                logger.info(f"Updated original message with post-update notification")
-            elif owner_id:
-                # Fallback: send a new message
-                await im_client.web_client.chat_postMessage(
-                    channel=owner_id,
-                    text=success_text,
-                    blocks=success_blocks
-                )
-                logger.info(f"Sent post-update notification to {owner_id}")
+                logger.info("Updated original message with post-update notification")
+            else:
+                # Fallback: send a new message to owner
+                owner_id = await self._get_workspace_owner_id()
+                if owner_id:
+                    dm_channel = await self._open_dm_channel(owner_id)
+                    if dm_channel:
+                        await im_client.web_client.chat_postMessage(
+                            channel=dm_channel,
+                            text=success_text,
+                            blocks=success_blocks
+                        )
+                        logger.info(f"Sent post-update notification to {owner_id}")
         except Exception as e:
             logger.error(f"Failed to send post-update notification: {e}")
         finally:
@@ -405,15 +528,38 @@ class UpdateChecker:
 
 
 async def handle_update_button_click(controller: "Controller", payload: Dict[str, Any]) -> None:
-    """Handle the 'Update Now' button click from Slack."""
+    """Handle the 'Update Now' button click from Slack.
+    
+    This function should return quickly to avoid Slack ack timeout.
+    The actual update is performed in a background task.
+    """
+    channel_id = payload.get("channel", {}).get("id")
+    message_ts = payload.get("message", {}).get("ts")
+    im_client = controller.im_client
+    
+    # Check if upgrade is already in progress
+    if hasattr(controller, 'update_checker') and controller.update_checker._upgrade_lock.locked():
+        try:
+            await im_client.web_client.chat_update(
+                channel=channel_id,
+                ts=message_ts,
+                text="Upgrade already in progress",
+                blocks=[
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": ":warning: An upgrade is already in progress. Please wait."
+                        }
+                    }
+                ]
+            )
+        except Exception as e:
+            logger.error(f"Failed to update message: {e}")
+        return
+    
+    # Update message immediately to acknowledge the click
     try:
-        user_id = payload.get("user", {}).get("id")
-        channel_id = payload.get("channel", {}).get("id")
-        message_ts = payload.get("message", {}).get("ts")
-        
-        im_client = controller.im_client
-        
-        # Acknowledge the button click with a loading message
         await im_client.web_client.chat_update(
             channel=channel_id,
             ts=message_ts,
@@ -428,29 +574,62 @@ async def handle_update_button_click(controller: "Controller", payload: Dict[str
                 }
             ]
         )
+    except Exception as e:
+        logger.error(f"Failed to acknowledge button click: {e}")
+        return
+    
+    # Schedule the actual update in a background task to avoid blocking
+    asyncio.create_task(_do_update_from_button(controller, channel_id, message_ts))
+
+
+async def _do_update_from_button(controller: "Controller", channel_id: str, message_ts: str) -> None:
+    """Background task to perform update after button click."""
+    try:
+        if not hasattr(controller, 'update_checker'):
+            return
         
-        # Perform the update
-        if hasattr(controller, 'update_checker'):
-            version_info = controller.update_checker._get_version_info()
-            if version_info.get("has_update"):
-                # Pass message coordinates so we can update it after restart
-                await controller.update_checker._perform_update(
-                    version_info["latest"], channel_id=channel_id, message_ts=message_ts
-                )
-            else:
+        update_checker = controller.update_checker
+        im_client = controller.im_client
+        
+        # Check for updates
+        version_info = await update_checker._get_version_info_async()
+        
+        if version_info.get("has_update"):
+            # Perform the update
+            success = await update_checker._perform_update(
+                version_info["latest"], channel_id=channel_id, message_ts=message_ts
+            )
+            if not success:
+                # Update failed, show error
                 await im_client.web_client.chat_update(
                     channel=channel_id,
                     ts=message_ts,
-                    text="Already up to date",
+                    text="Upgrade failed",
                     blocks=[
                         {
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
-                                "text": ":white_check_mark: Already running the latest version."
+                                "text": ":x: *Upgrade Failed*\n\nPlease check the logs for details."
                             }
                         }
                     ]
                 )
+        else:
+            # No update available
+            await im_client.web_client.chat_update(
+                channel=channel_id,
+                ts=message_ts,
+                text="Already up to date",
+                blocks=[
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": ":white_check_mark: Already running the latest version."
+                        }
+                    }
+                ]
+            )
     except Exception as e:
-        logger.error(f"Failed to handle update button click: {e}", exc_info=True)
+        logger.error(f"Failed to perform update from button click: {e}", exc_info=True)

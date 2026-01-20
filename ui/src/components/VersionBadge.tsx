@@ -230,7 +230,7 @@ export const VersionBadge: React.FC = () => {
             <button
               onClick={checkVersion}
               disabled={checking || restarting}
-              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm bg-neutral-100 hover:bg-neutral-200 rounded-md transition-colors disabled:opacity-50"
+              className="flex items-center justify-center gap-1.5 px-3 py-2 text-sm bg-neutral-100 hover:bg-neutral-200 rounded-md transition-colors disabled:opacity-50 whitespace-nowrap"
             >
               <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
               {checking ? t('dashboard.checking') : t('dashboard.checkUpdate')}
@@ -239,7 +239,7 @@ export const VersionBadge: React.FC = () => {
               <button
                 onClick={handleUpgrade}
                 disabled={upgrading}
-                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm bg-accent text-white hover:bg-accent/90 rounded-md transition-colors disabled:opacity-50"
+                className="flex items-center justify-center gap-1.5 px-3 py-2 text-sm bg-accent text-white hover:bg-accent/90 rounded-md transition-colors disabled:opacity-50 whitespace-nowrap"
               >
                 <Download size={14} className={upgrading ? 'animate-bounce' : ''} />
                 {upgrading ? t('dashboard.upgrading') : t('dashboard.upgradeNow')}

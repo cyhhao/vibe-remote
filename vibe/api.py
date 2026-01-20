@@ -50,10 +50,6 @@ def config_to_payload(config: V2Config) -> dict:
             "default_cwd": config.runtime.default_cwd,
             "log_level": config.runtime.log_level,
         },
-        "slack": {
-            **config.slack.__dict__,
-            "require_mention": config.slack.require_mention,
-        },
         "agents": {
             "default_backend": config.agents.default_backend,
             "opencode": config.agents.opencode.__dict__,

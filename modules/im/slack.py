@@ -482,22 +482,35 @@ class SlackBot(BaseIMClient):
             if req.type == "events_api":
                 # Handle Events API events
                 await self._handle_event(req.payload)
+                # Acknowledge after handling events
+                response = SocketModeResponse(envelope_id=req.envelope_id)
+                await client.send_socket_mode_response(response)
             elif req.type == "slash_commands":
                 # Handle slash commands
                 await self._handle_slash_command(req.payload)
+                # Acknowledge after handling slash commands
+                response = SocketModeResponse(envelope_id=req.envelope_id)
+                await client.send_socket_mode_response(response)
             elif req.type == "interactive":
-                # Handle interactive components (buttons, etc.)
+                # For interactive components, acknowledge FIRST to avoid Slack timeout
+                # This is important for long-running operations like updates
+                response = SocketModeResponse(envelope_id=req.envelope_id)
+                await client.send_socket_mode_response(response)
+                # Then handle the interaction
                 await self._handle_interactive(req.payload)
-
-            # Acknowledge the request
-            response = SocketModeResponse(envelope_id=req.envelope_id)
-            await client.send_socket_mode_response(response)
+            else:
+                # Unknown request type, still acknowledge
+                response = SocketModeResponse(envelope_id=req.envelope_id)
+                await client.send_socket_mode_response(response)
 
         except Exception as e:
             logger.error(f"Error handling socket mode request: {e}")
-            # Still acknowledge even on error
-            response = SocketModeResponse(envelope_id=req.envelope_id)
-            await client.send_socket_mode_response(response)
+            # Still acknowledge even on error (if not already acknowledged)
+            try:
+                response = SocketModeResponse(envelope_id=req.envelope_id)
+                await client.send_socket_mode_response(response)
+            except Exception:
+                pass  # Already acknowledged or connection issue
 
     async def _handle_event(self, payload: Dict[str, Any]):
         """Handle Events API events"""
