@@ -130,12 +130,23 @@ export const VersionBadge: React.FC = () => {
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <span className="font-medium text-sm">{t('dashboard.versionAndUpdate')}</span>
-            <button
-              onClick={() => setIsPopupOpen(false)}
-              className="text-muted hover:text-text p-1 rounded"
-            >
-              <X size={14} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={checkVersion}
+                disabled={checking || restarting}
+                className="text-muted hover:text-text p-1 rounded disabled:opacity-50"
+                aria-label={checking ? t('dashboard.checking') : t('dashboard.checkUpdate')}
+                title={checking ? t('dashboard.checking') : t('dashboard.checkUpdate')}
+              >
+                <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
+              </button>
+              <button
+                onClick={() => setIsPopupOpen(false)}
+                className="text-muted hover:text-text p-1 rounded"
+              >
+                <X size={14} />
+              </button>
+            </div>
           </div>
 
           {/* Content */}
@@ -226,15 +237,7 @@ export const VersionBadge: React.FC = () => {
           </div>
 
           {/* Actions */}
-          <div className="px-4 py-3 border-t border-border flex gap-2">
-            <button
-              onClick={checkVersion}
-              disabled={checking || restarting}
-              className="flex items-center justify-center gap-1.5 px-3 py-2 text-sm bg-neutral-100 hover:bg-neutral-200 rounded-md transition-colors disabled:opacity-50 whitespace-nowrap"
-            >
-              <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
-              {checking ? t('dashboard.checking') : t('dashboard.checkUpdate')}
-            </button>
+          <div className="px-4 py-3 border-t border-border flex justify-end">
             {hasUpdate && !restarting && (
               <button
                 onClick={handleUpgrade}

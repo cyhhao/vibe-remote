@@ -192,52 +192,50 @@ class UpdateChecker:
             self._reload_config()
             interval = max(self.config.check_interval_minutes, MIN_CHECK_INTERVAL_MINUTES)
             
-            # If interval is set to 0 (disabled), stop the loop
-            if self.config.check_interval_minutes <= 0:
-                logger.info("Update checker disabled via config, stopping loop")
-                self._running = False
-                break
-            
+            # If interval is set to 0 (disabled), keep loop alive so hot-reload can re-enable
             await asyncio.sleep(interval * 60)
 
     async def _do_check(self) -> None:
         """Perform a single update check."""
-        # Reload config for hot-reload support (e.g., user toggled auto_update in UI)
-        self._reload_config()
-        
-        # Skip if disabled
-        if self.config.check_interval_minutes <= 0:
-            return
-        
-        # Fetch version info in a thread to avoid blocking the event loop
-        version_info = await asyncio.to_thread(_fetch_pypi_version_sync)
-        
-        self.state.last_check_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        self.state.save()
-        
-        if version_info.get("error"):
-            logger.warning(f"Failed to check for updates: {version_info['error']}")
-            return
-        
-        if not version_info.get("has_update"):
-            logger.debug(f"No update available (current={version_info['current']})")
-            return
-        
-        latest = version_info["latest"]
-        current = version_info["current"]
-        logger.info(f"Update available: {current} -> {latest}")
-        
-        # Notification flow (independent)
-        if self.config.notify_slack and self.state.notified_version != latest:
-            await self._send_slack_notification(current, latest)
-            self.state.notified_version = latest
-            self.state.notified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        try:
+            # Reload config for hot-reload support (e.g., user toggled auto_update in UI)
+            self._reload_config()
+            
+            # Skip if disabled
+            if self.config.check_interval_minutes <= 0:
+                return
+            
+            # Fetch version info in a thread to avoid blocking the event loop
+            version_info = await asyncio.to_thread(_fetch_pypi_version_sync)
+            
+            self.state.last_check_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             self.state.save()
-        
-        # Auto-update flow (independent)
-        if self.config.auto_update and self._is_idle():
-            logger.info("System is idle, performing auto-update...")
-            await self._perform_update(latest)
+            
+            if version_info.get("error"):
+                logger.warning(f"Failed to check for updates: {version_info['error']}")
+                return
+            
+            if not version_info.get("has_update"):
+                logger.debug(f"No update available (current={version_info['current']})")
+                return
+            
+            latest = version_info["latest"]
+            current = version_info["current"]
+            logger.info(f"Update available: {current} -> {latest}")
+            
+            # Notification flow (independent)
+            if self.config.notify_slack and self.state.notified_version != latest:
+                await self._send_slack_notification(current, latest)
+                self.state.notified_version = latest
+                self.state.notified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                self.state.save()
+            
+            # Auto-update flow (independent)
+            if self.config.auto_update and self._is_idle():
+                logger.info("System is idle, performing auto-update...")
+                await self._perform_update(latest)
+        except Exception as e:
+            logger.error(f"Update check failed: {e}", exc_info=True)
 
     async def _get_version_info_async(self) -> Dict[str, Any]:
         """Get version info asynchronously."""
@@ -412,18 +410,20 @@ class UpdateChecker:
 
     async def _perform_update(
         self, target_version: str, channel_id: Optional[str] = None, message_ts: Optional[str] = None
-    ) -> bool:
-        """Perform the actual update and restart. Returns True if upgrade started."""
+    ) -> Dict[str, Any]:
+        """Perform the actual update and restart. Returns do_upgrade result dict."""
         # Prevent concurrent upgrades
         if self._upgrade_lock.locked():
             logger.warning("Upgrade already in progress, skipping")
-            return False
+            return {
+                "ok": False,
+                "message": "Upgrade already in progress",
+                "output": None,
+                "restarting": False,
+            }
         
         async with self._upgrade_lock:
             logger.info(f"Starting auto-update to version {target_version}")
-            
-            # Write a marker file so we can send confirmation after restart
-            self._write_update_marker(target_version, channel_id=channel_id, message_ts=message_ts)
             
             # Run upgrade in thread to avoid blocking event loop
             from vibe.api import do_upgrade
@@ -431,13 +431,20 @@ class UpdateChecker:
             
             if result["ok"]:
                 logger.info(f"Upgrade successful: {result['message']}")
-                return True
+                if result.get("restarting"):
+                    # Write marker only if restart is scheduled
+                    self._write_update_marker(
+                        target_version, channel_id=channel_id, message_ts=message_ts
+                    )
+                else:
+                    logger.warning("Upgrade completed without restart; manual restart required")
+                return result
             else:
                 logger.error(f"Upgrade failed: {result['message']}")
                 if result.get("output"):
                     logger.error(f"Output: {result['output']}")
                 self._remove_update_marker()
-                return False
+                return result
 
     def _write_update_marker(
         self, version: str, channel_id: Optional[str] = None, message_ts: Optional[str] = None
@@ -596,10 +603,10 @@ async def _do_update_from_button(controller: "Controller", channel_id: str, mess
         
         if version_info.get("has_update"):
             # Perform the update
-            success = await update_checker._perform_update(
+            result = await update_checker._perform_update(
                 version_info["latest"], channel_id=channel_id, message_ts=message_ts
             )
-            if not success:
+            if not result.get("ok"):
                 # Update failed, show error
                 await im_client.web_client.chat_update(
                     channel=channel_id,
@@ -611,6 +618,22 @@ async def _do_update_from_button(controller: "Controller", channel_id: str, mess
                             "text": {
                                 "type": "mrkdwn",
                                 "text": ":x: *Upgrade Failed*\n\nPlease check the logs for details."
+                            }
+                        }
+                    ]
+                )
+            elif not result.get("restarting"):
+                # Upgrade succeeded but restart not scheduled
+                await im_client.web_client.chat_update(
+                    channel=channel_id,
+                    ts=message_ts,
+                    text="Upgrade completed - restart required",
+                    blocks=[
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": ":white_check_mark: *Upgrade complete*\n\nPlease restart Vibe Remote to apply the update."
                             }
                         }
                     ]
