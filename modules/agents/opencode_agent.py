@@ -330,9 +330,17 @@ class OpenCodeServerManager:
         if self._process and self._process.returncode is None and self._process.pid == pid:
             return
 
+        # Check if the server is healthy before deciding to kill it.
+        # If it's healthy, we should adopt it rather than kill it.
+        if await self._is_healthy():
+            logger.info(
+                f"Adopting healthy OpenCode server pid={pid} from previous run"
+            )
+            return
+
         cmd = self._get_pid_command(pid)
         if cmd and self._is_opencode_serve_cmd(cmd, self.port) and self._pid_exists(pid):
-            await self._terminate_pid(pid, reason="orphaned from previous run")
+            await self._terminate_pid(pid, reason="orphaned and unhealthy")
         self._clear_pid_file()
 
     async def ensure_running(self) -> str:
@@ -441,23 +449,12 @@ class OpenCodeServerManager:
                 self._http_session = None
                 self._http_session_loop = None
 
-            if self._process and self._process.returncode is None:
-                self._process.terminate()
-                try:
-                    await asyncio.wait_for(self._process.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    self._process.kill()
-                logger.info("OpenCode server stopped")
-            else:
-                info = self._read_pid_file()
-                pid = info.get("pid") if isinstance(info, dict) else None
-                port = info.get("port") if isinstance(info, dict) else None
-                if isinstance(pid, int) and port == self.port and self._pid_exists(pid):
-                    cmd = self._get_pid_command(pid)
-                    if cmd and self._is_opencode_serve_cmd(cmd, self.port):
-                        await self._terminate_pid(pid, reason="shutdown")
+            # Don't terminate OpenCode server on vibe-remote shutdown.
+            # Let it continue running so the next vibe-remote instance can adopt it.
+            # This prevents interrupting tasks that are still in progress.
+            logger.info("OpenCode server left running for next vibe-remote instance to adopt")
 
-            self._clear_pid_file()
+            # Keep pid_file so next instance knows about the running server.
             self._process = None
 
     def stop_sync(self) -> None:
@@ -473,23 +470,13 @@ class OpenCodeServerManager:
                 self._http_session = None
                 self._http_session_loop = None
 
-        if self._process and self._process.returncode is None:
-            self._process.terminate()
-            logger.info("OpenCode server terminated (sync)")
-        else:
-            info = self._read_pid_file()
-            pid = info.get("pid") if isinstance(info, dict) else None
-            port = info.get("port") if isinstance(info, dict) else None
-            if isinstance(pid, int) and port == self.port and self._pid_exists(pid):
-                cmd = self._get_pid_command(pid)
-                if cmd and self._is_opencode_serve_cmd(cmd, self.port):
-                    try:
-                        os.kill(pid, signal.SIGTERM)
-                        logger.info("OpenCode server terminated (sync via pid file)")
-                    except Exception as e:
-                        logger.debug(f"Failed to terminate OpenCode server pid={pid}: {e}")
+        # Don't terminate OpenCode server on vibe-remote shutdown.
+        # Let it continue running so the next vibe-remote instance can adopt it.
+        # This prevents interrupting tasks that are still in progress.
+        logger.info("OpenCode server left running for next vibe-remote instance to adopt")
 
-        self._clear_pid_file()
+        # Keep pid_file so next instance knows about the running server.
+        # Don't clear _process reference - just let it be garbage collected.
         self._process = None
 
     @classmethod
@@ -498,36 +485,9 @@ class OpenCodeServerManager:
             cls._instance.stop_sync()
             return
 
-        pid_file = Path(__file__).resolve().parents[2] / "logs" / "opencode_server.json"
-        try:
-            raw = pid_file.read_text()
-        except FileNotFoundError:
-            return
-        except Exception as e:
-            logger.debug(f"Failed to read OpenCode pid file: {e}")
-            return
-
-        try:
-            info = json.loads(raw)
-        except Exception:
-            info = None
-
-        pid = info.get("pid") if isinstance(info, dict) else None
-        port = info.get("port") if isinstance(info, dict) else None
-
-        if isinstance(pid, int) and isinstance(port, int) and cls._pid_exists(pid):
-            cmd = cls._get_pid_command(pid)
-            if cmd and cls._is_opencode_serve_cmd(cmd, port):
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    logger.info("OpenCode server terminated (sync via pid file)")
-                except Exception as e:
-                    logger.debug(f"Failed to terminate OpenCode server pid={pid}: {e}")
-
-        try:
-            pid_file.unlink()
-        except Exception:
-            pass
+        # Don't terminate OpenCode server on vibe-remote shutdown.
+        # Let it continue running so the next vibe-remote instance can adopt it.
+        logger.info("OpenCode server left running for next vibe-remote instance to adopt")
 
     async def create_session(
         self, directory: str, title: Optional[str] = None

@@ -133,7 +133,7 @@ vibe
 ## 在 Slack 中使用
 
 1. 邀请 bot 到频道：`/invite @Vibe Remote`
-2. 输入 `/start` 或 `@Vibe Remote` 打开控制面板
+2. 输入 `@Vibe Remote /start` 打开控制面板
 3. 开始写代码！
 
 **技巧：**

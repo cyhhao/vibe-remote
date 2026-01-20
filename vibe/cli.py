@@ -409,9 +409,52 @@ def cmd_vibe():
 
 
 
+def _stop_opencode_server():
+    """Terminate the OpenCode server if running."""
+    pid_file = paths.get_logs_dir() / "opencode_server.json"
+    if not pid_file.exists():
+        return False
+    
+    try:
+        info = json.loads(pid_file.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    
+    pid = info.get("pid") if isinstance(info, dict) else None
+    if not isinstance(pid, int) or not _pid_alive(pid):
+        pid_file.unlink(missing_ok=True)
+        return False
+    
+    # Verify it's actually an opencode serve process
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+        )
+        cmd = result.stdout.strip()
+        if "opencode" not in cmd or "serve" not in cmd:
+            return False
+    except Exception:
+        return False
+    
+    try:
+        os.kill(pid, signal.SIGTERM)
+        pid_file.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
 def cmd_stop():
     runtime.stop_service()
     runtime.stop_ui()
+    
+    # Also terminate OpenCode server on full stop
+    if _stop_opencode_server():
+        print("OpenCode server stopped")
+    
     _write_status("stopped")
     return 0
 

@@ -90,6 +90,7 @@ def save_settings(payload: dict) -> dict:
             ),
             custom_cwd=channel_payload.get("custom_cwd"),
             routing=routing,
+            require_mention=channel_payload.get("require_mention"),
         )
     store.settings.channels = channels
     store.save()
@@ -252,6 +253,7 @@ def _settings_to_payload(store: SettingsStore) -> dict:
                 settings.show_message_types
             ),
             "custom_cwd": settings.custom_cwd,
+            "require_mention": settings.require_mention,
             "routing": {
                 "agent_backend": settings.routing.agent_backend,
                 "opencode_agent": settings.routing.opencode_agent,

@@ -104,6 +104,10 @@ class SettingsHandler:
             message_types = self.settings_manager.get_available_message_types()
             display_names = self.settings_manager.get_message_type_display_names()
 
+            # Get current require_mention override for this channel
+            current_require_mention = self.settings_manager.get_require_mention_override(settings_key)
+            global_require_mention = self.config.slack.require_mention
+
             try:
                 await self.im_client.open_settings_modal(
                     trigger_id,
@@ -111,6 +115,8 @@ class SettingsHandler:
                     message_types,
                     display_names,
                     context.channel_id,
+                    current_require_mention=current_require_mention,
+                    global_require_mention=global_require_mention,
                 )
             except Exception as e:
                 logger.error(f"Error opening settings modal: {e}")
@@ -236,7 +242,7 @@ class SettingsHandler:
                 items=[
                     ("Real-time", f"Messages are immediately sent to {agent_label}"),
                     ("Persistent", "Each chat maintains its own conversation context"),
-                    ("Commands", "Use /start for menu, /clear to reset session"),
+                    ("Commands", "Use @Vibe Remote /start for menu, @Vibe Remote /clear to reset session"),
                     ("Work Dir", "Change working directory with /set_cwd or via menu"),
                     ("Settings", "Customize message visibility in Settings"),
                 ],
@@ -311,6 +317,10 @@ class SettingsHandler:
         # Get current backend (from routing or default)
         current_backend = self.controller.resolve_agent_for_context(context)
 
+        # Get current require_mention override for this channel
+        current_require_mention = self.settings_manager.get_require_mention_override(settings_key)
+        global_require_mention = self.config.slack.require_mention
+
         # Get OpenCode agents/models if available
         opencode_agents = []
         opencode_models = {}
@@ -342,6 +352,8 @@ class SettingsHandler:
                 opencode_agents=opencode_agents,
                 opencode_models=opencode_models,
                 opencode_default_config=opencode_default_config,
+                current_require_mention=current_require_mention,
+                global_require_mention=global_require_mention,
             )
         except Exception as e:
             logger.error(f"Error opening routing modal: {e}", exc_info=True)

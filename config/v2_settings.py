@@ -35,6 +35,8 @@ class ChannelSettings:
     )
     custom_cwd: Optional[str] = None
     routing: RoutingSettings = field(default_factory=RoutingSettings)
+    # Per-channel require_mention override: None=use global default, True=require, False=don't require
+    require_mention: Optional[bool] = None
 
 
 @dataclass
@@ -81,6 +83,7 @@ class SettingsStore:
                 ),
                 custom_cwd=channel_payload.get("custom_cwd"),
                 routing=routing,
+                require_mention=channel_payload.get("require_mention"),
             )
         self.settings = SettingsState(channels=channels)
 
@@ -98,6 +101,7 @@ class SettingsStore:
                     "opencode_model": settings.routing.opencode_model,
                     "opencode_reasoning_effort": settings.routing.opencode_reasoning_effort,
                 },
+                "require_mention": settings.require_mention,
             }
         self.settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

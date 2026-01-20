@@ -140,7 +140,7 @@ Agent 需要输入时 — 文件选择、确认、选项 — Slack 弹出按钮�
 
 | Slack 里 | 干嘛的 |
 |----------|--------|
-| `/start` | 打开控制面板 |
+| `@Vibe Remote /start` | 打开控制面板 |
 | `/stop` | 停止当前会话 |
 | 直接打字 | 跟 Agent 对话 |
 | 在线程里回复 | 继续对话 |
@@ -244,8 +244,8 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## 文档
 
+- **[CLI 参考手册](docs/CLI_ZH.md)** — 命令行使用和服务生命周期
 - **[Slack 配置指南](docs/SLACK_SETUP_ZH.md)** — 详细配置和截图
-- **[English Setup Guide](docs/SLACK_SETUP.md)** — English guide
 
 ---
 

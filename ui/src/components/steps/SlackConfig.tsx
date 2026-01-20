@@ -162,26 +162,29 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
                     <ExternalLink size={16} />
                     {t('slackConfig.createSlackApp')}
                   </button>
-                  <button
-                    onClick={copyManifest}
-                    disabled={!manifest || manifestLoading}
-                    className="flex items-center gap-2 px-4 py-2 bg-neutral-100 hover:bg-neutral-200 text-text rounded-lg transition-colors font-medium border border-border"
-                  >
-                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                    {copied ? t('slackConfig.copied') : t('slackConfig.copyManifest')}
-                  </button>
                 </div>
 
                 {manifest && (
-                  <details className="group">
-                    <summary className="cursor-pointer text-sm text-accent hover:text-accent/80 flex items-center gap-1">
-                      <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
-                      {t('slackConfig.viewManifest')}
-                    </summary>
-                    <pre className="mt-2 bg-neutral-900 text-neutral-100 p-3 rounded-lg text-xs overflow-x-auto max-h-40 overflow-y-auto font-mono">
-                      {manifest}
-                    </pre>
-                  </details>
+                  <div className="flex items-center gap-3 text-sm">
+                    <details className="group">
+                      <summary className="cursor-pointer text-accent hover:text-accent/80 flex items-center gap-1">
+                        <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
+                        {t('slackConfig.viewManifest')}
+                      </summary>
+                      <pre className="mt-2 bg-neutral-900 text-neutral-100 p-3 rounded-lg text-xs overflow-x-auto max-h-40 overflow-y-auto font-mono">
+                        {manifest}
+                      </pre>
+                    </details>
+                    <span className="text-muted">|</span>
+                    <button
+                      onClick={copyManifest}
+                      disabled={manifestLoading}
+                      className="flex items-center gap-1 text-accent hover:text-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {copied ? <Check size={14} /> : <Copy size={14} />}
+                      {copied ? t('slackConfig.copied') : t('slackConfig.copyManifest')}
+                    </button>
+                  </div>
                 )}
 
                 {manifestLoading && (
@@ -225,7 +228,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
                     type="password"
                     value={botToken}
                     onChange={(e) => setBotToken(e.target.value)}
-                    placeholder="xoxb-..."
+                    placeholder={t('slackConfig.botTokenPlaceholder')}
                     className="w-full bg-bg border border-border rounded-lg p-3 text-text focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent font-mono transition-colors"
                   />
                   <p className="text-xs text-muted">{t('slackConfig.botTokenHint')} <code className="bg-neutral-100 px-1.5 py-0.5 rounded text-text">xoxb-</code></p>
@@ -262,7 +265,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
                     type="password"
                     value={appToken}
                     onChange={(e) => setAppToken(e.target.value)}
-                    placeholder="xapp-..."
+                    placeholder={t('slackConfig.appTokenPlaceholder')}
                     className="w-full bg-bg border border-border rounded-lg p-3 text-text focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent font-mono transition-colors"
                   />
                   <p className="text-xs text-muted">{t('slackConfig.appTokenHint')} <code className="bg-neutral-100 px-1.5 py-0.5 rounded text-text">xapp-</code></p>

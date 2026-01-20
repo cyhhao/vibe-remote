@@ -154,6 +154,7 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path == "/control":
             from vibe import runtime
+            from vibe.cli import _stop_opencode_server
 
             payload = self._read_json()
             action = payload.get("action")
@@ -166,6 +167,8 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
                 runtime.write_status("running", "started", service_pid, status.get("ui_pid"))
             elif action == "stop":
                 runtime.stop_service()
+                # Also terminate OpenCode server on full stop
+                _stop_opencode_server()
                 runtime.write_status("stopped")
             elif action == "restart":
                 runtime.stop_service()

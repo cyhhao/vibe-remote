@@ -534,3 +534,54 @@ class SettingsManager:
             settings.channel_routing = None
             self.update_user_settings(settings_key, settings)
             logger.info(f"Cleared channel routing for {settings_key}")
+
+    # ---------------------------------------------
+    # Per-channel require_mention management
+    # ---------------------------------------------
+    def get_require_mention(
+        self, channel_id: Union[int, str], global_default: bool = False
+    ) -> bool:
+        """Get effective require_mention value for a channel.
+
+        Args:
+            channel_id: The channel to check
+            global_default: The global require_mention setting from config
+
+        Returns:
+            True if mention is required, False otherwise.
+            Uses per-channel setting if set, otherwise falls back to global_default.
+        """
+        self._reload_if_changed()
+        key = str(channel_id)
+        channel_settings = self.store.settings.channels.get(key)
+
+        if channel_settings is not None and channel_settings.require_mention is not None:
+            return channel_settings.require_mention
+
+        return global_default
+
+    def set_require_mention(
+        self, channel_id: Union[int, str], value: Optional[bool]
+    ):
+        """Set per-channel require_mention override.
+
+        Args:
+            channel_id: The channel to configure
+            value: True=require mention, False=don't require, None=use global default
+        """
+        key = str(channel_id)
+        channel_settings = self.store.get_channel(key)
+        channel_settings.require_mention = value
+        self.store.update_channel(key, channel_settings)
+        logger.info(f"Updated require_mention for channel {key}: {value}")
+
+    def get_require_mention_override(
+        self, channel_id: Union[int, str]
+    ) -> Optional[bool]:
+        """Get the raw per-channel require_mention override (may be None)."""
+        self._reload_if_changed()
+        key = str(channel_id)
+        channel_settings = self.store.settings.channels.get(key)
+        if channel_settings is not None:
+            return channel_settings.require_mention
+        return None

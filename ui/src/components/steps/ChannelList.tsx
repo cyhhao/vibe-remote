@@ -1,9 +1,27 @@
 import React, { useEffect, useState } from 'react';
-import { Hash, CheckSquare, Square, RefreshCw } from 'lucide-react';
+import { Hash, CheckSquare, Square, RefreshCw, HelpCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import clsx from 'clsx';
+
+/** Input that only commits value on blur */
+function BlurInput({
+  value,
+  onCommit,
+  ...props
+}: { value: string; onCommit: (v: string) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'onBlur'>) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => setLocal(value), [value]);
+  return (
+    <input
+      {...props}
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => { if (local !== value) onCommit(local); }}
+    />
+  );
+}
 
 interface ChannelListProps {
   data?: any;
@@ -22,6 +40,7 @@ interface ChannelConfig {
     opencode_model?: string | null;
     opencode_reasoning_effort?: string | null;
   };
+  require_mention?: boolean | null;  // null=use global default, true=require, false=don't require
 }
 
 export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onBack, isPage }) => {
@@ -153,6 +172,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       opencode_model: null,
       opencode_reasoning_effort: null,
     },
+    require_mention: null,
   });
 
   const reasoningOptionsByModel = React.useMemo(() => {
@@ -185,6 +205,15 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('channelList.refreshList')}
             </button>
+            <span className="relative group">
+              <span className="flex items-center gap-1 text-sm text-muted cursor-help">
+                <HelpCircle size={14} />
+                {t('channelList.cantFindChannel')}
+              </span>
+              <span className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-text text-bg text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-64 whitespace-normal">
+                {t('channelList.inviteBotHint')}
+              </span>
+            </span>
             {channels.length === 0 && !loading && (
               <span className="text-sm text-warning">{t('channelList.noChannelsFound')}</span>
             )}
@@ -217,6 +246,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               ...def.routing,
               ...(rawConfig.routing || {}),
             },
+            // Preserve require_mention from rawConfig (can be null, true, or false)
+            require_mention: rawConfig.require_mention !== undefined ? rawConfig.require_mention : def.require_mention,
           };
           return (
             <div key={channel.id} className="p-4 hover:bg-neutral-50/50 transition-colors">
@@ -250,14 +281,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               {channelConfig.enabled && (
                 <div className="mt-4 pl-8 space-y-4">
                   {/* Basic Settings */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-muted uppercase">{t('channelList.workingDirectory')}</label>
-                      <input
+                      <BlurInput
                         type="text"
                         placeholder={config.runtime?.default_cwd || t('channelList.useGlobalDefault')}
                         value={channelConfig.custom_cwd}
-                        onChange={(e) => updateConfig(channel.id, { custom_cwd: e.target.value })}
+                        onCommit={(v) => updateConfig(channel.id, { custom_cwd: v })}
                         className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text placeholder:text-muted/50 font-mono"
                       />
                     </div>
@@ -278,11 +309,36 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                         <option value="codex">Codex</option>
                       </select>
                     </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted uppercase">{t('channelList.requireMention')}</label>
+                      <select
+                        value={channelConfig.require_mention === null || channelConfig.require_mention === undefined ? '' : channelConfig.require_mention ? 'true' : 'false'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          updateConfig(channel.id, {
+                            require_mention: val === '' ? null : val === 'true',
+                          });
+                        }}
+                        className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
+                      >
+                        <option value="">{t('common.default')} ({config.slack?.require_mention ? t('common.enabled') : t('common.disabled')})</option>
+                        <option value="true">{t('channelList.requireMentionOn')}</option>
+                        <option value="false">{t('channelList.requireMentionOff')}</option>
+                      </select>
+                    </div>
                   </div>
 
                   {/* Show Message Types */}
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-muted uppercase">{t('channelList.showMessageTypes')}</div>
+                    <div className="text-xs font-medium text-muted uppercase flex items-center gap-1">
+                      {t('channelList.showMessageTypes')}
+                      <span className="relative group">
+                        <HelpCircle size={12} className="text-muted/50 cursor-help" />
+                        <span className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-text text-bg text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-64 whitespace-normal font-normal normal-case">
+                          {t('channelList.showMessageTypesHint')}
+                        </span>
+                      </span>
+                    </div>
                     <div className="flex flex-wrap gap-3 text-sm">
                       {['system', 'assistant', 'toolcall'].map((msgType) => {
                         const checked = channelConfig.show_message_types.includes(msgType);

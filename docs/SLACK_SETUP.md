@@ -133,7 +133,7 @@ From here you can:
 ## Using in Slack
 
 1. Invite bot to channel: `/invite @Vibe Remote`
-2. Type `/start` or `@Vibe Remote` to open control panel
+2. Type `@Vibe Remote /start` to open control panel
 3. Start coding!
 
 **Tips:**
