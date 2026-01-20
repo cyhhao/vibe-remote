@@ -2207,7 +2207,9 @@ class OpenCodeAgent(BaseAgent):
                 continue
 
             # Check if the session has any in-progress assistant message
+            # or if the last assistant message ended with tool-calls (waiting for tool output)
             has_in_progress = False
+            last_assistant_finish = None
             for message in messages:
                 info = message.get("info", {})
                 if info.get("role") != "assistant":
@@ -2216,8 +2218,15 @@ class OpenCodeAgent(BaseAgent):
                 if not time_info.get("completed"):
                     has_in_progress = True
                     break
+                # Track the finish state of the last completed assistant message
+                last_assistant_finish = info.get("finish")
 
-            if not has_in_progress:
+            # Session is still active if:
+            # 1. There's an in-progress assistant message, OR
+            # 2. The last assistant message finished with "tool-calls" (waiting for tool output)
+            session_still_active = has_in_progress or last_assistant_finish == "tool-calls"
+
+            if not session_still_active:
                 # Session has completed, no need to restore
                 logger.info(
                     f"OpenCode session {session_id} has completed, removing from active polls"
