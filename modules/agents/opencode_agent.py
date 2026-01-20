@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 
+from config import paths
 from modules.agents.base import AgentRequest, BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -137,9 +138,7 @@ class OpenCodeServerManager:
         self._http_session: Optional[aiohttp.ClientSession] = None
         self._http_session_loop: Optional[asyncio.AbstractEventLoop] = None
         self._lock = asyncio.Lock()
-        self._pid_file = (
-            Path(__file__).resolve().parents[2] / "logs" / "opencode_server.json"
-        )
+        self._pid_file = paths.get_logs_dir() / "opencode_server.json"
 
     @classmethod
     async def get_instance(

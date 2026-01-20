@@ -64,6 +64,8 @@ class SessionState:
     )
     # active_polls: opencode_session_id -> ActivePollInfo
     active_polls: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # processed_message_ts: channel_id -> thread_ts -> last_processed_message_ts
+    processed_message_ts: Dict[str, Dict[str, str]] = field(default_factory=dict)
     last_activity: Optional[str] = None
 
 
@@ -84,6 +86,7 @@ class SessionsStore:
             session_mappings=payload.get("session_mappings", {}),
             active_slack_threads=payload.get("active_slack_threads", {}),
             active_polls=payload.get("active_polls", {}),
+            processed_message_ts=payload.get("processed_message_ts", {}),
             last_activity=payload.get("last_activity"),
         )
 
@@ -109,6 +112,20 @@ class SessionsStore:
             channel_map = {}
             self.state.active_slack_threads[user_id][channel_id] = channel_map
         return channel_map
+
+    def get_last_processed_message_ts(self, channel_id: str, thread_ts: str) -> Optional[str]:
+        """Get the last processed message ts for a thread."""
+        channel_map = self.state.processed_message_ts.get(channel_id)
+        if channel_map:
+            return channel_map.get(thread_ts)
+        return None
+
+    def set_last_processed_message_ts(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
+        """Set the last processed message ts for a thread."""
+        if channel_id not in self.state.processed_message_ts:
+            self.state.processed_message_ts[channel_id] = {}
+        self.state.processed_message_ts[channel_id][thread_ts] = message_ts
+        self.save()
 
     def add_active_poll(self, poll_info: ActivePollInfo) -> None:
         """Add an active poll to track."""
@@ -147,6 +164,7 @@ class SessionsStore:
             "session_mappings": self.state.session_mappings,
             "active_slack_threads": self.state.active_slack_threads,
             "active_polls": self.state.active_polls,
+            "processed_message_ts": self.state.processed_message_ts,
             "last_activity": self.state.last_activity,
         }
         self.sessions_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
