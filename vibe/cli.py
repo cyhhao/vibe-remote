@@ -40,11 +40,39 @@ def _pid_alive(pid):
         return False
 
 
-def _open_browser(url):
+def _in_ssh_session() -> bool:
+    """Best-effort detection for SSH sessions."""
+    return any(os.environ.get(key) for key in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"))
+
+
+def _open_browser(url: str) -> bool:
+    """Open a URL in the default browser (best effort).
+
+    Returns True if a launch attempt was made successfully.
+    """
     try:
-        subprocess.Popen(["open", url])
+        import webbrowser
+
+        if webbrowser.open(url):
+            return True
     except Exception:
         pass
+
+    # Fallbacks for environments where webbrowser isn't configured.
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", url])
+            return True
+        if os.name == "nt":
+            subprocess.Popen(["cmd", "/c", "start", "", url])
+            return True
+        if sys.platform.startswith("linux"):
+            subprocess.Popen(["xdg-open", url])
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 def _default_config():
@@ -402,8 +430,25 @@ def cmd_vibe():
     runtime.write_status("running", "pid={}".format(service_pid), service_pid, ui_pid)
 
     ui_url = "http://{}:{}".format(config.ui.setup_host, config.ui.setup_port)
-    if config.ui.open_browser:
-        _open_browser(ui_url)
+
+    # Always print Web UI access instructions.
+    print("Web UI:")
+    print(f"  {ui_url}")
+    print("")
+    port = int(config.ui.setup_port)
+    print("If you are running Vibe Remote on a remote server, use SSH port forwarding on your local machine:")
+    print(f"  ssh -NL {port}:localhost:{port} user@server-ip")
+    print("")
+    print("Then open in your local browser:")
+    print(f"  http://127.0.0.1:{port}")
+    print("")
+
+    # If running over SSH, avoid trying to open a browser on the server.
+    if config.ui.open_browser and not _in_ssh_session():
+        opened = _open_browser(ui_url)
+        if not opened:
+            print(f"(Tip) Could not auto-open a browser. Open this URL manually: {ui_url}")
+            print("")
 
     return 0
 
@@ -583,7 +628,7 @@ def cmd_upgrade():
     
     if is_uv_tool and uv_path:
         # Installed via uv tool, upgrade with uv
-        cmd = [uv_path, "tool", "upgrade", "vibe-remote"]
+        cmd = [uv_path, "tool", "install", "vibe-remote", "--upgrade"]
         print(f"Using uv: {' '.join(cmd)}")
     else:
         # Installed via pip or other method, use current Python's pip

@@ -84,6 +84,15 @@ class UiConfig:
 
 
 @dataclass
+class UpdateConfig:
+    """Configuration for automatic update checking and installation."""
+    auto_update: bool = True  # Auto-install updates when idle
+    check_interval_minutes: int = 60  # How often to check for updates (0 = disable)
+    idle_minutes: int = 30  # Minutes of inactivity before auto-update
+    notify_slack: bool = True  # Send Slack notification when update is available
+
+
+@dataclass
 class V2Config:
     mode: str
     version: str
@@ -92,6 +101,7 @@ class V2Config:
     agents: AgentsConfig
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
+    update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "reaction"
 
     @classmethod
@@ -167,6 +177,12 @@ class V2Config:
         if not isinstance(ui_payload, dict):
             raise ValueError("Config 'ui' must be an object")
         ui = UiConfig(**ui_payload)
+
+        update_payload = payload.get("update") or {}
+        if not isinstance(update_payload, dict):
+            raise ValueError("Config 'update' must be an object")
+        update = UpdateConfig(**update_payload)
+
         ack_mode = payload.get("ack_mode", "reaction")
         if ack_mode not in {"reaction", "message"}:
             raise ValueError("Config 'ack_mode' must be 'reaction' or 'message'")
@@ -179,6 +195,7 @@ class V2Config:
             agents=agents,
             gateway=gateway,
             ui=ui,
+            update=update,
             ack_mode=ack_mode,
         )
 
@@ -201,6 +218,7 @@ class V2Config:
             },
             "gateway": self.gateway.__dict__ if self.gateway else None,
             "ui": self.ui.__dict__,
+            "update": self.update.__dict__,
             "ack_mode": self.ack_mode,
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

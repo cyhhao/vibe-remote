@@ -15,39 +15,56 @@ const buildConfigPayload = (data: any) => ({
   mode: data.mode || 'self_host',
   version: 'v2',
   slack: {
+    // Preserve all existing slack fields
+    ...data.slack,
+    // Override only the fields that setup modifies
     bot_token: data.slack?.bot_token || '',
     app_token: data.slack?.app_token || '',
     require_mention: data.slack?.require_mention || false,
   },
   runtime: {
-    default_cwd: data.default_cwd || '.',
-    log_level: 'INFO',
+    // Preserve existing runtime config
+    ...data.runtime,
+    default_cwd: data.default_cwd || data.runtime?.default_cwd || '.',
   },
   agents: {
     default_backend: data.default_backend || 'opencode',
     opencode: {
+      // Preserve existing opencode config
+      ...data.agents?.opencode,
       enabled: data.agents?.opencode?.enabled ?? true,
       cli_path: data.agents?.opencode?.cli_path || 'opencode',
-      default_agent: data.opencode_default_agent || null,
-      default_model: data.opencode_default_model || null,
-      default_reasoning_effort: data.opencode_default_reasoning_effort || null,
+      default_agent: data.opencode_default_agent ?? data.agents?.opencode?.default_agent ?? null,
+      default_model: data.opencode_default_model ?? data.agents?.opencode?.default_model ?? null,
+      default_reasoning_effort: data.opencode_default_reasoning_effort ?? data.agents?.opencode?.default_reasoning_effort ?? null,
     },
     claude: {
+      // Preserve existing claude config
+      ...data.agents?.claude,
       enabled: data.agents?.claude?.enabled ?? true,
       cli_path: data.agents?.claude?.cli_path || 'claude',
-      default_model: data.claude_default_model || null,
+      default_model: data.claude_default_model ?? data.agents?.claude?.default_model ?? null,
     },
     codex: {
+      // Preserve existing codex config
+      ...data.agents?.codex,
       enabled: data.agents?.codex?.enabled ?? false,
       cli_path: data.agents?.codex?.cli_path || 'codex',
-      default_model: data.codex_default_model || null,
+      default_model: data.codex_default_model ?? data.agents?.codex?.default_model ?? null,
     },
   },
+  // Preserve gateway config entirely
+  gateway: data.gateway,
   ui: {
+    // Preserve existing ui config
+    ...data.ui,
     setup_host: data.ui?.setup_host || '127.0.0.1',
     setup_port: data.ui?.setup_port || 5123,
-    open_browser: true,
   },
+  // Preserve existing update config entirely
+  update: data.update,
+  // Preserve ack_mode
+  ack_mode: data.ack_mode,
 });
 
 const steps = [

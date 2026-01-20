@@ -50,10 +50,6 @@ def config_to_payload(config: V2Config) -> dict:
             "default_cwd": config.runtime.default_cwd,
             "log_level": config.runtime.log_level,
         },
-        "slack": {
-            **config.slack.__dict__,
-            "require_mention": config.slack.require_mention,
-        },
         "agents": {
             "default_backend": config.agents.default_backend,
             "opencode": config.agents.opencode.__dict__,
@@ -62,6 +58,7 @@ def config_to_payload(config: V2Config) -> dict:
         },
         "gateway": config.gateway.__dict__ if config.gateway else None,
         "ui": config.ui.__dict__,
+        "update": config.update.__dict__,
         "ack_mode": config.ack_mode,
     }
     return payload
@@ -367,7 +364,7 @@ def do_upgrade(auto_restart: bool = True) -> dict:
     
     if is_uv_tool and uv_path:
         # Installed via uv tool, upgrade with uv
-        cmd = [uv_path, "tool", "upgrade", "vibe-remote"]
+        cmd = [uv_path, "tool", "install", "vibe-remote", "--upgrade"]
     else:
         # Installed via pip or other method, use current Python's pip
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "vibe-remote"]

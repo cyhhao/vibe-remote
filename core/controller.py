@@ -17,6 +17,7 @@ from core.handlers import (
     SettingsHandler,
     MessageHandler,
 )
+from core.update_checker import UpdateChecker
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,11 @@ class Controller:
 
         # Background task for cleanup
         self.cleanup_task: Optional[asyncio.Task] = None
+
+        # Initialize update checker (use default config if not present)
+        from config.v2_config import UpdateConfig
+        update_config = getattr(config, 'update', None) or UpdateConfig()
+        self.update_checker = UpdateChecker(self, update_config)
 
         # Restore session mappings on startup (after handlers are initialized)
         self.session_handler.restore_session_mappings()
@@ -89,7 +95,8 @@ class Controller:
             from modules.im.slack import SlackBot
             if isinstance(self.im_client, SlackBot):
                 self.im_client.set_settings_manager(self.settings_manager)
-                logger.info("Injected settings_manager into SlackBot for thread tracking")
+                self.im_client.set_controller(self)
+                logger.info("Injected settings_manager and controller into SlackBot")
 
     def _init_handlers(self):
         """Initialize all handlers with controller reference"""
@@ -154,6 +161,13 @@ class Controller:
                     logger.info(f"Restored {restored} active OpenCode poll(s)")
             except Exception as e:
                 logger.error(f"Failed to restore active polls: {e}", exc_info=True)
+
+        # Start update checker and send any pending post-update notification
+        try:
+            await self.update_checker.check_and_send_post_update_notification()
+            self.update_checker.start()
+        except Exception as e:
+            logger.error(f"Failed to start update checker: {e}", exc_info=True)
 
     # Utility methods used by handlers
 
@@ -701,6 +715,12 @@ class Controller:
     def cleanup_sync(self):
         """Best-effort synchronous cleanup without cross-loop awaits"""
         logger.info("Cleaning up controller resources (sync, best-effort)...")
+
+        # Stop update checker
+        try:
+            self.update_checker.stop()
+        except Exception as e:
+            logger.debug(f"Update checker cleanup skipped: {e}")
 
         # Cancel receiver tasks without awaiting (they may belong to other loops)
         try:

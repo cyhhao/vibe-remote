@@ -20,6 +20,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requireMention, setRequireMention] = useState(data.slack?.require_mention || false);
+  const [autoUpdate, setAutoUpdate] = useState(data.update?.auto_update ?? true);
   const navigate = useNavigate();
 
   const saveAll = async () => {
@@ -31,6 +32,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         slack: {
           ...data.slack,
           require_mention: requireMention,
+        },
+        update: {
+          ...data.update,
+          auto_update: autoUpdate,
         },
       };
       const configPayload = buildConfigPayload(updatedData);
@@ -83,6 +88,25 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
                 type="checkbox"
                 checked={requireMention}
                 onChange={(e) => setRequireMention(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-border rounded-full peer peer-checked:bg-success peer-focus:ring-2 peer-focus:ring-success/20 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+            </label>
+          </div>
+        </div>
+
+        {/* Auto Update Setting */}
+        <div className="bg-panel border border-border rounded-lg p-4 shadow-sm">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-sm font-medium text-text">{t('summary.autoUpdate')}</h3>
+              <p className="text-xs text-muted mt-1">{t('summary.autoUpdateHint')}</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoUpdate}
+                onChange={(e) => setAutoUpdate(e.target.checked)}
                 className="sr-only peer"
               />
               <div className="w-11 h-6 bg-border rounded-full peer peer-checked:bg-success peer-focus:ring-2 peer-focus:ring-success/20 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
@@ -170,39 +194,59 @@ const buildConfigPayload = (data: any) => {
     mode: data.mode || 'self_host',
     version: 'v2',
     slack: {
+      // Preserve all existing slack fields
+      ...data.slack,
+      // Override only the fields that setup modifies
       bot_token: data.slack?.bot_token || '',
       app_token: data.slack?.app_token || '',
       require_mention: data.slack?.require_mention || false,
     },
     runtime: {
-      default_cwd: data.default_cwd || '_tmp',
-      log_level: 'INFO',
+      // Preserve existing runtime config
+      ...data.runtime,
+      default_cwd: data.default_cwd || data.runtime?.default_cwd || '_tmp',
     },
     agents: {
       default_backend: data.default_backend || 'opencode',
       opencode: {
+        // Preserve existing opencode config
+        ...agents.opencode,
         enabled: agents.opencode?.enabled ?? true,
         cli_path: agents.opencode?.cli_path || 'opencode',
-        default_agent: data.opencode_default_agent || null,
-        default_model: data.opencode_default_model || null,
-        default_reasoning_effort: data.opencode_default_reasoning_effort || null,
+        default_agent: data.opencode_default_agent ?? agents.opencode?.default_agent ?? null,
+        default_model: data.opencode_default_model ?? agents.opencode?.default_model ?? null,
+        default_reasoning_effort: data.opencode_default_reasoning_effort ?? agents.opencode?.default_reasoning_effort ?? null,
       },
       claude: {
+        // Preserve existing claude config
+        ...agents.claude,
         enabled: agents.claude?.enabled ?? true,
         cli_path: agents.claude?.cli_path || 'claude',
-        default_model: data.claude_default_model || null,
+        default_model: data.claude_default_model ?? agents.claude?.default_model ?? null,
       },
       codex: {
+        // Preserve existing codex config
+        ...agents.codex,
         enabled: agents.codex?.enabled ?? false,
         cli_path: agents.codex?.cli_path || 'codex',
-        default_model: data.codex_default_model || null,
+        default_model: data.codex_default_model ?? agents.codex?.default_model ?? null,
       },
     },
+    // Preserve gateway config entirely
+    gateway: data.gateway,
     ui: {
+      // Preserve existing ui config
+      ...data.ui,
       setup_host: data.ui?.setup_host || '127.0.0.1',
       setup_port: data.ui?.setup_port || 5123,
-      open_browser: true,
     },
+    // Preserve existing update config, only override auto_update from UI toggle
+    update: data.update ? {
+      ...data.update,
+      auto_update: data.update.auto_update,
+    } : undefined,
+    // Preserve ack_mode
+    ack_mode: data.ack_mode,
   };
 };
 
