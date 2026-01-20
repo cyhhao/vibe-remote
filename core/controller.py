@@ -137,7 +137,23 @@ class Controller:
             on_change_cwd=self.handle_change_cwd_submission,
             on_routing_update=self.handle_routing_update,
             on_routing_modal_update=self.handle_routing_modal_update,
+            on_ready=self._on_im_ready,
         )
+
+    async def _on_im_ready(self):
+        """Called when IM client is connected and ready.
+
+        Used to restore active poll loops that were interrupted by restart.
+        """
+        logger.info("IM client ready, checking for active polls to restore...")
+        opencode_agent = self.agent_service.agents.get("opencode")
+        if opencode_agent and hasattr(opencode_agent, "restore_active_polls"):
+            try:
+                restored = await opencode_agent.restore_active_polls()
+                if restored > 0:
+                    logger.info(f"Restored {restored} active OpenCode poll(s)")
+            except Exception as e:
+                logger.error(f"Failed to restore active polls: {e}", exc_info=True)
 
     # Utility methods used by handlers
 

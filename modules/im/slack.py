@@ -49,6 +49,7 @@ class SlackBot(BaseIMClient):
         self._recent_event_ids: Dict[str, float] = {}
         self._stop_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._on_ready: Optional[Callable] = None
 
     def set_settings_manager(self, settings_manager):
         """Set the settings manager for thread tracking"""
@@ -973,6 +974,12 @@ class SlackBot(BaseIMClient):
                 self._loop = asyncio.get_running_loop()
                 self._stop_event = asyncio.Event()
                 await self.socket_client.connect()
+                # Call on_ready callback after successful connection
+                if self._on_ready:
+                    try:
+                        await self._on_ready()
+                    except Exception as e:
+                        logger.error(f"on_ready callback failed: {e}", exc_info=True)
                 await self._stop_event.wait()
                 await self._async_close()
 
@@ -985,6 +992,12 @@ class SlackBot(BaseIMClient):
                 self._ensure_clients()
                 self._loop = asyncio.get_running_loop()
                 self._stop_event = asyncio.Event()
+                # Call on_ready callback (even in Web API only mode)
+                if self._on_ready:
+                    try:
+                        await self._on_ready()
+                    except Exception as e:
+                        logger.error(f"on_ready callback failed: {e}", exc_info=True)
                 await self._stop_event.wait()
                 await self._async_close()
 
@@ -2034,6 +2047,10 @@ class SlackBot(BaseIMClient):
         # Register routing modal update handler
         if "on_routing_modal_update" in kwargs:
             self._on_routing_modal_update = kwargs["on_routing_modal_update"]
+
+        # Register on_ready handler (called when connected)
+        if "on_ready" in kwargs:
+            self._on_ready = kwargs["on_ready"]
 
     async def get_or_create_thread(
         self, channel_id: str, user_id: str

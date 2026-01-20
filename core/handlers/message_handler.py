@@ -53,6 +53,26 @@ class MessageHandler:
                 await self.controller.command_handler.handle_start(context, "")
                 return
 
+            # Deduplication: check if this message has already been processed
+            # This prevents duplicate processing when vibe-remote restarts and
+            # Slack resends events
+            message_ts = context.message_id
+            thread_ts = context.thread_id or context.message_id
+            if message_ts and thread_ts:
+                if self.settings_manager.is_message_already_processed(
+                    context.channel_id, thread_ts, message_ts
+                ):
+                    logger.info(
+                        f"Skipping already processed message: channel={context.channel_id}, "
+                        f"thread={thread_ts}, message={message_ts}"
+                    )
+                    return
+                # Record this message as processed immediately to prevent duplicates
+                # even if processing fails (we don't want to retry failed messages forever)
+                self.settings_manager.record_processed_message(
+                    context.channel_id, thread_ts, message_ts
+                )
+
             # Skip automatic cleanup; receiver tasks are retained until shutdown
 
             # Allow "stop" shortcut inside Slack threads

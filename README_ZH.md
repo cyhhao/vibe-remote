@@ -29,7 +29,7 @@
 **用了 Vibe Remote：** 打开 Slack。输入「修一下 login.py 的认证 bug」。看着 Claude Code 实时修复。批准。继续喝玛格丽塔。
 
 ```
-就这样。这就是产品。
+让 AI 去忙，你去浪。
 ```
 
 ---
