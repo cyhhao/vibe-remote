@@ -1,4 +1,5 @@
 import React, { createContext, useContext } from 'react';
+import { useToast } from './ToastContext';
 
 export type ApiContextType = {
   getConfig: () => Promise<any>;
@@ -48,9 +49,39 @@ export const useApi = () => {
 };
 
 export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { showToast } = useToast();
+
+  const handleApiError = async (res: Response, path: string) => {
+    let errorMessage = `Request failed: ${path} (${res.status})`;
+    
+    try {
+      const data = await res.json();
+      if (data.error) {
+        errorMessage = data.error;
+      }
+    } catch {
+      // Response is not JSON, use status text
+      errorMessage = `${path}: ${res.statusText || 'Unknown error'} (${res.status})`;
+    }
+
+    // Log error details to console
+    console.error(`[API Error] ${path}`, {
+      status: res.status,
+      statusText: res.statusText,
+      error: errorMessage,
+    });
+
+    // Show toast to user
+    showToast(errorMessage, 'error');
+
+    throw new Error(errorMessage);
+  };
+
   const getJson = async (path: string) => {
     const res = await fetch(path);
-    if (!res.ok) throw new Error(`Request failed: ${path}`);
+    if (!res.ok) {
+      await handleApiError(res, path);
+    }
     return res.json();
   };
 
@@ -60,7 +91,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error(`Request failed: ${path}`);
+    if (!res.ok) {
+      await handleApiError(res, path);
+    }
     return res.json();
   };
 

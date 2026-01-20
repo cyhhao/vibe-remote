@@ -1,6 +1,6 @@
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -8,6 +8,12 @@ from config import paths
 from modules.im.base import BaseIMConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _filter_dataclass_fields(dc_class, payload: dict) -> dict:
+    """Filter payload to only include fields defined in dataclass."""
+    valid_fields = {f.name for f in fields(dc_class)}
+    return {k: v for k, v in payload.items() if k in valid_fields}
 
 
 @dataclass
@@ -130,17 +136,17 @@ class V2Config:
             slack_payload = dict(slack_payload)
             slack_payload["require_mention"] = False
 
-        slack = SlackConfig(**slack_payload)
+        slack = SlackConfig(**_filter_dataclass_fields(SlackConfig, slack_payload))
         slack.validate()
         gateway_payload = payload.get("gateway")
         if gateway_payload is not None and not isinstance(gateway_payload, dict):
             raise ValueError("Config 'gateway' must be an object")
-        gateway = GatewayConfig(**gateway_payload) if gateway_payload else None
+        gateway = GatewayConfig(**_filter_dataclass_fields(GatewayConfig, gateway_payload)) if gateway_payload else None
 
         runtime_payload = payload.get("runtime")
         if not isinstance(runtime_payload, dict):
             raise ValueError("Config 'runtime' must be an object")
-        runtime = RuntimeConfig(**runtime_payload)
+        runtime = RuntimeConfig(**_filter_dataclass_fields(RuntimeConfig, runtime_payload))
 
         agents_payload = payload.get("agents")
         if not isinstance(agents_payload, dict):
@@ -158,9 +164,9 @@ class V2Config:
         if not isinstance(codex_payload, dict):
             raise ValueError("Config 'agents.codex' must be an object")
 
-        opencode = OpenCodeConfig(**opencode_payload)
-        claude = ClaudeConfig(**claude_payload)
-        codex = CodexConfig(**codex_payload)
+        opencode = OpenCodeConfig(**_filter_dataclass_fields(OpenCodeConfig, opencode_payload))
+        claude = ClaudeConfig(**_filter_dataclass_fields(ClaudeConfig, claude_payload))
+        codex = CodexConfig(**_filter_dataclass_fields(CodexConfig, codex_payload))
 
         default_backend = agents_payload.get("default_backend", "opencode")
         if default_backend not in {"opencode", "claude", "codex"}:
@@ -176,12 +182,12 @@ class V2Config:
         ui_payload = payload.get("ui") or {}
         if not isinstance(ui_payload, dict):
             raise ValueError("Config 'ui' must be an object")
-        ui = UiConfig(**ui_payload)
+        ui = UiConfig(**_filter_dataclass_fields(UiConfig, ui_payload))
 
         update_payload = payload.get("update") or {}
         if not isinstance(update_payload, dict):
             raise ValueError("Config 'update' must be an object")
-        update = UpdateConfig(**update_payload)
+        update = UpdateConfig(**_filter_dataclass_fields(UpdateConfig, update_payload))
 
         ack_mode = payload.get("ack_mode", "reaction")
         if ack_mode not in {"reaction", "message"}:
