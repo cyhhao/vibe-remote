@@ -56,6 +56,13 @@ def _run_async(coro, timeout: float = 10.0) -> dict:
 @app.errorhandler(Exception)
 def handle_exception(e):
     """Global exception handler - ensures all errors return JSON."""
+    from werkzeug.exceptions import HTTPException
+
+    # Preserve HTTP status codes for client errors (4xx)
+    if isinstance(e, HTTPException):
+        return jsonify({"error": e.description}), e.code
+
+    # Log and return 500 for unexpected server errors
     logger.exception("Unhandled exception in UI server")
     return jsonify({"error": str(e)}), 500
 
