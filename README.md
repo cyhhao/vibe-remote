@@ -29,7 +29,7 @@ You're at the beach. Phone buzzes — production's on fire.
 **Vibe Remote you:** Open Slack. Type "Fix the auth bug in login.py". Watch Claude Code fix it in real-time. Approve. Sip margarita.
 
 ```
-That's it. That's the product.
+AI works. You live.
 ```
 
 ---

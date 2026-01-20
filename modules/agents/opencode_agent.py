@@ -1457,6 +1457,17 @@ class OpenCodeAgent(BaseAgent):
                 request.working_path,
             )
 
+            # Record active poll for restoration on restart
+            self.settings_manager.add_active_poll(
+                opencode_session_id=session_id,
+                base_session_id=request.base_session_id,
+                channel_id=request.context.channel_id,
+                thread_id=request.context.thread_id,
+                settings_key=request.settings_key,
+                working_path=request.working_path,
+                baseline_message_ids=list(baseline_message_ids),
+            )
+
             seen_tool_calls: set[str] = set()
             emitted_assistant_messages: set[str] = set()
             poll_interval_seconds = 2.0
@@ -1834,6 +1845,8 @@ class OpenCodeAgent(BaseAgent):
                                         )
                                         if question_message_id:
                                             pending_payload["prompt_message_id"] = question_message_id
+                                        # Remove active poll when waiting for question response
+                                        self.settings_manager.remove_active_poll(session_id)
                                         return
                                     except Exception as err:
                                         logger.warning(
@@ -1846,6 +1859,8 @@ class OpenCodeAgent(BaseAgent):
                                     text,
                                     parse_mode="markdown",
                                 )
+                                # Remove active poll when waiting for question response
+                                self.settings_manager.remove_active_poll(session_id)
                                 return
 
                             # single question + single select + <=10 options -> buttons
@@ -1884,6 +1899,8 @@ class OpenCodeAgent(BaseAgent):
                                     )
                                     if question_message_id:
                                         pending_payload["prompt_message_id"] = question_message_id
+                                    # Remove active poll when waiting for question response
+                                    self.settings_manager.remove_active_poll(session_id)
                                     return
                                 except Exception as err:
                                     logger.warning(
@@ -1903,6 +1920,8 @@ class OpenCodeAgent(BaseAgent):
                                     f"Failed to send question prompt to Slack: {err}",
                                     exc_info=True,
                                 )
+                            # Remove active poll when waiting for question response
+                            self.settings_manager.remove_active_poll(session_id)
                             return
 
                         toolcall = self.im_client.formatter.format_toolcall(
@@ -2027,8 +2046,14 @@ class OpenCodeAgent(BaseAgent):
                     started_at=request.started_at,
                 )
 
+            # Remove active poll on normal completion
+            self.settings_manager.remove_active_poll(session_id)
+
         except asyncio.CancelledError:
             logger.info(f"OpenCode request cancelled for {request.base_session_id}")
+            # Remove active poll on cancellation
+            if session_id:
+                self.settings_manager.remove_active_poll(session_id)
             raise
         except Exception as e:
             error_name = type(e).__name__
@@ -2042,6 +2067,10 @@ class OpenCodeAgent(BaseAgent):
                 logger.warning(
                     f"Failed to abort OpenCode session after error: {abort_err}"
                 )
+
+            # Remove active poll on error
+            if session_id:
+                self.settings_manager.remove_active_poll(session_id)
 
             await self.controller.emit_agent_message(
                 request.context,
@@ -2088,7 +2117,9 @@ class OpenCodeAgent(BaseAgent):
             return False
 
         req_info = self._request_sessions.get(request.base_session_id)
+        opencode_session_id = None
         if req_info:
+            opencode_session_id = req_info[0]
             try:
                 server = await self._get_server()
                 await server.abort_session(req_info[0], req_info[1])
@@ -2100,6 +2131,10 @@ class OpenCodeAgent(BaseAgent):
             await task
         except asyncio.CancelledError:
             pass
+
+        # Remove from active_polls since we're stopping
+        if opencode_session_id:
+            self.settings_manager.remove_active_poll(opencode_session_id)
 
         await self.controller.emit_agent_message(
             request.context, "notify", "Terminated OpenCode execution."
@@ -2113,6 +2148,7 @@ class OpenCodeAgent(BaseAgent):
         for base_id, task in list(self._active_requests.items()):
             req_info = self._request_sessions.get(base_id)
             if req_info and len(req_info) >= 3 and req_info[2] == settings_key:
+                opencode_session_id = req_info[0]
                 if not task.done():
                     try:
                         server = await self._get_server()
@@ -2125,6 +2161,8 @@ class OpenCodeAgent(BaseAgent):
                     except asyncio.CancelledError:
                         pass
                     terminated += 1
+                # Remove from active_polls
+                self.settings_manager.remove_active_poll(opencode_session_id)
         return terminated
 
     async def _delete_ack(self, request: AgentRequest):
@@ -2136,3 +2174,281 @@ class OpenCodeAgent(BaseAgent):
                 logger.debug(f"Could not delete ack message: {err}")
             finally:
                 request.ack_message_id = None
+
+    async def restore_active_polls(self) -> int:
+        """Restore active poll loops that were interrupted by vibe-remote restart.
+
+        Returns:
+            Number of polls successfully restored.
+        """
+        from modules.im import MessageContext
+        from config.v2_sessions import ActivePollInfo
+
+        active_polls = self.settings_manager.get_all_active_polls()
+        if not active_polls:
+            logger.debug("No active polls to restore")
+            return 0
+
+        restored_count = 0
+        stale_poll_ids = []
+
+        for session_id, poll_info in active_polls.items():
+            # Validate the OpenCode session is still alive
+            try:
+                server = await self._get_server()
+                messages = await server.list_messages(
+                    session_id=poll_info.opencode_session_id,
+                    directory=poll_info.working_path,
+                )
+            except Exception as err:
+                logger.warning(
+                    f"Failed to verify OpenCode session {session_id} for restoration: {err}"
+                )
+                stale_poll_ids.append(session_id)
+                continue
+
+            # Check if the session has any in-progress assistant message
+            has_in_progress = False
+            for message in messages:
+                info = message.get("info", {})
+                if info.get("role") != "assistant":
+                    continue
+                time_info = info.get("time") or {}
+                if not time_info.get("completed"):
+                    has_in_progress = True
+                    break
+
+            if not has_in_progress:
+                # Session has completed, no need to restore
+                logger.info(
+                    f"OpenCode session {session_id} has completed, removing from active polls"
+                )
+                stale_poll_ids.append(session_id)
+                continue
+
+            # Create a restoration task
+            logger.info(
+                f"Restoring poll loop for OpenCode session {session_id} "
+                f"(thread={poll_info.base_session_id}, cwd={poll_info.working_path})"
+            )
+
+            task = asyncio.create_task(
+                self._restored_poll_loop(poll_info)
+            )
+            self._active_requests[poll_info.base_session_id] = task
+            self._request_sessions[poll_info.base_session_id] = (
+                poll_info.opencode_session_id,
+                poll_info.working_path,
+                poll_info.settings_key,
+            )
+            restored_count += 1
+
+        # Clean up stale polls
+        for session_id in stale_poll_ids:
+            self.settings_manager.remove_active_poll(session_id)
+
+        if restored_count > 0:
+            logger.info(f"Restored {restored_count} active poll loop(s)")
+        if stale_poll_ids:
+            logger.info(f"Removed {len(stale_poll_ids)} stale active poll(s)")
+
+        return restored_count
+
+    async def _restored_poll_loop(self, poll_info) -> None:
+        """Continue a poll loop that was interrupted by restart.
+
+        This is similar to the main poll loop in handle_message but starts from
+        saved state instead of sending a new prompt.
+        """
+        from modules.im import MessageContext
+
+        session_id = poll_info.opencode_session_id
+        context = MessageContext(
+            user_id="",  # Not needed for poll loop
+            channel_id=poll_info.channel_id,
+            thread_id=poll_info.thread_id,
+        )
+
+        # Notify user that we're resuming
+        await self.controller.emit_agent_message(
+            context,
+            "notify",
+            "Resuming interrupted OpenCode session after restart...",
+        )
+
+        server = await self._get_server()
+        baseline_message_ids = set(poll_info.baseline_message_ids)
+        seen_tool_calls = set(poll_info.seen_tool_calls)
+        emitted_assistant_messages = set(poll_info.emitted_assistant_messages)
+        poll_interval_seconds = 2.0
+        final_text: Optional[str] = None
+
+        # Error retry tracking
+        error_retry_count = 0
+        error_retry_limit = getattr(self.opencode_config, "error_retry_limit", 1)
+        last_error_message_id: Optional[str] = None
+
+        started_at = time.monotonic()
+
+        def _relative_path(path: str) -> str:
+            return self._to_relative_path(path, poll_info.working_path)
+
+        try:
+            poll_iter = 0
+            while True:
+                poll_iter += 1
+                try:
+                    messages = await server.list_messages(
+                        session_id=session_id,
+                        directory=poll_info.working_path,
+                    )
+                    if poll_iter % 5 == 0:
+                        last_info = messages[-1].get("info", {}) if messages else {}
+                        logger.info(
+                            "OpenCode restored poll heartbeat %s iter=%s last=%s role=%s completed=%s finish=%s error=%s",
+                            session_id,
+                            poll_iter,
+                            last_info.get("id"),
+                            last_info.get("role"),
+                            bool(last_info.get("time", {}).get("completed")),
+                            last_info.get("finish"),
+                            bool(last_info.get("error")),
+                        )
+                except Exception as poll_err:
+                    logger.warning(f"Failed to poll OpenCode messages (restored): {poll_err}")
+                    await asyncio.sleep(poll_interval_seconds)
+                    continue
+
+                for message in messages:
+                    info = message.get("info", {})
+                    message_id = info.get("id")
+                    if not message_id or message_id in baseline_message_ids:
+                        continue
+                    if info.get("role") != "assistant":
+                        continue
+
+                    for part in message.get("parts", []) or []:
+                        if part.get("type") != "tool":
+                            continue
+                        call_key = part.get("callID") or part.get("id")
+                        if not call_key or call_key in seen_tool_calls:
+                            continue
+                        tool_name = part.get("tool") or "tool"
+                        tool_state = part.get("state") or {}
+                        tool_input = tool_state.get("input") or {}
+
+                        if tool_name == "question" and tool_state.get("status") != "completed":
+                            # Question detected - need user input, exit poll loop
+                            logger.info(
+                                "Detected question in restored poll for %s, exiting poll loop",
+                                session_id,
+                            )
+                            # Remove from active polls since we need user input
+                            self.settings_manager.remove_active_poll(session_id)
+
+                            # TODO: Emit question UI to user
+                            await self.controller.emit_agent_message(
+                                context,
+                                "notify",
+                                "OpenCode is waiting for input. Please check the session.",
+                            )
+                            return
+
+                        seen_tool_calls.add(call_key)
+
+                        # Update persisted state
+                        poll_info.seen_tool_calls = list(seen_tool_calls)
+                        self.settings_manager.update_active_poll_state(
+                            session_id,
+                            seen_tool_calls=poll_info.seen_tool_calls,
+                        )
+
+                        # Emit tool call summary (simplified for restored polls)
+                        if tool_name in ("read", "write", "edit", "bash", "glob", "grep"):
+                            tool_summary = f"`{tool_name}`"
+                            if tool_name == "bash":
+                                cmd = tool_input.get("command", "")
+                                if cmd:
+                                    cmd_preview = cmd[:50] + "..." if len(cmd) > 50 else cmd
+                                    tool_summary = f"`bash`: `{cmd_preview}`"
+                            elif tool_name in ("read", "write", "edit"):
+                                path = tool_input.get("file_path") or tool_input.get("path", "")
+                                if path:
+                                    tool_summary = f"`{tool_name}`: `{_relative_path(path)}`"
+
+                            await self.controller.emit_agent_message(
+                                context, "tool_call", tool_summary
+                            )
+
+                # Check completion status
+                if messages:
+                    last_message = messages[-1]
+                    last_info = last_message.get("info", {})
+                    if last_info.get("role") == "assistant":
+                        time_info = last_info.get("time") or {}
+                        if time_info.get("completed"):
+                            msg_error = last_info.get("error")
+                            if msg_error:
+                                error_text = str(msg_error)
+                                if last_info.get("id") != last_error_message_id:
+                                    error_retry_count = 0
+                                    last_error_message_id = last_info.get("id")
+                                error_retry_count += 1
+                                if error_retry_count > error_retry_limit:
+                                    await self.controller.emit_agent_message(
+                                        context, "notify", f"OpenCode error: {error_text}"
+                                    )
+                                    self.settings_manager.remove_active_poll(session_id)
+                                    return
+
+                            if last_info.get("finish") != "tool-calls":
+                                if not msg_error:
+                                    error_retry_count = 0
+                                final_text = self._extract_response_text(last_message)
+                                break
+
+                await asyncio.sleep(poll_interval_seconds)
+
+            if final_text:
+                await self.emit_result_message(
+                    context,
+                    final_text,
+                    subtype="success",
+                    started_at=started_at,
+                    parse_mode="markdown",
+                )
+            else:
+                await self.emit_result_message(
+                    context,
+                    "(No response from OpenCode)",
+                    subtype="warning",
+                    started_at=started_at,
+                )
+
+            # Remove active poll on normal completion
+            self.settings_manager.remove_active_poll(session_id)
+
+        except asyncio.CancelledError:
+            logger.info(f"Restored OpenCode poll cancelled for {poll_info.base_session_id}")
+            self.settings_manager.remove_active_poll(session_id)
+            raise
+        except Exception as e:
+            error_name = type(e).__name__
+            error_details = str(e).strip()
+            error_text = f"{error_name}: {error_details}" if error_details else error_name
+
+            logger.error(f"Restored OpenCode poll failed: {error_text}", exc_info=True)
+            try:
+                await server.abort_session(session_id, poll_info.working_path)
+            except Exception as abort_err:
+                logger.warning(
+                    f"Failed to abort OpenCode session after error: {abort_err}"
+                )
+
+            self.settings_manager.remove_active_poll(session_id)
+
+            await self.controller.emit_agent_message(
+                context,
+                "notify",
+                f"Restored OpenCode session failed: {error_text}",
+            )

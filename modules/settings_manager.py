@@ -585,3 +585,64 @@ class SettingsManager:
         if channel_settings is not None:
             return channel_settings.require_mention
         return None
+
+    # ---------------------------------------------
+    # Active polls management (for poll restoration on restart)
+    # ---------------------------------------------
+    def add_active_poll(
+        self,
+        opencode_session_id: str,
+        base_session_id: str,
+        channel_id: str,
+        thread_id: str,
+        settings_key: str,
+        working_path: str,
+        baseline_message_ids: List[str],
+    ) -> None:
+        """Record an active poll for potential restoration on restart."""
+        from config.v2_sessions import ActivePollInfo
+
+        poll_info = ActivePollInfo(
+            opencode_session_id=opencode_session_id,
+            base_session_id=base_session_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
+            settings_key=settings_key,
+            working_path=working_path,
+            baseline_message_ids=baseline_message_ids,
+            seen_tool_calls=[],
+            emitted_assistant_messages=[],
+            started_at=time.time(),
+        )
+        self.sessions_store.add_active_poll(poll_info)
+        logger.debug(
+            f"Added active poll: session={opencode_session_id}, thread={thread_id}"
+        )
+
+    def remove_active_poll(self, opencode_session_id: str) -> None:
+        """Remove an active poll record."""
+        self.sessions_store.remove_active_poll(opencode_session_id)
+        logger.debug(f"Removed active poll: session={opencode_session_id}")
+
+    def update_active_poll_state(
+        self,
+        opencode_session_id: str,
+        seen_tool_calls: Optional[List[str]] = None,
+        emitted_assistant_messages: Optional[List[str]] = None,
+    ) -> None:
+        """Update the state of an active poll (for restoration accuracy)."""
+        from config.v2_sessions import ActivePollInfo
+
+        poll_info = self.sessions_store.get_active_poll(opencode_session_id)
+        if poll_info:
+            if seen_tool_calls is not None:
+                poll_info.seen_tool_calls = seen_tool_calls
+            if emitted_assistant_messages is not None:
+                poll_info.emitted_assistant_messages = emitted_assistant_messages
+            self.sessions_store.update_active_poll(poll_info)
+
+    def get_all_active_polls(self) -> Dict[str, Any]:
+        """Get all active polls for restoration."""
+        from config.v2_sessions import ActivePollInfo
+
+        return self.sessions_store.get_all_active_polls()
