@@ -191,18 +191,18 @@ vibe doctor   # 诊断问题
 你需要至少安装一个编码 Agent：
 
 <details>
-<summary><b>Claude Code</b>（推荐）</summary>
+<summary><b>OpenCode</b>（推荐）</summary>
 
 ```bash
-npm install -g @anthropic-ai/claude-code
+curl -fsSL https://opencode.ai/install | bash
 ```
 </details>
 
 <details>
-<summary><b>OpenCode</b></summary>
+<summary><b>Claude Code</b></summary>
 
 ```bash
-curl -fsSL https://opencode.ai/install | bash
+npm install -g @anthropic-ai/claude-code
 ```
 </details>
 
@@ -235,10 +235,10 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## 路线图
 
-- [ ] Discord & Teams 支持
+- [ ] SaaS Mode
+- [ ] Vibe Remote Coding Agent（一个 Agent 统领全局）
 - [ ] Slack 文件附件
 - [ ] 多工作区
-- [ ] 云中继模式（可选）
 
 ---
 
@@ -246,6 +246,16 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 - **[CLI 参考手册](docs/CLI_ZH.md)** — 命令行使用和服务生命周期
 - **[Slack 配置指南](docs/SLACK_SETUP_ZH.md)** — 详细配置和截图
+
+## 远端服务器提示（SSH）
+
+如果你把 Vibe Remote 部署在远端服务器上，请保持 Web UI 只监听在 `127.0.0.1:5123`，并通过 SSH 端口转发在本机访问：
+
+```bash
+ssh -NL 5123:localhost:5123 user@server-ip
+```
+
+详见：**[CLI 参考手册](docs/CLI_ZH.md)**（搜索“远端服务器访问 Web UI”）
 
 ---
 

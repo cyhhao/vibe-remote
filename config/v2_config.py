@@ -87,7 +87,7 @@ class UiConfig:
 class UpdateConfig:
     """Configuration for automatic update checking and installation."""
     auto_update: bool = True  # Auto-install updates when idle
-    check_interval_minutes: int = 10  # How often to check for updates (0 = disable)
+    check_interval_minutes: int = 60  # How often to check for updates (0 = disable)
     idle_minutes: int = 30  # Minutes of inactivity before auto-update
     notify_slack: bool = True  # Send Slack notification when update is available
 

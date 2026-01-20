@@ -10,9 +10,6 @@ This module provides:
 import asyncio
 import json
 import logging
-import shutil
-import subprocess
-import sys
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -90,6 +87,11 @@ class UpdateChecker:
             logger.info("Update checker disabled (check_interval_minutes=0)")
             return
         
+        # Initialize last_activity_at if not set (for idle detection baseline)
+        if not self.state.last_activity_at:
+            self.state.last_activity_at = time.time()
+            self.state.save()
+        
         self._running = True
         self._check_task = asyncio.create_task(self._check_loop())
         logger.info(
@@ -109,6 +111,17 @@ class UpdateChecker:
         self.state.last_activity_at = time.time()
         self.state.save()
 
+    def _reload_config(self) -> None:
+        """Reload UpdateConfig from config file (for hot-reload support)."""
+        try:
+            config_path = paths.get_config_path()
+            if config_path.exists():
+                data = json.loads(config_path.read_text(encoding="utf-8"))
+                update_data = data.get("update") or {}
+                self.config = UpdateConfig(**update_data)
+        except Exception as e:
+            logger.warning(f"Failed to reload update config: {e}")
+
     async def _check_loop(self) -> None:
         """Main loop for periodic update checking."""
         # Initial delay to let the service fully start
@@ -127,6 +140,9 @@ class UpdateChecker:
 
     async def _do_check(self) -> None:
         """Perform a single update check."""
+        # Reload config for hot-reload support (e.g., user toggled auto_update in UI)
+        self._reload_config()
+        
         version_info = self._get_version_info()
         
         self.state.last_check_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -191,12 +207,16 @@ class UpdateChecker:
             return False
         
         # Check for recent activity
-        if self.state.last_activity_at:
-            idle_seconds = time.time() - self.state.last_activity_at
-            idle_minutes = idle_seconds / 60
-            if idle_minutes < self.config.idle_minutes:
-                logger.debug(f"Not idle: last activity {idle_minutes:.1f} minutes ago")
-                return False
+        # If no activity recorded yet, consider it NOT idle (just started)
+        if not self.state.last_activity_at:
+            logger.debug("Not idle: no activity recorded yet (service just started)")
+            return False
+        
+        idle_seconds = time.time() - self.state.last_activity_at
+        idle_minutes = idle_seconds / 60
+        if idle_minutes < self.config.idle_minutes:
+            logger.debug(f"Not idle: last activity {idle_minutes:.1f} minutes ago")
+            return False
         
         return True
 
@@ -292,51 +312,41 @@ class UpdateChecker:
         except Exception as e:
             logger.error(f"Failed to send update notification: {e}")
 
-    async def _perform_update(self, target_version: str) -> None:
+    async def _perform_update(
+        self, target_version: str, channel_id: Optional[str] = None, message_ts: Optional[str] = None
+    ) -> None:
         """Perform the actual update and restart."""
         logger.info(f"Starting auto-update to version {target_version}")
         
         # Write a marker file so we can send confirmation after restart
-        self._write_update_marker(target_version)
+        self._write_update_marker(target_version, channel_id=channel_id, message_ts=message_ts)
         
-        # Perform the upgrade
-        exe_path = sys.executable
-        is_uv_tool = ".local/share/uv/tools/" in exe_path or "/uv/tools/" in exe_path
-        uv_path = shutil.which("uv")
+        # Use the same upgrade logic as the API/CLI
+        from vibe.api import do_upgrade
+        result = do_upgrade(auto_restart=True)
         
-        if is_uv_tool and uv_path:
-            cmd = [uv_path, "tool", "upgrade", "vibe-remote"]
+        if result["ok"]:
+            logger.info(f"Upgrade successful: {result['message']}")
         else:
-            cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "vibe-remote"]
-        
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            if result.returncode == 0:
-                logger.info("Upgrade successful, restarting...")
-                # Schedule restart
-                vibe_path = shutil.which("vibe")
-                if vibe_path:
-                    subprocess.Popen(
-                        f"sleep 2 && {vibe_path}",
-                        shell=True,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=True,
-                    )
-            else:
-                logger.error(f"Upgrade failed: {result.stderr}")
-                self._remove_update_marker()
-        except Exception as e:
-            logger.error(f"Upgrade failed: {e}")
+            logger.error(f"Upgrade failed: {result['message']}")
+            if result.get("output"):
+                logger.error(f"Output: {result['output']}")
             self._remove_update_marker()
 
-    def _write_update_marker(self, version: str) -> None:
+    def _write_update_marker(
+        self, version: str, channel_id: Optional[str] = None, message_ts: Optional[str] = None
+    ) -> None:
         """Write a marker file to trigger post-update notification."""
         marker_path = paths.get_state_dir() / "pending_update_notification.json"
-        marker_path.write_text(json.dumps({
+        data = {
             "version": version,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }), encoding="utf-8")
+        }
+        # Store message coordinates for updating the original message after restart
+        if channel_id and message_ts:
+            data["channel_id"] = channel_id
+            data["message_ts"] = message_ts
+        marker_path.write_text(json.dumps(data), encoding="utf-8")
 
     def _remove_update_marker(self) -> None:
         """Remove the update marker file."""
@@ -351,15 +361,41 @@ class UpdateChecker:
         
         try:
             data = json.loads(marker_path.read_text(encoding="utf-8"))
-            version = data.get("version")
+            channel_id = data.get("channel_id")
+            message_ts = data.get("message_ts")
+            # Use the target version from marker (more reliable than __version__ in edge cases)
+            target_version = data.get("version", "unknown")
             
             owner_id = await self._get_workspace_owner_id()
-            if owner_id:
-                from vibe import __version__
-                im_client = self.controller.im_client
+            im_client = self.controller.im_client
+            
+            success_text = f":white_check_mark: Vibe Remote has been updated to `{target_version}`"
+            success_blocks = [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f":white_check_mark: *Vibe Remote Updated Successfully*\n\n"
+                                f"Now running version `{target_version}`"
+                    }
+                }
+            ]
+            
+            # If we have original message coordinates, update that message
+            if channel_id and message_ts:
+                await im_client.web_client.chat_update(
+                    channel=channel_id,
+                    ts=message_ts,
+                    text=success_text,
+                    blocks=success_blocks
+                )
+                logger.info(f"Updated original message with post-update notification")
+            elif owner_id:
+                # Fallback: send a new message
                 await im_client.web_client.chat_postMessage(
                     channel=owner_id,
-                    text=f":white_check_mark: Vibe Remote has been updated to `{__version__}`"
+                    text=success_text,
+                    blocks=success_blocks
                 )
                 logger.info(f"Sent post-update notification to {owner_id}")
         except Exception as e:
@@ -397,7 +433,10 @@ async def handle_update_button_click(controller: "Controller", payload: Dict[str
         if hasattr(controller, 'update_checker'):
             version_info = controller.update_checker._get_version_info()
             if version_info.get("has_update"):
-                await controller.update_checker._perform_update(version_info["latest"])
+                # Pass message coordinates so we can update it after restart
+                await controller.update_checker._perform_update(
+                    version_info["latest"], channel_id=channel_id, message_ts=message_ts
+                )
             else:
                 await im_client.web_client.chat_update(
                     channel=channel_id,

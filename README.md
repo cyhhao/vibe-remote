@@ -191,18 +191,18 @@ vibe doctor   # Diagnose issues
 You need at least one coding agent installed:
 
 <details>
-<summary><b>Claude Code</b> (Recommended)</summary>
+<summary><b>OpenCode</b> (Recommended)</summary>
 
 ```bash
-npm install -g @anthropic-ai/claude-code
+curl -fsSL https://opencode.ai/install | bash
 ```
 </details>
 
 <details>
-<summary><b>OpenCode</b></summary>
+<summary><b>Claude Code</b></summary>
 
 ```bash
-curl -fsSL https://opencode.ai/install | bash
+npm install -g @anthropic-ai/claude-code
 ```
 </details>
 
@@ -235,10 +235,10 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## Roadmap
 
-- [ ] Discord & Teams support
+- [ ] SaaS Mode
+- [ ] Vibe Remote Coding Agent (one agent to rule them all)
 - [ ] File attachments in Slack
 - [ ] Multi-workspace
-- [ ] Cloud relay mode (optional)
 
 ---
 
@@ -246,6 +246,16 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 - **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
+
+## Remote Server Tip (SSH)
+
+If you run Vibe Remote on a remote server, keep the Web UI bound to `127.0.0.1:5123` and access it via SSH port forwarding:
+
+```bash
+ssh -NL 5123:localhost:5123 user@server-ip
+```
+
+See: **[CLI Reference](docs/CLI.md)** (search for "Remote Web UI Access")
 
 ---
 

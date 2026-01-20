@@ -54,8 +54,10 @@ class Controller:
         # Background task for cleanup
         self.cleanup_task: Optional[asyncio.Task] = None
 
-        # Initialize update checker
-        self.update_checker = UpdateChecker(self, config.update)
+        # Initialize update checker (use default config if not present)
+        from config.v2_config import UpdateConfig
+        update_config = getattr(config, 'update', None) or UpdateConfig()
+        self.update_checker = UpdateChecker(self, update_config)
 
         # Restore session mappings on startup (after handlers are initialized)
         self.session_handler.restore_session_mappings()
