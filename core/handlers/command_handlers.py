@@ -77,13 +77,13 @@ class CommandHandlers:
                 f"Channel/Chat ID: {formatter.format_code_inline(context.channel_id)}",
                 "",
                 formatter.format_bold("Commands:"),
-                formatter.format_text("/start - Show this message"),
-                formatter.format_text("/clear - Reset session and start fresh"),
-                formatter.format_text("/cwd - Show current working directory"),
-                formatter.format_text("/set_cwd <path> - Set working directory"),
-                formatter.format_text("/settings - Personalization settings"),
+                formatter.format_text("@Vibe Remote /start - Show this message"),
+                formatter.format_text("@Vibe Remote /clear - Reset session and start fresh"),
+                formatter.format_text("@Vibe Remote /cwd - Show current working directory"),
+                formatter.format_text("@Vibe Remote /set_cwd <path> - Set working directory"),
+                formatter.format_text("@Vibe Remote /settings - Personalization settings"),
                 formatter.format_text(
-                    f"/stop - Interrupt {agent_display_name} execution"
+                    f"@Vibe Remote /stop - Interrupt {agent_display_name} execution"
                 ),
                 "",
                 formatter.format_bold("How it works:"),
@@ -303,7 +303,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
                 channel_context,
-                "📂 Click the 'Change Work Dir' button in the /start menu to change working directory.",
+                "📂 Click the 'Change Work Dir' button in the @Vibe Remote /start menu to change working directory.",
             )
 
     async def handle_stop(self, context: MessageContext, args: str = ""):

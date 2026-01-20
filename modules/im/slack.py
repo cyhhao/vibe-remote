@@ -536,7 +536,14 @@ class SlackBot(BaseIMClient):
             # For threads: only respond if the bot is active in that thread
             is_thread_reply = event.get("thread_ts") is not None
 
-            if self.config.require_mention and not channel_id.startswith("D"):
+            # Resolve effective require_mention: per-channel override or global default
+            effective_require_mention = self.config.require_mention
+            if self.settings_manager:
+                effective_require_mention = self.settings_manager.get_require_mention(
+                    channel_id, global_default=self.config.require_mention
+                )
+
+            if effective_require_mention and not channel_id.startswith("D"):
                 # In channel main thread: require mention (silently ignore)
                 if not is_thread_reply:
                     logger.debug(f"Ignoring non-mention message in channel: '{text}'")
@@ -714,7 +721,7 @@ class SlackBot(BaseIMClient):
             if response_url:
                 await self.send_slash_response(
                     response_url,
-                    f"❌ Unknown command: `/{command}`\n\nPlease use `/start` to access all bot features.",
+                    f"❌ Unknown command: `/{command}`\n\nPlease use `@Vibe Remote /start` to access all bot features.",
                 )
 
     async def _handle_interactive(self, payload: Dict[str, Any]):
@@ -807,12 +814,27 @@ class SlackBot(BaseIMClient):
             # Get the values from selected options
             show_types = [opt.get("value") for opt in selected_options]
 
+            # Extract require_mention setting
+            require_mention_data = values.get("require_mention_block", {}).get(
+                "require_mention_select", {}
+            )
+            require_mention_value = require_mention_data.get("selected_option", {}).get("value")
+            # Convert to Optional[bool]: "__default__" -> None, "true" -> True, "false" -> False
+            if require_mention_value == "__default__":
+                require_mention = None
+            elif require_mention_value == "true":
+                require_mention = True
+            elif require_mention_value == "false":
+                require_mention = False
+            else:
+                require_mention = None
+
             # Get channel_id from the view's private_metadata if available
             channel_id = view.get("private_metadata")
 
             # Update settings - need access to settings manager
             if hasattr(self, "_on_settings_update"):
-                await self._on_settings_update(user_id, show_types, channel_id)
+                await self._on_settings_update(user_id, show_types, channel_id, require_mention)
 
         elif callback_id == "change_cwd_modal":
             # Handle change CWD modal submission
@@ -918,10 +940,25 @@ class SlackBot(BaseIMClient):
             if oc_reasoning == "__default__":
                 oc_reasoning = None
 
+            # Extract require_mention (optional)
+            require_mention_data = values.get("require_mention_block", {}).get(
+                "require_mention_select", {}
+            )
+            require_mention_value = require_mention_data.get("selected_option", {}).get("value")
+            # Convert to Optional[bool]: "__default__" -> None, "true" -> True, "false" -> False
+            if require_mention_value == "__default__":
+                require_mention = None
+            elif require_mention_value == "true":
+                require_mention = True
+            elif require_mention_value == "false":
+                require_mention = False
+            else:
+                require_mention = None
+
             # Update routing via callback
             if hasattr(self, "_on_routing_update"):
                 await self._on_routing_update(
-                    user_id, channel_id, backend, oc_agent, oc_model, oc_reasoning
+                    user_id, channel_id, backend, oc_agent, oc_model, oc_reasoning, require_mention
                 )
 
     def run(self):
@@ -1068,6 +1105,8 @@ class SlackBot(BaseIMClient):
         message_types: list,
         display_names: dict,
         channel_id: str = None,
+        current_require_mention: object = None,  # None=default, True, False
+        global_require_mention: bool = False,
     ):
         """Open a modal dialog for settings"""
         self._ensure_clients()
@@ -1120,6 +1159,40 @@ class SlackBot(BaseIMClient):
         if selected_options:
             multi_select_element["initial_options"] = selected_options
 
+        # Build require_mention selector
+        global_mention_label = "On" if global_require_mention else "Off"
+        require_mention_options = [
+            {
+                "text": {"type": "plain_text", "text": f"(Default) - {global_mention_label}"},
+                "value": "__default__",
+            },
+            {
+                "text": {"type": "plain_text", "text": "Require @mention"},
+                "value": "true",
+            },
+            {
+                "text": {"type": "plain_text", "text": "Don't require @mention"},
+                "value": "false",
+            },
+        ]
+
+        # Determine initial option for require_mention
+        initial_require_mention = require_mention_options[0]  # Default
+        if current_require_mention is not None:
+            target_value = "true" if current_require_mention else "false"
+            for opt in require_mention_options:
+                if opt["value"] == target_value:
+                    initial_require_mention = opt
+                    break
+
+        require_mention_select = {
+            "type": "static_select",
+            "action_id": "require_mention_select",
+            "placeholder": {"type": "plain_text", "text": "Select @mention behavior"},
+            "options": require_mention_options,
+            "initial_option": initial_require_mention,
+        }
+
         # Create the modal view
         view = {
             "type": "modal",
@@ -1133,7 +1206,35 @@ class SlackBot(BaseIMClient):
                     "type": "header",
                     "text": {
                         "type": "plain_text",
-                        "text": "Message Visibility Settings",
+                        "text": "Channel Behavior",
+                        "emoji": True,
+                    },
+                },
+                {
+                    "type": "input",
+                    "block_id": "require_mention_block",
+                    "element": require_mention_select,
+                    "label": {
+                        "type": "plain_text",
+                        "text": "Require @mention to respond",
+                        "emoji": True,
+                    },
+                },
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": "_When enabled, the bot only responds when @mentioned in channels (DMs always work)._",
+                        }
+                    ],
+                },
+                {"type": "divider"},
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "Message Visibility",
                         "emoji": True,
                     },
                 },
@@ -1144,7 +1245,6 @@ class SlackBot(BaseIMClient):
                         "text": "Choose which message types to *show* from agent output. Unselected types won't appear in your Slack workspace.",
                     },
                 },
-                {"type": "divider"},
                 {
                     "type": "input",
                     "block_id": "show_message_types",
@@ -1298,6 +1398,8 @@ class SlackBot(BaseIMClient):
         selected_opencode_agent: object = _UNSET,
         selected_opencode_model: object = _UNSET,
         selected_opencode_reasoning: object = _UNSET,
+        current_require_mention: object = _UNSET,  # None=default, True, False
+        global_require_mention: bool = False,
     ) -> dict:
         """Build modal view for agent/model routing settings."""
         # Build backend options
@@ -1351,6 +1453,48 @@ class SlackBot(BaseIMClient):
                 "label": {"type": "plain_text", "text": "Backend"},
             },
         ]
+
+        # Add require_mention selector
+        # Build options: Default (uses global), Require @mention, Don't require @mention
+        global_mention_label = "On" if global_require_mention else "Off"
+        require_mention_options = [
+            {
+                "text": {"type": "plain_text", "text": f"(Default) - {global_mention_label}"},
+                "value": "__default__",
+            },
+            {
+                "text": {"type": "plain_text", "text": "Require @mention"},
+                "value": "true",
+            },
+            {
+                "text": {"type": "plain_text", "text": "Don't require @mention"},
+                "value": "false",
+            },
+        ]
+
+        # Determine initial option
+        initial_require_mention = require_mention_options[0]  # Default
+        if current_require_mention is not _UNSET and current_require_mention is not None:
+            target_value = "true" if current_require_mention else "false"
+            for opt in require_mention_options:
+                if opt["value"] == target_value:
+                    initial_require_mention = opt
+                    break
+
+        require_mention_select = {
+            "type": "static_select",
+            "action_id": "require_mention_select",
+            "placeholder": {"type": "plain_text", "text": "Select @mention behavior"},
+            "options": require_mention_options,
+            "initial_option": initial_require_mention,
+        }
+
+        blocks.append({
+            "type": "input",
+            "block_id": "require_mention_block",
+            "element": require_mention_select,
+            "label": {"type": "plain_text", "text": "Require @mention to respond"},
+        })
 
         # OpenCode-specific options (only if opencode is registered)
         if "opencode" in registered_backends:
@@ -1788,6 +1932,8 @@ class SlackBot(BaseIMClient):
         opencode_agents: list,
         opencode_models: dict,
         opencode_default_config: dict,
+        current_require_mention: object = None,  # None=default, True, False
+        global_require_mention: bool = False,
     ):
         """Open a modal dialog for agent/model routing settings"""
         self._ensure_clients()
@@ -1800,6 +1946,8 @@ class SlackBot(BaseIMClient):
             opencode_agents=opencode_agents,
             opencode_models=opencode_models,
             opencode_default_config=opencode_default_config,
+            current_require_mention=current_require_mention,
+            global_require_mention=global_require_mention,
         )
 
         try:
@@ -1823,6 +1971,8 @@ class SlackBot(BaseIMClient):
         selected_opencode_agent: Optional[str] = None,
         selected_opencode_model: Optional[str] = None,
         selected_opencode_reasoning: Optional[str] = None,
+        current_require_mention: object = None,
+        global_require_mention: bool = False,
     ) -> None:
         """Update routing modal when selections change."""
         self._ensure_clients()
@@ -1839,6 +1989,8 @@ class SlackBot(BaseIMClient):
             selected_opencode_agent=selected_opencode_agent,
             selected_opencode_model=selected_opencode_model,
             selected_opencode_reasoning=selected_opencode_reasoning,
+            current_require_mention=current_require_mention,
+            global_require_mention=global_require_mention,
         )
 
         try:

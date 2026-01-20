@@ -140,7 +140,7 @@ When your agent needs input — file selection, confirmation, options — Slack 
 
 | In Slack | What it does |
 |----------|--------------|
-| `/start` | Open control panel |
+| `@Vibe Remote /start` | Open control panel |
 | `/stop` | Kill current session |
 | Just type | Talk to your agent |
 | Reply in thread | Continue conversation |
@@ -244,8 +244,8 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## Docs
 
+- **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
-- **[中文安装指南](docs/SLACK_SETUP_ZH.md)** — Chinese guide
 
 ---
 

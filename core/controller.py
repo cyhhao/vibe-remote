@@ -152,10 +152,17 @@ class Controller:
         custom_cwd = self.settings_manager.get_custom_cwd(settings_key)
 
         # Use custom CWD if available, otherwise use default from config
-        if custom_cwd and os.path.exists(custom_cwd):
-            return os.path.abspath(custom_cwd)
-        elif custom_cwd:
-            logger.warning(f"Custom CWD does not exist: {custom_cwd}, using default")
+        if custom_cwd:
+            abs_path = os.path.abspath(os.path.expanduser(custom_cwd))
+            if os.path.exists(abs_path):
+                return abs_path
+            # Try to create it
+            try:
+                os.makedirs(abs_path, exist_ok=True)
+                logger.info(f"Created custom CWD: {abs_path}")
+                return abs_path
+            except OSError as e:
+                logger.warning(f"Failed to create custom CWD '{abs_path}': {e}, using default")
 
         # Fall back to default from config.json
         default_cwd = self.config.claude.cwd
@@ -370,7 +377,8 @@ class Controller:
 
     # Settings update handler (for Slack modal)
     async def handle_settings_update(
-        self, user_id: str, show_message_types: list, channel_id: Optional[str] = None
+        self, user_id: str, show_message_types: list, channel_id: Optional[str] = None,
+        require_mention: Optional[bool] = None,
     ):
         """Handle settings update (typically from Slack modal)"""
         try:
@@ -389,8 +397,12 @@ class Controller:
             # Save settings - using the correct method name
             self.settings_manager.update_user_settings(settings_key, user_settings)
 
+            # Save require_mention setting
+            self.settings_manager.set_require_mention(settings_key, require_mention)
+
             logger.info(
-                f"Updated settings for {settings_key}: show types = {show_message_types}"
+                f"Updated settings for {settings_key}: show types = {show_message_types}, "
+                f"require_mention = {require_mention}"
             )
 
             # Create context for sending confirmation (without 'message' field)
@@ -573,6 +585,7 @@ class Controller:
         opencode_agent: Optional[str],
         opencode_model: Optional[str],
         opencode_reasoning_effort: Optional[str] = None,
+        require_mention: Optional[bool] = None,
     ):
         """Handle routing update submission (from Slack modal)"""
         from modules.settings_manager import ChannelRouting
@@ -592,6 +605,9 @@ class Controller:
             # Save routing
             self.settings_manager.set_channel_routing(settings_key, routing)
 
+            # Save require_mention setting
+            self.settings_manager.set_require_mention(settings_key, require_mention)
+
             # Build confirmation message
             parts = [f"Backend: **{backend}**"]
             if backend == "opencode":
@@ -601,6 +617,14 @@ class Controller:
                     parts.append(f"Model: **{opencode_model}**")
                 if opencode_reasoning_effort:
                     parts.append(f"Reasoning Effort: **{opencode_reasoning_effort}**")
+
+            # Add require_mention status to confirmation
+            if require_mention is None:
+                parts.append("Require @mention: **(Default)**")
+            elif require_mention:
+                parts.append("Require @mention: **Yes**")
+            else:
+                parts.append("Require @mention: **No**")
 
             # Create context for confirmation message
             context = MessageContext(
@@ -617,7 +641,7 @@ class Controller:
 
             logger.info(
                 f"Routing updated for {settings_key}: backend={backend}, "
-                f"agent={opencode_agent}, model={opencode_model}"
+                f"agent={opencode_agent}, model={opencode_model}, require_mention={require_mention}"
             )
 
         except Exception as e:
