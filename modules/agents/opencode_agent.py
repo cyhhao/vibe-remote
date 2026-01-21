@@ -929,6 +929,58 @@ class OpenCodeAgent(BaseAgent):
         # Events to signal when question answers are submitted
         self._question_answer_events: Dict[str, asyncio.Event] = {}
 
+    # Timeout for waiting on user to answer a question (30 minutes)
+    QUESTION_WAIT_TIMEOUT_SECONDS = 30 * 60
+
+    def _get_or_create_question_event(self, base_session_id: str) -> asyncio.Event:
+        """Get or create an event for question answer coordination.
+
+        Clears the event if it already exists (important for nested questions).
+        """
+        evt = self._question_answer_events.get(base_session_id)
+        if evt is None:
+            evt = asyncio.Event()
+            self._question_answer_events[base_session_id] = evt
+        else:
+            evt.clear()  # Clear for nested questions
+        return evt
+
+    def _clear_question_event(self, base_session_id: str, evt: asyncio.Event) -> None:
+        """Clear question event, but only if it's still the same object (avoid races)."""
+        current = self._question_answer_events.get(base_session_id)
+        if current is evt:
+            self._question_answer_events.pop(base_session_id, None)
+
+    async def _handle_question_timeout(
+        self, request: AgentRequest, session_id: str, pending: Dict[str, Any]
+    ) -> None:
+        """Handle timeout when user doesn't answer a question within timeout period."""
+        # Best-effort: disable old buttons so user doesn't click stale UI
+        msg_id = pending.get("prompt_message_id")
+        if msg_id and hasattr(self.im_client, "remove_inline_keyboard"):
+            try:
+                await self.im_client.remove_inline_keyboard(
+                    request.context,
+                    msg_id,
+                    text=(pending.get("prompt_text") or "")
+                    + "\n\n_(Timed out waiting for answer)_",
+                    parse_mode="markdown",
+                )
+            except Exception:
+                pass
+
+        # Clear in-memory state
+        self._pending_questions.pop(request.base_session_id, None)
+
+        # Stop restoring this on restart (since we're abandoning the run)
+        self.settings_manager.remove_active_poll(session_id)
+
+        await self.controller.emit_agent_message(
+            request.context,
+            "notify",
+            "Timed out waiting for your answer (30 minutes). Please re-run your request.",
+        )
+
     async def _get_server(self) -> OpenCodeServerManager:
         if self._server_manager is None:
             self._server_manager = await OpenCodeServerManager.get_instance(
@@ -991,9 +1043,8 @@ class OpenCodeAgent(BaseAgent):
             is_modal_open = (
                 pending and request.message == "opencode_question:open_modal"
             )
-            is_question_action = pending and request.message.startswith(
-                "opencode_question:"
-            )
+            # Any message when pending exists (except modal open) is an answer submission
+            is_answer_submission = pending and not is_modal_open
 
             existing_task = self._active_requests.get(request.base_session_id)
             if existing_task and not existing_task.done():
@@ -1002,16 +1053,14 @@ class OpenCodeAgent(BaseAgent):
                         "OpenCode session %s running; opening modal without cancel",
                         request.base_session_id,
                     )
-                elif is_question_action:
+                elif is_answer_submission:
+                    # NEW: Do not cancel poll task for answer submission
+                    # The main poll loop is waiting on an event, which will be set
+                    # after the answer is successfully submitted
                     logger.info(
-                        "OpenCode session %s running; cancelling poll task for question reply",
+                        "OpenCode session %s running; submitting answer without cancel",
                         request.base_session_id,
                     )
-                    existing_task.cancel()
-                    try:
-                        await existing_task
-                    except asyncio.CancelledError:
-                        pass
                 else:
                     logger.info(
                         "OpenCode session %s already running; cancelling before new request",
@@ -1042,14 +1091,11 @@ class OpenCodeAgent(BaseAgent):
                 else:
                     task = asyncio.create_task(self._process_message(request))
                     self._active_requests[request.base_session_id] = task
-            elif pending:
-                pending_payload = self._pending_questions.pop(
-                    request.base_session_id, None
-                )
-                task = asyncio.create_task(
-                    self._process_question_answer(request, pending_payload or {})
-                )
-                self._active_requests[request.base_session_id] = task
+            elif is_answer_submission:
+                # NEW: Do not pop pending here; let _process_question_answer handle it
+                # Do not create/track as _active_requests; the main poll task is still running
+                await self._process_question_answer(request, pending or {})
+                return  # Don't track or wait on a task
             else:
                 task = asyncio.create_task(self._process_message(request))
                 self._active_requests[request.base_session_id] = task
@@ -1066,6 +1112,9 @@ class OpenCodeAgent(BaseAgent):
         except asyncio.CancelledError:
             # Task was cancelled (e.g. by /stop), exit gracefully without bubbling
             logger.debug(f"OpenCode task cancelled for {request.base_session_id}")
+            # Clean up question state on cancellation
+            self._question_answer_events.pop(request.base_session_id, None)
+            self._pending_questions.pop(request.base_session_id, None)
         finally:
             if self._active_requests.get(request.base_session_id) is task:
                 self._active_requests.pop(request.base_session_id, None)
@@ -1300,157 +1349,25 @@ class OpenCodeAgent(BaseAgent):
             )
             return
 
-        # After replying, continue polling for all new messages until completion.
-        # We need to process intermediate messages, not just wait for the final one.
-        baseline_message_ids: set[str] = set()
-        try:
-            baseline_messages = await server.list_messages(session_id, directory)
-            for m in baseline_messages:
-                mid = m.get("info", {}).get("id")
-                if mid:
-                    baseline_message_ids.add(mid)
-        except Exception:
-            pass
-
-        seen_tool_calls: set[str] = set()
-        emitted_assistant_messages: set[str] = set()
-        poll_interval_seconds = 2.0
-        final_text: Optional[str] = None
-
-        def _relative_path(path: str) -> str:
-            return self._to_relative_path(path, request.working_path)
-
-        poll_iter = 0
-        while True:
-            poll_iter += 1
-            try:
-                messages = await server.list_messages(session_id, directory)
-            except Exception as poll_err:
-                logger.warning(
-                    f"Failed to poll OpenCode messages after question answer: {poll_err}"
-                )
-                await asyncio.sleep(poll_interval_seconds)
-                continue
-
-            # Process all new messages
-            for message in messages:
-                info = message.get("info", {})
-                message_id = info.get("id")
-                if not message_id or message_id in baseline_message_ids:
-                    continue
-                if info.get("role") != "assistant":
-                    continue
-
-                # Process tool calls
-                for part in message.get("parts", []) or []:
-                    if part.get("type") != "tool":
-                        continue
-                    call_key = part.get("callID") or part.get("id")
-                    if not call_key or call_key in seen_tool_calls:
-                        continue
-                    tool_name = part.get("tool") or "tool"
-                    tool_state = part.get("state") or {}
-                    tool_input = tool_state.get("input") or {}
-
-                    # Check for nested questions - warn but continue
-                    if (
-                        tool_name == "question"
-                        and tool_state.get("status") != "completed"
-                    ):
-                        logger.warning(
-                            "Detected nested question after answer submission for %s, "
-                            "continuing to process other messages",
-                            session_id,
-                        )
-
-                    # Format and emit tool call
-                    toolcall = self.im_client.formatter.format_toolcall(
-                        tool_name,
-                        tool_input,
-                        get_relative_path=_relative_path,
-                    )
-                    await self.controller.emit_agent_message(
-                        request.context,
-                        "toolcall",
-                        toolcall,
-                        parse_mode="markdown",
-                    )
-                    seen_tool_calls.add(call_key)
-
-                # Emit intermediate assistant messages (tool-calls finish)
-                if (
-                    info.get("time", {}).get("completed")
-                    and message_id not in emitted_assistant_messages
-                    and info.get("finish") == "tool-calls"
-                ):
-                    text = self._extract_response_text(message)
-                    if text:
-                        await self.controller.emit_agent_message(
-                            request.context,
-                            "assistant",
-                            text,
-                            parse_mode="markdown",
-                        )
-                    emitted_assistant_messages.add(message_id)
-
-            # Check for final completion
-            if messages:
-                last_message = messages[-1]
-                last_info = last_message.get("info", {})
-                last_id = last_info.get("id")
-
-                # Check for errors first
-                if (
-                    last_id
-                    and last_id not in baseline_message_ids
-                    and last_info.get("role") == "assistant"
-                    and last_info.get("time", {}).get("completed")
-                ):
-                    msg_error = last_info.get("error")
-                    if msg_error:
-                        error_name = msg_error.get("name", "UnknownError")
-                        error_data = msg_error.get("data", {})
-                        error_msg = (
-                            error_data.get("message", "")
-                            if isinstance(error_data, dict)
-                            else str(error_data)
-                        )
-                        logger.error(
-                            "OpenCode error after question answer for %s: %s - %s",
-                            session_id,
-                            error_name,
-                            error_msg[:200],
-                        )
-                        await self.controller.emit_agent_message(
-                            request.context,
-                            "notify",
-                            f"OpenCode error after question answer: {error_name} - {error_msg[:500]}",
-                        )
-                        return
-
-                    # No error, check for normal completion
-                    if last_info.get("finish") != "tool-calls":
-                        # Session completed
-                        final_text = self._extract_response_text(last_message)
-                        break
-
-            await asyncio.sleep(poll_interval_seconds)
-
-        # Emit final result
-        if final_text:
-            await self.emit_result_message(
-                request.context,
-                final_text,
-                subtype="success",
-                started_at=request.started_at,
-                parse_mode="markdown",
+        # Answer submitted successfully - signal main poll loop to continue
+        evt = self._question_answer_events.get(request.base_session_id)
+        if evt:
+            evt.set()
+            logger.info(
+                "Answer submitted for %s, signaling main poll loop to resume",
+                session_id,
             )
         else:
-            await self.emit_result_message(
+            # Edge case: poll task died/restarted/timed out
+            logger.warning(
+                "No wait event found for %s; cannot resume poll",
+                request.base_session_id,
+            )
+            await self.controller.emit_agent_message(
                 request.context,
-                "(No response from OpenCode)",
-                subtype="warning",
-                started_at=request.started_at,
+                "notify",
+                "Answer submitted, but I no longer have an active poll loop for this session. "
+                "Please send a new message to continue.",
             )
 
     async def _process_message(self, request: AgentRequest) -> None:
