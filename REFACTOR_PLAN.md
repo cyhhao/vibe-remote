@@ -74,34 +74,48 @@ async def _process_question_answer(request, pending):
 
 ## Implementation Steps
 
-### Step 1: Add event coordination
+### Step 1: Add event coordination ✅ COMPLETE
 - [x] Add `_question_answer_events: Dict[str, asyncio.Event]` to class
-- [ ] Create event when question detected
-- [ ] Set event when answer submitted
-- [ ] Clear event after processing
+- [x] Create event when question detected (`_get_or_create_question_event`)
+- [x] Set event when answer submitted
+- [x] Clear event after processing (`_clear_question_event`)
+- [x] Add timeout tracking set (`_timed_out_questions`)
+- **Commit:** `72c3c99` - Add question answer event coordination
 
-### Step 2: Refactor main loop to not exit on question
-- [ ] Remove `return` after sending question buttons
-- [ ] Add `await event.wait()` to block until answer
-- [ ] Continue processing after answer submitted
+### Step 2: Refactor main loop to not exit on question ✅ COMPLETE
+- [x] Remove `return` after sending question buttons
+- [x] Add `await event.wait()` to block until answer (`_wait_for_question_answer`)
+- [x] Continue processing after answer submitted (restart poll loop)
+- [x] Add timeout handling (30 minutes)
+- **Commit:** `2c1e928` - Unify poll loop - wait for answer instead of exit
 
-### Step 3: Simplify _process_question_answer
-- [ ] Remove entire post-answer polling loop
-- [ ] Keep only answer submission logic
-- [ ] Set event to resume main loop
+### Step 3: Simplify _process_question_answer ✅ COMPLETE
+- [x] Remove entire post-answer polling loop (~150 lines deleted)
+- [x] Keep only answer submission logic
+- [x] Set event to resume main loop
+- [x] Update routing to not cancel poll task
+- **Commit:** `2806bd2` - Simplify question answer handler and update routing
 
-### Step 4: Handle edge cases
-- [ ] Timeout for waiting on answer (user never responds)
-- [ ] Nested questions (question after question)
-- [ ] Concurrent requests to same session
-- [ ] Poll restoration on restart
+### Step 4: Handle edge cases ✅ COMPLETE
+- [x] Timeout for waiting on answer (user never responds) - 30 minute timeout
+- [x] Late answer race condition - `_timed_out_questions` set prevents resumption
+- [x] Answer submission failures - set event even on error to unblock loop
+- [x] Immediate poll restart - exit message loop when `restart_poll=True`
+- [x] Safety wrapper for timeout handler - try-except protection
+- [ ] Nested questions (question after question) - needs testing
+- [ ] Concurrent requests to same session - needs testing
+- [ ] Poll restoration on restart - needs testing
+- **Commits:** `39cbb72`, `517886f` - Fix timeout and P0 issues
 
-### Step 5: Testing
+### Step 5: Testing 🚧 IN PROGRESS
 - [ ] Test normal question flow
 - [ ] Test nested questions
-- [ ] Test timeout scenarios
+- [ ] Test timeout scenarios (reduce timeout to 30s for testing)
+- [ ] Test answer submission failures
+- [ ] Test late answer after timeout
 - [ ] Test concurrent operations
 - [ ] Test poll restoration
+- [ ] Test `/stop` during question wait
 
 ## Benefits
 
@@ -117,10 +131,52 @@ async def _process_question_answer(request, pending):
 2. **Complexity**: Event-based coordination might be tricky
 3. **Edge Cases**: Concurrent questions, restarts, etc.
 
+## Current Status
+
+**Branch:** `refactor/unify-opencode-poll-loop`  
+**Base Branch:** `fix/opencode-question-poll-resume` (PR #28 - awaiting merge)
+
+**Completed:**
+- ✅ All core refactoring (Steps 1-3)
+- ✅ Critical edge cases handled (Step 4)
+- ✅ Syntax validation passed
+
+**Next Steps:**
+1. **Testing Phase** - Validate all scenarios work correctly
+2. **Decide Merge Strategy:**
+   - Option A: Merge PR #28 first, then merge refactor as separate PR
+   - Option B: Update refactor to include all fixes from PR #28, merge directly
+3. **Production Deployment** - Monitor for issues
+
+## Testing Checklist
+
+### Critical Scenarios
+- [ ] Normal flow: Send prompt → question appears → answer → completion
+- [ ] Timeout: User doesn't answer for 30 minutes (reduce to 30s for testing)
+- [ ] Late answer: User clicks button after timeout
+- [ ] Answer failure: Simulate `reply_question()` exception
+- [ ] Nested questions: OpenCode asks second question after first answer
+- [ ] Cancellation: User sends `/stop` while waiting for answer
+- [ ] Empty response: Final message has no text content (original bug)
+
+### Testing Commands
+```bash
+# Reduce timeout for faster testing (in opencode_agent.py)
+QUESTION_WAIT_TIMEOUT_SECONDS = 30  # Change from 30*60
+
+# Start vibe in editable mode
+cd /Users/cyh/vibe-remote
+uv tool install --force --editable .
+vibe
+
+# Test with a task that asks questions
+# Example: "Search Twitter for AI news and ask me which results to analyze"
+```
+
 ## Migration Strategy
 
-1. Implement refactor on feature branch
-2. Run extensive manual testing
-3. Deploy to staging environment
-4. Monitor for issues
-5. Roll out gradually if possible
+1. ✅ Implement refactor on feature branch
+2. 🚧 Run extensive manual testing
+3. Create PR and request code review
+4. Deploy to staging/production
+5. Monitor logs for issues: `~/.vibe_remote/logs/vibe_remote.log`
