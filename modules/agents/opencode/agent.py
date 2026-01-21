@@ -126,7 +126,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             await task
         except asyncio.CancelledError:
             logger.debug(f"OpenCode task cancelled for {request.base_session_id}")
-            self._question_handler.clear(request.base_session_id)
+            await self._question_handler.clear(request.base_session_id)
         finally:
             if self._active_requests.get(request.base_session_id) is task:
                 self._active_requests.pop(request.base_session_id, None)
@@ -276,10 +276,13 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     started_at=request.started_at,
                 )
 
+            # Clean up answer reaction after result is sent
+            await self._question_handler.clear(request.base_session_id)
             self.settings_manager.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
             logger.info(f"OpenCode request cancelled for {request.base_session_id}")
+            await self._question_handler.clear(request.base_session_id)
             if session_id:
                 self.settings_manager.remove_active_poll(session_id)
             raise
@@ -296,6 +299,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     f"Failed to abort OpenCode session after error: {abort_err}"
                 )
 
+            # Clean up answer reaction on error
+            await self._question_handler.clear(request.base_session_id)
             if session_id:
                 self.settings_manager.remove_active_poll(session_id)
 

@@ -24,6 +24,7 @@ class PendingQuestionPayload(TypedDict, total=False):
     multiple: bool
     questions: List[Dict[str, Any]]
     thread_id: Optional[str]
+    trigger_message_id: Optional[str]  # Original request message_id for consolidated key
 
 
 @dataclass(frozen=True)

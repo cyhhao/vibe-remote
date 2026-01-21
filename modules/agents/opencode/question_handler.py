@@ -35,6 +35,9 @@ class OpenCodeQuestionHandler:
         self._pending_questions: Dict[str, PendingQuestionPayload] = {}
         self._question_answer_events: Dict[str, asyncio.Event] = {}
         self._timed_out_questions: set[str] = set()
+        # Track reactions added after question answer for cleanup
+        # Maps base_session_id -> (context, message_id, emoji)
+        self._answer_reactions: Dict[str, tuple] = {}
 
     def get_pending(self, base_session_id: str) -> Optional[PendingQuestionPayload]:
         return self._pending_questions.get(base_session_id)
@@ -45,10 +48,22 @@ class OpenCodeQuestionHandler:
     def pop_pending(self, base_session_id: str) -> Optional[PendingQuestionPayload]:
         return self._pending_questions.pop(base_session_id, None)
 
-    def clear(self, base_session_id: str) -> None:
+    async def clear(self, base_session_id: str) -> None:
+        """Clear all state for a session, including removing any answer reaction."""
         self._pending_questions.pop(base_session_id, None)
         self._question_answer_events.pop(base_session_id, None)
         self._timed_out_questions.discard(base_session_id)
+        await self._remove_answer_reaction(base_session_id)
+
+    async def _remove_answer_reaction(self, base_session_id: str) -> None:
+        """Remove the 👀 reaction added after question answer."""
+        reaction_info = self._answer_reactions.pop(base_session_id, None)
+        if reaction_info and hasattr(self._im_client, "remove_reaction"):
+            context, message_id, emoji = reaction_info
+            try:
+                await self._im_client.remove_reaction(context, message_id, emoji)
+            except Exception as err:
+                logger.debug(f"Failed to remove answer reaction: {err}")
 
     def _get_or_create_question_event(self, base_session_id: str) -> asyncio.Event:
         """Get or create an event for question answer coordination.
@@ -229,6 +244,7 @@ class OpenCodeQuestionHandler:
         question_count = pending.get("question_count")
         pending_thread_id = pending.get("thread_id")
         question_message_id = pending.get("prompt_message_id")
+        trigger_message_id = pending.get("trigger_message_id")  # Original request msg_id
 
         if pending_thread_id and not request.context.thread_id:
             request.context.thread_id = pending_thread_id
@@ -388,6 +404,25 @@ class OpenCodeQuestionHandler:
                 "OpenCode did not accept the answer. Please retry.",
             )
             return
+
+        # Add 👀 reaction to question message to indicate answer received
+        # Track it for cleanup when the request completes
+        if question_message_id and hasattr(self._im_client, "add_reaction"):
+            try:
+                emoji = "eyes"
+                await self._im_client.add_reaction(
+                    request.context, question_message_id, emoji
+                )
+                # Save for cleanup when request completes
+                self._answer_reactions[request.base_session_id] = (
+                    request.context, question_message_id, emoji
+                )
+            except Exception as err:
+                logger.debug(f"Failed to add reaction to question message: {err}")
+
+        # Clear consolidated message ID so subsequent log messages appear after user's reply
+        # instead of editing the old consolidated message from before the question
+        await self._controller.clear_consolidated_message_id(request.context, trigger_message_id)
 
         evt = self._question_answer_events.get(request.base_session_id)
         if evt:
@@ -686,6 +721,7 @@ class OpenCodeQuestionHandler:
             "multiple": multiple,
             "questions": qlist,
             "thread_id": request.context.thread_id,
+            "trigger_message_id": request.context.message_id,  # For consolidated key
         }
         self._pending_questions[request.base_session_id] = pending_payload
 
