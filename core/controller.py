@@ -233,8 +233,14 @@ class Controller:
         return self._consolidated_message_locks[key]
 
     def _get_consolidated_max_chars(self) -> int:
-        # Slack max message length is ~40k characters.
-        return 35000
+        # Slack API hard limit is exactly 4000 characters for chat.update
+        # (chat.postMessage may accept more, but editing fails above 4000)
+        return 4000
+
+    def _get_consolidated_split_threshold(self) -> int:
+        # When accumulated message exceeds this threshold, start a new message
+        # to avoid Slack edit failures. Use 90% of max to leave some buffer.
+        return 3600
 
     def _get_result_max_chars(self) -> int:
         return 30000
@@ -380,11 +386,41 @@ class Controller:
             separator = "\n\n---\n\n" if existing else ""
             updated = f"{existing}{separator}{chunk}" if existing else chunk
 
+            split_threshold = self._get_consolidated_split_threshold()
+            existing_message_id = self._consolidated_message_ids.get(consolidated_key)
+
+            # Check if we need to split: accumulated message exceeds threshold
+            if existing_message_id and len(updated) > split_threshold:
+                # Append continuation notice to old message
+                continuation_notice = "\n\n---\n\n_(continued below...)_"
+                old_text = existing + continuation_notice
+                old_text = self._truncate_consolidated(old_text, self._get_consolidated_max_chars())
+
+                target_context = self._get_target_context(context)
+                try:
+                    await self.im_client.edit_message(
+                        target_context,
+                        existing_message_id,
+                        text=old_text,
+                        parse_mode="markdown",
+                    )
+                except Exception as err:
+                    logger.warning(f"Failed to finalize old consolidated message: {err}")
+
+                # Clear buffer and message_id, start fresh with just the new chunk
+                self._consolidated_message_buffers[consolidated_key] = chunk
+                self._consolidated_message_ids.pop(consolidated_key, None)
+                updated = chunk
+                existing_message_id = None
+                logger.info(
+                    "Consolidated message exceeded %d chars, starting new message",
+                    split_threshold,
+                )
+
             updated = self._truncate_consolidated(updated, self._get_consolidated_max_chars())
             self._consolidated_message_buffers[consolidated_key] = updated
 
             target_context = self._get_target_context(context)
-            existing_message_id = self._consolidated_message_ids.get(consolidated_key)
             if existing_message_id:
                 try:
                     ok = await self.im_client.edit_message(

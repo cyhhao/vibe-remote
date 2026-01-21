@@ -656,11 +656,21 @@ def cmd_upgrade():
         return 1
 
 
+def cmd_restart():
+    """Restart all services (stop + start)."""
+    print("Restarting vibe services...")
+    cmd_stop()
+    print("Waiting 3 seconds...")
+    time.sleep(3)
+    return cmd_vibe()
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="vibe")
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("stop", help="Stop all services")
+    subparsers.add_parser("restart", help="Restart all services")
     subparsers.add_parser("status", help="Show service status")
     subparsers.add_parser("doctor", help="Run diagnostics")
     subparsers.add_parser("version", help="Show version")
@@ -675,6 +685,8 @@ def main():
 
     if args.command == "stop":
         sys.exit(cmd_stop())
+    if args.command == "restart":
+        sys.exit(cmd_restart())
     if args.command == "status":
         sys.exit(cmd_status())
     if args.command == "doctor":
