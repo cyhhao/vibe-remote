@@ -1314,11 +1314,14 @@ class OpenCodeAgent(BaseAgent):
         emitted_assistant_messages: set[str] = set()
         poll_interval_seconds = 2.0
         final_text: Optional[str] = None
+        max_poll_iterations = 300  # 10 minutes with 2s intervals
+        poll_count = 0
 
         def _relative_path(path: str) -> str:
             return self._to_relative_path(path, request.working_path)
 
-        while True:
+        while poll_count < max_poll_iterations:
+            poll_count += 1
             try:
                 messages = await server.list_messages(session_id, directory)
             except Exception as poll_err:
@@ -1347,6 +1350,17 @@ class OpenCodeAgent(BaseAgent):
                     tool_name = part.get("tool") or "tool"
                     tool_state = part.get("state") or {}
                     tool_input = tool_state.get("input") or {}
+
+                    # Check for nested questions - warn but continue
+                    if (
+                        tool_name == "question"
+                        and tool_state.get("status") != "completed"
+                    ):
+                        logger.warning(
+                            "Detected nested question after answer submission for %s, "
+                            "continuing to process other messages",
+                            session_id,
+                        )
 
                     # Format and emit tool call
                     toolcall = self.im_client.formatter.format_toolcall(
@@ -1384,18 +1398,51 @@ class OpenCodeAgent(BaseAgent):
                 last_info = last_message.get("info", {})
                 last_id = last_info.get("id")
 
+                # Check for errors first
                 if (
                     last_id
                     and last_id not in baseline_message_ids
                     and last_info.get("role") == "assistant"
                     and last_info.get("time", {}).get("completed")
-                    and last_info.get("finish") != "tool-calls"
                 ):
-                    # Session completed
-                    final_text = self._extract_response_text(last_message)
-                    break
+                    msg_error = last_info.get("error")
+                    if msg_error:
+                        error_name = msg_error.get("name", "UnknownError")
+                        error_data = msg_error.get("data", {})
+                        error_msg = (
+                            error_data.get("message", "")
+                            if isinstance(error_data, dict)
+                            else str(error_data)
+                        )
+                        logger.error(
+                            "OpenCode error after question answer for %s: %s - %s",
+                            session_id,
+                            error_name,
+                            error_msg[:200],
+                        )
+                        await self.controller.emit_agent_message(
+                            request.context,
+                            "notify",
+                            f"OpenCode error after question answer: {error_name} - {error_msg[:500]}",
+                        )
+                        return
+
+                    # No error, check for normal completion
+                    if last_info.get("finish") != "tool-calls":
+                        # Session completed
+                        final_text = self._extract_response_text(last_message)
+                        break
 
             await asyncio.sleep(poll_interval_seconds)
+
+        # Check if timed out
+        if poll_count >= max_poll_iterations:
+            logger.warning(
+                "Post-answer polling timeout after %d iterations for %s",
+                poll_count,
+                session_id,
+            )
+            final_text = None  # Will trigger warning message
 
         # Emit final result
         if final_text:
