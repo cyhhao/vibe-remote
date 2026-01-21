@@ -926,6 +926,8 @@ class OpenCodeAgent(BaseAgent):
         self._session_locks: Dict[str, asyncio.Lock] = {}
         self._initialized_sessions: set[str] = set()
         self._pending_questions: Dict[str, Dict[str, Any]] = {}
+        # Events to signal when question answers are submitted
+        self._question_answer_events: Dict[str, asyncio.Event] = {}
 
     async def _get_server(self) -> OpenCodeServerManager:
         if self._server_manager is None:
