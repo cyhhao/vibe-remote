@@ -465,7 +465,9 @@ class Controller:
                 # Don't lstrip() - preserve intentional indentation in code blocks
                 sent_chars = len(first_part) - len(continuation_notice)
                 updated = updated[sent_chars:]
+                # Clear both local var and stored ID to avoid editing old message on failure
                 existing_message_id = None
+                self._consolidated_message_ids.pop(consolidated_key, None)
                 logger.info(
                     "Log Message chunk exceeded %d bytes, split and continuing",
                     max_bytes,
