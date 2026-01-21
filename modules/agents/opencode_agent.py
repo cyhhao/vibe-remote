@@ -928,6 +928,8 @@ class OpenCodeAgent(BaseAgent):
         self._pending_questions: Dict[str, Dict[str, Any]] = {}
         # Events to signal when question answers are submitted
         self._question_answer_events: Dict[str, asyncio.Event] = {}
+        # Track questions that have timed out to prevent late answers from resuming
+        self._timed_out_questions: set[str] = set()
 
     # Timeout for waiting on user to answer a question (30 minutes)
     QUESTION_WAIT_TIMEOUT_SECONDS = 30 * 60
@@ -962,13 +964,18 @@ class OpenCodeAgent(BaseAgent):
         # Create/clear event before waiting
         evt = self._get_or_create_question_event(request.base_session_id)
 
-        # Mark this as seen so we don't re-prompt on resume
-        # (caller should add to seen_tool_calls)
-
         try:
             await asyncio.wait_for(
                 evt.wait(), timeout=self.QUESTION_WAIT_TIMEOUT_SECONDS
             )
+            # Check if this question timed out while we were waiting
+            if request.base_session_id in self._timed_out_questions:
+                self._timed_out_questions.discard(request.base_session_id)
+                logger.warning(
+                    "Answer received after timeout for %s, ignoring",
+                    request.base_session_id,
+                )
+                return False
             logger.info(
                 "Answer received for %s, resuming poll loop", request.base_session_id
             )
@@ -979,7 +986,14 @@ class OpenCodeAgent(BaseAgent):
                 request.base_session_id,
                 self.QUESTION_WAIT_TIMEOUT_SECONDS,
             )
-            await self._handle_question_timeout(request, session_id, pending_payload)
+            # Mark as timed out to prevent late answers
+            self._timed_out_questions.add(request.base_session_id)
+            try:
+                await self._handle_question_timeout(
+                    request, session_id, pending_payload
+                )
+            except Exception as e:
+                logger.error(f"Error in timeout handler: {e}", exc_info=True)
             return False
         finally:
             self._clear_question_event(request.base_session_id, evt)
@@ -1366,6 +1380,12 @@ class OpenCodeAgent(BaseAgent):
         except Exception as err:
             logger.warning(f"Failed to reply OpenCode question: {err}")
             self._pending_questions[request.base_session_id] = pending
+
+            # Signal the waiting loop that answer failed (so it doesn't hang forever)
+            evt = self._question_answer_events.get(request.base_session_id)
+            if evt:
+                evt.set()
+
             await self.controller.emit_agent_message(
                 request.context,
                 "notify",
@@ -1375,6 +1395,12 @@ class OpenCodeAgent(BaseAgent):
 
         if not ok:
             self._pending_questions[request.base_session_id] = pending
+
+            # Signal the waiting loop that answer was rejected
+            evt = self._question_answer_events.get(request.base_session_id)
+            if evt:
+                evt.set()
+
             await self.controller.emit_agent_message(
                 request.context,
                 "notify",
@@ -2155,20 +2181,28 @@ class OpenCodeAgent(BaseAgent):
                         )
                         seen_tool_calls.add(call_key)
 
-                    if (
-                        info.get("time", {}).get("completed")
-                        and message_id not in emitted_assistant_messages
-                        and info.get("finish") == "tool-calls"
-                    ):
-                        text = self._extract_response_text(message)
-                        if text:
-                            await self.controller.emit_agent_message(
-                                request.context,
-                                "assistant",
-                                text,
-                                parse_mode="markdown",
-                            )
-                        emitted_assistant_messages.add(message_id)
+                    # Check if we need to restart after question answer
+                    if restart_poll:
+                        break  # Exit parts loop
+
+                # Check if we need to restart after question answer
+                if restart_poll:
+                    break  # Exit message loop
+
+                if (
+                    info.get("time", {}).get("completed")
+                    and message_id not in emitted_assistant_messages
+                    and info.get("finish") == "tool-calls"
+                ):
+                    text = self._extract_response_text(message)
+                    if text:
+                        await self.controller.emit_agent_message(
+                            request.context,
+                            "assistant",
+                            text,
+                            parse_mode="markdown",
+                        )
+                    emitted_assistant_messages.add(message_id)
 
                 if messages:
                     last_message = messages[-1]
