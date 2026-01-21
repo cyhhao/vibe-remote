@@ -1314,14 +1314,13 @@ class OpenCodeAgent(BaseAgent):
         emitted_assistant_messages: set[str] = set()
         poll_interval_seconds = 2.0
         final_text: Optional[str] = None
-        max_poll_iterations = 300  # 10 minutes with 2s intervals
-        poll_count = 0
 
         def _relative_path(path: str) -> str:
             return self._to_relative_path(path, request.working_path)
 
-        while poll_count < max_poll_iterations:
-            poll_count += 1
+        poll_iter = 0
+        while True:
+            poll_iter += 1
             try:
                 messages = await server.list_messages(session_id, directory)
             except Exception as poll_err:
@@ -1434,15 +1433,6 @@ class OpenCodeAgent(BaseAgent):
                         break
 
             await asyncio.sleep(poll_interval_seconds)
-
-        # Check if timed out
-        if poll_count >= max_poll_iterations:
-            logger.warning(
-                "Post-answer polling timeout after %d iterations for %s",
-                poll_count,
-                session_id,
-            )
-            final_text = None  # Will trigger warning message
 
         # Emit final result
         if final_text:
