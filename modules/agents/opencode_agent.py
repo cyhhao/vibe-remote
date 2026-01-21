@@ -52,13 +52,21 @@ def _parse_model_key(model_key: Optional[str]) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
-def _find_model_variants(opencode_models: dict, target_model: Optional[str]) -> Dict[str, Any]:
+def _find_model_variants(
+    opencode_models: dict, target_model: Optional[str]
+) -> Dict[str, Any]:
     target_provider, target_model_id = _parse_model_key(target_model)
-    if not target_provider or not target_model_id or not isinstance(opencode_models, dict):
+    if (
+        not target_provider
+        or not target_model_id
+        or not isinstance(opencode_models, dict)
+    ):
         return {}
     providers_data = opencode_models.get("providers", [])
     for provider in providers_data:
-        provider_id = provider.get("id") or provider.get("provider_id") or provider.get("name")
+        provider_id = (
+            provider.get("id") or provider.get("provider_id") or provider.get("name")
+        )
         if provider_id != target_provider:
             continue
 
@@ -82,7 +90,9 @@ def _find_model_variants(opencode_models: dict, target_model: Optional[str]) -> 
     return {}
 
 
-def _build_reasoning_options_from_variants(variants: Dict[str, Any]) -> List[Dict[str, str]]:
+def _build_reasoning_options_from_variants(
+    variants: Dict[str, Any],
+) -> List[Dict[str, str]]:
     sorted_variants = sorted(
         variants.keys(),
         key=lambda variant: (
@@ -255,7 +265,11 @@ class OpenCodeServerManager:
     def _is_opencode_serve_cmd(command: str, port: int) -> bool:
         if not command:
             return False
-        return "opencode" in command and " serve" in command and f"--port={port}" in command
+        return (
+            "opencode" in command
+            and " serve" in command
+            and f"--port={port}" in command
+        )
 
     def _is_port_available(self) -> bool:
         try:
@@ -328,7 +342,11 @@ class OpenCodeServerManager:
             self._clear_pid_file()
             return
 
-        if self._process and self._process.returncode is None and self._process.pid == pid:
+        if (
+            self._process
+            and self._process.returncode is None
+            and self._process.pid == pid
+        ):
             return
 
         # Check if the server is healthy before deciding to kill it.
@@ -357,7 +375,11 @@ class OpenCodeServerManager:
             return
 
         cmd = self._get_pid_command(pid)
-        if cmd and self._is_opencode_serve_cmd(cmd, self.port) and self._pid_exists(pid):
+        if (
+            cmd
+            and self._is_opencode_serve_cmd(cmd, self.port)
+            and self._pid_exists(pid)
+        ):
             await self._terminate_pid(pid, reason="orphaned and unhealthy")
         self._clear_pid_file()
 
@@ -471,7 +493,9 @@ class OpenCodeServerManager:
             # Don't terminate OpenCode server on vibe-remote shutdown.
             # Let it continue running so the next vibe-remote instance can adopt it.
             # This prevents interrupting tasks that are still in progress.
-            logger.info("OpenCode server left running for next vibe-remote instance to adopt")
+            logger.info(
+                "OpenCode server left running for next vibe-remote instance to adopt"
+            )
 
             # Keep pid_file so next instance knows about the running server.
             self._process = None
@@ -492,7 +516,9 @@ class OpenCodeServerManager:
         # Don't terminate OpenCode server on vibe-remote shutdown.
         # Let it continue running so the next vibe-remote instance can adopt it.
         # This prevents interrupting tasks that are still in progress.
-        logger.info("OpenCode server left running for next vibe-remote instance to adopt")
+        logger.info(
+            "OpenCode server left running for next vibe-remote instance to adopt"
+        )
 
         # Keep pid_file so next instance knows about the running server.
         # Don't clear _process reference - just let it be garbage collected.
@@ -506,7 +532,9 @@ class OpenCodeServerManager:
 
         # Don't terminate OpenCode server on vibe-remote shutdown.
         # Let it continue running so the next vibe-remote instance can adopt it.
-        logger.info("OpenCode server left running for next vibe-remote instance to adopt")
+        logger.info(
+            "OpenCode server left running for next vibe-remote instance to adopt"
+        )
 
     async def create_session(
         self, directory: str, title: Optional[str] = None
@@ -618,9 +646,7 @@ class OpenCodeServerManager:
         ) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
-                raise RuntimeError(
-                    f"Failed to get message: {resp.status} {error_text}"
-                )
+                raise RuntimeError(f"Failed to get message: {resp.status} {error_text}")
             return await resp.json()
 
     async def list_questions(
@@ -658,7 +684,6 @@ class OpenCodeServerManager:
             return bool(data)
 
     async def abort_session(self, session_id: str, directory: str) -> bool:
-
         session = await self._get_http_session()
 
         try:
@@ -703,7 +728,8 @@ class OpenCodeServerManager:
                     agents = await resp.json()
                     # Filter to primary agents (build, plan), exclude hidden/subagent
                     return [
-                        a for a in agents
+                        a
+                        for a in agents
                         if a.get("mode") == "primary" and not a.get("hidden", False)
                     ]
                 return []
@@ -815,7 +841,9 @@ class OpenCodeServerManager:
         agent_config = self._get_agent_config(config, agent_name)
         model = agent_config.get("model")
         if isinstance(model, str) and model:
-            logger.debug(f"Found model '{model}' for agent '{agent_name}' in opencode.json")
+            logger.debug(
+                f"Found model '{model}' for agent '{agent_name}' in opencode.json"
+            )
             return model
 
         # Fall back to global default model
@@ -853,7 +881,9 @@ class OpenCodeServerManager:
                 )
                 return reasoning_effort
             else:
-                logger.debug(f"Ignoring unknown reasoningEffort '{reasoning_effort}' for agent '{agent_name}'")
+                logger.debug(
+                    f"Ignoring unknown reasoningEffort '{reasoning_effort}' for agent '{agent_name}'"
+                )
 
         # Fall back to global default reasoningEffort
         reasoning_effort = config.get("reasoningEffort")
@@ -864,7 +894,9 @@ class OpenCodeServerManager:
                 )
                 return reasoning_effort
             else:
-                logger.debug(f"Ignoring unknown global reasoningEffort '{reasoning_effort}'")
+                logger.debug(
+                    f"Ignoring unknown global reasoningEffort '{reasoning_effort}'"
+                )
         return None
 
     def get_default_agent_from_config(self) -> Optional[str]:
@@ -924,7 +956,9 @@ class OpenCodeAgent(BaseAgent):
             try:
                 messages = await server.list_messages(session_id, directory)
             except Exception as err:
-                logger.debug(f"Failed to poll OpenCode session {session_id} for idle: {err}")
+                logger.debug(
+                    f"Failed to poll OpenCode session {session_id} for idle: {err}"
+                )
                 await asyncio.sleep(1.0)
                 continue
 
@@ -955,8 +989,12 @@ class OpenCodeAgent(BaseAgent):
         task: Optional[asyncio.Task] = None
         async with lock:
             pending = self._pending_questions.get(request.base_session_id)
-            is_modal_open = pending and request.message == "opencode_question:open_modal"
-            is_question_action = pending and request.message.startswith("opencode_question:")
+            is_modal_open = (
+                pending and request.message == "opencode_question:open_modal"
+            )
+            is_question_action = pending and request.message.startswith(
+                "opencode_question:"
+            )
 
             existing_task = self._active_requests.get(request.base_session_id)
             if existing_task and not existing_task.done():
@@ -1006,7 +1044,9 @@ class OpenCodeAgent(BaseAgent):
                     task = asyncio.create_task(self._process_message(request))
                     self._active_requests[request.base_session_id] = task
             elif pending:
-                pending_payload = self._pending_questions.pop(request.base_session_id, None)
+                pending_payload = self._pending_questions.pop(
+                    request.base_session_id, None
+                )
                 task = asyncio.create_task(
                     self._process_question_answer(request, pending_payload or {})
                 )
@@ -1032,9 +1072,7 @@ class OpenCodeAgent(BaseAgent):
                 self._active_requests.pop(request.base_session_id, None)
                 self._request_sessions.pop(request.base_session_id, None)
 
-    def _build_question_selection_note(
-        self, answers_payload: List[List[str]]
-    ) -> str:
+    def _build_question_selection_note(self, answers_payload: List[List[str]]) -> str:
         if not answers_payload:
             return ""
 
@@ -1078,7 +1116,9 @@ class OpenCodeAgent(BaseAgent):
                 pending=pending,
             )
         except Exception as err:
-            logger.error(f"Failed to open OpenCode question modal: {err}", exc_info=True)
+            logger.error(
+                f"Failed to open OpenCode question modal: {err}", exc_info=True
+            )
             await self.im_client.send_message(
                 request.context,
                 f"Failed to open modal: {err}. Please reply with a custom message.",
@@ -1099,7 +1139,9 @@ class OpenCodeAgent(BaseAgent):
         if pending_thread_id and not request.context.thread_id:
             request.context.thread_id = pending_thread_id
         try:
-            question_count_int = int(question_count) if question_count is not None else 1
+            question_count_int = (
+                int(question_count) if question_count is not None else 1
+            )
         except Exception:
             question_count_int = 1
         question_count_int = max(1, question_count_int)
@@ -1211,10 +1253,14 @@ class OpenCodeAgent(BaseAgent):
 
         if question_message_id:
             note = self._build_question_selection_note(answers_payload)
-            fallback_text = pending.get("prompt_text") if isinstance(pending, dict) else None
+            fallback_text = (
+                pending.get("prompt_text") if isinstance(pending, dict) else None
+            )
             if note:
                 try:
-                    updated_text = f"{fallback_text}\n\n{note}" if fallback_text else note
+                    updated_text = (
+                        f"{fallback_text}\n\n{note}" if fallback_text else note
+                    )
                     await self.im_client.remove_inline_keyboard(
                         request.context,
                         question_message_id,
@@ -1255,7 +1301,8 @@ class OpenCodeAgent(BaseAgent):
             )
             return
 
-        # After replying, continue polling for final assistant output.
+        # After replying, continue polling for all new messages until completion.
+        # We need to process intermediate messages, not just wait for the final one.
         baseline_message_ids: set[str] = set()
         try:
             baseline_messages = await server.list_messages(session_id, directory)
@@ -1266,37 +1313,146 @@ class OpenCodeAgent(BaseAgent):
         except Exception as e:
             logger.warning("Failed to get baseline messages for session %s: %s", session_id, e)
 
+        seen_tool_calls: set[str] = set()
+        emitted_assistant_messages: set[str] = set()
         poll_interval_seconds = 2.0
+        final_text: Optional[str] = None
+
+        def _relative_path(path: str) -> str:
+            return self._to_relative_path(path, request.working_path)
+
+        poll_iter = 0
         while True:
-            messages = await server.list_messages(session_id, directory)
-            if messages:
-                last = messages[-1]
-                last_info = last.get("info", {})
+            poll_iter += 1
+            try:
+                messages = await server.list_messages(session_id, directory)
+            except Exception as poll_err:
+                logger.warning(
+                    f"Failed to poll OpenCode messages after question answer: {poll_err}"
+                )
+                await asyncio.sleep(poll_interval_seconds)
+                continue
+
+            # Process all new messages
+            for message in messages:
+                info = message.get("info", {})
+                message_id = info.get("id")
+                if not message_id or message_id in baseline_message_ids:
+                    continue
+                if info.get("role") != "assistant":
+                    continue
+
+                # Process tool calls
+                for part in message.get("parts", []) or []:
+                    if part.get("type") != "tool":
+                        continue
+                    call_key = part.get("callID") or part.get("id")
+                    if not call_key or call_key in seen_tool_calls:
+                        continue
+                    tool_name = part.get("tool") or "tool"
+                    tool_state = part.get("state") or {}
+                    tool_input = tool_state.get("input") or {}
+
+                    # Check for nested questions - warn but continue
+                    if (
+                        tool_name == "question"
+                        and tool_state.get("status") != "completed"
+                    ):
+                        logger.warning(
+                            "Detected nested question after answer submission for %s, "
+                            "continuing to process other messages",
+                            session_id,
+                        )
+
+                    # Format and emit tool call
+                    toolcall = self.im_client.formatter.format_toolcall(
+                        tool_name,
+                        tool_input,
+                        get_relative_path=_relative_path,
+                    )
+                    await self.controller.emit_agent_message(
+                        request.context,
+                        "toolcall",
+                        toolcall,
+                        parse_mode="markdown",
+                    )
+                    seen_tool_calls.add(call_key)
+
+                # Emit intermediate assistant messages (tool-calls finish)
                 if (
-                    last_info.get("role") == "assistant"
-                    and last_info.get("time", {}).get("completed")
-                    and last_info.get("finish") != "tool-calls"
-                    and last_info.get("id") not in baseline_message_ids
+                    info.get("time", {}).get("completed")
+                    and message_id not in emitted_assistant_messages
+                    and info.get("finish") == "tool-calls"
                 ):
-                    text = self._extract_response_text(last)
+                    text = self._extract_response_text(message)
                     if text:
-                        await self.emit_result_message(
+                        await self.controller.emit_agent_message(
                             request.context,
+                            "assistant",
                             text,
-                            subtype="success",
-                            started_at=request.started_at,
                             parse_mode="markdown",
                         )
-                    else:
-                        await self.emit_result_message(
-                            request.context,
-                            "(No response from OpenCode)",
-                            subtype="warning",
-                            started_at=request.started_at,
+                    emitted_assistant_messages.add(message_id)
+
+            # Check for final completion
+            if messages:
+                last_message = messages[-1]
+                last_info = last_message.get("info", {})
+                last_id = last_info.get("id")
+
+                # Check for errors first
+                if (
+                    last_id
+                    and last_id not in baseline_message_ids
+                    and last_info.get("role") == "assistant"
+                    and last_info.get("time", {}).get("completed")
+                ):
+                    msg_error = last_info.get("error")
+                    if msg_error:
+                        error_name = msg_error.get("name", "UnknownError")
+                        error_data = msg_error.get("data", {})
+                        error_msg = (
+                            error_data.get("message", "")
+                            if isinstance(error_data, dict)
+                            else str(error_data)
                         )
-                    return
+                        logger.error(
+                            "OpenCode error after question answer for %s: %s - %s",
+                            session_id,
+                            error_name,
+                            error_msg[:200],
+                        )
+                        await self.controller.emit_agent_message(
+                            request.context,
+                            "notify",
+                            f"OpenCode error after question answer: {error_name} - {error_msg[:500]}",
+                        )
+                        return
+
+                    # No error, check for normal completion
+                    if last_info.get("finish") != "tool-calls":
+                        # Session completed
+                        final_text = self._extract_response_text(last_message)
+                        break
 
             await asyncio.sleep(poll_interval_seconds)
+
+        # Emit final result
+        if final_text:
+            await self.emit_result_message(
+                request.context,
+                final_text,
+                subtype="success",
+                started_at=request.started_at,
+                parse_mode="markdown",
+            )
+        else:
+            await self.emit_result_message(
+                request.context,
+                "(No response from OpenCode)",
+                subtype="warning",
+                started_at=request.started_at,
+            )
 
     async def _process_message(self, request: AgentRequest) -> None:
         try:
@@ -1413,7 +1569,9 @@ class OpenCodeAgent(BaseAgent):
                 override_reasoning = request.subagent_reasoning_effort
 
             if request.subagent_name and not override_model:
-                override_model = server.get_agent_model_from_config(request.subagent_name)
+                override_model = server.get_agent_model_from_config(
+                    request.subagent_name
+                )
             if request.subagent_name and not override_reasoning:
                 override_reasoning = server.get_agent_reasoning_effort_from_config(
                     request.subagent_name
@@ -1442,7 +1600,9 @@ class OpenCodeAgent(BaseAgent):
             # Priority: 1) channel override or prefix subagent, 2) agent's config, 3) global opencode.json config
             reasoning_effort = override_reasoning
             if not reasoning_effort:
-                reasoning_effort = server.get_agent_reasoning_effort_from_config(agent_to_use)
+                reasoning_effort = server.get_agent_reasoning_effort_from_config(
+                    agent_to_use
+                )
 
             # Use OpenCode's async prompt API so long-running turns don't hold a single HTTP request.
             baseline_message_ids: set[str] = set()
@@ -1543,7 +1703,10 @@ class OpenCodeAgent(BaseAgent):
                         tool_state = part.get("state") or {}
                         tool_input = tool_state.get("input") or {}
 
-                        if tool_name == "question" and tool_state.get("status") != "completed":
+                        if (
+                            tool_name == "question"
+                            and tool_state.get("status") != "completed"
+                        ):
                             logger.info(
                                 "Detected question toolcall for %s message=%s callID=%s",
                                 session_id,
@@ -1553,7 +1716,11 @@ class OpenCodeAgent(BaseAgent):
 
                             # Always render the question text from the tool input so the
                             # user can answer even if /question listing is temporarily empty.
-                            qlist = tool_input.get("questions") if isinstance(tool_input, dict) else None
+                            qlist = (
+                                tool_input.get("questions")
+                                if isinstance(tool_input, dict)
+                                else None
+                            )
                             qlist = qlist if isinstance(qlist, list) else []
 
                             question_fetch_deadline = time.monotonic() + 60.0
@@ -1576,7 +1743,9 @@ class OpenCodeAgent(BaseAgent):
                                 remaining = question_fetch_deadline - time.monotonic()
                                 if remaining <= 0:
                                     return 0.0
-                                return min(question_fetch_delays[attempt_index], remaining)
+                                return min(
+                                    question_fetch_delays[attempt_index], remaining
+                                )
 
                             question_id = None
                             questions_listing: List[Dict[str, Any]] = []
@@ -1589,7 +1758,9 @@ class OpenCodeAgent(BaseAgent):
                                         request.working_path
                                     )
                                     if not questions_listing:
-                                        questions_listing = await server.list_questions()
+                                        questions_listing = (
+                                            await server.list_questions()
+                                        )
                                     last_list_err = None
                                 except Exception as err:
                                     last_list_err = err
@@ -1635,12 +1806,16 @@ class OpenCodeAgent(BaseAgent):
 
                             if questions_listing and not qlist:
                                 try:
-                                    first_questions = questions_listing[0].get("questions")
+                                    first_questions = questions_listing[0].get(
+                                        "questions"
+                                    )
                                     if not isinstance(first_questions, list):
                                         first_questions = []
                                     listing_preview = {
                                         "id": questions_listing[0].get("id"),
-                                        "sessionID": questions_listing[0].get("sessionID"),
+                                        "sessionID": questions_listing[0].get(
+                                            "sessionID"
+                                        ),
                                         "tool": questions_listing[0].get("tool"),
                                         "questions_len": len(first_questions),
                                     }
@@ -1666,10 +1841,15 @@ class OpenCodeAgent(BaseAgent):
 
                                 for item in session_items:
                                     tool_meta = item.get("tool") or {}
-                                    if part.get("callID") and tool_meta.get("callID") == part.get("callID"):
+                                    if part.get("callID") and tool_meta.get(
+                                        "callID"
+                                    ) == part.get("callID"):
                                         matched_item = item
                                         break
-                                    if message_id and tool_meta.get("messageID") == message_id:
+                                    if (
+                                        message_id
+                                        and tool_meta.get("messageID") == message_id
+                                    ):
                                         matched_item = item
                                         break
 
@@ -1679,7 +1859,9 @@ class OpenCodeAgent(BaseAgent):
                                 if matched_item is None and part.get("callID"):
                                     for item in questions_listing:
                                         tool_meta = item.get("tool") or {}
-                                        if tool_meta.get("callID") == part.get("callID"):
+                                        if tool_meta.get("callID") == part.get(
+                                            "callID"
+                                        ):
                                             matched_item = item
                                             break
 
@@ -1718,13 +1900,21 @@ class OpenCodeAgent(BaseAgent):
                                         full_message = None
 
                                     if full_message:
-                                        for msg_part in full_message.get("parts", []) or []:
+                                        for msg_part in (
+                                            full_message.get("parts", []) or []
+                                        ):
                                             if msg_part.get("type") != "tool":
                                                 continue
                                             if msg_part.get("tool") != "question":
                                                 continue
-                                            msg_call_id = msg_part.get("callID") or msg_part.get("id")
-                                            if call_key and msg_call_id and msg_call_id != call_key:
+                                            msg_call_id = msg_part.get(
+                                                "callID"
+                                            ) or msg_part.get("id")
+                                            if (
+                                                call_key
+                                                and msg_call_id
+                                                and msg_call_id != call_key
+                                            ):
                                                 continue
                                             msg_state = msg_part.get("state") or {}
                                             msg_input = msg_state.get("input") or {}
@@ -1766,7 +1956,9 @@ class OpenCodeAgent(BaseAgent):
                             for q_idx, q in enumerate(qlist or []):
                                 if not isinstance(q, dict):
                                     continue
-                                title = (q.get("header") or f"Question {q_idx + 1}").strip()
+                                title = (
+                                    q.get("header") or f"Question {q_idx + 1}"
+                                ).strip()
                                 prompt = (q.get("question") or "").strip()
                                 options_raw = q.get("options")
                                 options: List[Dict[str, Any]] = (
@@ -1780,7 +1972,9 @@ class OpenCodeAgent(BaseAgent):
                                 for idx, opt in enumerate(options, start=1):
                                     if not isinstance(opt, dict):
                                         continue
-                                    label = (opt.get("label") or f"Option {idx}").strip()
+                                    label = (
+                                        opt.get("label") or f"Option {idx}"
+                                    ).strip()
                                     desc = (opt.get("description") or "").strip()
                                     if q_idx == 0:
                                         option_labels.append(label)
@@ -1792,7 +1986,9 @@ class OpenCodeAgent(BaseAgent):
                                 if q_idx < len(qlist) - 1:
                                     lines.append("")
 
-                            first_q = qlist[0] if qlist and isinstance(qlist[0], dict) else {}
+                            first_q = (
+                                qlist[0] if qlist and isinstance(qlist[0], dict) else {}
+                            )
                             multiple = bool(first_q.get("multiple"))
                             text = "\n".join(lines)
                             logger.info(
@@ -1836,16 +2032,29 @@ class OpenCodeAgent(BaseAgent):
                                 "questions": qlist,
                                 "thread_id": request.context.thread_id,
                             }
-                            self._pending_questions[request.base_session_id] = pending_payload
+                            self._pending_questions[request.base_session_id] = (
+                                pending_payload
+                            )
 
-                            if multiple or question_count != 1 or len(option_labels) > 10:
+                            if (
+                                multiple
+                                or question_count != 1
+                                or len(option_labels) > 10
+                            ):
                                 # Multi-select or multi-question: show full text + modal button
                                 modal_keyboard = None
                                 if hasattr(self.im_client, "send_message_with_buttons"):
                                     from modules.im import InlineButton, InlineKeyboard
 
                                     modal_keyboard = InlineKeyboard(
-                                        buttons=[[InlineButton(text="Choose…", callback_data="opencode_question:open_modal")]]
+                                        buttons=[
+                                            [
+                                                InlineButton(
+                                                    text="Choose…",
+                                                    callback_data="opencode_question:open_modal",
+                                                )
+                                            ]
+                                        ]
                                     )
 
                                 if modal_keyboard:
@@ -1863,9 +2072,13 @@ class OpenCodeAgent(BaseAgent):
                                             parse_mode="markdown",
                                         )
                                         if question_message_id:
-                                            pending_payload["prompt_message_id"] = question_message_id
+                                            pending_payload["prompt_message_id"] = (
+                                                question_message_id
+                                            )
                                         # Remove active poll when waiting for question response
-                                        self.settings_manager.remove_active_poll(session_id)
+                                        self.settings_manager.remove_active_poll(
+                                            session_id
+                                        )
                                         return
                                     except Exception as err:
                                         logger.warning(
@@ -1896,7 +2109,9 @@ class OpenCodeAgent(BaseAgent):
                                 row: list[InlineButton] = []
                                 for idx, label in enumerate(option_labels, start=1):
                                     callback = f"opencode_question:choose:{idx}"
-                                    row.append(InlineButton(text=label, callback_data=callback))
+                                    row.append(
+                                        InlineButton(text=label, callback_data=callback)
+                                    )
                                     if len(row) == 5:
                                         buttons.append(row)
                                         row = []
@@ -1910,14 +2125,18 @@ class OpenCodeAgent(BaseAgent):
                                         session_id,
                                         len(option_labels),
                                     )
-                                    question_message_id = await self.im_client.send_message_with_buttons(
-                                        request.context,
-                                        text,
-                                        keyboard,
-                                        parse_mode="markdown",
+                                    question_message_id = (
+                                        await self.im_client.send_message_with_buttons(
+                                            request.context,
+                                            text,
+                                            keyboard,
+                                            parse_mode="markdown",
+                                        )
                                     )
                                     if question_message_id:
-                                        pending_payload["prompt_message_id"] = question_message_id
+                                        pending_payload["prompt_message_id"] = (
+                                            question_message_id
+                                        )
                                     # Remove active poll when waiting for question response
                                     self.settings_manager.remove_active_poll(session_id)
                                     return
@@ -1989,7 +2208,11 @@ class OpenCodeAgent(BaseAgent):
                             last_error_message_id = last_id
                             error_name = msg_error.get("name", "UnknownError")
                             error_data = msg_error.get("data", {})
-                            error_msg = error_data.get("message", "") if isinstance(error_data, dict) else str(error_data)
+                            error_msg = (
+                                error_data.get("message", "")
+                                if isinstance(error_data, dict)
+                                else str(error_data)
+                            )
 
                             logger.warning(
                                 "OpenCode message error detected for %s: %s - %s (retry %d/%d)",
@@ -2029,7 +2252,7 @@ class OpenCodeAgent(BaseAgent):
                                         retry_err,
                                     )
                                     # Fall through to report error
-                            
+
                             # Retry limit reached or retry failed, report error to user
                             await self.controller.emit_agent_message(
                                 request.context,
@@ -2077,7 +2300,9 @@ class OpenCodeAgent(BaseAgent):
         except Exception as e:
             error_name = type(e).__name__
             error_details = str(e).strip()
-            error_text = f"{error_name}: {error_details}" if error_details else error_name
+            error_text = (
+                f"{error_name}: {error_details}" if error_details else error_name
+            )
 
             logger.error(f"OpenCode request failed: {error_text}", exc_info=True)
             try:
@@ -2110,7 +2335,9 @@ class OpenCodeAgent(BaseAgent):
 
         if not text_parts and parts:
             part_types = [p.get("type") for p in parts]
-            logger.debug(f"OpenCode response has no text parts; part types: {part_types}")
+            logger.debug(
+                f"OpenCode response has no text parts; part types: {part_types}"
+            )
 
         return "\n\n".join(text_parts).strip()
 
@@ -2129,8 +2356,6 @@ class OpenCodeAgent(BaseAgent):
             return abs_path
 
     async def handle_stop(self, request: AgentRequest) -> bool:
-
-
         task = self._active_requests.get(request.base_session_id)
         if not task or task.done():
             return False
@@ -2244,7 +2469,9 @@ class OpenCodeAgent(BaseAgent):
             # Session is still active if:
             # 1. There's an in-progress assistant message, OR
             # 2. The last assistant message finished with "tool-calls" (waiting for tool output)
-            session_still_active = has_in_progress or last_assistant_finish == "tool-calls"
+            session_still_active = (
+                has_in_progress or last_assistant_finish == "tool-calls"
+            )
 
             if not session_still_active:
                 # Session has completed, no need to restore
@@ -2260,9 +2487,7 @@ class OpenCodeAgent(BaseAgent):
                 f"(thread={poll_info.base_session_id}, cwd={poll_info.working_path})"
             )
 
-            task = asyncio.create_task(
-                self._restored_poll_loop(poll_info)
-            )
+            task = asyncio.create_task(self._restored_poll_loop(poll_info))
             self._active_requests[poll_info.base_session_id] = task
             self._request_sessions[poll_info.base_session_id] = (
                 poll_info.opencode_session_id,
@@ -2343,7 +2568,9 @@ class OpenCodeAgent(BaseAgent):
                             bool(last_info.get("error")),
                         )
                 except Exception as poll_err:
-                    logger.warning(f"Failed to poll OpenCode messages (restored): {poll_err}")
+                    logger.warning(
+                        f"Failed to poll OpenCode messages (restored): {poll_err}"
+                    )
                     await asyncio.sleep(poll_interval_seconds)
                     continue
 
@@ -2365,7 +2592,10 @@ class OpenCodeAgent(BaseAgent):
                         tool_state = part.get("state") or {}
                         tool_input = tool_state.get("input") or {}
 
-                        if tool_name == "question" and tool_state.get("status") != "completed":
+                        if (
+                            tool_name == "question"
+                            and tool_state.get("status") != "completed"
+                        ):
                             # Question detected - need user input, exit poll loop
                             logger.info(
                                 "Detected question in restored poll for %s, exiting poll loop",
@@ -2392,17 +2622,30 @@ class OpenCodeAgent(BaseAgent):
                         )
 
                         # Emit tool call summary (simplified for restored polls)
-                        if tool_name in ("read", "write", "edit", "bash", "glob", "grep"):
+                        if tool_name in (
+                            "read",
+                            "write",
+                            "edit",
+                            "bash",
+                            "glob",
+                            "grep",
+                        ):
                             tool_summary = f"`{tool_name}`"
                             if tool_name == "bash":
                                 cmd = tool_input.get("command", "")
                                 if cmd:
-                                    cmd_preview = cmd[:50] + "..." if len(cmd) > 50 else cmd
+                                    cmd_preview = (
+                                        cmd[:50] + "..." if len(cmd) > 50 else cmd
+                                    )
                                     tool_summary = f"`bash`: `{cmd_preview}`"
                             elif tool_name in ("read", "write", "edit"):
-                                path = tool_input.get("file_path") or tool_input.get("path", "")
+                                path = tool_input.get("file_path") or tool_input.get(
+                                    "path", ""
+                                )
                                 if path:
-                                    tool_summary = f"`{tool_name}`: `{_relative_path(path)}`"
+                                    tool_summary = (
+                                        f"`{tool_name}`: `{_relative_path(path)}`"
+                                    )
 
                             await self.controller.emit_agent_message(
                                 context, "tool_call", tool_summary
@@ -2424,7 +2667,9 @@ class OpenCodeAgent(BaseAgent):
                                 error_retry_count += 1
                                 if error_retry_count > error_retry_limit:
                                     await self.controller.emit_agent_message(
-                                        context, "notify", f"OpenCode error: {error_text}"
+                                        context,
+                                        "notify",
+                                        f"OpenCode error: {error_text}",
                                     )
                                     self.settings_manager.remove_active_poll(session_id)
                                     return
@@ -2457,13 +2702,17 @@ class OpenCodeAgent(BaseAgent):
             self.settings_manager.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
-            logger.info(f"Restored OpenCode poll cancelled for {poll_info.base_session_id}")
+            logger.info(
+                f"Restored OpenCode poll cancelled for {poll_info.base_session_id}"
+            )
             self.settings_manager.remove_active_poll(session_id)
             raise
         except Exception as e:
             error_name = type(e).__name__
             error_details = str(e).strip()
-            error_text = f"{error_name}: {error_details}" if error_details else error_name
+            error_text = (
+                f"{error_name}: {error_details}" if error_details else error_name
+            )
 
             logger.error(f"Restored OpenCode poll failed: {error_text}", exc_info=True)
             try:
