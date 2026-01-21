@@ -419,6 +419,10 @@ class OpenCodeQuestionHandler:
             except Exception as err:
                 logger.debug(f"Failed to add reaction to question message: {err}")
 
+        # Clear consolidated message ID so subsequent log messages appear after user's reply
+        # instead of editing the old consolidated message from before the question
+        self._controller.clear_consolidated_message_id(request.context)
+
         evt = self._question_answer_events.get(request.base_session_id)
         if evt:
             evt.set()

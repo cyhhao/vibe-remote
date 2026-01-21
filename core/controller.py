@@ -232,6 +232,17 @@ class Controller:
             self._consolidated_message_locks[key] = asyncio.Lock()
         return self._consolidated_message_locks[key]
 
+    def clear_consolidated_message_id(self, context: MessageContext) -> None:
+        """Clear consolidated message ID so next log message starts fresh.
+
+        Call this after user answers a question to make subsequent log messages
+        appear after the user's reply instead of editing the old consolidated message.
+        """
+        key = self._get_consolidated_message_key(context)
+        self._consolidated_message_ids.pop(key, None)
+        # Also clear the buffer so we don't append to stale content
+        self._consolidated_message_buffers.pop(key, None)
+
     def _get_consolidated_max_bytes(self) -> int:
         # Slack API hard limit is exactly 4000 BYTES (not characters) for chat.update
         # Chinese/emoji characters take 3-4 bytes each in UTF-8
@@ -443,6 +454,7 @@ class Controller:
                 first_part = self._truncate_consolidated(updated, target_bytes)
                 first_part = first_part.rstrip("…") + continuation_notice  # Replace truncation marker
 
+                send_ok = False
                 if existing_message_id:
                     try:
                         await self.im_client.edit_message(
@@ -451,6 +463,7 @@ class Controller:
                             text=first_part,
                             parse_mode="markdown",
                         )
+                        send_ok = True
                     except Exception as err:
                         logger.warning(f"Failed to edit oversized Log Message: {err}")
                 else:
@@ -458,8 +471,14 @@ class Controller:
                         await self.im_client.send_message(
                             target_context, first_part, parse_mode="markdown"
                         )
+                        send_ok = True
                     except Exception as err:
                         logger.error(f"Failed to send oversized Log Message: {err}")
+
+                if not send_ok:
+                    # Failed to send/edit - stop splitting and truncate the remainder
+                    logger.warning("Stopping split loop due to send failure, truncating remainder")
+                    break
 
                 # Continue with remainder (skip the part we already sent)
                 # Don't lstrip() - preserve intentional indentation in code blocks
