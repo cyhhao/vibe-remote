@@ -397,12 +397,15 @@ class OpenCodePollLoop:
                     started_at=started_at,
                 )
 
+            # Clean up answer reaction after result is sent
+            await self._question_handler.clear(poll_info.base_session_id)
             self._agent.settings_manager.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
             logger.info(
                 f"Restored OpenCode poll cancelled for {poll_info.base_session_id}"
             )
+            await self._question_handler.clear(poll_info.base_session_id)
             self._agent.settings_manager.remove_active_poll(session_id)
             raise
         except Exception as e:
