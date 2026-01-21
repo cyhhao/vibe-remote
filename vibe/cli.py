@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import os
 import shutil
 import signal
@@ -20,6 +21,8 @@ from config.v2_config import (
     V2Config,
 )
 from vibe import __version__, runtime
+
+logger = logging.getLogger(__name__)
 
 
 def _write_json(path, payload):
@@ -462,7 +465,8 @@ def _stop_opencode_server():
     
     try:
         info = json.loads(pid_file.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        logger.debug("Failed to parse OpenCode PID file: %s", e)
         return False
     
     pid = info.get("pid") if isinstance(info, dict) else None
@@ -481,14 +485,16 @@ def _stop_opencode_server():
         cmd = result.stdout.strip()
         if "opencode" not in cmd or "serve" not in cmd:
             return False
-    except Exception:
+    except Exception as e:
+        logger.debug("Failed to verify OpenCode process (pid=%s): %s", pid, e)
         return False
     
     try:
         os.kill(pid, signal.SIGTERM)
         pid_file.unlink(missing_ok=True)
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to stop OpenCode server (pid=%s): %s", pid, e)
         return False
 
 
