@@ -389,6 +389,15 @@ class OpenCodeQuestionHandler:
             )
             return
 
+        # Add 👀 reaction to question message to indicate answer received
+        if question_message_id and hasattr(self._im_client, "add_reaction"):
+            try:
+                await self._im_client.add_reaction(
+                    request.context, question_message_id, "eyes"
+                )
+            except Exception as err:
+                logger.debug(f"Failed to add reaction to question message: {err}")
+
         evt = self._question_answer_events.get(request.base_session_id)
         if evt:
             evt.set()
