@@ -53,7 +53,11 @@ class OpenCodeQuestionHandler:
         """Get or create an event for question answer coordination.
 
         Clears the event if it already exists (important for nested questions).
+        Also clears any stale timeout marker from previous runs.
         """
+
+        # Clear stale timeout marker - this is a new question, not a late answer
+        self._timed_out_questions.discard(base_session_id)
 
         evt = self._question_answer_events.get(base_session_id)
         if evt is None:
@@ -354,23 +358,17 @@ class OpenCodeQuestionHandler:
         except Exception as err:
             logger.warning(f"Failed to reply OpenCode question: {err}")
             self._pending_questions[request.base_session_id] = pending
-
-            evt = self._question_answer_events.get(request.base_session_id)
-            if evt:
-                evt.set()
-
+            # Do NOT set event here - let user retry, poll loop keeps waiting
             await self._controller.emit_agent_message(
                 request.context,
                 "notify",
-                f"Failed to submit answer to OpenCode: {err}",
+                f"Failed to submit answer to OpenCode: {err}. Please retry.",
             )
             return
 
         if not ok:
             self._pending_questions[request.base_session_id] = pending
-            evt = self._question_answer_events.get(request.base_session_id)
-            if evt:
-                evt.set()
+            # Do NOT set event here - let user retry, poll loop keeps waiting
             await self._controller.emit_agent_message(
                 request.context,
                 "notify",
