@@ -261,16 +261,14 @@ class Controller:
         """Truncate text to fit within max_bytes (UTF-8 encoded)."""
         if self._get_text_byte_length(text) <= max_bytes:
             return text
-        # Binary search for the right character position
-        encoded = text.encode("utf-8")
-        if len(encoded) <= max_bytes:
-            return text
+        # Reserve space for ellipsis (3 bytes for "…")
+        ellipsis = "…"
+        ellipsis_bytes = len(ellipsis.encode("utf-8"))  # 3 bytes
+        target_bytes = max_bytes - ellipsis_bytes
         # Truncate bytes and decode, handling partial characters
-        truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
-        return truncated.rstrip() + "…"
-        prefix = "…(truncated)…\n\n"
-        keep = max(0, max_chars - len(prefix))
-        return f"{prefix}{text[-keep:]}"
+        encoded = text.encode("utf-8")
+        truncated = encoded[:target_bytes].decode("utf-8", errors="ignore")
+        return truncated.rstrip() + ellipsis
 
     def resolve_agent_for_context(self, context: MessageContext) -> str:
         """Unified agent resolution with dynamic override support.
