@@ -176,7 +176,7 @@ async def opencode_options_async(cwd: str) -> dict:
 
     try:
         from config.v2_compat import to_app_config
-        from modules.agents.opencode_agent import (
+        from modules.agents.opencode import (
             OpenCodeServerManager,
             build_reasoning_effort_options,
         )
@@ -406,4 +406,3 @@ def do_upgrade(auto_restart: bool = True) -> dict:
         return {"ok": False, "message": "Upgrade timed out", "output": None, "restarting": False}
     except Exception as e:
         return {"ok": False, "message": str(e), "output": None, "restarting": False}
-

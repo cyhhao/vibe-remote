@@ -222,7 +222,10 @@ class Controller:
     def _get_consolidated_message_key(self, context: MessageContext) -> str:
         settings_key = self._get_settings_key(context)
         thread_key = context.thread_id or context.channel_id
-        return f"{settings_key}:{thread_key}"
+        # Include message_id to distinguish different conversation rounds within same thread
+        # Each user message triggers a new round with its own consolidated message
+        trigger_id = context.message_id or ""
+        return f"{settings_key}:{thread_key}:{trigger_id}"
 
     def _get_consolidated_message_lock(self, key: str) -> asyncio.Lock:
         if key not in self._consolidated_message_locks:
@@ -764,7 +767,7 @@ class Controller:
 
         # Stop OpenCode server if running
         try:
-            from modules.agents.opencode_agent import OpenCodeServerManager
+            from modules.agents.opencode import OpenCodeServerManager
             OpenCodeServerManager.stop_instance_sync()
         except Exception as e:
             logger.debug(f"OpenCode server cleanup skipped: {e}")
