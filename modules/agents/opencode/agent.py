@@ -282,6 +282,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
         except asyncio.CancelledError:
             logger.info(f"OpenCode request cancelled for {request.base_session_id}")
+            await self._question_handler.clear(request.base_session_id)
             if session_id:
                 self.settings_manager.remove_active_poll(session_id)
             raise
@@ -298,6 +299,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     f"Failed to abort OpenCode session after error: {abort_err}"
                 )
 
+            # Clean up answer reaction on error
+            await self._question_handler.clear(request.base_session_id)
             if session_id:
                 self.settings_manager.remove_active_poll(session_id)
 

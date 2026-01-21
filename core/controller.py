@@ -462,9 +462,9 @@ class Controller:
                         logger.error(f"Failed to send oversized Log Message: {err}")
 
                 # Continue with remainder (skip the part we already sent)
-                # Find how many characters fit in target_bytes
+                # Don't lstrip() - preserve intentional indentation in code blocks
                 sent_chars = len(first_part) - len(continuation_notice)
-                updated = updated[sent_chars:].lstrip()
+                updated = updated[sent_chars:]
                 existing_message_id = None
                 logger.info(
                     "Log Message chunk exceeded %d bytes, split and continuing",
