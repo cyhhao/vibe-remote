@@ -244,6 +244,7 @@ class OpenCodeQuestionHandler:
         question_count = pending.get("question_count")
         pending_thread_id = pending.get("thread_id")
         question_message_id = pending.get("prompt_message_id")
+        trigger_message_id = pending.get("trigger_message_id")  # Original request msg_id
 
         if pending_thread_id and not request.context.thread_id:
             request.context.thread_id = pending_thread_id
@@ -421,7 +422,7 @@ class OpenCodeQuestionHandler:
 
         # Clear consolidated message ID so subsequent log messages appear after user's reply
         # instead of editing the old consolidated message from before the question
-        self._controller.clear_consolidated_message_id(request.context)
+        self._controller.clear_consolidated_message_id(request.context, trigger_message_id)
 
         evt = self._question_answer_events.get(request.base_session_id)
         if evt:
@@ -720,6 +721,7 @@ class OpenCodeQuestionHandler:
             "multiple": multiple,
             "questions": qlist,
             "thread_id": request.context.thread_id,
+            "trigger_message_id": request.context.message_id,  # For consolidated key
         }
         self._pending_questions[request.base_session_id] = pending_payload
 

@@ -232,13 +232,25 @@ class Controller:
             self._consolidated_message_locks[key] = asyncio.Lock()
         return self._consolidated_message_locks[key]
 
-    def clear_consolidated_message_id(self, context: MessageContext) -> None:
+    def clear_consolidated_message_id(
+        self, context: MessageContext, trigger_message_id: Optional[str] = None
+    ) -> None:
         """Clear consolidated message ID so next log message starts fresh.
 
         Call this after user answers a question to make subsequent log messages
         appear after the user's reply instead of editing the old consolidated message.
+
+        Args:
+            context: The message context
+            trigger_message_id: If provided, use this instead of context.message_id
+                               for the consolidated key (needed when context is from
+                               user's answer message, not original request)
         """
-        key = self._get_consolidated_message_key(context)
+        # Build key with the original trigger message_id if provided
+        settings_key = self._get_settings_key(context)
+        thread_key = context.thread_id or context.channel_id
+        msg_id = trigger_message_id if trigger_message_id else (context.message_id or "")
+        key = f"{settings_key}:{thread_key}:{msg_id}"
         self._consolidated_message_ids.pop(key, None)
         # Also clear the buffer so we don't append to stale content
         self._consolidated_message_buffers.pop(key, None)
