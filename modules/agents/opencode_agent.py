@@ -951,6 +951,39 @@ class OpenCodeAgent(BaseAgent):
         if current is evt:
             self._question_answer_events.pop(base_session_id, None)
 
+    async def _wait_for_question_answer(
+        self, request: AgentRequest, session_id: str, pending_payload: Dict[str, Any]
+    ) -> bool:
+        """Wait for user to answer the question.
+
+        Returns:
+            True if answer was submitted successfully, False if timed out
+        """
+        # Create/clear event before waiting
+        evt = self._get_or_create_question_event(request.base_session_id)
+
+        # Mark this as seen so we don't re-prompt on resume
+        # (caller should add to seen_tool_calls)
+
+        try:
+            await asyncio.wait_for(
+                evt.wait(), timeout=self.QUESTION_WAIT_TIMEOUT_SECONDS
+            )
+            logger.info(
+                "Answer received for %s, resuming poll loop", request.base_session_id
+            )
+            return True
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timeout waiting for answer for %s after %d seconds",
+                request.base_session_id,
+                self.QUESTION_WAIT_TIMEOUT_SECONDS,
+            )
+            await self._handle_question_timeout(request, session_id, pending_payload)
+            return False
+        finally:
+            self._clear_question_event(request.base_session_id, evt)
+
     async def _handle_question_timeout(
         self, request: AgentRequest, session_id: str, pending: Dict[str, Any]
     ) -> None:
@@ -1579,6 +1612,7 @@ class OpenCodeAgent(BaseAgent):
             poll_iter = 0
             while True:
                 poll_iter += 1
+                restart_poll = False  # Flag to restart poll after question answer
                 try:
                     messages = await server.list_messages(
                         session_id=session_id,
@@ -1991,11 +2025,17 @@ class OpenCodeAgent(BaseAgent):
                                             pending_payload["prompt_message_id"] = (
                                                 question_message_id
                                             )
-                                        # Remove active poll when waiting for question response
-                                        self.settings_manager.remove_active_poll(
-                                            session_id
-                                        )
-                                        return
+                                        # Wait for user to answer question
+                                        seen_tool_calls.add(call_key)
+                                        if await self._wait_for_question_answer(
+                                            request, session_id, pending_payload
+                                        ):
+                                            # Answer submitted, restart poll to process new messages
+                                            restart_poll = True
+                                            break
+                                        else:
+                                            # Timeout, end the request
+                                            return
                                     except Exception as err:
                                         logger.warning(
                                             f"Failed to send modal button, falling back to text: {err}",
@@ -2007,9 +2047,17 @@ class OpenCodeAgent(BaseAgent):
                                     text,
                                     parse_mode="markdown",
                                 )
-                                # Remove active poll when waiting for question response
-                                self.settings_manager.remove_active_poll(session_id)
-                                return
+                                # Wait for user to answer question
+                                seen_tool_calls.add(call_key)
+                                if await self._wait_for_question_answer(
+                                    request, session_id, pending_payload
+                                ):
+                                    # Answer submitted, restart poll to process new messages
+                                    restart_poll = True
+                                    break
+                                else:
+                                    # Timeout, end the request
+                                    return
 
                             # single question + single select + <=10 options -> buttons
                             if (
@@ -2053,9 +2101,17 @@ class OpenCodeAgent(BaseAgent):
                                         pending_payload["prompt_message_id"] = (
                                             question_message_id
                                         )
-                                    # Remove active poll when waiting for question response
-                                    self.settings_manager.remove_active_poll(session_id)
-                                    return
+                                    # Wait for user to answer question
+                                    seen_tool_calls.add(call_key)
+                                    if await self._wait_for_question_answer(
+                                        request, session_id, pending_payload
+                                    ):
+                                        # Answer submitted, restart poll to process new messages
+                                        restart_poll = True
+                                        break
+                                    else:
+                                        # Timeout, end the request
+                                        return
                                 except Exception as err:
                                     logger.warning(
                                         f"Failed to send Slack buttons, falling back to text: {err}",
@@ -2074,9 +2130,17 @@ class OpenCodeAgent(BaseAgent):
                                     f"Failed to send question prompt to Slack: {err}",
                                     exc_info=True,
                                 )
-                            # Remove active poll when waiting for question response
-                            self.settings_manager.remove_active_poll(session_id)
-                            return
+                            # Wait for user to answer question
+                            seen_tool_calls.add(call_key)
+                            if await self._wait_for_question_answer(
+                                request, session_id, pending_payload
+                            ):
+                                # Answer submitted, restart poll to process new messages
+                                restart_poll = True
+                                break
+                            else:
+                                # Timeout, end the request
+                                return
 
                         toolcall = self.im_client.formatter.format_toolcall(
                             tool_name,
@@ -2185,6 +2249,13 @@ class OpenCodeAgent(BaseAgent):
                                 error_retry_count = 0
                             final_text = self._extract_response_text(last_message)
                             break
+
+                # Check if we need to restart poll after question answer
+                if restart_poll:
+                    logger.info(
+                        "Restarting poll loop for %s after question answer", session_id
+                    )
+                    continue  # Restart the while True loop
 
                 await asyncio.sleep(poll_interval_seconds)
 
