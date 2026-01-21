@@ -315,9 +315,14 @@ class Controller:
     ):
         """Centralized dispatch for agent messages.
 
-        - notify: always send immediately
-        - result: always send immediately (not hideable)
-        - system/assistant/toolcall: consolidate into a single editable message per thread
+        Message Types:
+        - Log Messages (system/assistant/toolcall): Consolidated into a single
+          editable message per conversation round. Can be hidden by user settings.
+        - Result Message: Final output, always sent immediately, not hideable.
+        - Notify Message: Notifications, always sent immediately.
+
+        Log Messages are accumulated and edited in-place until they exceed the
+        Slack character limit (4000 chars), then a new message is started.
         """
         if not text or not text.strip():
             return
@@ -364,6 +369,7 @@ class Controller:
                     )
             return
 
+        # Log Messages: system/assistant/toolcall - consolidated into editable message
         if canonical_type not in {"system", "assistant", "toolcall"}:
             canonical_type = "assistant"
 
@@ -382,21 +388,22 @@ class Controller:
 
         async with lock:
             chunk = text.strip()
+            max_chars = self._get_consolidated_max_chars()
+            split_threshold = self._get_consolidated_split_threshold()
             existing = self._consolidated_message_buffers.get(consolidated_key, "")
+            existing_message_id = self._consolidated_message_ids.get(consolidated_key)
+
             separator = "\n\n---\n\n" if existing else ""
             updated = f"{existing}{separator}{chunk}" if existing else chunk
 
-            split_threshold = self._get_consolidated_split_threshold()
-            existing_message_id = self._consolidated_message_ids.get(consolidated_key)
+            target_context = self._get_target_context(context)
+            continuation_notice = "\n\n---\n\n_(continued below...)_"
 
-            # Check if we need to split: accumulated message exceeds threshold
+            # Case 1: Accumulated message exceeds threshold, split off old message
             if existing_message_id and len(updated) > split_threshold:
-                # Append continuation notice to old message
-                continuation_notice = "\n\n---\n\n_(continued below...)_"
                 old_text = existing + continuation_notice
-                old_text = self._truncate_consolidated(old_text, self._get_consolidated_max_chars())
+                old_text = self._truncate_consolidated(old_text, max_chars)
 
-                target_context = self._get_target_context(context)
                 try:
                     await self.im_client.edit_message(
                         target_context,
@@ -405,22 +412,54 @@ class Controller:
                         parse_mode="markdown",
                     )
                 except Exception as err:
-                    logger.warning(f"Failed to finalize old consolidated message: {err}")
+                    logger.warning(f"Failed to finalize old Log Message: {err}")
 
-                # Clear buffer and message_id, start fresh with just the new chunk
+                # Start fresh with just the new chunk
                 self._consolidated_message_buffers[consolidated_key] = chunk
                 self._consolidated_message_ids.pop(consolidated_key, None)
                 updated = chunk
                 existing_message_id = None
                 logger.info(
-                    "Consolidated message exceeded %d chars, starting new message",
+                    "Log Message exceeded %d chars, starting new message",
                     split_threshold,
                 )
 
-            updated = self._truncate_consolidated(updated, self._get_consolidated_max_chars())
+            # Case 2: Single chunk (including first message) exceeds max_chars
+            # Split into multiple messages to avoid truncation
+            while len(updated) > max_chars:
+                # Send first part with continuation notice
+                split_at = split_threshold - len(continuation_notice)
+                first_part = updated[:split_at] + continuation_notice
+
+                if existing_message_id:
+                    try:
+                        await self.im_client.edit_message(
+                            target_context,
+                            existing_message_id,
+                            text=first_part,
+                            parse_mode="markdown",
+                        )
+                    except Exception as err:
+                        logger.warning(f"Failed to edit oversized Log Message: {err}")
+                else:
+                    try:
+                        await self.im_client.send_message(
+                            target_context, first_part, parse_mode="markdown"
+                        )
+                    except Exception as err:
+                        logger.error(f"Failed to send oversized Log Message: {err}")
+
+                # Continue with remainder
+                updated = updated[split_at:]
+                existing_message_id = None
+                logger.info(
+                    "Log Message chunk exceeded %d chars, split and continuing",
+                    max_chars,
+                )
+
+            updated = self._truncate_consolidated(updated, max_chars)
             self._consolidated_message_buffers[consolidated_key] = updated
 
-            target_context = self._get_target_context(context)
             if existing_message_id:
                 try:
                     ok = await self.im_client.edit_message(
@@ -430,7 +469,7 @@ class Controller:
                         parse_mode="markdown",
                     )
                 except Exception as err:
-                    logger.warning(f"Failed to edit consolidated message: {err}")
+                    logger.warning(f"Failed to edit Log Message: {err}")
                     ok = False
                 if ok:
                     return
@@ -442,7 +481,7 @@ class Controller:
                 )
                 self._consolidated_message_ids[consolidated_key] = new_id
             except Exception as err:
-                logger.error(f"Failed to send consolidated message: {err}", exc_info=True)
+                logger.error(f"Failed to send Log Message: {err}", exc_info=True)
 
     # Settings update handler (for Slack modal)
     async def handle_settings_update(
