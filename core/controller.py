@@ -232,15 +232,19 @@ class Controller:
             self._consolidated_message_locks[key] = asyncio.Lock()
         return self._consolidated_message_locks[key]
 
-    def _get_consolidated_max_chars(self) -> int:
-        # Slack API hard limit is exactly 4000 characters for chat.update
-        # (chat.postMessage may accept more, but editing fails above 4000)
+    def _get_consolidated_max_bytes(self) -> int:
+        # Slack API hard limit is exactly 4000 BYTES (not characters) for chat.update
+        # Chinese/emoji characters take 3-4 bytes each in UTF-8
         return 4000
 
     def _get_consolidated_split_threshold(self) -> int:
-        # When accumulated message exceeds this threshold, start a new message
+        # When accumulated message exceeds this threshold (in bytes), start a new message
         # to avoid Slack edit failures. Use 90% of max to leave some buffer.
         return 3600
+
+    def _get_text_byte_length(self, text: str) -> int:
+        """Get UTF-8 byte length of text (Slack counts bytes, not characters)."""
+        return len(text.encode("utf-8"))
 
     def _get_result_max_chars(self) -> int:
         return 30000
@@ -253,9 +257,17 @@ class Controller:
         keep = max(0, max_chars - len(prefix) - len(suffix))
         return f"{prefix}{text[:keep]}{suffix}"
 
-    def _truncate_consolidated(self, text: str, max_chars: int) -> str:
-        if len(text) <= max_chars:
+    def _truncate_consolidated(self, text: str, max_bytes: int) -> str:
+        """Truncate text to fit within max_bytes (UTF-8 encoded)."""
+        if self._get_text_byte_length(text) <= max_bytes:
             return text
+        # Binary search for the right character position
+        encoded = text.encode("utf-8")
+        if len(encoded) <= max_bytes:
+            return text
+        # Truncate bytes and decode, handling partial characters
+        truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
+        return truncated.rstrip() + "…"
         prefix = "…(truncated)…\n\n"
         keep = max(0, max_chars - len(prefix))
         return f"{prefix}{text[-keep:]}"
@@ -322,7 +334,7 @@ class Controller:
         - Notify Message: Notifications, always sent immediately.
 
         Log Messages are accumulated and edited in-place until they exceed the
-        Slack character limit (4000 chars), then a new message is started.
+        Slack byte limit (4000 bytes UTF-8), then a new message is started.
         """
         if not text or not text.strip():
             return
@@ -388,7 +400,7 @@ class Controller:
 
         async with lock:
             chunk = text.strip()
-            max_chars = self._get_consolidated_max_chars()
+            max_bytes = self._get_consolidated_max_bytes()
             split_threshold = self._get_consolidated_split_threshold()
             existing = self._consolidated_message_buffers.get(consolidated_key, "")
             existing_message_id = self._consolidated_message_ids.get(consolidated_key)
@@ -398,11 +410,12 @@ class Controller:
 
             target_context = self._get_target_context(context)
             continuation_notice = "\n\n---\n\n_(continued below...)_"
+            continuation_bytes = self._get_text_byte_length(continuation_notice)
 
-            # Case 1: Accumulated message exceeds threshold, split off old message
-            if existing_message_id and len(updated) > split_threshold:
+            # Case 1: Accumulated message exceeds threshold (in bytes), split off old message
+            if existing_message_id and self._get_text_byte_length(updated) > split_threshold:
                 old_text = existing + continuation_notice
-                old_text = self._truncate_consolidated(old_text, max_chars)
+                old_text = self._truncate_consolidated(old_text, max_bytes)
 
                 try:
                     await self.im_client.edit_message(
@@ -420,16 +433,17 @@ class Controller:
                 updated = chunk
                 existing_message_id = None
                 logger.info(
-                    "Log Message exceeded %d chars, starting new message",
+                    "Log Message exceeded %d bytes, starting new message",
                     split_threshold,
                 )
 
-            # Case 2: Single chunk (including first message) exceeds max_chars
+            # Case 2: Single chunk (including first message) exceeds max_bytes
             # Split into multiple messages to avoid truncation
-            while len(updated) > max_chars:
-                # Send first part with continuation notice
-                split_at = split_threshold - len(continuation_notice)
-                first_part = updated[:split_at] + continuation_notice
+            while self._get_text_byte_length(updated) > max_bytes:
+                # Find split point that fits within threshold (accounting for continuation notice)
+                target_bytes = split_threshold - continuation_bytes
+                first_part = self._truncate_consolidated(updated, target_bytes)
+                first_part = first_part.rstrip("…") + continuation_notice  # Replace truncation marker
 
                 if existing_message_id:
                     try:
@@ -449,15 +463,17 @@ class Controller:
                     except Exception as err:
                         logger.error(f"Failed to send oversized Log Message: {err}")
 
-                # Continue with remainder
-                updated = updated[split_at:]
+                # Continue with remainder (skip the part we already sent)
+                # Find how many characters fit in target_bytes
+                sent_chars = len(first_part) - len(continuation_notice)
+                updated = updated[sent_chars:].lstrip()
                 existing_message_id = None
                 logger.info(
-                    "Log Message chunk exceeded %d chars, split and continuing",
-                    max_chars,
+                    "Log Message chunk exceeded %d bytes, split and continuing",
+                    max_bytes,
                 )
 
-            updated = self._truncate_consolidated(updated, max_chars)
+            updated = self._truncate_consolidated(updated, max_bytes)
             self._consolidated_message_buffers[consolidated_key] = updated
 
             if existing_message_id:
