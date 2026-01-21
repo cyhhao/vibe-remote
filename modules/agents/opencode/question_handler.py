@@ -26,10 +26,11 @@ class OpenCodeQuestionHandler:
     # Timeout for waiting on user to answer a question (30 minutes)
     QUESTION_WAIT_TIMEOUT_SECONDS = 30 * 60
 
-    def __init__(self, controller, im_client, settings_manager):
+    def __init__(self, controller, im_client, settings_manager, get_server=None):
         self._controller = controller
         self._im_client = im_client
         self._settings_manager = settings_manager
+        self._get_server = get_server  # Callback to get server instance for abort
 
         self._pending_questions: Dict[str, PendingQuestionPayload] = {}
         self._question_answer_events: Dict[str, asyncio.Event] = {}
@@ -145,6 +146,18 @@ class OpenCodeQuestionHandler:
 
         # Stop restoring this on restart (since we're abandoning the run)
         self._settings_manager.remove_active_poll(session_id)
+
+        # Abort the OpenCode session so rerun starts fresh
+        directory = pending.get("directory")
+        if self._get_server and session_id and directory:
+            try:
+                server = await self._get_server()
+                await server.abort_session(session_id, directory)
+                logger.info(
+                    "Aborted OpenCode session %s after question timeout", session_id
+                )
+            except Exception as e:
+                logger.warning(f"Failed to abort session on timeout: {e}")
 
         await self._controller.emit_agent_message(
             request.context,

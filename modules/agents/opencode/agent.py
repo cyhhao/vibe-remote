@@ -39,7 +39,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         self._session_manager = OpenCodeSessionManager(self.settings_manager, self.name)
 
         self._question_handler = OpenCodeQuestionHandler(
-            self.controller, self.im_client, self.settings_manager
+            self.controller, self.im_client, self.settings_manager,
+            get_server=self._get_server,
         )
         self._poll_loop = OpenCodePollLoop(self, self._question_handler)
 
