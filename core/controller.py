@@ -232,7 +232,7 @@ class Controller:
             self._consolidated_message_locks[key] = asyncio.Lock()
         return self._consolidated_message_locks[key]
 
-    def clear_consolidated_message_id(
+    async def clear_consolidated_message_id(
         self, context: MessageContext, trigger_message_id: Optional[str] = None
     ) -> None:
         """Clear consolidated message ID so next log message starts fresh.
@@ -251,9 +251,13 @@ class Controller:
         thread_key = context.thread_id or context.channel_id
         msg_id = trigger_message_id if trigger_message_id else (context.message_id or "")
         key = f"{settings_key}:{thread_key}:{msg_id}"
-        self._consolidated_message_ids.pop(key, None)
-        # Also clear the buffer so we don't append to stale content
-        self._consolidated_message_buffers.pop(key, None)
+
+        # Use the same per-key lock as emit_agent_message to avoid race conditions
+        lock = self._get_consolidated_message_lock(key)
+        async with lock:
+            self._consolidated_message_ids.pop(key, None)
+            # Also clear the buffer so we don't append to stale content
+            self._consolidated_message_buffers.pop(key, None)
 
     def _get_consolidated_max_bytes(self) -> int:
         # Slack API hard limit is exactly 4000 BYTES (not characters) for chat.update
