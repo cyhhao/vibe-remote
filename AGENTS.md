@@ -31,6 +31,8 @@ This file defines how coding agents should work in this repository.
 ### Documentation Updates
 
 - When adding user-visible features, update the user documentation with usage guidance alongside the code changes.
+- For complex features, bug investigations, or refactorings that require detailed documentation (e.g., plans, testing guides, summaries), create a dedicated subfolder under `docs/` with a descriptive name (e.g., `docs/opencode-poll-loop-refactor/`). Place all related documentation files in that subfolder.
+- Do NOT place project-specific documentation in the root directory. Keep the root clean.
 
 ### Quality Bar
 
