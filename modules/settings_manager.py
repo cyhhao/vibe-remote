@@ -405,6 +405,32 @@ class SettingsManager:
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         return dict(agent_map)
 
+    def list_all_agent_sessions(
+        self, user_id: Union[int, str]
+    ) -> Dict[str, Dict[str, str]]:
+        """Return all stored session mappings for the user, grouped by agent.
+
+        Structure: {agent_name: {thread_id: session_id}}
+        """
+        user_key = self._normalize_user_id(user_id)
+        # Ensure namespaces exist
+        self.sessions_store._ensure_user_namespace(user_key)
+        agent_maps = self.sessions_store.state.session_mappings.get(user_key, {})
+        # Shallow copies to avoid accidental mutation
+        return {agent: dict(mapping) for agent, mapping in agent_maps.items()}
+
+    def list_all_agent_sessions(self, user_id: Union[int, str]) -> Dict[str, Dict[str, str]]:
+        """Return all stored session mappings for the user, grouped by agent.
+
+        Returns: {agent_name: {thread_id: session_id}}
+        """
+        user_key = self._normalize_user_id(user_id)
+        # Ensure namespace exists to avoid KeyError
+        self.sessions_store._ensure_user_namespace(user_key)
+        agent_maps = self.sessions_store.state.session_mappings.get(user_key, {})
+        # Return shallow copies to prevent accidental mutation
+        return {agent: dict(mapping) for agent, mapping in agent_maps.items()}
+
     # Backwards-compatible helpers for Claude-specific call sites
     def set_session_mapping(
         self,

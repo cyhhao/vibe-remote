@@ -144,6 +144,7 @@ class Controller:
             on_change_cwd=self.handle_change_cwd_submission,
             on_routing_update=self.handle_routing_update,
             on_routing_modal_update=self.handle_routing_modal_update,
+            on_resume_session=self.handle_resume_session_submission,
             on_ready=self._on_im_ready,
         )
 
@@ -614,6 +615,61 @@ class Controller:
             )
             await self.im_client.send_message(
                 context, f"❌ Failed to change working directory: {str(e)}"
+            )
+
+    async def handle_resume_session_submission(
+        self,
+        user_id: str,
+        channel_id: Optional[str],
+        thread_id: Optional[str],
+        agent: Optional[str],
+        session_id: Optional[str],
+    ) -> None:
+        """Bind a provided session_id to the current thread for the chosen agent."""
+        try:
+            if not agent or not session_id:
+                raise ValueError("Agent and session ID are required to resume.")
+
+            target_thread = (
+                thread_id
+                or (channel_id if channel_id and channel_id.startswith("D") else None)
+            )
+            # Build context for replies (use thread_id if provided)
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id or user_id,
+                thread_id=target_thread or None,
+                platform_specific={},
+            )
+
+            settings_key = self._get_settings_key(context)
+            base_session_id = f"slack_{target_thread or context.channel_id}"
+
+            # Persist mapping
+            self.settings_manager.set_agent_session_mapping(
+                settings_key, agent, base_session_id, session_id
+            )
+            # Mark thread active for visibility/cleanup semantics
+            if target_thread:
+                self.settings_manager.mark_thread_active(user_id, context.channel_id, target_thread)
+
+            agent_label = agent.capitalize()
+            confirmation = (
+                f"✅ Resumed {agent_label} session.\n"
+                f"Session ID: `{session_id}`\n"
+                "You can now continue the conversation in this thread."
+            )
+            await self.im_client.send_message(context, confirmation)
+        except Exception as e:
+            logger.error(f"Error resuming session: {e}", exc_info=True)
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id or user_id,
+                thread_id=thread_id or None,
+                platform_specific={},
+            )
+            await self.im_client.send_message(
+                context, f"❌ Failed to resume session: {str(e)}"
             )
 
     async def handle_routing_modal_update(
