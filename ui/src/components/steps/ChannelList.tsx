@@ -187,6 +187,17 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   const selectedCount = channels.filter((channel) => isChannelEnabled(channel.id)).length;
 
+  // Sort channels: enabled channels first
+  const sortedChannels = React.useMemo(() => {
+    return [...channels].sort((a, b) => {
+      const aEnabled = isChannelEnabled(a.id);
+      const bEnabled = isChannelEnabled(b.id);
+      if (aEnabled && !bEnabled) return -1;
+      if (!aEnabled && bEnabled) return 1;
+      return 0;
+    });
+  }, [channels, configs]);
+
   return (
     <div className={clsx('flex flex-col h-full', isPage ? 'max-w-5xl mx-auto' : '')}>
       <div className="flex justify-between items-center mb-6">
@@ -234,7 +245,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             {t('channelList.addTokenFirst')}
           </div>
         )}
-        {channels.map((channel) => {
+        {sortedChannels.map((channel) => {
           const rawConfig = configs[channel.id] || {};
           const def = defaultConfig();
           const channelConfig = {
