@@ -189,13 +189,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   // Sort channels: enabled channels first
   const sortedChannels = React.useMemo(() => {
-    return [...channels].sort((a, b) => {
-      const aEnabled = isChannelEnabled(a.id);
-      const bEnabled = isChannelEnabled(b.id);
-      if (aEnabled && !bEnabled) return -1;
-      if (!aEnabled && bEnabled) return 1;
-      return 0;
-    });
+    return [...channels].sort((a, b) =>
+      Number(isChannelEnabled(b.id)) - Number(isChannelEnabled(a.id))
+    );
   }, [channels, configs]);
 
   return (
