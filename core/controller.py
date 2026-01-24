@@ -624,17 +624,23 @@ class Controller:
         thread_id: Optional[str],
         agent: Optional[str],
         session_id: Optional[str],
+        host_message_ts: Optional[str] = None,
     ) -> None:
         """Bind a provided session_id to the current thread for the chosen agent."""
         try:
             if not agent or not session_id:
                 raise ValueError("Agent and session ID are required to resume.")
 
-            target_thread = (
-                thread_id
-                or (channel_id if channel_id and channel_id.startswith("D") else None)
-            )
-            # Build context for replies (use thread_id if provided)
+            # Decide whether to reuse current thread or start a new one for clarity.
+            reuse_thread = True
+            if host_message_ts and thread_id and thread_id == host_message_ts:
+                # Resume was initiated from the /start menu message; start a fresh thread.
+                reuse_thread = False
+
+            # If DM and no thread provided, reuse channel unless we intentionally create new thread later
+            target_thread = thread_id if reuse_thread else None
+
+            # Build confirmation context (top-level message when starting fresh)
             context = MessageContext(
                 user_id=user_id,
                 channel_id=channel_id or user_id,
@@ -642,24 +648,29 @@ class Controller:
                 platform_specific={},
             )
 
+            agent_label = agent.capitalize()
+            confirmation = (
+                f"✅ Resumed {agent_label} session.\n"
+                f"Session ID: `{session_id}`\n"
+                "Reply in this thread to continue."
+            )
+
+            confirmation_ts = await self.im_client.send_message(context, confirmation)
+
+            # If we created a fresh top-level message, use it as the new thread anchor
+            mapped_thread = target_thread or confirmation_ts
+            base_session_id = f"slack_{mapped_thread}"
+
             settings_key = self._get_settings_key(context)
-            base_session_id = f"slack_{target_thread or context.channel_id}"
 
             # Persist mapping
             self.settings_manager.set_agent_session_mapping(
                 settings_key, agent, base_session_id, session_id
             )
-            # Mark thread active for visibility/cleanup semantics
-            if target_thread:
-                self.settings_manager.mark_thread_active(user_id, context.channel_id, target_thread)
-
-            agent_label = agent.capitalize()
-            confirmation = (
-                f"✅ Resumed {agent_label} session.\n"
-                f"Session ID: `{session_id}`\n"
-                "You can now continue the conversation in this thread."
+            # Mark thread active
+            self.settings_manager.mark_thread_active(
+                user_id, context.channel_id, mapped_thread
             )
-            await self.im_client.send_message(context, confirmation)
         except Exception as e:
             logger.error(f"Error resuming session: {e}", exc_info=True)
             context = MessageContext(

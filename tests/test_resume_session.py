@@ -27,10 +27,14 @@ class _StubIMClient:
         self.resume_calls = []
 
     async def send_message(self, context, text):
-        self.messages.append((context.channel_id, context.thread_id, text))
+        ts = f"T{len(self.messages)+1}"
+        self.messages.append((context.channel_id, context.thread_id, text, ts))
+        return ts
 
-    async def open_resume_session_modal(self, trigger_id, sessions_by_agent, channel_id, thread_id):
-        self.resume_calls.append((trigger_id, sessions_by_agent, channel_id, thread_id))
+    async def open_resume_session_modal(
+        self, trigger_id, sessions_by_agent, channel_id, thread_id, host_message_ts
+    ):
+        self.resume_calls.append((trigger_id, sessions_by_agent, channel_id, thread_id, host_message_ts))
 
 
 class _StubConfig:
@@ -87,9 +91,9 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
             session_id="sess_dm",
         )
 
-        # In DM, thread falls back to channel id for base session key
-        self.assertEqual(settings.set_calls, [("DXYZ", "codex", "slack_DXYZ", "sess_dm")])
-        self.assertEqual(settings.mark_calls, [("U999", "DXYZ", "DXYZ")])
+        # No thread provided -> new confirmation message anchor used
+        self.assertEqual(settings.set_calls, [("DXYZ", "codex", "slack_T1", "sess_dm")])
+        self.assertEqual(settings.mark_calls, [("U999", "DXYZ", "T1")])
 
     async def test_command_handlers_handle_resume_opens_modal(self):
         settings = _StubSettingsManager()
@@ -110,8 +114,8 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         # One info message about missing sessions
         self.assertEqual(len(im_client.messages), 1)
         self.assertIn("No stored sessions", im_client.messages[0][2])
-        # Modal opened with empty sessions map
-        self.assertEqual(im_client.resume_calls, [("TRIG", {}, "CCHAN", "TH1")])
+        # Modal opened with empty sessions map and host ts
+        self.assertEqual(im_client.resume_calls, [("TRIG", {}, "CCHAN", "TH1", "TS1")])
 
 
 if __name__ == "__main__":

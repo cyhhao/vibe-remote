@@ -911,18 +911,20 @@ class SlackBot(BaseIMClient):
             metadata_raw = view.get("private_metadata")
             channel_id = None
             thread_id = None
+            host_message_ts = None
             try:
                 import json
 
                 md = json.loads(metadata_raw) if metadata_raw else {}
                 channel_id = md.get("channel_id")
                 thread_id = md.get("thread_id")
+                host_message_ts = md.get("host_message_ts")
             except Exception:
                 pass
 
             if hasattr(self, "_on_resume_session"):
                 await self._on_resume_session(
-                    user_id, channel_id, thread_id, chosen_agent, chosen_session
+                    user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts
                 )
 
         elif callback_id == "opencode_question_modal":
@@ -1439,6 +1441,7 @@ class SlackBot(BaseIMClient):
         sessions_by_agent: Dict[str, Dict[str, str]],
         channel_id: Optional[str],
         thread_id: Optional[str],
+        host_message_ts: Optional[str],
     ):
         """Open a modal to let users select or input a session to resume."""
         self._ensure_clients()
@@ -1541,7 +1544,11 @@ class SlackBot(BaseIMClient):
             }
         )
 
-        metadata = {"channel_id": channel_id, "thread_id": thread_id}
+        metadata = {
+            "channel_id": channel_id,
+            "thread_id": thread_id,
+            "host_message_ts": host_message_ts,
+        }
         import json
 
         view = {

@@ -348,6 +348,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 sessions_by_agent=sessions_by_agent,
                 channel_id=context.channel_id,
                 thread_id=context.thread_id or context.message_id or "",
+                host_message_ts=context.message_id,
             )
         except Exception as e:
             logger.error(f"Error opening resume modal: {e}")

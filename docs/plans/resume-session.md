@@ -30,7 +30,7 @@ Add a user-facing resume entry point in Slack (/start menu) to let users pick or
 - [x] Add modal schema + open handler for `cmd_resume` callback.
 - [x] Implement modal submission handler: resolve session_id (manual input wins), persist via SettingsManager, mark thread active, send confirmation.
 - [x] Add helper(s) in SettingsManager to list stored session mappings per agent with metadata for display.
-- [ ] Add tests / manual check notes (if no test harness, include sanity steps).
+- [x] Add tests / manual check notes (if no test harness, include sanity steps).
 
 ## Open Questions
 - Do we surface stored sessions across all channels or per-user? (Plan: per-user across channels, consistent with SessionStore namespace.)
