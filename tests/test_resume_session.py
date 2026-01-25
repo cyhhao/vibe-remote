@@ -1,4 +1,3 @@
-import asyncio
 import unittest
 
 from core.controller import Controller
@@ -11,8 +10,12 @@ class _StubSettingsManager:
         self.set_calls = []
         self.mark_calls = []
 
-    def set_agent_session_mapping(self, settings_key, agent_name, thread_id, session_id):
-        self.set_calls.append((settings_key, agent_name, thread_id, session_id))
+    def set_agent_session_mapping(
+        self, settings_key, agent_name, thread_id, session_id
+    ):
+        self.set_calls.append(
+            (settings_key, agent_name, thread_id, session_id)
+        )
 
     def mark_thread_active(self, user_id, channel_id, thread_ts):
         self.mark_calls.append((user_id, channel_id, thread_ts))
@@ -34,7 +37,9 @@ class _StubIMClient:
     async def open_resume_session_modal(
         self, trigger_id, sessions_by_agent, channel_id, thread_id, host_message_ts
     ):
-        self.resume_calls.append((trigger_id, sessions_by_agent, channel_id, thread_id, host_message_ts))
+        self.resume_calls.append(
+            (trigger_id, sessions_by_agent, channel_id, thread_id, host_message_ts)
+        )
 
 
 class _StubConfig:
@@ -73,7 +78,10 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
             session_id="sess_abc",
         )
 
-        self.assertEqual(settings.set_calls, [("C111", "claude", "slack_169999.123", "sess_abc")])
+        self.assertEqual(
+            settings.set_calls,
+            [("C111", "claude", "slack_169999.123", "sess_abc")],
+        )
         self.assertEqual(settings.mark_calls, [("U123", "C111", "169999.123")])
         self.assertIn("sess_abc", im_client.messages[0][2])
 
