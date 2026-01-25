@@ -11,6 +11,7 @@ export type ApiContextType = {
   slackManifest: () => Promise<{ ok: boolean; manifest?: string; manifest_compact?: string; error?: string }>;
   doctor: () => Promise<any>;
   opencodeOptions: (cwd: string) => Promise<any>;
+  opencodeSetupPermission: () => Promise<{ ok: boolean; message: string; config_path: string }>;
   getLogs: (lines?: number) => Promise<{ logs: LogEntry[]; total: number }>;
   getVersion: () => Promise<VersionInfo>;
   doUpgrade: () => Promise<UpgradeResult>;
@@ -75,6 +76,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     slackManifest: () => getJson('/slack/manifest'),
     doctor: () => postJson('/doctor', {}),
     opencodeOptions: (cwd) => postJson('/opencode/options', { cwd }),
+    opencodeSetupPermission: () => postJson('/opencode/setup-permission', {}),
     getLogs: (lines = 500) => postJson('/logs', { lines }),
     getVersion: () => getJson('/version'),
     doUpgrade: () => postJson('/upgrade', {}),

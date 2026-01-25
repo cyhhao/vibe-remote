@@ -116,7 +116,12 @@
     "cliPath": "CLI Path",
     "cliPathPlaceholder": "Path to {{name}} CLI...",
     "cliPathDetection": "CLI path detection and enablement",
-    "recommended": "(recommended)"
+    "recommended": "(recommended)",
+    "setupPermission": "Setup Permission",
+    "settingUpPermission": "Setting up...",
+    "permissionSetupSuccess": "Permission configured successfully",
+    "permissionSetupFailed": "Failed to configure permission",
+    "permissionRequired": "Required: Allow all permissions to work with Vibe Remote"
   },
   "channelList": {
     "title": "Channel Settings",

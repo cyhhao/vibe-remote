@@ -20,6 +20,8 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   const { t } = useTranslation();
   const api = useApi();
   const [checking, setChecking] = useState(false);
+  const [settingUpPermission, setSettingUpPermission] = useState(false);
+  const [permissionSetupMessage, setPermissionSetupMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
   const [defaultBackend, setDefaultBackend] = useState<string>(data.default_backend || 'opencode');
   const [agents, setAgents] = useState<Record<string, AgentState>>(
     data.agents || {
@@ -65,6 +67,23 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
       ...prev,
       [name]: { ...prev[name], enabled },
     }));
+  };
+
+  const setupOpenCodePermission = async () => {
+    setSettingUpPermission(true);
+    setPermissionSetupMessage(null);
+    try {
+      const result = await api.opencodeSetupPermission();
+      if (result.ok) {
+        setPermissionSetupMessage({ type: 'success', text: t('agentDetection.permissionSetupSuccess') });
+      } else {
+        setPermissionSetupMessage({ type: 'error', text: result.message || t('agentDetection.permissionSetupFailed') });
+      }
+    } catch (error) {
+      setPermissionSetupMessage({ type: 'error', text: t('agentDetection.permissionSetupFailed') });
+    } finally {
+      setSettingUpPermission(false);
+    }
   };
 
   const canContinue = Object.values(agents).some((agent) => agent.enabled);
@@ -150,6 +169,38 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                     </button>
                   </div>
               </div>
+
+              {name === 'opencode' && agent.status === 'ok' && (
+                <div className="mt-2 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                  <p className="text-xs text-amber-800 dark:text-amber-200 mb-2 font-medium">
+                    {t('agentDetection.permissionRequired')}
+                  </p>
+                  <button
+                    onClick={setupOpenCodePermission}
+                    disabled={settingUpPermission}
+                    className="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-400 text-white rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+                  >
+                    {settingUpPermission ? (
+                      <>
+                        <RefreshCw size={14} className="animate-spin" />
+                        {t('agentDetection.settingUpPermission')}
+                      </>
+                    ) : (
+                      t('agentDetection.setupPermission')
+                    )}
+                  </button>
+                  {permissionSetupMessage && (
+                    <div className={clsx(
+                      "mt-2 p-2 rounded text-xs font-medium",
+                      permissionSetupMessage.type === 'success' 
+                        ? "bg-green-50 dark:bg-green-950/20 text-green-800 dark:text-green-200 border border-green-200 dark:border-green-800"
+                        : "bg-red-50 dark:bg-red-950/20 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800"
+                    )}>
+                      {permissionSetupMessage.text}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))}

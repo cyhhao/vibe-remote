@@ -62,14 +62,20 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
 
             payload = runtime.read_status()
             pid_path = paths.get_runtime_pid_path()
-            pid = pid_path.read_text(encoding="utf-8").strip() if pid_path.exists() else None
+            pid = (
+                pid_path.read_text(encoding="utf-8").strip()
+                if pid_path.exists()
+                else None
+            )
             running = bool(pid and pid.isdigit() and runtime.pid_alive(int(pid)))
             payload["running"] = running
             payload["pid"] = int(pid) if pid and pid.isdigit() else None
             if running:
                 payload["service_pid"] = payload.get("service_pid") or payload["pid"]
             elif payload.get("state") == "running":
-                runtime.write_status("stopped", "process not running", None, payload.get("ui_pid"))
+                runtime.write_status(
+                    "stopped", "process not running", None, payload.get("ui_pid")
+                )
                 payload = runtime.read_status()
                 payload["running"] = False
                 payload["pid"] = None
@@ -124,7 +130,10 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
         else:
             file_path = ui_dist / requested_path
         resolved_path = file_path.resolve()
-        if ui_dist.resolve() not in resolved_path.parents and resolved_path != ui_dist.resolve():
+        if (
+            ui_dist.resolve() not in resolved_path.parents
+            and resolved_path != ui_dist.resolve()
+        ):
             self._send_json({"error": "not_found"}, status=404)
             return
 
@@ -164,7 +173,9 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
                 config = runtime.ensure_config()
                 runtime.stop_service()
                 service_pid = runtime.start_service()
-                runtime.write_status("running", "started", service_pid, status.get("ui_pid"))
+                runtime.write_status(
+                    "running", "started", service_pid, status.get("ui_pid")
+                )
             elif action == "stop":
                 runtime.stop_service()
                 # Also terminate OpenCode server on full stop
@@ -174,8 +185,12 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
                 runtime.stop_service()
                 config = runtime.ensure_config()
                 service_pid = runtime.start_service()
-                runtime.write_status("running", "restarted", service_pid, status.get("ui_pid"))
-            self._send_json({"ok": True, "action": action, "status": runtime.read_status()})
+                runtime.write_status(
+                    "running", "restarted", service_pid, status.get("ui_pid")
+                )
+            self._send_json(
+                {"ok": True, "action": action, "status": runtime.read_status()}
+            )
             return
         if self.path == "/config":
             from vibe import api
@@ -208,6 +223,7 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
                 import time
                 from config import paths as config_paths
                 from vibe.runtime import get_working_dir
+
                 working_dir = get_working_dir()
                 # Start new UI server process first (it will retry until port is available)
                 command = f"from vibe.ui_server import run_ui_server; run_ui_server('{host}', {port})"
@@ -226,7 +242,9 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
                 stdout.close()
                 stderr.close()
                 # Write new PID
-                config_paths.get_runtime_ui_pid_path().write_text(str(process.pid), encoding="utf-8")
+                config_paths.get_runtime_ui_pid_path().write_text(
+                    str(process.pid), encoding="utf-8"
+                )
                 runtime.write_status(
                     status.get("state", "running"),
                     status.get("detail"),
@@ -280,7 +298,9 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
             try:
                 with open(log_path, "r", encoding="utf-8", errors="replace") as f:
                     all_lines = f.readlines()
-                    recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                    recent_lines = (
+                        all_lines[-lines:] if len(all_lines) > lines else all_lines
+                    )
                 # Parse log lines
                 # Format: 2026-01-19 18:46:42,292 - slack_sdk.socket_mode.aiohttp - DEBUG - [__init__.py:246] - message
                 log_pattern = re.compile(
@@ -291,12 +311,14 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
                     line = line.rstrip("\n")
                     match = log_pattern.match(line)
                     if match:
-                        logs.append({
-                            "timestamp": match.group(1),
-                            "logger": match.group(2),
-                            "level": match.group(3),
-                            "message": match.group(4),
-                        })
+                        logs.append(
+                            {
+                                "timestamp": match.group(1),
+                                "logger": match.group(2),
+                                "level": match.group(3),
+                                "message": match.group(4),
+                            }
+                        )
                     elif logs and line:
                         # Continuation of previous log (multiline)
                         logs[-1]["message"] += "\n" + line
@@ -320,6 +342,12 @@ class UiHandler(http.server.BaseHTTPRequestHandler):
             result = api.do_upgrade()
             self._send_json(result)
             return
+        if self.path == "/opencode/setup-permission":
+            from vibe import api
+
+            result = api.setup_opencode_permission()
+            self._send_json(result)
+            return
         self._send_json({"error": "not_found"}, status=404)
 
 
@@ -330,6 +358,7 @@ class ThreadingHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 def run_ui_server(host: str, port: int) -> None:
     import time
+
     paths.ensure_data_dirs()
     print(f"UI Server running at http://{host}:{port}")
     # Retry binding in case of TIME_WAIT
