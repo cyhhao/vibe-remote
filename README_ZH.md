@@ -196,6 +196,14 @@ vibe doctor   # 诊断问题
 ```bash
 curl -fsSL https://opencode.ai/install | bash
 ```
+
+**必须配置：** 在 `~/.opencode/opencode.json` 中添加以下配置：
+
+```json
+{
+  "permission": "allow"
+}
+```
 </details>
 
 <details>
