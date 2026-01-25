@@ -3,6 +3,8 @@ import unittest
 from core.controller import Controller
 from core.handlers.command_handlers import CommandHandlers
 from modules.im import MessageContext
+from modules.im.slack import SlackBot
+from config.v2_config import SlackConfig
 
 
 class _StubSettingsManager:
@@ -124,6 +126,47 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("No stored sessions", im_client.messages[0][2])
         # Modal opened with empty sessions map and host ts
         self.assertEqual(im_client.resume_calls, [("TRIG", {}, "CCHAN", "TH1", "TS1")])
+
+    async def test_resume_modal_manual_session_uses_manual_agent(self):
+        cfg = SlackConfig(bot_token="xoxb-test")
+        slack = SlackBot(cfg)
+        received = {}
+
+        async def _on_resume(user_id, channel_id, thread_id, agent, session, host_ts):
+            received["args"] = (user_id, channel_id, thread_id, agent, session, host_ts)
+
+        slack._on_resume_session = _on_resume
+
+        payload = {
+            "type": "view_submission",
+            "user": {"id": "U1"},
+            "view": {
+                "callback_id": "resume_session_modal",
+                "state": {
+                    "values": {
+                        "agent_block": {
+                            "agent_select": {"selected_option": {"value": "codex"}}
+                        },
+                        "manual_block": {"manual_input": {"value": "manual_sess"}},
+                        "session_block": {
+                            "session_select": {
+                                "selected_option": {"value": "claude|sess_drop"}
+                            }
+                        },
+                    }
+                },
+                "private_metadata": (
+                    '{"channel_id":"C1","thread_id":"TH1","host_message_ts":"TS1"}'
+                ),
+            },
+        }
+
+        await slack._handle_view_submission(payload)
+
+        self.assertEqual(
+            received["args"],
+            ("U1", "C1", "TH1", "codex", "manual_sess", "TS1"),
+        )
 
 
 if __name__ == "__main__":

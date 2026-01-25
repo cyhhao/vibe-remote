@@ -902,12 +902,13 @@ class SlackBot(BaseIMClient):
             if selected_value and "|" in selected_value:
                 selected_agent, selected_session = selected_value.split("|", 1)
 
-            # manual input takes precedence
-            chosen_session = manual_session or selected_session
-            chosen_agent = selected_agent or agent
-            if manual_session and not chosen_agent:
-                # fallback to agent select when manual filled
-                chosen_agent = agent
+            # Manual input takes precedence and should respect the manual agent selector.
+            if manual_session:
+                chosen_session = manual_session
+                chosen_agent = agent or selected_agent
+            else:
+                chosen_session = selected_session
+                chosen_agent = selected_agent or agent
             metadata_raw = view.get("private_metadata")
             channel_id = None
             thread_id = None
