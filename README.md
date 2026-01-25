@@ -196,6 +196,14 @@ You need at least one coding agent installed:
 ```bash
 curl -fsSL https://opencode.ai/install | bash
 ```
+
+**Required:** Add to `~/.opencode/opencode.json` to skip permission prompts:
+
+```json
+{
+  "permission": "allow"
+}
+```
 </details>
 
 <details>
