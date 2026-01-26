@@ -236,6 +236,25 @@ class MessageHandler:
                     await self._delete_ack(context.channel_id, request)
         except Exception as e:
             logger.error(f"Error processing user message: {e}", exc_info=True)
+            # Clean up reaction on any exception
+            # Use try/except to safely access possibly-unbound local variables
+            try:
+                try:
+                    # Try using request object if it was created
+                    if request.ack_reaction_message_id:  # type: ignore[possibly-undefined]
+                        await self._remove_ack_reaction(context, request)  # type: ignore[possibly-undefined]
+                except NameError:
+                    # request not defined yet, try using local variables
+                    if (
+                        ack_reaction_message_id  # type: ignore[possibly-undefined]
+                        and ack_reaction_emoji  # type: ignore[possibly-undefined]
+                        and not subagent_name  # type: ignore[possibly-undefined]
+                    ):
+                        await self.im_client.remove_reaction(
+                            context, ack_reaction_message_id, ack_reaction_emoji
+                        )
+            except Exception as cleanup_err:
+                logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
             await self.im_client.send_message(
                 context, self.formatter.format_error(f"Error: {str(e)}")
             )
