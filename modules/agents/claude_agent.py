@@ -67,10 +67,10 @@ class ClaudeAgent(BaseAgent):
                 )
         except Exception as e:
             logger.error(f"Error processing Claude message: {e}", exc_info=True)
-            # Clean up reaction on error - may be in queue or still in request
-            await self._remove_ack_reaction_direct(context, request)
-            # Also try to remove from queue if it was added
-            await self._remove_pending_reaction(request.composite_session_id, context)
+            # Clean up the specific reaction for this request (not FIFO)
+            await self._remove_specific_pending_reaction(
+                request.composite_session_id, context, request
+            )
             await self.session_handler.handle_session_error(
                 request.composite_session_id, context, e
             )
@@ -333,6 +333,32 @@ class ClaudeAgent(BaseAgent):
             finally:
                 request.ack_reaction_message_id = None
                 request.ack_reaction_emoji = None
+
+    async def _remove_specific_pending_reaction(
+        self, composite_key: str, context: MessageContext, request: AgentRequest
+    ) -> None:
+        """Remove a specific reaction from the queue by matching message_id.
+
+        Used on error paths to remove the current request's reaction instead of FIFO.
+        """
+        if not request.ack_reaction_message_id:
+            return
+        reactions = self._pending_reactions.get(composite_key)
+        if not reactions:
+            return
+        # Find and remove the matching reaction
+        target_id = request.ack_reaction_message_id
+        target_emoji = request.ack_reaction_emoji
+        for i, (msg_id, emoji) in enumerate(reactions):
+            if msg_id == target_id and emoji == target_emoji:
+                reactions.pop(i)
+                if not reactions:
+                    self._pending_reactions.pop(composite_key, None)
+                try:
+                    await self.im_client.remove_reaction(context, msg_id, emoji)
+                except Exception as err:
+                    logger.debug(f"Failed to remove reaction ack: {err}")
+                return
 
     async def _clear_pending_reactions(
         self, composite_key: str, context: MessageContext
