@@ -25,10 +25,9 @@ class ClaudeAgent(BaseAgent):
         self.claude_client = controller.claude_client
         self._last_assistant_text: dict[str, str] = {}
         self._pending_assistant_message: dict[str, str] = {}
-        # Store reaction info per session for cleanup after result
-        self._pending_reactions: dict[
-            str, tuple[str, str]
-        ] = {}  # session_id -> (message_id, emoji)
+        # Store reaction info per session as a queue (FIFO) for cleanup after result
+        # Each entry is (reaction_message_id, emoji)
+        self._pending_reactions: dict[str, list[tuple[str, str]]] = {}
 
     async def handle_message(self, request: AgentRequest) -> None:
         context = request.context
@@ -48,11 +47,12 @@ class ClaudeAgent(BaseAgent):
 
             await self._delete_ack(context, request)
 
-            # Store reaction info for cleanup after result message
+            # Store reaction info for cleanup after result message (queue for multiple messages)
             if request.ack_reaction_message_id and request.ack_reaction_emoji:
-                self._pending_reactions[request.composite_session_id] = (
-                    request.ack_reaction_message_id,
-                    request.ack_reaction_emoji,
+                if request.composite_session_id not in self._pending_reactions:
+                    self._pending_reactions[request.composite_session_id] = []
+                self._pending_reactions[request.composite_session_id].append(
+                    (request.ack_reaction_message_id, request.ack_reaction_emoji)
                 )
 
             if (
@@ -294,10 +294,17 @@ class ClaudeAgent(BaseAgent):
     async def _remove_pending_reaction(
         self, composite_key: str, context: MessageContext
     ) -> None:
-        """Remove stored reaction for a session after result is sent."""
-        reaction_info = self._pending_reactions.pop(composite_key, None)
-        if reaction_info:
-            message_id, emoji = reaction_info
+        """Remove the oldest stored reaction for a session after result is sent.
+
+        Uses FIFO queue to handle multiple messages in the same session.
+        """
+        reactions = self._pending_reactions.get(composite_key)
+        if reactions:
+            # Pop the oldest reaction (FIFO)
+            message_id, emoji = reactions.pop(0)
+            # Clean up empty list
+            if not reactions:
+                self._pending_reactions.pop(composite_key, None)
             try:
                 await self.im_client.remove_reaction(context, message_id, emoji)
             except Exception as err:

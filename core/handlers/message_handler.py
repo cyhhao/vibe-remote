@@ -229,11 +229,11 @@ class MessageHandler:
                 await self.controller.agent_service.handle_message(agent_name, request)
             except KeyError:
                 await self._handle_missing_agent(context, agent_name)
+                # Clean up reaction on error
+                await self._remove_ack_reaction(context, request)
             finally:
                 if request.ack_message_id:
                     await self._delete_ack(context.channel_id, request)
-                # Note: reaction removal is now handled by the agent when sending result message
-                # See BaseAgent.emit_result_message and _remove_ack_reaction
         except Exception as e:
             logger.error(f"Error processing user message: {e}", exc_info=True)
             await self.im_client.send_message(
@@ -388,6 +388,23 @@ class MessageHandler:
                 logger.debug(f"Failed to delete ack message: {err}")
             finally:
                 request.ack_message_id = None
+
+    async def _remove_ack_reaction(
+        self, context: MessageContext, request: AgentRequest
+    ):
+        """Remove acknowledgement reaction if it still exists."""
+        if request.ack_reaction_message_id and request.ack_reaction_emoji:
+            try:
+                await self.im_client.remove_reaction(
+                    context,
+                    request.ack_reaction_message_id,
+                    request.ack_reaction_emoji,
+                )
+            except Exception as err:
+                logger.debug(f"Failed to remove reaction ack: {err}")
+            finally:
+                request.ack_reaction_message_id = None
+                request.ack_reaction_emoji = None
 
     def _get_ack_text(self, agent_name: str) -> str:
         """Unified acknowledgement text before agent processing."""

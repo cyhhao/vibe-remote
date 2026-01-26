@@ -149,6 +149,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 "notify",
                 f"Failed to start OpenCode server: {e}",
             )
+            await self._remove_ack_reaction(request)
             return
 
         await self._delete_ack(request)
@@ -163,6 +164,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 "notify",
                 "Failed to obtain OpenCode session ID",
             )
+            await self._remove_ack_reaction(request)
             return
 
         self._session_manager.set_request_session(
@@ -300,6 +302,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         except asyncio.CancelledError:
             logger.info(f"OpenCode request cancelled for {request.base_session_id}")
             await self._question_handler.clear(request.base_session_id)
+            await self._remove_ack_reaction(request)
             if session_id:
                 self.settings_manager.remove_active_poll(session_id)
             raise
@@ -320,6 +323,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
             # Clean up answer reaction on error
             await self._question_handler.clear(request.base_session_id)
+            await self._remove_ack_reaction(request)
             if session_id:
                 self.settings_manager.remove_active_poll(session_id)
 
@@ -390,6 +394,21 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 logger.debug(f"Could not delete ack message: {err}")
             finally:
                 request.ack_message_id = None
+
+    async def _remove_ack_reaction(self, request: AgentRequest) -> None:
+        """Remove acknowledgement reaction on error paths."""
+        if request.ack_reaction_message_id and request.ack_reaction_emoji:
+            try:
+                await self.im_client.remove_reaction(
+                    request.context,
+                    request.ack_reaction_message_id,
+                    request.ack_reaction_emoji,
+                )
+            except Exception as err:
+                logger.debug(f"Could not remove ack reaction: {err}")
+            finally:
+                request.ack_reaction_message_id = None
+                request.ack_reaction_emoji = None
 
     async def restore_active_polls(self) -> int:
         """Restore active poll loops that were interrupted by vibe-remote restart."""
