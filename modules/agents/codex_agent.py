@@ -74,12 +74,14 @@ class CodexAgent(BaseAgent):
                 "notify",
                 "❌ Codex CLI not found. Please install it or set CODEX_CLI_PATH.",
             )
+            await self._remove_ack_reaction(request)
             return
         except Exception as e:
             logger.error(f"Failed to launch Codex CLI: {e}", exc_info=True)
             await self.controller.emit_agent_message(
                 request.context, "notify", f"❌ Failed to start Codex CLI: {e}"
             )
+            await self._remove_ack_reaction(request)
             return
 
         await self._delete_ack(request)
@@ -347,6 +349,21 @@ class CodexAgent(BaseAgent):
                 logger.debug(f"Could not delete ack message: {err}")
             finally:
                 request.ack_message_id = None
+
+    async def _remove_ack_reaction(self, request: AgentRequest) -> None:
+        """Remove acknowledgement reaction on error paths."""
+        if request.ack_reaction_message_id and request.ack_reaction_emoji:
+            try:
+                await self.im_client.remove_reaction(
+                    request.context,
+                    request.ack_reaction_message_id,
+                    request.ack_reaction_emoji,
+                )
+            except Exception as err:
+                logger.debug(f"Could not remove ack reaction: {err}")
+            finally:
+                request.ack_reaction_message_id = None
+                request.ack_reaction_emoji = None
 
     def _prepare_last_message_payload(self, text: str) -> Tuple[str, Optional[str]]:
         """Prepare cached assistant text for reuse in result messages."""
