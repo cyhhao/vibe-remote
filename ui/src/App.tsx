@@ -54,13 +54,13 @@ function AppRoutes() {
 function App() {
   return (
     <StatusProvider>
-      <ApiProvider>
-        <ToastProvider>
+      <ToastProvider>
+        <ApiProvider>
           <BrowserRouter>
              <AppRoutes />
           </BrowserRouter>
-        </ToastProvider>
-      </ApiProvider>
+        </ApiProvider>
+      </ToastProvider>
     </StatusProvider>
   );
 }

@@ -222,16 +222,56 @@ class Controller:
     def _get_consolidated_message_key(self, context: MessageContext) -> str:
         settings_key = self._get_settings_key(context)
         thread_key = context.thread_id or context.channel_id
-        return f"{settings_key}:{thread_key}"
+        # Include message_id to distinguish different conversation rounds within same thread
+        # Each user message triggers a new round with its own consolidated message
+        trigger_id = context.message_id or ""
+        return f"{settings_key}:{thread_key}:{trigger_id}"
 
     def _get_consolidated_message_lock(self, key: str) -> asyncio.Lock:
         if key not in self._consolidated_message_locks:
             self._consolidated_message_locks[key] = asyncio.Lock()
         return self._consolidated_message_locks[key]
 
-    def _get_consolidated_max_chars(self) -> int:
-        # Slack max message length is ~40k characters.
-        return 35000
+    async def clear_consolidated_message_id(
+        self, context: MessageContext, trigger_message_id: Optional[str] = None
+    ) -> None:
+        """Clear consolidated message ID so next log message starts fresh.
+
+        Call this after user answers a question to make subsequent log messages
+        appear after the user's reply instead of editing the old consolidated message.
+
+        Args:
+            context: The message context
+            trigger_message_id: If provided, use this instead of context.message_id
+                               for the consolidated key (needed when context is from
+                               user's answer message, not original request)
+        """
+        # Build key with the original trigger message_id if provided
+        settings_key = self._get_settings_key(context)
+        thread_key = context.thread_id or context.channel_id
+        msg_id = trigger_message_id if trigger_message_id else (context.message_id or "")
+        key = f"{settings_key}:{thread_key}:{msg_id}"
+
+        # Use the same per-key lock as emit_agent_message to avoid race conditions
+        lock = self._get_consolidated_message_lock(key)
+        async with lock:
+            self._consolidated_message_ids.pop(key, None)
+            # Also clear the buffer so we don't append to stale content
+            self._consolidated_message_buffers.pop(key, None)
+
+    def _get_consolidated_max_bytes(self) -> int:
+        # Slack API hard limit is exactly 4000 BYTES (not characters) for chat.update
+        # Chinese/emoji characters take 3-4 bytes each in UTF-8
+        return 4000
+
+    def _get_consolidated_split_threshold(self) -> int:
+        # When accumulated message exceeds this threshold (in bytes), start a new message
+        # to avoid Slack edit failures. Use 90% of max to leave some buffer.
+        return 3600
+
+    def _get_text_byte_length(self, text: str) -> int:
+        """Get UTF-8 byte length of text (Slack counts bytes, not characters)."""
+        return len(text.encode("utf-8"))
 
     def _get_result_max_chars(self) -> int:
         return 30000
@@ -244,12 +284,18 @@ class Controller:
         keep = max(0, max_chars - len(prefix) - len(suffix))
         return f"{prefix}{text[:keep]}{suffix}"
 
-    def _truncate_consolidated(self, text: str, max_chars: int) -> str:
-        if len(text) <= max_chars:
+    def _truncate_consolidated(self, text: str, max_bytes: int) -> str:
+        """Truncate text to fit within max_bytes (UTF-8 encoded)."""
+        if self._get_text_byte_length(text) <= max_bytes:
             return text
-        prefix = "…(truncated)…\n\n"
-        keep = max(0, max_chars - len(prefix))
-        return f"{prefix}{text[-keep:]}"
+        # Reserve space for ellipsis (3 bytes for "…")
+        ellipsis = "…"
+        ellipsis_bytes = len(ellipsis.encode("utf-8"))  # 3 bytes
+        target_bytes = max_bytes - ellipsis_bytes
+        # Truncate bytes and decode, handling partial characters
+        encoded = text.encode("utf-8")
+        truncated = encoded[:target_bytes].decode("utf-8", errors="ignore")
+        return truncated.rstrip() + ellipsis
 
     def resolve_agent_for_context(self, context: MessageContext) -> str:
         """Unified agent resolution with dynamic override support.
@@ -306,9 +352,14 @@ class Controller:
     ):
         """Centralized dispatch for agent messages.
 
-        - notify: always send immediately
-        - result: always send immediately (not hideable)
-        - system/assistant/toolcall: consolidate into a single editable message per thread
+        Message Types:
+        - Log Messages (system/assistant/toolcall): Consolidated into a single
+          editable message per conversation round. Can be hidden by user settings.
+        - Result Message: Final output, always sent immediately, not hideable.
+        - Notify Message: Notifications, always sent immediately.
+
+        Log Messages are accumulated and edited in-place until they exceed the
+        Slack byte limit (4000 bytes UTF-8), then a new message is started.
         """
         if not text or not text.strip():
             return
@@ -355,6 +406,7 @@ class Controller:
                     )
             return
 
+        # Log Messages: system/assistant/toolcall - consolidated into editable message
         if canonical_type not in {"system", "assistant", "toolcall"}:
             canonical_type = "assistant"
 
@@ -373,15 +425,92 @@ class Controller:
 
         async with lock:
             chunk = text.strip()
+            max_bytes = self._get_consolidated_max_bytes()
+            split_threshold = self._get_consolidated_split_threshold()
             existing = self._consolidated_message_buffers.get(consolidated_key, "")
+            existing_message_id = self._consolidated_message_ids.get(consolidated_key)
+
             separator = "\n\n---\n\n" if existing else ""
             updated = f"{existing}{separator}{chunk}" if existing else chunk
 
-            updated = self._truncate_consolidated(updated, self._get_consolidated_max_chars())
+            target_context = self._get_target_context(context)
+            continuation_notice = "\n\n---\n\n_(continued below...)_"
+            continuation_bytes = self._get_text_byte_length(continuation_notice)
+
+            # Case 1: Accumulated message exceeds threshold (in bytes), split off old message
+            if existing_message_id and self._get_text_byte_length(updated) > split_threshold:
+                old_text = existing + continuation_notice
+                old_text = self._truncate_consolidated(old_text, max_bytes)
+
+                try:
+                    await self.im_client.edit_message(
+                        target_context,
+                        existing_message_id,
+                        text=old_text,
+                        parse_mode="markdown",
+                    )
+                except Exception as err:
+                    logger.warning(f"Failed to finalize old Log Message: {err}")
+
+                # Start fresh with just the new chunk
+                self._consolidated_message_buffers[consolidated_key] = chunk
+                self._consolidated_message_ids.pop(consolidated_key, None)
+                updated = chunk
+                existing_message_id = None
+                logger.info(
+                    "Log Message exceeded %d bytes, starting new message",
+                    split_threshold,
+                )
+
+            # Case 2: Single chunk (including first message) exceeds max_bytes
+            # Split into multiple messages to avoid truncation
+            while self._get_text_byte_length(updated) > max_bytes:
+                # Find split point that fits within threshold (accounting for continuation notice)
+                target_bytes = split_threshold - continuation_bytes
+                first_part = self._truncate_consolidated(updated, target_bytes)
+                first_part = first_part.rstrip("…") + continuation_notice  # Replace truncation marker
+
+                send_ok = False
+                if existing_message_id:
+                    try:
+                        await self.im_client.edit_message(
+                            target_context,
+                            existing_message_id,
+                            text=first_part,
+                            parse_mode="markdown",
+                        )
+                        send_ok = True
+                    except Exception as err:
+                        logger.warning(f"Failed to edit oversized Log Message: {err}")
+                else:
+                    try:
+                        await self.im_client.send_message(
+                            target_context, first_part, parse_mode="markdown"
+                        )
+                        send_ok = True
+                    except Exception as err:
+                        logger.error(f"Failed to send oversized Log Message: {err}")
+
+                if not send_ok:
+                    # Failed to send/edit - stop splitting and truncate the remainder
+                    logger.warning("Stopping split loop due to send failure, truncating remainder")
+                    break
+
+                # Continue with remainder (skip the part we already sent)
+                # Don't lstrip() - preserve intentional indentation in code blocks
+                sent_chars = len(first_part) - len(continuation_notice)
+                updated = updated[sent_chars:]
+                # Clear both local var and stored ID to avoid editing old message on failure
+                existing_message_id = None
+                self._consolidated_message_ids.pop(consolidated_key, None)
+                logger.info(
+                    "Log Message chunk exceeded %d bytes, split and continuing",
+                    max_bytes,
+                )
+
+            updated = self._truncate_consolidated(updated, max_bytes)
             self._consolidated_message_buffers[consolidated_key] = updated
 
-            target_context = self._get_target_context(context)
-            existing_message_id = self._consolidated_message_ids.get(consolidated_key)
             if existing_message_id:
                 try:
                     ok = await self.im_client.edit_message(
@@ -391,7 +520,7 @@ class Controller:
                         parse_mode="markdown",
                     )
                 except Exception as err:
-                    logger.warning(f"Failed to edit consolidated message: {err}")
+                    logger.warning(f"Failed to edit Log Message: {err}")
                     ok = False
                 if ok:
                     return
@@ -403,7 +532,7 @@ class Controller:
                 )
                 self._consolidated_message_ids[consolidated_key] = new_id
             except Exception as err:
-                logger.error(f"Failed to send consolidated message: {err}", exc_info=True)
+                logger.error(f"Failed to send Log Message: {err}", exc_info=True)
 
     # Settings update handler (for Slack modal)
     async def handle_settings_update(
@@ -743,8 +872,8 @@ class Controller:
 
                 if not inspect.iscoroutinefunction(stop_attr):
                     stop_attr()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to stop IM client: %s", e)
 
         # Best-effort async shutdown for IM clients
         try:
@@ -759,12 +888,12 @@ class Controller:
                         pass
                 else:
                     shutdown_attr()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to shutdown IM client: %s", e)
 
         # Stop OpenCode server if running
         try:
-            from modules.agents.opencode_agent import OpenCodeServerManager
+            from modules.agents.opencode import OpenCodeServerManager
             OpenCodeServerManager.stop_instance_sync()
         except Exception as e:
             logger.debug(f"OpenCode server cleanup skipped: {e}")

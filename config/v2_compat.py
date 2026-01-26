@@ -43,7 +43,7 @@ class AppCompatConfig:
 
 def to_app_config(v2: V2Config) -> AppCompatConfig:
     claude = ClaudeCompatConfig(
-        permission_mode="default",
+        permission_mode="bypassPermissions",
         cwd=v2.runtime.default_cwd,
         system_prompt=None,
     )

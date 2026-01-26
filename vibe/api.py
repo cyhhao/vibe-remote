@@ -178,7 +178,7 @@ async def opencode_options_async(cwd: str) -> dict:
 
     try:
         from config.v2_compat import to_app_config
-        from modules.agents.opencode_agent import (
+        from modules.agents.opencode import (
             OpenCodeServerManager,
             build_reasoning_effort_options,
         )
@@ -369,19 +369,18 @@ def setup_opencode_permission() -> dict:
 
     Handles both creating new config and updating existing config safely using JSON parsing.
 
+    Note: Always uses ~/.opencode/opencode.json as per OpenCode documentation for permission
+    configuration. The ~/.config/opencode path is only for other settings.
+
     Returns:
         {"ok": bool, "message": str, "config_path": str}
     """
     import json
     from pathlib import Path
 
-    # Determine config path - check both standard locations
+    # Always use ~/.opencode/opencode.json for permission config
+    # This is the documented path for permission settings (see README.md lines 200-205)
     config_path = Path.home() / ".opencode" / "opencode.json"
-    alt_config_path = Path.home() / ".config" / "opencode" / "opencode.json"
-
-    # Use whichever exists, or create in .opencode by default
-    if alt_config_path.exists():
-        config_path = alt_config_path
 
     try:
         # Ensure parent directory exists
