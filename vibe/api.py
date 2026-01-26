@@ -437,9 +437,9 @@ def do_upgrade(auto_restart: bool = True) -> dict:
 def setup_opencode_permission() -> dict:
     """Set OpenCode permission to 'allow' in config file.
 
-    Detection priority:
-    1. ~/.opencode/opencode.json - if exists, update it
-    2. ~/.config/opencode/opencode.json - if exists, update it
+    Detection priority (aligned with _load_opencode_user_config):
+    1. ~/.config/opencode/opencode.json - if exists, update it
+    2. ~/.opencode/opencode.json - if exists, update it
     3. Create new file at ~/.config/opencode/opencode.json (XDG standard)
 
     Returns:
@@ -447,14 +447,14 @@ def setup_opencode_permission() -> dict:
     """
     from pathlib import Path
 
-    opencode_path = Path.home() / ".opencode" / "opencode.json"
     xdg_path = Path.home() / ".config" / "opencode" / "opencode.json"
+    opencode_path = Path.home() / ".opencode" / "opencode.json"
 
-    # Determine which path to use
-    if opencode_path.exists():
-        config_path = opencode_path
-    elif xdg_path.exists():
+    # Determine which path to use (same priority as _load_opencode_user_config)
+    if xdg_path.exists():
         config_path = xdg_path
+    elif opencode_path.exists():
+        config_path = opencode_path
     else:
         config_path = xdg_path  # Default to XDG standard
 
