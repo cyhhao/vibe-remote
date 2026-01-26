@@ -101,6 +101,8 @@ class ClaudeAgent(BaseAgent):
                 logger.warning(f"Error closing Claude session {session_key}: {e}")
             finally:
                 self.claude_sessions.pop(session_key, None)
+                # Clear pending reactions for this session (no context to call API)
+                self._pending_reactions.pop(session_key, None)
 
         # Legacy session manager cleanup (best-effort)
         await self.session_manager.clear_session(settings_key)
@@ -287,6 +289,11 @@ class ClaudeAgent(BaseAgent):
             # Clean up all pending reactions for this session on error
             await self._clear_pending_reactions(composite_key, context)
             await self.session_handler.handle_session_error(composite_key, context, e)
+        finally:
+            # Clean up any remaining reactions when receiver ends normally
+            # (e.g., client closed without sending a result)
+            composite_key = f"{base_session_id}:{working_path}"
+            await self._clear_pending_reactions(composite_key, context)
 
     async def _delete_ack(self, context: MessageContext, request: AgentRequest):
         ack_id = request.ack_message_id
