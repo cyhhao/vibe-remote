@@ -104,6 +104,8 @@ class CodexAgent(BaseAgent):
             await asyncio.gather(stdout_task, stderr_task)
         finally:
             self._unregister_process(request.composite_session_id)
+            # Clean up reaction as fallback if turn.completed was never received
+            await self._remove_ack_reaction(request)
 
         if process.returncode != 0:
             await self.controller.emit_agent_message(

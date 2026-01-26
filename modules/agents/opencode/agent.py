@@ -275,6 +275,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             )
 
             if not should_emit:
+                # Clean up reaction even if we don't emit a result
+                await self._remove_ack_reaction(request)
                 return
 
             if final_text:
