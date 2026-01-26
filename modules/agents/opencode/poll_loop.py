@@ -248,9 +248,9 @@ class OpenCodePollLoop:
             if poll_info.ack_reaction_message_id and poll_info.ack_reaction_emoji:
                 try:
                     await self._agent.im_client.remove_reaction(
-                        channel_id=poll_info.channel_id,
-                        message_ts=poll_info.ack_reaction_message_id,
-                        emoji=poll_info.ack_reaction_emoji,
+                        context,
+                        poll_info.ack_reaction_message_id,
+                        poll_info.ack_reaction_emoji,
                     )
                 except Exception as e:
                     logger.debug(f"Failed to remove ack reaction: {e}")
