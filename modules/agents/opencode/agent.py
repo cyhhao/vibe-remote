@@ -266,6 +266,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 settings_key=request.settings_key,
                 working_path=request.working_path,
                 baseline_message_ids=list(baseline_message_ids),
+                ack_reaction_message_id=request.ack_reaction_message_id,
+                ack_reaction_emoji=request.ack_reaction_emoji,
             )
 
             final_text, should_emit = await self._poll_loop.run_prompt_poll(

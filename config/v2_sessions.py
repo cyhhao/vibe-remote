@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ActivePollInfo:
     """Information about an active poll that needs to be restored on restart."""
+
     opencode_session_id: str
     base_session_id: str
     channel_id: str
@@ -22,6 +23,9 @@ class ActivePollInfo:
     seen_tool_calls: List[str] = field(default_factory=list)
     emitted_assistant_messages: List[str] = field(default_factory=list)
     started_at: float = 0.0
+    # Ack reaction info for cleanup on restore
+    ack_reaction_message_id: Optional[str] = None
+    ack_reaction_emoji: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -35,6 +39,8 @@ class ActivePollInfo:
             "seen_tool_calls": self.seen_tool_calls,
             "emitted_assistant_messages": self.emitted_assistant_messages,
             "started_at": self.started_at,
+            "ack_reaction_message_id": self.ack_reaction_message_id,
+            "ack_reaction_emoji": self.ack_reaction_emoji,
         }
 
     @classmethod
@@ -50,15 +56,15 @@ class ActivePollInfo:
             seen_tool_calls=data.get("seen_tool_calls", []),
             emitted_assistant_messages=data.get("emitted_assistant_messages", []),
             started_at=data.get("started_at", 0.0),
+            ack_reaction_message_id=data.get("ack_reaction_message_id"),
+            ack_reaction_emoji=data.get("ack_reaction_emoji"),
         )
 
 
 @dataclass
 class SessionState:
     # session_mappings: user_id -> agent_name -> thread_id -> session_id
-    session_mappings: Dict[str, Dict[str, Dict[str, str]]] = field(
-        default_factory=dict
-    )
+    session_mappings: Dict[str, Dict[str, Dict[str, str]]] = field(default_factory=dict)
     active_slack_threads: Dict[str, Dict[str, Dict[str, float]]] = field(
         default_factory=dict
     )
@@ -113,14 +119,18 @@ class SessionsStore:
             self.state.active_slack_threads[user_id][channel_id] = channel_map
         return channel_map
 
-    def get_last_processed_message_ts(self, channel_id: str, thread_ts: str) -> Optional[str]:
+    def get_last_processed_message_ts(
+        self, channel_id: str, thread_ts: str
+    ) -> Optional[str]:
         """Get the last processed message ts for a thread."""
         channel_map = self.state.processed_message_ts.get(channel_id)
         if channel_map:
             return channel_map.get(thread_ts)
         return None
 
-    def set_last_processed_message_ts(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
+    def set_last_processed_message_ts(
+        self, channel_id: str, thread_ts: str, message_ts: str
+    ) -> None:
         """Set the last processed message ts for a thread."""
         if channel_id not in self.state.processed_message_ts:
             self.state.processed_message_ts[channel_id] = {}
