@@ -90,7 +90,9 @@ def status():
     if running:
         payload["service_pid"] = payload.get("service_pid") or payload["pid"]
     elif payload.get("state") == "running":
-        runtime.write_status("stopped", "process not running", None, payload.get("ui_pid"))
+        runtime.write_status(
+            "stopped", "process not running", None, payload.get("ui_pid")
+        )
         payload = runtime.read_status()
         payload["running"] = False
         payload["pid"] = None
@@ -209,7 +211,9 @@ def ui_reload():
         from config import paths as config_paths
 
         working_dir = get_working_dir()
-        command = f"from vibe.ui_server import run_ui_server; run_ui_server('{host}', {port})"
+        command = (
+            f"from vibe.ui_server import run_ui_server; run_ui_server('{host}', {port})"
+        )
         stdout_path = config_paths.get_runtime_dir() / "ui_stdout.log"
         stderr_path = config_paths.get_runtime_dir() / "ui_stderr.log"
         stdout = stdout_path.open("ab")
@@ -224,7 +228,9 @@ def ui_reload():
         )
         stdout.close()
         stderr.close()
-        config_paths.get_runtime_ui_pid_path().write_text(str(process.pid), encoding="utf-8")
+        config_paths.get_runtime_ui_pid_path().write_text(
+            str(process.pid), encoding="utf-8"
+        )
         runtime.write_status(
             status.get("state", "running"),
             status.get("detail"),
@@ -293,12 +299,14 @@ def logs():
             line = line.rstrip("\n")
             match = log_pattern.match(line)
             if match:
-                logs_list.append({
-                    "timestamp": match.group(1),
-                    "logger": match.group(2),
-                    "level": match.group(3),
-                    "message": match.group(4),
-                })
+                logs_list.append(
+                    {
+                        "timestamp": match.group(1),
+                        "logger": match.group(2),
+                        "level": match.group(3),
+                        "message": match.group(4),
+                    }
+                )
             elif logs_list and line:
                 logs_list[-1]["message"] += "\n" + line
         return jsonify({"logs": logs_list, "total": len(all_lines)})
@@ -326,6 +334,13 @@ def upgrade():
     return jsonify(result)
 
 
+@app.route("/opencode/setup-permission", methods=["POST"])
+def opencode_setup_permission():
+    from vibe import api
+
+    return jsonify(api.setup_opencode_permission())
+
+
 # =============================================================================
 # Static Files (SPA)
 # =============================================================================
@@ -347,12 +362,17 @@ def serve_static(path):
     resolved_path = file_path.resolve()
 
     # Security check: ensure path is within ui_dist
-    if ui_dist.resolve() not in resolved_path.parents and resolved_path != ui_dist.resolve():
+    if (
+        ui_dist.resolve() not in resolved_path.parents
+        and resolved_path != ui_dist.resolve()
+    ):
         return jsonify({"error": "not_found"}), 404
 
     if resolved_path.exists() and resolved_path.is_file():
         mime_type, _ = mimetypes.guess_type(str(resolved_path))
-        return send_file(resolved_path, mimetype=mime_type or "application/octet-stream")
+        return send_file(
+            resolved_path, mimetype=mime_type or "application/octet-stream"
+        )
 
     # SPA fallback: serve index.html for routes without file extension
     if "." not in path:
