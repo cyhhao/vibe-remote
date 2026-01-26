@@ -435,57 +435,53 @@ def do_upgrade(auto_restart: bool = True) -> dict:
 
 
 def setup_opencode_permission() -> dict:
-    """Set OpenCode permission to 'allow' in config files.
+    """Set OpenCode permission to 'allow' in config file.
 
-    Updates both ~/.opencode/opencode.json (OpenCode official) and
-    ~/.config/opencode/opencode.json (XDG standard) to ensure compatibility.
+    Uses ~/.config/opencode/opencode.json as per OpenCode official documentation.
 
     Returns:
-        {"ok": bool, "message": str, "config_paths": list[str]}
+        {"ok": bool, "message": str, "config_path": str}
     """
     from pathlib import Path
 
-    paths_to_update = [
-        Path.home() / ".opencode" / "opencode.json",
-        Path.home() / ".config" / "opencode" / "opencode.json",
-    ]
-    updated_paths = []
-    errors = []
+    config_path = Path.home() / ".config" / "opencode" / "opencode.json"
 
-    for config_path in paths_to_update:
-        try:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
 
-            config = {}
-            if config_path.exists():
-                content = config_path.read_text(encoding="utf-8").strip()
-                if content:
-                    config = json.loads(content)
-                    if not isinstance(config, dict):
-                        errors.append(f"{config_path}: not a JSON object")
-                        continue
+        config = {}
+        if config_path.exists():
+            content = config_path.read_text(encoding="utf-8").strip()
+            if content:
+                config = json.loads(content)
+                if not isinstance(config, dict):
+                    return {
+                        "ok": False,
+                        "message": "Config is not a JSON object",
+                        "config_path": str(config_path),
+                    }
 
-            if config.get("permission") != "allow":
-                config["permission"] = "allow"
-                config_path.write_text(
-                    json.dumps(config, indent=2) + "\n", encoding="utf-8"
-                )
+        if config.get("permission") == "allow":
+            return {
+                "ok": True,
+                "message": "Permission already set",
+                "config_path": str(config_path),
+            }
 
-            updated_paths.append(str(config_path))
-        except json.JSONDecodeError as e:
-            errors.append(f"{config_path}: invalid JSON - {e}")
-        except Exception as e:
-            errors.append(f"{config_path}: {e}")
+        config["permission"] = "allow"
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
-    if not updated_paths:
+        return {
+            "ok": True,
+            "message": "Permission set to 'allow'",
+            "config_path": str(config_path),
+        }
+    except json.JSONDecodeError as e:
         return {
             "ok": False,
-            "message": f"Failed to update any config: {'; '.join(errors)}",
-            "config_paths": [],
+            "message": f"Invalid JSON: {e}",
+            "config_path": str(config_path),
         }
-
-    message = f"Permission set in {len(updated_paths)} config(s)"
-    if errors:
-        message += f" (warnings: {'; '.join(errors)})"
-
-    return {"ok": True, "message": message, "config_paths": updated_paths}
+    except Exception as e:
+        logger.error(f"Failed to setup OpenCode permission: {e}")
+        return {"ok": False, "message": str(e), "config_path": str(config_path)}
