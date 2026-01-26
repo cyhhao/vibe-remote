@@ -197,7 +197,7 @@ vibe doctor   # 诊断问题
 curl -fsSL https://opencode.ai/install | bash
 ```
 
-**必须配置：** 在 `~/.config/opencode/opencode.json` 或 `~/.opencode/opencode.json` 中添加以下配置：
+**必须配置：** 在 `~/.config/opencode/opencode.json` 中添加以下配置：
 
 ```json
 {
