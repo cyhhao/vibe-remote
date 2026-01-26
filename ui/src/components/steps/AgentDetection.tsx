@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, X, RefreshCw, Search } from 'lucide-react';
+import { Check, X, RefreshCw, Search, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
@@ -16,6 +16,8 @@ type AgentState = {
   status?: 'unknown' | 'ok' | 'missing';
 };
 
+type PermissionState = 'idle' | 'loading' | 'success' | 'error';
+
 export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
@@ -28,6 +30,8 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
       codex: { enabled: false, cli_path: 'codex', status: 'unknown' },
     }
   );
+  const [permissionState, setPermissionState] = useState<PermissionState>('idle');
+  const [permissionMessage, setPermissionMessage] = useState<string>('');
 
   const isMissing = (agent: AgentState) => agent.status === 'missing';
 
@@ -65,6 +69,23 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
       ...prev,
       [name]: { ...prev[name], enabled },
     }));
+  };
+
+  const setupPermission = async () => {
+    setPermissionState('loading');
+    try {
+      const result = await api.opencodeSetupPermission();
+      if (result.ok) {
+        setPermissionState('success');
+        setPermissionMessage(result.message);
+      } else {
+        setPermissionState('error');
+        setPermissionMessage(result.message);
+      }
+    } catch (e) {
+      setPermissionState('error');
+      setPermissionMessage(String(e));
+    }
   };
 
   const canContinue = Object.values(agents).some((agent) => agent.enabled);
@@ -150,6 +171,32 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                     </button>
                   </div>
               </div>
+
+              {name === 'opencode' && agent.status === 'ok' && (
+                <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-sm text-amber-800 mb-2">{t('agentDetection.permissionHint')}</p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={setupPermission}
+                      disabled={permissionState === 'loading'}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      {permissionState === 'loading' ? (
+                        <RefreshCw size={14} className="animate-spin" />
+                      ) : (
+                        <Settings size={14} />
+                      )}
+                      {t('agentDetection.setupPermission')}
+                    </button>
+                    {permissionState === 'success' && (
+                      <span className="text-sm text-green-600">{permissionMessage}</span>
+                    )}
+                    {permissionState === 'error' && (
+                      <span className="text-sm text-red-600">{permissionMessage}</span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ))}

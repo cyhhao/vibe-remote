@@ -145,11 +145,13 @@ def list_channels(bot_token: str) -> dict:
                 cursor=cursor,
             )
             for channel in response.get("channels", []):
-                channels.append({
-                    "id": channel.get("id"),
-                    "name": channel.get("name"),
-                    "is_private": channel.get("is_private", False),
-                })
+                channels.append(
+                    {
+                        "id": channel.get("id"),
+                        "name": channel.get("name"),
+                        "is_private": channel.get("is_private", False),
+                    }
+                )
             cursor = response.get("response_metadata", {}).get("next_cursor")
             if not cursor:
                 break
@@ -185,7 +187,9 @@ async def opencode_options_async(cwd: str) -> dict:
         if not config.opencode:
             return {"ok": False, "error": "opencode disabled"}
         opencode_config = config.opencode
-        timeout_seconds = min(10.0, float(opencode_config.request_timeout_seconds or 10))
+        timeout_seconds = min(
+            10.0, float(opencode_config.request_timeout_seconds or 10)
+        )
 
         def _build_reasoning_options(
             models: dict,
@@ -221,10 +225,18 @@ async def opencode_options_async(cwd: str) -> dict:
             request_timeout_seconds=opencode_config.request_timeout_seconds,
         )
         await asyncio.wait_for(server.ensure_running(), timeout=timeout_seconds)
-        agents = await asyncio.wait_for(server.get_available_agents(cwd), timeout=timeout_seconds)
-        models = await asyncio.wait_for(server.get_available_models(cwd), timeout=timeout_seconds)
-        defaults = await asyncio.wait_for(server.get_default_config(cwd), timeout=timeout_seconds)
-        reasoning_options = _build_reasoning_options(models, build_reasoning_effort_options)
+        agents = await asyncio.wait_for(
+            server.get_available_agents(cwd), timeout=timeout_seconds
+        )
+        models = await asyncio.wait_for(
+            server.get_available_models(cwd), timeout=timeout_seconds
+        )
+        defaults = await asyncio.wait_for(
+            server.get_default_config(cwd), timeout=timeout_seconds
+        )
+        reasoning_options = _build_reasoning_options(
+            models, build_reasoning_effort_options
+        )
         data = {
             "agents": agents,
             "models": models,
@@ -263,43 +275,47 @@ def _settings_to_payload(store: SettingsStore) -> dict:
 
 def get_slack_manifest() -> dict:
     """Get Slack App Manifest template for self-host mode.
-    
+
     Loads manifest from vibe/templates/slack_manifest.json.
-    
+
     Returns:
         {"ok": True, "manifest": str, "manifest_compact": str} on success
         {"ok": False, "error": str} on failure
     """
     import json
     import importlib.resources
-    
+
     try:
         manifest = None
-        
+
         # Try to load from package resources (installed via pip/uv)
         try:
-            if hasattr(importlib.resources, 'files'):
-                package_files = importlib.resources.files('vibe')
-                template_path = package_files / 'templates' / 'slack_manifest.json'
-                if hasattr(template_path, 'read_text'):
-                    manifest = json.loads(template_path.read_text(encoding='utf-8'))
+            if hasattr(importlib.resources, "files"):
+                package_files = importlib.resources.files("vibe")
+                template_path = package_files / "templates" / "slack_manifest.json"
+                if hasattr(template_path, "read_text"):
+                    manifest = json.loads(template_path.read_text(encoding="utf-8"))
         except (TypeError, FileNotFoundError, AttributeError, json.JSONDecodeError):
             pass
-        
+
         # Fallback: load from file system (development mode)
         if manifest is None:
             this_dir = Path(__file__).parent
-            template_file = this_dir / 'templates' / 'slack_manifest.json'
+            template_file = this_dir / "templates" / "slack_manifest.json"
             if template_file.exists():
-                manifest = json.loads(template_file.read_text(encoding='utf-8'))
-        
+                manifest = json.loads(template_file.read_text(encoding="utf-8"))
+
         if manifest is None:
             return {"ok": False, "error": "Manifest template file not found"}
-        
+
         # Pretty JSON for display, compact JSON for URL
         manifest_pretty = json.dumps(manifest, indent=2)
-        manifest_compact = json.dumps(manifest, separators=(',', ':'))
-        return {"ok": True, "manifest": manifest_pretty, "manifest_compact": manifest_compact}
+        manifest_compact = json.dumps(manifest, separators=(",", ":"))
+        return {
+            "ok": True,
+            "manifest": manifest_pretty,
+            "manifest_compact": manifest_compact,
+        }
     except Exception as exc:
         logger.error("Failed to load Slack manifest: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -307,7 +323,7 @@ def get_slack_manifest() -> dict:
 
 def get_version_info() -> dict:
     """Get current version and check for updates.
-    
+
     Returns:
         {
             "current": str,
@@ -318,10 +334,10 @@ def get_version_info() -> dict:
     """
     import urllib.request
     from vibe import __version__
-    
+
     current = __version__
     result = {"current": current, "latest": None, "has_update": False, "error": None}
-    
+
     try:
         url = "https://pypi.org/pypi/vibe-remote/json"
         req = urllib.request.Request(url, headers={"User-Agent": "vibe-remote"})
@@ -329,46 +345,50 @@ def get_version_info() -> dict:
             data = json.loads(resp.read().decode("utf-8"))
             latest = data.get("info", {}).get("version", "")
             result["latest"] = latest
-            
+
             # Simple version comparison (works for semver)
             if latest and latest != current:
                 try:
-                    current_parts = [int(x) for x in current.split(".")[:3] if x.isdigit()]
-                    latest_parts = [int(x) for x in latest.split(".")[:3] if x.isdigit()]
+                    current_parts = [
+                        int(x) for x in current.split(".")[:3] if x.isdigit()
+                    ]
+                    latest_parts = [
+                        int(x) for x in latest.split(".")[:3] if x.isdigit()
+                    ]
                     result["has_update"] = latest_parts > current_parts
                 except (ValueError, AttributeError):
                     result["has_update"] = latest != current
     except Exception as e:
         result["error"] = str(e)
-    
+
     return result
 
 
 def do_upgrade(auto_restart: bool = True) -> dict:
     """Perform upgrade to latest version.
-    
+
     Args:
         auto_restart: If True, restart vibe after successful upgrade
-    
+
     Returns:
         {"ok": bool, "message": str, "output": str | None, "restarting": bool}
     """
     import sys
-    
+
     # Determine upgrade method based on how vibe was installed
     # Check if running from uv tool environment
     exe_path = sys.executable
     is_uv_tool = ".local/share/uv/tools/" in exe_path or "/uv/tools/" in exe_path
-    
+
     uv_path = shutil.which("uv")
-    
+
     if is_uv_tool and uv_path:
         # Installed via uv tool, upgrade with uv
         cmd = [uv_path, "tool", "install", "vibe-remote", "--upgrade"]
     else:
         # Installed via pip or other method, use current Python's pip
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "vibe-remote"]
-    
+
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode == 0:
@@ -388,10 +408,11 @@ def do_upgrade(auto_restart: bool = True) -> dict:
                         start_new_session=True,
                     )
                     restarting = True
-            
+
             return {
                 "ok": True,
-                "message": "Upgrade successful." + (" Restarting..." if restarting else " Please restart vibe."),
+                "message": "Upgrade successful."
+                + (" Restarting..." if restarting else " Please restart vibe."),
                 "output": result.stdout,
                 "restarting": restarting,
             }
@@ -403,6 +424,64 @@ def do_upgrade(auto_restart: bool = True) -> dict:
                 "restarting": False,
             }
     except subprocess.TimeoutExpired:
-        return {"ok": False, "message": "Upgrade timed out", "output": None, "restarting": False}
+        return {
+            "ok": False,
+            "message": "Upgrade timed out",
+            "output": None,
+            "restarting": False,
+        }
     except Exception as e:
         return {"ok": False, "message": str(e), "output": None, "restarting": False}
+
+
+def setup_opencode_permission() -> dict:
+    """Set OpenCode permission to 'allow' in config file.
+
+    Always uses ~/.opencode/opencode.json as per OpenCode documentation.
+
+    Returns:
+        {"ok": bool, "message": str, "config_path": str}
+    """
+    from pathlib import Path
+
+    config_path = Path.home() / ".opencode" / "opencode.json"
+
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+
+        config = {}
+        if config_path.exists():
+            content = config_path.read_text(encoding="utf-8").strip()
+            if content:
+                config = json.loads(content)
+                if not isinstance(config, dict):
+                    return {
+                        "ok": False,
+                        "message": "Config is not a JSON object",
+                        "config_path": str(config_path),
+                    }
+
+        if config.get("permission") == "allow":
+            return {
+                "ok": True,
+                "message": "Permission already set",
+                "config_path": str(config_path),
+            }
+
+        config["permission"] = "allow"
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+
+        return {
+            "ok": True,
+            "message": "Permission set to 'allow'",
+            "config_path": str(config_path),
+        }
+    except json.JSONDecodeError as e:
+        return {
+            "ok": False,
+            "message": f"Invalid JSON: {e}",
+            "config_path": str(config_path),
+        }
+    except Exception as e:
+        logger.error(f"Failed to setup OpenCode permission: {e}")
+        return {"ok": False, "message": str(e), "config_path": str(config_path)}
