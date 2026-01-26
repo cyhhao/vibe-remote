@@ -101,8 +101,8 @@ class ClaudeAgent(BaseAgent):
                 logger.warning(f"Error closing Claude session {session_key}: {e}")
             finally:
                 self.claude_sessions.pop(session_key, None)
-                # Clear pending reactions for this session (no context to call API)
-                self._pending_reactions.pop(session_key, None)
+                # Note: don't pop pending reactions here - let receiver's finally block handle them
+                # so that reactions can be properly removed from IM when receiver ends
 
         # Legacy session manager cleanup (best-effort)
         await self.session_manager.clear_session(settings_key)
