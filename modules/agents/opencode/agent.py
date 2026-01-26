@@ -106,6 +106,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     open_modal_task = asyncio.create_task(
                         self._question_handler.open_question_modal(request, pending)  # type: ignore[arg-type]
                     )
+                    # Clean up reaction for modal open request
+                    await self._remove_ack_reaction(request)
                 else:
                     task = asyncio.create_task(self._process_message(request))
                     self._active_requests[request.base_session_id] = task
@@ -116,6 +118,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     pending,
                     server,  # type: ignore[arg-type]
                 )
+                # Clean up reaction for answer submission
+                await self._remove_ack_reaction(request)
                 return
             else:
                 task = asyncio.create_task(self._process_message(request))
