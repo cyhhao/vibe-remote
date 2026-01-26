@@ -438,62 +438,74 @@ def setup_opencode_permission() -> dict:
     """Set OpenCode permission to 'allow' in config file.
 
     Detection priority (aligned with _load_opencode_user_config):
-    1. ~/.config/opencode/opencode.json - if exists, update it
-    2. ~/.opencode/opencode.json - if exists, update it
+    1. ~/.config/opencode/opencode.json - if exists and valid, update it
+    2. ~/.opencode/opencode.json - if exists and valid, update it
     3. Create new file at ~/.config/opencode/opencode.json (XDG standard)
+
+    Mirrors _load_opencode_user_config behavior: skips invalid files and tries next.
 
     Returns:
         {"ok": bool, "message": str, "config_path": str}
     """
     from pathlib import Path
 
-    xdg_path = Path.home() / ".config" / "opencode" / "opencode.json"
-    opencode_path = Path.home() / ".opencode" / "opencode.json"
+    config_paths = [
+        Path.home() / ".config" / "opencode" / "opencode.json",
+        Path.home() / ".opencode" / "opencode.json",
+    ]
 
-    # Determine which path to use (same priority as _load_opencode_user_config)
-    if xdg_path.exists():
-        config_path = xdg_path
-    elif opencode_path.exists():
-        config_path = opencode_path
-    else:
-        config_path = xdg_path  # Default to XDG standard
+    # Try each path in priority order
+    for config_path in config_paths:
+        if not config_path.exists():
+            continue
 
-    try:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-
-        config = {}
-        if config_path.exists():
+        try:
             content = config_path.read_text(encoding="utf-8").strip()
-            if content:
+            if not content:
+                # Empty file, treat as valid empty config
+                config = {}
+            else:
                 config = json.loads(content)
                 if not isinstance(config, dict):
-                    return {
-                        "ok": False,
-                        "message": "Config is not a JSON object",
-                        "config_path": str(config_path),
-                    }
+                    logger.warning(f"{config_path}: not a JSON object, skipping")
+                    continue
 
-        if config.get("permission") == "allow":
+            # Found a valid config file, update it
+            if config.get("permission") == "allow":
+                return {
+                    "ok": True,
+                    "message": "Permission already set",
+                    "config_path": str(config_path),
+                }
+
+            config["permission"] = "allow"
+            config_path.write_text(
+                json.dumps(config, indent=2) + "\n", encoding="utf-8"
+            )
             return {
                 "ok": True,
-                "message": "Permission already set",
+                "message": "Permission set to 'allow'",
                 "config_path": str(config_path),
             }
+        except json.JSONDecodeError as e:
+            logger.warning(f"{config_path}: invalid JSON ({e}), skipping")
+            continue
+        except Exception as e:
+            logger.warning(f"{config_path}: failed to read ({e}), skipping")
+            continue
 
-        config["permission"] = "allow"
-        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-
+    # No existing valid config found, create at XDG path (first in list)
+    config_path = config_paths[0]
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            json.dumps({"permission": "allow"}, indent=2) + "\n", encoding="utf-8"
+        )
         return {
             "ok": True,
             "message": "Permission set to 'allow'",
             "config_path": str(config_path),
         }
-    except json.JSONDecodeError as e:
-        return {
-            "ok": False,
-            "message": f"Invalid JSON: {e}",
-            "config_path": str(config_path),
-        }
     except Exception as e:
-        logger.error(f"Failed to setup OpenCode permission: {e}")
+        logger.error(f"Failed to create OpenCode config: {e}")
         return {"ok": False, "message": str(e), "config_path": str(config_path)}
