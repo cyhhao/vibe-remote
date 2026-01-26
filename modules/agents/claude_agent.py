@@ -66,6 +66,8 @@ class ClaudeAgent(BaseAgent):
                 )
         except Exception as e:
             logger.error(f"Error processing Claude message: {e}", exc_info=True)
+            # Clean up reaction on error (before it was queued)
+            await self._remove_ack_reaction_direct(context, request)
             await self.session_handler.handle_session_error(
                 request.composite_session_id, context, e
             )
@@ -279,6 +281,8 @@ class ClaudeAgent(BaseAgent):
                 f"Error in Claude receiver for session {composite_key}: {e}",
                 exc_info=True,
             )
+            # Clean up all pending reactions for this session on error
+            await self._clear_pending_reactions(composite_key, context)
             await self.session_handler.handle_session_error(composite_key, context, e)
 
     async def _delete_ack(self, context: MessageContext, request: AgentRequest):
@@ -309,6 +313,35 @@ class ClaudeAgent(BaseAgent):
                 await self.im_client.remove_reaction(context, message_id, emoji)
             except Exception as err:
                 logger.debug(f"Failed to remove reaction ack: {err}")
+
+    async def _remove_ack_reaction_direct(
+        self, context: MessageContext, request: AgentRequest
+    ) -> None:
+        """Remove ack reaction directly from request (for error paths before queuing)."""
+        if request.ack_reaction_message_id and request.ack_reaction_emoji:
+            try:
+                await self.im_client.remove_reaction(
+                    context,
+                    request.ack_reaction_message_id,
+                    request.ack_reaction_emoji,
+                )
+            except Exception as err:
+                logger.debug(f"Failed to remove reaction ack: {err}")
+            finally:
+                request.ack_reaction_message_id = None
+                request.ack_reaction_emoji = None
+
+    async def _clear_pending_reactions(
+        self, composite_key: str, context: MessageContext
+    ) -> None:
+        """Clear all pending reactions for a session (for error cleanup)."""
+        reactions = self._pending_reactions.pop(composite_key, None)
+        if reactions:
+            for message_id, emoji in reactions:
+                try:
+                    await self.im_client.remove_reaction(context, message_id, emoji)
+                except Exception as err:
+                    logger.debug(f"Failed to remove reaction ack: {err}")
 
     def get_relative_path(
         self, abs_path: str, context: Optional[MessageContext] = None
