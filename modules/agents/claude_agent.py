@@ -40,20 +40,21 @@ class ClaudeAgent(BaseAgent):
                 subagent_reasoning_effort=request.subagent_reasoning_effort,
             )
 
-            await client.query(request.message, session_id=request.composite_session_id)
-            logger.info(
-                f"Sent message to Claude for session {request.composite_session_id}"
-            )
-
-            await self._delete_ack(context, request)
-
-            # Store reaction info for cleanup after result message (queue for multiple messages)
+            # Queue reaction BEFORE sending query to avoid race condition where
+            # a fast result arrives before the reaction is queued
             if request.ack_reaction_message_id and request.ack_reaction_emoji:
                 if request.composite_session_id not in self._pending_reactions:
                     self._pending_reactions[request.composite_session_id] = []
                 self._pending_reactions[request.composite_session_id].append(
                     (request.ack_reaction_message_id, request.ack_reaction_emoji)
                 )
+
+            await client.query(request.message, session_id=request.composite_session_id)
+            logger.info(
+                f"Sent message to Claude for session {request.composite_session_id}"
+            )
+
+            await self._delete_ack(context, request)
 
             if (
                 request.composite_session_id not in self.receiver_tasks
@@ -66,8 +67,10 @@ class ClaudeAgent(BaseAgent):
                 )
         except Exception as e:
             logger.error(f"Error processing Claude message: {e}", exc_info=True)
-            # Clean up reaction on error (before it was queued)
+            # Clean up reaction on error - may be in queue or still in request
             await self._remove_ack_reaction_direct(context, request)
+            # Also try to remove from queue if it was added
+            await self._remove_pending_reaction(request.composite_session_id, context)
             await self.session_handler.handle_session_error(
                 request.composite_session_id, context, e
             )
