@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 STREAM_BUFFER_LIMIT = 8 * 1024 * 1024  # 8MB cap for Codex stdout/stderr streams
 
+
 class CodexAgent(BaseAgent):
     """Codex CLI integration via codex exec JSON streaming mode."""
 
@@ -93,12 +94,8 @@ class CodexAgent(BaseAgent):
             f"Codex session {request.composite_session_id} started (pid={process.pid})"
         )
 
-        stdout_task = asyncio.create_task(
-            self._consume_stdout(process, request)
-        )
-        stderr_task = asyncio.create_task(
-            self._consume_stderr(process, request)
-        )
+        stdout_task = asyncio.create_task(self._consume_stdout(process, request))
+        stderr_task = asyncio.create_task(self._consume_stderr(process, request))
 
         try:
             await process.wait()
@@ -206,9 +203,7 @@ class CodexAgent(BaseAgent):
                     continue
                 await self._handle_event(event, request)
         except Exception as err:
-            await self._notify_stream_error(
-                request, f"Codex stdout 读取异常：{err}"
-            )
+            await self._notify_stream_error(request, f"Codex stdout 读取异常：{err}")
             logger.exception("Unexpected Codex stdout error")
 
     async def _consume_stderr(self, process: Process, request: AgentRequest):
@@ -231,9 +226,7 @@ class CodexAgent(BaseAgent):
                 parse_mode="markdown",
             )
 
-    async def _handle_event(
-        self, event: Dict, request: AgentRequest
-    ):
+    async def _handle_event(self, event: Dict, request: AgentRequest):
         event_type = event.get("type")
 
         if event_type == "thread.started":
@@ -277,7 +270,9 @@ class CodexAgent(BaseAgent):
                             parse_mode=pending_parse_mode or "markdown",
                         )
 
-                    self._pending_assistant_messages[session_key] = self._prepare_last_message_payload(text)
+                    self._pending_assistant_messages[session_key] = (
+                        self._prepare_last_message_payload(text)
+                    )
             elif item_type == "command_execution":
                 command = details.get("command")
                 status = details.get("status")
@@ -330,6 +325,7 @@ class CodexAgent(BaseAgent):
                     subtype="success",
                     started_at=request.started_at,
                     parse_mode=pending_parse_mode or "markdown",
+                    request=request,
                 )
             else:
                 await self.emit_result_message(
@@ -338,6 +334,7 @@ class CodexAgent(BaseAgent):
                     subtype="success",
                     started_at=request.started_at,
                     parse_mode="markdown",
+                    request=request,
                 )
             return
 
@@ -345,17 +342,13 @@ class CodexAgent(BaseAgent):
         ack_id = request.ack_message_id
         if ack_id and hasattr(self.im_client, "delete_message"):
             try:
-                await self.im_client.delete_message(
-                    request.context.channel_id, ack_id
-                )
+                await self.im_client.delete_message(request.context.channel_id, ack_id)
             except Exception as err:
                 logger.debug(f"Could not delete ack message: {err}")
             finally:
                 request.ack_message_id = None
 
-    def _prepare_last_message_payload(
-        self, text: str
-    ) -> Tuple[str, Optional[str]]:
+    def _prepare_last_message_payload(self, text: str) -> Tuple[str, Optional[str]]:
         """Prepare cached assistant text for reuse in result messages."""
         return text, "markdown"
 

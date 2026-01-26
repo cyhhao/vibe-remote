@@ -25,6 +25,10 @@ class ClaudeAgent(BaseAgent):
         self.claude_client = controller.claude_client
         self._last_assistant_text: dict[str, str] = {}
         self._pending_assistant_message: dict[str, str] = {}
+        # Store reaction info per session for cleanup after result
+        self._pending_reactions: dict[
+            str, tuple[str, str]
+        ] = {}  # session_id -> (message_id, emoji)
 
     async def handle_message(self, request: AgentRequest) -> None:
         context = request.context
@@ -37,14 +41,19 @@ class ClaudeAgent(BaseAgent):
                 subagent_reasoning_effort=request.subagent_reasoning_effort,
             )
 
-            await client.query(
-                request.message, session_id=request.composite_session_id
-            )
+            await client.query(request.message, session_id=request.composite_session_id)
             logger.info(
                 f"Sent message to Claude for session {request.composite_session_id}"
             )
 
             await self._delete_ack(context, request)
+
+            # Store reaction info for cleanup after result message
+            if request.ack_reaction_message_id and request.ack_reaction_emoji:
+                self._pending_reactions[request.composite_session_id] = (
+                    request.ack_reaction_message_id,
+                    request.ack_reaction_emoji,
+                )
 
             if (
                 request.composite_session_id not in self.receiver_tasks
@@ -172,7 +181,9 @@ class ClaudeAgent(BaseAgent):
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
-                        pending = self._pending_assistant_message.pop(composite_key, None)
+                        pending = self._pending_assistant_message.pop(
+                            composite_key, None
+                        )
                         if pending:
                             await self.controller.emit_agent_message(
                                 context,
@@ -193,7 +204,9 @@ class ClaudeAgent(BaseAgent):
                             formatted_assistant = formatter.format_assistant_message(
                                 text_parts
                             )
-                            self._pending_assistant_message[composite_key] = formatted_assistant
+                            self._pending_assistant_message[composite_key] = (
+                                formatted_assistant
+                            )
                         continue
 
                     if message_type == "system":
@@ -213,7 +226,9 @@ class ClaudeAgent(BaseAgent):
                         continue
 
                     if message_type == "result":
-                        pending = self._pending_assistant_message.pop(composite_key, None)
+                        pending = self._pending_assistant_message.pop(
+                            composite_key, None
+                        )
                         result_text = getattr(message, "result", None)
                         used_fallback = False
                         if not result_text:
@@ -237,6 +252,9 @@ class ClaudeAgent(BaseAgent):
                             duration_ms=getattr(message, "duration_ms", 0),
                             parse_mode="markdown",
                         )
+
+                        # Remove ack reaction after result is sent
+                        await self._remove_pending_reaction(composite_key, context)
 
                         self._last_assistant_text.pop(composite_key, None)
                         session = await self.session_manager.get_or_create_session(
@@ -272,6 +290,18 @@ class ClaudeAgent(BaseAgent):
                 logger.debug(f"Could not delete ack message: {err}")
             finally:
                 request.ack_message_id = None
+
+    async def _remove_pending_reaction(
+        self, composite_key: str, context: MessageContext
+    ) -> None:
+        """Remove stored reaction for a session after result is sent."""
+        reaction_info = self._pending_reactions.pop(composite_key, None)
+        if reaction_info:
+            message_id, emoji = reaction_info
+            try:
+                await self.im_client.remove_reaction(context, message_id, emoji)
+            except Exception as err:
+                logger.debug(f"Failed to remove reaction ack: {err}")
 
     def get_relative_path(
         self, abs_path: str, context: Optional[MessageContext] = None
@@ -327,7 +357,9 @@ class ClaudeAgent(BaseAgent):
             if isinstance(block, TextBlock):
                 text = block.text.strip() if block.text else ""
                 if text:
-                    parts.append(self.claude_client.formatter.escape_special_chars(text))
+                    parts.append(
+                        self.claude_client.formatter.escape_special_chars(text)
+                    )
         return "\n\n".join(parts).strip()
 
     def _detect_message_type(self, message) -> Optional[str]:
