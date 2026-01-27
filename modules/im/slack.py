@@ -884,6 +884,50 @@ class SlackBot(BaseIMClient):
             # We need to find the right channel to send the message
             # For now, we'll rely on the controller to handle this
 
+        elif callback_id == "resume_session_modal":
+            user_id = payload.get("user", {}).get("id")
+            values = view.get("state", {}).get("values", {})
+
+            agent_data = values.get("agent_block", {}).get("agent_select", {})
+            agent = agent_data.get("selected_option", {}).get("value")
+
+            manual_data = values.get("manual_block", {}).get("manual_input", {})
+            manual_session = (manual_data.get("value") or "").strip()
+
+            session_data = values.get("session_block", {}).get("session_select", {}) if values else {}
+            selected_option = session_data.get("selected_option") or {}
+            selected_value = selected_option.get("value") if isinstance(selected_option, dict) else None
+            selected_session = None
+            selected_agent = None
+            if selected_value and "|" in selected_value:
+                selected_agent, selected_session = selected_value.split("|", 1)
+
+            # Manual input takes precedence and should respect the manual agent selector.
+            if manual_session:
+                chosen_session = manual_session
+                chosen_agent = agent or selected_agent
+            else:
+                chosen_session = selected_session
+                chosen_agent = selected_agent or agent
+            metadata_raw = view.get("private_metadata")
+            channel_id = None
+            thread_id = None
+            host_message_ts = None
+            try:
+                import json
+
+                md = json.loads(metadata_raw) if metadata_raw else {}
+                channel_id = md.get("channel_id")
+                thread_id = md.get("thread_id")
+                host_message_ts = md.get("host_message_ts")
+            except Exception:
+                pass
+
+            if hasattr(self, "_on_resume_session"):
+                await self._on_resume_session(
+                    user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts
+                )
+
         elif callback_id == "opencode_question_modal":
             user_id = payload.get("user", {}).get("id")
             values = view.get("state", {}).get("values", {})
@@ -1390,6 +1434,138 @@ class SlackBot(BaseIMClient):
             await self.web_client.views_open(trigger_id=trigger_id, view=view)
         except SlackApiError as e:
             logger.error(f"Error opening change CWD modal: {e}")
+            raise
+
+    async def open_resume_session_modal(
+        self,
+        trigger_id: str,
+        sessions_by_agent: Dict[str, Dict[str, str]],
+        channel_id: Optional[str],
+        thread_id: Optional[str],
+        host_message_ts: Optional[str],
+    ):
+        """Open a modal to let users select or input a session to resume."""
+        self._ensure_clients()
+
+        # Build agent options (fallback to common backends)
+        agent_keys = list(sessions_by_agent.keys()) or ["claude", "codex", "opencode"]
+        agent_options = []
+        for agent in sorted(set(agent_keys)):
+            agent_options.append(
+                {
+                    "text": {"type": "plain_text", "text": agent.capitalize(), "emoji": True},
+                    "value": agent,
+                }
+            )
+
+        session_option_groups = []
+        for agent, mapping in sessions_by_agent.items():
+            if not mapping:
+                continue
+            options = []
+            for thread, session_id in mapping.items():
+                thread_label = thread.replace("slack_", "", 1) if thread.startswith("slack_") else thread
+                truncated = session_id[:60]
+                desc = f"thread {thread_label}"
+                options.append(
+                    {
+                        "text": {"type": "plain_text", "text": truncated, "emoji": True},
+                        "value": f"{agent}|{session_id}",
+                        "description": {"type": "plain_text", "text": desc[:75], "emoji": True},
+                    }
+                )
+            if options:
+                session_option_groups.append(
+                    {
+                        "label": {"type": "plain_text", "text": agent.capitalize(), "emoji": True},
+                        "options": options,
+                    }
+                )
+
+        blocks: list = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "Select a saved session or paste a session ID to resume work in this thread.",
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "agent_block",
+                "label": {"type": "plain_text", "text": "Agent backend", "emoji": True},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "agent_select",
+                    "options": agent_options,
+                    "initial_option": agent_options[0],
+                },
+            },
+        ]
+
+        if session_option_groups:
+            blocks.append(
+                {
+                    "type": "input",
+                    "block_id": "session_block",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": "Pick an existing session", "emoji": True},
+                    "element": {
+                        "type": "static_select",
+                        "action_id": "session_select",
+                        "option_groups": session_option_groups,
+                        "placeholder": {"type": "plain_text", "text": "Select a session", "emoji": True},
+                    },
+                }
+            )
+        else:
+            blocks.append(
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": "_No stored sessions found. Paste a session ID below to resume._",
+                        }
+                    ],
+                }
+            )
+
+        blocks.append(
+            {
+                "type": "input",
+                "block_id": "manual_block",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Or paste a session ID", "emoji": True},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "manual_input",
+                    "placeholder": {"type": "plain_text", "text": "e.g., sess_12345", "emoji": True},
+                },
+            }
+        )
+
+        metadata = {
+            "channel_id": channel_id,
+            "thread_id": thread_id,
+            "host_message_ts": host_message_ts,
+        }
+        import json
+
+        view = {
+            "type": "modal",
+            "callback_id": "resume_session_modal",
+            "private_metadata": json.dumps(metadata),
+            "title": {"type": "plain_text", "text": "Resume Session", "emoji": True},
+            "submit": {"type": "plain_text", "text": "Resume", "emoji": True},
+            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "blocks": blocks,
+        }
+
+        try:
+            await self.web_client.views_open(trigger_id=trigger_id, view=view)
+        except SlackApiError as e:
+            logger.error(f"Error opening resume modal: {e}")
             raise
 
     def _get_default_opencode_agent_name(self, opencode_agents: list) -> Optional[str]:
@@ -2074,6 +2250,10 @@ class SlackBot(BaseIMClient):
         # Register routing modal update handler
         if "on_routing_modal_update" in kwargs:
             self._on_routing_modal_update = kwargs["on_routing_modal_update"]
+
+        # Register resume session handler
+        if "on_resume_session" in kwargs:
+            self._on_resume_session = kwargs["on_resume_session"]
 
         # Register on_ready handler (called when connected)
         if "on_ready" in kwargs:

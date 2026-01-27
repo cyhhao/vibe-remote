@@ -116,8 +116,11 @@ class CommandHandlers:
                 InlineButton(text="🔄 Clear All Session", callback_data="cmd_clear"),
                 InlineButton(text="⚙️ Settings", callback_data="cmd_settings"),
             ],
-            # Row 3: Agent/Model switching
-            [InlineButton(text="🤖 Agent Settings", callback_data="cmd_routing")],
+            # Row 3: Resume + Agent/Model switching
+            [
+                InlineButton(text="⏮️ Resume Session", callback_data="cmd_resume"),
+                InlineButton(text="🤖 Agent Settings", callback_data="cmd_routing"),
+            ],
             # Row 4: Help
             [InlineButton(text="ℹ️ How it Works", callback_data="info_how_it_works")],
         ]
@@ -304,6 +307,54 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             await self.im_client.send_message(
                 channel_context,
                 "📂 Click the 'Change Work Dir' button in the @Vibe Remote /start menu to change working directory.",
+            )
+
+    async def handle_resume(self, context: MessageContext):
+        """Open resume-session modal (Slack) or explain availability."""
+        if self.config.platform != "slack":
+            channel_context = self._get_channel_context(context)
+            await self.im_client.send_message(
+                channel_context,
+                "⏮️ Resume is currently available only on Slack. Continue in the same thread to auto-resume.",
+            )
+            return
+
+        trigger_id = (
+            context.platform_specific.get("trigger_id")
+            if context.platform_specific
+            else None
+        )
+        if not trigger_id:
+            channel_context = self._get_channel_context(context)
+            await self.im_client.send_message(
+                channel_context,
+                "⏮️ Please click the Resume button inside Slack to open the picker.",
+            )
+            return
+
+        settings_key = self.controller._get_settings_key(context)
+        sessions_by_agent = self.settings_manager.list_all_agent_sessions(settings_key)
+
+        if not sessions_by_agent:
+            channel_context = self._get_channel_context(context)
+            await self.im_client.send_message(
+                channel_context,
+                "ℹ️ No stored sessions found. You can still paste a session ID manually in the resume modal.",
+            )
+
+        try:
+            await self.im_client.open_resume_session_modal(
+                trigger_id=trigger_id,
+                sessions_by_agent=sessions_by_agent,
+                channel_id=context.channel_id,
+                thread_id=context.thread_id or context.message_id or "",
+                host_message_ts=context.message_id,
+            )
+        except Exception as e:
+            logger.error(f"Error opening resume modal: {e}")
+            channel_context = self._get_channel_context(context)
+            await self.im_client.send_message(
+                channel_context, "❌ Failed to open resume dialog. Please try again."
             )
 
     async def handle_stop(self, context: MessageContext, args: str = ""):
