@@ -119,15 +119,12 @@ class SessionHandler:
                     "Using Claude subagent session for %s at %s", cached_base, working_path
                 )
                 return self.claude_sessions[cached_key]
+            # Always use agent-specific key when effective_agent is set
+            # This ensures session continuity even on first use
+            composite_key = cached_key
+            base_session_id = cached_base
             if cached_session_id:
                 stored_claude_session_id = cached_session_id
-                composite_key = cached_key
-                base_session_id = cached_base
-            if composite_key in self.claude_sessions:
-                logger.info(
-                    "Using Claude subagent session for %s at %s", cached_base, working_path
-                )
-                return self.claude_sessions[composite_key]
 
         # Ensure working directory exists
         if not os.path.exists(working_path):
