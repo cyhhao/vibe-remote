@@ -248,7 +248,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     show_message_types: [],
     custom_cwd: '',
     routing: {
-      agent_backend: config.agents?.default_backend || 'opencode',
+      agent_backend: 'opencode',
       opencode_agent: null,
       opencode_model: null,
       opencode_reasoning_effort: null,
@@ -390,15 +390,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-muted uppercase">{t('channelList.backend')}</label>
                       <select
-                        value={channelConfig.routing.agent_backend || ''}
+                        value={channelConfig.routing.agent_backend || 'opencode'}
                         onChange={(e) =>
                           updateConfig(channel.id, {
-                            routing: { ...channelConfig.routing, agent_backend: e.target.value || null },
+                            routing: { ...channelConfig.routing, agent_backend: e.target.value },
                           })
                         }
                         className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
                       >
-                        <option value="">{t('common.default')} ({config.agents?.default_backend || 'opencode'})</option>
                         <option value="opencode">OpenCode</option>
                         <option value="claude">Claude</option>
                         <option value="codex">Codex</option>
@@ -458,7 +457,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   </div>
 
                   {/* OpenCode Settings */}
-                  {channelConfig.routing.agent_backend === 'opencode' && (
+                  {(!channelConfig.routing.agent_backend || channelConfig.routing.agent_backend === 'opencode') && (
                     <div className="space-y-3">
                       <div className="text-xs font-medium text-muted uppercase">{t('channelList.opencodeSettings')}</div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
