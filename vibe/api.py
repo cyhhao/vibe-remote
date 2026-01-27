@@ -721,17 +721,12 @@ def codex_models() -> dict:
 
     Codex CLI does not expose a stable `list models` command.
     We derive suggestions from:
-    - Common OpenAI model names (o3, o4-mini, gpt-5, etc.)
+    - Common OpenAI model names (gpt-5, etc.)
     - ~/.codex/config.toml (if present)
     """
 
     # Common OpenAI model names used with Codex
     options: list[str] = [
-        # O-series (reasoning models)
-        "o3",
-        "o3-mini",
-        "o3-pro",
-        "o4-mini",
         # GPT series
         "gpt-5",
         "gpt-5.1",
