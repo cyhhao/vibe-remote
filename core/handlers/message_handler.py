@@ -92,6 +92,11 @@ class MessageHandler:
             )
             settings_key = self._get_settings_key(context)
 
+            # Update thread's current message_id so log messages follow this user message
+            # This is critical for proper log message grouping when agent receivers
+            # hold references to older contexts
+            self.controller.update_thread_message_id(context)
+
             agent_name = self.controller.resolve_agent_for_context(context)
 
             matched_prefix = None
@@ -137,7 +142,11 @@ class MessageHandler:
                             )
                     else:
                         try:
-                            subagent_def = load_claude_subagent(normalized)
+                            from pathlib import Path
+                            subagent_def = load_claude_subagent(
+                                normalized,
+                                project_root=Path(working_path),
+                            )
                             if subagent_def:
                                 subagent_name = subagent_def.name
                                 subagent_model = subagent_def.model

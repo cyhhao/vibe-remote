@@ -9,6 +9,7 @@ class ClaudeCompatConfig:
     permission_mode: str
     cwd: str
     system_prompt: Optional[str] = None
+    default_model: Optional[str] = None
 
     def __post_init__(self) -> None:
         self.permission_mode = str(self.permission_mode)
@@ -46,6 +47,7 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         permission_mode="bypassPermissions",
         cwd=v2.runtime.default_cwd,
         system_prompt=None,
+        default_model=v2.agents.claude.default_model,
     )
     codex = None
     if v2.agents.codex.enabled:

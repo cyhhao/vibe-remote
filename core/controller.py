@@ -38,6 +38,9 @@ class Controller:
         self._consolidated_message_ids: Dict[str, str] = {}
         self._consolidated_message_buffers: Dict[str, str] = {}
         self._consolidated_message_locks: Dict[str, asyncio.Lock] = {}
+        # Track current message_id per thread - ensures log messages follow the latest user message
+        # Key: "{settings_key}:{thread_id}", Value: message_id
+        self._thread_current_message_id: Dict[str, str] = {}
 
         # Initialize core modules
         self._init_modules()
@@ -222,10 +225,25 @@ class Controller:
     def _get_consolidated_message_key(self, context: MessageContext) -> str:
         settings_key = self._get_settings_key(context)
         thread_key = context.thread_id or context.channel_id
-        # Include message_id to distinguish different conversation rounds within same thread
-        # Each user message triggers a new round with its own consolidated message
-        trigger_id = context.message_id or ""
+        # Use the tracked current message_id for this thread if available
+        # This ensures log messages follow the latest user message, even when
+        # agent receivers hold stale context references
+        tracking_key = f"{settings_key}:{thread_key}"
+        trigger_id = self._thread_current_message_id.get(tracking_key) or context.message_id or ""
         return f"{settings_key}:{thread_key}:{trigger_id}"
+
+    def update_thread_message_id(self, context: MessageContext) -> None:
+        """Update the current message_id for a thread.
+        
+        Call this when processing a new user message to ensure subsequent
+        log messages (from agents) are grouped with this message.
+        """
+        if not context.message_id:
+            return
+        settings_key = self._get_settings_key(context)
+        thread_key = context.thread_id or context.channel_id
+        tracking_key = f"{settings_key}:{thread_key}"
+        self._thread_current_message_id[tracking_key] = context.message_id
 
     def _get_consolidated_message_lock(self, key: str) -> asyncio.Lock:
         if key not in self._consolidated_message_locks:

@@ -3,6 +3,7 @@ import { Hash, CheckSquare, Square, RefreshCw, HelpCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
+import { Combobox } from '../ui/combobox';
 import clsx from 'clsx';
 
 /** Input that only commits value on blur */
@@ -39,6 +40,10 @@ interface ChannelConfig {
     opencode_agent?: string | null;
     opencode_model?: string | null;
     opencode_reasoning_effort?: string | null;
+    claude_agent?: string | null;
+    claude_model?: string | null;
+    codex_model?: string | null;
+    codex_reasoning_effort?: string | null;
   };
   require_mention?: boolean | null;  // null=use global default, true=require, false=don't require
 }
@@ -51,7 +56,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [channels, setChannels] = useState<any[]>([]);
   const [configs, setConfigs] = useState<Record<string, ChannelConfig>>(data.channelConfigs || {});
   const [config, setConfig] = useState<any>(data);
-  const [opencodeOptions, setOpencodeOptions] = useState<any>(null);
+  const [opencodeOptionsByCwd, setOpencodeOptionsByCwd] = useState<Record<string, any>>({});
+  const [claudeAgentsByCwd, setClaudeAgentsByCwd] = useState<Record<string, { id: string; name: string; path: string; source?: string }[]>>({});
+  const [claudeModels, setClaudeModels] = useState<string[]>([]);
+  const [codexModels, setCodexModels] = useState<string[]>([]);
   const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -88,15 +96,47 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     }
   };
 
-  const loadOpenCodeOptions = async () => {
+  const loadOpenCodeOptions = async (cwd: string) => {
     try {
-      const cwd = config.runtime?.default_cwd || '.';
       const result = await api.opencodeOptions(cwd);
       if (result.ok) {
-        setOpencodeOptions(result.data);
+        setOpencodeOptionsByCwd((prev) => ({ ...prev, [cwd]: result.data }));
       }
     } catch (e) {
       console.error('Failed to load OpenCode options:', e);
+    }
+  };
+
+  const loadClaudeAgents = async (cwd: string) => {
+    try {
+      const result = await api.claudeAgents(cwd);
+      if (result.ok) {
+        setClaudeAgentsByCwd((prev) => ({ ...prev, [cwd]: result.agents || [] }));
+      }
+    } catch (e) {
+      console.error('Failed to load Claude agents:', e);
+    }
+  };
+
+  const loadClaudeModels = async () => {
+    try {
+      const result = await api.claudeModels();
+      if (result.ok) {
+        setClaudeModels(result.models || []);
+      }
+    } catch (e) {
+      console.error('Failed to load Claude models:', e);
+    }
+  };
+
+  const loadCodexModels = async () => {
+    try {
+      const result = await api.codexModels();
+      if (result.ok) {
+        setCodexModels(result.models || []);
+      }
+    } catch (e) {
+      console.error('Failed to load Codex models:', e);
     }
   };
 
@@ -107,10 +147,51 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   }, [botToken]);
 
   useEffect(() => {
-    if (config.agents?.opencode?.enabled) {
-      loadOpenCodeOptions();
+    if (config.agents?.claude?.enabled) {
+      loadClaudeModels();
     }
-  }, [config.agents?.opencode?.enabled]);
+  }, [config.agents?.claude?.enabled]);
+
+  useEffect(() => {
+    if (config.agents?.codex?.enabled) {
+      loadCodexModels();
+    }
+  }, [config.agents?.codex?.enabled]);
+
+  useEffect(() => {
+    if (!channels.length) return;
+    const defaultCwd = config.runtime?.default_cwd || '.';
+    const defaultBackend = config.agents?.default_backend || 'opencode';
+
+    const neededOpenCodeCwds = new Set<string>();
+    const neededClaudeCwds = new Set<string>();
+
+    channels.forEach((channel) => {
+      const raw = configs[channel.id];
+      if (!raw || raw.enabled === false) return;
+      const effectiveCwd = (raw.custom_cwd ?? '') || defaultCwd;
+      const backend = raw.routing?.agent_backend || defaultBackend;
+
+      if (backend === 'opencode' && config.agents?.opencode?.enabled) {
+        neededOpenCodeCwds.add(effectiveCwd);
+      }
+      if (backend === 'claude' && config.agents?.claude?.enabled) {
+        neededClaudeCwds.add(effectiveCwd);
+      }
+    });
+
+    neededOpenCodeCwds.forEach((cwd) => {
+      if (!opencodeOptionsByCwd[cwd]) {
+        void loadOpenCodeOptions(cwd);
+      }
+    });
+
+    neededClaudeCwds.forEach((cwd) => {
+      if (!claudeAgentsByCwd[cwd]) {
+        void loadClaudeAgents(cwd);
+      }
+    });
+  }, [channels, configs, config.runtime?.default_cwd, config.agents?.default_backend, config.agents?.opencode?.enabled, config.agents?.claude?.enabled]);
 
   useEffect(() => {
     if (!channels.length) return;
@@ -171,19 +252,21 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       opencode_agent: null,
       opencode_model: null,
       opencode_reasoning_effort: null,
+      claude_agent: null,
+      claude_model: null,
+      codex_model: null,
+      codex_reasoning_effort: null,
     },
     require_mention: null,
   });
 
-  const reasoningOptionsByModel = React.useMemo(() => {
-    const lookup = opencodeOptions?.reasoning_options || {};
+  const getReasoningOptions = (cwd: string, modelKey: string) => {
+    const lookup = opencodeOptionsByCwd[cwd]?.reasoning_options || {};
     if (lookup && typeof lookup === 'object') {
-      return lookup as Record<string, { value: string; label: string }[]>;
+      return (lookup as Record<string, { value: string; label: string }[]>)[modelKey] || [];
     }
-    return {} as Record<string, { value: string; label: string }[]>;
-  }, [opencodeOptions]);
-
-  const getReasoningOptions = (modelKey: string) => reasoningOptionsByModel[modelKey] || [];
+    return [];
+  };
 
   const selectedCount = channels.filter((channel) => isChannelEnabled(channel.id)).length;
 
@@ -249,6 +332,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             ...rawConfig,
             enabled: isChannelEnabled(channel.id),
             show_message_types: rawConfig.show_message_types || def.show_message_types,
+            custom_cwd: rawConfig.custom_cwd ?? def.custom_cwd,
             routing: {
               ...def.routing,
               ...(rawConfig.routing || {}),
@@ -256,6 +340,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             // Preserve require_mention from rawConfig (can be null, true, or false)
             require_mention: rawConfig.require_mention !== undefined ? rawConfig.require_mention : def.require_mention,
           };
+
+          const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '.';
+          const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
+          const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
           return (
             <div key={channel.id} className="p-4 hover:bg-neutral-50/50 transition-colors">
               <div className="flex items-center justify-between">
@@ -443,15 +531,113 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                                 },
                               })
                             }
-                            disabled={!getReasoningOptions(selectedModels[channel.id] || channelConfig.routing.opencode_model || '').length}
+                            disabled={!getReasoningOptions(
+                              effectiveCwd,
+                              selectedModels[channel.id] || channelConfig.routing.opencode_model || ''
+                            ).length}
                             className="w-full bg-panel border border-border rounded px-3 py-2 text-sm disabled:opacity-50"
                           >
                             <option value="">{t('common.default')}</option>
-                            {getReasoningOptions(selectedModels[channel.id] || channelConfig.routing.opencode_model || '').map((option) => (
+                            {getReasoningOptions(
+                              effectiveCwd,
+                              selectedModels[channel.id] || channelConfig.routing.opencode_model || ''
+                            ).map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>
                             ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Claude Settings */}
+                  {channelConfig.routing.agent_backend === 'claude' && (
+                    <div className="space-y-3">
+                      <div className="text-xs font-medium text-muted uppercase">{t('channelList.claudeSettings')}</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-bg/50 p-3 rounded border border-border">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted">{t('channelList.agent')}</label>
+                          <select
+                            value={channelConfig.routing.claude_agent || ''}
+                            onChange={(e) =>
+                              updateConfig(channel.id, {
+                                routing: { ...channelConfig.routing, claude_agent: e.target.value || null },
+                              })
+                            }
+                            className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
+                          >
+                            <option value="">{t('common.default')}</option>
+                            {claudeAgents.map((agent) => (
+                              <option key={agent.id} value={agent.id}>{agent.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted">{t('channelList.model')}</label>
+                          <Combobox
+                            options={[
+                              { value: '', label: t('common.default') },
+                              ...claudeModels.map(m => ({ value: m, label: m }))
+                            ]}
+                            value={channelConfig.routing.claude_model || ''}
+                            onValueChange={(v) =>
+                              updateConfig(channel.id, {
+                                routing: { ...channelConfig.routing, claude_model: v || null },
+                              })
+                            }
+                            placeholder={t('channelList.claudeModelPlaceholder')}
+                            searchPlaceholder={t('channelList.searchModel')}
+                            allowCustomValue={true}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Codex Settings */}
+                  {channelConfig.routing.agent_backend === 'codex' && (
+                    <div className="space-y-3">
+                      <div className="text-xs font-medium text-muted uppercase">{t('channelList.codexSettings')}</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-bg/50 p-3 rounded border border-border">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted">{t('channelList.model')}</label>
+                          <Combobox
+                            options={[
+                              { value: '', label: t('common.default') },
+                              ...codexModels.map(m => ({ value: m, label: m }))
+                            ]}
+                            value={channelConfig.routing.codex_model || ''}
+                            onValueChange={(v) =>
+                              updateConfig(channel.id, {
+                                routing: { ...channelConfig.routing, codex_model: v || null },
+                              })
+                            }
+                            placeholder={t('channelList.codexModelPlaceholder')}
+                            searchPlaceholder={t('channelList.searchModel')}
+                            allowCustomValue={true}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
+                          <select
+                            value={channelConfig.routing.codex_reasoning_effort || ''}
+                            onChange={(e) =>
+                              updateConfig(channel.id, {
+                                routing: {
+                                  ...channelConfig.routing,
+                                  codex_reasoning_effort: e.target.value || null,
+                                },
+                              })
+                            }
+                            className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
+                          >
+                            <option value="">{t('common.default')}</option>
+                            <option value="low">{t('channelList.reasoningLow')}</option>
+                            <option value="medium">{t('channelList.reasoningMedium')}</option>
+                            <option value="high">{t('channelList.reasoningHigh')}</option>
+                            <option value="xhigh">{t('channelList.reasoningXHigh')}</option>
                           </select>
                         </div>
                       </div>

@@ -13,6 +13,9 @@ export type ApiContextType = {
   doctor: () => Promise<any>;
   opencodeOptions: (cwd: string) => Promise<any>;
   opencodeSetupPermission: () => Promise<{ ok: boolean; message: string; config_path: string }>;
+  claudeAgents: (cwd?: string) => Promise<{ ok: boolean; agents?: { id: string; name: string; path: string; source?: string }[]; error?: string }>;
+  claudeModels: () => Promise<{ ok: boolean; models?: string[]; error?: string }>;
+  codexModels: () => Promise<{ ok: boolean; models?: string[]; error?: string }>;
   getLogs: (lines?: number) => Promise<{ logs: LogEntry[]; total: number }>;
   getVersion: () => Promise<VersionInfo>;
   doUpgrade: () => Promise<UpgradeResult>;
@@ -110,6 +113,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     doctor: () => postJson('/doctor', {}),
     opencodeOptions: (cwd) => postJson('/opencode/options', { cwd }),
     opencodeSetupPermission: () => postJson('/opencode/setup-permission', {}),
+    claudeAgents: (cwd) => cwd ? getJson(`/claude/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/claude/agents'),
+    claudeModels: () => getJson('/claude/models'),
+    codexModels: () => getJson('/codex/models'),
     getLogs: (lines = 500) => postJson('/logs', { lines }),
     getVersion: () => getJson('/version'),
     doUpgrade: () => postJson('/upgrade', {}),

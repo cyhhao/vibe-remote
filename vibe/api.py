@@ -21,10 +21,8 @@ from config.v2_sessions import SessionsStore
 
 logger = logging.getLogger(__name__)
 
-_OPENCODE_OPTIONS_CACHE: dict[str, Optional[object]] = {
-    "data": None,
-    "updated_at": 0.0,
-}
+# Cache per cwd: { cwd: { "data": ..., "updated_at": ... } }
+_OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
 
@@ -79,6 +77,10 @@ def save_settings(payload: dict) -> dict:
             opencode_agent=routing_payload.get("opencode_agent"),
             opencode_model=routing_payload.get("opencode_model"),
             opencode_reasoning_effort=routing_payload.get("opencode_reasoning_effort"),
+            claude_agent=routing_payload.get("claude_agent"),
+            claude_model=routing_payload.get("claude_model"),
+            codex_model=routing_payload.get("codex_model"),
+            codex_reasoning_effort=routing_payload.get("codex_reasoning_effort"),
         )
         channels[channel_id] = ChannelSettings(
             enabled=channel_payload.get("enabled", True),
@@ -169,10 +171,12 @@ def opencode_options(cwd: str) -> dict:
 
 
 async def opencode_options_async(cwd: str) -> dict:
-    cache_data = _OPENCODE_OPTIONS_CACHE.get("data")
-    updated_at = _OPENCODE_OPTIONS_CACHE.get("updated_at")
-    updated_at_value = updated_at if isinstance(updated_at, float) else 0.0
-    cache_age = time.monotonic() - updated_at_value
+    # Expand ~ to user home directory
+    expanded_cwd = os.path.expanduser(cwd)
+    cache_entry = _OPENCODE_OPTIONS_CACHE.get(expanded_cwd, {})
+    cache_data = cache_entry.get("data")
+    updated_at = cache_entry.get("updated_at", 0.0)
+    cache_age = time.monotonic() - updated_at
     if cache_data and cache_age < _OPENCODE_OPTIONS_TTL_SECONDS:
         return {"ok": True, "data": cache_data, "cached": True}
 
@@ -226,13 +230,13 @@ async def opencode_options_async(cwd: str) -> dict:
         )
         await asyncio.wait_for(server.ensure_running(), timeout=timeout_seconds)
         agents = await asyncio.wait_for(
-            server.get_available_agents(cwd), timeout=timeout_seconds
+            server.get_available_agents(expanded_cwd), timeout=timeout_seconds
         )
         models = await asyncio.wait_for(
-            server.get_available_models(cwd), timeout=timeout_seconds
+            server.get_available_models(expanded_cwd), timeout=timeout_seconds
         )
         defaults = await asyncio.wait_for(
-            server.get_default_config(cwd), timeout=timeout_seconds
+            server.get_default_config(expanded_cwd), timeout=timeout_seconds
         )
         reasoning_options = _build_reasoning_options(
             models, build_reasoning_effort_options
@@ -243,8 +247,10 @@ async def opencode_options_async(cwd: str) -> dict:
             "defaults": defaults,
             "reasoning_options": reasoning_options,
         }
-        _OPENCODE_OPTIONS_CACHE["data"] = data
-        _OPENCODE_OPTIONS_CACHE["updated_at"] = time.monotonic()
+        _OPENCODE_OPTIONS_CACHE[expanded_cwd] = {
+            "data": data,
+            "updated_at": time.monotonic(),
+        }
         return {"ok": True, "data": data}
     except Exception as exc:
         logger.warning("OpenCode options fetch failed: %s", exc, exc_info=True)
@@ -268,6 +274,10 @@ def _settings_to_payload(store: SettingsStore) -> dict:
                 "opencode_agent": settings.routing.opencode_agent,
                 "opencode_model": settings.routing.opencode_model,
                 "opencode_reasoning_effort": settings.routing.opencode_reasoning_effort,
+                "claude_agent": settings.routing.claude_agent,
+                "claude_model": settings.routing.claude_model,
+                "codex_model": settings.routing.codex_model,
+                "codex_reasoning_effort": settings.routing.codex_reasoning_effort,
             },
         }
     return payload
@@ -509,3 +519,254 @@ def setup_opencode_permission() -> dict:
     except Exception as e:
         logger.error(f"Failed to create OpenCode config: {e}")
         return {"ok": False, "message": str(e), "config_path": str(config_path)}
+
+
+def parse_claude_agent_file(agent_path: str) -> Optional[dict]:
+    """Parse a Claude agent markdown file and extract metadata.
+
+    Agent files have YAML frontmatter and a markdown body:
+    ---
+    name: agent-name
+    description: When to invoke this agent
+    tools: Read, Bash, Edit  # Optional
+    model: sonnet  # Optional: sonnet, opus, haiku, inherit
+    ---
+    System prompt content here...
+
+    Returns:
+        {
+            "name": str,
+            "description": str,
+            "prompt": str,       # The markdown body (system prompt)
+            "tools": list[str],  # Optional
+            "model": str,        # Optional
+        }
+        or None on parse failure
+    """
+    try:
+        content = Path(agent_path).read_text(encoding="utf-8")
+
+        # Check for YAML frontmatter
+        if not content.startswith("---"):
+            # No frontmatter, use entire content as prompt
+            return {
+                "name": Path(agent_path).stem,
+                "description": f"Agent from {Path(agent_path).name}",
+                "prompt": content.strip(),
+                "tools": None,
+                "model": None,
+            }
+
+        # Find the closing ---
+        lines = content.split("\n")
+        end_idx = -1
+        for i, line in enumerate(lines[1:], start=1):
+            if line.strip() == "---":
+                end_idx = i
+                break
+
+        if end_idx == -1:
+            # Malformed frontmatter, use entire content
+            return {
+                "name": Path(agent_path).stem,
+                "description": f"Agent from {Path(agent_path).name}",
+                "prompt": content.strip(),
+                "tools": None,
+                "model": None,
+            }
+
+        # Parse YAML frontmatter
+        frontmatter_lines = lines[1:end_idx]
+        frontmatter_text = "\n".join(frontmatter_lines)
+
+        # Simple YAML parsing (avoid external dependency)
+        metadata: dict = {}
+        for line in frontmatter_lines:
+            if ":" in line:
+                key, _, value = line.partition(":")
+                key = key.strip()
+                value = value.strip()
+                if key and value:
+                    metadata[key] = value
+
+        # Extract body (system prompt)
+        body_lines = lines[end_idx + 1:]
+        body = "\n".join(body_lines).strip()
+
+        # Parse tools if present (comma or space separated)
+        tools = None
+        if "tools" in metadata:
+            tools_str = metadata["tools"]
+            # Handle both "Read, Bash, Edit" and "Read Bash Edit"
+            if "," in tools_str:
+                tools = [t.strip() for t in tools_str.split(",") if t.strip()]
+            else:
+                tools = [t.strip() for t in tools_str.split() if t.strip()]
+
+        return {
+            "name": metadata.get("name", Path(agent_path).stem),
+            "description": metadata.get("description", f"Agent from {Path(agent_path).name}"),
+            "prompt": body,
+            "tools": tools,
+            "model": metadata.get("model"),
+        }
+    except Exception as e:
+        logger.warning(f"Failed to parse agent file {agent_path}: {e}")
+        return None
+
+
+def claude_agents(cwd: Optional[str] = None) -> dict:
+    """List available Claude Code agents (global + project).
+
+    Claude supports both:
+    - Global agents: ~/.claude/agents/*.md
+    - Project agents: <cwd>/.claude/agents/*.md (if cwd provided)
+
+    Returns:
+        {
+            "ok": True,
+            "agents": [
+                {"id": "reviewer", "name": "reviewer", "path": "/path/to/reviewer.md"},
+                ...
+            ]
+        }
+        or {"ok": False, "error": str} on failure
+    """
+    global_dir = Path.home() / ".claude" / "agents"
+    project_dir: Optional[Path] = None
+    if cwd:
+        try:
+            project_dir = (Path(cwd).expanduser().resolve() / ".claude" / "agents")
+        except Exception:
+            project_dir = None
+
+    def _scan_agents(directory: Path, source: str) -> dict[str, dict]:
+        if not directory.exists():
+            return {}
+        if not directory.is_dir():
+            return {}
+        found: dict[str, dict] = {}
+        for agent_file in sorted(directory.glob("*.md")):
+            if not agent_file.is_file():
+                continue
+            agent_id = agent_file.stem
+            found[agent_id] = {
+                "id": agent_id,
+                "name": agent_id,
+                "path": str(agent_file),
+                "source": source,
+            }
+        return found
+
+    try:
+        # Project overrides global on name collision.
+        merged = _scan_agents(global_dir, "global")
+        if project_dir is not None:
+            merged.update(_scan_agents(project_dir, "project"))
+        agents = list(merged.values())
+        agents.sort(key=lambda x: (0 if x.get("source") == "project" else 1, x.get("id", "")))
+        return {"ok": True, "agents": agents}
+    except Exception as e:
+        logger.error(f"Failed to scan Claude agents directory: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+def claude_models() -> dict:
+    """Best-effort list of Claude Code model options.
+
+    Claude Code does not expose a stable `list models` CLI subcommand.
+    We derive suggestions from:
+    - Common aliases mentioned by `claude --help` (opus/sonnet/haiku)
+    - Common full model names (claude-opus-4, claude-sonnet-4, etc.)
+    - ~/.claude/settings.json `model`
+    - ~/.claude/settings.json `env` model variables (if present)
+    """
+
+    # Common full model names (latest versions)
+    options: list[str] = [
+        "claude-opus-4",
+        "claude-sonnet-4",
+        "claude-haiku-4",
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+    ]
+
+    settings_path = Path.home() / ".claude" / "settings.json"
+    try:
+        if settings_path.exists() and settings_path.is_file():
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                model = data.get("model")
+                if isinstance(model, str) and model.strip():
+                    options.append(model.strip())
+                env = data.get("env")
+                if isinstance(env, dict):
+                    for key in (
+                        "ANTHROPIC_MODEL",
+                        "ANTHROPIC_SMALL_FAST_MODEL",
+                    ):
+                        value = env.get(key)
+                        if isinstance(value, str) and value.strip():
+                            options.append(value.strip())
+    except Exception as exc:
+        logger.warning("Failed to read Claude settings.json: %s", exc, exc_info=True)
+
+    uniq = sorted({x for x in options if x})
+    return {"ok": True, "models": uniq}
+
+
+def codex_models() -> dict:
+    """Best-effort list of Codex model options.
+
+    Codex CLI does not expose a stable `list models` command.
+    We derive suggestions from:
+    - Common OpenAI model names (o3, o4-mini, gpt-5, etc.)
+    - ~/.codex/config.toml (if present)
+    """
+
+    # Common OpenAI model names used with Codex
+    options: list[str] = [
+        # O-series (reasoning models)
+        "o3",
+        "o3-mini",
+        "o3-pro",
+        "o4-mini",
+        # GPT series
+        "gpt-5",
+        "gpt-5.1",
+        "gpt-5.2",
+        "gpt-5.2-codex",
+    ]
+    config_path = Path.home() / ".codex" / "config.toml"
+
+    try:
+        if config_path.exists() and config_path.is_file():
+            try:
+                import tomllib  # py3.11+
+            except Exception:  # pragma: no cover
+                tomllib = None
+
+            if tomllib is None:
+                uniq = sorted({x for x in options if x})
+                return {"ok": True, "models": uniq}
+
+            data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                model = data.get("model")
+                if isinstance(model, str) and model.strip():
+                    options.append(model.strip())
+                notice = data.get("notice")
+                if isinstance(notice, dict):
+                    migrations = notice.get("model_migrations")
+                    if isinstance(migrations, dict):
+                        for k, v in migrations.items():
+                            if isinstance(k, str) and k.strip():
+                                options.append(k.strip())
+                            if isinstance(v, str) and v.strip():
+                                options.append(v.strip())
+    except Exception as exc:
+        logger.warning("Failed to read Codex config.toml: %s", exc, exc_info=True)
+
+    uniq = sorted({x for x in options if x})
+    return {"ok": True, "models": uniq}
