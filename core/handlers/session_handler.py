@@ -95,9 +95,11 @@ class SessionHandler:
         channel_settings = self.settings_manager.get_channel_settings(context.channel_id)
         routing = channel_settings.routing if channel_settings else None
         
-        # Priority: subagent params > channel config > global default
+        # Priority: subagent params > channel config > agent frontmatter > global default
+        # Note: agent frontmatter model is applied later after loading agent file
         effective_agent = subagent_name or (routing.claude_agent if routing else None)
-        effective_model = subagent_model or (routing.claude_model if routing else None) or self.config.claude.default_model
+        # Store explicit model override (not including default yet)
+        explicit_model = subagent_model or (routing.claude_model if routing else None)
         # Note: Claude Code has no CLI parameter for reasoning_effort, so we don't use it
 
         if composite_key in self.claude_sessions and not effective_agent:
@@ -142,16 +144,23 @@ class SessionHandler:
         # Workaround: read the agent file and use its content as system_prompt
         agent_system_prompt: Optional[str] = None
         agent_allowed_tools: Optional[list] = None
+        agent_model: Optional[str] = None
         if effective_agent:
             agent_data = self._load_agent_file(effective_agent, working_path)
             if agent_data:
                 agent_system_prompt = agent_data.get("prompt")
                 agent_allowed_tools = agent_data.get("tools")
+                agent_model = agent_data.get("model")
                 logger.info(f"Loaded agent '{effective_agent}' system prompt ({len(agent_system_prompt or '')} chars)")
                 if agent_allowed_tools:
                     logger.info(f"  Agent allowed tools: {agent_allowed_tools}")
+                if agent_model:
+                    logger.info(f"  Agent model from frontmatter: {agent_model}")
             else:
                 logger.warning(f"Could not load agent file for '{effective_agent}'")
+
+        # Determine final model: explicit override > agent frontmatter > global default
+        effective_model = explicit_model or agent_model or self.config.claude.default_model
 
         # Determine final system prompt: agent prompt takes precedence over config
         final_system_prompt = agent_system_prompt or self.config.claude.system_prompt
