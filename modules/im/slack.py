@@ -808,7 +808,22 @@ class SlackBot(BaseIMClient):
                         await self.on_callback_query_callback(context, callback_data)
                 elif action_type in {"static_select", "external_select"}:
                     action_id = action.get("action_id")
-                    if action_id in {"opencode_agent_select", "opencode_model_select"}:
+                    # Trigger modal update for backend selection and all backend-specific selectors
+                    routing_modal_actions = {
+                        "backend_select",
+                        "opencode_agent_select",
+                        "opencode_model_select",
+                        "claude_agent_select",
+                        "claude_model_select",
+                        "codex_model_select",
+                    }
+                    # Also check for prefixed action IDs (reasoning selects have unique suffixes)
+                    should_update = (
+                        action_id in routing_modal_actions
+                        or (action_id and action_id.startswith("opencode_reasoning_select"))
+                        or (action_id and action_id.startswith("codex_reasoning_select"))
+                    )
+                    if should_update:
                         if hasattr(self, "_on_routing_modal_update"):
                             channel_from_view = view.get("private_metadata")
                             await self._on_routing_modal_update(
