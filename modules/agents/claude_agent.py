@@ -6,6 +6,7 @@ from typing import Callable, Optional
 from claude_code_sdk import TextBlock, ToolUseBlock
 
 from modules.agents.base import AgentRequest, BaseAgent
+from modules.agents.claude_question_handler import ClaudeQuestionHandler
 from modules.im import MessageContext
 
 logger = logging.getLogger(__name__)
@@ -29,8 +30,21 @@ class ClaudeAgent(BaseAgent):
         # Each entry is (reaction_message_id, emoji)
         self._pending_reactions: dict[str, list[tuple[str, str]]] = {}
 
+        # Question handler for AskUserQuestion support
+        self._question_handler = ClaudeQuestionHandler(
+            agent=self,
+            controller=controller,
+            im_client=controller.im_client,
+            settings_manager=controller.settings_manager,
+        )
+
     async def handle_message(self, request: AgentRequest) -> None:
         context = request.context
+
+        # Check if this is a question callback
+        if request.message.startswith("claude_question:"):
+            await self._handle_question_callback(request)
+            return
 
         try:
             client = await self.session_handler.get_or_create_claude_session(
@@ -76,6 +90,35 @@ class ClaudeAgent(BaseAgent):
             )
         finally:
             await self._delete_ack(context, request)
+
+    async def _handle_question_callback(self, request: AgentRequest) -> None:
+        """Handle question-related callbacks (button clicks, modal submissions)."""
+        pending = self._question_handler.get_pending(request.base_session_id)
+        if not pending:
+            await self.controller.emit_agent_message(
+                request.context,
+                "notify",
+                "No pending question found. The session may have timed out.",
+            )
+            return
+
+        # Handle modal open request
+        if request.message == "claude_question:open_modal":
+            trigger_id = None
+            if request.context.platform_specific:
+                trigger_id = request.context.platform_specific.get("trigger_id")
+            if trigger_id:
+                await self._question_handler.open_modal(request, pending)
+            else:
+                await self.controller.emit_agent_message(
+                    request.context,
+                    "notify",
+                    "Cannot open modal without trigger_id. Please reply with text.",
+                )
+            return
+
+        # Process answer
+        await self._question_handler.process_answer(request, pending)
 
     async def clear_sessions(self, settings_key: str) -> int:
         """Clear Claude sessions scoped to the provided settings key."""
@@ -149,6 +192,17 @@ class ClaudeAgent(BaseAgent):
         try:
             settings_key = self.controller._get_settings_key(context)
             composite_key = f"{base_session_id}:{working_path}"
+
+            # Build a request object for question handler
+            request = AgentRequest(
+                context=context,
+                message="",
+                working_path=working_path,
+                base_session_id=base_session_id,
+                composite_session_id=composite_key,
+                settings_key=settings_key,
+            )
+
             async for message in client.receive_messages():
                 try:
                     claude_session_id = self._maybe_capture_session_id(
@@ -168,8 +222,16 @@ class ClaudeAgent(BaseAgent):
                     if message_type == "assistant":
                         toolcalls = []
                         text_parts = []
+                        ask_user_question_block = None
+
                         for block in getattr(message, "content", []) or []:
                             if isinstance(block, ToolUseBlock):
+                                # Check for AskUserQuestion
+                                if self._question_handler.is_ask_user_question(block):
+                                    ask_user_question_block = block
+                                    # Don't format as regular toolcall
+                                    continue
+
                                 toolcalls.append(
                                     formatter.format_toolcall(
                                         block.name,
@@ -214,6 +276,32 @@ class ClaudeAgent(BaseAgent):
                             self._pending_assistant_message[composite_key] = (
                                 formatted_assistant
                             )
+
+                        # Handle AskUserQuestion if detected
+                        if ask_user_question_block:
+                            logger.info(
+                                "Detected AskUserQuestion for session %s",
+                                base_session_id,
+                            )
+                            answered = await self._question_handler.handle_ask_user_question(
+                                request=request,
+                                tool_use_block=ask_user_question_block,
+                                client=client,
+                                composite_session_id=composite_key,
+                            )
+                            if not answered:
+                                # Timed out - stop receiving messages
+                                logger.warning(
+                                    "AskUserQuestion timed out for session %s",
+                                    base_session_id,
+                                )
+                                return
+                            # Answer submitted - continue receiving messages
+                            logger.info(
+                                "AskUserQuestion answered for session %s, continuing",
+                                base_session_id,
+                            )
+
                         continue
 
                     if message_type == "system":
