@@ -39,7 +39,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         self._session_manager = OpenCodeSessionManager(self.settings_manager, self.name)
 
         self._question_handler = OpenCodeQuestionHandler(
-            self.controller, self.im_client, self.settings_manager,
+            self.controller,
+            self.im_client,
+            self.settings_manager,
             get_server=self._get_server,
         )
         self._poll_loop = OpenCodePollLoop(self, self._question_handler)
@@ -56,7 +58,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
         async with lock:
             pending = self._question_handler.get_pending(request.base_session_id)
-            is_modal_open = pending and request.message == "opencode_question:open_modal"
+            is_modal_open = (
+                pending and request.message == "opencode_question:open_modal"
+            )
             is_answer_submission = pending and not is_modal_open
 
             existing_task = self._active_requests.get(request.base_session_id)
@@ -102,14 +106,20 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     open_modal_task = asyncio.create_task(
                         self._question_handler.open_question_modal(request, pending)  # type: ignore[arg-type]
                     )
+                    # Clean up reaction for modal open request
+                    await self._remove_ack_reaction(request)
                 else:
                     task = asyncio.create_task(self._process_message(request))
                     self._active_requests[request.base_session_id] = task
             elif is_answer_submission:
                 server = await self._get_server()
                 await self._question_handler.process_question_answer(
-                    request, pending, server  # type: ignore[arg-type]
+                    request,
+                    pending,
+                    server,  # type: ignore[arg-type]
                 )
+                # Clean up reaction for answer submission
+                await self._remove_ack_reaction(request)
                 return
             else:
                 task = asyncio.create_task(self._process_message(request))
@@ -143,22 +153,29 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 "notify",
                 f"Failed to start OpenCode server: {e}",
             )
+            await self._remove_ack_reaction(request)
             return
 
         await self._delete_ack(request)
         await self._session_manager.ensure_working_dir(request.working_path)
 
-        session_id = await self._session_manager.get_or_create_session_id(request, server)
+        session_id = await self._session_manager.get_or_create_session_id(
+            request, server
+        )
         if not session_id:
             await self.controller.emit_agent_message(
                 request.context,
                 "notify",
                 "Failed to obtain OpenCode session ID",
             )
+            await self._remove_ack_reaction(request)
             return
 
         self._session_manager.set_request_session(
-            request.base_session_id, session_id, request.working_path, request.settings_key
+            request.base_session_id,
+            session_id,
+            request.working_path,
+            request.settings_key,
         )
 
         if self._session_manager.mark_initialized(session_id):
@@ -183,7 +200,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 override_reasoning = request.subagent_reasoning_effort
 
             if request.subagent_name and not override_model:
-                override_model = server.get_agent_model_from_config(request.subagent_name)
+                override_model = server.get_agent_model_from_config(
+                    request.subagent_name
+                )
             if request.subagent_name and not override_reasoning:
                 override_reasoning = server.get_agent_reasoning_effort_from_config(
                     request.subagent_name
@@ -204,7 +223,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
             reasoning_effort = override_reasoning
             if not reasoning_effort:
-                reasoning_effort = server.get_agent_reasoning_effort_from_config(agent_to_use)
+                reasoning_effort = server.get_agent_reasoning_effort_from_config(
+                    agent_to_use
+                )
 
             baseline_message_ids: set[str] = set()
             try:
@@ -245,6 +266,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 settings_key=request.settings_key,
                 working_path=request.working_path,
                 baseline_message_ids=list(baseline_message_ids),
+                ack_reaction_message_id=request.ack_reaction_message_id,
+                ack_reaction_emoji=request.ack_reaction_emoji,
             )
 
             final_text, should_emit = await self._poll_loop.run_prompt_poll(
@@ -258,6 +281,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             )
 
             if not should_emit:
+                # Clean up reaction even if we don't emit a result
+                await self._remove_ack_reaction(request)
                 return
 
             if final_text:
@@ -267,6 +292,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     subtype="success",
                     started_at=request.started_at,
                     parse_mode="markdown",
+                    request=request,
                 )
             else:
                 await self.emit_result_message(
@@ -274,6 +300,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     "(No response from OpenCode)",
                     subtype="warning",
                     started_at=request.started_at,
+                    request=request,
                 )
 
             # Clean up answer reaction after result is sent
@@ -283,13 +310,16 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         except asyncio.CancelledError:
             logger.info(f"OpenCode request cancelled for {request.base_session_id}")
             await self._question_handler.clear(request.base_session_id)
+            await self._remove_ack_reaction(request)
             if session_id:
                 self.settings_manager.remove_active_poll(session_id)
             raise
         except Exception as e:
             error_name = type(e).__name__
             error_details = str(e).strip()
-            error_text = f"{error_name}: {error_details}" if error_details else error_name
+            error_text = (
+                f"{error_name}: {error_details}" if error_details else error_name
+            )
 
             logger.error(f"OpenCode request failed: {error_text}", exc_info=True)
             try:
@@ -301,6 +331,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
             # Clean up answer reaction on error
             await self._question_handler.clear(request.base_session_id)
+            await self._remove_ack_reaction(request)
             if session_id:
                 self.settings_manager.remove_active_poll(session_id)
 
@@ -372,6 +403,21 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             finally:
                 request.ack_message_id = None
 
+    async def _remove_ack_reaction(self, request: AgentRequest) -> None:
+        """Remove acknowledgement reaction on error paths."""
+        if request.ack_reaction_message_id and request.ack_reaction_emoji:
+            try:
+                await self.im_client.remove_reaction(
+                    request.context,
+                    request.ack_reaction_message_id,
+                    request.ack_reaction_emoji,
+                )
+            except Exception as err:
+                logger.debug(f"Could not remove ack reaction: {err}")
+            finally:
+                request.ack_reaction_message_id = None
+                request.ack_reaction_emoji = None
+
     async def restore_active_polls(self) -> int:
         """Restore active poll loops that were interrupted by vibe-remote restart."""
 
@@ -409,7 +455,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     break
                 last_assistant_finish = info.get("finish")
 
-            session_still_active = has_in_progress or last_assistant_finish == "tool-calls"
+            session_still_active = (
+                has_in_progress or last_assistant_finish == "tool-calls"
+            )
             if not session_still_active:
                 logger.info(
                     f"OpenCode session {session_id} has completed, removing from active polls"
@@ -422,7 +470,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 f"(thread={poll_info.base_session_id}, cwd={poll_info.working_path})"
             )
 
-            task = asyncio.create_task(self._poll_loop.run_restored_poll_loop(poll_info))
+            task = asyncio.create_task(
+                self._poll_loop.run_restored_poll_loop(poll_info)
+            )
             self._active_requests[poll_info.base_session_id] = task
             self._session_manager.set_request_session(
                 poll_info.base_session_id,

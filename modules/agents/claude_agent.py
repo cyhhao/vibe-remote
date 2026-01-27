@@ -25,6 +25,9 @@ class ClaudeAgent(BaseAgent):
         self.claude_client = controller.claude_client
         self._last_assistant_text: dict[str, str] = {}
         self._pending_assistant_message: dict[str, str] = {}
+        # Store reaction info per session as a queue (FIFO) for cleanup after result
+        # Each entry is (reaction_message_id, emoji)
+        self._pending_reactions: dict[str, list[tuple[str, str]]] = {}
 
     async def handle_message(self, request: AgentRequest) -> None:
         context = request.context
@@ -37,9 +40,16 @@ class ClaudeAgent(BaseAgent):
                 subagent_reasoning_effort=request.subagent_reasoning_effort,
             )
 
-            await client.query(
-                request.message, session_id=request.composite_session_id
-            )
+            # Queue reaction BEFORE sending query to avoid race condition where
+            # a fast result arrives before the reaction is queued
+            if request.ack_reaction_message_id and request.ack_reaction_emoji:
+                if request.composite_session_id not in self._pending_reactions:
+                    self._pending_reactions[request.composite_session_id] = []
+                self._pending_reactions[request.composite_session_id].append(
+                    (request.ack_reaction_message_id, request.ack_reaction_emoji)
+                )
+
+            await client.query(request.message, session_id=request.composite_session_id)
             logger.info(
                 f"Sent message to Claude for session {request.composite_session_id}"
             )
@@ -57,6 +67,10 @@ class ClaudeAgent(BaseAgent):
                 )
         except Exception as e:
             logger.error(f"Error processing Claude message: {e}", exc_info=True)
+            # Clean up the specific reaction for this request (not FIFO)
+            await self._remove_specific_pending_reaction(
+                request.composite_session_id, context, request
+            )
             await self.session_handler.handle_session_error(
                 request.composite_session_id, context, e
             )
@@ -87,6 +101,8 @@ class ClaudeAgent(BaseAgent):
                 logger.warning(f"Error closing Claude session {session_key}: {e}")
             finally:
                 self.claude_sessions.pop(session_key, None)
+                # Note: don't pop pending reactions here - let receiver's finally block handle them
+                # so that reactions can be properly removed from IM when receiver ends
 
         # Legacy session manager cleanup (best-effort)
         await self.session_manager.clear_session(settings_key)
@@ -172,7 +188,9 @@ class ClaudeAgent(BaseAgent):
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
-                        pending = self._pending_assistant_message.pop(composite_key, None)
+                        pending = self._pending_assistant_message.pop(
+                            composite_key, None
+                        )
                         if pending:
                             await self.controller.emit_agent_message(
                                 context,
@@ -193,7 +211,9 @@ class ClaudeAgent(BaseAgent):
                             formatted_assistant = formatter.format_assistant_message(
                                 text_parts
                             )
-                            self._pending_assistant_message[composite_key] = formatted_assistant
+                            self._pending_assistant_message[composite_key] = (
+                                formatted_assistant
+                            )
                         continue
 
                     if message_type == "system":
@@ -213,7 +233,9 @@ class ClaudeAgent(BaseAgent):
                         continue
 
                     if message_type == "result":
-                        pending = self._pending_assistant_message.pop(composite_key, None)
+                        pending = self._pending_assistant_message.pop(
+                            composite_key, None
+                        )
                         result_text = getattr(message, "result", None)
                         used_fallback = False
                         if not result_text:
@@ -238,6 +260,9 @@ class ClaudeAgent(BaseAgent):
                             parse_mode="markdown",
                         )
 
+                        # Remove ack reaction after result is sent
+                        await self._remove_pending_reaction(composite_key, context)
+
                         self._last_assistant_text.pop(composite_key, None)
                         session = await self.session_manager.get_or_create_session(
                             context.user_id, context.channel_id
@@ -261,7 +286,14 @@ class ClaudeAgent(BaseAgent):
                 f"Error in Claude receiver for session {composite_key}: {e}",
                 exc_info=True,
             )
+            # Clean up all pending reactions for this session on error
+            await self._clear_pending_reactions(composite_key, context)
             await self.session_handler.handle_session_error(composite_key, context, e)
+        finally:
+            # Clean up any remaining reactions when receiver ends normally
+            # (e.g., client closed without sending a result)
+            composite_key = f"{base_session_id}:{working_path}"
+            await self._clear_pending_reactions(composite_key, context)
 
     async def _delete_ack(self, context: MessageContext, request: AgentRequest):
         ack_id = request.ack_message_id
@@ -272,6 +304,80 @@ class ClaudeAgent(BaseAgent):
                 logger.debug(f"Could not delete ack message: {err}")
             finally:
                 request.ack_message_id = None
+
+    async def _remove_pending_reaction(
+        self, composite_key: str, context: MessageContext
+    ) -> None:
+        """Remove the oldest stored reaction for a session after result is sent.
+
+        Uses FIFO queue to handle multiple messages in the same session.
+        """
+        reactions = self._pending_reactions.get(composite_key)
+        if reactions:
+            # Pop the oldest reaction (FIFO)
+            message_id, emoji = reactions.pop(0)
+            # Clean up empty list
+            if not reactions:
+                self._pending_reactions.pop(composite_key, None)
+            try:
+                await self.im_client.remove_reaction(context, message_id, emoji)
+            except Exception as err:
+                logger.debug(f"Failed to remove reaction ack: {err}")
+
+    async def _remove_ack_reaction_direct(
+        self, context: MessageContext, request: AgentRequest
+    ) -> None:
+        """Remove ack reaction directly from request (for error paths before queuing)."""
+        if request.ack_reaction_message_id and request.ack_reaction_emoji:
+            try:
+                await self.im_client.remove_reaction(
+                    context,
+                    request.ack_reaction_message_id,
+                    request.ack_reaction_emoji,
+                )
+            except Exception as err:
+                logger.debug(f"Failed to remove reaction ack: {err}")
+            finally:
+                request.ack_reaction_message_id = None
+                request.ack_reaction_emoji = None
+
+    async def _remove_specific_pending_reaction(
+        self, composite_key: str, context: MessageContext, request: AgentRequest
+    ) -> None:
+        """Remove a specific reaction from the queue by matching message_id.
+
+        Used on error paths to remove the current request's reaction instead of FIFO.
+        """
+        if not request.ack_reaction_message_id:
+            return
+        reactions = self._pending_reactions.get(composite_key)
+        if not reactions:
+            return
+        # Find and remove the matching reaction
+        target_id = request.ack_reaction_message_id
+        target_emoji = request.ack_reaction_emoji
+        for i, (msg_id, emoji) in enumerate(reactions):
+            if msg_id == target_id and emoji == target_emoji:
+                reactions.pop(i)
+                if not reactions:
+                    self._pending_reactions.pop(composite_key, None)
+                try:
+                    await self.im_client.remove_reaction(context, msg_id, emoji)
+                except Exception as err:
+                    logger.debug(f"Failed to remove reaction ack: {err}")
+                return
+
+    async def _clear_pending_reactions(
+        self, composite_key: str, context: MessageContext
+    ) -> None:
+        """Clear all pending reactions for a session (for error cleanup)."""
+        reactions = self._pending_reactions.pop(composite_key, None)
+        if reactions:
+            for message_id, emoji in reactions:
+                try:
+                    await self.im_client.remove_reaction(context, message_id, emoji)
+                except Exception as err:
+                    logger.debug(f"Failed to remove reaction ack: {err}")
 
     def get_relative_path(
         self, abs_path: str, context: Optional[MessageContext] = None
@@ -327,7 +433,9 @@ class ClaudeAgent(BaseAgent):
             if isinstance(block, TextBlock):
                 text = block.text.strip() if block.text else ""
                 if text:
-                    parts.append(self.claude_client.formatter.escape_special_chars(text))
+                    parts.append(
+                        self.claude_client.formatter.escape_special_chars(text)
+                    )
         return "\n\n".join(parts).strip()
 
     def _detect_message_type(self, message) -> Optional[str]:

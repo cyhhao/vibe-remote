@@ -96,16 +96,21 @@ class OpenCodePollLoop:
                     tool_state = part.get("state") or {}
                     tool_input = tool_state.get("input") or {}
 
-                    if tool_name == "question" and tool_state.get("status") != "completed":
-                        answered = await self._question_handler.handle_question_toolcall(
-                            request=request,
-                            server=server,
-                            opencode_session_id=session_id,
-                            message_id=message_id,
-                            tool_part=part,
-                            tool_input=tool_input,
-                            call_key=call_key,
-                            seen_tool_calls=seen_tool_calls,
+                    if (
+                        tool_name == "question"
+                        and tool_state.get("status") != "completed"
+                    ):
+                        answered = (
+                            await self._question_handler.handle_question_toolcall(
+                                request=request,
+                                server=server,
+                                opencode_session_id=session_id,
+                                message_id=message_id,
+                                tool_part=part,
+                                tool_input=tool_input,
+                                call_key=call_key,
+                                seen_tool_calls=seen_tool_calls,
+                            )
                         )
                         if answered:
                             restart_poll = True
@@ -238,6 +243,18 @@ class OpenCodePollLoop:
             thread_id=poll_info.thread_id,
         )
 
+        async def _remove_ack_reaction() -> None:
+            """Remove ack reaction from the original message."""
+            if poll_info.ack_reaction_message_id and poll_info.ack_reaction_emoji:
+                try:
+                    await self._agent.im_client.remove_reaction(
+                        context,
+                        poll_info.ack_reaction_message_id,
+                        poll_info.ack_reaction_emoji,
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to remove ack reaction: {e}")
+
         await self._agent.controller.emit_agent_message(
             context,
             "notify",
@@ -306,12 +323,16 @@ class OpenCodePollLoop:
                         tool_state = part.get("state") or {}
                         tool_input = tool_state.get("input") or {}
 
-                        if tool_name == "question" and tool_state.get("status") != "completed":
+                        if (
+                            tool_name == "question"
+                            and tool_state.get("status") != "completed"
+                        ):
                             logger.info(
                                 "Detected question in restored poll for %s, exiting poll loop",
                                 session_id,
                             )
                             self._agent.settings_manager.remove_active_poll(session_id)
+                            await _remove_ack_reaction()
                             await self._agent.controller.emit_agent_message(
                                 context,
                                 "notify",
@@ -338,14 +359,18 @@ class OpenCodePollLoop:
                             if tool_name == "bash":
                                 cmd = tool_input.get("command", "")
                                 if cmd:
-                                    cmd_preview = cmd[:50] + "..." if len(cmd) > 50 else cmd
+                                    cmd_preview = (
+                                        cmd[:50] + "..." if len(cmd) > 50 else cmd
+                                    )
                                     tool_summary = f"`bash`: `{cmd_preview}`"
                             elif tool_name in ("read", "write", "edit"):
                                 path = tool_input.get("file_path") or tool_input.get(
                                     "path", ""
                                 )
                                 if path:
-                                    tool_summary = f"`{tool_name}`: `{_relative_path(path)}`"
+                                    tool_summary = (
+                                        f"`{tool_name}`: `{_relative_path(path)}`"
+                                    )
 
                             await self._agent.controller.emit_agent_message(
                                 context, "tool_call", tool_summary
@@ -370,13 +395,18 @@ class OpenCodePollLoop:
                                         "notify",
                                         f"OpenCode error: {error_text}",
                                     )
-                                    self._agent.settings_manager.remove_active_poll(session_id)
+                                    self._agent.settings_manager.remove_active_poll(
+                                        session_id
+                                    )
+                                    await _remove_ack_reaction()
                                     return
 
                             if last_info.get("finish") != "tool-calls":
                                 if not msg_error:
                                     error_retry_count = 0
-                                final_text = self._agent._extract_response_text(last_message)
+                                final_text = self._agent._extract_response_text(
+                                    last_message
+                                )
                                 break
 
                 await asyncio.sleep(poll_interval_seconds)
@@ -397,6 +427,8 @@ class OpenCodePollLoop:
                     started_at=started_at,
                 )
 
+            # Clean up ack reaction after result is sent
+            await _remove_ack_reaction()
             # Clean up answer reaction after result is sent
             await self._question_handler.clear(poll_info.base_session_id)
             self._agent.settings_manager.remove_active_poll(session_id)
@@ -405,13 +437,16 @@ class OpenCodePollLoop:
             logger.info(
                 f"Restored OpenCode poll cancelled for {poll_info.base_session_id}"
             )
+            await _remove_ack_reaction()
             await self._question_handler.clear(poll_info.base_session_id)
             self._agent.settings_manager.remove_active_poll(session_id)
             raise
         except Exception as e:
             error_name = type(e).__name__
             error_details = str(e).strip()
-            error_text = f"{error_name}: {error_details}" if error_details else error_name
+            error_text = (
+                f"{error_name}: {error_details}" if error_details else error_name
+            )
 
             logger.error(f"Restored OpenCode poll failed: {error_text}", exc_info=True)
             try:
@@ -422,6 +457,7 @@ class OpenCodePollLoop:
                 )
 
             self._agent.settings_manager.remove_active_poll(session_id)
+            await _remove_ack_reaction()
 
             await self._agent.controller.emit_agent_message(
                 context,
