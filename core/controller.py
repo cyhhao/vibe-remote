@@ -885,7 +885,9 @@ class Controller:
 
             logger.info(
                 f"Routing updated for {settings_key}: backend={backend}, "
-                f"agent={opencode_agent}, model={opencode_model}, require_mention={require_mention}"
+                f"opencode_agent={opencode_agent}, opencode_model={opencode_model}, "
+                f"claude_agent={claude_agent}, claude_model={claude_model}, "
+                f"codex_model={codex_model}"
             )
 
         except Exception as e:
