@@ -1566,6 +1566,7 @@ class SlackBot(BaseIMClient):
             {
                 "type": "input",
                 "block_id": "backend_block",
+                "dispatch_action": True,
                 "element": backend_select,
                 "label": {"type": "plain_text", "text": "Backend"},
             },
