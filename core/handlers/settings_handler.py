@@ -341,6 +341,35 @@ class SettingsHandler:
             except Exception as e:
                 logger.warning(f"Failed to fetch OpenCode data: {e}")
 
+        # Get Claude agents/models if available
+        claude_agents = []
+        claude_models = []
+
+        if "claude" in registered_backends:
+            try:
+                from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
+                cwd = self.controller.get_cwd(context)
+                agents_result = get_claude_agents(cwd)
+                if agents_result.get("ok"):
+                    claude_agents = agents_result.get("agents", [])
+                models_result = get_claude_models()
+                if models_result.get("ok"):
+                    claude_models = models_result.get("models", [])
+            except Exception as e:
+                logger.warning(f"Failed to fetch Claude data: {e}")
+
+        # Get Codex models if available
+        codex_models = []
+
+        if "codex" in registered_backends:
+            try:
+                from vibe.api import codex_models as get_codex_models
+                models_result = get_codex_models()
+                if models_result.get("ok"):
+                    codex_models = models_result.get("models", [])
+            except Exception as e:
+                logger.warning(f"Failed to fetch Codex data: {e}")
+
         # Open modal
         try:
             await self.im_client.open_routing_modal(
@@ -352,6 +381,9 @@ class SettingsHandler:
                 opencode_agents=opencode_agents,
                 opencode_models=opencode_models,
                 opencode_default_config=opencode_default_config,
+                claude_agents=claude_agents,
+                claude_models=claude_models,
+                codex_models=codex_models,
                 current_require_mention=current_require_mention,
                 global_require_mention=global_require_mention,
             )

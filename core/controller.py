@@ -710,16 +710,46 @@ class Controller:
                 elif action_id.startswith("opencode_reasoning_select"):
                     oc_reasoning = selected_value
 
+            # Extract Claude/Codex selections from current action or state
+            claude_agent = _selected_value("claude_agent_block", "claude_agent_select")
+            claude_model = _selected_value("claude_model_block", "claude_model_select")
+            codex_model = _selected_value("codex_model_block", "codex_model_select")
+            codex_reasoning = _selected_prefixed_value(
+                "codex_reasoning_block", "codex_reasoning_select"
+            )
+
+            # Handle action payload for Claude/Codex
+            if isinstance(action_id, str) and isinstance(selected_value, str):
+                if action_id == "claude_agent_select":
+                    claude_agent = selected_value
+                elif action_id == "claude_model_select":
+                    claude_model = selected_value
+                elif action_id == "codex_model_select":
+                    codex_model = selected_value
+                elif action_id.startswith("codex_reasoning_select"):
+                    codex_reasoning = selected_value
+
             if oc_agent == "__default__":
                 oc_agent = None
             if oc_model == "__default__":
                 oc_model = None
             if oc_reasoning == "__default__":
                 oc_reasoning = None
+            if claude_agent == "__default__":
+                claude_agent = None
+            if claude_model == "__default__":
+                claude_model = None
+            if codex_model == "__default__":
+                codex_model = None
+            if codex_reasoning == "__default__":
+                codex_reasoning = None
 
             opencode_agents = []
             opencode_models = {}
             opencode_default_config = {}
+            claude_agents = []
+            claude_models = []
+            codex_models = []
 
             if "opencode" in registered_backends:
                 try:
@@ -734,6 +764,30 @@ class Controller:
                 except Exception as e:
                     logger.warning(f"Failed to fetch OpenCode data: {e}")
 
+            # Fetch Claude data
+            if "claude" in registered_backends:
+                try:
+                    from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
+                    cwd = self.get_cwd(context)
+                    agents_result = get_claude_agents(cwd)
+                    if agents_result.get("ok"):
+                        claude_agents = agents_result.get("agents", [])
+                    models_result = get_claude_models()
+                    if models_result.get("ok"):
+                        claude_models = models_result.get("models", [])
+                except Exception as e:
+                    logger.warning(f"Failed to fetch Claude data: {e}")
+
+            # Fetch Codex data
+            if "codex" in registered_backends:
+                try:
+                    from vibe.api import codex_models as get_codex_models
+                    models_result = get_codex_models()
+                    if models_result.get("ok"):
+                        codex_models = models_result.get("models", [])
+                except Exception as e:
+                    logger.warning(f"Failed to fetch Codex data: {e}")
+
             if hasattr(self.im_client, "update_routing_modal"):
                 await self.im_client.update_routing_modal(  # type: ignore[attr-defined]
                     view_id=view_id,
@@ -745,10 +799,17 @@ class Controller:
                     opencode_agents=opencode_agents,
                     opencode_models=opencode_models,
                     opencode_default_config=opencode_default_config,
+                    claude_agents=claude_agents,
+                    claude_models=claude_models,
+                    codex_models=codex_models,
                     selected_backend=selected_backend,
                     selected_opencode_agent=oc_agent,
                     selected_opencode_model=oc_model,
                     selected_opencode_reasoning=oc_reasoning,
+                    selected_claude_agent=claude_agent,
+                    selected_claude_model=claude_model,
+                    selected_codex_model=codex_model,
+                    selected_codex_reasoning=codex_reasoning,
                 )
         except Exception as e:
             logger.error(f"Error updating routing modal: {e}", exc_info=True)
@@ -762,6 +823,10 @@ class Controller:
         opencode_agent: Optional[str],
         opencode_model: Optional[str],
         opencode_reasoning_effort: Optional[str] = None,
+        claude_agent: Optional[str] = None,
+        claude_model: Optional[str] = None,
+        codex_model: Optional[str] = None,
+        codex_reasoning_effort: Optional[str] = None,
         require_mention: Optional[bool] = None,
     ):
         """Handle routing update submission (from Slack modal)"""
@@ -774,6 +839,10 @@ class Controller:
                 opencode_agent=opencode_agent,
                 opencode_model=opencode_model,
                 opencode_reasoning_effort=opencode_reasoning_effort,
+                claude_agent=claude_agent,
+                claude_model=claude_model,
+                codex_model=codex_model,
+                codex_reasoning_effort=codex_reasoning_effort,
             )
 
             # Get settings key
@@ -794,6 +863,16 @@ class Controller:
                     parts.append(f"Model: **{opencode_model}**")
                 if opencode_reasoning_effort:
                     parts.append(f"Reasoning Effort: **{opencode_reasoning_effort}**")
+            elif backend == "claude":
+                if claude_agent:
+                    parts.append(f"Agent: **{claude_agent}**")
+                if claude_model:
+                    parts.append(f"Model: **{claude_model}**")
+            elif backend == "codex":
+                if codex_model:
+                    parts.append(f"Model: **{codex_model}**")
+                if codex_reasoning_effort:
+                    parts.append(f"Reasoning Effort: **{codex_reasoning_effort}**")
 
             # Add require_mention status to confirmation
             if require_mention is None:
