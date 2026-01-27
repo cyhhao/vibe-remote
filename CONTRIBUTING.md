@@ -11,7 +11,7 @@ Thanks for your interest in contributing!
 ## Development
 
 - Run locally: `python main.py`
-- Lint before PR (add your linter if used)
+- Lint before PR: ruff is configured with a minimal safety rule set (E9,F63,F7,F82) and ignores E501. Install hooks with `pip install pre-commit` then `pre-commit install`. Run manually with `pre-commit run --all-files`.
 - Write clear commit messages
 - Agent-specific changes: install the relevant CLI (recommended: OpenCode `opencode`; also supported: Codex), then route one Slack channel via Slack **Agent Settings** to manually test the backend (`opencode` or `codex`).
 

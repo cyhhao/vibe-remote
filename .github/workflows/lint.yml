@@ -1,0 +1,20 @@
+name: lint
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run pre-commit (ruff)
+        run: |
+          pip install pre-commit
+          pre-commit run --all-files

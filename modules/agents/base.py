@@ -28,6 +28,9 @@ class AgentRequest:
     last_agent_message: Optional[str] = None
     last_agent_message_parse_mode: Optional[str] = None
     started_at: float = field(default_factory=time.monotonic)
+    # Reaction ack: emoji added to user's message, to be removed when result is sent
+    ack_reaction_message_id: Optional[str] = None
+    ack_reaction_emoji: Optional[str] = None
 
 
 @dataclass
@@ -57,6 +60,28 @@ class BaseAgent(ABC):
         elapsed = time.monotonic() - started_at
         return max(0, int(elapsed * 1000))
 
+    async def _remove_ack_reaction(self, request: AgentRequest) -> None:
+        """Remove the acknowledgement reaction from user's message.
+
+        Called after sending result message to clean up the 👀 reaction.
+        """
+        if request.ack_reaction_message_id and request.ack_reaction_emoji:
+            try:
+                await self.im_client.remove_reaction(
+                    request.context,
+                    request.ack_reaction_message_id,
+                    request.ack_reaction_emoji,
+                )
+            except Exception as err:
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    f"Failed to remove reaction ack: {err}"
+                )
+            finally:
+                request.ack_reaction_message_id = None
+                request.ack_reaction_emoji = None
+
     async def emit_result_message(
         self,
         context: MessageContext,
@@ -66,6 +91,7 @@ class BaseAgent(ABC):
         started_at: Optional[float] = None,
         parse_mode: str = "markdown",
         suffix: Optional[str] = None,
+        request: Optional[AgentRequest] = None,
     ) -> None:
         if duration_ms is None:
             duration_ms = self._calculate_duration_ms(started_at)
@@ -77,6 +103,9 @@ class BaseAgent(ABC):
         await self.controller.emit_agent_message(
             context, "result", formatted, parse_mode=parse_mode
         )
+        # Remove ack reaction after result is sent
+        if request:
+            await self._remove_ack_reaction(request)
 
     @abstractmethod
     async def handle_message(self, request: AgentRequest) -> None:

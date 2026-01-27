@@ -116,7 +116,9 @@
     "cliPath": "CLI 路径",
     "cliPathPlaceholder": "{{name}} CLI 路径...",
     "cliPathDetection": "CLI 路径检测和启用设置",
-    "recommended": "（推荐）"
+    "recommended": "（推荐）",
+    "permissionHint": "OpenCode 需要配置权限以跳过审批提示。",
+    "setupPermission": "一键设置权限"
   },
   "channelList": {
     "title": "频道设置",

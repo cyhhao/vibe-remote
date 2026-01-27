@@ -116,7 +116,9 @@
     "cliPath": "CLI Path",
     "cliPathPlaceholder": "Path to {{name}} CLI...",
     "cliPathDetection": "CLI path detection and enablement",
-    "recommended": "(recommended)"
+    "recommended": "(recommended)",
+    "permissionHint": "OpenCode requires permission config to skip approval prompts.",
+    "setupPermission": "Setup Permission"
   },
   "channelList": {
     "title": "Channel Settings",

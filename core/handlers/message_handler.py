@@ -48,7 +48,7 @@ class MessageHandler:
         """Process regular user messages and route to configured agent"""
         try:
             # Record user activity for auto-update idle detection
-            if hasattr(self.controller, 'update_checker'):
+            if hasattr(self.controller, "update_checker"):
                 self.controller.update_checker.record_activity()
 
             # If message is empty (e.g., user just @mentioned bot without text),
@@ -112,8 +112,12 @@ class MessageHandler:
                     normalized = normalize_subagent_name(parsed.name)
                     if agent_name == "opencode":
                         try:
-                            opencode_agent = self.controller.agent_service.agents.get("opencode")
-                            if opencode_agent and hasattr(opencode_agent, "_get_server"):
+                            opencode_agent = self.controller.agent_service.agents.get(
+                                "opencode"
+                            )
+                            if opencode_agent and hasattr(
+                                opencode_agent, "_get_server"
+                            ):
                                 server = await opencode_agent._get_server()
                                 await server.ensure_running()
                                 opencode_agents = await server.get_available_agents(
@@ -128,14 +132,18 @@ class MessageHandler:
                                 if match:
                                     subagent_name = match.get("name")
                         except Exception as err:
-                            logger.warning(f"Failed to resolve OpenCode subagent: {err}")
+                            logger.warning(
+                                f"Failed to resolve OpenCode subagent: {err}"
+                            )
                     else:
                         try:
                             subagent_def = load_claude_subagent(normalized)
                             if subagent_def:
                                 subagent_name = subagent_def.name
                                 subagent_model = subagent_def.model
-                                subagent_reasoning_effort = subagent_def.reasoning_effort
+                                subagent_reasoning_effort = (
+                                    subagent_def.reasoning_effort
+                                )
                         except Exception as err:
                             logger.warning(f"Failed to resolve Claude subagent: {err}")
 
@@ -199,7 +207,6 @@ class MessageHandler:
                             f"Failed to remove reaction ack for subagent: {err}"
                         )
 
-
             request = AgentRequest(
                 context=context,
                 message=message,
@@ -212,24 +219,42 @@ class MessageHandler:
                 subagent_key=matched_prefix,
                 subagent_model=subagent_model,
                 subagent_reasoning_effort=subagent_reasoning_effort,
+                # Pass reaction info for agents to remove when result is sent
+                ack_reaction_message_id=ack_reaction_message_id
+                if not subagent_name
+                else None,
+                ack_reaction_emoji=ack_reaction_emoji if not subagent_name else None,
             )
             try:
                 await self.controller.agent_service.handle_message(agent_name, request)
             except KeyError:
                 await self._handle_missing_agent(context, agent_name)
+                # Clean up reaction on error
+                await self._remove_ack_reaction(context, request)
             finally:
                 if request.ack_message_id:
                     await self._delete_ack(context.channel_id, request)
-                elif ack_reaction_message_id and ack_reaction_emoji:
-                    if not subagent_name:
-                        try:
-                            await self.im_client.remove_reaction(
-                                context, ack_reaction_message_id, ack_reaction_emoji
-                            )
-                        except Exception as err:
-                            logger.debug(f"Failed to remove reaction ack: {err}")
         except Exception as e:
             logger.error(f"Error processing user message: {e}", exc_info=True)
+            # Clean up reaction on any exception
+            # Use try/except to safely access possibly-unbound local variables
+            try:
+                try:
+                    # Try using request object if it was created
+                    if request.ack_reaction_message_id:  # type: ignore[possibly-undefined]
+                        await self._remove_ack_reaction(context, request)  # type: ignore[possibly-undefined]
+                except NameError:
+                    # request not defined yet, try using local variables
+                    if (
+                        ack_reaction_message_id  # type: ignore[possibly-undefined]
+                        and ack_reaction_emoji  # type: ignore[possibly-undefined]
+                        and not subagent_name  # type: ignore[possibly-undefined]
+                    ):
+                        await self.im_client.remove_reaction(
+                            context, ack_reaction_message_id, ack_reaction_emoji
+                        )
+            except Exception as cleanup_err:
+                logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
             await self.im_client.send_message(
                 context, self.formatter.format_error(f"Error: {str(e)}")
             )
@@ -385,6 +410,23 @@ class MessageHandler:
                 logger.debug(f"Failed to delete ack message: {err}")
             finally:
                 request.ack_message_id = None
+
+    async def _remove_ack_reaction(
+        self, context: MessageContext, request: AgentRequest
+    ):
+        """Remove acknowledgement reaction if it still exists."""
+        if request.ack_reaction_message_id and request.ack_reaction_emoji:
+            try:
+                await self.im_client.remove_reaction(
+                    context,
+                    request.ack_reaction_message_id,
+                    request.ack_reaction_emoji,
+                )
+            except Exception as err:
+                logger.debug(f"Failed to remove reaction ack: {err}")
+            finally:
+                request.ack_reaction_message_id = None
+                request.ack_reaction_emoji = None
 
     def _get_ack_text(self, agent_name: str) -> str:
         """Unified acknowledgement text before agent processing."""
