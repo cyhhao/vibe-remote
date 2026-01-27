@@ -698,7 +698,8 @@ def claude_models() -> dict:
             data = json.loads(settings_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 model = data.get("model")
-                if isinstance(model, str) and model.strip():
+                # Only add full model names (e.g., "claude-sonnet-4"), not aliases like "opus"
+                if isinstance(model, str) and model.strip() and model.strip().startswith("claude-"):
                     options.append(model.strip())
                 env = data.get("env")
                 if isinstance(env, dict):
@@ -707,7 +708,8 @@ def claude_models() -> dict:
                         "ANTHROPIC_SMALL_FAST_MODEL",
                     ):
                         value = env.get(key)
-                        if isinstance(value, str) and value.strip():
+                        # Only add full model names
+                        if isinstance(value, str) and value.strip() and value.strip().startswith("claude-"):
                             options.append(value.strip())
     except Exception as exc:
         logger.warning("Failed to read Claude settings.json: %s", exc, exc_info=True)
