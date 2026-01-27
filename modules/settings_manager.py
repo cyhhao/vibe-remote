@@ -229,6 +229,8 @@ class SettingsManager:
                 channel_settings = self._to_channel_settings(settings)
                 if existing is not None:
                     channel_settings.enabled = existing.enabled
+                    # Preserve require_mention setting (it's managed separately)
+                    channel_settings.require_mention = existing.require_mention
                 channels[str(settings_key)] = channel_settings
             self.store.settings.channels = channels
             self.store.save()
