@@ -3,10 +3,13 @@ import logging
 import os
 from typing import Callable, Optional
 
-from claude_code_sdk import TextBlock, ToolUseBlock
+from claude_agent_sdk import TextBlock, ToolUseBlock
 
 from modules.agents.base import AgentRequest, BaseAgent
-from modules.agents.claude_question_handler import ClaudeQuestionHandler
+# NOTE: AskUserQuestion support is disabled because Claude Code SDK cannot
+# respond to it programmatically. See: https://github.com/anthropics/claude-code/issues/10168
+# Keeping the import for future use when SDK adds support.
+# from modules.agents.claude_question_handler import ClaudeQuestionHandler
 from modules.im import MessageContext
 
 logger = logging.getLogger(__name__)
@@ -16,6 +19,10 @@ class ClaudeAgent(BaseAgent):
     """Existing Claude Code integration extracted into an agent backend."""
 
     name = "claude"
+
+    # AskUserQuestion support is disabled - SDK cannot respond programmatically
+    # Set to True when SDK adds support (see issue #10168)
+    ENABLE_ASK_USER_QUESTION = False
 
     def __init__(self, controller):
         super().__init__(controller)
@@ -30,21 +37,23 @@ class ClaudeAgent(BaseAgent):
         # Each entry is (reaction_message_id, emoji)
         self._pending_reactions: dict[str, list[tuple[str, str]]] = {}
 
-        # Question handler for AskUserQuestion support
-        self._question_handler = ClaudeQuestionHandler(
-            agent=self,
-            controller=controller,
-            im_client=controller.im_client,
-            settings_manager=controller.settings_manager,
-        )
+        # Question handler for AskUserQuestion support (disabled)
+        # NOTE: Uncomment when SDK adds AskUserQuestion support
+        # self._question_handler = ClaudeQuestionHandler(
+        #     agent=self,
+        #     controller=controller,
+        #     im_client=controller.im_client,
+        #     settings_manager=controller.settings_manager,
+        # )
+        self._question_handler = None
 
     async def handle_message(self, request: AgentRequest) -> None:
         context = request.context
 
-        # Check if this is a question callback
-        if request.message.startswith("claude_question:"):
-            await self._handle_question_callback(request)
-            return
+        # Question callback handling (disabled - SDK doesn't support AskUserQuestion response)
+        # if self.ENABLE_ASK_USER_QUESTION and request.message.startswith("claude_question:"):
+        #     await self._handle_question_callback(request)
+        #     return
 
         try:
             client = await self.session_handler.get_or_create_claude_session(
@@ -92,33 +101,18 @@ class ClaudeAgent(BaseAgent):
             await self._delete_ack(context, request)
 
     async def _handle_question_callback(self, request: AgentRequest) -> None:
-        """Handle question-related callbacks (button clicks, modal submissions)."""
-        pending = self._question_handler.get_pending(request.base_session_id)
-        if not pending:
-            await self.controller.emit_agent_message(
-                request.context,
-                "notify",
-                "No pending question found. The session may have timed out.",
-            )
-            return
-
-        # Handle modal open request
-        if request.message == "claude_question:open_modal":
-            trigger_id = None
-            if request.context.platform_specific:
-                trigger_id = request.context.platform_specific.get("trigger_id")
-            if trigger_id:
-                await self._question_handler.open_modal(request, pending)
-            else:
-                await self.controller.emit_agent_message(
-                    request.context,
-                    "notify",
-                    "Cannot open modal without trigger_id. Please reply with text.",
-                )
-            return
-
-        # Process answer
-        await self._question_handler.process_answer(request, pending)
+        """Handle question-related callbacks (button clicks, modal submissions).
+        
+        NOTE: This method is disabled because Claude Code SDK cannot respond to
+        AskUserQuestion programmatically. See: https://github.com/anthropics/claude-code/issues/10168
+        """
+        # AskUserQuestion support disabled
+        await self.controller.emit_agent_message(
+            request.context,
+            "notify",
+            "AskUserQuestion support is currently disabled. Claude Code SDK does not support programmatic responses to this tool.",
+        )
+        return
 
     async def clear_sessions(self, settings_key: str) -> int:
         """Clear Claude sessions scoped to the provided settings key."""
@@ -222,15 +216,16 @@ class ClaudeAgent(BaseAgent):
                     if message_type == "assistant":
                         toolcalls = []
                         text_parts = []
-                        ask_user_question_block = None
+                        # AskUserQuestion detection disabled - SDK cannot respond
+                        # ask_user_question_block = None
 
                         for block in getattr(message, "content", []) or []:
                             if isinstance(block, ToolUseBlock):
-                                # Check for AskUserQuestion
-                                if self._question_handler.is_ask_user_question(block):
-                                    ask_user_question_block = block
-                                    # Don't format as regular toolcall
-                                    continue
+                                # AskUserQuestion handling disabled - tool is disallowed via ClaudeAgentOptions
+                                # if self.ENABLE_ASK_USER_QUESTION and self._question_handler:
+                                #     if self._question_handler.is_ask_user_question(block):
+                                #         ask_user_question_block = block
+                                #         continue
 
                                 toolcalls.append(
                                     formatter.format_toolcall(
@@ -277,30 +272,29 @@ class ClaudeAgent(BaseAgent):
                                 formatted_assistant
                             )
 
-                        # Handle AskUserQuestion if detected
-                        if ask_user_question_block:
-                            logger.info(
-                                "Detected AskUserQuestion for session %s",
-                                base_session_id,
-                            )
-                            answered = await self._question_handler.handle_ask_user_question(
-                                request=request,
-                                tool_use_block=ask_user_question_block,
-                                client=client,
-                                composite_session_id=composite_key,
-                            )
-                            if not answered:
-                                # Timed out - stop receiving messages
-                                logger.warning(
-                                    "AskUserQuestion timed out for session %s",
-                                    base_session_id,
-                                )
-                                return
-                            # Answer submitted - continue receiving messages
-                            logger.info(
-                                "AskUserQuestion answered for session %s, continuing",
-                                base_session_id,
-                            )
+                        # AskUserQuestion handling disabled - SDK cannot respond programmatically
+                        # See: https://github.com/anthropics/claude-code/issues/10168
+                        # if self.ENABLE_ASK_USER_QUESTION and ask_user_question_block:
+                        #     logger.info(
+                        #         "Detected AskUserQuestion for session %s",
+                        #         base_session_id,
+                        #     )
+                        #     answered = await self._question_handler.handle_ask_user_question(
+                        #         request=request,
+                        #         tool_use_block=ask_user_question_block,
+                        #         client=client,
+                        #         composite_session_id=composite_key,
+                        #     )
+                        #     if not answered:
+                        #         logger.warning(
+                        #             "AskUserQuestion timed out for session %s",
+                        #             base_session_id,
+                        #         )
+                        #         return
+                        #     logger.info(
+                        #         "AskUserQuestion answered for session %s, continuing",
+                        #         base_session_id,
+                        #     )
 
                         continue
 

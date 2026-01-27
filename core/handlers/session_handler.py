@@ -4,7 +4,7 @@ import os
 import logging
 from typing import Optional, Dict, Any, Tuple
 from modules.im import MessageContext
-from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 logger = logging.getLogger(__name__)
 
@@ -105,12 +105,16 @@ class SessionHandler:
         if subagent_reasoning_effort:
             extra_args["reasoning-effort"] = subagent_reasoning_effort
 
-        options = ClaudeCodeOptions(
+        options = ClaudeAgentOptions(
             permission_mode=self.config.claude.permission_mode,
             cwd=working_path,
             system_prompt=self.config.claude.system_prompt,
             resume=stored_claude_session_id if stored_claude_session_id else None,
             extra_args=extra_args,
+            setting_sources=["user"],  # Load user settings from ~/.claude/settings.json
+            # Disable AskUserQuestion tool - SDK cannot respond to it programmatically
+            # See: https://github.com/anthropics/claude-code/issues/10168
+            disallowed_tools=["AskUserQuestion"],
         )
         
         # Log session creation details
@@ -131,7 +135,7 @@ class SessionHandler:
         client = ClaudeSDKClient(options=options)
 
         # Log the actual options being used
-        logger.info("ClaudeCodeOptions details:")
+        logger.info("ClaudeAgentOptions details:")
         logger.info(f"  - permission_mode: {options.permission_mode}")
         logger.info(f"  - cwd: {options.cwd}")
         logger.info(f"  - system_prompt: {options.system_prompt}")
