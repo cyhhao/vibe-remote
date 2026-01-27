@@ -182,7 +182,8 @@ class SessionHandler:
             system_prompt=final_system_prompt,
             resume=stored_claude_session_id if stored_claude_session_id else None,
             extra_args=extra_args,
-            allowed_tools=agent_allowed_tools or [],  # Use agent's allowed tools if specified
+            # Only set allowed_tools if agent file specifies tools; None = use SDK defaults
+            allowed_tools=agent_allowed_tools if agent_allowed_tools else None,
             setting_sources=["user"],  # Load user settings from ~/.claude/settings.json
             # Disable AskUserQuestion tool - SDK cannot respond to it programmatically
             # See: https://github.com/anthropics/claude-code/issues/10168
