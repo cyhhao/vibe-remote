@@ -81,16 +81,11 @@ class Controller:
         self.session_manager = SessionManager()
         self.settings_manager = SettingsManager()
 
-        # Agent routing
-        self.agent_router = AgentRouter.from_file(None, platform=self.config.platform)
-
-        # Default backend preference:
-        # If OpenCode is enabled, make it the implicit default backend.
-        if self.config.opencode:
-            self.agent_router.global_default = "opencode"
-            platform_route = self.agent_router.platform_routes.get(self.config.platform)
-            if platform_route:
-                platform_route.default = "opencode"
+        # Agent routing - use configured default_backend
+        default_backend = self.config.agents.default_backend if self.config.agents else "opencode"
+        self.agent_router = AgentRouter.from_file(
+            None, platform=self.config.platform, default_backend=default_backend
+        )
 
         # Inject settings_manager into SlackBot if it's Slack platform
         if self.config.platform == "slack":
