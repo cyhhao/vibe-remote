@@ -317,10 +317,6 @@ class SettingsHandler:
         # Get current backend (from routing or default)
         current_backend = self.controller.resolve_agent_for_context(context)
 
-        # Get current require_mention override for this channel
-        current_require_mention = self.settings_manager.get_require_mention_override(settings_key)
-        global_require_mention = self.config.slack.require_mention
-
         # Get OpenCode agents/models if available
         opencode_agents = []
         opencode_models = {}
@@ -384,8 +380,6 @@ class SettingsHandler:
                 claude_agents=claude_agents,
                 claude_models=claude_models,
                 codex_models=codex_models,
-                current_require_mention=current_require_mention,
-                global_require_mention=global_require_mention,
             )
         except Exception as e:
             logger.error(f"Error opening routing modal: {e}", exc_info=True)

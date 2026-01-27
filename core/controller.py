@@ -827,7 +827,6 @@ class Controller:
         claude_model: Optional[str] = None,
         codex_model: Optional[str] = None,
         codex_reasoning_effort: Optional[str] = None,
-        require_mention: Optional[bool] = None,
     ):
         """Handle routing update submission (from Slack modal)"""
         from modules.settings_manager import ChannelRouting
@@ -851,9 +850,6 @@ class Controller:
             # Save routing
             self.settings_manager.set_channel_routing(settings_key, routing)
 
-            # Save require_mention setting
-            self.settings_manager.set_require_mention(settings_key, require_mention)
-
             # Build confirmation message
             parts = [f"Backend: **{backend}**"]
             if backend == "opencode":
@@ -873,14 +869,6 @@ class Controller:
                     parts.append(f"Model: **{codex_model}**")
                 if codex_reasoning_effort:
                     parts.append(f"Reasoning Effort: **{codex_reasoning_effort}**")
-
-            # Add require_mention status to confirmation
-            if require_mention is None:
-                parts.append("Require @mention: **(Default)**")
-            elif require_mention:
-                parts.append("Require @mention: **Yes**")
-            else:
-                parts.append("Require @mention: **No**")
 
             # Create context for confirmation message
             context = MessageContext(

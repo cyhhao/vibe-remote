@@ -1028,21 +1028,6 @@ class SlackBot(BaseIMClient):
             if codex_reasoning == "__default__":
                 codex_reasoning = None
 
-            # Extract require_mention (optional)
-            require_mention_data = values.get("require_mention_block", {}).get(
-                "require_mention_select", {}
-            )
-            require_mention_value = require_mention_data.get("selected_option", {}).get("value")
-            # Convert to Optional[bool]: "__default__" -> None, "true" -> True, "false" -> False
-            if require_mention_value == "__default__":
-                require_mention = None
-            elif require_mention_value == "true":
-                require_mention = True
-            elif require_mention_value == "false":
-                require_mention = False
-            else:
-                require_mention = None
-
             # Update routing via callback
             if hasattr(self, "_on_routing_update"):
                 await self._on_routing_update(
@@ -1056,7 +1041,6 @@ class SlackBot(BaseIMClient):
                     claude_model,
                     codex_model,
                     codex_reasoning,
-                    require_mention,
                 )
 
     def run(self):
@@ -1515,8 +1499,6 @@ class SlackBot(BaseIMClient):
         selected_claude_model: object = _UNSET,
         selected_codex_model: object = _UNSET,
         selected_codex_reasoning: object = _UNSET,
-        current_require_mention: object = _UNSET,  # None=default, True, False
-        global_require_mention: bool = False,
     ) -> dict:
         """Build modal view for agent/model routing settings."""
         # Build backend options
@@ -1571,48 +1553,6 @@ class SlackBot(BaseIMClient):
                 "label": {"type": "plain_text", "text": "Backend"},
             },
         ]
-
-        # Add require_mention selector
-        # Build options: Default (uses global), Require @mention, Don't require @mention
-        global_mention_label = "On" if global_require_mention else "Off"
-        require_mention_options = [
-            {
-                "text": {"type": "plain_text", "text": f"(Default) - {global_mention_label}"},
-                "value": "__default__",
-            },
-            {
-                "text": {"type": "plain_text", "text": "Require @mention"},
-                "value": "true",
-            },
-            {
-                "text": {"type": "plain_text", "text": "Don't require @mention"},
-                "value": "false",
-            },
-        ]
-
-        # Determine initial option
-        initial_require_mention = require_mention_options[0]  # Default
-        if current_require_mention is not _UNSET and current_require_mention is not None:
-            target_value = "true" if current_require_mention else "false"
-            for opt in require_mention_options:
-                if opt["value"] == target_value:
-                    initial_require_mention = opt
-                    break
-
-        require_mention_select = {
-            "type": "static_select",
-            "action_id": "require_mention_select",
-            "placeholder": {"type": "plain_text", "text": "Select @mention behavior"},
-            "options": require_mention_options,
-            "initial_option": initial_require_mention,
-        }
-
-        blocks.append({
-            "type": "input",
-            "block_id": "require_mention_block",
-            "element": require_mention_select,
-            "label": {"type": "plain_text", "text": "Require @mention to respond"},
-        })
 
         # Determine effective backend for showing backend-specific options
         effective_backend = selected_backend_value or current_backend or "opencode"
@@ -2405,8 +2345,6 @@ class SlackBot(BaseIMClient):
         claude_agents: list = None,
         claude_models: list = None,
         codex_models: list = None,
-        current_require_mention: object = None,  # None=default, True, False
-        global_require_mention: bool = False,
     ):
         """Open a modal dialog for agent/model routing settings"""
         self._ensure_clients()
@@ -2422,8 +2360,6 @@ class SlackBot(BaseIMClient):
             claude_agents=claude_agents,
             claude_models=claude_models,
             codex_models=codex_models,
-            current_require_mention=current_require_mention,
-            global_require_mention=global_require_mention,
         )
 
         try:
@@ -2454,8 +2390,6 @@ class SlackBot(BaseIMClient):
         selected_claude_model: Optional[str] = None,
         selected_codex_model: Optional[str] = None,
         selected_codex_reasoning: Optional[str] = None,
-        current_require_mention: object = None,
-        global_require_mention: bool = False,
     ) -> None:
         """Update routing modal when selections change."""
         self._ensure_clients()
@@ -2479,8 +2413,6 @@ class SlackBot(BaseIMClient):
             selected_claude_model=selected_claude_model,
             selected_codex_model=selected_codex_model,
             selected_codex_reasoning=selected_codex_reasoning,
-            current_require_mention=current_require_mention,
-            global_require_mention=global_require_mention,
         )
 
         try:
