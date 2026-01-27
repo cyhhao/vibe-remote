@@ -1503,7 +1503,7 @@ class SlackBot(BaseIMClient):
         """Build modal view for agent/model routing settings."""
         # Build backend options
         backend_display_names = {
-            "claude": "Claude Code",
+            "claude": "ClaudeCode",
             "codex": "Codex",
             "opencode": "OpenCode",
         }

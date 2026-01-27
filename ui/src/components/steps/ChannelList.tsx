@@ -399,7 +399,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                         className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
                       >
                         <option value="opencode">OpenCode</option>
-                        <option value="claude">Claude</option>
+                        <option value="claude">ClaudeCode</option>
                         <option value="codex">Codex</option>
                       </select>
                     </div>
