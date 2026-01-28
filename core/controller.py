@@ -51,6 +51,9 @@ class Controller:
         # Initialize agents (depends on handlers/session handler)
         self._init_agents()
 
+        # Validate default_backend against registered agents
+        self._validate_default_backend()
+
         # Setup callbacks
         self._setup_callbacks()
 
@@ -120,6 +123,38 @@ class Controller:
                 self.agent_service.register(OpenCodeAgent(self, self.config.opencode))
             except Exception as e:
                 logger.error(f"Failed to initialize OpenCode agent: {e}")
+
+    def _validate_default_backend(self):
+        """Validate default_backend against registered agents and fallback if needed."""
+        current_default = self.agent_router.global_default
+        registered = set(self.agent_service.agents.keys())
+
+        if current_default not in registered:
+            # Find a fallback from registered agents
+            # Prefer: opencode > claude > codex > any
+            for fallback in ["opencode", "claude", "codex"]:
+                if fallback in registered:
+                    logger.warning(
+                        f"Configured default_backend '{current_default}' is not enabled. "
+                        f"Falling back to '{fallback}'."
+                    )
+                    self.agent_router.global_default = fallback
+                    for route in self.agent_router.platform_routes.values():
+                        route.default = fallback
+                    return
+
+            # If no preferred fallback, use any registered agent
+            if registered:
+                fallback = next(iter(registered))
+                logger.warning(
+                    f"Configured default_backend '{current_default}' is not enabled. "
+                    f"Falling back to '{fallback}'."
+                )
+                self.agent_router.global_default = fallback
+                for route in self.agent_router.platform_routes.values():
+                    route.default = fallback
+            else:
+                logger.error("No agents are registered! Check your configuration.")
 
     def _setup_callbacks(self):
         """Setup callback connections between modules"""
