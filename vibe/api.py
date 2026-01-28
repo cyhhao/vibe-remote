@@ -579,29 +579,41 @@ def parse_claude_agent_file(agent_path: str) -> Optional[dict]:
         frontmatter_lines = lines[1:end_idx]
         frontmatter_text = "\n".join(frontmatter_lines)
 
-        # Simple YAML parsing (avoid external dependency)
+        # Use yaml.safe_load for proper YAML parsing (handles lists, etc.)
         metadata: dict = {}
-        for line in frontmatter_lines:
-            if ":" in line:
-                key, _, value = line.partition(":")
-                key = key.strip()
-                value = value.strip()
-                if key and value:
-                    metadata[key] = value
+        try:
+            import yaml
+            parsed = yaml.safe_load(frontmatter_text)
+            if isinstance(parsed, dict):
+                metadata = parsed
+        except Exception as yaml_err:
+            logger.debug(f"YAML parse failed, falling back to simple parsing: {yaml_err}")
+            # Fallback to simple key: value parsing
+            for line in frontmatter_lines:
+                if ":" in line:
+                    key, _, value = line.partition(":")
+                    key = key.strip()
+                    value = value.strip()
+                    if key and value:
+                        metadata[key] = value
 
         # Extract body (system prompt)
         body_lines = lines[end_idx + 1:]
         body = "\n".join(body_lines).strip()
 
-        # Parse tools if present (comma or space separated)
+        # Parse tools if present
         tools = None
         if "tools" in metadata:
-            tools_str = metadata["tools"]
-            # Handle both "Read, Bash, Edit" and "Read Bash Edit"
-            if "," in tools_str:
-                tools = [t.strip() for t in tools_str.split(",") if t.strip()]
-            else:
-                tools = [t.strip() for t in tools_str.split() if t.strip()]
+            tools_val = metadata["tools"]
+            if isinstance(tools_val, list):
+                # YAML list format: tools:\n  - Read\n  - Bash
+                tools = [str(t).strip() for t in tools_val if t]
+            elif isinstance(tools_val, str):
+                # Inline format: tools: Read, Bash, Edit
+                if "," in tools_val:
+                    tools = [t.strip() for t in tools_val.split(",") if t.strip()]
+                else:
+                    tools = [t.strip() for t in tools_val.split() if t.strip()]
 
         return {
             "name": metadata.get("name", Path(agent_path).stem),
