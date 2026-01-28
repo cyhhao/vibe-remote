@@ -1913,6 +1913,13 @@ class SlackBot(BaseIMClient):
                         "value": model,
                     })
 
+            # Add current model if not in list (preserve custom models)
+            if current_cl_model and not any(opt["value"] == current_cl_model for opt in cl_model_options):
+                cl_model_options.append({
+                    "text": {"type": "plain_text", "text": current_cl_model[:75]},
+                    "value": current_cl_model,
+                })
+
             # Limit to 100 options
             if len(cl_model_options) > 100:
                 cl_model_options = cl_model_options[:100]
@@ -1988,6 +1995,13 @@ class SlackBot(BaseIMClient):
                         "text": {"type": "plain_text", "text": model[:75]},
                         "value": model,
                     })
+
+            # Add current model if not in list (preserve custom models)
+            if current_cx_model and not any(opt["value"] == current_cx_model for opt in cx_model_options):
+                cx_model_options.append({
+                    "text": {"type": "plain_text", "text": current_cx_model[:75]},
+                    "value": current_cx_model,
+                })
 
             # Limit to 100 options
             if len(cx_model_options) > 100:
