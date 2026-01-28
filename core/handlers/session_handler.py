@@ -156,6 +156,10 @@ class SessionHandler:
             else:
                 logger.warning(f"Could not load agent file for '{effective_agent}'")
 
+        # Filter out special values that aren't actual model names
+        if agent_model and agent_model.lower() in ("inherit", ""):
+            agent_model = None
+
         # Determine final model: explicit override > agent frontmatter > global default
         effective_model = explicit_model or agent_model or self.config.claude.default_model
 
