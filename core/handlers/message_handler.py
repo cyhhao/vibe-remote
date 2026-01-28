@@ -99,6 +99,11 @@ class MessageHandler:
 
             agent_name = self.controller.resolve_agent_for_context(context)
 
+            # Check for routing-based agent to maintain session key consistency
+            # This ensures session IDs match between MessageHandler and SessionHandler
+            routing = self.controller.settings_manager.get_channel_routing(settings_key)
+            routing_agent = routing.claude_agent if routing else None
+
             matched_prefix = None
             subagent_message = None
             subagent_name = None
@@ -165,6 +170,10 @@ class MessageHandler:
                 if agent_name == "claude":
                     base_session_id = f"{base_session_id}:{subagent_name}"
                     composite_key = f"{base_session_id}:{working_path}"
+            elif agent_name == "claude" and routing_agent and not subagent_name:
+                # Update session IDs for routing-based agent to match SessionHandler
+                base_session_id = f"{base_session_id}:{routing_agent}"
+                composite_key = f"{base_session_id}:{working_path}"
 
             ack_message_id = None
             ack_mode = getattr(self.config, "ack_mode", "reaction")
