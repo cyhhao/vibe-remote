@@ -34,7 +34,7 @@ def apply_claude_sdk_patches():
     """Apply runtime patches for third-party SDK limits."""
     logger = logging.getLogger(__name__)
     try:
-        from claude_code_sdk._internal.transport import subprocess_cli
+        from claude_agent_sdk._internal.transport import subprocess_cli
     except Exception as exc:
         logger.warning(f"Claude SDK patch skipped: {exc}")
         return
@@ -44,7 +44,7 @@ def apply_claude_sdk_patches():
     subprocess_cli._MAX_BUFFER_SIZE = buffer_size
     if previous != buffer_size:
         logger.info(
-            "Patched claude_code_sdk _MAX_BUFFER_SIZE from %s to %s bytes",
+            "Patched claude_agent_sdk _MAX_BUFFER_SIZE from %s to %s bytes",
             previous,
             buffer_size,
         )

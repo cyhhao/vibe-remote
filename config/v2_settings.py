@@ -1,5 +1,4 @@
 import json
-import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,9 +21,18 @@ def normalize_show_message_types(show_message_types: Optional[List[str]]) -> Lis
 @dataclass
 class RoutingSettings:
     agent_backend: Optional[str] = None
+    # OpenCode settings
     opencode_agent: Optional[str] = None
     opencode_model: Optional[str] = None
     opencode_reasoning_effort: Optional[str] = None
+    # Claude Code settings
+    claude_agent: Optional[str] = None
+    claude_model: Optional[str] = None
+    # Note: Claude Code has no CLI parameter for reasoning effort (Extended Thinking)
+    # Codex settings
+    codex_model: Optional[str] = None
+    codex_reasoning_effort: Optional[str] = None
+    # Note: Codex subagent not supported yet
 
 
 @dataclass
@@ -75,6 +83,10 @@ class SettingsStore:
                 opencode_agent=routing_payload.get("opencode_agent"),
                 opencode_model=routing_payload.get("opencode_model"),
                 opencode_reasoning_effort=routing_payload.get("opencode_reasoning_effort"),
+                claude_agent=routing_payload.get("claude_agent"),
+                claude_model=routing_payload.get("claude_model"),
+                codex_model=routing_payload.get("codex_model"),
+                codex_reasoning_effort=routing_payload.get("codex_reasoning_effort"),
             )
             channels[channel_id] = ChannelSettings(
                 enabled=channel_payload.get("enabled", False),
@@ -100,6 +112,10 @@ class SettingsStore:
                     "opencode_agent": settings.routing.opencode_agent,
                     "opencode_model": settings.routing.opencode_model,
                     "opencode_reasoning_effort": settings.routing.opencode_reasoning_effort,
+                    "claude_agent": settings.routing.claude_agent,
+                    "claude_model": settings.routing.claude_model,
+                    "codex_model": settings.routing.codex_model,
+                    "codex_reasoning_effort": settings.routing.codex_reasoning_effort,
                 },
                 "require_mention": settings.require_mention,
             }

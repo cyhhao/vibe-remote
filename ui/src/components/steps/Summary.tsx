@@ -260,11 +260,16 @@ const buildSettingsPayload = (data: any) => {
           enabled: cfg.enabled,
           show_message_types: cfg.show_message_types || [],
           custom_cwd: cfg.custom_cwd || null,
+          require_mention: cfg.require_mention ?? null,
           routing: {
             agent_backend: cfg.routing?.agent_backend || null,
             opencode_agent: cfg.routing?.opencode_agent || null,
             opencode_model: cfg.routing?.opencode_model || null,
             opencode_reasoning_effort: cfg.routing?.opencode_reasoning_effort || null,
+            claude_agent: cfg.routing?.claude_agent || null,
+            claude_model: cfg.routing?.claude_model || null,
+            codex_model: cfg.routing?.codex_model || null,
+            codex_reasoning_effort: cfg.routing?.codex_reasoning_effort || null,
           },
         },
       ])

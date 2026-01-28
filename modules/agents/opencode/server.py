@@ -10,6 +10,7 @@ import signal
 import socket
 import subprocess
 import time
+import threading
 from asyncio.subprocess import Process
 from typing import Any, Dict, List, Optional
 
@@ -28,7 +29,7 @@ class OpenCodeServerManager:
     """Manages a singleton OpenCode server process shared across all working directories."""
 
     _instance: Optional["OpenCodeServerManager"] = None
-    _class_lock: asyncio.Lock = asyncio.Lock()
+    _class_lock: threading.Lock = threading.Lock()
 
     def __init__(
         self,
@@ -44,8 +45,17 @@ class OpenCodeServerManager:
         self._base_url: Optional[str] = None
         self._http_session: Optional[aiohttp.ClientSession] = None
         self._http_session_loop: Optional[asyncio.AbstractEventLoop] = None
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None
+        self._lock_loop: Optional[asyncio.AbstractEventLoop] = None
         self._pid_file = paths.get_logs_dir() / "opencode_server.json"
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Get or create an asyncio.Lock bound to the current event loop."""
+        current_loop = asyncio.get_event_loop()
+        if self._lock is None or self._lock_loop is not current_loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = current_loop
+        return self._lock
 
     @classmethod
     async def get_instance(
@@ -54,7 +64,7 @@ class OpenCodeServerManager:
         port: int = DEFAULT_OPENCODE_PORT,
         request_timeout_seconds: int = 60,
     ) -> "OpenCodeServerManager":
-        async with cls._class_lock:
+        with cls._class_lock:
             if cls._instance is None:
                 cls._instance = cls(
                     binary=binary,
@@ -82,7 +92,19 @@ class OpenCodeServerManager:
         return f"http://{self.host}:{self.port}"
 
     async def _get_http_session(self) -> aiohttp.ClientSession:
-        if self._http_session is None or self._http_session.closed:
+        current_loop = asyncio.get_running_loop()
+        # Recreate session if it's closed or bound to a different event loop
+        if (
+            self._http_session is None
+            or self._http_session.closed
+            or self._http_session_loop is not current_loop
+        ):
+            # Close old session if it exists and is not closed
+            if self._http_session is not None and not self._http_session.closed:
+                try:
+                    await self._http_session.close()
+                except Exception:
+                    pass
             total_timeout: Optional[int] = (
                 None
                 if self.request_timeout_seconds <= 0
@@ -91,7 +113,7 @@ class OpenCodeServerManager:
             self._http_session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=total_timeout)
             )
-            self._http_session_loop = asyncio.get_running_loop()
+            self._http_session_loop = current_loop
         return self._http_session
 
     def _read_pid_file(self) -> Optional[Dict[str, Any]]:
@@ -279,7 +301,7 @@ class OpenCodeServerManager:
         self._clear_pid_file()
 
     async def ensure_running(self) -> str:
-        async with self._lock:
+        async with self._get_lock():
             await self._cleanup_orphaned_managed_server()
 
             if await self._is_healthy():
@@ -378,7 +400,7 @@ class OpenCodeServerManager:
         )
 
     async def stop(self) -> None:
-        async with self._lock:
+        async with self._get_lock():
             if self._http_session:
                 await self._http_session.close()
                 self._http_session = None

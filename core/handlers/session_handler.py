@@ -4,7 +4,7 @@ import os
 import logging
 from typing import Optional, Dict, Any, Tuple
 from modules.im import MessageContext
-from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,37 @@ class SessionHandler:
         """Get working directory - delegate to controller's get_cwd"""
         return self.controller.get_cwd(context)
     
+    def _load_agent_file(self, agent_name: str, working_path: str) -> Optional[Dict[str, Any]]:
+        """Load an agent file and return its parsed content.
+        
+        Searches for agent file in:
+        1. Project agents: <working_path>/.claude/agents/<agent_name>.md
+        2. Global agents: ~/.claude/agents/<agent_name>.md
+        
+        Returns:
+            Dict with keys: name, description, prompt, tools, model
+            or None if not found/parse error.
+        """
+        from pathlib import Path
+        from vibe.api import parse_claude_agent_file
+        
+        # Search paths (project first, then global)
+        search_paths = [
+            Path(working_path) / ".claude" / "agents" / f"{agent_name}.md",
+            Path.home() / ".claude" / "agents" / f"{agent_name}.md",
+        ]
+        
+        for agent_path in search_paths:
+            if agent_path.exists() and agent_path.is_file():
+                parsed = parse_claude_agent_file(str(agent_path))
+                if parsed:
+                    return parsed
+                else:
+                    logger.warning(f"Failed to parse agent file: {agent_path}")
+        
+        logger.warning(f"Agent file not found for '{agent_name}' in {search_paths}")
+        return None
+    
     def get_session_info(self, context: MessageContext) -> Tuple[str, str, str]:
         """Get session info: base_session_id, working_path, and composite_key"""
         base_session_id = self.get_base_session_id(context)
@@ -60,12 +91,23 @@ class SessionHandler:
             settings_key, base_session_id
         )
 
-        if composite_key in self.claude_sessions and not subagent_name:
+        # Read channel-level configuration overrides
+        channel_settings = self.settings_manager.get_channel_settings(context.channel_id)
+        routing = channel_settings.routing if channel_settings else None
+        
+        # Priority: subagent params > channel config > agent frontmatter > global default
+        # Note: agent frontmatter model is applied later after loading agent file
+        effective_agent = subagent_name or (routing.claude_agent if routing else None)
+        # Store explicit model override (not including default yet)
+        explicit_model = subagent_model or (routing.claude_model if routing else None)
+        # Note: Claude Code has no CLI parameter for reasoning_effort, so we don't use it
+
+        if composite_key in self.claude_sessions and not effective_agent:
             logger.info(f"Using existing Claude SDK client for {base_session_id} at {working_path}")
             return self.claude_sessions[composite_key]
 
-        if subagent_name:
-            cached_base = f"{base_session_id}:{subagent_name}"
+        if effective_agent:
+            cached_base = f"{base_session_id}:{effective_agent}"
             cached_key = f"{cached_base}:{working_path}"
             cached_session_id = self.settings_manager.get_agent_session_id(
                 settings_key,
@@ -77,15 +119,12 @@ class SessionHandler:
                     "Using Claude subagent session for %s at %s", cached_base, working_path
                 )
                 return self.claude_sessions[cached_key]
+            # Always use agent-specific key when effective_agent is set
+            # This ensures session continuity even on first use
+            composite_key = cached_key
+            base_session_id = cached_base
             if cached_session_id:
                 stored_claude_session_id = cached_session_id
-                composite_key = cached_key
-                base_session_id = cached_base
-            if composite_key in self.claude_sessions:
-                logger.info(
-                    "Using Claude subagent session for %s at %s", cached_base, working_path
-                )
-                return self.claude_sessions[composite_key]
 
         # Ensure working directory exists
         if not os.path.exists(working_path):
@@ -96,21 +135,61 @@ class SessionHandler:
                 logger.error(f"Failed to create working directory {working_path}: {e}")
                 working_path = os.getcwd()
         
-        # Create options for Claude client
-        extra_args = {}
-        if subagent_name:
-            extra_args["agent"] = subagent_name
-        if subagent_model:
-            extra_args["model"] = subagent_model
-        if subagent_reasoning_effort:
-            extra_args["reasoning-effort"] = subagent_reasoning_effort
+        # Build system prompt from agent file if subagent is specified
+        # Claude Code has a bug where ~/.claude/agents/*.md files are not auto-discovered
+        # See: https://github.com/anthropics/claude-code/issues/11205
+        # Workaround: read the agent file and use its content as system_prompt
+        agent_system_prompt: Optional[str] = None
+        agent_allowed_tools: Optional[list] = None
+        agent_model: Optional[str] = None
+        if effective_agent:
+            agent_data = self._load_agent_file(effective_agent, working_path)
+            if agent_data:
+                agent_system_prompt = agent_data.get("prompt")
+                agent_allowed_tools = agent_data.get("tools")
+                agent_model = agent_data.get("model")
+                logger.info(f"Loaded agent '{effective_agent}' system prompt ({len(agent_system_prompt or '')} chars)")
+                if agent_allowed_tools:
+                    logger.info(f"  Agent allowed tools: {agent_allowed_tools}")
+                if agent_model:
+                    logger.info(f"  Agent model from frontmatter: {agent_model}")
+            else:
+                logger.warning(f"Could not load agent file for '{effective_agent}'")
 
-        options = ClaudeCodeOptions(
+        # Filter out special values that aren't actual model names
+        if agent_model and agent_model.lower() in ("inherit", ""):
+            agent_model = None
+
+        # Determine final model: explicit override > agent frontmatter > global default
+        effective_model = explicit_model or agent_model or self.config.claude.default_model
+
+        # Determine final system prompt: agent prompt takes precedence over config
+        final_system_prompt = agent_system_prompt or self.config.claude.system_prompt
+
+        # Create extra_args for CLI passthrough (fallback for model)
+        extra_args: Dict[str, str | None] = {}
+        if effective_model:
+            extra_args["model"] = effective_model
+
+        # Collect Anthropic-related environment variables to pass to Claude
+        claude_env = {}
+        for key in os.environ:
+            if key.startswith("ANTHROPIC_") or key.startswith("CLAUDE_"):
+                claude_env[key] = os.environ[key]
+
+        options = ClaudeAgentOptions(
             permission_mode=self.config.claude.permission_mode,
             cwd=working_path,
-            system_prompt=self.config.claude.system_prompt,
+            system_prompt=final_system_prompt,
             resume=stored_claude_session_id if stored_claude_session_id else None,
             extra_args=extra_args,
+            # Only set allowed_tools if agent file specifies tools; None = use SDK defaults
+            allowed_tools=agent_allowed_tools if agent_allowed_tools else None,
+            setting_sources=["user"],  # Load user settings from ~/.claude/settings.json
+            # Disable AskUserQuestion tool - SDK cannot respond to it programmatically
+            # See: https://github.com/anthropics/claude-code/issues/10168
+            disallowed_tools=["AskUserQuestion"],
+            env=claude_env,  # Pass Anthropic/Claude env vars
         )
         
         # Log session creation details
@@ -118,8 +197,10 @@ class SessionHandler:
         logger.info(f"  Working directory: {working_path}")
         logger.info(f"  Resume session ID: {stored_claude_session_id}")
         logger.info(f"  Options.resume: {options.resume}")
-        if subagent_name:
-            logger.info(f"  Subagent: {subagent_name}")
+        if effective_agent:
+            logger.info(f"  Subagent: {effective_agent}")
+        if effective_model:
+            logger.info(f"  Model: {effective_model}")
         
         # Log if we're resuming a session
         if stored_claude_session_id:
@@ -131,7 +212,7 @@ class SessionHandler:
         client = ClaudeSDKClient(options=options)
 
         # Log the actual options being used
-        logger.info("ClaudeCodeOptions details:")
+        logger.info("ClaudeAgentOptions details:")
         logger.info(f"  - permission_mode: {options.permission_mode}")
         logger.info(f"  - cwd: {options.cwd}")
         logger.info(f"  - system_prompt: {options.system_prompt}")

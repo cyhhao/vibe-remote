@@ -58,7 +58,15 @@ class CodexAgent(BaseAgent):
         if not os.path.exists(request.working_path):
             os.makedirs(request.working_path, exist_ok=True)
 
-        cmd = self._build_command(request, resume_id)
+        # Read channel-level configuration overrides
+        channel_settings = self.settings_manager.get_channel_settings(request.context.channel_id)
+        routing = channel_settings.routing if channel_settings else None
+        
+        # Priority: channel config > global default
+        effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
+        effective_reasoning_effort = (routing.codex_reasoning_effort if routing else None)
+
+        cmd = self._build_command(request, resume_id, effective_model, effective_reasoning_effort)
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -164,13 +172,25 @@ class CodexAgent(BaseAgent):
         self._unregister_process(composite_key)
         return True
 
-    def _build_command(self, request: AgentRequest, resume_id: Optional[str]) -> list:
+    def _build_command(
+        self,
+        request: AgentRequest,
+        resume_id: Optional[str],
+        model: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
+    ) -> list:
         cmd = [self.codex_config.binary, "exec", "--json"]
         cmd += ["--dangerously-bypass-approvals-and-sandbox"]
         cmd += ["--skip-git-repo-check"]
 
-        if self.codex_config.default_model:
-            cmd += ["--model", self.codex_config.default_model]
+        # Model selection (priority: param > config default)
+        effective_model = model or self.codex_config.default_model
+        if effective_model:
+            cmd += ["--model", effective_model]
+
+        # Reasoning effort (via -c config override)
+        if reasoning_effort:
+            cmd += ["-c", f"model_reasoning_effort={reasoning_effort}"]
 
         cmd += ["--cd", request.working_path]
         cmd += self.codex_config.extra_args

@@ -1,6 +1,5 @@
 import logging
 import hashlib
-import logging
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Union
@@ -22,11 +21,20 @@ class ChannelRouting:
     """Per-channel agent routing configuration."""
 
     agent_backend: Optional[str] = None  # "claude" | "codex" | "opencode" | None
+    # OpenCode settings
     opencode_agent: Optional[str] = None  # "build" | "plan" | ... | None
     opencode_model: Optional[str] = None  # "provider/model" | None
     opencode_reasoning_effort: Optional[str] = (
         None  # "low" | "medium" | "high" | "xhigh" | None
     )
+    # Claude Code settings
+    claude_agent: Optional[str] = None  # subagent name from ~/.claude/agents/
+    claude_model: Optional[str] = None  # "claude-sonnet-4" | "claude-opus-4" | ...
+    # Note: Claude Code has no CLI parameter for reasoning effort
+    # Codex settings
+    codex_model: Optional[str] = None  # "gpt-5-codex" | "o3" | ...
+    codex_reasoning_effort: Optional[str] = None  # "minimal" | "low" | "medium" | "high" | "xhigh"
+    # Note: Codex subagent not supported yet
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
@@ -42,6 +50,10 @@ class ChannelRouting:
             opencode_agent=data.get("opencode_agent"),
             opencode_model=data.get("opencode_model"),
             opencode_reasoning_effort=data.get("opencode_reasoning_effort"),
+            claude_agent=data.get("claude_agent"),
+            claude_model=data.get("claude_model"),
+            codex_model=data.get("codex_model"),
+            codex_reasoning_effort=data.get("codex_reasoning_effort"),
         )
 
 
@@ -123,6 +135,10 @@ class SettingsManager:
             opencode_agent=channel_settings.routing.opencode_agent,
             opencode_model=channel_settings.routing.opencode_model,
             opencode_reasoning_effort=channel_settings.routing.opencode_reasoning_effort,
+            claude_agent=channel_settings.routing.claude_agent,
+            claude_model=channel_settings.routing.claude_model,
+            codex_model=channel_settings.routing.codex_model,
+            codex_reasoning_effort=channel_settings.routing.codex_reasoning_effort,
         )
         return UserSettings(
             show_message_types=self._normalize_show_message_types(
@@ -146,6 +162,10 @@ class SettingsManager:
                 opencode_agent=routing.opencode_agent,
                 opencode_model=routing.opencode_model,
                 opencode_reasoning_effort=routing.opencode_reasoning_effort,
+                claude_agent=routing.claude_agent,
+                claude_model=routing.claude_model,
+                codex_model=routing.codex_model,
+                codex_reasoning_effort=routing.codex_reasoning_effort,
             ),
         )
 
@@ -209,6 +229,8 @@ class SettingsManager:
                 channel_settings = self._to_channel_settings(settings)
                 if existing is not None:
                     channel_settings.enabled = existing.enabled
+                    # Preserve require_mention setting (it's managed separately)
+                    channel_settings.require_mention = existing.require_mention
                 channels[str(settings_key)] = channel_settings
             self.store.settings.channels = channels
             self.store.save()

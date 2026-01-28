@@ -341,6 +341,36 @@ def opencode_setup_permission():
     return jsonify(api.setup_opencode_permission())
 
 
+@app.route("/claude/agents", methods=["GET"])
+def claude_agents():
+    from vibe import api
+
+    cwd = request.args.get("cwd")
+    if cwd:
+        # Expand ~ first, then check if absolute
+        expanded = Path(cwd).expanduser()
+        if not expanded.is_absolute():
+            cwd = str(get_working_dir() / cwd)
+        else:
+            cwd = str(expanded)
+
+    return jsonify(api.claude_agents(cwd))
+
+
+@app.route("/claude/models", methods=["GET"])
+def claude_models():
+    from vibe import api
+
+    return jsonify(api.claude_models())
+
+
+@app.route("/codex/models", methods=["GET"])
+def codex_models():
+    from vibe import api
+
+    return jsonify(api.codex_models())
+
+
 # =============================================================================
 # Static Files (SPA)
 # =============================================================================

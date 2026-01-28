@@ -105,7 +105,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           className="mt-2 w-full bg-bg border border-border rounded px-3 py-2 text-sm"
         >
           <option value="opencode">OpenCode {t('agentDetection.recommended')}</option>
-          <option value="claude">Claude</option>
+          <option value="claude">ClaudeCode</option>
           <option value="codex">Codex</option>
         </select>
       </div>

@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PlatformRoute:
-    default: str = "claude"
+    default: str = "opencode"
     overrides: Dict[str, str] = field(default_factory=dict)
 
 
@@ -19,17 +19,17 @@ class AgentRouter:
     def __init__(
         self,
         platform_routes: Dict[str, PlatformRoute],
-        global_default: str = "claude",
+        global_default: str = "opencode",
     ):
         self.platform_routes = platform_routes
         self.global_default = global_default
 
     @classmethod
     def from_file(
-        cls, file_path: Optional[str], *, platform: str
+        cls, file_path: Optional[str], *, platform: str, default_backend: str = "opencode"
     ) -> "AgentRouter":
         routes: Dict[str, PlatformRoute] = {}
-        global_default = "claude"
+        global_default = default_backend
 
         # File-based routing removed; keep defaults only.
         routes.setdefault(platform, PlatformRoute(default=global_default))
