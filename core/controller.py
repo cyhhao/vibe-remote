@@ -641,10 +641,6 @@ class Controller:
             opencode_agent = current_routing.opencode_agent if current_routing else None
             opencode_model = current_routing.opencode_model if current_routing else None
             opencode_reasoning_effort = current_routing.opencode_reasoning_effort if current_routing else None
-            if agent != "opencode":
-                opencode_agent = None
-                opencode_model = None
-                opencode_reasoning_effort = None
 
             routing = ChannelRouting(
                 agent_backend=agent,
