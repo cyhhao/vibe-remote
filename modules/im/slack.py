@@ -1417,11 +1417,15 @@ class SlackBot(BaseIMClient):
             )
 
         session_option_groups = []
+        total_session_options = 0
+        max_session_options = 100
         for agent, mapping in sessions_by_agent.items():
             if not mapping:
                 continue
             options = []
             for thread, session_id in mapping.items():
+                if total_session_options >= max_session_options:
+                    break
                 thread_label = thread.replace("slack_", "", 1) if thread.startswith("slack_") else thread
                 truncated = session_id[:60]
                 desc = f"thread {thread_label}"
@@ -1432,6 +1436,7 @@ class SlackBot(BaseIMClient):
                         "description": {"type": "plain_text", "text": desc[:75], "emoji": True},
                     }
                 )
+                total_session_options += 1
             if options:
                 session_option_groups.append(
                     {
@@ -1439,6 +1444,8 @@ class SlackBot(BaseIMClient):
                         "options": options,
                     }
                 )
+            if total_session_options >= max_session_options:
+                break
 
         blocks: list = [
             {
@@ -1476,6 +1483,18 @@ class SlackBot(BaseIMClient):
                     },
                 }
             )
+            if total_session_options >= max_session_options:
+                blocks.append(
+                    {
+                        "type": "context",
+                        "elements": [
+                            {
+                                "type": "mrkdwn",
+                                "text": "_Showing the first 100 saved sessions. Paste a session ID below for others._",
+                            }
+                        ],
+                    }
+                )
         else:
             blocks.append(
                 {
