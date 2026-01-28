@@ -56,7 +56,8 @@ class Controller:
 
         # Initialize update checker (use default config if not present)
         from config.v2_config import UpdateConfig
-        update_config = getattr(config, 'update', None) or UpdateConfig()
+
+        update_config = getattr(config, "update", None) or UpdateConfig()
         self.update_checker = UpdateChecker(self, update_config)
 
         # Restore session mappings on startup (after handlers are initialized)
@@ -93,6 +94,7 @@ class Controller:
         if self.config.platform == "slack":
             # Import here to avoid circular dependency
             from modules.im.slack import SlackBot
+
             if isinstance(self.im_client, SlackBot):
                 self.im_client.set_settings_manager(self.settings_manager)
                 self.im_client.set_controller(self)
@@ -325,9 +327,7 @@ class Controller:
 
         return resolved
 
-    def get_opencode_overrides(
-        self, context: MessageContext
-    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    def get_opencode_overrides(self, context: MessageContext) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Get OpenCode agent, model, and reasoning effort overrides for this channel.
 
         Returns:
@@ -365,30 +365,22 @@ class Controller:
         if not text or not text.strip():
             return
 
-        canonical_type = self.settings_manager._canonicalize_message_type(
-            message_type or ""
-        )
+        canonical_type = self.settings_manager._canonicalize_message_type(message_type or "")
         settings_key = self._get_settings_key(context)
 
         if canonical_type == "notify":
             target_context = self._get_target_context(context)
-            await self.im_client.send_message(
-                target_context, text, parse_mode=parse_mode
-            )
+            await self.im_client.send_message(target_context, text, parse_mode=parse_mode)
             return
 
         if canonical_type == "result":
             target_context = self._get_target_context(context)
             if len(text) <= self._get_result_max_chars():
-                await self.im_client.send_message(
-                    target_context, text, parse_mode=parse_mode
-                )
+                await self.im_client.send_message(target_context, text, parse_mode=parse_mode)
                 return
 
             summary = self._build_result_summary(text, self._get_result_max_chars())
-            await self.im_client.send_message(
-                target_context, summary, parse_mode=parse_mode
-            )
+            await self.im_client.send_message(target_context, summary, parse_mode=parse_mode)
 
             if self.config.platform == "slack" and hasattr(self.im_client, "upload_markdown"):
                 try:
@@ -485,9 +477,7 @@ class Controller:
                         logger.warning(f"Failed to edit oversized Log Message: {err}")
                 else:
                     try:
-                        await self.im_client.send_message(
-                            target_context, first_part, parse_mode="markdown"
-                        )
+                        await self.im_client.send_message(target_context, first_part, parse_mode="markdown")
                         send_ok = True
                     except Exception as err:
                         logger.error(f"Failed to send oversized Log Message: {err}")
@@ -528,25 +518,24 @@ class Controller:
                 self._consolidated_message_ids.pop(consolidated_key, None)
 
             try:
-                new_id = await self.im_client.send_message(
-                    target_context, updated, parse_mode="markdown"
-                )
+                new_id = await self.im_client.send_message(target_context, updated, parse_mode="markdown")
                 self._consolidated_message_ids[consolidated_key] = new_id
             except Exception as err:
                 logger.error(f"Failed to send Log Message: {err}", exc_info=True)
 
     # Settings update handler (for Slack modal)
     async def handle_settings_update(
-        self, user_id: str, show_message_types: list, channel_id: Optional[str] = None,
+        self,
+        user_id: str,
+        show_message_types: list,
+        channel_id: Optional[str] = None,
         require_mention: Optional[bool] = None,
     ):
         """Handle settings update (typically from Slack modal)"""
         try:
             # Determine settings key - for Slack, always use channel_id
             if self.config.platform == "slack":
-                settings_key = (
-                    channel_id if channel_id else user_id
-                )  # fallback to user_id if no channel
+                settings_key = channel_id if channel_id else user_id  # fallback to user_id if no channel
             else:
                 settings_key = channel_id if channel_id else user_id
 
@@ -573,9 +562,7 @@ class Controller:
             )
 
             # Send confirmation
-            await self.im_client.send_message(
-                context, "✅ Settings updated successfully!"
-            )
+            await self.im_client.send_message(context, "✅ Settings updated successfully!")
 
         except Exception as e:
             logger.error(f"Error updating settings: {e}")
@@ -585,14 +572,10 @@ class Controller:
                 channel_id=channel_id if channel_id else user_id,
                 platform_specific={},
             )
-            await self.im_client.send_message(
-                context, f"❌ Failed to update settings: {str(e)}"
-            )
+            await self.im_client.send_message(context, f"❌ Failed to update settings: {str(e)}")
 
     # Working directory change handler (for Slack modal)
-    async def handle_change_cwd_submission(
-        self, user_id: str, new_cwd: str, channel_id: Optional[str] = None
-    ):
+    async def handle_change_cwd_submission(self, user_id: str, new_cwd: str, channel_id: Optional[str] = None):
         """Handle working directory change submission (from Slack modal) - reuse command handler logic"""
         try:
             # Create context for messages (without 'message' field which doesn't exist in MessageContext)
@@ -613,9 +596,7 @@ class Controller:
                 channel_id=channel_id if channel_id else user_id,
                 platform_specific={},
             )
-            await self.im_client.send_message(
-                context, f"❌ Failed to change working directory: {str(e)}"
-            )
+            await self.im_client.send_message(context, f"❌ Failed to change working directory: {str(e)}")
 
     async def handle_resume_session_submission(
         self,
@@ -627,6 +608,8 @@ class Controller:
         host_message_ts: Optional[str] = None,
     ) -> None:
         """Bind a provided session_id to the current thread for the chosen agent."""
+        from modules.settings_manager import ChannelRouting
+
         try:
             if not agent or not session_id:
                 raise ValueError("Agent and session ID are required to resume.")
@@ -648,10 +631,29 @@ class Controller:
                 platform_specific={},
             )
 
+            settings_key = self._get_settings_key(context)
+            current_routing = self.settings_manager.get_channel_routing(settings_key)
+            opencode_agent = current_routing.opencode_agent if current_routing else None
+            opencode_model = current_routing.opencode_model if current_routing else None
+            opencode_reasoning_effort = current_routing.opencode_reasoning_effort if current_routing else None
+            if agent != "opencode":
+                opencode_agent = None
+                opencode_model = None
+                opencode_reasoning_effort = None
+
+            routing = ChannelRouting(
+                agent_backend=agent,
+                opencode_agent=opencode_agent,
+                opencode_model=opencode_model,
+                opencode_reasoning_effort=opencode_reasoning_effort,
+            )
+            self.settings_manager.set_channel_routing(settings_key, routing)
+
             agent_label = agent.capitalize()
             confirmation = (
                 f"✅ Resumed {agent_label} session.\n"
                 f"Session ID: `{session_id}`\n"
+                f"Routing set to {agent_label} for this channel.\n"
                 "Reply in this thread to continue."
             )
 
@@ -661,16 +663,10 @@ class Controller:
             mapped_thread = target_thread or confirmation_ts
             base_session_id = f"slack_{mapped_thread}"
 
-            settings_key = self._get_settings_key(context)
-
             # Persist mapping
-            self.settings_manager.set_agent_session_mapping(
-                settings_key, agent, base_session_id, session_id
-            )
+            self.settings_manager.set_agent_session_mapping(settings_key, agent, base_session_id, session_id)
             # Mark thread active
-            self.settings_manager.mark_thread_active(
-                user_id, context.channel_id, mapped_thread
-            )
+            self.settings_manager.mark_thread_active(user_id, context.channel_id, mapped_thread)
         except Exception as e:
             logger.error(f"Error resuming session: {e}", exc_info=True)
             context = MessageContext(
@@ -679,9 +675,7 @@ class Controller:
                 thread_id=thread_id or None,
                 platform_specific={},
             )
-            await self.im_client.send_message(
-                context, f"❌ Failed to resume session: {str(e)}"
-            )
+            await self.im_client.send_message(context, f"❌ Failed to resume session: {str(e)}")
 
     async def handle_routing_modal_update(
         self,
@@ -708,9 +702,7 @@ class Controller:
             settings_key = self._get_settings_key(context)
             current_routing = self.settings_manager.get_channel_routing(settings_key)
             all_backends = list(self.agent_service.agents.keys())
-            registered_backends = sorted(
-                all_backends, key=lambda x: (x != "opencode", x)
-            )
+            registered_backends = sorted(all_backends, key=lambda x: (x != "opencode", x))
             current_backend = self.resolve_agent_for_context(context)
 
             values = view.get("state", {}).get("values", {})
@@ -723,9 +715,7 @@ class Controller:
                 data = values.get(block_id, {}).get(action_id, {})
                 return data.get("selected_option", {}).get("value")
 
-            def _selected_prefixed_value(
-                block_id: str, action_prefix: str
-            ) -> Optional[str]:
+            def _selected_prefixed_value(block_id: str, action_prefix: str) -> Optional[str]:
                 block = values.get(block_id, {})
                 if not isinstance(block, dict):
                     return None
@@ -740,9 +730,7 @@ class Controller:
 
             oc_agent = _selected_value("opencode_agent_block", "opencode_agent_select")
             oc_model = _selected_value("opencode_model_block", "opencode_model_select")
-            oc_reasoning = _selected_prefixed_value(
-                "opencode_reasoning_block", "opencode_reasoning_select"
-            )
+            oc_reasoning = _selected_prefixed_value("opencode_reasoning_block", "opencode_reasoning_select")
 
             # For block_actions, the latest selection is carried on the `action` payload.
             action_id = action.get("action_id")
@@ -877,16 +865,12 @@ class Controller:
                 channel_id=channel_id if channel_id else user_id,
                 platform_specific={},
             )
-            await self.im_client.send_message(
-                context, f"❌ Failed to update routing: {str(e)}"
-            )
+            await self.im_client.send_message(context, f"❌ Failed to update routing: {str(e)}")
 
     # Main run method
     def run(self):
         """Run the controller"""
-        logger.info(
-            f"Starting Claude Proxy Controller with {self.config.platform} platform..."
-        )
+        logger.info(f"Starting Claude Proxy Controller with {self.config.platform} platform...")
 
         # 不再创建额外事件循环，避免与 IM 客户端的内部事件循环冲突
         # 清理职责改为：
@@ -961,6 +945,7 @@ class Controller:
         # Stop OpenCode server if running
         try:
             from modules.agents.opencode import OpenCodeServerManager
+
             OpenCodeServerManager.stop_instance_sync()
         except Exception as e:
             logger.debug(f"OpenCode server cleanup skipped: {e}")
