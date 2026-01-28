@@ -827,20 +827,26 @@ class Controller:
         from modules.settings_manager import ChannelRouting
 
         try:
-            # Create routing object
-            routing = ChannelRouting(
-                agent_backend=backend,
-                opencode_agent=opencode_agent,
-                opencode_model=opencode_model,
-                opencode_reasoning_effort=opencode_reasoning_effort,
-                claude_agent=claude_agent,
-                claude_model=claude_model,
-                codex_model=codex_model,
-                codex_reasoning_effort=codex_reasoning_effort,
-            )
-
             # Get settings key
             settings_key = channel_id if channel_id else user_id
+
+            # Get existing routing to preserve settings for other backends
+            existing_routing = self.settings_manager.get_channel_routing(settings_key)
+
+            # Merge with existing routing - only update fields for the selected backend
+            routing = ChannelRouting(
+                agent_backend=backend,
+                # OpenCode settings: update if opencode is selected, otherwise preserve existing
+                opencode_agent=opencode_agent if backend == "opencode" else (existing_routing.opencode_agent if existing_routing else None),
+                opencode_model=opencode_model if backend == "opencode" else (existing_routing.opencode_model if existing_routing else None),
+                opencode_reasoning_effort=opencode_reasoning_effort if backend == "opencode" else (existing_routing.opencode_reasoning_effort if existing_routing else None),
+                # Claude settings: update if claude is selected, otherwise preserve existing
+                claude_agent=claude_agent if backend == "claude" else (existing_routing.claude_agent if existing_routing else None),
+                claude_model=claude_model if backend == "claude" else (existing_routing.claude_model if existing_routing else None),
+                # Codex settings: update if codex is selected, otherwise preserve existing
+                codex_model=codex_model if backend == "codex" else (existing_routing.codex_model if existing_routing else None),
+                codex_reasoning_effort=codex_reasoning_effort if backend == "codex" else (existing_routing.codex_reasoning_effort if existing_routing else None),
+            )
 
             # Save routing
             self.settings_manager.set_channel_routing(settings_key, routing)
