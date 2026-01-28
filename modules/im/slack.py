@@ -1404,9 +1404,13 @@ class SlackBot(BaseIMClient):
         """Open a modal to let users select or input a session to resume."""
         self._ensure_clients()
 
-        # Build agent options: always include common backends + any with stored sessions
+        # Build agent options limited to enabled backends when available
         common_agents = ["claude", "codex", "opencode"]
-        agent_keys = set(common_agents) | set(sessions_by_agent.keys())
+        registered_backends = None
+        if getattr(self, "_controller", None) and getattr(self._controller, "agent_service", None):
+            registered_backends = list(self._controller.agent_service.agents.keys())
+        allowed_agents = set(registered_backends) if registered_backends else set(common_agents)
+        agent_keys = allowed_agents
         agent_options = []
         for agent in sorted(agent_keys):
             agent_options.append(
@@ -1420,6 +1424,8 @@ class SlackBot(BaseIMClient):
         total_session_options = 0
         max_session_options = 100
         for agent, mapping in sessions_by_agent.items():
+            if agent not in allowed_agents:
+                continue
             if not mapping:
                 continue
             options = []

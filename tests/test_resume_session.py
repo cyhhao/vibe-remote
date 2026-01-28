@@ -11,19 +11,22 @@ class _StubSettingsManager:
     def __init__(self):
         self.set_calls = []
         self.mark_calls = []
+        self.routing_calls = []
 
-    def set_agent_session_mapping(
-        self, settings_key, agent_name, thread_id, session_id
-    ):
-        self.set_calls.append(
-            (settings_key, agent_name, thread_id, session_id)
-        )
+    def set_agent_session_mapping(self, settings_key, agent_name, thread_id, session_id):
+        self.set_calls.append((settings_key, agent_name, thread_id, session_id))
 
     def mark_thread_active(self, user_id, channel_id, thread_ts):
         self.mark_calls.append((user_id, channel_id, thread_ts))
 
     def list_all_agent_sessions(self, user_id):
         return {}
+
+    def get_channel_routing(self, settings_key):
+        return None
+
+    def set_channel_routing(self, settings_key, routing):
+        self.routing_calls.append((settings_key, routing))
 
 
 class _StubIMClient:
@@ -32,16 +35,12 @@ class _StubIMClient:
         self.resume_calls = []
 
     async def send_message(self, context, text):
-        ts = f"T{len(self.messages)+1}"
+        ts = f"T{len(self.messages) + 1}"
         self.messages.append((context.channel_id, context.thread_id, text, ts))
         return ts
 
-    async def open_resume_session_modal(
-        self, trigger_id, sessions_by_agent, channel_id, thread_id, host_message_ts
-    ):
-        self.resume_calls.append(
-            (trigger_id, sessions_by_agent, channel_id, thread_id, host_message_ts)
-        )
+    async def open_resume_session_modal(self, trigger_id, sessions_by_agent, channel_id, thread_id, host_message_ts):
+        self.resume_calls.append((trigger_id, sessions_by_agent, channel_id, thread_id, host_message_ts))
 
 
 class _StubConfig:
@@ -144,20 +143,12 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
                 "callback_id": "resume_session_modal",
                 "state": {
                     "values": {
-                        "agent_block": {
-                            "agent_select": {"selected_option": {"value": "codex"}}
-                        },
+                        "agent_block": {"agent_select": {"selected_option": {"value": "codex"}}},
                         "manual_block": {"manual_input": {"value": "manual_sess"}},
-                        "session_block": {
-                            "session_select": {
-                                "selected_option": {"value": "claude|sess_drop"}
-                            }
-                        },
+                        "session_block": {"session_select": {"selected_option": {"value": "claude|sess_drop"}}},
                     }
                 },
-                "private_metadata": (
-                    '{"channel_id":"C1","thread_id":"TH1","host_message_ts":"TS1"}'
-                ),
+                "private_metadata": ('{"channel_id":"C1","thread_id":"TH1","host_message_ts":"TS1"}'),
             },
         }
 

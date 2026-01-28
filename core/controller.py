@@ -614,6 +614,11 @@ class Controller:
             if not agent or not session_id:
                 raise ValueError("Agent and session ID are required to resume.")
 
+            if getattr(self, "agent_service", None):
+                available_agents = set(self.agent_service.agents.keys())
+                if agent not in available_agents:
+                    raise ValueError(f"Agent '{agent}' is not enabled.")
+
             # Decide whether to reuse current thread or start a new one for clarity.
             reuse_thread = True
             if host_message_ts and thread_id and thread_id == host_message_ts:
