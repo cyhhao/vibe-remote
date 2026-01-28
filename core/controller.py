@@ -82,7 +82,7 @@ class Controller:
         self.settings_manager = SettingsManager()
 
         # Agent routing - use configured default_backend
-        default_backend = self.config.agents.default_backend if self.config.agents else "opencode"
+        default_backend = getattr(self.config, 'default_backend', 'opencode')
         self.agent_router = AgentRouter.from_file(
             None, platform=self.config.platform, default_backend=default_backend
         )

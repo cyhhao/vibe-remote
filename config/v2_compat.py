@@ -40,6 +40,7 @@ class AppCompatConfig:
     opencode: Optional[OpenCodeCompatConfig]
     log_level: str
     ack_mode: str
+    default_backend: str = "opencode"
 
 
 def to_app_config(v2: V2Config) -> AppCompatConfig:
@@ -73,4 +74,5 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         opencode=opencode,
         log_level=v2.runtime.log_level,
         ack_mode=v2.ack_mode,
+        default_backend=v2.agents.default_backend,
     )
