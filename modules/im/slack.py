@@ -90,9 +90,7 @@ class SlackBot(BaseIMClient):
             self.web_client = AsyncWebClient(token=self.config.bot_token)
 
         if self.socket_client is None and self.config.app_token:
-            self.socket_client = SocketModeClient(
-                app_token=self.config.app_token, web_client=self.web_client
-            )
+            self.socket_client = SocketModeClient(app_token=self.config.app_token, web_client=self.web_client)
 
     def _convert_markdown_to_slack_mrkdwn(self, text: str) -> str:
         """Convert standard markdown to Slack mrkdwn format using third-party library
@@ -111,9 +109,7 @@ class SlackBot(BaseIMClient):
             converted_text = self.markdown_converter.convert(text)
             return converted_text
         except Exception as e:
-            logger.warning(
-                f"Error converting markdown to mrkdwn: {e}, using original text"
-            )
+            logger.warning(f"Error converting markdown to mrkdwn: {e}, using original text")
             # Fallback to original text if conversion fails
             return text
 
@@ -140,9 +136,7 @@ class SlackBot(BaseIMClient):
             if context.thread_id:
                 kwargs["thread_ts"] = context.thread_id
                 # Optionally broadcast to channel
-                if context.platform_specific and context.platform_specific.get(
-                    "reply_broadcast"
-                ):
+                if context.platform_specific and context.platform_specific.get("reply_broadcast"):
                     kwargs["reply_broadcast"] = True
             elif reply_to:
                 # If reply_to is specified, use it as thread timestamp
@@ -171,9 +165,7 @@ class SlackBot(BaseIMClient):
             # Mark thread as active if we sent a message to a thread
             if self.settings_manager and (context.thread_id or reply_to):
                 thread_ts = context.thread_id or reply_to
-                self.settings_manager.mark_thread_active(
-                    context.user_id, context.channel_id, thread_ts
-                )
+                self.settings_manager.mark_thread_active(context.user_id, context.channel_id, thread_ts)
                 logger.debug(f"Marked thread {thread_ts} as active after bot message")
 
             return response["ts"]
@@ -241,9 +233,7 @@ class SlackBot(BaseIMClient):
 
             # NOTE: reaction failures were previously DEBUG-only; surface at INFO/WARN for operability.
             if error_code in ["missing_scope", "not_in_channel", "channel_not_found"]:
-                logger.warning(
-                    f"Slack reaction add failed: error={error_code}, needed={needed}"
-                )
+                logger.warning(f"Slack reaction add failed: error={error_code}, needed={needed}")
             else:
                 logger.info(f"Slack reaction add failed: {err}")
             return False
@@ -344,9 +334,7 @@ class SlackBot(BaseIMClient):
 
             # Mark thread as active if we sent a message to a thread
             if self.settings_manager and context.thread_id:
-                self.settings_manager.mark_thread_active(
-                    context.user_id, context.channel_id, context.thread_id
-                )
+                self.settings_manager.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
                 logger.debug(f"Marked thread {context.thread_id} as active after bot message with buttons")
 
             return response["ts"]
@@ -452,9 +440,7 @@ class SlackBot(BaseIMClient):
             logger.error(f"Error removing Slack buttons: {e}")
             return False
 
-    async def answer_callback(
-        self, callback_id: str, text: Optional[str] = None, show_alert: bool = False
-    ) -> bool:
+    async def answer_callback(self, callback_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
         """Answer a Slack interactive callback"""
         # Slack does not have a direct equivalent to answer_callback_query
         # Instead, we typically update the message or send an ephemeral message
@@ -464,19 +450,13 @@ class SlackBot(BaseIMClient):
     def register_handlers(self):
         """Register Slack event handlers"""
         if not self.socket_client:
-            logger.warning(
-                "Socket mode client not configured, skipping handler registration"
-            )
+            logger.warning("Socket mode client not configured, skipping handler registration")
             return
 
         # Register socket mode request handler
-        self.socket_client.socket_mode_request_listeners.append(
-            self._handle_socket_mode_request
-        )
+        self.socket_client.socket_mode_request_listeners.append(self._handle_socket_mode_request)
 
-    async def _handle_socket_mode_request(
-        self, client: SocketModeClient, req: SocketModeRequest
-    ):
+    async def _handle_socket_mode_request(self, client: SocketModeClient, req: SocketModeRequest):
         """Handle incoming Socket Mode requests"""
         try:
             if req.type == "events_api":
@@ -638,9 +618,7 @@ class SlackBot(BaseIMClient):
 
             # Mark thread as active when bot is @mentioned
             if self.settings_manager and thread_id:
-                self.settings_manager.mark_thread_active(
-                    event.get("user"), channel_id, thread_id
-                )
+                self.settings_manager.mark_thread_active(event.get("user"), channel_id, thread_id)
                 logger.info(f"Marked thread {thread_id} as active due to @mention")
 
             # Remove the mention from the text
@@ -649,9 +627,7 @@ class SlackBot(BaseIMClient):
 
             text = re.sub(r"<@[\w]+>", "", text).strip()
 
-            logger.info(
-                f"App mention processed: original='{event.get('text')}', cleaned='{text}'"
-            )
+            logger.info(f"App mention processed: original='{event.get('text')}', cleaned='{text}'")
 
             # Check if this is a command after mention
             if text.startswith("/"):
@@ -659,9 +635,7 @@ class SlackBot(BaseIMClient):
                 command = parts[0][1:]  # Remove the /
                 args = parts[1] if len(parts) > 1 else ""
 
-                logger.info(
-                    f"Command detected: '{command}', available: {list(self.on_command_callbacks.keys())}"
-                )
+                logger.info(f"Command detected: '{command}', available: {list(self.on_command_callbacks.keys())}")
 
                 if command in self.on_command_callbacks:
                     logger.info(f"Executing command handler for: {command}")
@@ -728,9 +702,7 @@ class SlackBot(BaseIMClient):
                 "cwd",
                 "queue",
             ]:
-                await self.send_slash_response(
-                    response_url, f"⏳ Processing `/{command}`..."
-                )
+                await self.send_slash_response(response_url, f"⏳ Processing `/{command}`...")
 
             await handler(context, payload.get("text", ""))
         elif actual_command in self.slash_command_handlers:
@@ -756,6 +728,7 @@ class SlackBot(BaseIMClient):
             for action in actions:
                 if action.get("action_id") == "vibe_update_now":
                     from core.update_checker import handle_update_button_click
+
                     if hasattr(self, "_controller") and self._controller:
                         await handle_update_button_click(self._controller, payload)
                     return
@@ -770,9 +743,7 @@ class SlackBot(BaseIMClient):
 
             # Check if channel is authorized for interactive components
             if not await self._is_authorized_channel(channel_id):
-                logger.info(
-                    f"Unauthorized interactive action from channel: {channel_id}"
-                )
+                logger.info(f"Unauthorized interactive action from channel: {channel_id}")
                 try:
                     await self._send_unauthorized_message(channel_id)
                 except Exception as e:
@@ -849,18 +820,14 @@ class SlackBot(BaseIMClient):
             values = view.get("state", {}).get("values", {})
 
             # Extract selected show message types
-            show_types_data = values.get("show_message_types", {}).get(
-                "show_types_select", {}
-            )
+            show_types_data = values.get("show_message_types", {}).get("show_types_select", {})
             selected_options = show_types_data.get("selected_options", [])
 
             # Get the values from selected options
             show_types = [opt.get("value") for opt in selected_options]
 
             # Extract require_mention setting
-            require_mention_data = values.get("require_mention_block", {}).get(
-                "require_mention_select", {}
-            )
+            require_mention_data = values.get("require_mention_block", {}).get("require_mention_select", {})
             require_mention_value = require_mention_data.get("selected_option", {}).get("value")
             # Convert to Optional[bool]: "__default__" -> None, "true" -> True, "false" -> False
             if require_mention_value == "__default__":
@@ -898,6 +865,50 @@ class SlackBot(BaseIMClient):
             # Send success message to the user (via DM or channel)
             # We need to find the right channel to send the message
             # For now, we'll rely on the controller to handle this
+
+        elif callback_id == "resume_session_modal":
+            user_id = payload.get("user", {}).get("id")
+            values = view.get("state", {}).get("values", {})
+
+            agent_data = values.get("agent_block", {}).get("agent_select", {})
+            agent = agent_data.get("selected_option", {}).get("value")
+
+            manual_data = values.get("manual_block", {}).get("manual_input", {})
+            manual_session = (manual_data.get("value") or "").strip()
+
+            session_data = values.get("session_block", {}).get("session_select", {}) if values else {}
+            selected_option = session_data.get("selected_option") or {}
+            selected_value = selected_option.get("value") if isinstance(selected_option, dict) else None
+            selected_session = None
+            selected_agent = None
+            if selected_value and "|" in selected_value:
+                selected_agent, selected_session = selected_value.split("|", 1)
+
+            # Manual input takes precedence and should respect the manual agent selector.
+            if manual_session:
+                chosen_session = manual_session
+                chosen_agent = agent or selected_agent
+            else:
+                chosen_session = selected_session
+                chosen_agent = selected_agent or agent
+            metadata_raw = view.get("private_metadata")
+            channel_id = None
+            thread_id = None
+            host_message_ts = None
+            try:
+                import json
+
+                md = json.loads(metadata_raw) if metadata_raw else {}
+                channel_id = md.get("channel_id")
+                thread_id = md.get("thread_id")
+                host_message_ts = md.get("host_message_ts")
+            except Exception:
+                pass
+
+            if hasattr(self, "_on_resume_session"):
+                await self._on_resume_session(
+                    user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts
+                )
 
         elif callback_id == "opencode_question_modal" or callback_id == "claude_question_modal":
             # Generic question modal handling for both OpenCode and Claude
@@ -959,17 +970,13 @@ class SlackBot(BaseIMClient):
             backend = backend_data.get("selected_option", {}).get("value")
 
             # Extract OpenCode agent (optional)
-            oc_agent_data = values.get("opencode_agent_block", {}).get(
-                "opencode_agent_select", {}
-            )
+            oc_agent_data = values.get("opencode_agent_block", {}).get("opencode_agent_select", {})
             oc_agent = oc_agent_data.get("selected_option", {}).get("value")
             if oc_agent == "__default__":
                 oc_agent = None
 
             # Extract OpenCode model (optional)
-            oc_model_data = values.get("opencode_model_block", {}).get(
-                "opencode_model_select", {}
-            )
+            oc_model_data = values.get("opencode_model_block", {}).get("opencode_model_select", {})
             oc_model = oc_model_data.get("selected_option", {}).get("value")
             if oc_model == "__default__":
                 oc_model = None
@@ -989,26 +996,33 @@ class SlackBot(BaseIMClient):
             if oc_reasoning == "__default__":
                 oc_reasoning = None
 
+            # Extract require_mention (optional)
+            require_mention_data = values.get("require_mention_block", {}).get("require_mention_select", {})
+            require_mention_value = require_mention_data.get("selected_option", {}).get("value")
+            # Convert to Optional[bool]: "__default__" -> None, "true" -> True, "false" -> False
+            if require_mention_value == "__default__":
+                require_mention = None
+            elif require_mention_value == "true":
+                require_mention = True
+            elif require_mention_value == "false":
+                require_mention = False
+            else:
+                require_mention = None
+
             # Extract Claude agent (optional)
-            claude_agent_data = values.get("claude_agent_block", {}).get(
-                "claude_agent_select", {}
-            )
+            claude_agent_data = values.get("claude_agent_block", {}).get("claude_agent_select", {})
             claude_agent = claude_agent_data.get("selected_option", {}).get("value")
             if claude_agent == "__default__":
                 claude_agent = None
 
             # Extract Claude model (optional)
-            claude_model_data = values.get("claude_model_block", {}).get(
-                "claude_model_select", {}
-            )
+            claude_model_data = values.get("claude_model_block", {}).get("claude_model_select", {})
             claude_model = claude_model_data.get("selected_option", {}).get("value")
             if claude_model == "__default__":
                 claude_model = None
 
             # Extract Codex model (optional)
-            codex_model_data = values.get("codex_model_block", {}).get(
-                "codex_model_select", {}
-            )
+            codex_model_data = values.get("codex_model_block", {}).get("codex_model_select", {})
             codex_model = codex_model_data.get("selected_option", {}).get("value")
             if codex_model == "__default__":
                 codex_model = None
@@ -1226,9 +1240,7 @@ class SlackBot(BaseIMClient):
             if msg_type in user_settings.show_message_types:
                 selected_options.append(option)  # Same object reference!
 
-        logger.info(
-            f"Creating modal with {len(options)} options, {len(selected_options)} selected"
-        )
+        logger.info(f"Creating modal with {len(options)} options, {len(selected_options)} selected")
         logger.info(f"Show types: {user_settings.show_message_types}")
 
         # Debug: Log the actual data being sent
@@ -1377,9 +1389,7 @@ class SlackBot(BaseIMClient):
         }
         return descriptions.get(msg_type, f"{msg_type} messages")
 
-    async def open_change_cwd_modal(
-        self, trigger_id: str, current_cwd: str, channel_id: str = None
-    ):
+    async def open_change_cwd_modal(self, trigger_id: str, current_cwd: str, channel_id: str = None):
         """Open a modal dialog for changing working directory"""
         self._ensure_clients()
 
@@ -1446,6 +1456,164 @@ class SlackBot(BaseIMClient):
             logger.error(f"Error opening change CWD modal: {e}")
             raise
 
+    async def open_resume_session_modal(
+        self,
+        trigger_id: str,
+        sessions_by_agent: Dict[str, Dict[str, str]],
+        channel_id: Optional[str],
+        thread_id: Optional[str],
+        host_message_ts: Optional[str],
+    ):
+        """Open a modal to let users select or input a session to resume."""
+        self._ensure_clients()
+
+        # Build agent options limited to enabled backends when available
+        common_agents = ["claude", "codex", "opencode"]
+        registered_backends = None
+        if getattr(self, "_controller", None) and getattr(self._controller, "agent_service", None):
+            registered_backends = list(self._controller.agent_service.agents.keys())
+        allowed_agents = set(registered_backends) if registered_backends else set(common_agents)
+        agent_keys = allowed_agents
+        agent_options = []
+        for agent in sorted(agent_keys):
+            agent_options.append(
+                {
+                    "text": {"type": "plain_text", "text": agent.capitalize(), "emoji": True},
+                    "value": agent,
+                }
+            )
+
+        session_option_groups = []
+        total_session_options = 0
+        max_session_options = 100
+        for agent, mapping in sessions_by_agent.items():
+            if agent not in allowed_agents:
+                continue
+            if not mapping:
+                continue
+            options = []
+            for thread, session_id in mapping.items():
+                if total_session_options >= max_session_options:
+                    break
+                thread_label = thread.replace("slack_", "", 1) if thread.startswith("slack_") else thread
+                truncated = session_id[:60]
+                desc = f"thread {thread_label}"
+                options.append(
+                    {
+                        "text": {"type": "plain_text", "text": truncated, "emoji": True},
+                        "value": f"{agent}|{session_id}",
+                        "description": {"type": "plain_text", "text": desc[:75], "emoji": True},
+                    }
+                )
+                total_session_options += 1
+            if options:
+                session_option_groups.append(
+                    {
+                        "label": {"type": "plain_text", "text": agent.capitalize(), "emoji": True},
+                        "options": options,
+                    }
+                )
+            if total_session_options >= max_session_options:
+                break
+
+        blocks: list = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "Select a saved session or paste a session ID to resume work in this thread.",
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "agent_block",
+                "label": {"type": "plain_text", "text": "Agent backend", "emoji": True},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "agent_select",
+                    "options": agent_options,
+                    "initial_option": agent_options[0],
+                },
+            },
+        ]
+
+        if session_option_groups:
+            blocks.append(
+                {
+                    "type": "input",
+                    "block_id": "session_block",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": "Pick an existing session", "emoji": True},
+                    "element": {
+                        "type": "static_select",
+                        "action_id": "session_select",
+                        "option_groups": session_option_groups,
+                        "placeholder": {"type": "plain_text", "text": "Select a session", "emoji": True},
+                    },
+                }
+            )
+            if total_session_options >= max_session_options:
+                blocks.append(
+                    {
+                        "type": "context",
+                        "elements": [
+                            {
+                                "type": "mrkdwn",
+                                "text": "_Showing the first 100 saved sessions. Paste a session ID below for others._",
+                            }
+                        ],
+                    }
+                )
+        else:
+            blocks.append(
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": "_No stored sessions found. Paste a session ID below to resume._",
+                        }
+                    ],
+                }
+            )
+
+        blocks.append(
+            {
+                "type": "input",
+                "block_id": "manual_block",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Or paste a session ID", "emoji": True},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "manual_input",
+                    "placeholder": {"type": "plain_text", "text": "e.g., sess_12345", "emoji": True},
+                },
+            }
+        )
+
+        metadata = {
+            "channel_id": channel_id,
+            "thread_id": thread_id,
+            "host_message_ts": host_message_ts,
+        }
+        import json
+
+        view = {
+            "type": "modal",
+            "callback_id": "resume_session_modal",
+            "private_metadata": json.dumps(metadata),
+            "title": {"type": "plain_text", "text": "Resume Session", "emoji": True},
+            "submit": {"type": "plain_text", "text": "Resume", "emoji": True},
+            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "blocks": blocks,
+        }
+
+        try:
+            await self.web_client.views_open(trigger_id=trigger_id, view=view)
+        except SlackApiError as e:
+            logger.error(f"Error opening resume modal: {e}")
+            raise
+
     def _get_default_opencode_agent_name(self, opencode_agents: list) -> Optional[str]:
         """Resolve the default OpenCode agent name."""
         for agent in opencode_agents:
@@ -1510,15 +1678,15 @@ class SlackBot(BaseIMClient):
         backend_options = []
         for backend in registered_backends:
             display_name = backend_display_names.get(backend, backend.capitalize())
-            backend_options.append({
-                "text": {"type": "plain_text", "text": display_name},
-                "value": backend,
-            })
+            backend_options.append(
+                {
+                    "text": {"type": "plain_text", "text": display_name},
+                    "value": backend,
+                }
+            )
 
         # Find initial backend option
-        selected_backend_value = (
-            current_backend if selected_backend is _UNSET else selected_backend
-        )
+        selected_backend_value = current_backend if selected_backend is _UNSET else selected_backend
         initial_backend = None
         for option in backend_options:
             if option["value"] == selected_backend_value:
@@ -1561,23 +1729,17 @@ class SlackBot(BaseIMClient):
         if effective_backend == "opencode" and "opencode" in registered_backends:
             # Get current opencode settings
             if selected_opencode_agent is _UNSET:
-                current_oc_agent = (
-                    current_routing.opencode_agent if current_routing else None
-                )
+                current_oc_agent = current_routing.opencode_agent if current_routing else None
             else:
                 current_oc_agent = selected_opencode_agent
 
             if selected_opencode_model is _UNSET:
-                current_oc_model = (
-                    current_routing.opencode_model if current_routing else None
-                )
+                current_oc_model = current_routing.opencode_model if current_routing else None
             else:
                 current_oc_model = selected_opencode_model
 
             if selected_opencode_reasoning is _UNSET:
-                current_oc_reasoning = (
-                    current_routing.opencode_reasoning_effort if current_routing else None
-                )
+                current_oc_reasoning = current_routing.opencode_reasoning_effort if current_routing else None
             else:
                 current_oc_reasoning = selected_opencode_reasoning
 
@@ -1587,16 +1749,16 @@ class SlackBot(BaseIMClient):
             )
 
             # Build agent options
-            agent_options = [
-                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}
-            ]
+            agent_options = [{"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}]
             for agent in opencode_agents:
                 agent_name = agent.get("name", "")
                 if agent_name:
-                    agent_options.append({
-                        "text": {"type": "plain_text", "text": agent_name},
-                        "value": agent_name,
-                    })
+                    agent_options.append(
+                        {
+                            "text": {"type": "plain_text", "text": agent_name},
+                            "value": agent_name,
+                        }
+                    )
 
             # Find initial agent
             initial_agent = agent_options[0]  # Default
@@ -1618,9 +1780,7 @@ class SlackBot(BaseIMClient):
             default_label = "(Default)"
             if default_model_str:
                 default_label = f"(Default) - {default_model_str}"
-            model_options = [
-                {"text": {"type": "plain_text", "text": default_label}, "value": "__default__"}
-            ]
+            model_options = [{"text": {"type": "plain_text", "text": default_label}, "value": "__default__"}]
 
             # Add models from providers
             providers_data = opencode_models.get("providers", [])
@@ -1638,8 +1798,7 @@ class SlackBot(BaseIMClient):
 
                 # Deprioritize embedding and utility models (put them at the end)
                 is_utility = any(
-                    kw in mid_lower
-                    for kw in ["embedding", "tts", "whisper", "ada", "davinci", "turbo-instruct"]
+                    kw in mid_lower for kw in ["embedding", "tts", "whisper", "ada", "davinci", "turbo-instruct"]
                 )
                 utility_penalty = 1 if is_utility else 0
 
@@ -1693,10 +1852,12 @@ class SlackBot(BaseIMClient):
                         if is_default:
                             display += " (default)"
 
-                        model_options.append({
-                            "text": {"type": "plain_text", "text": display[:75]},  # Slack limit
-                            "value": full_model,
-                        })
+                        model_options.append(
+                            {
+                                "text": {"type": "plain_text", "text": display[:75]},  # Slack limit
+                                "value": full_model,
+                            }
+                        )
                         provider_model_count += 1
 
             # Final safety check for Slack's 100 option limit
@@ -1726,8 +1887,7 @@ class SlackBot(BaseIMClient):
 
             reasoning_model_key = target_model or "__default__"
             reasoning_action_id = (
-                "opencode_reasoning_select__"
-                + hashlib.sha1(reasoning_model_key.encode("utf-8")).hexdigest()[:8]
+                "opencode_reasoning_select__" + hashlib.sha1(reasoning_model_key.encode("utf-8")).hexdigest()[:8]
             )
 
             if target_model:
@@ -1749,10 +1909,7 @@ class SlackBot(BaseIMClient):
                                 model_info = candidate
                         elif isinstance(models, list):
                             for entry in models:
-                                if (
-                                    isinstance(entry, dict)
-                                    and entry.get("id") == target_model_id
-                                ):
+                                if isinstance(entry, dict) and entry.get("id") == target_model_id:
                                     model_info = entry
                                     break
 
@@ -1764,9 +1921,7 @@ class SlackBot(BaseIMClient):
                         break
 
             # Build options from variants or use fallback
-            reasoning_effort_options = [
-                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}
-            ]
+            reasoning_effort_options = [{"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}]
 
             if model_variants:
                 # Use model-specific variants with stable ordering
@@ -1790,17 +1945,21 @@ class SlackBot(BaseIMClient):
                 )
                 for variant_key in sorted_variants:
                     display_name = variant_display_names.get(variant_key, variant_key.capitalize())
-                    reasoning_effort_options.append({
-                        "text": {"type": "plain_text", "text": display_name},
-                        "value": variant_key,
-                    })
+                    reasoning_effort_options.append(
+                        {
+                            "text": {"type": "plain_text", "text": display_name},
+                            "value": variant_key,
+                        }
+                    )
             else:
                 # Fallback to common options
-                reasoning_effort_options.extend([
-                    {"text": {"type": "plain_text", "text": "Low"}, "value": "low"},
-                    {"text": {"type": "plain_text", "text": "Medium"}, "value": "medium"},
-                    {"text": {"type": "plain_text", "text": "High"}, "value": "high"},
-                ])
+                reasoning_effort_options.extend(
+                    [
+                        {"text": {"type": "plain_text", "text": "Low"}, "value": "low"},
+                        {"text": {"type": "plain_text", "text": "Medium"}, "value": "medium"},
+                        {"text": {"type": "plain_text", "text": "High"}, "value": "high"},
+                    ]
+                )
 
             # Find initial reasoning effort
             initial_reasoning = reasoning_effort_options[0]  # Default
@@ -1819,39 +1978,41 @@ class SlackBot(BaseIMClient):
             }
 
             # Add OpenCode section
-            blocks.extend([
-                {"type": "divider"},
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": "*OpenCode Settings*",
+            blocks.extend(
+                [
+                    {"type": "divider"},
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "*OpenCode Settings*",
+                        },
                     },
-                },
-                {
-                    "type": "input",
-                    "block_id": "opencode_agent_block",
-                    "optional": True,
-                    "dispatch_action": True,
-                    "element": agent_select,
-                    "label": {"type": "plain_text", "text": "OpenCode Agent"},
-                },
-                {
-                    "type": "input",
-                    "block_id": "opencode_model_block",
-                    "optional": True,
-                    "dispatch_action": True,
-                    "element": model_select,
-                    "label": {"type": "plain_text", "text": "Model"},
-                },
-                {
-                    "type": "input",
-                    "block_id": "opencode_reasoning_block",
-                    "optional": True,
-                    "element": reasoning_select,
-                    "label": {"type": "plain_text", "text": "Reasoning Effort (Thinking Mode)"},
-                },
-            ])
+                    {
+                        "type": "input",
+                        "block_id": "opencode_agent_block",
+                        "optional": True,
+                        "dispatch_action": True,
+                        "element": agent_select,
+                        "label": {"type": "plain_text", "text": "OpenCode Agent"},
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "opencode_model_block",
+                        "optional": True,
+                        "dispatch_action": True,
+                        "element": model_select,
+                        "label": {"type": "plain_text", "text": "Model"},
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "opencode_reasoning_block",
+                        "optional": True,
+                        "element": reasoning_select,
+                        "label": {"type": "plain_text", "text": "Reasoning Effort (Thinking Mode)"},
+                    },
+                ]
+            )
 
         # Claude-specific options (only if claude is selected)
         if effective_backend == "claude" and "claude" in registered_backends:
@@ -1860,31 +2021,27 @@ class SlackBot(BaseIMClient):
 
             # Get current claude settings
             if selected_claude_agent is _UNSET:
-                current_cl_agent = (
-                    current_routing.claude_agent if current_routing else None
-                )
+                current_cl_agent = current_routing.claude_agent if current_routing else None
             else:
                 current_cl_agent = selected_claude_agent
 
             if selected_claude_model is _UNSET:
-                current_cl_model = (
-                    current_routing.claude_model if current_routing else None
-                )
+                current_cl_model = current_routing.claude_model if current_routing else None
             else:
                 current_cl_model = selected_claude_model
 
             # Build agent options
-            cl_agent_options = [
-                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}
-            ]
+            cl_agent_options = [{"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}]
             for agent in claude_agents:
                 agent_id = agent.get("id", "")
                 agent_name = agent.get("name", agent_id)
                 if agent_id:
-                    cl_agent_options.append({
-                        "text": {"type": "plain_text", "text": agent_name[:75]},
-                        "value": agent_id,
-                    })
+                    cl_agent_options.append(
+                        {
+                            "text": {"type": "plain_text", "text": agent_name[:75]},
+                            "value": agent_id,
+                        }
+                    )
 
             # Find initial agent
             initial_cl_agent = cl_agent_options[0]
@@ -1903,22 +2060,24 @@ class SlackBot(BaseIMClient):
             }
 
             # Build model options
-            cl_model_options = [
-                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}
-            ]
+            cl_model_options = [{"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}]
             for model in claude_models:
                 if model:
-                    cl_model_options.append({
-                        "text": {"type": "plain_text", "text": model[:75]},
-                        "value": model,
-                    })
+                    cl_model_options.append(
+                        {
+                            "text": {"type": "plain_text", "text": model[:75]},
+                            "value": model,
+                        }
+                    )
 
             # Add current model if not in list (preserve custom models)
             if current_cl_model and not any(opt["value"] == current_cl_model for opt in cl_model_options):
-                cl_model_options.append({
-                    "text": {"type": "plain_text", "text": current_cl_model[:75]},
-                    "value": current_cl_model,
-                })
+                cl_model_options.append(
+                    {
+                        "text": {"type": "plain_text", "text": current_cl_model[:75]},
+                        "value": current_cl_model,
+                    }
+                )
 
             # Limit to 100 options
             if len(cl_model_options) > 100:
@@ -1941,30 +2100,32 @@ class SlackBot(BaseIMClient):
             }
 
             # Add Claude section
-            blocks.extend([
-                {"type": "divider"},
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": "*Claude Settings*",
+            blocks.extend(
+                [
+                    {"type": "divider"},
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "*Claude Settings*",
+                        },
                     },
-                },
-                {
-                    "type": "input",
-                    "block_id": "claude_agent_block",
-                    "optional": True,
-                    "element": cl_agent_select,
-                    "label": {"type": "plain_text", "text": "Claude Agent"},
-                },
-                {
-                    "type": "input",
-                    "block_id": "claude_model_block",
-                    "optional": True,
-                    "element": cl_model_select,
-                    "label": {"type": "plain_text", "text": "Model"},
-                },
-            ])
+                    {
+                        "type": "input",
+                        "block_id": "claude_agent_block",
+                        "optional": True,
+                        "element": cl_agent_select,
+                        "label": {"type": "plain_text", "text": "Claude Agent"},
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "claude_model_block",
+                        "optional": True,
+                        "element": cl_model_select,
+                        "label": {"type": "plain_text", "text": "Model"},
+                    },
+                ]
+            )
 
         # Codex-specific options (only if codex is selected)
         if effective_backend == "codex" and "codex" in registered_backends:
@@ -1972,36 +2133,34 @@ class SlackBot(BaseIMClient):
 
             # Get current codex settings
             if selected_codex_model is _UNSET:
-                current_cx_model = (
-                    current_routing.codex_model if current_routing else None
-                )
+                current_cx_model = current_routing.codex_model if current_routing else None
             else:
                 current_cx_model = selected_codex_model
 
             if selected_codex_reasoning is _UNSET:
-                current_cx_reasoning = (
-                    current_routing.codex_reasoning_effort if current_routing else None
-                )
+                current_cx_reasoning = current_routing.codex_reasoning_effort if current_routing else None
             else:
                 current_cx_reasoning = selected_codex_reasoning
 
             # Build model options
-            cx_model_options = [
-                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}
-            ]
+            cx_model_options = [{"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}]
             for model in codex_models:
                 if model:
-                    cx_model_options.append({
-                        "text": {"type": "plain_text", "text": model[:75]},
-                        "value": model,
-                    })
+                    cx_model_options.append(
+                        {
+                            "text": {"type": "plain_text", "text": model[:75]},
+                            "value": model,
+                        }
+                    )
 
             # Add current model if not in list (preserve custom models)
             if current_cx_model and not any(opt["value"] == current_cx_model for opt in cx_model_options):
-                cx_model_options.append({
-                    "text": {"type": "plain_text", "text": current_cx_model[:75]},
-                    "value": current_cx_model,
-                })
+                cx_model_options.append(
+                    {
+                        "text": {"type": "plain_text", "text": current_cx_model[:75]},
+                        "value": current_cx_model,
+                    }
+                )
 
             # Limit to 100 options
             if len(cx_model_options) > 100:
@@ -2048,41 +2207,45 @@ class SlackBot(BaseIMClient):
             }
 
             # Add Codex section
-            blocks.extend([
-                {"type": "divider"},
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": "*Codex Settings*",
+            blocks.extend(
+                [
+                    {"type": "divider"},
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "*Codex Settings*",
+                        },
                     },
-                },
-                {
-                    "type": "input",
-                    "block_id": "codex_model_block",
-                    "optional": True,
-                    "element": cx_model_select,
-                    "label": {"type": "plain_text", "text": "Model"},
-                },
-                {
-                    "type": "input",
-                    "block_id": "codex_reasoning_block",
-                    "optional": True,
-                    "element": cx_reasoning_select,
-                    "label": {"type": "plain_text", "text": "Reasoning Effort"},
-                },
-            ])
+                    {
+                        "type": "input",
+                        "block_id": "codex_model_block",
+                        "optional": True,
+                        "element": cx_model_select,
+                        "label": {"type": "plain_text", "text": "Model"},
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "codex_reasoning_block",
+                        "optional": True,
+                        "element": cx_reasoning_select,
+                        "label": {"type": "plain_text", "text": "Reasoning Effort"},
+                    },
+                ]
+            )
 
         # Add tip
-        blocks.append({
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": "_💡 Select (Default) to use the backend's configured defaults._",
-                }
-            ],
-        })
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "_💡 Select (Default) to use the backend's configured defaults._",
+                    }
+                ],
+            }
+        )
 
         return {
             "type": "modal",
@@ -2471,20 +2634,20 @@ class SlackBot(BaseIMClient):
         if "on_routing_modal_update" in kwargs:
             self._on_routing_modal_update = kwargs["on_routing_modal_update"]
 
+        # Register resume session handler
+        if "on_resume_session" in kwargs:
+            self._on_resume_session = kwargs["on_resume_session"]
+
         # Register on_ready handler (called when connected)
         if "on_ready" in kwargs:
             self._on_ready = kwargs["on_ready"]
 
-    async def get_or_create_thread(
-        self, channel_id: str, user_id: str
-    ) -> Optional[str]:
+    async def get_or_create_thread(self, channel_id: str, user_id: str) -> Optional[str]:
         """Get existing thread timestamp or return None for new thread"""
         # Deprecated: Thread handling now uses user's message timestamp directly
         return None
 
-    async def send_slash_response(
-        self, response_url: str, text: str, ephemeral: bool = True
-    ) -> bool:
+    async def send_slash_response(self, response_url: str, text: str, ephemeral: bool = True) -> bool:
         """Send response to a slash command via response_url"""
         try:
             import aiohttp

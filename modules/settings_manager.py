@@ -24,9 +24,7 @@ class ChannelRouting:
     # OpenCode settings
     opencode_agent: Optional[str] = None  # "build" | "plan" | ... | None
     opencode_model: Optional[str] = None  # "provider/model" | None
-    opencode_reasoning_effort: Optional[str] = (
-        None  # "low" | "medium" | "high" | "xhigh" | None
-    )
+    opencode_reasoning_effort: Optional[str] = None  # "low" | "medium" | "high" | "xhigh" | None
     # Claude Code settings
     claude_agent: Optional[str] = None  # subagent name from ~/.claude/agents/
     claude_model: Optional[str] = None  # "claude-sonnet-4" | "claude-opus-4" | ...
@@ -59,9 +57,7 @@ class ChannelRouting:
 
 @dataclass
 class UserSettings:
-    show_message_types: List[str] = field(
-        default_factory=lambda: DEFAULT_SHOW_MESSAGE_TYPES.copy()
-    )
+    show_message_types: List[str] = field(default_factory=lambda: DEFAULT_SHOW_MESSAGE_TYPES.copy())
     custom_cwd: Optional[str] = None
     channel_routing: Optional[ChannelRouting] = None
     enabled: bool = True
@@ -86,9 +82,7 @@ class UserSettings:
         show_message_types = payload.get("show_message_types")
         settings = cls(
             show_message_types=(
-                show_message_types
-                if show_message_types is not None
-                else DEFAULT_SHOW_MESSAGE_TYPES.copy()
+                show_message_types if show_message_types is not None else DEFAULT_SHOW_MESSAGE_TYPES.copy()
             ),
             custom_cwd=payload.get("custom_cwd"),
         )
@@ -107,9 +101,7 @@ class SettingsManager:
 
     def __init__(self, settings_file: Optional[str] = None):
         paths.ensure_data_dirs()
-        self.settings_file = (
-            Path(settings_file) if settings_file else paths.get_settings_path()
-        )
+        self.settings_file = Path(settings_file) if settings_file else paths.get_settings_path()
         self._settings_mtime_ns: Optional[int] = None
         self._settings_fingerprint: Optional[str] = None
         self.settings: Dict[Union[int, str], UserSettings] = {}
@@ -141,9 +133,7 @@ class SettingsManager:
             codex_reasoning_effort=channel_settings.routing.codex_reasoning_effort,
         )
         return UserSettings(
-            show_message_types=self._normalize_show_message_types(
-                channel_settings.show_message_types
-            ),
+            show_message_types=self._normalize_show_message_types(channel_settings.show_message_types),
             custom_cwd=channel_settings.custom_cwd,
             channel_routing=routing,
             enabled=channel_settings.enabled,
@@ -153,9 +143,7 @@ class SettingsManager:
         routing = settings.channel_routing or ChannelRouting()
         return ChannelSettings(
             enabled=settings.enabled,
-            show_message_types=self._normalize_show_message_types(
-                settings.show_message_types
-            ),
+            show_message_types=self._normalize_show_message_types(settings.show_message_types),
             custom_cwd=settings.custom_cwd,
             routing=RoutingSettings(
                 agent_backend=routing.agent_backend,
@@ -179,9 +167,7 @@ class SettingsManager:
             return
 
         for channel_id, channel_settings in self.store.settings.channels.items():
-            self.settings[str(channel_id)] = self._from_channel_settings(
-                channel_settings
-            )
+            self.settings[str(channel_id)] = self._from_channel_settings(channel_settings)
 
         try:
             self._settings_mtime_ns = self.settings_file.stat().st_mtime_ns
@@ -254,9 +240,7 @@ class SettingsManager:
         if normalized_id not in self.settings:
             settings = UserSettings()
             if normalized_id in self.store.settings.channels:
-                settings = self._from_channel_settings(
-                    self.store.settings.channels[normalized_id]
-                )
+                settings = self._from_channel_settings(self.store.settings.channels[normalized_id])
             self.settings[normalized_id] = settings
             self._save_settings()
         return self.settings[normalized_id]
@@ -265,16 +249,12 @@ class SettingsManager:
         """Update settings for a specific user"""
         normalized_id = self._normalize_user_id(user_id)
 
-        settings.show_message_types = self._normalize_show_message_types(
-            settings.show_message_types
-        )
+        settings.show_message_types = self._normalize_show_message_types(settings.show_message_types)
 
         self.settings[normalized_id] = settings
         self._save_settings()
 
-    def toggle_show_message_type(
-        self, user_id: Union[int, str], message_type: str
-    ) -> bool:
+    def toggle_show_message_type(self, user_id: Union[int, str], message_type: str) -> bool:
         """Toggle a message type in show list, returns new state (True if now shown)"""
         message_type = self._canonicalize_message_type(message_type)
         settings = self.get_user_settings(user_id)
@@ -300,17 +280,13 @@ class SettingsManager:
         settings = self.get_user_settings(user_id)
         return settings.custom_cwd
 
-    def get_channel_settings(
-        self, channel_id: Union[int, str]
-    ) -> Optional[ChannelSettings]:
+    def get_channel_settings(self, channel_id: Union[int, str]) -> Optional[ChannelSettings]:
         """Get raw ChannelSettings for a channel without creating defaults."""
         self._reload_if_changed()
         key = str(channel_id)
         return self.store.settings.channels.get(key)
 
-    def is_message_type_hidden(
-        self, user_id: Union[int, str], message_type: str
-    ) -> bool:
+    def is_message_type_hidden(self, user_id: Union[int, str], message_type: str) -> bool:
         """Check if a message type is hidden for user (not in show_message_types)"""
         self._reload_if_changed()
         message_type = self._canonicalize_message_type(message_type)
@@ -333,9 +309,7 @@ class SettingsManager:
             "toolcall": "Toolcall",
         }
 
-    def _ensure_agent_namespace(
-        self, user_id: Union[int, str], agent_name: str
-    ) -> Dict[str, str]:
+    def _ensure_agent_namespace(self, user_id: Union[int, str], agent_name: str) -> Dict[str, str]:
         user_key = self._normalize_user_id(user_id)
         return self.sessions_store.get_agent_map(user_key, agent_name)
 
@@ -350,10 +324,7 @@ class SettingsManager:
         agent_map = self._ensure_agent_namespace(user_id, agent_name)
         agent_map[thread_id] = session_id
         self.sessions_store.save()
-        logger.info(
-            f"Stored {agent_name} session mapping for {user_id}: "
-            f"{thread_id} -> {session_id}"
-        )
+        logger.info(f"Stored {agent_name} session mapping for {user_id}: {thread_id} -> {session_id}")
 
     def get_agent_session_id(
         self,
@@ -370,9 +341,7 @@ class SettingsManager:
         """Normalize message type to canonical form to support aliases."""
         return self.MESSAGE_TYPE_ALIASES.get(message_type, message_type)
 
-    def _normalize_show_message_types(
-        self, show_message_types: Optional[List[str]]
-    ) -> List[str]:
+    def _normalize_show_message_types(self, show_message_types: Optional[List[str]]) -> List[str]:
         """Normalize and migrate show message types to current canonical schema."""
         allowed = {"system", "assistant", "toolcall"}
         if show_message_types is None:
@@ -402,9 +371,7 @@ class SettingsManager:
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         if thread_id in agent_map:
             del agent_map[thread_id]
-            logger.info(
-                f"Cleared {agent_name} session mapping for user {user_id}: {thread_id}"
-            )
+            logger.info(f"Cleared {agent_name} session mapping for user {user_id}: {thread_id}")
             self.sessions_store.save()
 
     def clear_agent_sessions(self, user_id: Union[int, str], agent_name: str):
@@ -413,9 +380,7 @@ class SettingsManager:
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         if agent_map:
             self.sessions_store.state.session_mappings[user_key][agent_name] = {}
-            logger.info(
-                f"Cleared all {agent_name} session namespaces for user {user_id}"
-            )
+            logger.info(f"Cleared all {agent_name} session namespaces for user {user_id}")
             self.sessions_store.save()
 
     def clear_all_session_mappings(self, user_id: Union[int, str]):
@@ -425,18 +390,26 @@ class SettingsManager:
         if agent_maps:
             count = sum(len(agent_map) for agent_map in agent_maps.values())
             self.sessions_store.state.session_mappings[user_key] = {}
-            logger.info(
-                f"Cleared all session mappings ({count} bases) for user {user_id}"
-            )
+            logger.info(f"Cleared all session mappings ({count} bases) for user {user_id}")
             self.sessions_store.save()
 
-    def list_agent_sessions(
-        self, user_id: Union[int, str], agent_name: str
-    ) -> Dict[str, str]:
+    def list_agent_sessions(self, user_id: Union[int, str], agent_name: str) -> Dict[str, str]:
         """Get copy of session mappings (thread_id -> session_id) for an agent."""
         user_key = self._normalize_user_id(user_id)
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         return dict(agent_map)
+
+    def list_all_agent_sessions(self, user_id: Union[int, str]) -> Dict[str, Dict[str, str]]:
+        """Return all stored session mappings for the user, grouped by agent.
+
+        Structure: {agent_name: {thread_id: session_id}}
+        """
+        user_key = self._normalize_user_id(user_id)
+        # Ensure namespaces exist
+        self.sessions_store._ensure_user_namespace(user_key)
+        agent_maps = self.sessions_store.state.session_mappings.get(user_key, {})
+        # Shallow copies to avoid accidental mutation
+        return {agent: dict(mapping) for agent, mapping in agent_maps.items()}
 
     # Backwards-compatible helpers for Claude-specific call sites
     def set_session_mapping(
@@ -447,9 +420,7 @@ class SettingsManager:
     ):
         self.set_agent_session_mapping(user_id, "claude", thread_id, claude_session_id)
 
-    def get_claude_session_id(
-        self, user_id: Union[int, str], thread_id: str
-    ) -> Optional[str]:
+    def get_claude_session_id(self, user_id: Union[int, str], thread_id: str) -> Optional[str]:
         return self.get_agent_session_id(user_id, thread_id, agent_name="claude")
 
     def clear_session_mapping(
@@ -462,21 +433,15 @@ class SettingsManager:
     # ---------------------------------------------
     # Slack thread management
     # ---------------------------------------------
-    def mark_thread_active(
-        self, user_id: Union[int, str], channel_id: str, thread_ts: str
-    ):
+    def mark_thread_active(self, user_id: Union[int, str], channel_id: str, thread_ts: str):
         """Mark a Slack thread as active with current timestamp"""
         user_key = self._normalize_user_id(user_id)
         channel_map = self.sessions_store.get_thread_map(user_key, channel_id)
         channel_map[thread_ts] = time.time()
         self.sessions_store.save()
-        logger.info(
-            f"Marked thread active for user {user_id}: channel={channel_id}, thread={thread_ts}"
-        )
+        logger.info(f"Marked thread active for user {user_id}: channel={channel_id}, thread={thread_ts}")
 
-    def is_thread_active(
-        self, user_id: Union[int, str], channel_id: str, thread_ts: str
-    ) -> bool:
+    def is_thread_active(self, user_id: Union[int, str], channel_id: str, thread_ts: str) -> bool:
         """Check if a Slack thread is active (within 24 hours)"""
         user_key = self._normalize_user_id(user_id)
 
@@ -486,9 +451,7 @@ class SettingsManager:
         channel_map = self.sessions_store.get_thread_map(user_key, channel_id)
         return thread_ts in channel_map
 
-    def _cleanup_expired_threads_for_channel(
-        self, user_id: Union[int, str], channel_id: str
-    ):
+    def _cleanup_expired_threads_for_channel(self, user_id: Union[int, str], channel_id: str):
         """Remove threads older than 24 hours for a specific channel"""
         user_key = self._normalize_user_id(user_id)
         channel_map = self.sessions_store.get_thread_map(user_key, channel_id)
@@ -500,9 +463,7 @@ class SettingsManager:
         twenty_four_hours_ago = current_time - (24 * 60 * 60)
 
         expired_threads = [
-            thread_ts
-            for thread_ts, last_active in channel_map.items()
-            if last_active < twenty_four_hours_ago
+            thread_ts for thread_ts, last_active in channel_map.items() if last_active < twenty_four_hours_ago
         ]
 
         if expired_threads:
@@ -510,14 +471,10 @@ class SettingsManager:
                 del channel_map[thread_ts]
 
             if not channel_map:
-                self.sessions_store.state.active_slack_threads[user_key].pop(
-                    channel_id, None
-                )
+                self.sessions_store.state.active_slack_threads[user_key].pop(channel_id, None)
 
             self.sessions_store.save()
-            logger.info(
-                f"Cleaned up {len(expired_threads)} expired threads for channel {channel_id}"
-            )
+            logger.info(f"Cleaned up {len(expired_threads)} expired threads for channel {channel_id}")
 
     def cleanup_all_expired_threads(self, user_id: Union[int, str]):
         """Remove all threads older than 24 hours for all channels"""
@@ -534,47 +491,33 @@ class SettingsManager:
     # ---------------------------------------------
     # Message deduplication
     # ---------------------------------------------
-    def is_message_already_processed(
-        self, channel_id: str, thread_ts: str, message_ts: str
-    ) -> bool:
+    def is_message_already_processed(self, channel_id: str, thread_ts: str, message_ts: str) -> bool:
         """Check if a message has already been processed.
 
         Compares the message_ts with the last processed message ts for the thread.
         Returns True if message_ts <= last_processed_ts (i.e., already processed).
         """
-        last_ts = self.sessions_store.get_last_processed_message_ts(
-            channel_id, thread_ts
-        )
+        last_ts = self.sessions_store.get_last_processed_message_ts(channel_id, thread_ts)
         if not last_ts:
             return False
         # Slack ts format is "epoch.sequence", can be compared as strings
         return message_ts <= last_ts
 
-    def record_processed_message(
-        self, channel_id: str, thread_ts: str, message_ts: str
-    ) -> None:
+    def record_processed_message(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
         """Record that a message has been processed."""
-        self.sessions_store.set_last_processed_message_ts(
-            channel_id, thread_ts, message_ts
-        )
-        logger.debug(
-            f"Recorded processed message: channel={channel_id}, thread={thread_ts}, message={message_ts}"
-        )
+        self.sessions_store.set_last_processed_message_ts(channel_id, thread_ts, message_ts)
+        logger.debug(f"Recorded processed message: channel={channel_id}, thread={thread_ts}, message={message_ts}")
 
     # ---------------------------------------------
     # Channel routing management
     # ---------------------------------------------
-    def get_channel_routing(
-        self, settings_key: Union[int, str]
-    ) -> Optional[ChannelRouting]:
+    def get_channel_routing(self, settings_key: Union[int, str]) -> Optional[ChannelRouting]:
         """Get channel routing override for the given settings key."""
         self._reload_if_changed()
         settings = self.get_user_settings(settings_key)
         return settings.channel_routing
 
-    def set_channel_routing(
-        self, settings_key: Union[int, str], routing: ChannelRouting
-    ):
+    def set_channel_routing(self, settings_key: Union[int, str], routing: ChannelRouting):
         """Set channel routing override."""
         settings = self.get_user_settings(settings_key)
         settings.channel_routing = routing
@@ -597,9 +540,7 @@ class SettingsManager:
     # ---------------------------------------------
     # Per-channel require_mention management
     # ---------------------------------------------
-    def get_require_mention(
-        self, channel_id: Union[int, str], global_default: bool = False
-    ) -> bool:
+    def get_require_mention(self, channel_id: Union[int, str], global_default: bool = False) -> bool:
         """Get effective require_mention value for a channel.
 
         Args:
@@ -614,10 +555,7 @@ class SettingsManager:
         key = str(channel_id)
         channel_settings = self.store.settings.channels.get(key)
 
-        if (
-            channel_settings is not None
-            and channel_settings.require_mention is not None
-        ):
+        if channel_settings is not None and channel_settings.require_mention is not None:
             return channel_settings.require_mention
 
         return global_default
@@ -635,9 +573,7 @@ class SettingsManager:
         self.store.update_channel(key, channel_settings)
         logger.info(f"Updated require_mention for channel {key}: {value}")
 
-    def get_require_mention_override(
-        self, channel_id: Union[int, str]
-    ) -> Optional[bool]:
+    def get_require_mention_override(self, channel_id: Union[int, str]) -> Optional[bool]:
         """Get the raw per-channel require_mention override (may be None)."""
         self._reload_if_changed()
         key = str(channel_id)
@@ -679,9 +615,7 @@ class SettingsManager:
             ack_reaction_emoji=ack_reaction_emoji,
         )
         self.sessions_store.add_active_poll(poll_info)
-        logger.debug(
-            f"Added active poll: session={opencode_session_id}, thread={thread_id}"
-        )
+        logger.debug(f"Added active poll: session={opencode_session_id}, thread={thread_id}")
 
     def remove_active_poll(self, opencode_session_id: str) -> None:
         """Remove an active poll record."""
