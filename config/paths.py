@@ -21,6 +21,10 @@ def get_runtime_dir() -> Path:
     return get_vibe_remote_dir() / "runtime"
 
 
+def get_attachments_dir() -> Path:
+    return get_vibe_remote_dir() / "attachments"
+
+
 def get_runtime_pid_path() -> Path:
     return get_runtime_dir() / "vibe.pid"
 
@@ -54,3 +58,4 @@ def ensure_data_dirs() -> None:
     get_state_dir().mkdir(parents=True, exist_ok=True)
     get_logs_dir().mkdir(parents=True, exist_ok=True)
     get_runtime_dir().mkdir(parents=True, exist_ok=True)
+    get_attachments_dir().mkdir(parents=True, exist_ok=True)

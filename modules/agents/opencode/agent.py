@@ -464,20 +464,20 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
     def _prepare_message_with_files(self, request: AgentRequest) -> str:
         """Prepare message with file attachment information.
 
-        If there are file attachments, prepend file info to the message
+        If there are file attachments, append file info to the message
         so the agent knows what files are available to read.
+        Files are stored in ~/.vibe_remote/attachments/{channel_id}/.
 
         Args:
             request: The agent request containing message and files
 
         Returns:
-            Message string, potentially with file info prepended
+            Message string, potentially with file info appended
         """
         if not request.files:
             return request.message
 
         # Build file info section
-        file_info_parts = []
         images = []
         other_files = []
 
@@ -491,32 +491,25 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             else:
                 other_files.append(attachment)
 
-        # Format file info
-        if images:
-            if len(images) == 1:
-                img = images[0]
-                file_info_parts.append(f"[User attached an image: {img.local_path}]")
-            else:
-                paths = ", ".join(img.local_path for img in images)
-                file_info_parts.append(f"[User attached {len(images)} images: {paths}]")
-
-        if other_files:
-            if len(other_files) == 1:
-                f = other_files[0]
-                file_info_parts.append(f"[User attached a file: {f.local_path} ({f.mimetype})]")
-            else:
-                files_desc = ", ".join(f"{f.local_path} ({f.mimetype})" for f in other_files)
-                file_info_parts.append(f"[User attached {len(other_files)} files: {files_desc}]")
-
-        if not file_info_parts:
+        if not images and not other_files:
             return request.message
 
-        # Combine file info with user message
-        file_info = "\n".join(file_info_parts)
+        # Format file info as a clear block at the end
+        file_lines = ["", "[User Attachments]"]
 
-        # If there's no text message, just use file info
+        for img in images:
+            size_str = f", {img.size} bytes" if img.size else ""
+            file_lines.append(f"- Image: {img.local_path} ({img.mimetype}{size_str})")
+
+        for f in other_files:
+            size_str = f", {f.size} bytes" if f.size else ""
+            file_lines.append(f"- File: {f.local_path} ({f.mimetype}{size_str})")
+
+        file_info = "\n".join(file_lines)
+
+        # If there's no text message, just use file info (without leading newline)
         if not request.message or not request.message.strip():
-            return file_info
+            return file_info.lstrip()
 
-        # Prepend file info to message
-        return f"{file_info}\n\n{request.message}"
+        # Append file info to message
+        return f"{request.message}{file_info}"

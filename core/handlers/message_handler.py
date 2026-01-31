@@ -136,6 +136,7 @@ class MessageHandler:
                     else:
                         try:
                             from pathlib import Path
+
                             subagent_def = load_claude_subagent(
                                 normalized,
                                 project_root=Path(working_path),
@@ -331,9 +332,7 @@ class MessageHandler:
                 if not self.session_handler:
                     raise RuntimeError("Session handler not initialized")
 
-                base_session_id, working_path, composite_key = (
-                    self.session_handler.get_session_info(context)
-                )
+                base_session_id, working_path, composite_key = self.session_handler.get_session_info(context)
                 settings_key = self._get_settings_key(context)
                 request = AgentRequest(
                     context=context,
@@ -431,21 +430,29 @@ class MessageHandler:
     async def _process_file_attachments(self, context: MessageContext, working_path: str) -> Optional[list]:
         """Download and process file attachments from the message.
 
-        All files (including images) are saved to the working directory.
+        All files (including images) are saved to ~/.vibe_remote/attachments/{channel_id}/
+        to avoid polluting the working directory (which is often a git repo).
         The agent can then use Read tools to access them.
 
         Args:
             context: Message context with file attachments
-            working_path: Working directory path for saving files
+            working_path: Working directory path (not used for storage, kept for API compat)
 
         Returns:
             List of processed FileAttachment objects with local_path set
         """
         import os
+        import time
+        from config.paths import get_attachments_dir
         from modules.im.base import FileAttachment
 
         if not context.files:
             return None
+
+        # Create channel-specific attachments directory
+        # Path: ~/.vibe_remote/attachments/{channel_id}/
+        attachments_dir = get_attachments_dir() / context.channel_id
+        attachments_dir.mkdir(parents=True, exist_ok=True)
 
         processed = []
         for attachment in context.files:
@@ -459,30 +466,20 @@ class MessageHandler:
                     file_info = {
                         "url_private_download": attachment.url,
                         "name": attachment.name,
+                        "size": attachment.size,
                     }
                     content = await self.im_client.download_file(file_info)
                     if content:
-                        # Save all files (including images) to working directory
-                        # Create attachments subdirectory
-                        attachments_dir = os.path.join(working_path, "_attachments")
-                        os.makedirs(attachments_dir, exist_ok=True)
-
-                        # Sanitize filename and save
+                        # Generate filename: {timestamp}_{original_name}
+                        timestamp = int(time.time())
                         safe_name = self._sanitize_filename(attachment.name)
-                        local_path = os.path.join(attachments_dir, safe_name)
-
-                        # Avoid overwriting: add timestamp if file exists
-                        if os.path.exists(local_path):
-                            import time
-
-                            base, ext = os.path.splitext(safe_name)
-                            safe_name = f"{base}_{int(time.time())}{ext}"
-                            local_path = os.path.join(attachments_dir, safe_name)
+                        filename = f"{timestamp}_{safe_name}"
+                        local_path = attachments_dir / filename
 
                         with open(local_path, "wb") as f:
                             f.write(content)
 
-                        attachment.local_path = local_path
+                        attachment.local_path = str(local_path)
                         attachment.size = len(content)
 
                         # Determine file type for logging
