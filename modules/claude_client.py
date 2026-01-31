@@ -1,8 +1,8 @@
 import logging
 import os
 from typing import Optional, Callable
-from claude_code_sdk import (
-    ClaudeCodeOptions,
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
     SystemMessage,
     AssistantMessage,
     UserMessage,
@@ -24,7 +24,7 @@ class ClaudeClient:
     ):
         self.config = config
         self.formatter = formatter or SlackFormatter()
-        self.options = ClaudeCodeOptions(
+        self.options = ClaudeAgentOptions(
             permission_mode=config.permission_mode,  # type: ignore[arg-type]
             cwd=config.cwd,
             system_prompt=config.system_prompt,

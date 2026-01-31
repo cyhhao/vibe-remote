@@ -808,7 +808,22 @@ class SlackBot(BaseIMClient):
                         await self.on_callback_query_callback(context, callback_data)
                 elif action_type in {"static_select", "external_select"}:
                     action_id = action.get("action_id")
-                    if action_id in {"opencode_agent_select", "opencode_model_select"}:
+                    # Trigger modal update for backend selection and all backend-specific selectors
+                    routing_modal_actions = {
+                        "backend_select",
+                        "opencode_agent_select",
+                        "opencode_model_select",
+                        "claude_agent_select",
+                        "claude_model_select",
+                        "codex_model_select",
+                    }
+                    # Also check for prefixed action IDs (reasoning selects have unique suffixes)
+                    should_update = (
+                        action_id in routing_modal_actions
+                        or (action_id and action_id.startswith("opencode_reasoning_select"))
+                        or (action_id and action_id.startswith("codex_reasoning_select"))
+                    )
+                    if should_update:
                         if hasattr(self, "_on_routing_modal_update"):
                             channel_from_view = view.get("private_metadata")
                             await self._on_routing_modal_update(
@@ -884,7 +899,8 @@ class SlackBot(BaseIMClient):
             # We need to find the right channel to send the message
             # For now, we'll rely on the controller to handle this
 
-        elif callback_id == "opencode_question_modal":
+        elif callback_id == "opencode_question_modal" or callback_id == "claude_question_modal":
+            # Generic question modal handling for both OpenCode and Claude
             user_id = payload.get("user", {}).get("id")
             values = view.get("state", {}).get("values", {})
             metadata_raw = view.get("private_metadata")
@@ -898,6 +914,10 @@ class SlackBot(BaseIMClient):
 
             channel_id = metadata.get("channel_id")
             thread_id = metadata.get("thread_id")
+            # Get callback_prefix from metadata, fallback to deriving from callback_id
+            callback_prefix = metadata.get("callback_prefix")
+            if not callback_prefix:
+                callback_prefix = callback_id.replace("_modal", "")
 
             answers = []
             q_count = int(metadata.get("question_count") or 1)
@@ -922,9 +942,10 @@ class SlackBot(BaseIMClient):
                     thread_id=str(thread_id) if thread_id else None,
                     platform_specific={"payload": payload},
                 )
+                # Use callback_prefix to route to correct agent
                 await self.on_callback_query_callback(
                     context,
-                    "opencode_question:modal:" + json.dumps({"answers": answers}),
+                    f"{callback_prefix}:modal:" + json.dumps({"answers": answers}),
                 )
 
         elif callback_id == "routing_modal":
@@ -968,25 +989,58 @@ class SlackBot(BaseIMClient):
             if oc_reasoning == "__default__":
                 oc_reasoning = None
 
-            # Extract require_mention (optional)
-            require_mention_data = values.get("require_mention_block", {}).get(
-                "require_mention_select", {}
+            # Extract Claude agent (optional)
+            claude_agent_data = values.get("claude_agent_block", {}).get(
+                "claude_agent_select", {}
             )
-            require_mention_value = require_mention_data.get("selected_option", {}).get("value")
-            # Convert to Optional[bool]: "__default__" -> None, "true" -> True, "false" -> False
-            if require_mention_value == "__default__":
-                require_mention = None
-            elif require_mention_value == "true":
-                require_mention = True
-            elif require_mention_value == "false":
-                require_mention = False
-            else:
-                require_mention = None
+            claude_agent = claude_agent_data.get("selected_option", {}).get("value")
+            if claude_agent == "__default__":
+                claude_agent = None
+
+            # Extract Claude model (optional)
+            claude_model_data = values.get("claude_model_block", {}).get(
+                "claude_model_select", {}
+            )
+            claude_model = claude_model_data.get("selected_option", {}).get("value")
+            if claude_model == "__default__":
+                claude_model = None
+
+            # Extract Codex model (optional)
+            codex_model_data = values.get("codex_model_block", {}).get(
+                "codex_model_select", {}
+            )
+            codex_model = codex_model_data.get("selected_option", {}).get("value")
+            if codex_model == "__default__":
+                codex_model = None
+
+            # Extract Codex reasoning effort (optional)
+            codex_reasoning = None
+            codex_reasoning_block = values.get("codex_reasoning_block", {})
+            if isinstance(codex_reasoning_block, dict):
+                for action_id, action_data in codex_reasoning_block.items():
+                    if (
+                        isinstance(action_id, str)
+                        and action_id.startswith("codex_reasoning_select")
+                        and isinstance(action_data, dict)
+                    ):
+                        codex_reasoning = action_data.get("selected_option", {}).get("value")
+                        break
+            if codex_reasoning == "__default__":
+                codex_reasoning = None
 
             # Update routing via callback
             if hasattr(self, "_on_routing_update"):
                 await self._on_routing_update(
-                    user_id, channel_id, backend, oc_agent, oc_model, oc_reasoning, require_mention
+                    user_id,
+                    channel_id,
+                    backend,
+                    oc_agent,
+                    oc_model,
+                    oc_reasoning,
+                    claude_agent,
+                    claude_model,
+                    codex_model,
+                    codex_reasoning,
                 )
 
     def run(self):
@@ -1434,17 +1488,22 @@ class SlackBot(BaseIMClient):
         opencode_agents: list,
         opencode_models: dict,
         opencode_default_config: dict,
+        claude_agents: list = None,
+        claude_models: list = None,
+        codex_models: list = None,
         selected_backend: object = _UNSET,
         selected_opencode_agent: object = _UNSET,
         selected_opencode_model: object = _UNSET,
         selected_opencode_reasoning: object = _UNSET,
-        current_require_mention: object = _UNSET,  # None=default, True, False
-        global_require_mention: bool = False,
+        selected_claude_agent: object = _UNSET,
+        selected_claude_model: object = _UNSET,
+        selected_codex_model: object = _UNSET,
+        selected_codex_reasoning: object = _UNSET,
     ) -> dict:
         """Build modal view for agent/model routing settings."""
         # Build backend options
         backend_display_names = {
-            "claude": "Claude Code",
+            "claude": "ClaudeCode",
             "codex": "Codex",
             "opencode": "OpenCode",
         }
@@ -1489,55 +1548,17 @@ class SlackBot(BaseIMClient):
             {
                 "type": "input",
                 "block_id": "backend_block",
+                "dispatch_action": True,
                 "element": backend_select,
                 "label": {"type": "plain_text", "text": "Backend"},
             },
         ]
 
-        # Add require_mention selector
-        # Build options: Default (uses global), Require @mention, Don't require @mention
-        global_mention_label = "On" if global_require_mention else "Off"
-        require_mention_options = [
-            {
-                "text": {"type": "plain_text", "text": f"(Default) - {global_mention_label}"},
-                "value": "__default__",
-            },
-            {
-                "text": {"type": "plain_text", "text": "Require @mention"},
-                "value": "true",
-            },
-            {
-                "text": {"type": "plain_text", "text": "Don't require @mention"},
-                "value": "false",
-            },
-        ]
+        # Determine effective backend for showing backend-specific options
+        effective_backend = selected_backend_value or current_backend or "opencode"
 
-        # Determine initial option
-        initial_require_mention = require_mention_options[0]  # Default
-        if current_require_mention is not _UNSET and current_require_mention is not None:
-            target_value = "true" if current_require_mention else "false"
-            for opt in require_mention_options:
-                if opt["value"] == target_value:
-                    initial_require_mention = opt
-                    break
-
-        require_mention_select = {
-            "type": "static_select",
-            "action_id": "require_mention_select",
-            "placeholder": {"type": "plain_text", "text": "Select @mention behavior"},
-            "options": require_mention_options,
-            "initial_option": initial_require_mention,
-        }
-
-        blocks.append({
-            "type": "input",
-            "block_id": "require_mention_block",
-            "element": require_mention_select,
-            "label": {"type": "plain_text", "text": "Require @mention to respond"},
-        })
-
-        # OpenCode-specific options (only if opencode is registered)
-        if "opencode" in registered_backends:
+        # OpenCode-specific options (only if opencode is selected)
+        if effective_backend == "opencode" and "opencode" in registered_backends:
             # Get current opencode settings
             if selected_opencode_agent is _UNSET:
                 current_oc_agent = (
@@ -1804,7 +1825,7 @@ class SlackBot(BaseIMClient):
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "*OpenCode Options* (only applies when backend is OpenCode)",
+                        "text": "*OpenCode Settings*",
                     },
                 },
                 {
@@ -1832,13 +1853,233 @@ class SlackBot(BaseIMClient):
                 },
             ])
 
+        # Claude-specific options (only if claude is selected)
+        if effective_backend == "claude" and "claude" in registered_backends:
+            claude_agents = claude_agents or []
+            claude_models = claude_models or []
+
+            # Get current claude settings
+            if selected_claude_agent is _UNSET:
+                current_cl_agent = (
+                    current_routing.claude_agent if current_routing else None
+                )
+            else:
+                current_cl_agent = selected_claude_agent
+
+            if selected_claude_model is _UNSET:
+                current_cl_model = (
+                    current_routing.claude_model if current_routing else None
+                )
+            else:
+                current_cl_model = selected_claude_model
+
+            # Build agent options
+            cl_agent_options = [
+                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}
+            ]
+            for agent in claude_agents:
+                agent_id = agent.get("id", "")
+                agent_name = agent.get("name", agent_id)
+                if agent_id:
+                    cl_agent_options.append({
+                        "text": {"type": "plain_text", "text": agent_name[:75]},
+                        "value": agent_id,
+                    })
+
+            # Find initial agent
+            initial_cl_agent = cl_agent_options[0]
+            if current_cl_agent:
+                for opt in cl_agent_options:
+                    if opt["value"] == current_cl_agent:
+                        initial_cl_agent = opt
+                        break
+
+            cl_agent_select = {
+                "type": "static_select",
+                "action_id": "claude_agent_select",
+                "placeholder": {"type": "plain_text", "text": "Select Claude agent"},
+                "options": cl_agent_options,
+                "initial_option": initial_cl_agent,
+            }
+
+            # Build model options
+            cl_model_options = [
+                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}
+            ]
+            for model in claude_models:
+                if model:
+                    cl_model_options.append({
+                        "text": {"type": "plain_text", "text": model[:75]},
+                        "value": model,
+                    })
+
+            # Add current model if not in list (preserve custom models)
+            if current_cl_model and not any(opt["value"] == current_cl_model for opt in cl_model_options):
+                cl_model_options.append({
+                    "text": {"type": "plain_text", "text": current_cl_model[:75]},
+                    "value": current_cl_model,
+                })
+
+            # Limit to 100 options
+            if len(cl_model_options) > 100:
+                cl_model_options = cl_model_options[:100]
+
+            # Find initial model
+            initial_cl_model = cl_model_options[0]
+            if current_cl_model:
+                for opt in cl_model_options:
+                    if opt["value"] == current_cl_model:
+                        initial_cl_model = opt
+                        break
+
+            cl_model_select = {
+                "type": "static_select",
+                "action_id": "claude_model_select",
+                "placeholder": {"type": "plain_text", "text": "Select model"},
+                "options": cl_model_options,
+                "initial_option": initial_cl_model,
+            }
+
+            # Add Claude section
+            blocks.extend([
+                {"type": "divider"},
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*Claude Settings*",
+                    },
+                },
+                {
+                    "type": "input",
+                    "block_id": "claude_agent_block",
+                    "optional": True,
+                    "element": cl_agent_select,
+                    "label": {"type": "plain_text", "text": "Claude Agent"},
+                },
+                {
+                    "type": "input",
+                    "block_id": "claude_model_block",
+                    "optional": True,
+                    "element": cl_model_select,
+                    "label": {"type": "plain_text", "text": "Model"},
+                },
+            ])
+
+        # Codex-specific options (only if codex is selected)
+        if effective_backend == "codex" and "codex" in registered_backends:
+            codex_models = codex_models or []
+
+            # Get current codex settings
+            if selected_codex_model is _UNSET:
+                current_cx_model = (
+                    current_routing.codex_model if current_routing else None
+                )
+            else:
+                current_cx_model = selected_codex_model
+
+            if selected_codex_reasoning is _UNSET:
+                current_cx_reasoning = (
+                    current_routing.codex_reasoning_effort if current_routing else None
+                )
+            else:
+                current_cx_reasoning = selected_codex_reasoning
+
+            # Build model options
+            cx_model_options = [
+                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}
+            ]
+            for model in codex_models:
+                if model:
+                    cx_model_options.append({
+                        "text": {"type": "plain_text", "text": model[:75]},
+                        "value": model,
+                    })
+
+            # Add current model if not in list (preserve custom models)
+            if current_cx_model and not any(opt["value"] == current_cx_model for opt in cx_model_options):
+                cx_model_options.append({
+                    "text": {"type": "plain_text", "text": current_cx_model[:75]},
+                    "value": current_cx_model,
+                })
+
+            # Limit to 100 options
+            if len(cx_model_options) > 100:
+                cx_model_options = cx_model_options[:100]
+
+            # Find initial model
+            initial_cx_model = cx_model_options[0]
+            if current_cx_model:
+                for opt in cx_model_options:
+                    if opt["value"] == current_cx_model:
+                        initial_cx_model = opt
+                        break
+
+            cx_model_select = {
+                "type": "static_select",
+                "action_id": "codex_model_select",
+                "placeholder": {"type": "plain_text", "text": "Select model"},
+                "options": cx_model_options,
+                "initial_option": initial_cx_model,
+            }
+
+            # Build reasoning effort options
+            cx_reasoning_options = [
+                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"},
+                {"text": {"type": "plain_text", "text": "Low"}, "value": "low"},
+                {"text": {"type": "plain_text", "text": "Medium"}, "value": "medium"},
+                {"text": {"type": "plain_text", "text": "High"}, "value": "high"},
+            ]
+
+            # Find initial reasoning
+            initial_cx_reasoning = cx_reasoning_options[0]
+            if current_cx_reasoning:
+                for opt in cx_reasoning_options:
+                    if opt["value"] == current_cx_reasoning:
+                        initial_cx_reasoning = opt
+                        break
+
+            cx_reasoning_select = {
+                "type": "static_select",
+                "action_id": "codex_reasoning_select",
+                "placeholder": {"type": "plain_text", "text": "Select reasoning effort"},
+                "options": cx_reasoning_options,
+                "initial_option": initial_cx_reasoning,
+            }
+
+            # Add Codex section
+            blocks.extend([
+                {"type": "divider"},
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*Codex Settings*",
+                    },
+                },
+                {
+                    "type": "input",
+                    "block_id": "codex_model_block",
+                    "optional": True,
+                    "element": cx_model_select,
+                    "label": {"type": "plain_text", "text": "Model"},
+                },
+                {
+                    "type": "input",
+                    "block_id": "codex_reasoning_block",
+                    "optional": True,
+                    "element": cx_reasoning_select,
+                    "label": {"type": "plain_text", "text": "Reasoning Effort"},
+                },
+            ])
+
         # Add tip
         blocks.append({
             "type": "context",
             "elements": [
                 {
                     "type": "mrkdwn",
-                    "text": "_💡 Select (Default) to use OpenCode's configured defaults._",
+                    "text": "_💡 Select (Default) to use the backend's configured defaults._",
                 }
             ],
         })
@@ -1962,6 +2203,149 @@ class SlackBot(BaseIMClient):
 
         await self.web_client.views_open(trigger_id=trigger_id, view=view)
 
+    async def open_question_modal(
+        self,
+        trigger_id: str,
+        context: MessageContext,
+        pending: Any,  # PendingQuestion from question_ui module
+        callback_prefix: str = "opencode_question",
+    ):
+        """Open a question modal for any agent backend.
+
+        This is a generalized version of open_opencode_question_modal that
+        supports different callback prefixes for different agents.
+
+        Args:
+            trigger_id: Slack trigger ID for opening the modal
+            context: Message context
+            pending: PendingQuestion instance with questions data
+            callback_prefix: Prefix for callback routing (e.g., "opencode_question", "claude_question")
+        """
+        self._ensure_clients()
+
+        # Support both PendingQuestion dataclass and dict format
+        if hasattr(pending, "questions"):
+            questions = pending.questions
+        else:
+            questions = pending.get("questions") if isinstance(pending, dict) else []
+
+        if not questions:
+            raise ValueError("No questions available")
+
+        import json
+
+        private_metadata = json.dumps(
+            {
+                "channel_id": context.channel_id,
+                "thread_id": context.thread_id,
+                "question_count": len(questions),
+                "callback_prefix": callback_prefix,
+            }
+        )
+
+        blocks: list[Dict[str, Any]] = []
+        for idx, q in enumerate(questions):
+            # Support both Question dataclass and dict format
+            if hasattr(q, "header"):
+                header = (q.header or f"Question {idx + 1}").strip()
+                prompt = (q.question or "").strip()
+                multiple = bool(q.multiple)
+                options = q.options
+            elif isinstance(q, dict):
+                header = (q.get("header") or f"Question {idx + 1}").strip()
+                prompt = (q.get("question") or "").strip()
+                multiple = bool(q.get("multiple") or q.get("multiSelect"))
+                options = q.get("options") if isinstance(q.get("options"), list) else []
+            else:
+                continue
+
+            option_items = []
+            for opt in options:
+                # Support both QuestionOption dataclass and dict format
+                if hasattr(opt, "label"):
+                    label = opt.label
+                    desc = opt.description
+                elif isinstance(opt, dict):
+                    label = opt.get("label")
+                    desc = opt.get("description")
+                else:
+                    continue
+
+                if label is None:
+                    continue
+                item: Dict[str, Any] = {
+                    "text": {
+                        "type": "plain_text",
+                        "text": str(label)[:75],
+                        "emoji": True,
+                    },
+                    "value": str(label),
+                }
+                if desc:
+                    item["description"] = {
+                        "type": "plain_text",
+                        "text": str(desc)[:75],
+                        "emoji": True,
+                    }
+                option_items.append(item)
+
+            element: Dict[str, Any]
+            if multiple:
+                element = {
+                    "type": "multi_static_select",
+                    "action_id": "select",
+                    "options": option_items,
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "Select one or more",
+                        "emoji": True,
+                    },
+                }
+            else:
+                element = {
+                    "type": "static_select",
+                    "action_id": "select",
+                    "options": option_items,
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "Select one",
+                        "emoji": True,
+                    },
+                }
+
+            label_text = header
+            if prompt:
+                label_text = f"{header}: {prompt}"[:150]
+
+            blocks.append(
+                {
+                    "type": "input",
+                    "block_id": f"q{idx}",
+                    "label": {
+                        "type": "plain_text",
+                        "text": label_text,
+                        "emoji": True,
+                    },
+                    "element": element,
+                }
+            )
+
+        # Use callback_prefix to generate callback_id
+        callback_id = f"{callback_prefix}_modal"
+        title = "Claude Code" if callback_prefix.startswith("claude") else "OpenCode"
+
+        view = {
+            "type": "modal",
+            "callback_id": callback_id,
+            "private_metadata": private_metadata,
+            "title": {"type": "plain_text", "text": title, "emoji": True},
+            "submit": {"type": "plain_text", "text": "Submit", "emoji": True},
+            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "blocks": blocks,
+        }
+
+        await self.web_client.views_open(trigger_id=trigger_id, view=view)
+
     async def open_routing_modal(
         self,
         trigger_id: str,
@@ -1972,8 +2356,9 @@ class SlackBot(BaseIMClient):
         opencode_agents: list,
         opencode_models: dict,
         opencode_default_config: dict,
-        current_require_mention: object = None,  # None=default, True, False
-        global_require_mention: bool = False,
+        claude_agents: list = None,
+        claude_models: list = None,
+        codex_models: list = None,
     ):
         """Open a modal dialog for agent/model routing settings"""
         self._ensure_clients()
@@ -1986,8 +2371,9 @@ class SlackBot(BaseIMClient):
             opencode_agents=opencode_agents,
             opencode_models=opencode_models,
             opencode_default_config=opencode_default_config,
-            current_require_mention=current_require_mention,
-            global_require_mention=global_require_mention,
+            claude_agents=claude_agents,
+            claude_models=claude_models,
+            codex_models=codex_models,
         )
 
         try:
@@ -2007,12 +2393,17 @@ class SlackBot(BaseIMClient):
         opencode_agents: list,
         opencode_models: dict,
         opencode_default_config: dict,
+        claude_agents: list = None,
+        claude_models: list = None,
+        codex_models: list = None,
         selected_backend: Optional[str] = None,
         selected_opencode_agent: Optional[str] = None,
         selected_opencode_model: Optional[str] = None,
         selected_opencode_reasoning: Optional[str] = None,
-        current_require_mention: object = None,
-        global_require_mention: bool = False,
+        selected_claude_agent: Optional[str] = None,
+        selected_claude_model: Optional[str] = None,
+        selected_codex_model: Optional[str] = None,
+        selected_codex_reasoning: Optional[str] = None,
     ) -> None:
         """Update routing modal when selections change."""
         self._ensure_clients()
@@ -2025,12 +2416,17 @@ class SlackBot(BaseIMClient):
             opencode_agents=opencode_agents,
             opencode_models=opencode_models,
             opencode_default_config=opencode_default_config,
+            claude_agents=claude_agents,
+            claude_models=claude_models,
+            codex_models=codex_models,
             selected_backend=selected_backend,
             selected_opencode_agent=selected_opencode_agent,
             selected_opencode_model=selected_opencode_model,
             selected_opencode_reasoning=selected_opencode_reasoning,
-            current_require_mention=current_require_mention,
-            global_require_mention=global_require_mention,
+            selected_claude_agent=selected_claude_agent,
+            selected_claude_model=selected_claude_model,
+            selected_codex_model=selected_codex_model,
+            selected_codex_reasoning=selected_codex_reasoning,
         )
 
         try:

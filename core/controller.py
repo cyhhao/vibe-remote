@@ -38,6 +38,9 @@ class Controller:
         self._consolidated_message_ids: Dict[str, str] = {}
         self._consolidated_message_buffers: Dict[str, str] = {}
         self._consolidated_message_locks: Dict[str, asyncio.Lock] = {}
+        # Track current message_id per thread - ensures log messages follow the latest user message
+        # Key: "{settings_key}:{thread_id}", Value: message_id
+        self._thread_current_message_id: Dict[str, str] = {}
 
         # Initialize core modules
         self._init_modules()
@@ -47,6 +50,9 @@ class Controller:
 
         # Initialize agents (depends on handlers/session handler)
         self._init_agents()
+
+        # Validate default_backend against registered agents
+        self._validate_default_backend()
 
         # Setup callbacks
         self._setup_callbacks()
@@ -78,16 +84,11 @@ class Controller:
         self.session_manager = SessionManager()
         self.settings_manager = SettingsManager()
 
-        # Agent routing
-        self.agent_router = AgentRouter.from_file(None, platform=self.config.platform)
-
-        # Default backend preference:
-        # If OpenCode is enabled, make it the implicit default backend.
-        if self.config.opencode:
-            self.agent_router.global_default = "opencode"
-            platform_route = self.agent_router.platform_routes.get(self.config.platform)
-            if platform_route:
-                platform_route.default = "opencode"
+        # Agent routing - use configured default_backend
+        default_backend = getattr(self.config, 'default_backend', 'opencode')
+        self.agent_router = AgentRouter.from_file(
+            None, platform=self.config.platform, default_backend=default_backend
+        )
 
         # Inject settings_manager into SlackBot if it's Slack platform
         if self.config.platform == "slack":
@@ -122,6 +123,38 @@ class Controller:
                 self.agent_service.register(OpenCodeAgent(self, self.config.opencode))
             except Exception as e:
                 logger.error(f"Failed to initialize OpenCode agent: {e}")
+
+    def _validate_default_backend(self):
+        """Validate default_backend against registered agents and fallback if needed."""
+        current_default = self.agent_router.global_default
+        registered = set(self.agent_service.agents.keys())
+
+        if current_default not in registered:
+            # Find a fallback from registered agents
+            # Prefer: opencode > claude > codex > any
+            for fallback in ["opencode", "claude", "codex"]:
+                if fallback in registered:
+                    logger.warning(
+                        f"Configured default_backend '{current_default}' is not enabled. "
+                        f"Falling back to '{fallback}'."
+                    )
+                    self.agent_router.global_default = fallback
+                    for route in self.agent_router.platform_routes.values():
+                        route.default = fallback
+                    return
+
+            # If no preferred fallback, use any registered agent
+            if registered:
+                fallback = next(iter(registered))
+                logger.warning(
+                    f"Configured default_backend '{current_default}' is not enabled. "
+                    f"Falling back to '{fallback}'."
+                )
+                self.agent_router.global_default = fallback
+                for route in self.agent_router.platform_routes.values():
+                    route.default = fallback
+            else:
+                logger.error("No agents are registered! Check your configuration.")
 
     def _setup_callbacks(self):
         """Setup callback connections between modules"""
@@ -222,10 +255,25 @@ class Controller:
     def _get_consolidated_message_key(self, context: MessageContext) -> str:
         settings_key = self._get_settings_key(context)
         thread_key = context.thread_id or context.channel_id
-        # Include message_id to distinguish different conversation rounds within same thread
-        # Each user message triggers a new round with its own consolidated message
-        trigger_id = context.message_id or ""
+        # Use the tracked current message_id for this thread if available
+        # This ensures log messages follow the latest user message, even when
+        # agent receivers hold stale context references
+        tracking_key = f"{settings_key}:{thread_key}"
+        trigger_id = self._thread_current_message_id.get(tracking_key) or context.message_id or ""
         return f"{settings_key}:{thread_key}:{trigger_id}"
+
+    def update_thread_message_id(self, context: MessageContext) -> None:
+        """Update the current message_id for a thread.
+        
+        Call this when processing a new user message to ensure subsequent
+        log messages (from agents) are grouped with this message.
+        """
+        if not context.message_id:
+            return
+        settings_key = self._get_settings_key(context)
+        thread_key = context.thread_id or context.channel_id
+        tracking_key = f"{settings_key}:{thread_key}"
+        self._thread_current_message_id[tracking_key] = context.message_id
 
     def _get_consolidated_message_lock(self, key: str) -> asyncio.Lock:
         if key not in self._consolidated_message_locks:
@@ -692,16 +740,46 @@ class Controller:
                 elif action_id.startswith("opencode_reasoning_select"):
                     oc_reasoning = selected_value
 
+            # Extract Claude/Codex selections from current action or state
+            claude_agent = _selected_value("claude_agent_block", "claude_agent_select")
+            claude_model = _selected_value("claude_model_block", "claude_model_select")
+            codex_model = _selected_value("codex_model_block", "codex_model_select")
+            codex_reasoning = _selected_prefixed_value(
+                "codex_reasoning_block", "codex_reasoning_select"
+            )
+
+            # Handle action payload for Claude/Codex
+            if isinstance(action_id, str) and isinstance(selected_value, str):
+                if action_id == "claude_agent_select":
+                    claude_agent = selected_value
+                elif action_id == "claude_model_select":
+                    claude_model = selected_value
+                elif action_id == "codex_model_select":
+                    codex_model = selected_value
+                elif action_id.startswith("codex_reasoning_select"):
+                    codex_reasoning = selected_value
+
             if oc_agent == "__default__":
                 oc_agent = None
             if oc_model == "__default__":
                 oc_model = None
             if oc_reasoning == "__default__":
                 oc_reasoning = None
+            if claude_agent == "__default__":
+                claude_agent = None
+            if claude_model == "__default__":
+                claude_model = None
+            if codex_model == "__default__":
+                codex_model = None
+            if codex_reasoning == "__default__":
+                codex_reasoning = None
 
             opencode_agents = []
             opencode_models = {}
             opencode_default_config = {}
+            claude_agents = []
+            claude_models = []
+            codex_models = []
 
             if "opencode" in registered_backends:
                 try:
@@ -716,6 +794,30 @@ class Controller:
                 except Exception as e:
                     logger.warning(f"Failed to fetch OpenCode data: {e}")
 
+            # Fetch Claude data
+            if "claude" in registered_backends:
+                try:
+                    from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
+                    cwd = self.get_cwd(context)
+                    agents_result = get_claude_agents(cwd)
+                    if agents_result.get("ok"):
+                        claude_agents = agents_result.get("agents", [])
+                    models_result = get_claude_models()
+                    if models_result.get("ok"):
+                        claude_models = models_result.get("models", [])
+                except Exception as e:
+                    logger.warning(f"Failed to fetch Claude data: {e}")
+
+            # Fetch Codex data
+            if "codex" in registered_backends:
+                try:
+                    from vibe.api import codex_models as get_codex_models
+                    models_result = get_codex_models()
+                    if models_result.get("ok"):
+                        codex_models = models_result.get("models", [])
+                except Exception as e:
+                    logger.warning(f"Failed to fetch Codex data: {e}")
+
             if hasattr(self.im_client, "update_routing_modal"):
                 await self.im_client.update_routing_modal(  # type: ignore[attr-defined]
                     view_id=view_id,
@@ -727,10 +829,17 @@ class Controller:
                     opencode_agents=opencode_agents,
                     opencode_models=opencode_models,
                     opencode_default_config=opencode_default_config,
+                    claude_agents=claude_agents,
+                    claude_models=claude_models,
+                    codex_models=codex_models,
                     selected_backend=selected_backend,
                     selected_opencode_agent=oc_agent,
                     selected_opencode_model=oc_model,
                     selected_opencode_reasoning=oc_reasoning,
+                    selected_claude_agent=claude_agent,
+                    selected_claude_model=claude_model,
+                    selected_codex_model=codex_model,
+                    selected_codex_reasoning=codex_reasoning,
                 )
         except Exception as e:
             logger.error(f"Error updating routing modal: {e}", exc_info=True)
@@ -744,28 +853,38 @@ class Controller:
         opencode_agent: Optional[str],
         opencode_model: Optional[str],
         opencode_reasoning_effort: Optional[str] = None,
-        require_mention: Optional[bool] = None,
+        claude_agent: Optional[str] = None,
+        claude_model: Optional[str] = None,
+        codex_model: Optional[str] = None,
+        codex_reasoning_effort: Optional[str] = None,
     ):
         """Handle routing update submission (from Slack modal)"""
         from modules.settings_manager import ChannelRouting
 
         try:
-            # Create routing object
-            routing = ChannelRouting(
-                agent_backend=backend,
-                opencode_agent=opencode_agent,
-                opencode_model=opencode_model,
-                opencode_reasoning_effort=opencode_reasoning_effort,
-            )
-
             # Get settings key
             settings_key = channel_id if channel_id else user_id
 
+            # Get existing routing to preserve settings for other backends
+            existing_routing = self.settings_manager.get_channel_routing(settings_key)
+
+            # Merge with existing routing - only update fields for the selected backend
+            routing = ChannelRouting(
+                agent_backend=backend,
+                # OpenCode settings: update if opencode is selected, otherwise preserve existing
+                opencode_agent=opencode_agent if backend == "opencode" else (existing_routing.opencode_agent if existing_routing else None),
+                opencode_model=opencode_model if backend == "opencode" else (existing_routing.opencode_model if existing_routing else None),
+                opencode_reasoning_effort=opencode_reasoning_effort if backend == "opencode" else (existing_routing.opencode_reasoning_effort if existing_routing else None),
+                # Claude settings: update if claude is selected, otherwise preserve existing
+                claude_agent=claude_agent if backend == "claude" else (existing_routing.claude_agent if existing_routing else None),
+                claude_model=claude_model if backend == "claude" else (existing_routing.claude_model if existing_routing else None),
+                # Codex settings: update if codex is selected, otherwise preserve existing
+                codex_model=codex_model if backend == "codex" else (existing_routing.codex_model if existing_routing else None),
+                codex_reasoning_effort=codex_reasoning_effort if backend == "codex" else (existing_routing.codex_reasoning_effort if existing_routing else None),
+            )
+
             # Save routing
             self.settings_manager.set_channel_routing(settings_key, routing)
-
-            # Save require_mention setting
-            self.settings_manager.set_require_mention(settings_key, require_mention)
 
             # Build confirmation message
             parts = [f"Backend: **{backend}**"]
@@ -776,14 +895,16 @@ class Controller:
                     parts.append(f"Model: **{opencode_model}**")
                 if opencode_reasoning_effort:
                     parts.append(f"Reasoning Effort: **{opencode_reasoning_effort}**")
-
-            # Add require_mention status to confirmation
-            if require_mention is None:
-                parts.append("Require @mention: **(Default)**")
-            elif require_mention:
-                parts.append("Require @mention: **Yes**")
-            else:
-                parts.append("Require @mention: **No**")
+            elif backend == "claude":
+                if claude_agent:
+                    parts.append(f"Agent: **{claude_agent}**")
+                if claude_model:
+                    parts.append(f"Model: **{claude_model}**")
+            elif backend == "codex":
+                if codex_model:
+                    parts.append(f"Model: **{codex_model}**")
+                if codex_reasoning_effort:
+                    parts.append(f"Reasoning Effort: **{codex_reasoning_effort}**")
 
             # Create context for confirmation message
             context = MessageContext(
@@ -800,7 +921,9 @@ class Controller:
 
             logger.info(
                 f"Routing updated for {settings_key}: backend={backend}, "
-                f"agent={opencode_agent}, model={opencode_model}, require_mention={require_mention}"
+                f"opencode_agent={opencode_agent}, opencode_model={opencode_model}, "
+                f"claude_agent={claude_agent}, claude_model={claude_model}, "
+                f"codex_model={codex_model}"
             )
 
         except Exception as e:
