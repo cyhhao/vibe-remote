@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, X, RefreshCw, Search, Settings } from 'lucide-react';
+import { Check, X, RefreshCw, Search, Settings, Download } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
@@ -32,7 +32,8 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   );
   const [permissionState, setPermissionState] = useState<PermissionState>('idle');
   const [permissionMessage, setPermissionMessage] = useState<string>('');
-
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [installMessage, setInstallMessage] = useState<Record<string, { ok: boolean; message: string }>>({});
   const isMissing = (agent: AgentState) => agent.status === 'missing';
 
   useEffect(() => {
@@ -85,6 +86,29 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
     } catch (e) {
       setPermissionState('error');
       setPermissionMessage(String(e));
+    }
+  };
+
+  const installAgent = async (name: string) => {
+    setInstalling(name);
+    setInstallMessage((prev) => ({ ...prev, [name]: { ok: false, message: '' } }));
+    try {
+      const result = await api.installAgent(name);
+      setInstallMessage((prev) => ({
+        ...prev,
+        [name]: { ok: result.ok, message: result.message },
+      }));
+      if (result.ok) {
+        // Re-detect after successful installation
+        await detect(name);
+      }
+    } catch (e) {
+      setInstallMessage((prev) => ({
+        ...prev,
+        [name]: { ok: false, message: String(e) },
+      }));
+    } finally {
+      setInstalling(null);
     }
   };
 
@@ -171,6 +195,35 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                     </button>
                   </div>
               </div>
+
+              {/* One-click install button when agent is missing */}
+              {isMissing(agent) && (
+                <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-800 mb-2">{t('agentDetection.installHint')}</p>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      onClick={() => installAgent(name)}
+                      disabled={installing === name}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      {installing === name ? (
+                        <RefreshCw size={14} className="animate-spin" />
+                      ) : (
+                        <Download size={14} />
+                      )}
+                      {installing === name ? t('agentDetection.installing') : t('agentDetection.installAgent')}
+                    </button>
+                    {installMessage[name]?.message && (
+                      <span className={clsx(
+                        "text-sm",
+                        installMessage[name].ok ? "text-green-600" : "text-red-600"
+                      )}>
+                        {installMessage[name].message}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {name === 'opencode' && agent.status === 'ok' && (
                 <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">

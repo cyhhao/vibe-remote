@@ -7,6 +7,7 @@ export type ApiContextType = {
   getSettings: () => Promise<any>;
   saveSettings: (payload: any) => Promise<any>;
   detectCli: (binary: string) => Promise<any>;
+  installAgent: (name: string) => Promise<InstallResult>;
   slackAuthTest: (botToken: string) => Promise<any>;
   slackChannels: (botToken: string) => Promise<any>;
   slackManifest: () => Promise<{ ok: boolean; manifest?: string; manifest_compact?: string; error?: string }>;
@@ -40,6 +41,12 @@ export type UpgradeResult = {
   message: string;
   output: string | null;
   restarting: boolean;
+};
+
+export type InstallResult = {
+  ok: boolean;
+  message: string;
+  output: string | null;
 };
 
 const ApiContext = createContext<ApiContextType | undefined>(undefined);
@@ -107,6 +114,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getSettings: () => getJson('/settings'),
     saveSettings: (payload) => postJson('/settings', payload),
     detectCli: (binary) => getJson(`/cli/detect?binary=${encodeURIComponent(binary)}`),
+    installAgent: (name) => postJson(`/agent/${encodeURIComponent(name)}/install`, {}),
     slackAuthTest: (botToken) => postJson('/slack/auth_test', { bot_token: botToken }),
     slackChannels: (botToken) => postJson('/slack/channels', { bot_token: botToken }),
     slackManifest: () => getJson('/slack/manifest'),

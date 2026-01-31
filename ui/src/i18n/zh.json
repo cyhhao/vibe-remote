@@ -118,7 +118,10 @@
     "cliPathDetection": "CLI 路径检测和启用设置",
     "recommended": "（推荐）",
     "permissionHint": "OpenCode 需要配置权限以跳过审批提示。",
-    "setupPermission": "一键设置权限"
+    "setupPermission": "一键设置权限",
+    "installHint": "未找到 Agent，点击自动安装。",
+    "installAgent": "一键安装",
+    "installing": "安装中..."
   },
   "channelList": {
     "title": "频道设置",
