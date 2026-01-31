@@ -52,9 +52,10 @@ class MessageHandler:
             if hasattr(self.controller, "update_checker"):
                 self.controller.update_checker.record_activity()
 
-            # If message is empty (e.g., user just @mentioned bot without text),
+            # If message is empty AND no files attached (e.g., user just @mentioned bot without text),
             # trigger the /start command instead of sending empty message to agent
-            if not message or not message.strip():
+            has_files = bool(context.files)
+            if (not message or not message.strip()) and not has_files:
                 await self.controller.command_handler.handle_start(context, "")
                 return
 
@@ -485,7 +486,7 @@ class MessageHandler:
                         attachment.size = len(content)
 
                         # Determine file type for logging
-                        is_image = attachment.mimetype.startswith("image/")
+                        is_image = (attachment.mimetype or "").startswith("image/")
                         file_type = "image" if is_image else "file"
 
                         logger.info(f"Saved {file_type} '{attachment.name}' ({len(content)} bytes) to '{local_path}'")

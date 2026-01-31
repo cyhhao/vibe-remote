@@ -515,7 +515,7 @@ class ClaudeAgent(BaseAgent):
             if not attachment.local_path:
                 continue
 
-            is_image = attachment.mimetype.startswith("image/")
+            is_image = (attachment.mimetype or "").startswith("image/")
             if is_image:
                 images.append(attachment)
             else:

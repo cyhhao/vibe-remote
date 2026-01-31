@@ -2,7 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class MessageContext:
     thread_id: Optional[str] = None
     message_id: Optional[str] = None
     platform_specific: Optional[Dict[str, Any]] = None
-    files: Optional[list] = None  # List of FileAttachment objects
+    files: Optional[List[FileAttachment]] = None  # List of file attachments
 
 
 @dataclass
