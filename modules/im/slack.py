@@ -738,8 +738,19 @@ class SlackBot(BaseIMClient):
             channel_id = (
                 payload.get("channel", {}).get("id")
                 or payload.get("container", {}).get("channel_id")
-                or (view.get("private_metadata") if isinstance(view, dict) else None)
             )
+            
+            # For modal actions, try to extract channel_id from private_metadata JSON
+            if not channel_id and isinstance(view, dict):
+                private_metadata = view.get("private_metadata")
+                if private_metadata:
+                    try:
+                        import json
+                        metadata = json.loads(private_metadata)
+                        channel_id = metadata.get("channel_id") if isinstance(metadata, dict) else private_metadata
+                    except (json.JSONDecodeError, TypeError):
+                        # Fallback: treat private_metadata as channel_id directly (legacy behavior)
+                        channel_id = private_metadata
 
             # Check if channel is authorized for interactive components
             if not await self._is_authorized_channel(channel_id):
@@ -803,6 +814,11 @@ class SlackBot(BaseIMClient):
                                 view,
                                 action,
                             )
+                elif action_type == "plain_text_input":
+                    action_id = action.get("action_id")
+                    # Handle manual_input in resume_session_modal - show agent_block when user types
+                    if action_id == "manual_input" and view.get("callback_id") == "resume_session_modal":
+                        await self._handle_resume_modal_manual_input(view, action)
 
         elif payload.get("type") == "view_submission":
             # Handle modal submissions asynchronously to avoid Slack timeouts
@@ -884,17 +900,11 @@ class SlackBot(BaseIMClient):
             if selected_value and "|" in selected_value:
                 selected_agent, selected_session = selected_value.split("|", 1)
 
-            # Manual input takes precedence and should respect the manual agent selector.
-            if manual_session:
-                chosen_session = manual_session
-                chosen_agent = agent or selected_agent
-            else:
-                chosen_session = selected_session
-                chosen_agent = selected_agent or agent
             metadata_raw = view.get("private_metadata")
             channel_id = None
             thread_id = None
             host_message_ts = None
+            default_agent = None
             try:
                 import json
 
@@ -902,8 +912,18 @@ class SlackBot(BaseIMClient):
                 channel_id = md.get("channel_id")
                 thread_id = md.get("thread_id")
                 host_message_ts = md.get("host_message_ts")
+                default_agent = md.get("default_agent")
             except Exception:
                 pass
+
+            # Manual input takes precedence and should respect the manual agent selector.
+            if manual_session:
+                chosen_session = manual_session
+                # When manually entering session ID, use selected agent or default
+                chosen_agent = agent or selected_agent or default_agent
+            else:
+                chosen_session = selected_session
+                chosen_agent = selected_agent or agent
 
             if hasattr(self, "_on_resume_session"):
                 await self._on_resume_session(
@@ -1524,17 +1544,6 @@ class SlackBot(BaseIMClient):
                     "text": "Select a saved session or paste a session ID to resume work in this thread.",
                 },
             },
-            {
-                "type": "input",
-                "block_id": "agent_block",
-                "label": {"type": "plain_text", "text": "Agent backend", "emoji": True},
-                "element": {
-                    "type": "static_select",
-                    "action_id": "agent_select",
-                    "options": agent_options,
-                    "initial_option": agent_options[0],
-                },
-            },
         ]
 
         if session_option_groups:
@@ -1586,15 +1595,24 @@ class SlackBot(BaseIMClient):
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "manual_input",
-                    "placeholder": {"type": "plain_text", "text": "e.g., sess_12345", "emoji": True},
+                    "placeholder": {"type": "plain_text", "text": "e.g., ses_12345", "emoji": True},
+                    "dispatch_action_config": {
+                        "trigger_actions_on": ["on_character_entered"],
+                    },
                 },
+                "dispatch_action": True,
             }
         )
+
+        # Agent backend selector is NOT included initially.
+        # It will be dynamically added when user types in the manual session ID field.
 
         metadata = {
             "channel_id": channel_id,
             "thread_id": thread_id,
             "host_message_ts": host_message_ts,
+            "default_agent": agent_options[0]["value"] if agent_options else "opencode",
+            "agent_options": agent_options,  # Store for dynamic update
         }
         import json
 
@@ -1613,6 +1631,77 @@ class SlackBot(BaseIMClient):
         except SlackApiError as e:
             logger.error(f"Error opening resume modal: {e}")
             raise
+
+    async def _handle_resume_modal_manual_input(
+        self, view: Dict[str, Any], action: Dict[str, Any]
+    ):
+        """Handle manual_input changes in resume_session_modal - dynamically show/hide agent_block."""
+        import json
+
+        self._ensure_clients()
+
+        view_id = view.get("id")
+        blocks = view.get("blocks", [])
+        metadata_raw = view.get("private_metadata", "{}")
+
+        try:
+            metadata = json.loads(metadata_raw)
+        except Exception:
+            metadata = {}
+
+        agent_options = metadata.get("agent_options", [])
+        if not agent_options:
+            return
+
+        # Check if agent_block already exists
+        has_agent_block = any(b.get("block_id") == "agent_block" for b in blocks)
+
+        # Get current input value
+        input_value = (action.get("value") or "").strip()
+
+        # Determine if we need to update
+        should_show_agent = bool(input_value)
+
+        if should_show_agent and has_agent_block:
+            # Already showing, no update needed
+            return
+        if not should_show_agent and not has_agent_block:
+            # Already hidden, no update needed
+            return
+
+        # Build updated blocks
+        new_blocks = [b for b in blocks if b.get("block_id") != "agent_block"]
+
+        if should_show_agent:
+            # Add agent_block at the end
+            new_blocks.append(
+                {
+                    "type": "input",
+                    "block_id": "agent_block",
+                    "label": {"type": "plain_text", "text": "Agent backend", "emoji": True},
+                    "element": {
+                        "type": "static_select",
+                        "action_id": "agent_select",
+                        "options": agent_options,
+                        "placeholder": {"type": "plain_text", "text": "Select agent backend", "emoji": True},
+                    },
+                }
+            )
+
+        updated_view = {
+            "type": "modal",
+            "callback_id": "resume_session_modal",
+            "private_metadata": metadata_raw,
+            "title": {"type": "plain_text", "text": "Resume Session", "emoji": True},
+            "submit": {"type": "plain_text", "text": "Resume", "emoji": True},
+            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "blocks": new_blocks,
+        }
+
+        try:
+            await self.web_client.views_update(view_id=view_id, view=updated_view)
+        except SlackApiError as e:
+            logger.debug(f"Failed to update resume modal: {e}")
 
     def _get_default_opencode_agent_name(self, opencode_agents: list) -> Optional[str]:
         """Resolve the default OpenCode agent name."""

@@ -34,7 +34,7 @@ class _StubIMClient:
         self.messages = []
         self.resume_calls = []
 
-    async def send_message(self, context, text):
+    async def send_message(self, context, text, parse_mode=None):
         ts = f"T{len(self.messages) + 1}"
         self.messages.append((context.channel_id, context.thread_id, text, ts))
         return ts

@@ -702,11 +702,13 @@ class Controller:
             confirmation = (
                 f"✅ Resumed {agent_label} session.\n"
                 f"Session ID: `{session_id}`\n"
-                f"Routing set to {agent_label} for this channel.\n"
-                "Reply in this thread to continue."
+                f"💬 *Click this message and reply in the thread sidebar* to continue with this session.\n"
+                f"_(Sending a new message in the channel will start a fresh session.)_"
             )
 
-            confirmation_ts = await self.im_client.send_message(context, confirmation)
+            confirmation_ts = await self.im_client.send_message(
+                context, confirmation, parse_mode="markdown"
+            )
 
             # If we created a fresh top-level message, use it as the new thread anchor
             mapped_thread = target_thread or confirmation_ts
