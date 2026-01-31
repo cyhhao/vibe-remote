@@ -46,6 +46,34 @@ This file defines how coding agents should work in this repository.
 - Never commit secrets (tokens, credentials files).
 - Avoid destructive git operations unless explicitly requested (e.g., `reset --hard`, force-push).
 
+### Pre-push Lint Check
+
+Before every `git push`, run the lint check to avoid CI failures:
+
+```bash
+# Install ruff if not available
+pip install ruff
+
+# Run lint check on changed Python files
+ruff check <changed-files>
+
+# Or run on all Python files
+ruff check .
+```
+
+Fix any errors before pushing. The CI runs `pre-commit run --all-files` with ruff, so local lint must pass first.
+
+### Worktree Development Flow
+
+For complex features or bug fixes that may take extended time and block the main workspace, use git worktree:
+
+**When to use worktree:**
+- Task is complex and may span multiple sessions
+- Need to keep main workspace clean for quick fixes
+- Working on multiple independent features in parallel
+
+**How to use:** Load the `git-worktree-vibe-flow` skill for detailed setup, workflow, and cleanup instructions.
+
 ## 2) Project-Specific (Vibe Remote)
 
 ### Structure
