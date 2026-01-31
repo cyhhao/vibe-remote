@@ -57,32 +57,73 @@ def normalize_subagent_name(name: str) -> str:
     return (name or "").strip().lower()
 
 
-def list_claude_subagents(search_root: Optional[Path] = None) -> Dict[str, SubagentDefinition]:
-    root = search_root or (Path.home() / ".claude")
-    if not root.exists():
-        return {}
-
-    agent_files: list[Path] = []
-    candidate_dirs = _find_claude_agent_dirs(root)
-    for directory in candidate_dirs:
-        agent_files.extend(directory.glob("*.md"))
-
+def list_claude_subagents(
+    search_root: Optional[Path] = None,
+    project_root: Optional[Path] = None,
+) -> Dict[str, SubagentDefinition]:
+    """List all available Claude subagents.
+    
+    Args:
+        search_root: Global search root (default: ~/.claude)
+        project_root: Project-specific root to also search (e.g., <cwd>)
+    
+    Returns:
+        Dict mapping normalized agent names to their definitions.
+        Project agents override global agents with same name.
+    """
     definitions: Dict[str, SubagentDefinition] = {}
-    for agent_file in agent_files:
-        definition = _parse_claude_agent_definition(agent_file)
-        if not definition:
-            continue
-        key = normalize_subagent_name(definition.name)
-        if key:
-            definitions[key] = definition
+    
+    # Search global agents first
+    root = search_root or (Path.home() / ".claude")
+    if root.exists():
+        agent_files: list[Path] = []
+        candidate_dirs = _find_claude_agent_dirs(root)
+        for directory in candidate_dirs:
+            agent_files.extend(directory.glob("*.md"))
+
+        for agent_file in agent_files:
+            definition = _parse_claude_agent_definition(agent_file)
+            if not definition:
+                continue
+            key = normalize_subagent_name(definition.name)
+            if key:
+                definitions[key] = definition
+    
+    # Search project agents (override global)
+    if project_root:
+        project_agents_dir = project_root / ".claude" / "agents"
+        if project_agents_dir.exists() and project_agents_dir.is_dir():
+            for agent_file in project_agents_dir.glob("*.md"):
+                definition = _parse_claude_agent_definition(agent_file)
+                if not definition:
+                    continue
+                key = normalize_subagent_name(definition.name)
+                if key:
+                    definitions[key] = definition
+    
     return definitions
 
 
-def load_claude_subagent(name: str, search_root: Optional[Path] = None) -> Optional[SubagentDefinition]:
+def load_claude_subagent(
+    name: str,
+    search_root: Optional[Path] = None,
+    project_root: Optional[Path] = None,
+) -> Optional[SubagentDefinition]:
+    """Load a specific Claude subagent by name.
+    
+    Args:
+        name: Agent name to search for
+        search_root: Global search root (default: ~/.claude)
+        project_root: Project-specific root to also search (e.g., <cwd>)
+    
+    Returns:
+        SubagentDefinition if found, None otherwise.
+        Project agents take precedence over global agents.
+    """
     normalized = normalize_subagent_name(name)
     if not normalized:
         return None
-    return list_claude_subagents(search_root).get(normalized)
+    return list_claude_subagents(search_root, project_root).get(normalized)
 
 
 def _find_claude_agent_dirs(root: Path) -> Iterable[Path]:
