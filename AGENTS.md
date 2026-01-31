@@ -28,6 +28,40 @@ This file defines how coding agents should work in this repository.
 - If a review-related subagent exists, call it when the code is ready for review.
 - Address review findings as appropriate until no must-fix issues remain.
 
+### Review Loop for PRs
+
+After creating a PR, follow this iterative review process:
+
+1. **Request review**: Call the reviewer subagent with the PR URL and a summary of changes.
+
+2. **Evaluate feedback**: The reviewer will categorize issues as:
+   - **Critical**: Security vulnerabilities, data loss risks, breaking bugs → Must fix
+   - **Improvements**: Better error handling, edge cases, performance → Should fix
+   - **Nits**: Style, naming, minor optimizations → Discretionary
+
+3. **Fix and push**: Address critical and improvement issues, commit with descriptive message, push to the PR branch.
+
+4. **Re-request review**: Call the reviewer again to verify fixes.
+
+5. **Iterate**: Repeat steps 2-4 until:
+   - No critical issues remain
+   - No new significant improvements are suggested
+   - Only nits or acknowledged trade-offs remain
+
+**When to stop iterating:**
+- Reviewer confirms "no blocking issues" or "can merge"
+- Remaining suggestions are minor optimizations that don't affect correctness or security
+- User explicitly approves the current state
+
+**Example workflow:**
+```
+1st review → Critical: RCE via unvalidated input, Improvement: missing error handling
+   ↓ fix both issues
+2nd review → Improvement: output too large for UI, add pipefail
+   ↓ fix both issues  
+3rd review → Nit: error message wording → acceptable, merge
+```
+
 ### Documentation Updates
 
 - When adding user-visible features, update the user documentation with usage guidance alongside the code changes.
