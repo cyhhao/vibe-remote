@@ -121,7 +121,8 @@
     "setupPermission": "Setup Permission",
     "installHint": "Agent not found. Click to install automatically.",
     "installAgent": "Install",
-    "installing": "Installing..."
+    "installing": "Installing...",
+    "showOutput": "Show details"
   },
   "channelList": {
     "title": "Channel Settings",

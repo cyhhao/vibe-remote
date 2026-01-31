@@ -365,7 +365,30 @@ def codex_models():
 
 @app.route("/agent/<name>/install", methods=["POST"])
 def agent_install(name):
-    """Install an agent CLI tool (opencode, claude, codex)."""
+    """Install an agent CLI tool (opencode, claude, codex).
+
+    Security: Only allow requests from localhost to prevent CSRF/RCE attacks.
+    """
+    # Security: Only allow local requests
+    remote_addr = request.remote_addr or ""
+    if remote_addr not in {"127.0.0.1", "::1"}:
+        return jsonify({"ok": False, "message": "Forbidden: local access only"}), 403
+
+    # Security: Validate Origin header if present (CSRF protection)
+    origin = request.headers.get("Origin")
+    if origin:
+        # Allow localhost origins only
+        from urllib.parse import urlparse
+
+        parsed = urlparse(origin)
+        if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+            return jsonify({"ok": False, "message": "Forbidden: invalid origin"}), 403
+
+    # Security: Allowlist validation
+    allowed_agents = {"opencode", "claude", "codex"}
+    if name not in allowed_agents:
+        return jsonify({"ok": False, "message": f"Unknown agent: {name}"}), 400
+
     from vibe import api
 
     result = api.install_agent(name)

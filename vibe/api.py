@@ -715,20 +715,43 @@ def install_agent(name: str) -> dict:
         {"ok": bool, "message": str, "output": str | None}
     """
     import platform
-    import sys
 
     system = platform.system().lower()
 
+    def _check_binary(binary: str) -> str | None:
+        """Check if a binary exists in PATH. Returns error message if not found."""
+        if shutil.which(binary) is None:
+            return f"{binary} is required but not found. Please install it first."
+        return None
+
     if name == "opencode":
-        # OpenCode: use curl installer
+        # OpenCode: use curl installer (not supported on Windows)
+        if system == "windows":
+            return {
+                "ok": False,
+                "message": "OpenCode installer is not supported on Windows. Please use the manual installation method.",
+                "output": None,
+            }
+        # Check prerequisites
+        for binary in ["curl", "bash"]:
+            error = _check_binary(binary)
+            if error:
+                return {"ok": False, "message": error, "output": None}
         cmd = ["bash", "-c", "curl -fsSL https://opencode.ai/install | bash"]
     elif name == "claude":
         # Claude Code: platform-specific installer
         if system == "windows":
             # Windows: use PowerShell
+            error = _check_binary("powershell")
+            if error:
+                return {"ok": False, "message": error, "output": None}
             cmd = ["powershell", "-Command", "irm https://claude.ai/install.ps1 | iex"]
         else:
             # macOS/Linux: use bash
+            for binary in ["curl", "bash"]:
+                error = _check_binary(binary)
+                if error:
+                    return {"ok": False, "message": error, "output": None}
             cmd = ["bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"]
     elif name == "codex":
         # Codex: prefer npm, fallback to brew on macOS
@@ -756,7 +779,7 @@ def install_agent(name: str) -> dict:
         return {"ok": False, "message": f"Unknown agent: {name}", "output": None}
 
     try:
-        logger.info(f"Installing agent {name} with command: {cmd}")
+        logger.info("Installing agent %s with command: %s", name, cmd)
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -764,26 +787,26 @@ def install_agent(name: str) -> dict:
             timeout=300,  # 5 minute timeout for installation
             env={**os.environ, "PATH": os.environ.get("PATH", "")},
         )
-        output = result.stdout + "\n" + result.stderr if result.stderr else result.stdout
+        output = result.stdout + ("\n" + result.stderr if result.stderr else "")
         if result.returncode == 0:
-            logger.info(f"Agent {name} installed successfully")
+            logger.info("Agent %s installed successfully", name)
             return {
                 "ok": True,
                 "message": f"{name} installed successfully",
                 "output": output.strip(),
             }
         else:
-            logger.warning(f"Agent {name} installation failed: {output}")
+            logger.warning("Agent %s installation failed: %s", name, output)
             return {
                 "ok": False,
                 "message": f"Installation failed (exit code {result.returncode})",
                 "output": output.strip(),
             }
     except subprocess.TimeoutExpired:
-        logger.error(f"Agent {name} installation timed out")
+        logger.error("Agent %s installation timed out", name)
         return {"ok": False, "message": "Installation timed out", "output": None}
     except Exception as e:
-        logger.error(f"Agent {name} installation error: {e}")
+        logger.error("Agent %s installation error: %s", name, e)
         return {"ok": False, "message": str(e), "output": None}
 
 
