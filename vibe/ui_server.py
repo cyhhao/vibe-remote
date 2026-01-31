@@ -369,20 +369,24 @@ def agent_install(name):
 
     Security: Only allow requests from localhost to prevent CSRF/RCE attacks.
     """
+    from urllib.parse import urlparse
+
     # Security: Only allow local requests
     remote_addr = request.remote_addr or ""
     if remote_addr not in {"127.0.0.1", "::1"}:
         return jsonify({"ok": False, "message": "Forbidden: local access only"}), 403
 
-    # Security: Validate Origin header if present (CSRF protection)
+    # Security: Require Origin or Referer header for CSRF protection
     origin = request.headers.get("Origin")
-    if origin:
-        # Allow localhost origins only
-        from urllib.parse import urlparse
+    referer = request.headers.get("Referer")
+    if not origin and not referer:
+        return jsonify({"ok": False, "message": "Forbidden: missing origin header"}), 403
 
-        parsed = urlparse(origin)
-        if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
-            return jsonify({"ok": False, "message": "Forbidden: invalid origin"}), 403
+    # Validate Origin/Referer is from localhost
+    check_header = origin or referer
+    parsed = urlparse(check_header)
+    if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return jsonify({"ok": False, "message": "Forbidden: invalid origin"}), 403
 
     # Security: Allowlist validation
     allowed_agents = {"opencode", "claude", "codex"}

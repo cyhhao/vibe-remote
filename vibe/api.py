@@ -718,11 +718,20 @@ def install_agent(name: str) -> dict:
 
     system = platform.system().lower()
 
+    # Max output size to prevent UI slowdown (last N characters)
+    MAX_OUTPUT_CHARS = 8192
+
     def _check_binary(binary: str) -> str | None:
         """Check if a binary exists in PATH. Returns error message if not found."""
         if shutil.which(binary) is None:
             return f"{binary} is required but not found. Please install it first."
         return None
+
+    def _truncate_output(output: str) -> str:
+        """Truncate output to last MAX_OUTPUT_CHARS characters."""
+        if len(output) <= MAX_OUTPUT_CHARS:
+            return output
+        return "...(truncated)\n" + output[-MAX_OUTPUT_CHARS:]
 
     if name == "opencode":
         # OpenCode: use curl installer (not supported on Windows)
@@ -737,22 +746,23 @@ def install_agent(name: str) -> dict:
             error = _check_binary(binary)
             if error:
                 return {"ok": False, "message": error, "output": None}
-        cmd = ["bash", "-c", "curl -fsSL https://opencode.ai/install | bash"]
+        # Use pipefail to ensure curl failures are detected
+        cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://opencode.ai/install | bash"]
     elif name == "claude":
         # Claude Code: platform-specific installer
         if system == "windows":
-            # Windows: use PowerShell
+            # Windows: use PowerShell with error handling
             error = _check_binary("powershell")
             if error:
                 return {"ok": False, "message": error, "output": None}
-            cmd = ["powershell", "-Command", "irm https://claude.ai/install.ps1 | iex"]
+            cmd = ["powershell", "-NoProfile", "-Command", "irm https://claude.ai/install.ps1 -ErrorAction Stop | iex"]
         else:
-            # macOS/Linux: use bash
+            # macOS/Linux: use bash with pipefail
             for binary in ["curl", "bash"]:
                 error = _check_binary(binary)
                 if error:
                     return {"ok": False, "message": error, "output": None}
-            cmd = ["bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"]
+            cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://claude.ai/install.sh | bash"]
     elif name == "codex":
         # Codex: prefer npm, fallback to brew on macOS
         npm_path = shutil.which("npm")
@@ -788,19 +798,20 @@ def install_agent(name: str) -> dict:
             env={**os.environ, "PATH": os.environ.get("PATH", "")},
         )
         output = result.stdout + ("\n" + result.stderr if result.stderr else "")
+        output = _truncate_output(output.strip())
         if result.returncode == 0:
             logger.info("Agent %s installed successfully", name)
             return {
                 "ok": True,
                 "message": f"{name} installed successfully",
-                "output": output.strip(),
+                "output": output,
             }
         else:
             logger.warning("Agent %s installation failed: %s", name, output)
             return {
                 "ok": False,
                 "message": f"Installation failed (exit code {result.returncode})",
-                "output": output.strip(),
+                "output": output,
             }
     except subprocess.TimeoutExpired:
         logger.error("Agent %s installation timed out", name)
