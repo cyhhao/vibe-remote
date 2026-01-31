@@ -1725,32 +1725,6 @@ class SlackBot(BaseIMClient):
         # Determine effective backend for showing backend-specific options
         effective_backend = selected_backend_value or current_backend or "opencode"
 
-        # Determine initial option
-        initial_require_mention = require_mention_options[0]  # Default
-        if current_require_mention is not _UNSET and current_require_mention is not None:
-            target_value = "true" if current_require_mention else "false"
-            for opt in require_mention_options:
-                if opt["value"] == target_value:
-                    initial_require_mention = opt
-                    break
-
-        require_mention_select = {
-            "type": "static_select",
-            "action_id": "require_mention_select",
-            "placeholder": {"type": "plain_text", "text": "Select @mention behavior"},
-            "options": require_mention_options,
-            "initial_option": initial_require_mention,
-        }
-
-        blocks.append(
-            {
-                "type": "input",
-                "block_id": "require_mention_block",
-                "element": require_mention_select,
-                "label": {"type": "plain_text", "text": "Require @mention to respond"},
-            }
-        )
-
         # OpenCode-specific options (only if opencode is selected)
         if effective_backend == "opencode" and "opencode" in registered_backends:
             # Get current opencode settings
