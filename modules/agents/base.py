@@ -5,9 +5,10 @@ from __future__ import annotations
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from modules.im import MessageContext
+from modules.im.base import FileAttachment
 
 
 @dataclass
@@ -31,6 +32,8 @@ class AgentRequest:
     # Reaction ack: emoji added to user's message, to be removed when result is sent
     ack_reaction_message_id: Optional[str] = None
     ack_reaction_emoji: Optional[str] = None
+    # File attachments (downloaded or with URLs for download)
+    files: Optional[List[FileAttachment]] = None
 
 
 @dataclass
@@ -75,9 +78,7 @@ class BaseAgent(ABC):
             except Exception as err:
                 import logging
 
-                logging.getLogger(__name__).debug(
-                    f"Failed to remove reaction ack: {err}"
-                )
+                logging.getLogger(__name__).debug(f"Failed to remove reaction ack: {err}")
             finally:
                 request.ack_reaction_message_id = None
                 request.ack_reaction_emoji = None
@@ -95,14 +96,10 @@ class BaseAgent(ABC):
     ) -> None:
         if duration_ms is None:
             duration_ms = self._calculate_duration_ms(started_at)
-        formatted = self.im_client.formatter.format_result_message(
-            subtype or "", duration_ms, result_text
-        )
+        formatted = self.im_client.formatter.format_result_message(subtype or "", duration_ms, result_text)
         if suffix:
             formatted = f"{formatted}\n{suffix}"
-        await self.controller.emit_agent_message(
-            context, "result", formatted, parse_mode=parse_mode
-        )
+        await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
         # Remove ack reaction after result is sent
         if request:
             await self._remove_ack_reaction(request)

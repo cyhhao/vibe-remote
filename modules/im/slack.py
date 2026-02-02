@@ -1,9 +1,9 @@
 import asyncio
-import asyncio
 import hashlib
 import logging
 import time
-from typing import Dict, Any, Optional, Callable
+import aiohttp
+from typing import Dict, Any, Optional, Callable, List
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.socket_mode.aiohttp import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
@@ -11,7 +11,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.errors import SlackApiError
 from markdown_to_mrkdwn import SlackMarkdownConverter
 
-from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton
+from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
 from config.v2_config import SlackConfig
 from .formatters import SlackFormatter
 
@@ -194,6 +194,87 @@ class SlackBot(BaseIMClient):
         if not file_id:
             file_id = result.get("files", [{}])[0].get("id")
         return file_id or ""
+
+    async def download_file(
+        self,
+        file_info: Dict[str, Any],
+        max_bytes: int = 20 * 1024 * 1024,  # 20MB default limit
+        timeout_seconds: int = 30,
+    ) -> Optional[bytes]:
+        """Download a Slack file using the private URL.
+
+        Args:
+            file_info: Slack file object containing url_private_download and other metadata
+            max_bytes: Maximum file size to download (default 20MB)
+            timeout_seconds: Request timeout in seconds (default 30s)
+
+        Returns:
+            File content as bytes, or None if download fails
+        """
+        url = file_info.get("url_private_download") or file_info.get("url_private")
+        if not url:
+            logger.warning(f"No download URL for file: {file_info.get('name')}")
+            return None
+
+        # Check file size before download if available
+        file_size = file_info.get("size")
+        if file_size and file_size > max_bytes:
+            logger.warning(f"File too large ({file_size} bytes > {max_bytes}), skipping: {file_info.get('name')}")
+            return None
+
+        try:
+            headers = {"Authorization": f"Bearer {self.config.bot_token}"}
+            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers=headers) as response:
+                    if response.status != 200:
+                        logger.error(f"Failed to download file: HTTP {response.status}")
+                        return None
+
+                    # Check content-length header
+                    content_length = response.headers.get("Content-Length")
+                    if content_length and int(content_length) > max_bytes:
+                        logger.warning(f"File too large ({content_length} bytes), skipping: {file_info.get('name')}")
+                        return None
+
+                    # Stream download with size limit
+                    chunks = []
+                    total_size = 0
+                    async for chunk in response.content.iter_chunked(64 * 1024):
+                        total_size += len(chunk)
+                        if total_size > max_bytes:
+                            logger.warning(f"File exceeds max size during download, aborting: {file_info.get('name')}")
+                            return None
+                        chunks.append(chunk)
+
+                    return b"".join(chunks)
+
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout downloading file: {file_info.get('name')}")
+            return None
+        except Exception as e:
+            logger.error(f"Error downloading Slack file: {e}")
+            return None
+
+    def _extract_file_attachments(self, files: List[Dict[str, Any]]) -> List[FileAttachment]:
+        """Convert Slack file objects to FileAttachment list.
+
+        Args:
+            files: List of Slack file objects from event
+
+        Returns:
+            List of FileAttachment objects
+        """
+        attachments = []
+        for f in files:
+            attachment = FileAttachment(
+                name=f.get("name", "unknown"),
+                mimetype=f.get("mimetype", "application/octet-stream"),
+                url=f.get("url_private_download") or f.get("url_private"),
+                size=f.get("size"),
+            )
+            attachments.append(attachment)
+        return attachments
 
     async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
         """Add a reaction emoji to a Slack message."""
@@ -505,12 +586,18 @@ class SlackBot(BaseIMClient):
             if event.get("bot_id"):
                 return
 
-            # Ignore message subtypes (edited, deleted, joins, etc.)
-            # We only process plain user messages without subtype
+            # Check for file attachments first
+            slack_files = event.get("files", [])
+            has_files = bool(slack_files)
+
+            # Ignore most message subtypes (edited, deleted, joins, etc.)
+            # But allow file-related subtypes when files are present
             event_subtype = event.get("subtype")
+            file_subtypes = {"file_share", "file_comment", "file_mention"}
             if event_subtype:
-                logger.debug(f"Ignoring Slack message with subtype: {event_subtype}")
-                return
+                if not has_files and event_subtype not in file_subtypes:
+                    logger.debug(f"Ignoring Slack message with subtype: {event_subtype}")
+                    return
 
             channel_id = event.get("channel")
 
@@ -523,13 +610,16 @@ class SlackBot(BaseIMClient):
                 logger.info(f"Skipping message event with bot mention: '{text}'")
                 return
 
-            # Ignore messages without user or without actual text
+            # Extract file attachments (slack_files already checked above)
+            file_attachments = self._extract_file_attachments(slack_files) if slack_files else None
+
+            # Ignore messages without user or without actual text/files
             user_id = event.get("user")
             if not user_id:
                 logger.debug("Ignoring Slack message without user id")
                 return
-            if not text:
-                logger.debug("Ignoring Slack message with empty text")
+            if not text and not file_attachments:
+                logger.debug("Ignoring Slack message with empty text and no files")
                 return
 
             # Check if we require mention in channels (not DMs)
@@ -578,6 +668,7 @@ class SlackBot(BaseIMClient):
                 thread_id=thread_id,  # Always have a thread_id
                 message_id=event.get("ts"),
                 platform_specific={"team_id": payload.get("team_id"), "event": event},
+                files=file_attachments,
             )
 
             # Handle slash commands in regular messages
@@ -608,12 +699,17 @@ class SlackBot(BaseIMClient):
             # For Slack: if no thread_ts, use the message's own ts as thread_id (start of thread)
             thread_id = event.get("thread_ts") or event.get("ts")
 
+            # Extract file attachments if present
+            slack_files = event.get("files", [])
+            file_attachments = self._extract_file_attachments(slack_files) if slack_files else None
+
             context = MessageContext(
                 user_id=event.get("user"),
                 channel_id=channel_id,
                 thread_id=thread_id,  # Always have a thread_id
                 message_id=event.get("ts"),
                 platform_specific={"team_id": payload.get("team_id"), "event": event},
+                files=file_attachments,
             )
 
             # Mark thread as active when bot is @mentioned

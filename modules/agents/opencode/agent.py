@@ -58,9 +58,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
         async with lock:
             pending = self._question_handler.get_pending(request.base_session_id)
-            is_modal_open = (
-                pending and request.message == "opencode_question:open_modal"
-            )
+            is_modal_open = pending and request.message == "opencode_question:open_modal"
             is_answer_submission = pending and not is_modal_open
 
             existing_task = self._active_requests.get(request.base_session_id)
@@ -80,15 +78,11 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                         "OpenCode session %s already running; cancelling before new request",
                         request.base_session_id,
                     )
-                    req_info = self._session_manager.get_request_session(
-                        request.base_session_id
-                    )
+                    req_info = self._session_manager.get_request_session(request.base_session_id)
                     if req_info:
                         server = await self._get_server()
                         await server.abort_session(req_info[0], req_info[1])
-                        await self._session_manager.wait_for_session_idle(
-                            server, req_info[0], req_info[1]
-                        )
+                        await self._session_manager.wait_for_session_idle(server, req_info[0], req_info[1])
 
                     existing_task.cancel()
                     try:
@@ -159,9 +153,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         await self._delete_ack(request)
         await self._session_manager.ensure_working_dir(request.working_path)
 
-        session_id = await self._session_manager.get_or_create_session_id(
-            request, server
-        )
+        session_id = await self._session_manager.get_or_create_session_id(request, server)
         if not session_id:
             await self.controller.emit_agent_message(
                 request.context,
@@ -179,9 +171,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         )
 
         if self._session_manager.mark_initialized(session_id):
-            system_text = self.im_client.formatter.format_system_message(
-                request.working_path, "init", session_id
-            )
+            system_text = self.im_client.formatter.format_system_message(request.working_path, "init", session_id)
             await self.controller.emit_agent_message(
                 request.context,
                 "system",
@@ -190,9 +180,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             )
 
         try:
-            override_agent, override_model, override_reasoning = (
-                self.controller.get_opencode_overrides(request.context)
-            )
+            override_agent, override_model, override_reasoning = self.controller.get_opencode_overrides(request.context)
 
             override_agent = request.subagent_name or override_agent
             if request.subagent_name:
@@ -200,13 +188,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 override_reasoning = request.subagent_reasoning_effort
 
             if request.subagent_name and not override_model:
-                override_model = server.get_agent_model_from_config(
-                    request.subagent_name
-                )
+                override_model = server.get_agent_model_from_config(request.subagent_name)
             if request.subagent_name and not override_reasoning:
-                override_reasoning = server.get_agent_reasoning_effort_from_config(
-                    request.subagent_name
-                )
+                override_reasoning = server.get_agent_reasoning_effort_from_config(request.subagent_name)
 
             agent_to_use = override_agent
             if not agent_to_use:
@@ -223,9 +207,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
             reasoning_effort = override_reasoning
             if not reasoning_effort:
-                reasoning_effort = server.get_agent_reasoning_effort_from_config(
-                    agent_to_use
-                )
+                reasoning_effort = server.get_agent_reasoning_effort_from_config(agent_to_use)
 
             baseline_message_ids: set[str] = set()
             try:
@@ -238,14 +220,15 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     if message_id:
                         baseline_message_ids.add(message_id)
             except Exception as err:
-                logger.debug(
-                    f"Failed to snapshot OpenCode messages before prompt: {err}"
-                )
+                logger.debug(f"Failed to snapshot OpenCode messages before prompt: {err}")
+
+            # Prepare message with file attachment info if present
+            prompt_text = self._prepare_message_with_files(request)
 
             await server.prompt_async(
                 session_id=session_id,
                 directory=request.working_path,
-                text=request.message,
+                text=prompt_text,
                 agent=agent_to_use,
                 model=model_dict,
                 reasoning_effort=reasoning_effort,
@@ -317,17 +300,13 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         except Exception as e:
             error_name = type(e).__name__
             error_details = str(e).strip()
-            error_text = (
-                f"{error_name}: {error_details}" if error_details else error_name
-            )
+            error_text = f"{error_name}: {error_details}" if error_details else error_name
 
             logger.error(f"OpenCode request failed: {error_text}", exc_info=True)
             try:
                 await server.abort_session(session_id, request.working_path)
             except Exception as abort_err:
-                logger.warning(
-                    f"Failed to abort OpenCode session after error: {abort_err}"
-                )
+                logger.warning(f"Failed to abort OpenCode session after error: {abort_err}")
 
             # Clean up answer reaction on error
             await self._question_handler.clear(request.base_session_id)
@@ -365,9 +344,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         if opencode_session_id:
             self.settings_manager.remove_active_poll(opencode_session_id)
 
-        await self.controller.emit_agent_message(
-            request.context, "notify", "Terminated OpenCode execution."
-        )
+        await self.controller.emit_agent_message(request.context, "notify", "Terminated OpenCode execution.")
         logger.info(f"OpenCode session {request.base_session_id} terminated via /stop")
         return True
 
@@ -437,9 +414,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     directory=poll_info.working_path,
                 )
             except Exception as err:
-                logger.warning(
-                    f"Failed to verify OpenCode session {session_id} for restoration: {err}"
-                )
+                logger.warning(f"Failed to verify OpenCode session {session_id} for restoration: {err}")
                 stale_poll_ids.append(session_id)
                 continue
 
@@ -455,13 +430,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     break
                 last_assistant_finish = info.get("finish")
 
-            session_still_active = (
-                has_in_progress or last_assistant_finish == "tool-calls"
-            )
+            session_still_active = has_in_progress or last_assistant_finish == "tool-calls"
             if not session_still_active:
-                logger.info(
-                    f"OpenCode session {session_id} has completed, removing from active polls"
-                )
+                logger.info(f"OpenCode session {session_id} has completed, removing from active polls")
                 stale_poll_ids.append(session_id)
                 continue
 
@@ -470,9 +441,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 f"(thread={poll_info.base_session_id}, cwd={poll_info.working_path})"
             )
 
-            task = asyncio.create_task(
-                self._poll_loop.run_restored_poll_loop(poll_info)
-            )
+            task = asyncio.create_task(self._poll_loop.run_restored_poll_loop(poll_info))
             self._active_requests[poll_info.base_session_id] = task
             self._session_manager.set_request_session(
                 poll_info.base_session_id,
@@ -491,3 +460,56 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             logger.info(f"Removed {len(stale_poll_ids)} stale active poll(s)")
 
         return restored_count
+
+    def _prepare_message_with_files(self, request: AgentRequest) -> str:
+        """Prepare message with file attachment information.
+
+        If there are file attachments, append file info to the message
+        so the agent knows what files are available to read.
+        Files are stored in ~/.vibe_remote/attachments/{channel_id}/.
+
+        Args:
+            request: The agent request containing message and files
+
+        Returns:
+            Message string, potentially with file info appended
+        """
+        if not request.files:
+            return request.message
+
+        # Build file info section
+        images = []
+        other_files = []
+
+        for attachment in request.files:
+            if not attachment.local_path:
+                continue
+
+            is_image = (attachment.mimetype or "").startswith("image/")
+            if is_image:
+                images.append(attachment)
+            else:
+                other_files.append(attachment)
+
+        if not images and not other_files:
+            return request.message
+
+        # Format file info as a clear block at the end
+        file_lines = ["", "[User Attachments]"]
+
+        for img in images:
+            size_str = f", {img.size} bytes" if img.size else ""
+            file_lines.append(f"- Image: {img.local_path} ({img.mimetype}{size_str})")
+
+        for f in other_files:
+            size_str = f", {f.size} bytes" if f.size else ""
+            file_lines.append(f"- File: {f.local_path} ({f.mimetype}{size_str})")
+
+        file_info = "\n".join(file_lines)
+
+        # If there's no text message, just use file info (without leading newline)
+        if not request.message or not request.message.strip():
+            return file_info.lstrip()
+
+        # Append file info to message
+        return f"{request.message}{file_info}"

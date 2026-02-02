@@ -16,3 +16,4 @@ def test_ensure_data_dirs(tmp_path, monkeypatch):
     assert (tmp_path / ".vibe_remote" / "state").exists()
     assert (tmp_path / ".vibe_remote" / "logs").exists()
     assert (tmp_path / ".vibe_remote" / "runtime").exists()
+    assert (tmp_path / ".vibe_remote" / "attachments").exists()

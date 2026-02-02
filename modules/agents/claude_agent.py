@@ -6,6 +6,7 @@ from typing import Callable, Optional
 from claude_agent_sdk import TextBlock, ToolUseBlock
 
 from modules.agents.base import AgentRequest, BaseAgent
+
 # NOTE: AskUserQuestion support is disabled because Claude Code SDK cannot
 # respond to it programmatically. See: https://github.com/anthropics/claude-code/issues/10168
 # Keeping the import for future use when SDK adds support.
@@ -72,10 +73,11 @@ class ClaudeAgent(BaseAgent):
                     (request.ack_reaction_message_id, request.ack_reaction_emoji)
                 )
 
-            await client.query(request.message, session_id=request.composite_session_id)
-            logger.info(
-                f"Sent message to Claude for session {request.composite_session_id}"
-            )
+            # Prepare message with file attachment info if present
+            message = self._prepare_message_with_files(request)
+
+            await client.query(message, session_id=request.composite_session_id)
+            logger.info(f"Sent message to Claude for session {request.composite_session_id}")
 
             await self._delete_ack(context, request)
 
@@ -84,25 +86,19 @@ class ClaudeAgent(BaseAgent):
                 or self.receiver_tasks[request.composite_session_id].done()
             ):
                 self.receiver_tasks[request.composite_session_id] = asyncio.create_task(
-                    self._receive_messages(
-                        client, request.base_session_id, request.working_path, context
-                    )
+                    self._receive_messages(client, request.base_session_id, request.working_path, context)
                 )
         except Exception as e:
             logger.error(f"Error processing Claude message: {e}", exc_info=True)
             # Clean up the specific reaction for this request (not FIFO)
-            await self._remove_specific_pending_reaction(
-                request.composite_session_id, context, request
-            )
-            await self.session_handler.handle_session_error(
-                request.composite_session_id, context, e
-            )
+            await self._remove_specific_pending_reaction(request.composite_session_id, context, request)
+            await self.session_handler.handle_session_error(request.composite_session_id, context, e)
         finally:
             await self._delete_ack(context, request)
 
     async def _handle_question_callback(self, request: AgentRequest) -> None:
         """Handle question-related callbacks (button clicks, modal submissions).
-        
+
         NOTE: This method is disabled because Claude Code SDK cannot respond to
         AskUserQuestion programmatically. See: https://github.com/anthropics/claude-code/issues/10168
         """
@@ -116,9 +112,7 @@ class ClaudeAgent(BaseAgent):
 
     async def clear_sessions(self, settings_key: str) -> int:
         """Clear Claude sessions scoped to the provided settings key."""
-        agent_map = self.settings_manager.sessions_store.get_agent_map(
-            settings_key, self.name
-        )
+        agent_map = self.settings_manager.sessions_store.get_agent_map(settings_key, self.name)
         session_bases_to_clear = set(agent_map.keys())
 
         self.settings_manager.clear_agent_sessions(settings_key, self.name)
@@ -152,9 +146,7 @@ class ClaudeAgent(BaseAgent):
             return False
 
         client = self.claude_sessions[composite_key]
-        await self.controller.emit_agent_message(
-            request.context, "notify", "🛑 Interrupting Claude session..."
-        )
+        await self.controller.emit_agent_message(request.context, "notify", "🛑 Interrupting Claude session...")
         try:
             if hasattr(client, "interrupt"):
                 await client.interrupt()
@@ -199,13 +191,9 @@ class ClaudeAgent(BaseAgent):
 
             async for message in client.receive_messages():
                 try:
-                    claude_session_id = self._maybe_capture_session_id(
-                        message, base_session_id, settings_key
-                    )
+                    claude_session_id = self._maybe_capture_session_id(message, base_session_id, settings_key)
                     if claude_session_id:
-                        logger.info(
-                            f"Captured Claude session id {claude_session_id} for {base_session_id}"
-                        )
+                        logger.info(f"Captured Claude session id {claude_session_id} for {base_session_id}")
 
                     if self.claude_client._is_skip_message(message):
                         continue
@@ -231,9 +219,7 @@ class ClaudeAgent(BaseAgent):
                                     formatter.format_toolcall(
                                         block.name,
                                         block.input,
-                                        get_relative_path=lambda path: self.get_relative_path(
-                                            path, context
-                                        ),
+                                        get_relative_path=lambda path: self.get_relative_path(path, context),
                                     )
                                 )
                             elif isinstance(block, TextBlock):
@@ -245,9 +231,7 @@ class ClaudeAgent(BaseAgent):
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
-                        pending = self._pending_assistant_message.pop(
-                            composite_key, None
-                        )
+                        pending = self._pending_assistant_message.pop(composite_key, None)
                         if pending:
                             await self.controller.emit_agent_message(
                                 context,
@@ -265,12 +249,8 @@ class ClaudeAgent(BaseAgent):
                             )
 
                         if text_parts:
-                            formatted_assistant = formatter.format_assistant_message(
-                                text_parts
-                            )
-                            self._pending_assistant_message[composite_key] = (
-                                formatted_assistant
-                            )
+                            formatted_assistant = formatter.format_assistant_message(text_parts)
+                            self._pending_assistant_message[composite_key] = formatted_assistant
 
                         # AskUserQuestion handling disabled - SDK cannot respond programmatically
                         # See: https://github.com/anthropics/claude-code/issues/10168
@@ -301,9 +281,7 @@ class ClaudeAgent(BaseAgent):
                     if message_type == "system":
                         formatted_message = self.claude_client.format_message(
                             message,
-                            get_relative_path=lambda path: self.get_relative_path(
-                                path, context
-                            ),
+                            get_relative_path=lambda path: self.get_relative_path(path, context),
                         )
                         if formatted_message and formatted_message.strip():
                             await self.controller.emit_agent_message(
@@ -315,9 +293,7 @@ class ClaudeAgent(BaseAgent):
                         continue
 
                     if message_type == "result":
-                        pending = self._pending_assistant_message.pop(
-                            composite_key, None
-                        )
+                        pending = self._pending_assistant_message.pop(composite_key, None)
                         result_text = getattr(message, "result", None)
                         used_fallback = False
                         if not result_text:
@@ -346,21 +322,15 @@ class ClaudeAgent(BaseAgent):
                         await self._remove_pending_reaction(composite_key, context)
 
                         self._last_assistant_text.pop(composite_key, None)
-                        session = await self.session_manager.get_or_create_session(
-                            context.user_id, context.channel_id
-                        )
+                        session = await self.session_manager.get_or_create_session(context.user_id, context.channel_id)
                         if session:
-                            session.session_active[
-                                f"{base_session_id}:{working_path}"
-                            ] = False
+                            session.session_active[f"{base_session_id}:{working_path}"] = False
                         continue
 
                     # Ignore UserMessage/tool results; toolcalls are emitted from ToolUseBlock.
                     continue
                 except Exception as e:
-                    logger.error(
-                        f"Error processing message from Claude: {e}", exc_info=True
-                    )
+                    logger.error(f"Error processing message from Claude: {e}", exc_info=True)
                     continue
         except Exception as e:
             composite_key = f"{base_session_id}:{working_path}"
@@ -387,9 +357,7 @@ class ClaudeAgent(BaseAgent):
             finally:
                 request.ack_message_id = None
 
-    async def _remove_pending_reaction(
-        self, composite_key: str, context: MessageContext
-    ) -> None:
+    async def _remove_pending_reaction(self, composite_key: str, context: MessageContext) -> None:
         """Remove the oldest stored reaction for a session after result is sent.
 
         Uses FIFO queue to handle multiple messages in the same session.
@@ -406,9 +374,7 @@ class ClaudeAgent(BaseAgent):
             except Exception as err:
                 logger.debug(f"Failed to remove reaction ack: {err}")
 
-    async def _remove_ack_reaction_direct(
-        self, context: MessageContext, request: AgentRequest
-    ) -> None:
+    async def _remove_ack_reaction_direct(self, context: MessageContext, request: AgentRequest) -> None:
         """Remove ack reaction directly from request (for error paths before queuing)."""
         if request.ack_reaction_message_id and request.ack_reaction_emoji:
             try:
@@ -449,9 +415,7 @@ class ClaudeAgent(BaseAgent):
                     logger.debug(f"Failed to remove reaction ack: {err}")
                 return
 
-    async def _clear_pending_reactions(
-        self, composite_key: str, context: MessageContext
-    ) -> None:
+    async def _clear_pending_reactions(self, composite_key: str, context: MessageContext) -> None:
         """Clear all pending reactions for a session (for error cleanup)."""
         reactions = self._pending_reactions.pop(composite_key, None)
         if reactions:
@@ -461,9 +425,7 @@ class ClaudeAgent(BaseAgent):
                 except Exception as err:
                     logger.debug(f"Failed to remove reaction ack: {err}")
 
-    def get_relative_path(
-        self, abs_path: str, context: Optional[MessageContext] = None
-    ) -> str:
+    def get_relative_path(self, abs_path: str, context: Optional[MessageContext] = None) -> str:
         """Convert absolute path to relative path from working directory."""
         try:
             cwd = self.session_handler.get_working_path(context)
@@ -502,9 +464,7 @@ class ClaudeAgent(BaseAgent):
         ):
             session_id = message.data.get("session_id")
             if session_id:
-                self.session_handler.capture_session_id(
-                    base_session_id, session_id, settings_key
-                )
+                self.session_handler.capture_session_id(base_session_id, session_id, settings_key)
                 return session_id
         return None
 
@@ -515,9 +475,7 @@ class ClaudeAgent(BaseAgent):
             if isinstance(block, TextBlock):
                 text = block.text.strip() if block.text else ""
                 if text:
-                    parts.append(
-                        self.claude_client.formatter.escape_special_chars(text)
-                    )
+                    parts.append(self.claude_client.formatter.escape_special_chars(text))
         return "\n\n".join(parts).strip()
 
     def _detect_message_type(self, message) -> Optional[str]:
@@ -532,3 +490,56 @@ class ClaudeAgent(BaseAgent):
             "ResultMessage": "result",
         }
         return mapping.get(class_name)
+
+    def _prepare_message_with_files(self, request: AgentRequest) -> str:
+        """Prepare message with file attachment information.
+
+        If there are file attachments, append file info to the message
+        so the agent knows what files are available to read.
+        Files are stored in ~/.vibe_remote/attachments/{channel_id}/.
+
+        Args:
+            request: The agent request containing message and files
+
+        Returns:
+            Message string, potentially with file info appended
+        """
+        if not request.files:
+            return request.message
+
+        # Build file info section
+        images = []
+        other_files = []
+
+        for attachment in request.files:
+            if not attachment.local_path:
+                continue
+
+            is_image = (attachment.mimetype or "").startswith("image/")
+            if is_image:
+                images.append(attachment)
+            else:
+                other_files.append(attachment)
+
+        if not images and not other_files:
+            return request.message
+
+        # Format file info as a clear block at the end
+        file_lines = ["", "[User Attachments]"]
+
+        for img in images:
+            size_str = f", {img.size} bytes" if img.size else ""
+            file_lines.append(f"- Image: {img.local_path} ({img.mimetype}{size_str})")
+
+        for f in other_files:
+            size_str = f", {f.size} bytes" if f.size else ""
+            file_lines.append(f"- File: {f.local_path} ({f.mimetype}{size_str})")
+
+        file_info = "\n".join(file_lines)
+
+        # If there's no text message, just use file info (without leading newline)
+        if not request.message or not request.message.strip():
+            return file_info.lstrip()
+
+        # Append file info to message
+        return f"{request.message}{file_info}"
