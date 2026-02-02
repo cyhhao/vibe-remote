@@ -118,7 +118,11 @@
     "cliPathDetection": "CLI path detection and enablement",
     "recommended": "(recommended)",
     "permissionHint": "OpenCode requires permission config to skip approval prompts.",
-    "setupPermission": "Setup Permission"
+    "setupPermission": "Setup Permission",
+    "installHint": "Agent not found. Click to install automatically.",
+    "installAgent": "Install",
+    "installing": "Installing...",
+    "showOutput": "Show details"
   },
   "channelList": {
     "title": "Channel Settings",

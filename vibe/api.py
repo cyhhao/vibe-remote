@@ -84,9 +84,7 @@ def save_settings(payload: dict) -> dict:
         )
         channels[channel_id] = ChannelSettings(
             enabled=channel_payload.get("enabled", True),
-            show_message_types=normalize_show_message_types(
-                channel_payload.get("show_message_types")
-            ),
+            show_message_types=normalize_show_message_types(channel_payload.get("show_message_types")),
             custom_cwd=channel_payload.get("custom_cwd"),
             routing=routing,
             require_mention=channel_payload.get("require_mention"),
@@ -191,9 +189,7 @@ async def opencode_options_async(cwd: str) -> dict:
         if not config.opencode:
             return {"ok": False, "error": "opencode disabled"}
         opencode_config = config.opencode
-        timeout_seconds = min(
-            10.0, float(opencode_config.request_timeout_seconds or 10)
-        )
+        timeout_seconds = min(10.0, float(opencode_config.request_timeout_seconds or 10))
 
         def _build_reasoning_options(
             models: dict,
@@ -201,11 +197,7 @@ async def opencode_options_async(cwd: str) -> dict:
         ) -> dict:
             options: dict = {}
             for provider in models.get("providers", []):
-                provider_id = (
-                    provider.get("id")
-                    or provider.get("provider_id")
-                    or provider.get("name")
-                )
+                provider_id = provider.get("id") or provider.get("provider_id") or provider.get("name")
                 if not provider_id:
                     continue
                 model_ids = []
@@ -214,9 +206,7 @@ async def opencode_options_async(cwd: str) -> dict:
                     model_ids = list(provider_models.keys())
                 elif isinstance(provider_models, list):
                     model_ids = [
-                        model.get("id")
-                        for model in provider_models
-                        if isinstance(model, dict) and model.get("id")
+                        model.get("id") for model in provider_models if isinstance(model, dict) and model.get("id")
                     ]
                 for model_id in model_ids:
                     model_key = f"{provider_id}/{model_id}"
@@ -229,18 +219,10 @@ async def opencode_options_async(cwd: str) -> dict:
             request_timeout_seconds=opencode_config.request_timeout_seconds,
         )
         await asyncio.wait_for(server.ensure_running(), timeout=timeout_seconds)
-        agents = await asyncio.wait_for(
-            server.get_available_agents(expanded_cwd), timeout=timeout_seconds
-        )
-        models = await asyncio.wait_for(
-            server.get_available_models(expanded_cwd), timeout=timeout_seconds
-        )
-        defaults = await asyncio.wait_for(
-            server.get_default_config(expanded_cwd), timeout=timeout_seconds
-        )
-        reasoning_options = _build_reasoning_options(
-            models, build_reasoning_effort_options
-        )
+        agents = await asyncio.wait_for(server.get_available_agents(expanded_cwd), timeout=timeout_seconds)
+        models = await asyncio.wait_for(server.get_available_models(expanded_cwd), timeout=timeout_seconds)
+        defaults = await asyncio.wait_for(server.get_default_config(expanded_cwd), timeout=timeout_seconds)
+        reasoning_options = _build_reasoning_options(models, build_reasoning_effort_options)
         data = {
             "agents": agents,
             "models": models,
@@ -264,9 +246,7 @@ def _settings_to_payload(store: SettingsStore) -> dict:
     for channel_id, settings in store.settings.channels.items():
         payload["channels"][channel_id] = {
             "enabled": settings.enabled,
-            "show_message_types": normalize_show_message_types(
-                settings.show_message_types
-            ),
+            "show_message_types": normalize_show_message_types(settings.show_message_types),
             "custom_cwd": settings.custom_cwd,
             "require_mention": settings.require_mention,
             "routing": {
@@ -359,12 +339,8 @@ def get_version_info() -> dict:
             # Simple version comparison (works for semver)
             if latest and latest != current:
                 try:
-                    current_parts = [
-                        int(x) for x in current.split(".")[:3] if x.isdigit()
-                    ]
-                    latest_parts = [
-                        int(x) for x in latest.split(".")[:3] if x.isdigit()
-                    ]
+                    current_parts = [int(x) for x in current.split(".")[:3] if x.isdigit()]
+                    latest_parts = [int(x) for x in latest.split(".")[:3] if x.isdigit()]
                     result["has_update"] = latest_parts > current_parts
                 except (ValueError, AttributeError):
                     result["has_update"] = latest != current
@@ -421,8 +397,7 @@ def do_upgrade(auto_restart: bool = True) -> dict:
 
             return {
                 "ok": True,
-                "message": "Upgrade successful."
-                + (" Restarting..." if restarting else " Please restart vibe."),
+                "message": "Upgrade successful." + (" Restarting..." if restarting else " Please restart vibe."),
                 "output": result.stdout,
                 "restarting": restarting,
             }
@@ -489,9 +464,7 @@ def setup_opencode_permission() -> dict:
                 }
 
             config["permission"] = "allow"
-            config_path.write_text(
-                json.dumps(config, indent=2) + "\n", encoding="utf-8"
-            )
+            config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
             return {
                 "ok": True,
                 "message": "Permission set to 'allow'",
@@ -508,9 +481,7 @@ def setup_opencode_permission() -> dict:
     config_path = config_paths[0]
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(
-            json.dumps({"permission": "allow"}, indent=2) + "\n", encoding="utf-8"
-        )
+        config_path.write_text(json.dumps({"permission": "allow"}, indent=2) + "\n", encoding="utf-8")
         return {
             "ok": True,
             "message": "Permission set to 'allow'",
@@ -583,6 +554,7 @@ def parse_claude_agent_file(agent_path: str) -> Optional[dict]:
         metadata: dict = {}
         try:
             import yaml
+
             parsed = yaml.safe_load(frontmatter_text)
             if isinstance(parsed, dict):
                 metadata = parsed
@@ -598,7 +570,7 @@ def parse_claude_agent_file(agent_path: str) -> Optional[dict]:
                         metadata[key] = value
 
         # Extract body (system prompt)
-        body_lines = lines[end_idx + 1:]
+        body_lines = lines[end_idx + 1 :]
         body = "\n".join(body_lines).strip()
 
         # Parse tools if present
@@ -648,7 +620,7 @@ def claude_agents(cwd: Optional[str] = None) -> dict:
     project_dir: Optional[Path] = None
     if cwd:
         try:
-            project_dir = (Path(cwd).expanduser().resolve() / ".claude" / "agents")
+            project_dir = Path(cwd).expanduser().resolve() / ".claude" / "agents"
         except Exception:
             project_dir = None
 
@@ -728,6 +700,125 @@ def claude_models() -> dict:
 
     uniq = sorted({x for x in options if x})
     return {"ok": True, "models": uniq}
+
+
+def install_agent(name: str) -> dict:
+    """Install an agent CLI tool.
+
+    Supported agents:
+    - opencode: curl -fsSL https://opencode.ai/install | bash
+    - claude: curl -fsSL https://claude.ai/install.sh | bash (macOS/Linux)
+              irm https://claude.ai/install.ps1 | iex (Windows)
+    - codex: npm install -g @openai/codex
+
+    Returns:
+        {"ok": bool, "message": str, "output": str | None}
+    """
+    import platform
+
+    system = platform.system().lower()
+
+    # Max output size to prevent UI slowdown (last N characters)
+    MAX_OUTPUT_CHARS = 8192
+
+    def _check_binary(binary: str) -> str | None:
+        """Check if a binary exists in PATH. Returns error message if not found."""
+        if shutil.which(binary) is None:
+            return f"{binary} is required but not found. Please install it first."
+        return None
+
+    def _truncate_output(output: str) -> str:
+        """Truncate output to last MAX_OUTPUT_CHARS characters."""
+        if len(output) <= MAX_OUTPUT_CHARS:
+            return output
+        return "...(truncated)\n" + output[-MAX_OUTPUT_CHARS:]
+
+    if name == "opencode":
+        # OpenCode: use curl installer (not supported on Windows)
+        if system == "windows":
+            return {
+                "ok": False,
+                "message": "OpenCode installer is not supported on Windows. Please use the manual installation method.",
+                "output": None,
+            }
+        # Check prerequisites
+        for binary in ["curl", "bash"]:
+            error = _check_binary(binary)
+            if error:
+                return {"ok": False, "message": error, "output": None}
+        # Use pipefail to ensure curl failures are detected
+        cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://opencode.ai/install | bash"]
+    elif name == "claude":
+        # Claude Code: platform-specific installer
+        if system == "windows":
+            # Windows: use PowerShell with error handling
+            error = _check_binary("powershell")
+            if error:
+                return {"ok": False, "message": error, "output": None}
+            cmd = ["powershell", "-NoProfile", "-Command", "irm https://claude.ai/install.ps1 -ErrorAction Stop | iex"]
+        else:
+            # macOS/Linux: use bash with pipefail
+            for binary in ["curl", "bash"]:
+                error = _check_binary(binary)
+                if error:
+                    return {"ok": False, "message": error, "output": None}
+            cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://claude.ai/install.sh | bash"]
+    elif name == "codex":
+        # Codex: prefer npm, fallback to brew on macOS
+        npm_path = shutil.which("npm")
+        if npm_path:
+            cmd = [npm_path, "install", "-g", "@openai/codex"]
+        elif system == "darwin":
+            # macOS: try brew cask
+            brew_path = shutil.which("brew")
+            if brew_path:
+                cmd = [brew_path, "install", "--cask", "codex"]
+            else:
+                return {
+                    "ok": False,
+                    "message": "npm or brew not found. Please install Node.js or Homebrew first.",
+                    "output": None,
+                }
+        else:
+            return {
+                "ok": False,
+                "message": "npm not found. Please install Node.js first.",
+                "output": None,
+            }
+    else:
+        return {"ok": False, "message": f"Unknown agent: {name}", "output": None}
+
+    try:
+        logger.info("Installing agent %s with command: %s", name, cmd)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minute timeout for installation
+            env={**os.environ, "PATH": os.environ.get("PATH", "")},
+        )
+        output = result.stdout + ("\n" + result.stderr if result.stderr else "")
+        output = _truncate_output(output.strip())
+        if result.returncode == 0:
+            logger.info("Agent %s installed successfully", name)
+            return {
+                "ok": True,
+                "message": f"{name} installed successfully",
+                "output": output,
+            }
+        else:
+            logger.warning("Agent %s installation failed: %s", name, output)
+            return {
+                "ok": False,
+                "message": f"Installation failed (exit code {result.returncode})",
+                "output": output,
+            }
+    except subprocess.TimeoutExpired:
+        logger.error("Agent %s installation timed out", name)
+        return {"ok": False, "message": "Installation timed out", "output": None}
+    except Exception as e:
+        logger.error("Agent %s installation error: %s", name, e)
+        return {"ok": False, "message": str(e), "output": None}
 
 
 def codex_models() -> dict:

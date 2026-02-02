@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, X, RefreshCw, Search, Settings } from 'lucide-react';
+import { Check, X, RefreshCw, Search, Settings, Download, ChevronDown, ChevronUp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
@@ -32,8 +32,14 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   );
   const [permissionState, setPermissionState] = useState<PermissionState>('idle');
   const [permissionMessage, setPermissionMessage] = useState<string>('');
-
+  // Per-agent install state to prevent race conditions
+  const [installingAgents, setInstallingAgents] = useState<Record<string, boolean>>({});
+  const [installResults, setInstallResults] = useState<Record<string, { ok: boolean; message: string; output?: string | null }>>({});
+  const [expandedOutputs, setExpandedOutputs] = useState<Record<string, boolean>>({});
   const isMissing = (agent: AgentState) => agent.status === 'missing';
+
+  // Check if any agent is currently installing
+  const isAnyInstalling = Object.values(installingAgents).some(Boolean);
 
   useEffect(() => {
     if (!data.agents) {
@@ -86,6 +92,38 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
       setPermissionState('error');
       setPermissionMessage(String(e));
     }
+  };
+
+  const installAgent = async (name: string) => {
+    // Prevent multiple concurrent installations
+    if (isAnyInstalling) return;
+
+    setInstallingAgents((prev) => ({ ...prev, [name]: true }));
+    setInstallResults((prev) => ({ ...prev, [name]: { ok: false, message: '', output: null } }));
+    setExpandedOutputs((prev) => ({ ...prev, [name]: false }));
+
+    try {
+      const result = await api.installAgent(name);
+      setInstallResults((prev) => ({
+        ...prev,
+        [name]: { ok: result.ok, message: result.message, output: result.output },
+      }));
+      if (result.ok) {
+        // Re-detect after successful installation
+        await detect(name);
+      }
+    } catch (e) {
+      setInstallResults((prev) => ({
+        ...prev,
+        [name]: { ok: false, message: String(e), output: null },
+      }));
+    } finally {
+      setInstallingAgents((prev) => ({ ...prev, [name]: false }));
+    }
+  };
+
+  const toggleOutput = (name: string) => {
+    setExpandedOutputs((prev) => ({ ...prev, [name]: !prev[name] }));
   };
 
   const canContinue = Object.values(agents).some((agent) => agent.enabled);
@@ -171,6 +209,54 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                     </button>
                   </div>
               </div>
+
+              {/* One-click install button when agent is missing */}
+              {isMissing(agent) && (
+                <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-800 mb-2">{t('agentDetection.installHint')}</p>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <button
+                        onClick={() => installAgent(name)}
+                        disabled={isAnyInstalling}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {installingAgents[name] ? (
+                          <RefreshCw size={14} className="animate-spin" />
+                        ) : (
+                          <Download size={14} />
+                        )}
+                        {installingAgents[name] ? t('agentDetection.installing') : t('agentDetection.installAgent')}
+                      </button>
+                      {installResults[name]?.message && (
+                        <span className={clsx(
+                          "text-sm",
+                          installResults[name].ok ? "text-green-600" : "text-red-600"
+                        )}>
+                          {installResults[name].message}
+                        </span>
+                      )}
+                    </div>
+                    {/* Expandable output section */}
+                    {installResults[name]?.output && (
+                      <div className="mt-1">
+                        <button
+                          onClick={() => toggleOutput(name)}
+                          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                        >
+                          {expandedOutputs[name] ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                          {t('agentDetection.showOutput')}
+                        </button>
+                        {expandedOutputs[name] && (
+                          <pre className="mt-2 p-2 bg-gray-100 border border-gray-200 rounded text-xs text-gray-700 overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
+                            {installResults[name].output}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {name === 'opencode' && agent.status === 'ok' && (
                 <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">

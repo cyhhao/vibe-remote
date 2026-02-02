@@ -90,9 +90,7 @@ def status():
     if running:
         payload["service_pid"] = payload.get("service_pid") or payload["pid"]
     elif payload.get("state") == "running":
-        runtime.write_status(
-            "stopped", "process not running", None, payload.get("ui_pid")
-        )
+        runtime.write_status("stopped", "process not running", None, payload.get("ui_pid"))
         payload = runtime.read_status()
         payload["running"] = False
         payload["pid"] = None
@@ -211,9 +209,7 @@ def ui_reload():
         from config import paths as config_paths
 
         working_dir = get_working_dir()
-        command = (
-            f"from vibe.ui_server import run_ui_server; run_ui_server('{host}', {port})"
-        )
+        command = f"from vibe.ui_server import run_ui_server; run_ui_server('{host}', {port})"
         stdout_path = config_paths.get_runtime_dir() / "ui_stdout.log"
         stderr_path = config_paths.get_runtime_dir() / "ui_stderr.log"
         stdout = stdout_path.open("ab")
@@ -228,9 +224,7 @@ def ui_reload():
         )
         stdout.close()
         stderr.close()
-        config_paths.get_runtime_ui_pid_path().write_text(
-            str(process.pid), encoding="utf-8"
-        )
+        config_paths.get_runtime_ui_pid_path().write_text(str(process.pid), encoding="utf-8")
         runtime.write_status(
             status.get("state", "running"),
             status.get("detail"),
@@ -291,9 +285,7 @@ def logs():
         with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             all_lines = f.readlines()
             recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
-        log_pattern = re.compile(
-            r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$"
-        )
+        log_pattern = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
         logs_list = []
         for line in recent_lines:
             line = line.rstrip("\n")
@@ -371,6 +363,42 @@ def codex_models():
     return jsonify(api.codex_models())
 
 
+@app.route("/agent/<name>/install", methods=["POST"])
+def agent_install(name):
+    """Install an agent CLI tool (opencode, claude, codex).
+
+    Security: Only allow requests from localhost to prevent CSRF/RCE attacks.
+    """
+    from urllib.parse import urlparse
+
+    # Security: Only allow local requests
+    remote_addr = request.remote_addr or ""
+    if remote_addr not in {"127.0.0.1", "::1"}:
+        return jsonify({"ok": False, "message": "Forbidden: local access only"}), 403
+
+    # Security: Require Origin or Referer header for CSRF protection
+    origin = request.headers.get("Origin")
+    referer = request.headers.get("Referer")
+    if not origin and not referer:
+        return jsonify({"ok": False, "message": "Forbidden: missing origin header"}), 403
+
+    # Validate Origin/Referer is from localhost
+    check_header = origin or referer
+    parsed = urlparse(check_header)
+    if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return jsonify({"ok": False, "message": "Forbidden: invalid origin"}), 403
+
+    # Security: Allowlist validation
+    allowed_agents = {"opencode", "claude", "codex"}
+    if name not in allowed_agents:
+        return jsonify({"ok": False, "message": f"Unknown agent: {name}"}), 400
+
+    from vibe import api
+
+    result = api.install_agent(name)
+    return jsonify(result)
+
+
 # =============================================================================
 # Static Files (SPA)
 # =============================================================================
@@ -392,17 +420,12 @@ def serve_static(path):
     resolved_path = file_path.resolve()
 
     # Security check: ensure path is within ui_dist
-    if (
-        ui_dist.resolve() not in resolved_path.parents
-        and resolved_path != ui_dist.resolve()
-    ):
+    if ui_dist.resolve() not in resolved_path.parents and resolved_path != ui_dist.resolve():
         return jsonify({"error": "not_found"}), 404
 
     if resolved_path.exists() and resolved_path.is_file():
         mime_type, _ = mimetypes.guess_type(str(resolved_path))
-        return send_file(
-            resolved_path, mimetype=mime_type or "application/octet-stream"
-        )
+        return send_file(resolved_path, mimetype=mime_type or "application/octet-stream")
 
     # SPA fallback: serve index.html for routes without file extension
     if "." not in path:
