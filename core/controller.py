@@ -86,10 +86,8 @@ class Controller:
         self.settings_manager = SettingsManager()
 
         # Agent routing - use configured default_backend
-        default_backend = getattr(self.config, 'default_backend', 'opencode')
-        self.agent_router = AgentRouter.from_file(
-            None, platform=self.config.platform, default_backend=default_backend
-        )
+        default_backend = getattr(self.config, "default_backend", "opencode")
+        self.agent_router = AgentRouter.from_file(None, platform=self.config.platform, default_backend=default_backend)
 
         # Inject settings_manager into SlackBot if it's Slack platform
         if self.config.platform == "slack":
@@ -137,8 +135,7 @@ class Controller:
             for fallback in ["opencode", "claude", "codex"]:
                 if fallback in registered:
                     logger.warning(
-                        f"Configured default_backend '{current_default}' is not enabled. "
-                        f"Falling back to '{fallback}'."
+                        f"Configured default_backend '{current_default}' is not enabled. Falling back to '{fallback}'."
                     )
                     self.agent_router.global_default = fallback
                     for route in self.agent_router.platform_routes.values():
@@ -149,8 +146,7 @@ class Controller:
             if registered:
                 fallback = next(iter(registered))
                 logger.warning(
-                    f"Configured default_backend '{current_default}' is not enabled. "
-                    f"Falling back to '{fallback}'."
+                    f"Configured default_backend '{current_default}' is not enabled. Falling back to '{fallback}'."
                 )
                 self.agent_router.global_default = fallback
                 for route in self.agent_router.platform_routes.values():
@@ -267,7 +263,7 @@ class Controller:
 
     def update_thread_message_id(self, context: MessageContext) -> None:
         """Update the current message_id for a thread.
-        
+
         Call this when processing a new user message to ensure subsequent
         log messages (from agents) are grouped with this message.
         """
@@ -578,6 +574,7 @@ class Controller:
         show_message_types: list,
         channel_id: Optional[str] = None,
         require_mention: Optional[bool] = None,
+        language: Optional[str] = None,
     ):
         """Handle settings update (typically from Slack modal)"""
         try:
@@ -597,9 +594,12 @@ class Controller:
             # Save require_mention setting
             self.settings_manager.set_require_mention(settings_key, require_mention)
 
+            # Save language setting
+            self.settings_manager.set_language(settings_key, language)
+
             logger.info(
                 f"Updated settings for {settings_key}: show types = {show_message_types}, "
-                f"require_mention = {require_mention}"
+                f"require_mention = {require_mention}, language = {language}"
             )
 
             # Create context for sending confirmation (without 'message' field)
@@ -706,9 +706,7 @@ class Controller:
                 f"_(Sending a new message in the channel will start a fresh session.)_"
             )
 
-            confirmation_ts = await self.im_client.send_message(
-                context, confirmation, parse_mode="markdown"
-            )
+            confirmation_ts = await self.im_client.send_message(context, confirmation, parse_mode="markdown")
 
             # If we created a fresh top-level message, use it as the new thread anchor
             mapped_thread = target_thread or confirmation_ts
@@ -802,9 +800,7 @@ class Controller:
             claude_agent = _selected_value("claude_agent_block", "claude_agent_select")
             claude_model = _selected_value("claude_model_block", "claude_model_select")
             codex_model = _selected_value("codex_model_block", "codex_model_select")
-            codex_reasoning = _selected_prefixed_value(
-                "codex_reasoning_block", "codex_reasoning_select"
-            )
+            codex_reasoning = _selected_prefixed_value("codex_reasoning_block", "codex_reasoning_select")
 
             # Handle action payload for Claude/Codex
             if isinstance(action_id, str) and isinstance(selected_value, str):
@@ -856,6 +852,7 @@ class Controller:
             if "claude" in registered_backends:
                 try:
                     from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
+
                     cwd = self.get_cwd(context)
                     agents_result = get_claude_agents(cwd)
                     if agents_result.get("ok"):
@@ -870,6 +867,7 @@ class Controller:
             if "codex" in registered_backends:
                 try:
                     from vibe.api import codex_models as get_codex_models
+
                     models_result = get_codex_models()
                     if models_result.get("ok"):
                         codex_models = models_result.get("models", [])
@@ -930,15 +928,29 @@ class Controller:
             routing = ChannelRouting(
                 agent_backend=backend,
                 # OpenCode settings: update if opencode is selected, otherwise preserve existing
-                opencode_agent=opencode_agent if backend == "opencode" else (existing_routing.opencode_agent if existing_routing else None),
-                opencode_model=opencode_model if backend == "opencode" else (existing_routing.opencode_model if existing_routing else None),
-                opencode_reasoning_effort=opencode_reasoning_effort if backend == "opencode" else (existing_routing.opencode_reasoning_effort if existing_routing else None),
+                opencode_agent=opencode_agent
+                if backend == "opencode"
+                else (existing_routing.opencode_agent if existing_routing else None),
+                opencode_model=opencode_model
+                if backend == "opencode"
+                else (existing_routing.opencode_model if existing_routing else None),
+                opencode_reasoning_effort=opencode_reasoning_effort
+                if backend == "opencode"
+                else (existing_routing.opencode_reasoning_effort if existing_routing else None),
                 # Claude settings: update if claude is selected, otherwise preserve existing
-                claude_agent=claude_agent if backend == "claude" else (existing_routing.claude_agent if existing_routing else None),
-                claude_model=claude_model if backend == "claude" else (existing_routing.claude_model if existing_routing else None),
+                claude_agent=claude_agent
+                if backend == "claude"
+                else (existing_routing.claude_agent if existing_routing else None),
+                claude_model=claude_model
+                if backend == "claude"
+                else (existing_routing.claude_model if existing_routing else None),
                 # Codex settings: update if codex is selected, otherwise preserve existing
-                codex_model=codex_model if backend == "codex" else (existing_routing.codex_model if existing_routing else None),
-                codex_reasoning_effort=codex_reasoning_effort if backend == "codex" else (existing_routing.codex_reasoning_effort if existing_routing else None),
+                codex_model=codex_model
+                if backend == "codex"
+                else (existing_routing.codex_model if existing_routing else None),
+                codex_reasoning_effort=codex_reasoning_effort
+                if backend == "codex"
+                else (existing_routing.codex_reasoning_effort if existing_routing else None),
             )
 
             # Save routing

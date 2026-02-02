@@ -38,13 +38,13 @@ class RoutingSettings:
 @dataclass
 class ChannelSettings:
     enabled: bool = False
-    show_message_types: List[str] = field(
-        default_factory=lambda: DEFAULT_SHOW_MESSAGE_TYPES.copy()
-    )
+    show_message_types: List[str] = field(default_factory=lambda: DEFAULT_SHOW_MESSAGE_TYPES.copy())
     custom_cwd: Optional[str] = None
     routing: RoutingSettings = field(default_factory=RoutingSettings)
     # Per-channel require_mention override: None=use global default, True=require, False=don't require
     require_mention: Optional[bool] = None
+    # Per-channel language setting: None=use system default, "en", "zh", etc.
+    language: Optional[str] = None
 
 
 @dataclass
@@ -90,12 +90,11 @@ class SettingsStore:
             )
             channels[channel_id] = ChannelSettings(
                 enabled=channel_payload.get("enabled", False),
-                show_message_types=normalize_show_message_types(
-                    channel_payload.get("show_message_types")
-                ),
+                show_message_types=normalize_show_message_types(channel_payload.get("show_message_types")),
                 custom_cwd=channel_payload.get("custom_cwd"),
                 routing=routing,
                 require_mention=channel_payload.get("require_mention"),
+                language=channel_payload.get("language"),
             )
         self.settings = SettingsState(channels=channels)
 
@@ -118,6 +117,7 @@ class SettingsStore:
                     "codex_reasoning_effort": settings.routing.codex_reasoning_effort,
                 },
                 "require_mention": settings.require_mention,
+                "language": settings.language,
             }
         self.settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

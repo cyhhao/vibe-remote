@@ -14,6 +14,7 @@ from markdown_to_mrkdwn import SlackMarkdownConverter
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
 from config.v2_config import SlackConfig
 from .formatters import SlackFormatter
+from vibe.i18n import t as i18n_t
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,17 @@ class SlackBot(BaseIMClient):
     def set_controller(self, controller):
         """Set the controller reference for handling update button clicks"""
         self._controller = controller
+
+    def _get_lang(self, channel_id: Optional[str] = None) -> str:
+        """Get the language for a channel from settings."""
+        if channel_id and self.settings_manager:
+            return self.settings_manager.get_language(channel_id, default="en")
+        return "en"
+
+    def _t(self, key: str, channel_id: Optional[str] = None, **kwargs) -> str:
+        """Translate a key for the given channel's language."""
+        lang = self._get_lang(channel_id)
+        return i18n_t(key, lang, **kwargs)
 
     def _is_duplicate_event(self, event_id: Optional[str]) -> bool:
         """Deduplicate Slack events using event_id with a short TTL."""
@@ -759,7 +771,7 @@ class SlackBot(BaseIMClient):
             if response_url:
                 await self.send_slash_response(
                     response_url,
-                    "❌ This channel is not enabled. Please go to the control panel to enable it.",
+                    f"❌ {self._t('error.channelNotEnabled', channel_id)}",
                 )
             return
 
@@ -798,7 +810,9 @@ class SlackBot(BaseIMClient):
                 "cwd",
                 "queue",
             ]:
-                await self.send_slash_response(response_url, f"⏳ Processing `/{command}`...")
+                await self.send_slash_response(
+                    response_url, f"⏳ {self._t('common.processing', channel_id, command=command)}"
+                )
 
             await handler(context, payload.get("text", ""))
         elif actual_command in self.slash_command_handlers:
@@ -809,7 +823,7 @@ class SlackBot(BaseIMClient):
             if response_url:
                 await self.send_slash_response(
                     response_url,
-                    f"❌ Unknown command: `/{command}`\n\nPlease use `@Vibe Remote /start` to access all bot features.",
+                    f"❌ {self._t('error.unknownCommand', channel_id, command=command)}",
                 )
 
     async def _handle_interactive(self, payload: Dict[str, Any]):
@@ -831,17 +845,15 @@ class SlackBot(BaseIMClient):
 
             # In Slack modals, `channel` is often missing. We store the originating
             # channel_id in `view.private_metadata` when opening the modal.
-            channel_id = (
-                payload.get("channel", {}).get("id")
-                or payload.get("container", {}).get("channel_id")
-            )
-            
+            channel_id = payload.get("channel", {}).get("id") or payload.get("container", {}).get("channel_id")
+
             # For modal actions, try to extract channel_id from private_metadata JSON
             if not channel_id and isinstance(view, dict):
                 private_metadata = view.get("private_metadata")
                 if private_metadata:
                     try:
                         import json
+
                         metadata = json.loads(private_metadata)
                         channel_id = metadata.get("channel_id") if isinstance(metadata, dict) else private_metadata
                     except (json.JSONDecodeError, TypeError):
@@ -951,12 +963,18 @@ class SlackBot(BaseIMClient):
             else:
                 require_mention = None
 
+            # Extract language setting
+            language_data = values.get("language_block", {}).get("language_select", {})
+            language_value = language_data.get("selected_option", {}).get("value")
+            # Convert to Optional[str]: "__default__" -> None, else use the value
+            language = None if language_value == "__default__" else language_value
+
             # Get channel_id from the view's private_metadata if available
             channel_id = view.get("private_metadata")
 
             # Update settings - need access to settings manager
             if hasattr(self, "_on_settings_update"):
-                await self._on_settings_update(user_id, show_types, channel_id, require_mention)
+                await self._on_settings_update(user_id, show_types, channel_id, require_mention, language)
 
         elif callback_id == "change_cwd_modal":
             # Handle change CWD modal submission
@@ -1331,9 +1349,13 @@ class SlackBot(BaseIMClient):
         channel_id: str = None,
         current_require_mention: object = None,  # None=default, True, False
         global_require_mention: bool = False,
+        current_language: str = None,  # Current language setting
     ):
         """Open a modal dialog for settings"""
         self._ensure_clients()
+
+        # Get translations for the channel's language
+        t = lambda key, **kwargs: self._t(key, channel_id, **kwargs)
 
         # Create options for the multi-select menu
         options = []
@@ -1346,7 +1368,7 @@ class SlackBot(BaseIMClient):
                 "value": msg_type,
                 "description": {
                     "type": "plain_text",
-                    "text": self._get_message_type_description(msg_type),
+                    "text": self._get_message_type_description(msg_type, channel_id),
                     "emoji": True,
                 },
             }
@@ -1370,7 +1392,7 @@ class SlackBot(BaseIMClient):
             "type": "multi_static_select",
             "placeholder": {
                 "type": "plain_text",
-                "text": "Select message types to show",
+                "text": t("modal.settings.showMessageTypesPlaceholder"),
                 "emoji": True,
             },
             "options": options,
@@ -1385,15 +1407,15 @@ class SlackBot(BaseIMClient):
         global_mention_label = "On" if global_require_mention else "Off"
         require_mention_options = [
             {
-                "text": {"type": "plain_text", "text": f"(Default) - {global_mention_label}"},
+                "text": {"type": "plain_text", "text": t("modal.settings.optionDefault", status=global_mention_label)},
                 "value": "__default__",
             },
             {
-                "text": {"type": "plain_text", "text": "Require @mention"},
+                "text": {"type": "plain_text", "text": t("modal.settings.optionRequireMention")},
                 "value": "true",
             },
             {
-                "text": {"type": "plain_text", "text": "Don't require @mention"},
+                "text": {"type": "plain_text", "text": t("modal.settings.optionDontRequireMention")},
                 "value": "false",
             },
         ]
@@ -1410,9 +1432,32 @@ class SlackBot(BaseIMClient):
         require_mention_select = {
             "type": "static_select",
             "action_id": "require_mention_select",
-            "placeholder": {"type": "plain_text", "text": "Select @mention behavior"},
+            "placeholder": {"type": "plain_text", "text": t("modal.settings.selectMentionBehavior")},
             "options": require_mention_options,
             "initial_option": initial_require_mention,
+        }
+
+        # Build language selector
+        language_options = [
+            {"text": {"type": "plain_text", "text": t("language.systemDefault")}, "value": "__default__"},
+            {"text": {"type": "plain_text", "text": "English"}, "value": "en"},
+            {"text": {"type": "plain_text", "text": "中文"}, "value": "zh"},
+        ]
+
+        # Determine initial option for language
+        initial_language = language_options[0]  # System default
+        if current_language:
+            for opt in language_options:
+                if opt["value"] == current_language:
+                    initial_language = opt
+                    break
+
+        language_select = {
+            "type": "static_select",
+            "action_id": "language_select",
+            "placeholder": {"type": "plain_text", "text": t("modal.settings.language")},
+            "options": language_options,
+            "initial_option": initial_language,
         }
 
         # Create the modal view
@@ -1420,15 +1465,35 @@ class SlackBot(BaseIMClient):
             "type": "modal",
             "callback_id": "settings_modal",
             "private_metadata": channel_id or "",  # Store channel_id for later use
-            "title": {"type": "plain_text", "text": "Settings", "emoji": True},
-            "submit": {"type": "plain_text", "text": "Save", "emoji": True},
-            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "title": {"type": "plain_text", "text": t("modal.settings.title"), "emoji": True},
+            "submit": {"type": "plain_text", "text": t("common.save"), "emoji": True},
+            "close": {"type": "plain_text", "text": t("common.cancel"), "emoji": True},
             "blocks": [
+                {
+                    "type": "input",
+                    "block_id": "language_block",
+                    "element": language_select,
+                    "label": {
+                        "type": "plain_text",
+                        "text": t("modal.settings.language"),
+                        "emoji": True,
+                    },
+                },
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": f"_{t('modal.settings.languageHint')}_",
+                        }
+                    ],
+                },
+                {"type": "divider"},
                 {
                     "type": "header",
                     "text": {
                         "type": "plain_text",
-                        "text": "Channel Behavior",
+                        "text": t("modal.settings.channelBehavior"),
                         "emoji": True,
                     },
                 },
@@ -1438,7 +1503,7 @@ class SlackBot(BaseIMClient):
                     "element": require_mention_select,
                     "label": {
                         "type": "plain_text",
-                        "text": "Require @mention to respond",
+                        "text": t("modal.settings.requireMention"),
                         "emoji": True,
                     },
                 },
@@ -1447,7 +1512,7 @@ class SlackBot(BaseIMClient):
                     "elements": [
                         {
                             "type": "mrkdwn",
-                            "text": "_When enabled, the bot only responds when @mentioned in channels (DMs always work)._",
+                            "text": f"_{t('modal.settings.requireMentionHint')}_",
                         }
                     ],
                 },
@@ -1456,7 +1521,7 @@ class SlackBot(BaseIMClient):
                     "type": "header",
                     "text": {
                         "type": "plain_text",
-                        "text": "Message Visibility",
+                        "text": t("modal.settings.messageVisibility"),
                         "emoji": True,
                     },
                 },
@@ -1464,7 +1529,7 @@ class SlackBot(BaseIMClient):
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "Choose which message types to *show* from agent output. Unselected types won't appear in your Slack workspace.",
+                        "text": t("modal.settings.messageVisibilityDesc"),
                     },
                 },
                 {
@@ -1473,7 +1538,7 @@ class SlackBot(BaseIMClient):
                     "element": multi_select_element,
                     "label": {
                         "type": "plain_text",
-                        "text": "Show these message types:",
+                        "text": t("modal.settings.showMessageTypes"),
                         "emoji": True,
                     },
                     "optional": True,
@@ -1483,7 +1548,7 @@ class SlackBot(BaseIMClient):
                     "elements": [
                         {
                             "type": "mrkdwn",
-                            "text": "_💡 Tip: You can show/hide message types at any time. Changes apply immediately to new messages._",
+                            "text": f"_💡 {t('modal.settings.tip')}_",
                         }
                     ],
                 },
@@ -1496,18 +1561,17 @@ class SlackBot(BaseIMClient):
             logger.error(f"Error opening modal: {e}")
             raise
 
-    def _get_message_type_description(self, msg_type: str) -> str:
+    def _get_message_type_description(self, msg_type: str, channel_id: str = None) -> str:
         """Get description for a message type"""
-        descriptions = {
-            "system": "System initialization and status messages",
-            "toolcall": "Agent tool name + params (one line)",
-            "assistant": "Agent responses and explanations",
-        }
-        return descriptions.get(msg_type, f"{msg_type} messages")
+        key = f"messageType.{msg_type}Desc"
+        return self._t(key, channel_id)
 
     async def open_change_cwd_modal(self, trigger_id: str, current_cwd: str, channel_id: str = None):
         """Open a modal dialog for changing working directory"""
         self._ensure_clients()
+
+        # Get translations for the channel's language
+        t = lambda key, **kwargs: self._t(key, channel_id, **kwargs)
 
         # Create the modal view
         view = {
@@ -1516,17 +1580,17 @@ class SlackBot(BaseIMClient):
             "private_metadata": channel_id or "",  # Store channel_id for later use
             "title": {
                 "type": "plain_text",
-                "text": "Change Working Directory",
+                "text": t("modal.cwd.title"),
                 "emoji": True,
             },
-            "submit": {"type": "plain_text", "text": "Change", "emoji": True},
-            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "submit": {"type": "plain_text", "text": t("common.change"), "emoji": True},
+            "close": {"type": "plain_text", "text": t("common.cancel"), "emoji": True},
             "blocks": [
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"Current working directory:\n`{current_cwd}`",
+                        "text": f"{t('modal.cwd.current')}\n`{current_cwd}`",
                     },
                 },
                 {"type": "divider"},
@@ -1538,19 +1602,19 @@ class SlackBot(BaseIMClient):
                         "action_id": "new_cwd_input",
                         "placeholder": {
                             "type": "plain_text",
-                            "text": "Enter new directory path",
+                            "text": t("modal.cwd.placeholder"),
                             "emoji": True,
                         },
                         "initial_value": current_cwd,
                     },
                     "label": {
                         "type": "plain_text",
-                        "text": "New Working Directory:",
+                        "text": t("modal.cwd.new"),
                         "emoji": True,
                     },
                     "hint": {
                         "type": "plain_text",
-                        "text": "Use absolute path (e.g., /home/user/project) or ~ for home directory",
+                        "text": t("modal.cwd.hint"),
                         "emoji": True,
                     },
                 },
@@ -1559,7 +1623,7 @@ class SlackBot(BaseIMClient):
                     "elements": [
                         {
                             "type": "mrkdwn",
-                            "text": "💡 _Tip: The directory will be created if it doesn't exist._",
+                            "text": f"💡 _{t('modal.cwd.tip')}_",
                         }
                     ],
                 },
@@ -1728,9 +1792,7 @@ class SlackBot(BaseIMClient):
             logger.error(f"Error opening resume modal: {e}")
             raise
 
-    async def _handle_resume_modal_manual_input(
-        self, view: Dict[str, Any], action: Dict[str, Any]
-    ):
+    async def _handle_resume_modal_manual_input(self, view: Dict[str, Any], action: Dict[str, Any]):
         """Handle manual_input changes in resume_session_modal - dynamically show/hide agent_block."""
         import json
 
@@ -2873,7 +2935,7 @@ class SlackBot(BaseIMClient):
             self._ensure_clients()
             await self.web_client.chat_postMessage(
                 channel=channel_id,
-                text="❌ This channel is not enabled. Please go to the control panel to enable it.",
+                text=f"❌ {self._t('error.channelNotEnabled', channel_id)}",
             )
         except Exception as e:
             logger.error(f"Failed to send unauthorized message to {channel_id}: {e}")

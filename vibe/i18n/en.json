@@ -1,0 +1,164 @@
+{
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "submit": "Submit",
+    "change": "Change",
+    "resume": "Resume",
+    "default": "(Default)",
+    "selectOne": "Select one",
+    "selectOneOrMore": "Select one or more",
+    "processing": "Processing `/{command}`..."
+  },
+  "error": {
+    "channelNotEnabled": "This channel is not enabled. Please go to the control panel to enable it.",
+    "unknownCommand": "Unknown command: `/{command}`\n\nPlease use `@Vibe Remote /start` to access all bot features.",
+    "clearSession": "Error clearing session: {error}",
+    "settingsFailed": "Failed to open settings. Please try again.",
+    "cwdChangeFailed": "Failed to open directory change dialog. Please try again.",
+    "resumeFailed": "Failed to open resume dialog. Please try again.",
+    "stopFailed": "Error sending stop command: {error}",
+    "cwdSetFailed": "Error setting working directory: {error}",
+    "cwdCreateFailed": "Cannot create directory: {error}",
+    "cwdNotDirectory": "Path exists but is not a directory: `{path}`",
+    "cwdGetFailed": "Error getting working directory: {error}"
+  },
+  "success": {
+    "settingsUpdated": "Settings updated successfully!",
+    "cwdChanged": "Working directory changed to:\n`{path}`",
+    "sessionResumed": "Resumed {agent} session.\nSession ID: `{sessionId}`",
+    "routingUpdated": "Agent routing updated!"
+  },
+  "modal": {
+    "settings": {
+      "title": "Settings",
+      "channelBehavior": "Channel Behavior",
+      "requireMention": "Require @mention to respond",
+      "requireMentionHint": "When enabled, the bot only responds when @mentioned in channels (DMs always work).",
+      "messageVisibility": "Message Visibility",
+      "messageVisibilityDesc": "Choose which message types to *show* from agent output. Unselected types won't appear in your Slack workspace.",
+      "showMessageTypes": "Show these message types:",
+      "showMessageTypesPlaceholder": "Select message types to show",
+      "tip": "You can show/hide message types at any time. Changes apply immediately to new messages.",
+      "selectMentionBehavior": "Select @mention behavior",
+      "optionDefault": "(Default) - {status}",
+      "optionRequireMention": "Require @mention",
+      "optionDontRequireMention": "Don't require @mention",
+      "language": "Language / \u8bed\u8a00",
+      "languageHint": "Changes the language for bot messages in Slack."
+    },
+    "cwd": {
+      "title": "Change Working Directory",
+      "current": "Current working directory:",
+      "new": "New Working Directory:",
+      "placeholder": "Enter new directory path",
+      "hint": "Use absolute path (e.g., /home/user/project) or ~ for home directory",
+      "tip": "The directory will be created if it doesn't exist."
+    },
+    "resume": {
+      "title": "Resume Session",
+      "description": "Select a saved session or paste a session ID to resume work in this thread.",
+      "pickExisting": "Pick an existing session",
+      "selectSession": "Select a session",
+      "pasteId": "Or paste a session ID",
+      "pasteIdPlaceholder": "e.g., ses_12345",
+      "agentBackend": "Agent backend",
+      "selectAgentBackend": "Select agent backend",
+      "showingFirst100": "Showing the first 100 saved sessions. Paste a session ID below for others.",
+      "noSessionsFound": "No stored sessions found. Paste a session ID below to resume."
+    },
+    "routing": {
+      "title": "Agent Settings",
+      "currentBackend": "Current Backend:",
+      "backend": "Backend",
+      "selectBackend": "Select backend",
+      "opencodeSettings": "OpenCode Settings",
+      "opencodeAgent": "OpenCode Agent",
+      "selectOpencodeAgent": "Select OpenCode agent",
+      "model": "Model",
+      "selectModel": "Select model",
+      "reasoningEffort": "Reasoning Effort (Thinking Mode)",
+      "selectReasoningEffort": "Select reasoning effort",
+      "claudeSettings": "Claude Settings",
+      "claudeAgent": "Claude Agent",
+      "selectClaudeAgent": "Select Claude agent",
+      "codexSettings": "Codex Settings",
+      "codexReasoningEffort": "Reasoning Effort",
+      "tip": "Select (Default) to use the backend's configured defaults."
+    },
+    "question": {
+      "opencode": "OpenCode",
+      "claudeCode": "Claude Code"
+    }
+  },
+  "command": {
+    "start": {
+      "welcome": "Welcome to Vibe Remote!",
+      "greeting": "Hello {name}!",
+      "platform": "Platform: {platform}",
+      "agent": "Agent: {agent}",
+      "channel": "Channel: {channel}",
+      "quickActions": "Quick Actions:",
+      "quickActionsDesc": "Use the buttons below to manage your {agent} sessions, or simply type any message to start chatting with {agent}!",
+      "directMessage": "Direct Message"
+    },
+    "clear": {
+      "noSessions": "No active sessions to clear.\nSession state has been reset.",
+      "cleared": "Cleared active sessions for:\n{details}\nAll sessions reset.",
+      "sessionItem": "{agent} \u2192 {count} session(s)"
+    },
+    "cwd": {
+      "current": "Current Working Directory:",
+      "exists": "Directory exists",
+      "notExists": "Directory does not exist",
+      "hint": "This is where Agent will execute commands",
+      "usage": "Usage: /set_cwd <path>",
+      "changeInstructions": "To change working directory, use:\n`/set_cwd <path>`\n\nExample:\n`/set_cwd ~/projects/myapp`",
+      "clickButton": "Click the 'Change Work Dir' button in the @Vibe Remote /start menu to change working directory."
+    },
+    "resume": {
+      "slackOnly": "Resume is currently available only on Slack. Continue in the same thread to auto-resume.",
+      "clickButton": "Please click the Resume button inside Slack to open the picker.",
+      "noStoredSessions": "No stored sessions found. You can still paste a session ID manually in the resume modal."
+    },
+    "stop": {
+      "noActiveSession": "No active session to stop for this channel."
+    }
+  },
+  "button": {
+    "currentDir": "Current Dir",
+    "changeDir": "Change Work Dir",
+    "clearSession": "Clear All Session",
+    "settings": "Settings",
+    "resumeSession": "Resume Session",
+    "agentSettings": "Agent Settings",
+    "howItWorks": "How it Works"
+  },
+  "messageType": {
+    "system": "System",
+    "assistant": "Assistant",
+    "toolcall": "Toolcall",
+    "systemDesc": "System initialization and status messages",
+    "assistantDesc": "Agent responses and explanations",
+    "toolcallDesc": "Agent tool name + params (one line)"
+  },
+  "backend": {
+    "claude": "ClaudeCode",
+    "codex": "Codex",
+    "opencode": "OpenCode"
+  },
+  "reasoning": {
+    "none": "None",
+    "minimal": "Minimal",
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "xhigh": "Extra High",
+    "max": "Max"
+  },
+  "language": {
+    "systemDefault": "(System Default)",
+    "en": "English",
+    "zh": "\u4e2d\u6587"
+  }
+}
