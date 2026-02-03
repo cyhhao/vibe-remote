@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 from modules.agents import AgentRequest, get_agent_display_name
 from modules.im import MessageContext, InlineKeyboard, InlineButton
+from vibe.i18n import t as i18n_t
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,14 @@ class CommandHandlers:
         self.im_client = controller.im_client
         self.session_manager = controller.session_manager
         self.settings_manager = controller.settings_manager
+
+    def _get_lang(self) -> str:
+        """Get the global language setting from config."""
+        return getattr(self.config, "language", "en")
+
+    def _t(self, key: str, **kwargs) -> str:
+        """Translate a key using the global language setting."""
+        return i18n_t(key, self._get_lang(), **kwargs)
 
     def _get_channel_context(self, context: MessageContext) -> MessageContext:
         """Get context for channel messages (no thread)"""
@@ -51,7 +60,7 @@ class CommandHandlers:
             channel_info = {
                 "id": context.channel_id,
                 "name": (
-                    "Direct Message"
+                    self._t("command.start.directMessage")
                     if context.channel_id.startswith("D")
                     else context.channel_id
                 ),
@@ -69,7 +78,7 @@ class CommandHandlers:
 
             # Build welcome message using formatter to handle escaping properly
             lines = [
-                formatter.format_bold("Welcome to Vibe Remote!"),
+                formatter.format_bold(self._t("command.start.welcome")),
                 "",
                 f"Platform: {formatter.format_text(platform_name)}",
                 f"Agent: {formatter.format_text(agent_display_name)}",
@@ -108,34 +117,34 @@ class CommandHandlers:
         buttons = [
             # Row 1: Directory management
             [
-                InlineButton(text="📁 Current Dir", callback_data="cmd_cwd"),
-                InlineButton(text="📂 Change Work Dir", callback_data="cmd_change_cwd"),
+                InlineButton(text=f"📁 {self._t('button.currentDir')}", callback_data="cmd_cwd"),
+                InlineButton(text=f"📂 {self._t('button.changeDir')}", callback_data="cmd_change_cwd"),
             ],
             # Row 2: Session and Settings
             [
-                InlineButton(text="🔄 Clear All Session", callback_data="cmd_clear"),
-                InlineButton(text="⚙️ Settings", callback_data="cmd_settings"),
+                InlineButton(text=f"🔄 {self._t('button.clearSession')}", callback_data="cmd_clear"),
+                InlineButton(text=f"⚙️ {self._t('button.settings')}", callback_data="cmd_settings"),
             ],
             # Row 3: Resume + Agent/Model switching
             [
-                InlineButton(text="⏮️ Resume Session", callback_data="cmd_resume"),
-                InlineButton(text="🤖 Agent Settings", callback_data="cmd_routing"),
+                InlineButton(text=f"⏮️ {self._t('button.resumeSession')}", callback_data="cmd_resume"),
+                InlineButton(text=f"🤖 {self._t('button.agentSettings')}", callback_data="cmd_routing"),
             ],
             # Row 4: Help
-            [InlineButton(text="ℹ️ How it Works", callback_data="info_how_it_works")],
+            [InlineButton(text=f"ℹ️ {self._t('button.howItWorks')}", callback_data="info_how_it_works")],
         ]
 
         keyboard = InlineKeyboard(buttons=buttons)
 
-        welcome_text = f"""🎉 **Welcome to Vibe Remote!**
+        welcome_text = f"""🎉 **{self._t("command.start.welcome")}**
 
-👋 Hello **{user_name}**!
-🔧 Platform: **{platform_name}**
-🤖 Agent: **{agent_display_name}**
-📍 Channel: **{channel_info.get('name', 'Unknown')}**
+👋 {self._t("command.start.greeting", name=user_name)}
+🔧 {self._t("command.start.platform", platform=platform_name)}
+🤖 {self._t("command.start.agent", agent=agent_display_name)}
+📍 {self._t("command.start.channel", channel=channel_info.get('name', 'Unknown'))}
 
-**Quick Actions:**
-Use the buttons below to manage your {agent_display_name} sessions, or simply type any message to start chatting with {agent_display_name}!"""
+**{self._t("command.start.quickActions")}**
+{self._t("command.start.quickActionsDesc", agent=agent_display_name)}"""
 
         # Send command response to channel (not in thread)
         channel_context = self._get_channel_context(context)
@@ -151,16 +160,13 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
 
             cleared = await self.controller.agent_service.clear_sessions(settings_key)
             if not cleared:
-                full_response = (
-                    "📋 No active sessions to clear.\n🔄 Session state has been reset."
-                )
+                full_response = f"📋 {self._t('command.clear.noSessions')}"
             else:
                 details = "\n".join(
-                    f"• {agent} → {count} session(s)" for agent, count in cleared.items()
+                    f"• {self._t('command.clear.sessionItem', agent=agent, count=count)}"
+                    for agent, count in cleared.items()
                 )
-                full_response = (
-                    "✅ Cleared active sessions for:\n" f"{details}\n🔄 All sessions reset."
-                )
+                full_response = f"✅ {self._t('command.clear.cleared', details=details)}"
 
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(channel_context, full_response)
@@ -171,7 +177,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             try:
                 channel_context = self._get_channel_context(context)
                 await self.im_client.send_message(
-                    channel_context, f"❌ Error clearing session: {str(e)}"
+                    channel_context, f"❌ {self._t('error.clearSession', error=str(e))}"
                 )
             except Exception as send_error:
                 logger.error(
@@ -188,16 +194,16 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             formatter = self.im_client.formatter
 
             # Format path properly with code block
-            path_line = f"📁 Current Working Directory:\n{formatter.format_code_inline(absolute_path)}"
+            path_line = f"📁 {self._t('command.cwd.current')}\n{formatter.format_code_inline(absolute_path)}"
 
             # Build status lines
             status_lines = []
             if os.path.exists(absolute_path):
-                status_lines.append("✅ Directory exists")
+                status_lines.append(f"✅ {self._t('command.cwd.exists')}")
             else:
-                status_lines.append("⚠️ Directory does not exist")
+                status_lines.append(f"⚠️ {self._t('command.cwd.notExists')}")
 
-            status_lines.append("💡 This is where Agent will execute commands")
+            status_lines.append(f"💡 {self._t('command.cwd.hint')}")
 
             # Combine all parts
             response_text = path_line + "\n" + "\n".join(status_lines)
@@ -208,7 +214,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             logger.error(f"Error getting cwd: {e}")
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
-                channel_context, f"Error getting working directory: {str(e)}"
+                channel_context, f"❌ {self._t('error.cwdGetFailed', error=str(e))}"
             )
 
     async def handle_set_cwd(self, context: MessageContext, args: str):
@@ -217,7 +223,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             if not args:
                 channel_context = self._get_channel_context(context)
                 await self.im_client.send_message(
-                    channel_context, "Usage: /set_cwd <path>"
+                    channel_context, self._t("command.cwd.usage")
                 )
                 return
 
@@ -236,13 +242,13 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 except Exception as e:
                     channel_context = self._get_channel_context(context)
                     await self.im_client.send_message(
-                        channel_context, f"❌ Cannot create directory: {str(e)}"
+                        channel_context, f"❌ {self._t('error.cwdCreateFailed', error=str(e))}"
                     )
                     return
 
             if not os.path.isdir(absolute_path):
                 formatter = self.im_client.formatter
-                error_text = f"❌ Path exists but is not a directory: {formatter.format_code_inline(absolute_path)}"
+                error_text = f"❌ {self._t('error.cwdNotDirectory', path=formatter.format_code_inline(absolute_path))}"
                 channel_context = self._get_channel_context(context)
                 await self.im_client.send_message(channel_context, error_text)
                 return
@@ -254,10 +260,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             logger.info(f"User {context.user_id} changed cwd to: {absolute_path}")
 
             formatter = self.im_client.formatter
-            response_text = (
-                f"✅ Working directory changed to:\n"
-                f"{formatter.format_code_inline(absolute_path)}"
-            )
+            response_text = f"✅ {self._t('success.cwdChanged', path=formatter.format_code_inline(absolute_path))}"
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(channel_context, response_text)
 
@@ -265,7 +268,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             logger.error(f"Error setting cwd: {e}")
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
-                channel_context, f"❌ Error setting working directory: {str(e)}"
+                channel_context, f"❌ {self._t('error.cwdSetFailed', error=str(e))}"
             )
 
     async def handle_change_cwd_modal(self, context: MessageContext):
@@ -275,7 +278,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
                 channel_context,
-                "📂 To change working directory, use:\n`/set_cwd <path>`\n\nExample:\n`/set_cwd ~/projects/myapp`",
+                f"📂 {self._t('command.cwd.changeInstructions')}",
             )
             return
 
@@ -299,14 +302,14 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
                 channel_context = self._get_channel_context(context)
                 await self.im_client.send_message(
                     channel_context,
-                    "❌ Failed to open directory change dialog. Please try again.",
+                    f"❌ {self._t('error.cwdChangeFailed')}",
                 )
         else:
             # No trigger_id, show instructions
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
                 channel_context,
-                "📂 Click the 'Change Work Dir' button in the @Vibe Remote /start menu to change working directory.",
+                f"📂 {self._t('command.cwd.clickButton')}",
             )
 
     async def handle_resume(self, context: MessageContext):
@@ -315,7 +318,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
                 channel_context,
-                "⏮️ Resume is currently available only on Slack. Continue in the same thread to auto-resume.",
+                f"⏮️ {self._t('command.resume.slackOnly')}",
             )
             return
 
@@ -328,7 +331,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
                 channel_context,
-                "⏮️ Please click the Resume button inside Slack to open the picker.",
+                f"⏮️ {self._t('command.resume.clickButton')}",
             )
             return
 
@@ -339,7 +342,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
                 channel_context,
-                "ℹ️ No stored sessions found. You can still paste a session ID manually in the resume modal.",
+                f"ℹ️ {self._t('command.resume.noStoredSessions')}",
             )
 
         try:
@@ -354,7 +357,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             logger.error(f"Error opening resume modal: {e}")
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
-                channel_context, "❌ Failed to open resume dialog. Please try again."
+                channel_context, f"❌ {self._t('error.resumeFailed')}"
             )
 
     async def handle_stop(self, context: MessageContext, args: str = ""):
@@ -381,7 +384,7 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             if not handled:
                 channel_context = self._get_channel_context(context)
                 await self.im_client.send_message(
-                    channel_context, "ℹ️ No active session to stop for this channel."
+                    channel_context, f"ℹ️ {self._t('command.stop.noActiveSession')}"
                 )
 
         except Exception as e:
@@ -389,5 +392,5 @@ Use the buttons below to manage your {agent_display_name} sessions, or simply ty
             # For errors, still use original context to maintain thread consistency
             await self.im_client.send_message(
                 context,  # Use original context
-                f"❌ Error sending stop command: {str(e)}",
+                f"❌ {self._t('error.stopFailed', error=str(e))}",
             )

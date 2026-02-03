@@ -6,6 +6,7 @@ from typing import Optional, List
 from modules.agents import AgentRequest
 from modules.im import MessageContext
 from modules.im.base import FileAttachment
+from vibe.i18n import t as i18n_t
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,12 @@ class MessageHandler:
     def _get_settings_key(self, context: MessageContext) -> str:
         """Get settings key - delegate to controller"""
         return self.controller._get_settings_key(context)
+
+    def _get_lang(self) -> str:
+        return getattr(self.config, "language", "en")
+
+    def _t(self, key: str, **kwargs) -> str:
+        return i18n_t(key, self._get_lang(), **kwargs)
 
     def _get_target_context(self, context: MessageContext) -> MessageContext:
         """Get target context for sending messages"""
@@ -254,7 +261,10 @@ class MessageHandler:
                         await self.im_client.remove_reaction(context, ack_reaction_message_id, ack_reaction_emoji)
             except Exception as cleanup_err:
                 logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
-            await self.im_client.send_message(context, self.formatter.format_error(f"Error: {str(e)}"))
+            await self.im_client.send_message(
+                context,
+                self.formatter.format_error(self._t("error.processMessageFailed", error=str(e))),
+            )
 
     async def handle_callback_query(self, context: MessageContext, callback_data: str):
         """Route callback queries to appropriate handlers"""
@@ -309,9 +319,9 @@ class MessageHandler:
                 # Generic info handler
                 info_type = callback_data.replace("info_", "")
                 info_text = self.formatter.format_info_message(
-                    title=f"Info: {info_type}",
+                    title=self._t("info.genericTitle", topic=info_type),
                     emoji="ℹ️",
-                    footer="This feature is coming soon!",
+                    footer=self._t("info.genericFooter"),
                 )
                 await self.im_client.send_message(context, info_text)
 
@@ -351,14 +361,14 @@ class MessageHandler:
                 logger.warning(f"Unknown callback data: {callback_data}")
                 await self.im_client.send_message(
                     context,
-                    self.formatter.format_warning(f"Unknown action: {callback_data}"),
+                    self.formatter.format_warning(self._t("error.unknownAction", action=callback_data)),
                 )
 
         except Exception as e:
             logger.error(f"Error handling callback query: {e}", exc_info=True)
             await self.im_client.send_message(
                 context,
-                self.formatter.format_error(f"Error processing action: {str(e)}"),
+                self.formatter.format_error(self._t("error.processActionFailed", error=str(e))),
             )
 
     async def _handle_inline_stop(self, context: MessageContext) -> bool:
@@ -384,7 +394,7 @@ class MessageHandler:
                 await self._handle_missing_agent(context, agent_name)
                 return False
             if not handled:
-                await self.im_client.send_message(context, "ℹ️ No active session to stop.")
+                await self.im_client.send_message(context, f"ℹ️ {self._t('command.stop.noActiveSession')}")
             return handled
         except Exception as e:
             logger.error(f"Error handling inline stop: {e}", exc_info=True)
@@ -394,9 +404,7 @@ class MessageHandler:
         """Notify user when a requested agent backend is unavailable."""
         target = agent_name or self.controller.agent_service.default_agent
         msg = (
-            f"❌ Agent `{target}` is not configured. "
-            "Make sure the Codex CLI is installed and environment variables are set "
-            "if this channel is routed to Codex."
+            f"❌ {self._t('error.agentNotConfigured', agent=target)}"
         )
         await self.im_client.send_message(context, msg)
 
@@ -428,7 +436,8 @@ class MessageHandler:
     def _get_ack_text(self, agent_name: str) -> str:
         """Unified acknowledgement text before agent processing."""
         label = agent_name or self.controller.agent_service.default_agent
-        return f"📨 {label.capitalize()} received, processing..."
+        agent_label = label.capitalize() if label else ""
+        return f"📨 {self._t('message.ack', agent=agent_label)}"
 
     async def _process_file_attachments(self, context: MessageContext, working_path: str) -> Optional[list]:
         """Download and process file attachments from the message.

@@ -109,6 +109,7 @@ class V2Config:
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "reaction"
+    language: str = "en"  # Global language setting: "en", "zh", etc.
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "V2Config":
@@ -193,6 +194,10 @@ class V2Config:
         if ack_mode not in {"reaction", "message"}:
             raise ValueError("Config 'ack_mode' must be 'reaction' or 'message'")
 
+        language = payload.get("language", "en")
+        if language not in {"en", "zh"}:
+            language = "en"  # Fallback to English for unsupported languages
+
         return cls(
             mode=mode,
             version=payload.get("version", "v2"),
@@ -203,6 +208,7 @@ class V2Config:
             ui=ui,
             update=update,
             ack_mode=ack_mode,
+            language=language,
         )
 
     def save(self, config_path: Optional[Path] = None) -> None:
@@ -226,5 +232,6 @@ class V2Config:
             "ui": self.ui.__dict__,
             "update": self.update.__dict__,
             "ack_mode": self.ack_mode,
+            "language": self.language,
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

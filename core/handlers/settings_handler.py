@@ -3,6 +3,7 @@
 import logging
 from modules.agents import get_agent_display_name
 from modules.im import MessageContext, InlineKeyboard, InlineButton
+from vibe.i18n import t as i18n_t
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,12 @@ class SettingsHandler:
         """Get settings key - delegate to controller"""
         return self.controller._get_settings_key(context)
 
+    def _get_lang(self) -> str:
+        return getattr(self.config, "language", "en")
+
+    def _t(self, key: str, **kwargs) -> str:
+        return i18n_t(key, self._get_lang(), **kwargs)
+
     def _get_agent_display_name(self, context: MessageContext) -> str:
         """Return a friendly agent name for the current context."""
         agent_name = self.controller.resolve_agent_for_context(context)
@@ -40,7 +47,7 @@ class SettingsHandler:
 
         except Exception as e:
             logger.error(f"Error showing settings: {e}")
-            await self.im_client.send_message(context, f"❌ Error showing settings: {str(e)}")
+            await self.im_client.send_message(context, f"❌ {self._t('error.showSettings', error=str(e))}")
 
     async def _handle_settings_traditional(self, context: MessageContext):
         """Handle settings for non-Slack platforms"""
@@ -100,8 +107,8 @@ class SettingsHandler:
             current_require_mention = self.settings_manager.get_require_mention_override(settings_key)
             global_require_mention = self.config.slack.require_mention
 
-            # Get current language override for this channel
-            current_language = self.settings_manager.get_language_override(settings_key)
+            # Get current language from global config
+            current_language = self.config.language
 
             try:
                 await self.im_client.open_settings_modal(
@@ -116,16 +123,16 @@ class SettingsHandler:
                 )
             except Exception as e:
                 logger.error(f"Error opening settings modal: {e}")
-                await self.im_client.send_message(context, "❌ Failed to open settings. Please try again.")
+                await self.im_client.send_message(context, f"❌ {self._t('error.settingsFailed')}")
         else:
             # No trigger_id, show button to open modal
-            buttons = [[InlineButton(text="🛠️ Open Settings", callback_data="open_settings_modal")]]
+            buttons = [[InlineButton(text=f"🛠️ {self._t('button.settings')}", callback_data="open_settings_modal")]]
 
             keyboard = InlineKeyboard(buttons=buttons)
 
             await self.im_client.send_message_with_buttons(
                 context,
-                f"⚙️ *Personalization Settings*\n\nConfigure how {self._get_agent_display_name(context)} messages appear in your Slack workspace.",
+                f"⚙️ *{self._t('settings.personalizationTitle')}*\n\n{self._t('settings.personalizationDesc', agent=self._get_agent_display_name(context))}",
                 keyboard,
             )
 
@@ -149,7 +156,7 @@ class SettingsHandler:
                 checkbox = "☑️" if is_shown_now else "⬜"
                 display_name = display_names.get(mt, mt)
                 button = InlineButton(
-                    text=f"{checkbox} Show {display_name}",
+                    text=f"{checkbox} {self._t('settings.showMessageType', name=display_name)}",
                     callback_data=f"toggle_msg_{mt}",
                 )
                 row.append(button)
@@ -159,7 +166,7 @@ class SettingsHandler:
                     buttons.append(row)
                     row = []
 
-            buttons.append([InlineButton("ℹ️ About Message Types", callback_data="info_msg_types")])
+            buttons.append([InlineButton(f"ℹ️ {self._t('button.aboutMessageTypes')}", callback_data="info_msg_types")])
 
             keyboard = InlineKeyboard(buttons=buttons)
 
@@ -169,16 +176,19 @@ class SettingsHandler:
 
             # Answer callback (for Telegram)
             display_name = display_names.get(msg_type, msg_type)
-            action = "shown" if is_shown else "hidden"
+            action = self._t("settings.visibilityShown") if is_shown else self._t("settings.visibilityHidden")
 
             # Platform-specific callback answering
-            await self.im_client.send_message(context, f"{display_name} messages are now {action}")
+            await self.im_client.send_message(
+                context,
+                self._t("settings.messageTypeStatus", name=display_name, action=action),
+            )
 
         except Exception as e:
             logger.error(f"Error toggling message type {msg_type}: {e}")
             await self.im_client.send_message(
                 context,
-                self.formatter.format_error(f"Failed to toggle setting: {str(e)}"),
+                self.formatter.format_error(self._t("error.toggleSettingFailed", error=str(e))),
             )
 
     async def handle_info_message_types(self, context: MessageContext):
@@ -188,15 +198,15 @@ class SettingsHandler:
 
             # Use the new format_info_message method for clean, platform-agnostic formatting
             info_text = formatter.format_info_message(
-                title="Message Types Info:",
+                title=self._t("info.messageTypesTitle"),
                 emoji="📋",
                 items=[
-                    ("System", "System initialization and status messages"),
-                    ("Toolcall", "Agent tool name + params (one line)"),
-                    ("Assistant", "Agent responses and explanations"),
-                    ("Result", "Final execution result (always sent)"),
+                    (self._t("messageType.system"), self._t("messageType.systemDesc")),
+                    (self._t("messageType.toolcall"), self._t("messageType.toolcallDesc")),
+                    (self._t("messageType.assistant"), self._t("messageType.assistantDesc")),
+                    (self._t("messageType.result"), self._t("messageType.resultDesc")),
                 ],
-                footer="Hidden messages won't be sent to your IM platform.",
+                footer=self._t("info.messageTypesFooter"),
             )
 
             # Send as new message
@@ -205,7 +215,7 @@ class SettingsHandler:
 
         except Exception as e:
             logger.error(f"Error in info_msg_types handler: {e}", exc_info=True)
-            await self.im_client.send_message(context, "❌ Error showing message types info")
+            await self.im_client.send_message(context, f"❌ {self._t('error.messageTypesInfoFailed')}")
 
     async def handle_info_how_it_works(self, context: MessageContext):
         """Show information about how the bot works"""
@@ -215,16 +225,16 @@ class SettingsHandler:
 
             # Use format_info_message for clean, platform-agnostic formatting
             info_text = formatter.format_info_message(
-                title="How Vibe Remote Works:",
+                title=self._t("info.howItWorksTitle"),
                 emoji="📚",
                 items=[
-                    ("Real-time", f"Messages are immediately sent to {agent_label}"),
-                    ("Persistent", "Each chat maintains its own conversation context"),
-                    ("Commands", "Use @Vibe Remote /start for menu, @Vibe Remote /clear to reset session"),
-                    ("Work Dir", "Change working directory with /set_cwd or via menu"),
-                    ("Settings", "Customize message visibility in Settings"),
+                    (self._t("info.howItWorksRealtimeLabel"), self._t("info.howItWorksRealtimeDesc", agent=agent_label)),
+                    (self._t("info.howItWorksPersistentLabel"), self._t("info.howItWorksPersistentDesc")),
+                    (self._t("info.howItWorksCommandsLabel"), self._t("info.howItWorksCommandsDesc")),
+                    (self._t("info.howItWorksWorkDirLabel"), self._t("info.howItWorksWorkDirDesc")),
+                    (self._t("info.howItWorksSettingsLabel"), self._t("info.howItWorksSettingsDesc")),
                 ],
-                footer=f"Just type normally to chat with {agent_label}!",
+                footer=self._t("info.howItWorksFooter", agent=agent_label),
             )
 
             # Send as new message
@@ -233,7 +243,7 @@ class SettingsHandler:
 
         except Exception as e:
             logger.error(f"Error in handle_info_how_it_works: {e}", exc_info=True)
-            await self.im_client.send_message(context, "❌ Error showing help information")
+            await self.im_client.send_message(context, f"❌ {self._t('error.helpInfoFailed')}")
 
     async def handle_routing(self, context: MessageContext):
         """Handle routing command - show agent/model selection"""
@@ -245,12 +255,11 @@ class SettingsHandler:
                 # For other platforms, show a simple message
                 await self.im_client.send_message(
                     context,
-                    "🤖 Agent switching is currently only available in Slack. "
-                    "Use Slack Agent Settings to configure routing.",
+                    self._t("routing.slackOnly"),
                 )
         except Exception as e:
             logger.error(f"Error showing routing settings: {e}", exc_info=True)
-            await self.im_client.send_message(context, f"❌ Error showing routing settings: {str(e)}")
+            await self.im_client.send_message(context, f"❌ {self._t('error.routingFailed', error=str(e))}")
 
     async def _handle_routing_slack(self, context: MessageContext):
         """Handle routing for Slack using modal dialog"""
@@ -261,7 +270,7 @@ class SettingsHandler:
             buttons = [
                 [
                     InlineButton(
-                        text="🤖 Open Agent Settings",
+                        text=f"🤖 {self._t('button.agentSettings')}",
                         callback_data="open_routing_modal",
                     )
                 ]
@@ -269,7 +278,7 @@ class SettingsHandler:
             keyboard = InlineKeyboard(buttons=buttons)
             await self.im_client.send_message_with_buttons(
                 context,
-                "🤖 *Agent & Model Settings*\n\nConfigure which backend to use for this channel.",
+                f"🤖 *{self._t('routing.introTitle')}*\n\n{self._t('routing.introDesc')}",
                 keyboard,
             )
             return
@@ -353,4 +362,4 @@ class SettingsHandler:
             )
         except Exception as e:
             logger.error(f"Error opening routing modal: {e}", exc_info=True)
-            await self.im_client.send_message(context, "❌ Failed to open settings. Please try again.")
+            await self.im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")

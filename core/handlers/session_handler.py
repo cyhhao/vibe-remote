@@ -5,6 +5,7 @@ import logging
 from typing import Optional, Dict, Any, Tuple
 from modules.im import MessageContext
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from vibe.i18n import t as i18n_t
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,12 @@ class SessionHandler:
     def _get_settings_key(self, context: MessageContext) -> str:
         """Get settings key - delegate to controller"""
         return self.controller._get_settings_key(context)
+
+    def _get_lang(self) -> str:
+        return getattr(self.config, "language", "en")
+
+    def _t(self, key: str, **kwargs) -> str:
+        return i18n_t(key, self._get_lang(), **kwargs)
     
     def get_base_session_id(self, context: MessageContext) -> str:
         """Get base session ID based on platform and context (without path)"""
@@ -266,7 +273,7 @@ class SessionHandler:
             await self.im_client.send_message(
                 context,
                 self.formatter.format_error(
-                    "Session error detected. Session has been reset. Please try your message again."
+                    self._t("error.sessionReset")
                 )
             )
         elif "Session is broken" in error_msg or "Connection closed" in error_msg or "Connection lost" in error_msg:
@@ -277,7 +284,7 @@ class SessionHandler:
             await self.im_client.send_message(
                 context,
                 self.formatter.format_error(
-                    "Connection to Claude was lost. Please try your message again."
+                    self._t("error.sessionConnectionLost")
                 )
             )
         else:
@@ -285,7 +292,7 @@ class SessionHandler:
             logger.error(f"Error in session {composite_key}: {error}")
             await self.im_client.send_message(
                 context,
-                self.formatter.format_error(f"An error occurred: {error_msg}")
+                self.formatter.format_error(self._t("error.sessionGeneric", error=error_msg))
             )
     
     def capture_session_id(self, base_session_id: str, claude_session_id: str, settings_key: str):

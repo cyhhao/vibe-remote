@@ -58,6 +58,7 @@ def config_to_payload(config: V2Config) -> dict:
         "ui": config.ui.__dict__,
         "update": config.update.__dict__,
         "ack_mode": config.ack_mode,
+        "language": config.language,
     }
     return payload
 
