@@ -35,16 +35,15 @@ export const LanguageSwitcher: React.FC = () => {
   const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newLang = e.target.value;
     i18n.changeLanguage(newLang);
-    
+
     // Save to config
-    if (config) {
-      try {
-        const updatedConfig = { ...config, language: newLang };
-        await saveConfig(updatedConfig);
-        setConfig(updatedConfig);
-      } catch {
-        // Ignore save errors - language change already applied locally
-      }
+    try {
+      const baseConfig = config ?? await getConfig();
+      const updatedConfig = { ...baseConfig, language: newLang };
+      await saveConfig(updatedConfig);
+      setConfig(updatedConfig);
+    } catch {
+      // Ignore save errors - language change already applied locally
     }
   };
 

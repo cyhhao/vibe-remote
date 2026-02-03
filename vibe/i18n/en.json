@@ -31,6 +31,7 @@
     "routingFailed": "Error showing routing settings: {error}",
     "routingModalFailed": "Failed to open agent settings. Please try again.",
     "settingsUpdateFailed": "Failed to update settings: {error}",
+    "languageUpdateFailed": "Language update failed. Please try again.",
     "resumeSubmitFailed": "Failed to resume session: {error}",
     "routingUpdateFailed": "Failed to update routing: {error}",
     "unknownAction": "Unknown action: {action}",

@@ -23,6 +23,8 @@ class CommandHandlers:
 
     def _get_lang(self) -> str:
         """Get the global language setting from config."""
+        if hasattr(self.controller, "_get_lang"):
+            return self.controller._get_lang()
         return getattr(self.config, "language", "en")
 
     def _t(self, key: str, **kwargs) -> str:

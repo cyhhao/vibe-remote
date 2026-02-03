@@ -31,6 +31,7 @@
     "routingFailed": "显示路由设置时出错：{error}",
     "routingModalFailed": "无法打开 Agent 设置。请重试。",
     "settingsUpdateFailed": "更新设置失败：{error}",
+    "languageUpdateFailed": "语言更新失败，请重试。",
     "resumeSubmitFailed": "恢复会话失败：{error}",
     "routingUpdateFailed": "更新路由失败：{error}",
     "unknownAction": "未知操作：{action}",

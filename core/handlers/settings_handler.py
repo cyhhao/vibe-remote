@@ -24,6 +24,8 @@ class SettingsHandler:
         return self.controller._get_settings_key(context)
 
     def _get_lang(self) -> str:
+        if hasattr(self.controller, "_get_lang"):
+            return self.controller._get_lang()
         return getattr(self.config, "language", "en")
 
     def _t(self, key: str, **kwargs) -> str:

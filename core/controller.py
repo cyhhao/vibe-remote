@@ -671,15 +671,17 @@ class Controller:
             self.settings_manager.set_require_mention(settings_key, require_mention)
 
             # Save language setting to global config
+            language_saved = True
             if language is not None and language != self.config.language:
-                self.config.language = language
                 try:
                     from config.v2_config import V2Config
 
                     v2_config = V2Config.load()
                     v2_config.language = language
                     v2_config.save()
+                    self.config.language = language
                 except Exception as err:
+                    language_saved = False
                     logger.error(f"Failed to persist language setting: {err}")
 
             logger.info(
@@ -696,6 +698,11 @@ class Controller:
 
             # Send confirmation
             await self.im_client.send_message(context, f"✅ {self._t('success.settingsUpdated')}")
+            if not language_saved:
+                await self.im_client.send_message(
+                    context,
+                    f"⚠️ {self._t('error.languageUpdateFailed')}",
+                )
 
         except Exception as e:
             logger.error(f"Error updating settings: {e}")
