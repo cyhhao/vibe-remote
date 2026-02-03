@@ -1,9 +1,11 @@
 """Core controller that coordinates between modules and handlers"""
 
 import asyncio
+import json
 import os
 import logging
 from typing import Optional, Dict, Any
+from config import paths
 from modules.im import BaseIMClient, MessageContext, IMFactory
 from modules.im.formatters import SlackFormatter
 from modules.agent_router import AgentRouter
@@ -18,6 +20,7 @@ from core.handlers import (
     MessageHandler,
 )
 from core.update_checker import UpdateChecker
+from vibe.i18n import get_supported_languages, t as i18n_t
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,7 @@ class Controller:
     def __init__(self, config):
         """Initialize controller with configuration"""
         self.config = config
+        self._config_mtime: Optional[float] = None
 
         # Session tracking (must be initialized before handlers)
         self.claude_sessions: Dict[str, Any] = {}
@@ -85,6 +89,9 @@ class Controller:
         self.session_manager = SessionManager()
         self.settings_manager = SettingsManager()
 
+        # Migrate legacy per-channel language into global config
+        self._migrate_language_from_settings()
+
         # Agent routing - use configured default_backend
         default_backend = getattr(self.config, "default_backend", "opencode")
         self.agent_router = AgentRouter.from_file(None, platform=self.config.platform, default_backend=default_backend)
@@ -98,6 +105,76 @@ class Controller:
                 self.im_client.set_settings_manager(self.settings_manager)
                 self.im_client.set_controller(self)
                 logger.info("Injected settings_manager and controller into SlackBot")
+
+    def _get_lang(self) -> str:
+        self._refresh_language_from_config()
+        return getattr(self.config, "language", "en")
+
+    def _t(self, key: str, **kwargs) -> str:
+        return i18n_t(key, self._get_lang(), **kwargs)
+
+    def _refresh_language_from_config(self) -> None:
+        try:
+            config_path = paths.get_config_path()
+            if not config_path.exists():
+                return
+            mtime = config_path.stat().st_mtime
+            if self._config_mtime != mtime:
+                from config.v2_config import V2Config
+
+                v2_config = V2Config.load()
+                self.config.language = v2_config.language
+                self._config_mtime = mtime
+        except Exception as err:
+            logger.debug("Failed to reload language from config: %s", err)
+
+    def _migrate_language_from_settings(self) -> None:
+        """Persist legacy per-channel language into global config if missing."""
+        try:
+            config_path = paths.get_config_path()
+            if not config_path.exists():
+                return
+            config_payload = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(config_payload, dict) and "language" in config_payload:
+                return
+
+            settings_path = paths.get_settings_path()
+            if not settings_path.exists():
+                return
+            settings_payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            channels = settings_payload.get("channels") if isinstance(settings_payload, dict) else None
+            if not isinstance(channels, dict):
+                return
+
+            counts: dict[str, int] = {}
+            supported_languages = set(get_supported_languages())
+            for payload in channels.values():
+                if not isinstance(payload, dict):
+                    continue
+                value = payload.get("language")
+                if value in supported_languages:
+                    counts[value] = counts.get(value, 0) + 1
+
+            if not counts:
+                return
+
+            chosen = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+            if len(counts) > 1:
+                logger.warning(
+                    "Multiple per-channel languages found; using '%s' for global config (%s)",
+                    chosen,
+                    counts,
+                )
+
+            from config.v2_config import V2Config
+
+            v2_config = V2Config.load()
+            v2_config.language = chosen
+            v2_config.save()
+            self.config.language = chosen
+            logger.info("Migrated legacy per-channel language to global config: %s", chosen)
+        except Exception as err:
+            logger.warning("Failed to migrate legacy language setting: %s", err)
 
     def _init_handlers(self):
         """Initialize all handlers with controller reference"""
@@ -594,8 +671,19 @@ class Controller:
             # Save require_mention setting
             self.settings_manager.set_require_mention(settings_key, require_mention)
 
-            # Save language setting
-            self.settings_manager.set_language(settings_key, language)
+            # Save language setting to global config
+            language_saved = True
+            if language is not None and language != self.config.language:
+                try:
+                    from config.v2_config import V2Config
+
+                    v2_config = V2Config.load()
+                    v2_config.language = language
+                    v2_config.save()
+                    self.config.language = language
+                except Exception as err:
+                    language_saved = False
+                    logger.error(f"Failed to persist language setting: {err}")
 
             logger.info(
                 f"Updated settings for {settings_key}: show types = {show_message_types}, "
@@ -610,7 +698,12 @@ class Controller:
             )
 
             # Send confirmation
-            await self.im_client.send_message(context, "✅ Settings updated successfully!")
+            await self.im_client.send_message(context, f"✅ {self._t('success.settingsUpdated')}")
+            if not language_saved:
+                await self.im_client.send_message(
+                    context,
+                    f"⚠️ {self._t('error.languageUpdateFailed')}",
+                )
 
         except Exception as e:
             logger.error(f"Error updating settings: {e}")
@@ -620,7 +713,11 @@ class Controller:
                 channel_id=channel_id if channel_id else user_id,
                 platform_specific={},
             )
-            await self.im_client.send_message(context, f"❌ Failed to update settings: {str(e)}")
+            await self.im_client.send_message(
+                context,
+                f"❌ {self._t('error.settingsUpdateFailed', error=str(e))}",
+            )
+        
 
     # Working directory change handler (for Slack modal)
     async def handle_change_cwd_submission(self, user_id: str, new_cwd: str, channel_id: Optional[str] = None):
@@ -644,7 +741,10 @@ class Controller:
                 channel_id=channel_id if channel_id else user_id,
                 platform_specific={},
             )
-            await self.im_client.send_message(context, f"❌ Failed to change working directory: {str(e)}")
+            await self.im_client.send_message(
+                context,
+                f"❌ {self._t('error.cwdSetFailed', error=str(e))}",
+            )
 
     async def handle_resume_session_submission(
         self,
@@ -699,11 +799,12 @@ class Controller:
             self.settings_manager.set_channel_routing(settings_key, routing)
 
             agent_label = agent.capitalize()
-            confirmation = (
-                f"✅ Resumed {agent_label} session.\n"
-                f"Session ID: `{session_id}`\n"
-                f"💬 *Click this message and reply in the thread sidebar* to continue with this session.\n"
-                f"_(Sending a new message in the channel will start a fresh session.)_"
+            confirmation = "\n".join(
+                [
+                    f"✅ {self._t('success.sessionResumed', agent=agent_label, sessionId=session_id)}",
+                    self._t("success.sessionResumedTip1"),
+                    self._t("success.sessionResumedTip2"),
+                ]
             )
 
             confirmation_ts = await self.im_client.send_message(context, confirmation, parse_mode="markdown")
@@ -724,7 +825,10 @@ class Controller:
                 thread_id=thread_id or None,
                 platform_specific={},
             )
-            await self.im_client.send_message(context, f"❌ Failed to resume session: {str(e)}")
+            await self.im_client.send_message(
+                context,
+                f"❌ {self._t('error.resumeSubmitFailed', error=str(e))}",
+            )
 
     async def handle_routing_modal_update(
         self,
@@ -957,24 +1061,28 @@ class Controller:
             self.settings_manager.set_channel_routing(settings_key, routing)
 
             # Build confirmation message
-            parts = [f"Backend: **{backend}**"]
+            parts = [f"{self._t('routing.label.backend')}: **{backend}**"]
             if backend == "opencode":
                 if opencode_agent:
-                    parts.append(f"Agent: **{opencode_agent}**")
+                    parts.append(f"{self._t('routing.label.agent')}: **{opencode_agent}**")
                 if opencode_model:
-                    parts.append(f"Model: **{opencode_model}**")
+                    parts.append(f"{self._t('routing.label.model')}: **{opencode_model}**")
                 if opencode_reasoning_effort:
-                    parts.append(f"Reasoning Effort: **{opencode_reasoning_effort}**")
+                    parts.append(
+                        f"{self._t('routing.label.reasoningEffort')}: **{opencode_reasoning_effort}**"
+                    )
             elif backend == "claude":
                 if claude_agent:
-                    parts.append(f"Agent: **{claude_agent}**")
+                    parts.append(f"{self._t('routing.label.agent')}: **{claude_agent}**")
                 if claude_model:
-                    parts.append(f"Model: **{claude_model}**")
+                    parts.append(f"{self._t('routing.label.model')}: **{claude_model}**")
             elif backend == "codex":
                 if codex_model:
-                    parts.append(f"Model: **{codex_model}**")
+                    parts.append(f"{self._t('routing.label.model')}: **{codex_model}**")
                 if codex_reasoning_effort:
-                    parts.append(f"Reasoning Effort: **{codex_reasoning_effort}**")
+                    parts.append(
+                        f"{self._t('routing.label.reasoningEffort')}: **{codex_reasoning_effort}**"
+                    )
 
             # Create context for confirmation message
             context = MessageContext(
@@ -985,7 +1093,7 @@ class Controller:
 
             await self.im_client.send_message(
                 context,
-                f"✅ Agent routing updated!\n" + "\n".join(parts),
+                f"✅ {self._t('success.routingUpdated')}\n" + "\n".join(parts),
                 parse_mode="markdown",
             )
 
@@ -1003,7 +1111,10 @@ class Controller:
                 channel_id=channel_id if channel_id else user_id,
                 platform_specific={},
             )
-            await self.im_client.send_message(context, f"❌ Failed to update routing: {str(e)}")
+            await self.im_client.send_message(
+                context,
+                f"❌ {self._t('error.routingUpdateFailed', error=str(e))}",
+            )
 
     # Main run method
     def run(self):

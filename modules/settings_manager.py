@@ -583,51 +583,6 @@ class SettingsManager:
         return None
 
     # ---------------------------------------------
-    # Per-channel language management
-    # ---------------------------------------------
-    def get_language(self, channel_id: Union[int, str], default: str = "en") -> str:
-        """Get effective language for a channel.
-
-        Args:
-            channel_id: The channel to check
-            default: The default language to use if not set
-
-        Returns:
-            Language code (e.g., "en", "zh").
-            Uses per-channel setting if set, otherwise falls back to default.
-        """
-        self._reload_if_changed()
-        key = str(channel_id)
-        channel_settings = self.store.settings.channels.get(key)
-
-        if channel_settings is not None and channel_settings.language is not None:
-            return channel_settings.language
-
-        return default
-
-    def set_language(self, channel_id: Union[int, str], language: Optional[str]) -> None:
-        """Set per-channel language.
-
-        Args:
-            channel_id: The channel to configure
-            language: Language code (e.g., "en", "zh") or None to use default
-        """
-        key = str(channel_id)
-        channel_settings = self.store.get_channel(key)
-        channel_settings.language = language
-        self.store.update_channel(key, channel_settings)
-        logger.info(f"Updated language for channel {key}: {language}")
-
-    def get_language_override(self, channel_id: Union[int, str]) -> Optional[str]:
-        """Get the raw per-channel language override (may be None)."""
-        self._reload_if_changed()
-        key = str(channel_id)
-        channel_settings = self.store.settings.channels.get(key)
-        if channel_settings is not None:
-            return channel_settings.language
-        return None
-
-    # ---------------------------------------------
     # Active polls management (for poll restoration on restart)
     # ---------------------------------------------
     def add_active_poll(

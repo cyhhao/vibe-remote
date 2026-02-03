@@ -1,90 +1,139 @@
 {
   "common": {
-    "save": "\u4fdd\u5b58",
-    "cancel": "\u53d6\u6d88",
-    "submit": "\u63d0\u4ea4",
-    "change": "\u66f4\u6539",
-    "resume": "\u6062\u590d",
-    "default": "(\u9ed8\u8ba4)",
-    "selectOne": "\u9009\u62e9\u4e00\u4e2a",
-    "selectOneOrMore": "\u9009\u62e9\u4e00\u4e2a\u6216\u591a\u4e2a",
-    "processing": "\u6b63\u5728\u5904\u7406 `/{command}`..."
+    "save": "保存",
+    "cancel": "取消",
+    "submit": "提交",
+    "change": "更改",
+    "resume": "恢复",
+    "on": "开启",
+    "off": "关闭",
+    "default": "(默认)",
+    "selectOne": "选择一个",
+    "selectOneOrMore": "选择一个或多个",
+    "processing": "正在处理 `/{command}`..."
   },
   "error": {
-    "channelNotEnabled": "\u6b64\u9891\u9053\u672a\u542f\u7528\u3002\u8bf7\u524d\u5f80\u63a7\u5236\u9762\u677f\u542f\u7528\u5b83\u3002",
-    "unknownCommand": "\u672a\u77e5\u547d\u4ee4\uff1a`/{command}`\n\n\u8bf7\u4f7f\u7528 `@Vibe Remote /start` \u8bbf\u95ee\u6240\u6709\u673a\u5668\u4eba\u529f\u80fd\u3002",
-    "clearSession": "\u6e05\u9664\u4f1a\u8bdd\u65f6\u51fa\u9519\uff1a{error}",
-    "settingsFailed": "\u65e0\u6cd5\u6253\u5f00\u8bbe\u7f6e\u3002\u8bf7\u91cd\u8bd5\u3002",
-    "cwdChangeFailed": "\u65e0\u6cd5\u6253\u5f00\u76ee\u5f55\u66f4\u6539\u5bf9\u8bdd\u6846\u3002\u8bf7\u91cd\u8bd5\u3002",
-    "resumeFailed": "\u65e0\u6cd5\u6253\u5f00\u6062\u590d\u5bf9\u8bdd\u6846\u3002\u8bf7\u91cd\u8bd5\u3002",
-    "stopFailed": "\u53d1\u9001\u505c\u6b62\u547d\u4ee4\u65f6\u51fa\u9519\uff1a{error}",
-    "cwdSetFailed": "\u8bbe\u7f6e\u5de5\u4f5c\u76ee\u5f55\u65f6\u51fa\u9519\uff1a{error}",
-    "cwdCreateFailed": "\u65e0\u6cd5\u521b\u5efa\u76ee\u5f55\uff1a{error}",
-    "cwdNotDirectory": "\u8def\u5f84\u5b58\u5728\u4f46\u4e0d\u662f\u76ee\u5f55\uff1a`{path}`",
-    "cwdGetFailed": "\u83b7\u53d6\u5de5\u4f5c\u76ee\u5f55\u65f6\u51fa\u9519\uff1a{error}"
+    "channelNotEnabled": "此频道未启用。请前往控制面板启用它。",
+    "unknownCommand": "未知命令：`/{command}`\n\n请使用 `@Vibe Remote /start` 访问所有机器人功能。",
+    "clearSession": "清除会话时出错：{error}",
+    "settingsFailed": "无法打开设置。请重试。",
+    "cwdChangeFailed": "无法打开目录更改对话框。请重试。",
+    "resumeFailed": "无法打开恢复对话框。请重试。",
+    "stopFailed": "发送停止命令时出错：{error}",
+    "cwdSetFailed": "设置工作目录时出错：{error}",
+    "cwdCreateFailed": "无法创建目录：{error}",
+    "cwdNotDirectory": "路径存在但不是目录：`{path}`",
+    "cwdGetFailed": "获取工作目录时出错：{error}",
+    "showSettings": "显示设置时出错：{error}",
+    "toggleSettingFailed": "切换设置失败：{error}",
+    "messageTypesInfoFailed": "显示消息类型说明时出错",
+    "helpInfoFailed": "显示帮助信息时出错",
+    "routingFailed": "显示路由设置时出错：{error}",
+    "routingModalFailed": "无法打开 Agent 设置。请重试。",
+    "settingsUpdateFailed": "更新设置失败：{error}",
+    "languageUpdateFailed": "语言更新失败，请重试。",
+    "resumeSubmitFailed": "恢复会话失败：{error}",
+    "routingUpdateFailed": "更新路由失败：{error}",
+    "unknownAction": "未知操作：{action}",
+    "processActionFailed": "处理操作时出错：{error}",
+    "agentNotConfigured": "Agent `{agent}` 未配置。若此频道路由到 Codex，请确保已安装 Codex CLI 并设置环境变量。",
+    "processMessageFailed": "出错：{error}",
+    "sessionReset": "检测到会话错误。会话已重置，请重试。",
+    "sessionConnectionLost": "与 Claude 的连接已断开，请重试。",
+    "sessionGeneric": "发生错误：{error}"
   },
   "success": {
-    "settingsUpdated": "\u8bbe\u7f6e\u66f4\u65b0\u6210\u529f\uff01",
-    "cwdChanged": "\u5de5\u4f5c\u76ee\u5f55\u5df2\u66f4\u6539\u4e3a\uff1a\n`{path}`",
-    "sessionResumed": "\u5df2\u6062\u590d {agent} \u4f1a\u8bdd\u3002\n\u4f1a\u8bddID\uff1a`{sessionId}`",
-    "routingUpdated": "Agent \u8def\u7531\u5df2\u66f4\u65b0\uff01"
+    "settingsUpdated": "设置更新成功！",
+    "cwdChanged": "工作目录已更改为：\n`{path}`",
+    "sessionResumed": "已恢复 {agent} 会话。\n会话ID：`{sessionId}`",
+    "sessionResumedTip1": "💬 *点击此消息并在右侧线程中回复* 以继续该会话。",
+    "sessionResumedTip2": "_(在频道中发送新消息将开始新的会话。)_",
+    "routingUpdated": "Agent 路由已更新！"
+  },
+  "settings": {
+    "personalizationTitle": "个性化设置",
+    "personalizationDesc": "配置 {agent} 的消息在你的 Slack 工作区中的展示方式。",
+    "visibilityTitle": "设置 - 消息可见性",
+    "visibilityDesc": "选择要从 {agent} 输出中隐藏的消息类型：",
+    "showMessageType": "显示 {name}",
+    "visibilityShown": "显示",
+    "visibilityHidden": "隐藏",
+    "messageTypeStatus": "{name} 消息已设为 {action}"
+  },
+  "info": {
+    "messageTypesTitle": "消息类型说明：",
+    "messageTypesFooter": "隐藏的消息类型不会发送到你的 IM 平台。",
+    "howItWorksTitle": "Vibe Remote 如何工作：",
+    "howItWorksRealtimeLabel": "实时",
+    "howItWorksRealtimeDesc": "消息会立即发送给 {agent}",
+    "howItWorksPersistentLabel": "持续上下文",
+    "howItWorksPersistentDesc": "每个聊天保持独立的上下文",
+    "howItWorksCommandsLabel": "命令",
+    "howItWorksCommandsDesc": "使用 @Vibe Remote /start 打开菜单，@Vibe Remote /clear 重置会话",
+    "howItWorksWorkDirLabel": "工作目录",
+    "howItWorksWorkDirDesc": "使用 /set_cwd 或菜单修改工作目录",
+    "howItWorksSettingsLabel": "设置",
+    "howItWorksSettingsDesc": "在设置中自定义消息可见性",
+    "howItWorksFooter": "直接输入消息即可与 {agent} 对话！",
+    "genericTitle": "信息：{topic}",
+    "genericFooter": "该功能即将上线！"
   },
   "modal": {
     "settings": {
-      "title": "\u8bbe\u7f6e",
-      "channelBehavior": "\u9891\u9053\u884c\u4e3a",
-      "requireMention": "\u9700\u8981 @\u63d0\u53ca\u624d\u54cd\u5e94",
-      "requireMentionHint": "\u542f\u7528\u540e\uff0c\u673a\u5668\u4eba\u4ec5\u5728\u88ab @\u63d0\u53ca\u65f6\u624d\u5728\u9891\u9053\u4e2d\u54cd\u5e94\uff08\u79c1\u4fe1\u59cb\u7ec8\u6709\u6548\uff09\u3002",
-      "messageVisibility": "\u6d88\u606f\u53ef\u89c1\u6027",
-      "messageVisibilityDesc": "\u9009\u62e9\u8981\u4ece Agent \u8f93\u51fa\u4e2d*\u663e\u793a*\u7684\u6d88\u606f\u7c7b\u578b\u3002\u672a\u9009\u4e2d\u7684\u7c7b\u578b\u5c06\u4e0d\u4f1a\u5728\u60a8\u7684 Slack \u5de5\u4f5c\u533a\u4e2d\u663e\u793a\u3002",
-      "showMessageTypes": "\u663e\u793a\u8fd9\u4e9b\u6d88\u606f\u7c7b\u578b\uff1a",
-      "showMessageTypesPlaceholder": "\u9009\u62e9\u8981\u663e\u793a\u7684\u6d88\u606f\u7c7b\u578b",
-      "tip": "\u60a8\u53ef\u4ee5\u968f\u65f6\u663e\u793a/\u9690\u85cf\u6d88\u606f\u7c7b\u578b\u3002\u66f4\u6539\u4f1a\u7acb\u5373\u5e94\u7528\u4e8e\u65b0\u6d88\u606f\u3002",
-      "selectMentionBehavior": "\u9009\u62e9 @\u63d0\u53ca\u884c\u4e3a",
-      "optionDefault": "(\u9ed8\u8ba4) - {status}",
-      "optionRequireMention": "\u9700\u8981 @\u63d0\u53ca",
-      "optionDontRequireMention": "\u4e0d\u9700\u8981 @\u63d0\u53ca",
-      "language": "\u8bed\u8a00 / Language",
-      "languageHint": "\u66f4\u6539 Slack \u4e2d\u673a\u5668\u4eba\u6d88\u606f\u7684\u8bed\u8a00\u3002"
+      "title": "设置",
+      "channelBehavior": "频道行为",
+      "requireMention": "需要 @提及才响应",
+      "requireMentionHint": "启用后，机器人仅在被 @提及时才在频道中响应（私信始终有效）。",
+      "messageVisibility": "消息可见性",
+      "messageVisibilityDesc": "选择要从 Agent 输出中*显示*的消息类型。未选中的类型将不会在您的 Slack 工作区中显示。",
+      "showMessageTypes": "显示这些消息类型：",
+      "showMessageTypesPlaceholder": "选择要显示的消息类型",
+      "tip": "您可以随时显示/隐藏消息类型。更改会立即应用于新消息。",
+      "selectMentionBehavior": "选择 @提及行为",
+      "optionDefault": "(默认) - {status}",
+      "optionRequireMention": "需要 @提及",
+      "optionDontRequireMention": "不需要 @提及",
+      "language": "语言 / Language",
+      "languageHint": "更改 Slack 与 Web UI 中机器人消息的语言。"
     },
     "cwd": {
-      "title": "\u66f4\u6539\u5de5\u4f5c\u76ee\u5f55",
-      "current": "\u5f53\u524d\u5de5\u4f5c\u76ee\u5f55\uff1a",
-      "new": "\u65b0\u5de5\u4f5c\u76ee\u5f55\uff1a",
-      "placeholder": "\u8f93\u5165\u65b0\u7684\u76ee\u5f55\u8def\u5f84",
-      "hint": "\u4f7f\u7528\u7edd\u5bf9\u8def\u5f84\uff08\u4f8b\u5982 /home/user/project\uff09\u6216 ~ \u8868\u793a\u4e3b\u76ee\u5f55",
-      "tip": "\u5982\u679c\u76ee\u5f55\u4e0d\u5b58\u5728\uff0c\u5c06\u4f1a\u81ea\u52a8\u521b\u5efa\u3002"
+      "title": "更改工作目录",
+      "current": "当前工作目录：",
+      "new": "新工作目录：",
+      "placeholder": "输入新的目录路径",
+      "hint": "使用绝对路径（例如 /home/user/project）或 ~ 表示主目录",
+      "tip": "如果目录不存在，将会自动创建。"
     },
     "resume": {
-      "title": "\u6062\u590d\u4f1a\u8bdd",
-      "description": "\u9009\u62e9\u4e00\u4e2a\u5df2\u4fdd\u5b58\u7684\u4f1a\u8bdd\u6216\u7c98\u8d34\u4f1a\u8bdd ID \u4ee5\u5728\u6b64\u7ebf\u7a0b\u4e2d\u7ee7\u7eed\u5de5\u4f5c\u3002",
-      "pickExisting": "\u9009\u62e9\u4e00\u4e2a\u5df2\u6709\u4f1a\u8bdd",
-      "selectSession": "\u9009\u62e9\u4e00\u4e2a\u4f1a\u8bdd",
-      "pasteId": "\u6216\u7c98\u8d34\u4f1a\u8bdd ID",
-      "pasteIdPlaceholder": "\u4f8b\u5982 ses_12345",
-      "agentBackend": "Agent \u540e\u7aef",
-      "selectAgentBackend": "\u9009\u62e9 Agent \u540e\u7aef",
-      "showingFirst100": "\u663e\u793a\u524d 100 \u4e2a\u5df2\u4fdd\u5b58\u7684\u4f1a\u8bdd\u3002\u5982\u9700\u5176\u4ed6\u4f1a\u8bdd\uff0c\u8bf7\u5728\u4e0b\u65b9\u7c98\u8d34\u4f1a\u8bdd ID\u3002",
-      "noSessionsFound": "\u672a\u627e\u5230\u5df2\u5b58\u50a8\u7684\u4f1a\u8bdd\u3002\u8bf7\u5728\u4e0b\u65b9\u7c98\u8d34\u4f1a\u8bdd ID \u4ee5\u6062\u590d\u3002"
+      "title": "恢复会话",
+      "description": "选择一个已保存的会话或粘贴会话 ID 以在此线程中继续工作。",
+      "pickExisting": "选择一个已有会话",
+      "selectSession": "选择一个会话",
+      "pasteId": "或粘贴会话 ID",
+      "pasteIdPlaceholder": "例如 ses_12345",
+      "agentBackend": "Agent 后端",
+      "selectAgentBackend": "选择 Agent 后端",
+      "showingFirst100": "显示前 100 个已保存的会话。如需其他会话，请在下方粘贴会话 ID。",
+      "noSessionsFound": "未找到已存储的会话。请在下方粘贴会话 ID 以恢复。"
     },
     "routing": {
-      "title": "Agent \u8bbe\u7f6e",
-      "currentBackend": "\u5f53\u524d\u540e\u7aef\uff1a",
-      "backend": "\u540e\u7aef",
-      "selectBackend": "\u9009\u62e9\u540e\u7aef",
-      "opencodeSettings": "OpenCode \u8bbe\u7f6e",
+      "title": "Agent 设置",
+      "currentBackend": "当前后端：",
+      "backend": "后端",
+      "selectBackend": "选择后端",
+      "opencodeSettings": "OpenCode 设置",
       "opencodeAgent": "OpenCode Agent",
-      "selectOpencodeAgent": "\u9009\u62e9 OpenCode Agent",
-      "model": "\u6a21\u578b",
-      "selectModel": "\u9009\u62e9\u6a21\u578b",
-      "reasoningEffort": "\u63a8\u7406\u5f3a\u5ea6\uff08\u601d\u8003\u6a21\u5f0f\uff09",
-      "selectReasoningEffort": "\u9009\u62e9\u63a8\u7406\u5f3a\u5ea6",
-      "claudeSettings": "Claude \u8bbe\u7f6e",
+      "selectOpencodeAgent": "选择 OpenCode Agent",
+      "model": "模型",
+      "selectModel": "选择模型",
+      "reasoningEffort": "推理强度（思考模式）",
+      "selectReasoningEffort": "选择推理强度",
+      "claudeSettings": "Claude 设置",
       "claudeAgent": "Claude Agent",
-      "selectClaudeAgent": "\u9009\u62e9 Claude Agent",
-      "codexSettings": "Codex \u8bbe\u7f6e",
-      "codexReasoningEffort": "\u63a8\u7406\u5f3a\u5ea6",
-      "tip": "\u9009\u62e9\u201c(\u9ed8\u8ba4)\u201d\u4ee5\u4f7f\u7528\u540e\u7aef\u7684\u914d\u7f6e\u9ed8\u8ba4\u503c\u3002"
+      "selectClaudeAgent": "选择 Claude Agent",
+      "codexSettings": "Codex 设置",
+      "codexReasoningEffort": "推理强度",
+      "tip": "选择“(默认)”以使用后端的配置默认值。"
     },
     "question": {
       "opencode": "OpenCode",
@@ -93,54 +142,71 @@
   },
   "command": {
     "start": {
-      "welcome": "\u6b22\u8fce\u4f7f\u7528 Vibe Remote\uff01",
-      "greeting": "\u4f60\u597d {name}\uff01",
-      "platform": "\u5e73\u53f0\uff1a{platform}",
-      "agent": "Agent\uff1a{agent}",
-      "channel": "\u9891\u9053\uff1a{channel}",
-      "quickActions": "\u5feb\u6377\u64cd\u4f5c\uff1a",
-      "quickActionsDesc": "\u4f7f\u7528\u4e0b\u65b9\u6309\u94ae\u7ba1\u7406\u60a8\u7684 {agent} \u4f1a\u8bdd\uff0c\u6216\u76f4\u63a5\u8f93\u5165\u4efb\u4f55\u6d88\u606f\u5f00\u59cb\u4e0e {agent} \u804a\u5929\uff01",
-      "directMessage": "\u79c1\u4fe1"
+      "welcome": "欢迎使用 Vibe Remote！",
+      "greeting": "你好 {name}！",
+      "platform": "平台：{platform}",
+      "agent": "Agent：{agent}",
+      "channel": "频道：{channel}",
+      "quickActions": "快捷操作：",
+      "quickActionsDesc": "使用下方按钮管理您的 {agent} 会话，或直接输入任何消息开始与 {agent} 聊天！",
+      "directMessage": "私信"
     },
     "clear": {
-      "noSessions": "\u6ca1\u6709\u8981\u6e05\u9664\u7684\u6d3b\u52a8\u4f1a\u8bdd\u3002\n\u4f1a\u8bdd\u72b6\u6001\u5df2\u91cd\u7f6e\u3002",
-      "cleared": "\u5df2\u6e05\u9664\u7684\u6d3b\u52a8\u4f1a\u8bdd\uff1a\n{details}\n\u6240\u6709\u4f1a\u8bdd\u5df2\u91cd\u7f6e\u3002",
-      "sessionItem": "{agent} \u2192 {count} \u4e2a\u4f1a\u8bdd"
+      "noSessions": "没有要清除的活动会话。\n会话状态已重置。",
+      "cleared": "已清除的活动会话：\n{details}\n所有会话已重置。",
+      "sessionItem": "{agent} → {count} 个会话"
     },
     "cwd": {
-      "current": "\u5f53\u524d\u5de5\u4f5c\u76ee\u5f55\uff1a",
-      "exists": "\u76ee\u5f55\u5b58\u5728",
-      "notExists": "\u76ee\u5f55\u4e0d\u5b58\u5728",
-      "hint": "\u8fd9\u662f Agent \u6267\u884c\u547d\u4ee4\u7684\u4f4d\u7f6e",
-      "usage": "\u7528\u6cd5\uff1a/set_cwd <\u8def\u5f84>",
-      "changeInstructions": "\u8981\u66f4\u6539\u5de5\u4f5c\u76ee\u5f55\uff0c\u8bf7\u4f7f\u7528\uff1a\n`/set_cwd <\u8def\u5f84>`\n\n\u793a\u4f8b\uff1a\n`/set_cwd ~/projects/myapp`",
-      "clickButton": "\u8bf7\u70b9\u51fb @Vibe Remote /start \u83dc\u5355\u4e2d\u7684\u201c\u66f4\u6539\u5de5\u4f5c\u76ee\u5f55\u201d\u6309\u94ae\u6765\u66f4\u6539\u5de5\u4f5c\u76ee\u5f55\u3002"
+      "current": "当前工作目录：",
+      "exists": "目录存在",
+      "notExists": "目录不存在",
+      "hint": "这是 Agent 执行命令的位置",
+      "usage": "用法：/set_cwd <路径>",
+      "changeInstructions": "要更改工作目录，请使用：\n`/set_cwd <路径>`\n\n示例：\n`/set_cwd ~/projects/myapp`",
+      "clickButton": "请点击 @Vibe Remote /start 菜单中的“更改工作目录”按钮来更改工作目录。"
     },
     "resume": {
-      "slackOnly": "\u6062\u590d\u529f\u80fd\u76ee\u524d\u4ec5\u5728 Slack \u4e0a\u53ef\u7528\u3002\u5728\u540c\u4e00\u7ebf\u7a0b\u4e2d\u7ee7\u7eed\u53ef\u81ea\u52a8\u6062\u590d\u3002",
-      "clickButton": "\u8bf7\u5728 Slack \u4e2d\u70b9\u51fb\u201c\u6062\u590d\u201d\u6309\u94ae\u6253\u5f00\u9009\u62e9\u5668\u3002",
-      "noStoredSessions": "\u672a\u627e\u5230\u5df2\u5b58\u50a8\u7684\u4f1a\u8bdd\u3002\u60a8\u4ecd\u53ef\u4ee5\u5728\u6062\u590d\u5bf9\u8bdd\u6846\u4e2d\u624b\u52a8\u7c98\u8d34\u4f1a\u8bdd ID\u3002"
+      "slackOnly": "恢复功能目前仅在 Slack 上可用。在同一线程中继续可自动恢复。",
+      "clickButton": "请在 Slack 中点击“恢复”按钮打开选择器。",
+      "noStoredSessions": "未找到已存储的会话。您仍可以在恢复对话框中手动粘贴会话 ID。"
     },
     "stop": {
-      "noActiveSession": "\u6b64\u9891\u9053\u6ca1\u6709\u8981\u505c\u6b62\u7684\u6d3b\u52a8\u4f1a\u8bdd\u3002"
+      "noActiveSession": "此频道没有要停止的活动会话。"
     }
   },
   "button": {
-    "currentDir": "\u5f53\u524d\u76ee\u5f55",
-    "changeDir": "\u66f4\u6539\u5de5\u4f5c\u76ee\u5f55",
-    "clearSession": "\u6e05\u9664\u6240\u6709\u4f1a\u8bdd",
-    "settings": "\u8bbe\u7f6e",
-    "resumeSession": "\u6062\u590d\u4f1a\u8bdd",
-    "agentSettings": "Agent \u8bbe\u7f6e",
-    "howItWorks": "\u5982\u4f55\u5de5\u4f5c"
+    "currentDir": "当前目录",
+    "changeDir": "更改工作目录",
+    "clearSession": "清除所有会话",
+    "settings": "设置",
+    "resumeSession": "恢复会话",
+    "agentSettings": "Agent 设置",
+    "howItWorks": "如何工作",
+    "aboutMessageTypes": "关于消息类型"
   },
   "messageType": {
-    "system": "\u7cfb\u7edf",
-    "assistant": "\u52a9\u624b",
-    "toolcall": "\u5de5\u5177\u8c03\u7528",
-    "systemDesc": "\u7cfb\u7edf\u521d\u59cb\u5316\u548c\u72b6\u6001\u6d88\u606f",
-    "assistantDesc": "Agent \u7684\u56de\u590d\u548c\u89e3\u91ca",
-    "toolcallDesc": "Agent \u5de5\u5177\u540d\u79f0 + \u53c2\u6570\uff08\u5355\u884c\uff09"
+    "system": "系统",
+    "assistant": "助手",
+    "toolcall": "工具调用",
+    "result": "结果",
+    "systemDesc": "系统初始化和状态消息",
+    "assistantDesc": "Agent 的回复和解释",
+    "toolcallDesc": "Agent 工具名称 + 参数（单行）",
+    "resultDesc": "最终执行结果（始终发送）"
+  },
+  "routing": {
+    "slackOnly": "🤖 Agent 切换目前仅在 Slack 可用。请使用 Slack Agent 设置进行配置。",
+    "introTitle": "Agent 与模型设置",
+    "introDesc": "配置该频道使用的后端。",
+    "label": {
+      "backend": "后端",
+      "agent": "Agent",
+      "model": "模型",
+      "reasoningEffort": "推理强度"
+    }
+  },
+  "message": {
+    "ack": "{agent} 已收到，正在处理..."
   },
   "backend": {
     "claude": "ClaudeCode",
@@ -148,17 +214,17 @@
     "opencode": "OpenCode"
   },
   "reasoning": {
-    "none": "\u65e0",
-    "minimal": "\u6700\u5c0f",
-    "low": "\u4f4e",
-    "medium": "\u4e2d",
-    "high": "\u9ad8",
-    "xhigh": "\u8d85\u9ad8",
-    "max": "\u6700\u5927"
+    "none": "无",
+    "minimal": "最小",
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "xhigh": "超高",
+    "max": "最大"
   },
   "language": {
-    "systemDefault": "(\u7cfb\u7edf\u9ed8\u8ba4)",
+    "systemDefault": "(系统默认)",
     "en": "English",
-    "zh": "\u4e2d\u6587"
+    "zh": "中文"
   }
 }

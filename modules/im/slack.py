@@ -14,7 +14,7 @@ from markdown_to_mrkdwn import SlackMarkdownConverter
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
 from config.v2_config import SlackConfig
 from .formatters import SlackFormatter
-from vibe.i18n import t as i18n_t
+from vibe.i18n import get_supported_languages, t as i18n_t
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +63,12 @@ class SlackBot(BaseIMClient):
         self._controller = controller
 
     def _get_lang(self, channel_id: Optional[str] = None) -> str:
-        """Get the language for a channel from settings."""
-        if channel_id and self.settings_manager:
-            return self.settings_manager.get_language(channel_id, default="en")
+        """Get the global language setting from config."""
+        # Read from global config via controller
+        if self._controller and hasattr(self._controller, "config"):
+            if hasattr(self._controller, "_get_lang"):
+                return self._controller._get_lang()
+            return getattr(self._controller.config, "language", "en")
         return "en"
 
     def _t(self, key: str, channel_id: Optional[str] = None, **kwargs) -> str:
@@ -966,8 +969,9 @@ class SlackBot(BaseIMClient):
             # Extract language setting
             language_data = values.get("language_block", {}).get("language_select", {})
             language_value = language_data.get("selected_option", {}).get("value")
-            # Convert to Optional[str]: "__default__" -> None, else use the value
-            language = None if language_value == "__default__" else language_value
+            supported_languages = set(get_supported_languages())
+            # Convert to Optional[str]: use explicit language if supported
+            language = language_value if language_value in supported_languages else None
 
             # Get channel_id from the view's private_metadata if available
             channel_id = view.get("private_metadata")
@@ -1378,14 +1382,14 @@ class SlackBot(BaseIMClient):
             if msg_type in user_settings.show_message_types:
                 selected_options.append(option)  # Same object reference!
 
-        logger.info(f"Creating modal with {len(options)} options, {len(selected_options)} selected")
-        logger.info(f"Show types: {user_settings.show_message_types}")
+        logger.debug("Creating modal with %d options, %d selected", len(options), len(selected_options))
+        logger.debug("Show types: %s", user_settings.show_message_types)
 
-        # Debug: Log the actual data being sent
-        import json
+        if logger.isEnabledFor(logging.DEBUG):
+            import json
 
-        logger.info(f"Options: {json.dumps(options, indent=2)}")
-        logger.info(f"Selected options: {json.dumps(selected_options, indent=2)}")
+            logger.debug("Options: %s", json.dumps(options, indent=2))
+            logger.debug("Selected options: %s", json.dumps(selected_options, indent=2))
 
         # Create the multi-select element
         multi_select_element = {
@@ -1404,7 +1408,7 @@ class SlackBot(BaseIMClient):
             multi_select_element["initial_options"] = selected_options
 
         # Build require_mention selector
-        global_mention_label = "On" if global_require_mention else "Off"
+        global_mention_label = t("common.on") if global_require_mention else t("common.off")
         require_mention_options = [
             {
                 "text": {"type": "plain_text", "text": t("modal.settings.optionDefault", status=global_mention_label)},
@@ -1438,14 +1442,15 @@ class SlackBot(BaseIMClient):
         }
 
         # Build language selector
-        language_options = [
-            {"text": {"type": "plain_text", "text": t("language.systemDefault")}, "value": "__default__"},
-            {"text": {"type": "plain_text", "text": "English"}, "value": "en"},
-            {"text": {"type": "plain_text", "text": "中文"}, "value": "zh"},
-        ]
+        language_options = []
+        for code in get_supported_languages():
+            label = t(f"language.{code}")
+            if label == f"language.{code}":
+                label = code
+            language_options.append({"text": {"type": "plain_text", "text": label}, "value": code})
 
         # Determine initial option for language
-        initial_language = language_options[0]  # System default
+        initial_language = language_options[0]
         if current_language:
             for opt in language_options:
                 if opt["value"] == current_language:
@@ -1701,7 +1706,7 @@ class SlackBot(BaseIMClient):
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": "Select a saved session or paste a session ID to resume work in this thread.",
+                    "text": self._t("modal.resume.description"),
                 },
             },
         ]
@@ -1712,12 +1717,12 @@ class SlackBot(BaseIMClient):
                     "type": "input",
                     "block_id": "session_block",
                     "optional": True,
-                    "label": {"type": "plain_text", "text": "Pick an existing session", "emoji": True},
+                    "label": {"type": "plain_text", "text": self._t("modal.resume.pickExisting"), "emoji": True},
                     "element": {
                         "type": "static_select",
                         "action_id": "session_select",
                         "option_groups": session_option_groups,
-                        "placeholder": {"type": "plain_text", "text": "Select a session", "emoji": True},
+                        "placeholder": {"type": "plain_text", "text": self._t("modal.resume.selectSession"), "emoji": True},
                     },
                 }
             )
@@ -1728,7 +1733,7 @@ class SlackBot(BaseIMClient):
                         "elements": [
                             {
                                 "type": "mrkdwn",
-                                "text": "_Showing the first 100 saved sessions. Paste a session ID below for others._",
+                                "text": f"_{self._t('modal.resume.showingFirst100')}_",
                             }
                         ],
                     }
@@ -1740,7 +1745,7 @@ class SlackBot(BaseIMClient):
                     "elements": [
                         {
                             "type": "mrkdwn",
-                            "text": "_No stored sessions found. Paste a session ID below to resume._",
+                            "text": f"_{self._t('modal.resume.noSessionsFound')}_",
                         }
                     ],
                 }
@@ -1751,11 +1756,11 @@ class SlackBot(BaseIMClient):
                 "type": "input",
                 "block_id": "manual_block",
                 "optional": True,
-                "label": {"type": "plain_text", "text": "Or paste a session ID", "emoji": True},
+                "label": {"type": "plain_text", "text": self._t("modal.resume.pasteId"), "emoji": True},
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "manual_input",
-                    "placeholder": {"type": "plain_text", "text": "e.g., ses_12345", "emoji": True},
+                    "placeholder": {"type": "plain_text", "text": self._t("modal.resume.pasteIdPlaceholder"), "emoji": True},
                     "dispatch_action_config": {
                         "trigger_actions_on": ["on_character_entered"],
                     },
@@ -1780,9 +1785,9 @@ class SlackBot(BaseIMClient):
             "type": "modal",
             "callback_id": "resume_session_modal",
             "private_metadata": json.dumps(metadata),
-            "title": {"type": "plain_text", "text": "Resume Session", "emoji": True},
-            "submit": {"type": "plain_text", "text": "Resume", "emoji": True},
-            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "title": {"type": "plain_text", "text": self._t("modal.resume.title"), "emoji": True},
+            "submit": {"type": "plain_text", "text": self._t("common.resume"), "emoji": True},
+            "close": {"type": "plain_text", "text": self._t("common.cancel"), "emoji": True},
             "blocks": blocks,
         }
 
@@ -1836,12 +1841,12 @@ class SlackBot(BaseIMClient):
                 {
                     "type": "input",
                     "block_id": "agent_block",
-                    "label": {"type": "plain_text", "text": "Agent backend", "emoji": True},
+                    "label": {"type": "plain_text", "text": self._t("modal.resume.agentBackend"), "emoji": True},
                     "element": {
                         "type": "static_select",
                         "action_id": "agent_select",
                         "options": agent_options,
-                        "placeholder": {"type": "plain_text", "text": "Select agent backend", "emoji": True},
+                        "placeholder": {"type": "plain_text", "text": self._t("modal.resume.selectAgentBackend"), "emoji": True},
                     },
                 }
             )
@@ -1850,9 +1855,9 @@ class SlackBot(BaseIMClient):
             "type": "modal",
             "callback_id": "resume_session_modal",
             "private_metadata": metadata_raw,
-            "title": {"type": "plain_text", "text": "Resume Session", "emoji": True},
-            "submit": {"type": "plain_text", "text": "Resume", "emoji": True},
-            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "title": {"type": "plain_text", "text": self._t("modal.resume.title"), "emoji": True},
+            "submit": {"type": "plain_text", "text": self._t("common.resume"), "emoji": True},
+            "close": {"type": "plain_text", "text": self._t("common.cancel"), "emoji": True},
             "blocks": new_blocks,
         }
 
@@ -1945,7 +1950,7 @@ class SlackBot(BaseIMClient):
         backend_select = {
             "type": "static_select",
             "action_id": "backend_select",
-            "placeholder": {"type": "plain_text", "text": "Select backend"},
+            "placeholder": {"type": "plain_text", "text": self._t("modal.routing.selectBackend")},
             "options": backend_options,
             "initial_option": initial_backend,
         }
@@ -1956,7 +1961,7 @@ class SlackBot(BaseIMClient):
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Current Backend:* {backend_display_names.get(current_backend, current_backend)}",
+                    "text": f"*{self._t('modal.routing.currentBackend')}* {backend_display_names.get(current_backend, current_backend)}",
                 },
             },
             {"type": "divider"},
@@ -1965,7 +1970,7 @@ class SlackBot(BaseIMClient):
                 "block_id": "backend_block",
                 "dispatch_action": True,
                 "element": backend_select,
-                "label": {"type": "plain_text", "text": "Backend"},
+                "label": {"type": "plain_text", "text": self._t("modal.routing.backend")},
             },
         ]
 
@@ -1996,7 +2001,7 @@ class SlackBot(BaseIMClient):
             )
 
             # Build agent options
-            agent_options = [{"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}]
+            agent_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
             for agent in opencode_agents:
                 agent_name = agent.get("name", "")
                 if agent_name:
@@ -2018,15 +2023,15 @@ class SlackBot(BaseIMClient):
             agent_select = {
                 "type": "static_select",
                 "action_id": "opencode_agent_select",
-                "placeholder": {"type": "plain_text", "text": "Select OpenCode agent"},
+                "placeholder": {"type": "plain_text", "text": self._t("modal.routing.selectOpencodeAgent")},
                 "options": agent_options,
                 "initial_option": initial_agent,
             }
 
             # Build model options
-            default_label = "(Default)"
+            default_label = self._t("common.default")
             if default_model_str:
-                default_label = f"(Default) - {default_model_str}"
+                default_label = f"{self._t('common.default')} - {default_model_str}"
             model_options = [{"text": {"type": "plain_text", "text": default_label}, "value": "__default__"}]
 
             # Add models from providers
@@ -2123,7 +2128,7 @@ class SlackBot(BaseIMClient):
             model_select = {
                 "type": "static_select",
                 "action_id": "opencode_model_select",
-                "placeholder": {"type": "plain_text", "text": "Select model"},
+                "placeholder": {"type": "plain_text", "text": self._t("modal.routing.selectModel")},
                 "options": model_options,
                 "initial_option": initial_model,
             }
@@ -2168,19 +2173,19 @@ class SlackBot(BaseIMClient):
                         break
 
             # Build options from variants or use fallback
-            reasoning_effort_options = [{"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}]
+            reasoning_effort_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
 
             if model_variants:
                 # Use model-specific variants with stable ordering
                 variant_order = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
                 variant_display_names = {
-                    "none": "None",
-                    "minimal": "Minimal",
-                    "low": "Low",
-                    "medium": "Medium",
-                    "high": "High",
-                    "xhigh": "Extra High",
-                    "max": "Max",
+                    "none": self._t("reasoning.none"),
+                    "minimal": self._t("reasoning.minimal"),
+                    "low": self._t("reasoning.low"),
+                    "medium": self._t("reasoning.medium"),
+                    "high": self._t("reasoning.high"),
+                    "xhigh": self._t("reasoning.xhigh"),
+                    "max": self._t("reasoning.max"),
                 }
                 # Sort variants by predefined order, unknown variants go to end alphabetically
                 sorted_variants = sorted(
@@ -2202,9 +2207,9 @@ class SlackBot(BaseIMClient):
                 # Fallback to common options
                 reasoning_effort_options.extend(
                     [
-                        {"text": {"type": "plain_text", "text": "Low"}, "value": "low"},
-                        {"text": {"type": "plain_text", "text": "Medium"}, "value": "medium"},
-                        {"text": {"type": "plain_text", "text": "High"}, "value": "high"},
+                        {"text": {"type": "plain_text", "text": self._t("reasoning.low")}, "value": "low"},
+                        {"text": {"type": "plain_text", "text": self._t("reasoning.medium")}, "value": "medium"},
+                        {"text": {"type": "plain_text", "text": self._t("reasoning.high")}, "value": "high"},
                     ]
                 )
 
@@ -2219,7 +2224,7 @@ class SlackBot(BaseIMClient):
             reasoning_select = {
                 "type": "static_select",
                 "action_id": reasoning_action_id,
-                "placeholder": {"type": "plain_text", "text": "Select reasoning effort"},
+                "placeholder": {"type": "plain_text", "text": self._t("modal.routing.selectReasoningEffort")},
                 "options": reasoning_effort_options,
                 "initial_option": initial_reasoning,
             }
@@ -2232,7 +2237,7 @@ class SlackBot(BaseIMClient):
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": "*OpenCode Settings*",
+                            "text": f"*{self._t('modal.routing.opencodeSettings')}*",
                         },
                     },
                     {
@@ -2241,7 +2246,7 @@ class SlackBot(BaseIMClient):
                         "optional": True,
                         "dispatch_action": True,
                         "element": agent_select,
-                        "label": {"type": "plain_text", "text": "OpenCode Agent"},
+                        "label": {"type": "plain_text", "text": self._t("modal.routing.opencodeAgent")},
                     },
                     {
                         "type": "input",
@@ -2249,14 +2254,14 @@ class SlackBot(BaseIMClient):
                         "optional": True,
                         "dispatch_action": True,
                         "element": model_select,
-                        "label": {"type": "plain_text", "text": "Model"},
+                        "label": {"type": "plain_text", "text": self._t("modal.routing.model")},
                     },
                     {
                         "type": "input",
                         "block_id": "opencode_reasoning_block",
                         "optional": True,
                         "element": reasoning_select,
-                        "label": {"type": "plain_text", "text": "Reasoning Effort (Thinking Mode)"},
+                        "label": {"type": "plain_text", "text": self._t("modal.routing.reasoningEffort")},
                     },
                 ]
             )
@@ -2278,7 +2283,7 @@ class SlackBot(BaseIMClient):
                 current_cl_model = selected_claude_model
 
             # Build agent options
-            cl_agent_options = [{"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}]
+            cl_agent_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
             for agent in claude_agents:
                 agent_id = agent.get("id", "")
                 agent_name = agent.get("name", agent_id)
@@ -2301,13 +2306,13 @@ class SlackBot(BaseIMClient):
             cl_agent_select = {
                 "type": "static_select",
                 "action_id": "claude_agent_select",
-                "placeholder": {"type": "plain_text", "text": "Select Claude agent"},
+                "placeholder": {"type": "plain_text", "text": self._t("modal.routing.selectClaudeAgent")},
                 "options": cl_agent_options,
                 "initial_option": initial_cl_agent,
             }
 
             # Build model options
-            cl_model_options = [{"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}]
+            cl_model_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
             for model in claude_models:
                 if model:
                     cl_model_options.append(
@@ -2341,7 +2346,7 @@ class SlackBot(BaseIMClient):
             cl_model_select = {
                 "type": "static_select",
                 "action_id": "claude_model_select",
-                "placeholder": {"type": "plain_text", "text": "Select model"},
+                "placeholder": {"type": "plain_text", "text": self._t("modal.routing.selectModel")},
                 "options": cl_model_options,
                 "initial_option": initial_cl_model,
             }
@@ -2354,7 +2359,7 @@ class SlackBot(BaseIMClient):
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": "*Claude Settings*",
+                            "text": f"*{self._t('modal.routing.claudeSettings')}*",
                         },
                     },
                     {
@@ -2362,14 +2367,14 @@ class SlackBot(BaseIMClient):
                         "block_id": "claude_agent_block",
                         "optional": True,
                         "element": cl_agent_select,
-                        "label": {"type": "plain_text", "text": "Claude Agent"},
+                        "label": {"type": "plain_text", "text": self._t("modal.routing.claudeAgent")},
                     },
                     {
                         "type": "input",
                         "block_id": "claude_model_block",
                         "optional": True,
                         "element": cl_model_select,
-                        "label": {"type": "plain_text", "text": "Model"},
+                        "label": {"type": "plain_text", "text": self._t("modal.routing.model")},
                     },
                 ]
             )
@@ -2390,7 +2395,7 @@ class SlackBot(BaseIMClient):
                 current_cx_reasoning = selected_codex_reasoning
 
             # Build model options
-            cx_model_options = [{"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"}]
+            cx_model_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
             for model in codex_models:
                 if model:
                     cx_model_options.append(
@@ -2424,17 +2429,17 @@ class SlackBot(BaseIMClient):
             cx_model_select = {
                 "type": "static_select",
                 "action_id": "codex_model_select",
-                "placeholder": {"type": "plain_text", "text": "Select model"},
+                "placeholder": {"type": "plain_text", "text": self._t("modal.routing.selectModel")},
                 "options": cx_model_options,
                 "initial_option": initial_cx_model,
             }
 
             # Build reasoning effort options
             cx_reasoning_options = [
-                {"text": {"type": "plain_text", "text": "(Default)"}, "value": "__default__"},
-                {"text": {"type": "plain_text", "text": "Low"}, "value": "low"},
-                {"text": {"type": "plain_text", "text": "Medium"}, "value": "medium"},
-                {"text": {"type": "plain_text", "text": "High"}, "value": "high"},
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"},
+                {"text": {"type": "plain_text", "text": self._t("reasoning.low")}, "value": "low"},
+                {"text": {"type": "plain_text", "text": self._t("reasoning.medium")}, "value": "medium"},
+                {"text": {"type": "plain_text", "text": self._t("reasoning.high")}, "value": "high"},
             ]
 
             # Find initial reasoning
@@ -2448,7 +2453,7 @@ class SlackBot(BaseIMClient):
             cx_reasoning_select = {
                 "type": "static_select",
                 "action_id": "codex_reasoning_select",
-                "placeholder": {"type": "plain_text", "text": "Select reasoning effort"},
+                "placeholder": {"type": "plain_text", "text": self._t("modal.routing.selectReasoningEffort")},
                 "options": cx_reasoning_options,
                 "initial_option": initial_cx_reasoning,
             }
@@ -2461,7 +2466,7 @@ class SlackBot(BaseIMClient):
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": "*Codex Settings*",
+                            "text": f"*{self._t('modal.routing.codexSettings')}*",
                         },
                     },
                     {
@@ -2469,14 +2474,14 @@ class SlackBot(BaseIMClient):
                         "block_id": "codex_model_block",
                         "optional": True,
                         "element": cx_model_select,
-                        "label": {"type": "plain_text", "text": "Model"},
+                        "label": {"type": "plain_text", "text": self._t("modal.routing.model")},
                     },
                     {
                         "type": "input",
                         "block_id": "codex_reasoning_block",
                         "optional": True,
                         "element": cx_reasoning_select,
-                        "label": {"type": "plain_text", "text": "Reasoning Effort"},
+                        "label": {"type": "plain_text", "text": self._t("modal.routing.codexReasoningEffort")},
                     },
                 ]
             )
@@ -2488,7 +2493,7 @@ class SlackBot(BaseIMClient):
                 "elements": [
                     {
                         "type": "mrkdwn",
-                        "text": "_💡 Select (Default) to use the backend's configured defaults._",
+                        "text": f"_💡 {self._t('modal.routing.tip')}_",
                     }
                 ],
             }
@@ -2498,9 +2503,9 @@ class SlackBot(BaseIMClient):
             "type": "modal",
             "callback_id": "routing_modal",
             "private_metadata": channel_id,
-            "title": {"type": "plain_text", "text": "Agent Settings"},
-            "submit": {"type": "plain_text", "text": "Save"},
-            "close": {"type": "plain_text", "text": "Cancel"},
+            "title": {"type": "plain_text", "text": self._t("modal.routing.title")},
+            "submit": {"type": "plain_text", "text": self._t("common.save")},
+            "close": {"type": "plain_text", "text": self._t("common.cancel")},
             "blocks": blocks,
         }
 
@@ -2568,7 +2573,7 @@ class SlackBot(BaseIMClient):
                     "options": option_items,
                     "placeholder": {
                         "type": "plain_text",
-                        "text": "Select one or more",
+                        "text": self._t("common.selectOneOrMore"),
                         "emoji": True,
                     },
                 }
@@ -2579,7 +2584,7 @@ class SlackBot(BaseIMClient):
                     "options": option_items,
                     "placeholder": {
                         "type": "plain_text",
-                        "text": "Select one",
+                        "text": self._t("common.selectOne"),
                         "emoji": True,
                     },
                 }
@@ -2605,9 +2610,9 @@ class SlackBot(BaseIMClient):
             "type": "modal",
             "callback_id": "opencode_question_modal",
             "private_metadata": private_metadata,
-            "title": {"type": "plain_text", "text": "OpenCode", "emoji": True},
-            "submit": {"type": "plain_text", "text": "Submit", "emoji": True},
-            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "title": {"type": "plain_text", "text": self._t("modal.question.opencode"), "emoji": True},
+            "submit": {"type": "plain_text", "text": self._t("common.submit"), "emoji": True},
+            "close": {"type": "plain_text", "text": self._t("common.cancel"), "emoji": True},
             "blocks": blocks,
         }
 
@@ -2707,7 +2712,7 @@ class SlackBot(BaseIMClient):
                     "options": option_items,
                     "placeholder": {
                         "type": "plain_text",
-                        "text": "Select one or more",
+                        "text": self._t("common.selectOneOrMore"),
                         "emoji": True,
                     },
                 }
@@ -2718,7 +2723,7 @@ class SlackBot(BaseIMClient):
                     "options": option_items,
                     "placeholder": {
                         "type": "plain_text",
-                        "text": "Select one",
+                        "text": self._t("common.selectOne"),
                         "emoji": True,
                     },
                 }
@@ -2742,15 +2747,15 @@ class SlackBot(BaseIMClient):
 
         # Use callback_prefix to generate callback_id
         callback_id = f"{callback_prefix}_modal"
-        title = "Claude Code" if callback_prefix.startswith("claude") else "OpenCode"
+        title = self._t("modal.question.claudeCode") if callback_prefix.startswith("claude") else self._t("modal.question.opencode")
 
         view = {
             "type": "modal",
             "callback_id": callback_id,
             "private_metadata": private_metadata,
             "title": {"type": "plain_text", "text": title, "emoji": True},
-            "submit": {"type": "plain_text", "text": "Submit", "emoji": True},
-            "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+            "submit": {"type": "plain_text", "text": self._t("common.submit"), "emoji": True},
+            "close": {"type": "plain_text", "text": self._t("common.cancel"), "emoji": True},
             "blocks": blocks,
         }
 

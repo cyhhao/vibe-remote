@@ -65,6 +65,8 @@ const buildConfigPayload = (data: any) => ({
   update: data.update,
   // Preserve ack_mode
   ack_mode: data.ack_mode,
+  // Preserve language
+  language: data.language,
 });
 
 const steps = [

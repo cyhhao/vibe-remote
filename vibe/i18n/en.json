@@ -5,6 +5,8 @@
     "submit": "Submit",
     "change": "Change",
     "resume": "Resume",
+    "on": "On",
+    "off": "Off",
     "default": "(Default)",
     "selectOne": "Select one",
     "selectOneOrMore": "Select one or more",
@@ -21,13 +23,60 @@
     "cwdSetFailed": "Error setting working directory: {error}",
     "cwdCreateFailed": "Cannot create directory: {error}",
     "cwdNotDirectory": "Path exists but is not a directory: `{path}`",
-    "cwdGetFailed": "Error getting working directory: {error}"
+    "cwdGetFailed": "Error getting working directory: {error}",
+    "showSettings": "Error showing settings: {error}",
+    "toggleSettingFailed": "Failed to toggle setting: {error}",
+    "messageTypesInfoFailed": "Error showing message types info",
+    "helpInfoFailed": "Error showing help information",
+    "routingFailed": "Error showing routing settings: {error}",
+    "routingModalFailed": "Failed to open agent settings. Please try again.",
+    "settingsUpdateFailed": "Failed to update settings: {error}",
+    "languageUpdateFailed": "Language update failed. Please try again.",
+    "resumeSubmitFailed": "Failed to resume session: {error}",
+    "routingUpdateFailed": "Failed to update routing: {error}",
+    "unknownAction": "Unknown action: {action}",
+    "processActionFailed": "Error processing action: {error}",
+    "agentNotConfigured": "Agent `{agent}` is not configured. Make sure the Codex CLI is installed and environment variables are set if this channel is routed to Codex.",
+    "processMessageFailed": "Error: {error}",
+    "sessionReset": "Session error detected. Session has been reset. Please try your message again.",
+    "sessionConnectionLost": "Connection to Claude was lost. Please try your message again.",
+    "sessionGeneric": "An error occurred: {error}"
   },
   "success": {
     "settingsUpdated": "Settings updated successfully!",
     "cwdChanged": "Working directory changed to:\n`{path}`",
     "sessionResumed": "Resumed {agent} session.\nSession ID: `{sessionId}`",
+    "sessionResumedTip1": "💬 *Click this message and reply in the thread sidebar* to continue with this session.",
+    "sessionResumedTip2": "_(Sending a new message in the channel will start a fresh session.)_",
     "routingUpdated": "Agent routing updated!"
+  },
+  "settings": {
+    "personalizationTitle": "Personalization Settings",
+    "personalizationDesc": "Configure how {agent} messages appear in your Slack workspace.",
+    "visibilityTitle": "Settings - Message Visibility",
+    "visibilityDesc": "Select which message types to hide from {agent} output:",
+    "showMessageType": "Show {name}",
+    "visibilityShown": "shown",
+    "visibilityHidden": "hidden",
+    "messageTypeStatus": "{name} messages are now {action}"
+  },
+  "info": {
+    "messageTypesTitle": "Message Types Info:",
+    "messageTypesFooter": "Hidden messages won't be sent to your IM platform.",
+    "howItWorksTitle": "How Vibe Remote Works:",
+    "howItWorksRealtimeLabel": "Real-time",
+    "howItWorksRealtimeDesc": "Messages are immediately sent to {agent}",
+    "howItWorksPersistentLabel": "Persistent",
+    "howItWorksPersistentDesc": "Each chat maintains its own conversation context",
+    "howItWorksCommandsLabel": "Commands",
+    "howItWorksCommandsDesc": "Use @Vibe Remote /start for menu, @Vibe Remote /clear to reset session",
+    "howItWorksWorkDirLabel": "Work Dir",
+    "howItWorksWorkDirDesc": "Change working directory with /set_cwd or via menu",
+    "howItWorksSettingsLabel": "Settings",
+    "howItWorksSettingsDesc": "Customize message visibility in Settings",
+    "howItWorksFooter": "Just type normally to chat with {agent}!",
+    "genericTitle": "Info: {topic}",
+    "genericFooter": "This feature is coming soon!"
   },
   "modal": {
     "settings": {
@@ -45,7 +94,7 @@
       "optionRequireMention": "Require @mention",
       "optionDontRequireMention": "Don't require @mention",
       "language": "Language / \u8bed\u8a00",
-      "languageHint": "Changes the language for bot messages in Slack."
+      "languageHint": "Changes the language for bot messages in Slack and the Web UI."
     },
     "cwd": {
       "title": "Change Working Directory",
@@ -132,15 +181,32 @@
     "settings": "Settings",
     "resumeSession": "Resume Session",
     "agentSettings": "Agent Settings",
-    "howItWorks": "How it Works"
+    "howItWorks": "How it Works",
+    "aboutMessageTypes": "About Message Types"
   },
   "messageType": {
     "system": "System",
     "assistant": "Assistant",
     "toolcall": "Toolcall",
+    "result": "Result",
     "systemDesc": "System initialization and status messages",
     "assistantDesc": "Agent responses and explanations",
-    "toolcallDesc": "Agent tool name + params (one line)"
+    "toolcallDesc": "Agent tool name + params (one line)",
+    "resultDesc": "Final execution result (always sent)"
+  },
+  "routing": {
+    "slackOnly": "🤖 Agent switching is currently only available in Slack. Use Slack Agent Settings to configure routing.",
+    "introTitle": "Agent & Model Settings",
+    "introDesc": "Configure which backend to use for this channel.",
+    "label": {
+      "backend": "Backend",
+      "agent": "Agent",
+      "model": "Model",
+      "reasoningEffort": "Reasoning Effort"
+    }
+  },
+  "message": {
+    "ack": "{agent} received, processing..."
   },
   "backend": {
     "claude": "ClaudeCode",

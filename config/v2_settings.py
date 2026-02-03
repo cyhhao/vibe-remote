@@ -43,8 +43,6 @@ class ChannelSettings:
     routing: RoutingSettings = field(default_factory=RoutingSettings)
     # Per-channel require_mention override: None=use global default, True=require, False=don't require
     require_mention: Optional[bool] = None
-    # Per-channel language setting: None=use system default, "en", "zh", etc.
-    language: Optional[str] = None
 
 
 @dataclass
@@ -94,7 +92,6 @@ class SettingsStore:
                 custom_cwd=channel_payload.get("custom_cwd"),
                 routing=routing,
                 require_mention=channel_payload.get("require_mention"),
-                language=channel_payload.get("language"),
             )
         self.settings = SettingsState(channels=channels)
 
@@ -117,7 +114,6 @@ class SettingsStore:
                     "codex_reasoning_effort": settings.routing.codex_reasoning_effort,
                 },
                 "require_mention": settings.require_mention,
-                "language": settings.language,
             }
         self.settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

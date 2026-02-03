@@ -1,19 +1,51 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Languages } from 'lucide-react';
-
-const languages = [
-  { code: 'en', label: 'English' },
-  { code: 'zh', label: '中文' },
-];
+import { useApi } from '../context/ApiContext';
 
 export const LanguageSwitcher: React.FC = () => {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const { getConfig, saveConfig } = useApi();
+  const [config, setConfig] = useState<any>(null);
 
+  // Load config and sync language on mount
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const cfg = await getConfig();
+        setConfig(cfg);
+        // Sync i18n with config language
+        if (cfg.language && cfg.language !== i18n.language) {
+          i18n.changeLanguage(cfg.language);
+        }
+      } catch {
+        // Ignore errors on config load
+      }
+    };
+    loadConfig();
+  }, []);
+
+  const languageCodes = Object.keys(i18n.options.resources ?? {});
+  const availableLanguages = languageCodes.length ? languageCodes : ['en'];
+  const languages = availableLanguages.map((code) => ({
+    code,
+    label: t(`language.${code}`, { defaultValue: code }),
+  }));
   const currentLang = languages.find((l) => l.code === i18n.language) || languages[0];
 
-  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    i18n.changeLanguage(e.target.value);
+  const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newLang = e.target.value;
+    i18n.changeLanguage(newLang);
+
+    // Save to config
+    try {
+      const baseConfig = config ?? await getConfig();
+      const updatedConfig = { ...baseConfig, language: newLang };
+      await saveConfig(updatedConfig);
+      setConfig(updatedConfig);
+    } catch {
+      // Ignore save errors - language change already applied locally
+    }
   };
 
   return (
