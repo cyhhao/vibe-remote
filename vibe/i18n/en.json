@@ -94,7 +94,7 @@
       "optionRequireMention": "Require @mention",
       "optionDontRequireMention": "Don't require @mention",
       "language": "Language / \u8bed\u8a00",
-      "languageHint": "Changes the language for bot messages in Slack."
+      "languageHint": "Changes the language for bot messages in Slack and the Web UI."
     },
     "cwd": {
       "title": "Change Working Directory",

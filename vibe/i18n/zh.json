@@ -94,7 +94,7 @@
       "optionRequireMention": "需要 @提及",
       "optionDontRequireMention": "不需要 @提及",
       "language": "语言 / Language",
-      "languageHint": "更改 Slack 中机器人消息的语言。"
+      "languageHint": "更改 Slack 与 Web UI 中机器人消息的语言。"
     },
     "cwd": {
       "title": "更改工作目录",

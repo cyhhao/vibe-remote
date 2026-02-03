@@ -3,13 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Languages } from 'lucide-react';
 import { useApi } from '../context/ApiContext';
 
-const languages = [
-  { code: 'en', label: 'English' },
-  { code: 'zh', label: '中文' },
-];
-
 export const LanguageSwitcher: React.FC = () => {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
   const { getConfig, saveConfig } = useApi();
   const [config, setConfig] = useState<any>(null);
 
@@ -30,6 +25,12 @@ export const LanguageSwitcher: React.FC = () => {
     loadConfig();
   }, []);
 
+  const languageCodes = Object.keys(i18n.options.resources ?? {});
+  const availableLanguages = languageCodes.length ? languageCodes : ['en'];
+  const languages = availableLanguages.map((code) => ({
+    code,
+    label: t(`language.${code}`, { defaultValue: code }),
+  }));
   const currentLang = languages.find((l) => l.code === i18n.language) || languages[0];
 
   const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
