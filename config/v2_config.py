@@ -6,6 +6,7 @@ from typing import List, Optional, Union
 
 from config import paths
 from modules.im.base import BaseIMConfig
+from vibe.i18n import normalize_language
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ class V2Config:
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "reaction"
-    language: str = "en"  # Global language setting: "en", "zh", etc.
+    language: str = "en"  # Global language setting (see vibe/i18n)
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "V2Config":
@@ -194,9 +195,7 @@ class V2Config:
         if ack_mode not in {"reaction", "message"}:
             raise ValueError("Config 'ack_mode' must be 'reaction' or 'message'")
 
-        language = payload.get("language", "en")
-        if language not in {"en", "zh"}:
-            language = "en"  # Fallback to English for unsupported languages
+        language = normalize_language(payload.get("language"), default="en")
 
         return cls(
             mode=mode,

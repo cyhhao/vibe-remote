@@ -14,7 +14,7 @@ from markdown_to_mrkdwn import SlackMarkdownConverter
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
 from config.v2_config import SlackConfig
 from .formatters import SlackFormatter
-from vibe.i18n import t as i18n_t
+from vibe.i18n import get_supported_languages, t as i18n_t
 
 logger = logging.getLogger(__name__)
 
@@ -969,8 +969,9 @@ class SlackBot(BaseIMClient):
             # Extract language setting
             language_data = values.get("language_block", {}).get("language_select", {})
             language_value = language_data.get("selected_option", {}).get("value")
+            supported_languages = set(get_supported_languages())
             # Convert to Optional[str]: use explicit language if supported
-            language = language_value if language_value in {"en", "zh"} else None
+            language = language_value if language_value in supported_languages else None
 
             # Get channel_id from the view's private_metadata if available
             channel_id = view.get("private_metadata")
@@ -1441,10 +1442,12 @@ class SlackBot(BaseIMClient):
         }
 
         # Build language selector
-        language_options = [
-            {"text": {"type": "plain_text", "text": t("language.en")}, "value": "en"},
-            {"text": {"type": "plain_text", "text": t("language.zh")}, "value": "zh"},
-        ]
+        language_options = []
+        for code in get_supported_languages():
+            label = t(f"language.{code}")
+            if label == f"language.{code}":
+                label = code
+            language_options.append({"text": {"type": "plain_text", "text": label}, "value": code})
 
         # Determine initial option for language
         initial_language = language_options[0]

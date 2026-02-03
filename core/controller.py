@@ -20,7 +20,7 @@ from core.handlers import (
     MessageHandler,
 )
 from core.update_checker import UpdateChecker
-from vibe.i18n import t as i18n_t
+from vibe.i18n import get_supported_languages, t as i18n_t
 
 logger = logging.getLogger(__name__)
 
@@ -147,11 +147,12 @@ class Controller:
                 return
 
             counts: dict[str, int] = {}
+            supported_languages = set(get_supported_languages())
             for payload in channels.values():
                 if not isinstance(payload, dict):
                     continue
                 value = payload.get("language")
-                if value in {"en", "zh"}:
+                if value in supported_languages:
                     counts[value] = counts.get(value, 0) + 1
 
             if not counts:

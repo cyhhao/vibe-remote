@@ -115,3 +115,21 @@ def t(key: str, lang: str = "en", **kwargs: Any) -> str:
         Translated string
     """
     return I18n.get_instance().t(key, lang, **kwargs)
+
+
+def get_supported_languages() -> list[str]:
+    """Get supported language codes with stable ordering."""
+    languages = I18n.get_instance().get_available_languages()
+    if not languages:
+        return ["en"]
+    if "en" in languages:
+        return ["en"] + sorted([lang for lang in languages if lang != "en"])
+    return sorted(languages)
+
+
+def normalize_language(lang: Optional[str], default: str = "en") -> str:
+    """Normalize language to a supported value with fallback."""
+    if not lang:
+        return default
+    supported = get_supported_languages()
+    return lang if lang in supported else default
