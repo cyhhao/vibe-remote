@@ -1,9 +1,11 @@
 """Core controller that coordinates between modules and handlers"""
 
 import asyncio
+import json
 import os
 import logging
 from typing import Optional, Dict, Any
+from config import paths
 from modules.im import BaseIMClient, MessageContext, IMFactory
 from modules.im.formatters import SlackFormatter
 from modules.agent_router import AgentRouter
@@ -86,6 +88,9 @@ class Controller:
         self.session_manager = SessionManager()
         self.settings_manager = SettingsManager()
 
+        # Migrate legacy per-channel language into global config
+        self._migrate_language_from_settings()
+
         # Agent routing - use configured default_backend
         default_backend = getattr(self.config, "default_backend", "opencode")
         self.agent_router = AgentRouter.from_file(None, platform=self.config.platform, default_backend=default_backend)
@@ -105,6 +110,52 @@ class Controller:
 
     def _t(self, key: str, **kwargs) -> str:
         return i18n_t(key, self._get_lang(), **kwargs)
+
+    def _migrate_language_from_settings(self) -> None:
+        """Persist legacy per-channel language into global config if missing."""
+        try:
+            config_path = paths.get_config_path()
+            if not config_path.exists():
+                return
+            config_payload = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(config_payload, dict) and "language" in config_payload:
+                return
+
+            settings_path = paths.get_settings_path()
+            if not settings_path.exists():
+                return
+            settings_payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            channels = settings_payload.get("channels") if isinstance(settings_payload, dict) else None
+            if not isinstance(channels, dict):
+                return
+
+            languages = []
+            for payload in channels.values():
+                if not isinstance(payload, dict):
+                    continue
+                value = payload.get("language")
+                if value in {"en", "zh"}:
+                    languages.append(value)
+
+            if not languages:
+                return
+
+            chosen = languages[0]
+            if len(set(languages)) > 1:
+                logger.warning(
+                    "Multiple per-channel languages found; using '%s' for global config",
+                    chosen,
+                )
+
+            from config.v2_config import V2Config
+
+            v2_config = V2Config.load()
+            v2_config.language = chosen
+            v2_config.save()
+            self.config.language = chosen
+            logger.info("Migrated legacy per-channel language to global config: %s", chosen)
+        except Exception as err:
+            logger.warning("Failed to migrate legacy language setting: %s", err)
 
     def _init_handlers(self):
         """Initialize all handlers with controller reference"""
