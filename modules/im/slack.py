@@ -12,7 +12,8 @@ from slack_sdk.errors import SlackApiError
 from markdown_to_mrkdwn import SlackMarkdownConverter
 
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
-from config.v2_config import SlackConfig
+from config import paths
+from config.v2_config import SlackConfig, V2Config
 from .formatters import SlackFormatter
 from vibe.i18n import t as i18n_t
 
@@ -29,6 +30,7 @@ class SlackBot(BaseIMClient):
         self.config = config
         self.web_client: Optional[AsyncWebClient] = None
         self.socket_client: Optional[SocketModeClient] = None
+        self._config_mtime: Optional[float] = None
 
         # Initialize Slack formatter
         self.formatter = SlackFormatter()
@@ -66,6 +68,16 @@ class SlackBot(BaseIMClient):
         """Get the global language setting from config."""
         # Read from global config via controller
         if self._controller and hasattr(self._controller, "config"):
+            try:
+                config_path = paths.get_config_path()
+                if config_path.exists():
+                    mtime = config_path.stat().st_mtime
+                    if self._config_mtime != mtime:
+                        v2_config = V2Config.load()
+                        self._controller.config.language = v2_config.language
+                        self._config_mtime = mtime
+            except Exception as err:
+                logger.debug("Failed to reload language from config: %s", err)
             return getattr(self._controller.config, "language", "en")
         return "en"
 
@@ -967,8 +979,8 @@ class SlackBot(BaseIMClient):
             # Extract language setting
             language_data = values.get("language_block", {}).get("language_select", {})
             language_value = language_data.get("selected_option", {}).get("value")
-            # Convert to Optional[str]: "__default__" -> None, else use the value
-            language = None if language_value == "__default__" else language_value
+            # Convert to Optional[str]: use explicit language if supported
+            language = language_value if language_value in {"en", "zh"} else None
 
             # Get channel_id from the view's private_metadata if available
             channel_id = view.get("private_metadata")
@@ -1405,7 +1417,7 @@ class SlackBot(BaseIMClient):
             multi_select_element["initial_options"] = selected_options
 
         # Build require_mention selector
-        global_mention_label = "On" if global_require_mention else "Off"
+        global_mention_label = t("common.on") if global_require_mention else t("common.off")
         require_mention_options = [
             {
                 "text": {"type": "plain_text", "text": t("modal.settings.optionDefault", status=global_mention_label)},
@@ -1440,13 +1452,12 @@ class SlackBot(BaseIMClient):
 
         # Build language selector
         language_options = [
-            {"text": {"type": "plain_text", "text": t("language.systemDefault")}, "value": "__default__"},
-            {"text": {"type": "plain_text", "text": "English"}, "value": "en"},
-            {"text": {"type": "plain_text", "text": "中文"}, "value": "zh"},
+            {"text": {"type": "plain_text", "text": t("language.en")}, "value": "en"},
+            {"text": {"type": "plain_text", "text": t("language.zh")}, "value": "zh"},
         ]
 
         # Determine initial option for language
-        initial_language = language_options[0]  # System default
+        initial_language = language_options[0]
         if current_language:
             for opt in language_options:
                 if opt["value"] == current_language:

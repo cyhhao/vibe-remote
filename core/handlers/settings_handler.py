@@ -29,6 +29,13 @@ class SettingsHandler:
     def _t(self, key: str, **kwargs) -> str:
         return i18n_t(key, self._get_lang(), **kwargs)
 
+    def _message_type_display_names(self) -> dict:
+        return {
+            "system": self._t("messageType.system"),
+            "assistant": self._t("messageType.assistant"),
+            "toolcall": self._t("messageType.toolcall"),
+        }
+
     def _get_agent_display_name(self, context: MessageContext) -> str:
         """Return a friendly agent name for the current context."""
         agent_name = self.controller.resolve_agent_for_context(context)
@@ -57,7 +64,7 @@ class SettingsHandler:
 
         # Get available message types and display names
         message_types = self.settings_manager.get_available_message_types()
-        display_names = self.settings_manager.get_message_type_display_names()
+        display_names = self._message_type_display_names()
 
         # Create inline keyboard buttons in 2x2 layout
         buttons = []
@@ -68,7 +75,7 @@ class SettingsHandler:
             checkbox = "☑️" if is_shown else "⬜"
             display_name = display_names.get(msg_type, msg_type)
             button = InlineButton(
-                text=f"{checkbox} Show {display_name}",
+                text=f"{checkbox} {self._t('settings.showMessageType', name=display_name)}",
                 callback_data=f"toggle_msg_{msg_type}",
             )
             row.append(button)
@@ -79,7 +86,7 @@ class SettingsHandler:
                 row = []
 
         # Add info button on its own row
-        buttons.append([InlineButton("ℹ️ About Message Types", callback_data="info_msg_types")])
+        buttons.append([InlineButton(f"ℹ️ {self._t('button.aboutMessageTypes')}", callback_data="info_msg_types")])
 
         keyboard = InlineKeyboard(buttons=buttons)
 
@@ -87,7 +94,7 @@ class SettingsHandler:
         agent_label = self._get_agent_display_name(context)
         await self.im_client.send_message_with_buttons(
             context,
-            f"⚙️ *Settings \\- Message Visibility*\n\nSelect which message types to hide from {agent_label} output:",
+            f"⚙️ *{self._t('settings.visibilityTitle')}*\n\n{self._t('settings.visibilityDesc', agent=agent_label)}",
             keyboard,
         )
 
@@ -101,7 +108,7 @@ class SettingsHandler:
             settings_key = self._get_settings_key(context)
             user_settings = self.settings_manager.get_user_settings(settings_key)
             message_types = self.settings_manager.get_available_message_types()
-            display_names = self.settings_manager.get_message_type_display_names()
+            display_names = self._message_type_display_names()
 
             # Get current require_mention override for this channel
             current_require_mention = self.settings_manager.get_require_mention_override(settings_key)
@@ -146,7 +153,7 @@ class SettingsHandler:
             # Update the keyboard
             user_settings = self.settings_manager.get_user_settings(settings_key)
             message_types = self.settings_manager.get_available_message_types()
-            display_names = self.settings_manager.get_message_type_display_names()
+            display_names = self._message_type_display_names()
 
             buttons = []
             row = []

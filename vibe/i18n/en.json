@@ -5,6 +5,8 @@
     "submit": "Submit",
     "change": "Change",
     "resume": "Resume",
+    "on": "On",
+    "off": "Off",
     "default": "(Default)",
     "selectOne": "Select one",
     "selectOneOrMore": "Select one or more",
@@ -50,6 +52,8 @@
   "settings": {
     "personalizationTitle": "Personalization Settings",
     "personalizationDesc": "Configure how {agent} messages appear in your Slack workspace.",
+    "visibilityTitle": "Settings - Message Visibility",
+    "visibilityDesc": "Select which message types to hide from {agent} output:",
     "showMessageType": "Show {name}",
     "visibilityShown": "shown",
     "visibilityHidden": "hidden",

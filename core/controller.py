@@ -129,22 +129,23 @@ class Controller:
             if not isinstance(channels, dict):
                 return
 
-            languages = []
+            counts: dict[str, int] = {}
             for payload in channels.values():
                 if not isinstance(payload, dict):
                     continue
                 value = payload.get("language")
                 if value in {"en", "zh"}:
-                    languages.append(value)
+                    counts[value] = counts.get(value, 0) + 1
 
-            if not languages:
+            if not counts:
                 return
 
-            chosen = languages[0]
-            if len(set(languages)) > 1:
+            chosen = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+            if len(counts) > 1:
                 logger.warning(
-                    "Multiple per-channel languages found; using '%s' for global config",
+                    "Multiple per-channel languages found; using '%s' for global config (%s)",
                     chosen,
+                    counts,
                 )
 
             from config.v2_config import V2Config

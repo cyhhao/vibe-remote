@@ -5,6 +5,8 @@
     "submit": "提交",
     "change": "更改",
     "resume": "恢复",
+    "on": "开启",
+    "off": "关闭",
     "default": "(默认)",
     "selectOne": "选择一个",
     "selectOneOrMore": "选择一个或多个",
@@ -50,6 +52,8 @@
   "settings": {
     "personalizationTitle": "个性化设置",
     "personalizationDesc": "配置 {agent} 的消息在你的 Slack 工作区中的展示方式。",
+    "visibilityTitle": "设置 - 消息可见性",
+    "visibilityDesc": "选择要从 {agent} 输出中隐藏的消息类型：",
     "showMessageType": "显示 {name}",
     "visibilityShown": "显示",
     "visibilityHidden": "隐藏",
