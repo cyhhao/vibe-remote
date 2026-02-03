@@ -1381,14 +1381,14 @@ class SlackBot(BaseIMClient):
             if msg_type in user_settings.show_message_types:
                 selected_options.append(option)  # Same object reference!
 
-        logger.info(f"Creating modal with {len(options)} options, {len(selected_options)} selected")
-        logger.info(f"Show types: {user_settings.show_message_types}")
+        logger.debug("Creating modal with %d options, %d selected", len(options), len(selected_options))
+        logger.debug("Show types: %s", user_settings.show_message_types)
 
-        # Debug: Log the actual data being sent
-        import json
+        if logger.isEnabledFor(logging.DEBUG):
+            import json
 
-        logger.info(f"Options: {json.dumps(options, indent=2)}")
-        logger.info(f"Selected options: {json.dumps(selected_options, indent=2)}")
+            logger.debug("Options: %s", json.dumps(options, indent=2))
+            logger.debug("Selected options: %s", json.dumps(selected_options, indent=2))
 
         # Create the multi-select element
         multi_select_element = {
