@@ -31,6 +31,7 @@ class Controller:
     def __init__(self, config):
         """Initialize controller with configuration"""
         self.config = config
+        self._config_mtime: Optional[float] = None
 
         # Session tracking (must be initialized before handlers)
         self.claude_sessions: Dict[str, Any] = {}
@@ -106,10 +107,26 @@ class Controller:
                 logger.info("Injected settings_manager and controller into SlackBot")
 
     def _get_lang(self) -> str:
+        self._refresh_language_from_config()
         return getattr(self.config, "language", "en")
 
     def _t(self, key: str, **kwargs) -> str:
         return i18n_t(key, self._get_lang(), **kwargs)
+
+    def _refresh_language_from_config(self) -> None:
+        try:
+            config_path = paths.get_config_path()
+            if not config_path.exists():
+                return
+            mtime = config_path.stat().st_mtime
+            if self._config_mtime != mtime:
+                from config.v2_config import V2Config
+
+                v2_config = V2Config.load()
+                self.config.language = v2_config.language
+                self._config_mtime = mtime
+        except Exception as err:
+            logger.debug("Failed to reload language from config: %s", err)
 
     def _migrate_language_from_settings(self) -> None:
         """Persist legacy per-channel language into global config if missing."""

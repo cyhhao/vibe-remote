@@ -12,8 +12,7 @@ from slack_sdk.errors import SlackApiError
 from markdown_to_mrkdwn import SlackMarkdownConverter
 
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
-from config import paths
-from config.v2_config import SlackConfig, V2Config
+from config.v2_config import SlackConfig
 from .formatters import SlackFormatter
 from vibe.i18n import t as i18n_t
 
@@ -30,7 +29,6 @@ class SlackBot(BaseIMClient):
         self.config = config
         self.web_client: Optional[AsyncWebClient] = None
         self.socket_client: Optional[SocketModeClient] = None
-        self._config_mtime: Optional[float] = None
 
         # Initialize Slack formatter
         self.formatter = SlackFormatter()
@@ -68,16 +66,8 @@ class SlackBot(BaseIMClient):
         """Get the global language setting from config."""
         # Read from global config via controller
         if self._controller and hasattr(self._controller, "config"):
-            try:
-                config_path = paths.get_config_path()
-                if config_path.exists():
-                    mtime = config_path.stat().st_mtime
-                    if self._config_mtime != mtime:
-                        v2_config = V2Config.load()
-                        self._controller.config.language = v2_config.language
-                        self._config_mtime = mtime
-            except Exception as err:
-                logger.debug("Failed to reload language from config: %s", err)
+            if hasattr(self._controller, "_get_lang"):
+                return self._controller._get_lang()
             return getattr(self._controller.config, "language", "en")
         return "en"
 
