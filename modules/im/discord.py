@@ -421,6 +421,27 @@ class DiscordBot(BaseIMClient):
             bot_id = str(self.client.user.id)
             content = content.replace(f"<@{bot_id}>", "").replace(f"<@!{bot_id}>", "").strip()
 
+        # Handle slash-like commands in plain messages
+        if content.startswith("/"):
+            command_context = MessageContext(
+                user_id=str(message.author.id),
+                channel_id=channel_id,
+                thread_id=thread_id,
+                message_id=str(message.id),
+                platform_specific={"message": message},
+                files=files,
+            )
+            parts = content.split(maxsplit=1)
+            command = parts[0][1:]
+            args = parts[1] if len(parts) > 1 else ""
+            if command in self.on_command_callbacks:
+                handler = self.on_command_callbacks[command]
+                await handler(command_context, args)
+                return
+
+        if not content and not files:
+            return
+
         # For non-thread guild messages, create a real thread
         if not isinstance(channel, discord.Thread) and message.guild is not None:
             thread = await self._maybe_create_thread(message)
@@ -435,16 +456,6 @@ class DiscordBot(BaseIMClient):
             platform_specific={"message": message},
             files=files,
         )
-
-        # Handle slash-like commands in plain messages
-        if content.startswith("/"):
-            parts = content.split(maxsplit=1)
-            command = parts[0][1:]
-            args = parts[1] if len(parts) > 1 else ""
-            if command in self.on_command_callbacks:
-                handler = self.on_command_callbacks[command]
-                await handler(context, args)
-                return
 
         if self.on_message_callback:
             await self.on_message_callback(context, content)
@@ -527,6 +538,13 @@ class DiscordBot(BaseIMClient):
                     min_values=1,
                     max_values=1,
                 )
+
+                async def _defer(interaction: discord.Interaction):
+                    await interaction.response.defer()
+
+                self.types_select.callback = _defer
+                self.require_select.callback = _defer
+                self.lang_select.callback = _defer
                 self.add_item(self.types_select)
                 self.add_item(self.require_select)
                 self.add_item(self.lang_select)
@@ -597,10 +615,14 @@ class DiscordBot(BaseIMClient):
             for thread_key, session_id in mapping.items():
                 label = f"{agent}:{session_id[:24]}"
                 options.append(discord.SelectOption(label=label, value=f"{agent}|{session_id}"))
+        if len(options) > 25:
+            options = options[:25]
         if not options:
             options = [discord.SelectOption(label="No stored sessions", value="__none__")]
 
         agent_options = [discord.SelectOption(label=agent, value=agent) for agent in sorted(sessions_by_agent.keys())]
+        if len(agent_options) > 25:
+            agent_options = agent_options[:25]
         if not agent_options:
             agent_options = [discord.SelectOption(label="default", value="opencode")]
 
@@ -632,6 +654,12 @@ class DiscordBot(BaseIMClient):
                     min_values=1,
                     max_values=1,
                 )
+
+                async def _defer(interaction: discord.Interaction):
+                    await interaction.response.defer()
+
+                self.session_select.callback = _defer
+                self.agent_select.callback = _defer
                 self.add_item(self.session_select)
                 self.add_item(self.agent_select)
                 self.add_item(discord.ui.Button(label="Enter session ID", style=discord.ButtonStyle.secondary))
@@ -723,6 +751,8 @@ class DiscordBot(BaseIMClient):
                         discord.SelectOption(label=backend, value=backend, default=backend == self.selected_backend)
                         for backend in registered_backends
                     ]
+                    if len(options) > 25:
+                        options = options[:25]
                     backend_select = discord.ui.Select(
                         placeholder="Select backend",
                         options=options,
@@ -758,6 +788,10 @@ class DiscordBot(BaseIMClient):
                     model_options += [
                         discord.SelectOption(label=m, value=m, default=m == self.oc_model) for m in model_ids
                     ]
+                    if len(agent_options) > 25:
+                        agent_options = agent_options[:25]
+                    if len(model_options) > 25:
+                        model_options = model_options[:25]
                     reasoning_options = [
                         discord.SelectOption(label="Default", value="__default__"),
                         discord.SelectOption(label="low", value="low", default=self.oc_reasoning == "low"),
@@ -811,6 +845,10 @@ class DiscordBot(BaseIMClient):
                     model_options += [
                         discord.SelectOption(label=m, value=m, default=m == self.claude_model) for m in claude_models
                     ]
+                    if len(agent_options) > 25:
+                        agent_options = agent_options[:25]
+                    if len(model_options) > 25:
+                        model_options = model_options[:25]
 
                     agent_select = discord.ui.Select(
                         placeholder="Claude agent", options=agent_options, min_values=1, max_values=1
@@ -844,6 +882,8 @@ class DiscordBot(BaseIMClient):
                     model_options += [
                         discord.SelectOption(label=m, value=m, default=m == self.codex_model) for m in codex_models
                     ]
+                    if len(model_options) > 25:
+                        model_options = model_options[:25]
                     reasoning_options = [
                         discord.SelectOption(label="Default", value="__default__"),
                         discord.SelectOption(
@@ -993,10 +1033,17 @@ class DiscordBot(BaseIMClient):
 
 
 class _DiscordButtonView(discord.ui.View):
-    def __init__(self, outer: DiscordBot, base_context: MessageContext, keyboard: InlineKeyboard):
+    def __init__(
+        self,
+        outer: DiscordBot,
+        base_context: MessageContext,
+        keyboard: InlineKeyboard,
+        owner_id: Optional[str] = None,
+    ):
         super().__init__(timeout=900)
         self.outer = outer
         self.base_context = base_context
+        self.owner_id = owner_id
         for row_idx, row in enumerate(keyboard.buttons):
             for button in row:
                 item = discord.ui.Button(
@@ -1013,6 +1060,17 @@ class _DiscordButtonView(discord.ui.View):
                         "cmd_routing",
                         "cmd_resume",
                     }
+                    if data.startswith("vibe_update_now") and interaction.guild:
+                        is_owner = interaction.user.id == interaction.guild.owner_id
+                        is_admin = getattr(interaction.user, "guild_permissions", None)
+                        if not (is_owner or (is_admin and is_admin.administrator)):
+                            try:
+                                await interaction.response.send_message(
+                                    "You do not have permission to run updates.", ephemeral=True
+                                )
+                            except Exception:
+                                pass
+                            return
                     if not needs_modal:
                         try:
                             await interaction.response.defer(ephemeral=True)
@@ -1038,12 +1096,7 @@ class _DiscordButtonView(discord.ui.View):
                 item.callback = on_click
                 self.add_item(item)
 
-            async def interaction_check(self, interaction: discord.Interaction) -> bool:
-                if self.owner_id and str(interaction.user.id) != self.owner_id:
-                    return False
-                return True
-
-            async def interaction_check(self, interaction: discord.Interaction) -> bool:
-                if self.owner_id and str(interaction.user.id) != self.owner_id:
-                    return False
-                return True
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.owner_id and str(interaction.user.id) != self.owner_id:
+            return False
+        return True
