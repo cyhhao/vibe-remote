@@ -442,14 +442,21 @@ class UpdateChecker:
         channels = getattr(store, "settings", None)
         if not channels or not hasattr(channels, "channels"):
             return None
+        platform = getattr(self.controller.config, "platform", "slack")
         for channel_id, settings in channels.channels.items():
             if getattr(settings, "enabled", False):
+                if platform == "discord" and not str(channel_id).isdigit():
+                    continue
                 return str(channel_id)
         return None
 
     async def handle_update_button_click(self, context: MessageContext, target_version: Optional[str] = None) -> None:
         """Handle update button click for Discord (non-Slack)."""
         im_client = self.controller.im_client
+        message_id = context.message_id
+        if not message_id:
+            await im_client.send_message(context, "Update action unavailable for this message.")
+            return
         if self._upgrade_lock.locked():
             await im_client.edit_message(
                 context,
@@ -460,34 +467,25 @@ class UpdateChecker:
 
         if not target_version:
             version_info = await self._get_version_info_async()
+            if version_info.get("error"):
+                await im_client.edit_message(context, message_id, text="Update check failed. Please try again later.")
+                return
             if not version_info.get("has_update"):
-                await im_client.edit_message(context, context.message_id, text="Already up to date.")
+                await im_client.edit_message(context, message_id, text="Already up to date.")
                 return
             target_version = version_info.get("latest")
             if not target_version:
                 await im_client.edit_message(
-                    context,
-                    context.message_id,
-                    text="Update information unavailable. Please try again later.",
+                    context, message_id, text="Update information unavailable. Please try again later."
                 )
                 return
 
-        await im_client.edit_message(context, context.message_id, text="Updating Vibe Remote...")
-        result = await self._perform_update(
-            target_version, channel_id=context.channel_id, message_id=context.message_id
-        )
+        await im_client.edit_message(context, message_id, text="Updating Vibe Remote...")
+        result = await self._perform_update(target_version, channel_id=context.channel_id, message_id=message_id)
         if not result.get("ok"):
-            await im_client.edit_message(
-                context,
-                context.message_id,
-                text="Upgrade failed. Please check logs.",
-            )
+            await im_client.edit_message(context, message_id, text="Upgrade failed. Please check logs.")
         elif not result.get("restarting"):
-            await im_client.edit_message(
-                context,
-                context.message_id,
-                text="Upgrade complete. Please restart Vibe Remote.",
-            )
+            await im_client.edit_message(context, message_id, text="Upgrade complete. Please restart Vibe Remote.")
 
     async def _perform_update(
         self, target_version: str, channel_id: Optional[str] = None, message_id: Optional[str] = None

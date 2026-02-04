@@ -161,7 +161,7 @@ class V2Config:
         slack = SlackConfig(**_filter_dataclass_fields(SlackConfig, slack_payload))
         slack.validate()
 
-        discord_payload = payload.get("discord") or None
+        discord_payload = payload.get("discord")
         if discord_payload is not None and not isinstance(discord_payload, dict):
             raise ValueError("Config 'discord' must be an object")
         discord = None

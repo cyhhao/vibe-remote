@@ -323,7 +323,10 @@ class DiscordBot(BaseIMClient):
     async def _on_ready_event(self):
         logger.info("Discord client ready")
         if self._on_ready:
-            await self._on_ready()
+            try:
+                await self._on_ready()
+            except Exception as err:
+                logger.error("Discord on_ready callback failed: %s", err, exc_info=True)
 
     async def _is_authorized_channel(self, channel_id: str) -> bool:
         if not self.settings_manager:
@@ -1001,6 +1004,12 @@ class _DiscordButtonView(discord.ui.View):
                     except Exception:
                         pass
                     channel_id, thread_id = self.outer._extract_context_ids(interaction.channel)
+                    guild_id = str(interaction.guild_id) if interaction.guild_id else None
+                    if guild_id and not self.outer._is_allowed_guild(guild_id):
+                        return
+                    if not await self.outer._is_authorized_channel(channel_id):
+                        await self.outer._send_unauthorized_message(channel_id)
+                        return
                     context = MessageContext(
                         user_id=str(interaction.user.id),
                         channel_id=channel_id,
