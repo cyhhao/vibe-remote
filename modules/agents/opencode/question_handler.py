@@ -116,9 +116,7 @@ class OpenCodeQuestionHandler:
                 )
                 return False
 
-            logger.info(
-                "Answer received for %s, resuming poll loop", request.base_session_id
-            )
+            logger.info("Answer received for %s, resuming poll loop", request.base_session_id)
             return True
         except asyncio.TimeoutError:
             logger.warning(
@@ -149,8 +147,7 @@ class OpenCodeQuestionHandler:
                 await self._im_client.remove_inline_keyboard(
                     request.context,
                     msg_id,
-                    text=(pending.get("prompt_text") or "")
-                    + "\n\n_(Timed out waiting for answer)_",
+                    text=(pending.get("prompt_text") or "") + "\n\n_(Timed out waiting for answer)_",
                     parse_mode="markdown",
                 )
             except Exception:
@@ -168,9 +165,7 @@ class OpenCodeQuestionHandler:
             try:
                 server = await self._get_server()
                 await server.abort_session(session_id, directory)
-                logger.info(
-                    "Aborted OpenCode session %s after question timeout", session_id
-                )
+                logger.info("Aborted OpenCode session %s after question timeout", session_id)
             except Exception as e:
                 logger.warning(f"Failed to abort session on timeout: {e}")
 
@@ -197,20 +192,22 @@ class OpenCodeQuestionHandler:
             return ""
         return "已选择：\n" + "\n".join(lines)
 
-    async def open_question_modal(
-        self, request: AgentRequest, pending: PendingQuestionPayload
-    ) -> None:
+    async def open_question_modal(self, request: AgentRequest, pending: PendingQuestionPayload) -> None:
         trigger_id = None
+        interaction = None
         if request.context.platform_specific:
             trigger_id = request.context.platform_specific.get("trigger_id")
-        if not trigger_id:
+            interaction = request.context.platform_specific.get("interaction")
+        if not trigger_id and not interaction:
             await self._im_client.send_message(
                 request.context,
-                "Slack did not provide a trigger_id for the modal. Please reply with a custom message.",
+                "Modal UI is not available. Please reply with a custom message.",
             )
             return
 
-        if not hasattr(self._im_client, "open_opencode_question_modal"):
+        if not hasattr(self._im_client, "open_opencode_question_modal") and not hasattr(
+            self._im_client, "open_question_modal"
+        ):
             await self._im_client.send_message(
                 request.context,
                 "Modal UI is not available. Please reply with a custom message.",
@@ -218,11 +215,19 @@ class OpenCodeQuestionHandler:
             return
 
         try:
-            await self._im_client.open_opencode_question_modal(
-                trigger_id=trigger_id,
-                context=request.context,
-                pending=pending,
-            )
+            if hasattr(self._im_client, "open_opencode_question_modal"):
+                await self._im_client.open_opencode_question_modal(
+                    trigger_id=interaction or trigger_id,
+                    context=request.context,
+                    pending=pending,
+                )
+            else:
+                await self._im_client.open_question_modal(
+                    trigger_id=interaction or trigger_id,
+                    context=request.context,
+                    pending=pending,
+                    callback_prefix="opencode_question",
+                )
         except Exception as err:
             logger.error(f"Failed to open OpenCode question modal: {err}", exc_info=True)
             await self._im_client.send_message(
@@ -321,11 +326,7 @@ class OpenCodeQuestionHandler:
                     questions = await server.list_questions()
                 for item in questions:
                     tool = item.get("tool") or {}
-                    item_session_id = (
-                        item.get("sessionID")
-                        or item.get("sessionId")
-                        or item.get("session_id")
-                    )
+                    item_session_id = item.get("sessionID") or item.get("sessionId") or item.get("session_id")
                     if item_session_id != session_id:
                         continue
                     if call_id and tool.get("callID") != call_id:
@@ -410,13 +411,9 @@ class OpenCodeQuestionHandler:
         if question_message_id and hasattr(self._im_client, "add_reaction"):
             try:
                 emoji = "eyes"
-                await self._im_client.add_reaction(
-                    request.context, question_message_id, emoji
-                )
+                await self._im_client.add_reaction(request.context, question_message_id, emoji)
                 # Save for cleanup when request completes
-                self._answer_reactions[request.base_session_id] = (
-                    request.context, question_message_id, emoji
-                )
+                self._answer_reactions[request.base_session_id] = (request.context, question_message_id, emoji)
             except Exception as err:
                 logger.debug(f"Failed to add reaction to question message: {err}")
 
@@ -427,13 +424,9 @@ class OpenCodeQuestionHandler:
         evt = self._question_answer_events.get(request.base_session_id)
         if evt:
             evt.set()
-            logger.info(
-                "Answer submitted for %s, signaling main poll loop to resume", session_id
-            )
+            logger.info("Answer submitted for %s, signaling main poll loop to resume", session_id)
         else:
-            logger.warning(
-                "No wait event found for %s; cannot resume poll", request.base_session_id
-            )
+            logger.warning("No wait event found for %s; cannot resume poll", request.base_session_id)
             await self._controller.emit_agent_message(
                 request.context,
                 "notify",
@@ -503,9 +496,7 @@ class OpenCodeQuestionHandler:
                 await asyncio.sleep(delay)
 
         if last_list_err and not questions_listing:
-            logger.warning(
-                f"Failed to fetch questions listing for prompt fallback: {last_list_err}"
-            )
+            logger.warning(f"Failed to fetch questions listing for prompt fallback: {last_list_err}")
 
         logger.info(
             "Question list fetch for %s: dir=%s attempts=%s items=%s",
@@ -518,16 +509,10 @@ class OpenCodeQuestionHandler:
         if questions_listing:
             try:
                 item_sessions = [
-                    (
-                        item.get("sessionID")
-                        or item.get("sessionId")
-                        or item.get("session_id")
-                    )
+                    (item.get("sessionID") or item.get("sessionId") or item.get("session_id"))
                     for item in questions_listing
                 ]
-                logger.info(
-                    "Question list sessions for %s: %s", opencode_session_id, item_sessions
-                )
+                logger.info("Question list sessions for %s: %s", opencode_session_id, item_sessions)
             except Exception:
                 pass
 
@@ -550,11 +535,7 @@ class OpenCodeQuestionHandler:
         if questions_listing:
             session_items: List[Dict[str, Any]] = []
             for item in questions_listing:
-                item_session_id = (
-                    item.get("sessionID")
-                    or item.get("sessionId")
-                    or item.get("session_id")
-                )
+                item_session_id = item.get("sessionID") or item.get("sessionId") or item.get("session_id")
                 if item_session_id == opencode_session_id:
                     session_items.append(item)
 
@@ -622,9 +603,7 @@ class OpenCodeQuestionHandler:
                             continue
                         msg_state = msg_part.get("state") or {}
                         msg_input = msg_state.get("input") or {}
-                        msg_questions = (
-                            msg_input.get("questions") if isinstance(msg_input, dict) else None
-                        )
+                        msg_questions = msg_input.get("questions") if isinstance(msg_input, dict) else None
                         if isinstance(msg_questions, list):
                             qlist = msg_questions
                             break
@@ -637,9 +616,7 @@ class OpenCodeQuestionHandler:
                     await asyncio.sleep(delay)
 
             if last_msg_err and not qlist:
-                logger.warning(
-                    f"Failed to fetch full question input from message {message_id}: {last_msg_err}"
-                )
+                logger.warning(f"Failed to fetch full question input from message {message_id}: {last_msg_err}")
             if full_message is not None:
                 parts = full_message.get("parts", []) or []
                 tool_parts = [p for p in parts if p.get("type") == "tool"]
@@ -753,9 +730,7 @@ class OpenCodeQuestionHandler:
                         pending_payload["prompt_message_id"] = question_message_id
 
                     seen_tool_calls.add(call_key)
-                    if await self.wait_for_question_answer(
-                        request, opencode_session_id, pending_payload
-                    ):
+                    if await self.wait_for_question_answer(request, opencode_session_id, pending_payload):
                         return True
                     return False
                 except Exception as err:
@@ -764,9 +739,7 @@ class OpenCodeQuestionHandler:
                         exc_info=True,
                     )
 
-            await self._im_client.send_message(
-                request.context, text, parse_mode="markdown"
-            )
+            await self._im_client.send_message(request.context, text, parse_mode="markdown")
             seen_tool_calls.add(call_key)
             if await self.wait_for_question_answer(request, opencode_session_id, pending_payload):
                 return True
@@ -809,9 +782,7 @@ class OpenCodeQuestionHandler:
                 if question_message_id:
                     pending_payload["prompt_message_id"] = question_message_id
                 seen_tool_calls.add(call_key)
-                if await self.wait_for_question_answer(
-                    request, opencode_session_id, pending_payload
-                ):
+                if await self.wait_for_question_answer(request, opencode_session_id, pending_payload):
                     return True
                 return False
             except Exception as err:

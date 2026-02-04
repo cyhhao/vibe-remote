@@ -7,7 +7,7 @@ import logging
 from typing import Optional, Dict, Any
 from config import paths
 from modules.im import BaseIMClient, MessageContext, IMFactory
-from modules.im.formatters import SlackFormatter
+from modules.im.formatters import SlackFormatter, DiscordFormatter
 from modules.agent_router import AgentRouter
 from modules.agents import AgentService, ClaudeAgent, CodexAgent, OpenCodeAgent
 from modules.claude_client import ClaudeClient
@@ -79,7 +79,10 @@ class Controller:
         self.im_client: BaseIMClient = IMFactory.create_client(self.config)
 
         # Create platform-specific formatter
-        formatter = SlackFormatter()
+        if self.config.platform == "discord":
+            formatter = DiscordFormatter()
+        else:
+            formatter = SlackFormatter()
 
         # Inject formatter into clients
         self.im_client.formatter = formatter
@@ -96,15 +99,21 @@ class Controller:
         default_backend = getattr(self.config, "default_backend", "opencode")
         self.agent_router = AgentRouter.from_file(None, platform=self.config.platform, default_backend=default_backend)
 
-        # Inject settings_manager into SlackBot if it's Slack platform
+        # Inject settings_manager into IM client if supported
         if self.config.platform == "slack":
-            # Import here to avoid circular dependency
             from modules.im.slack import SlackBot
 
             if isinstance(self.im_client, SlackBot):
                 self.im_client.set_settings_manager(self.settings_manager)
                 self.im_client.set_controller(self)
                 logger.info("Injected settings_manager and controller into SlackBot")
+        elif self.config.platform == "discord":
+            from modules.im.discord import DiscordBot
+
+            if isinstance(self.im_client, DiscordBot):
+                self.im_client.set_settings_manager(self.settings_manager)
+                self.im_client.set_controller(self)
+                logger.info("Injected settings_manager and controller into DiscordBot")
 
     def _get_lang(self) -> str:
         self._refresh_language_from_config()
@@ -384,13 +393,17 @@ class Controller:
             self._consolidated_message_buffers.pop(key, None)
 
     def _get_consolidated_max_bytes(self) -> int:
+        if self.config.platform == "discord":
+            return 2000
         # Slack API hard limit is exactly 4000 BYTES (not characters) for chat.update
         # Chinese/emoji characters take 3-4 bytes each in UTF-8
         return 4000
 
     def _get_consolidated_split_threshold(self) -> int:
         # When accumulated message exceeds this threshold (in bytes), start a new message
-        # to avoid Slack edit failures. Use 90% of max to leave some buffer.
+        # to avoid edit failures. Use 90% of max to leave some buffer.
+        if self.config.platform == "discord":
+            return 1800
         return 3600
 
     def _get_text_byte_length(self, text: str) -> int:
@@ -398,6 +411,8 @@ class Controller:
         return len(text.encode("utf-8"))
 
     def _get_result_max_chars(self) -> int:
+        if self.config.platform == "discord":
+            return 1900
         return 30000
 
     def _build_result_summary(self, text: str, max_chars: int) -> str:
@@ -503,7 +518,7 @@ class Controller:
             summary = self._build_result_summary(text, self._get_result_max_chars())
             await self.im_client.send_message(target_context, summary, parse_mode=parse_mode)
 
-            if self.config.platform == "slack" and hasattr(self.im_client, "upload_markdown"):
+            if self.config.platform in {"slack", "discord"} and hasattr(self.im_client, "upload_markdown"):
                 try:
                     await self.im_client.upload_markdown(
                         target_context,
@@ -515,7 +530,7 @@ class Controller:
                     logger.warning(f"Failed to upload result attachment: {err}")
                     await self.im_client.send_message(
                         target_context,
-                        "无法上传附件（缺少 files:write 权限或上传失败）。需要我改成分条发送吗？",
+                        "Failed to upload attachment. Want me to split the result into multiple messages?",
                         parse_mode=parse_mode,
                     )
             return
@@ -717,7 +732,6 @@ class Controller:
                 context,
                 f"❌ {self._t('error.settingsUpdateFailed', error=str(e))}",
             )
-        
 
     # Working directory change handler (for Slack modal)
     async def handle_change_cwd_submission(self, user_id: str, new_cwd: str, channel_id: Optional[str] = None):
@@ -1068,9 +1082,7 @@ class Controller:
                 if opencode_model:
                     parts.append(f"{self._t('routing.label.model')}: **{opencode_model}**")
                 if opencode_reasoning_effort:
-                    parts.append(
-                        f"{self._t('routing.label.reasoningEffort')}: **{opencode_reasoning_effort}**"
-                    )
+                    parts.append(f"{self._t('routing.label.reasoningEffort')}: **{opencode_reasoning_effort}**")
             elif backend == "claude":
                 if claude_agent:
                     parts.append(f"{self._t('routing.label.agent')}: **{claude_agent}**")
@@ -1080,9 +1092,7 @@ class Controller:
                 if codex_model:
                     parts.append(f"{self._t('routing.label.model')}: **{codex_model}**")
                 if codex_reasoning_effort:
-                    parts.append(
-                        f"{self._t('routing.label.reasoningEffort')}: **{codex_reasoning_effort}**"
-                    )
+                    parts.append(f"{self._t('routing.label.reasoningEffort')}: **{codex_reasoning_effort}**")
 
             # Create context for confirmation message
             context = MessageContext(

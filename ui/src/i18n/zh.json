@@ -49,7 +49,7 @@
   },
   "welcome": {
     "title": "设置 Vibe Remote",
-    "subtitle": "为 Slack 打造的本地 AI 编程助手",
+    "subtitle": "为 Slack 与 Discord 打造的本地 AI 编程助手",
     "getStarted": "开始设置",
     "feature1": "本地运行，代码留在您的电脑上",
     "feature2": "SaaS 模式使用云端中继进行 Slack 消息传输，但不会存储消息内容",
@@ -61,6 +61,31 @@
     "saasDescription": "OAuth 安装 + 云端中继 + 本地执行（即将推出）",
     "selfHostMode": "自托管模式",
     "selfHostDescription": "使用您自己的 Slack 应用 + Socket Mode 令牌"
+  },
+  "platform": {
+    "title": "选择平台",
+    "subtitle": "选择要连接的聊天平台。",
+    "slack": {
+      "title": "Slack",
+      "desc": "连接 Slack 工作区并启用频道。"
+    },
+    "discord": {
+      "title": "Discord",
+      "desc": "连接 Discord 机器人并选择服务器。"
+    }
+  },
+  "discordConfig": {
+    "title": "Discord 配置",
+    "subtitle": "填写机器人令牌并验证权限。",
+    "botToken": "机器人令牌",
+    "botTokenPlaceholder": "粘贴 Discord 机器人令牌",
+    "botTokenHint": "在 Discord Developer Portal 获取令牌。",
+    "validateToken": "验证令牌",
+    "tokenValidated": "令牌验证成功",
+    "authFailed": "验证失败",
+    "guild": "服务器",
+    "guildPlaceholder": "选择服务器",
+    "guildHint": "选择已安装机器人的服务器。"
   },
   "slackConfig": {
     "title": "Slack 配置",
@@ -130,12 +155,17 @@
     "refreshList": "刷新列表",
     "cantFindChannel": "找不到你想要的频道？",
     "inviteBotHint": "请先将 Bot 邀请到频道：\n1. 打开频道，点击 ⚙️ 设置 → 集成 → 添加应用\n2. 或在频道中输入 /invite @你的Bot名称",
+    "discordInviteBotHint": "请确保机器人已加入服务器并具备访问频道的权限。",
+    "guild": "服务器",
+    "guildPlaceholder": "选择服务器",
+    "discordText": "文本",
+    "discordNews": "公告",
     "enabledCount": "已启用 {{count}} 个",
     "accessPolicy": "访问策略",
     "accessPolicyHint": "只有勾选的频道才会启用",
     "noChannelsFound": "未找到频道，请检查令牌或邀请机器人",
     "noChannelsLoaded": "未加载频道",
-    "addTokenFirst": "请先添加 Slack Bot 令牌以加载频道",
+    "addTokenFirst": "请先添加机器人令牌以加载频道",
     "workingDirectory": "工作目录",
     "useGlobalDefault": "使用全局默认值",
     "backend": "后端",
@@ -164,8 +194,12 @@
     "title": "检查并完成",
     "subtitle": "确认设置并启动 Vibe Remote",
     "mode": "模式",
+    "platform": "平台",
     "slackBotToken": "Slack Bot 令牌",
     "slackAppToken": "Slack App 令牌",
+    "discordBotToken": "Discord 机器人令牌",
+    "discordGuild": "Discord 服务器",
+    "notSet": "未设置",
     "enabledAgents": "已启用的 Agent",
     "channelsConfigured": "已配置的频道",
     "requireMention": "需要 @提及",
@@ -186,6 +220,7 @@
     "subtitle": "管理您的本地 Vibe Remote 实例",
     "serviceStatus": "服务状态",
     "mode": "模式",
+    "platform": "平台",
     "workspace": "工作区",
     "gateway": "网关",
     "health": "健康状态",

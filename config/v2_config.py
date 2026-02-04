@@ -19,7 +19,7 @@ def _filter_dataclass_fields(dc_class, payload: dict) -> dict:
 
 @dataclass
 class SlackConfig(BaseIMConfig):
-    bot_token: str
+    bot_token: str = ""
     app_token: Optional[str] = None
     signing_secret: Optional[str] = None
     team_id: Optional[str] = None
@@ -36,6 +36,20 @@ class SlackConfig(BaseIMConfig):
 
 
 @dataclass
+class DiscordConfig(BaseIMConfig):
+    bot_token: str = ""
+    application_id: Optional[str] = None
+    guild_allowlist: Optional[List[str]] = None
+    guild_denylist: Optional[List[str]] = None
+    require_mention: bool = False
+
+    def validate(self) -> None:
+        # Allow empty token for initial setup
+        if self.bot_token and len(self.bot_token.strip()) < 10:
+            raise ValueError("Invalid Discord bot token format")
+
+
+@dataclass
 class GatewayConfig:
     relay_url: Optional[str] = None
     workspace_token: Optional[str] = None
@@ -48,7 +62,6 @@ class GatewayConfig:
 class RuntimeConfig:
     default_cwd: str
     log_level: str = "INFO"
-
 
 
 @dataclass
@@ -93,10 +106,11 @@ class UiConfig:
 @dataclass
 class UpdateConfig:
     """Configuration for automatic update checking and installation."""
+
     auto_update: bool = True  # Auto-install updates when idle
     check_interval_minutes: int = 60  # How often to check for updates (0 = disable)
     idle_minutes: int = 30  # Minutes of inactivity before auto-update
-    notify_slack: bool = True  # Send Slack notification when update is available
+    notify_slack: bool = True  # Send update notification when update is available
 
 
 @dataclass
@@ -106,6 +120,8 @@ class V2Config:
     slack: SlackConfig
     runtime: RuntimeConfig
     agents: AgentsConfig
+    platform: str = "slack"
+    discord: Optional[DiscordConfig] = None
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
@@ -130,7 +146,11 @@ class V2Config:
         if mode not in {"self_host", "saas"}:
             raise ValueError("Config 'mode' must be 'self_host' or 'saas'")
 
-        slack_payload = payload.get("slack")
+        platform = payload.get("platform") or "slack"
+        if platform not in {"slack", "discord"}:
+            raise ValueError("Config 'platform' must be 'slack' or 'discord'")
+
+        slack_payload = payload.get("slack") or {}
         if not isinstance(slack_payload, dict):
             raise ValueError("Config 'slack' must be an object")
 
@@ -140,6 +160,16 @@ class V2Config:
 
         slack = SlackConfig(**_filter_dataclass_fields(SlackConfig, slack_payload))
         slack.validate()
+
+        discord_payload = payload.get("discord") or None
+        if discord_payload is not None and not isinstance(discord_payload, dict):
+            raise ValueError("Config 'discord' must be an object")
+        discord = None
+        if discord_payload is not None:
+            discord = DiscordConfig(**_filter_dataclass_fields(DiscordConfig, discord_payload))
+            discord.validate()
+        if platform == "discord" and discord is None:
+            raise ValueError("Config 'discord' must be provided when platform is discord")
         gateway_payload = payload.get("gateway")
         if gateway_payload is not None and not isinstance(gateway_payload, dict):
             raise ValueError("Config 'gateway' must be an object")
@@ -198,9 +228,11 @@ class V2Config:
         language = normalize_language(payload.get("language"), default="en")
 
         return cls(
+            platform=platform,
             mode=mode,
             version=payload.get("version", "v2"),
             slack=slack,
+            discord=discord,
             runtime=runtime,
             agents=agents,
             gateway=gateway,
@@ -214,9 +246,11 @@ class V2Config:
         paths.ensure_data_dirs()
         path = config_path or paths.get_config_path()
         payload = {
+            "platform": self.platform,
             "mode": self.mode,
             "version": self.version,
             "slack": self.slack.__dict__,
+            "discord": self.discord.__dict__ if self.discord else None,
             "runtime": {
                 "default_cwd": self.runtime.default_cwd,
                 "log_level": self.runtime.log_level,

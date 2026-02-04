@@ -34,6 +34,7 @@
     "languageUpdateFailed": "语言更新失败，请重试。",
     "resumeSubmitFailed": "恢复会话失败：{error}",
     "routingUpdateFailed": "更新路由失败：{error}",
+    "updateUnavailable": "当前无法执行更新操作。",
     "unknownAction": "未知操作：{action}",
     "processActionFailed": "处理操作时出错：{error}",
     "agentNotConfigured": "Agent `{agent}` 未配置。若此频道路由到 Codex，请确保已安装 Codex CLI 并设置环境变量。",

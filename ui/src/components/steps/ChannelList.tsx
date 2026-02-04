@@ -61,12 +61,20 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [claudeModels, setClaudeModels] = useState<string[]>([]);
   const [codexModels, setCodexModels] = useState<string[]>([]);
   const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
+  const [guilds, setGuilds] = useState<any[]>([]);
+  const [selectedGuild, setSelectedGuild] = useState<string>(data.discord?.guild_allowlist?.[0] || '');
 
   useEffect(() => {
     if (!isPage) {
       setConfigs(data.channelConfigs || {});
     }
   }, [data.channelConfigs, isPage]);
+
+  useEffect(() => {
+    if (!isPage) {
+      setSelectedGuild(data.discord?.guild_allowlist?.[0] || '');
+    }
+  }, [data.discord?.guild_allowlist, isPage]);
 
   useEffect(() => {
     if (isPage) {
@@ -79,15 +87,42 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     }
   }, [isPage]);
 
-  const botToken = config.slack?.bot_token || config.slackBotToken || '';
+  const platform = config.platform || data.platform || 'slack';
+  const botToken = platform === 'discord'
+    ? (config.discord?.bot_token || data.discord?.bot_token || '')
+    : (config.slack?.bot_token || config.slackBotToken || '');
+
+  const loadGuilds = async () => {
+    if (!botToken) return;
+    try {
+      const result = await api.discordGuilds(botToken);
+      if (result.ok) {
+        setGuilds(result.guilds || []);
+      }
+    } catch (e) {
+      console.error('Failed to load guilds:', e);
+    }
+  };
 
   const loadChannels = async () => {
     if (!botToken) return;
     setLoading(true);
     try {
-      const result = await api.slackChannels(botToken);
-      if (result.ok) {
-        setChannels(result.channels || []);
+      if (platform === 'discord') {
+        if (!selectedGuild) {
+          setLoading(false);
+          return;
+        }
+        const result = await api.discordChannels(botToken, selectedGuild);
+        if (result.ok) {
+          const filtered = (result.channels || []).filter((c: any) => c.type === 0 || c.type === 5);
+          setChannels(filtered);
+        }
+      } else {
+        const result = await api.slackChannels(botToken);
+        if (result.ok) {
+          setChannels(result.channels || []);
+        }
       }
     } catch (e) {
       console.error('Failed to load channels:', e);
@@ -141,10 +176,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   };
 
   useEffect(() => {
-    if (botToken) {
+    if (!botToken) return;
+    if (platform === 'discord') {
+      loadGuilds();
+      if (selectedGuild) {
+        loadChannels();
+      }
+    } else {
       loadChannels();
     }
-  }, [botToken]);
+  }, [botToken, platform, selectedGuild]);
 
   useEffect(() => {
     if (config.agents?.claude?.enabled) {
@@ -301,7 +342,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 {t('channelList.cantFindChannel')}
               </span>
               <span className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-text text-bg text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-64 whitespace-normal">
-                {t('channelList.inviteBotHint')}
+                {platform === 'discord' ? t('channelList.discordInviteBotHint') : t('channelList.inviteBotHint')}
               </span>
             </span>
             {channels.length === 0 && !loading && (
@@ -310,6 +351,21 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           </div>
           <span className="text-sm text-muted font-mono">{t('channelList.enabledCount', { count: selectedCount })}</span>
         </div>
+        {platform === 'discord' && (
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <label className="text-muted">{t('channelList.guild')}</label>
+            <select
+              value={selectedGuild}
+              onChange={(e) => setSelectedGuild(e.target.value)}
+              className="bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
+            >
+              <option value="">{t('channelList.guildPlaceholder')}</option>
+              {guilds.map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {isPage && (
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <span className="text-muted">{t('channelList.accessPolicy')}</span>
@@ -364,12 +420,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 <span
                   className={clsx(
                     'text-xs px-2 py-0.5 rounded-full border',
-                    channel.is_private
-                      ? 'bg-warning/10 text-warning border-warning/20'
-                      : 'bg-success/10 text-success border-success/20'
+                    platform === 'discord'
+                      ? 'bg-neutral-100 text-text border-border'
+                      : channel.is_private
+                        ? 'bg-warning/10 text-warning border-warning/20'
+                        : 'bg-success/10 text-success border-success/20'
                   )}
                 >
-                  {channel.is_private ? t('common.private') : t('common.public')}
+                  {platform === 'discord'
+                    ? (channel.type === 5 ? t('channelList.discordNews') : t('channelList.discordText'))
+                    : channel.is_private ? t('common.private') : t('common.public')}
                 </span>
               </div>
 
@@ -415,7 +475,11 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                         }}
                         className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
                       >
-                        <option value="">{t('common.default')} ({config.slack?.require_mention ? t('common.enabled') : t('common.disabled')})</option>
+                        <option value="">
+                          {t('common.default')} ({platform === 'discord'
+                            ? (config.discord?.require_mention ? t('common.enabled') : t('common.disabled'))
+                            : (config.slack?.require_mention ? t('common.enabled') : t('common.disabled'))})
+                        </option>
                         <option value="true">{t('channelList.requireMentionOn')}</option>
                         <option value="false">{t('channelList.requireMentionOff')}</option>
                       </select>
@@ -660,7 +724,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             {t('common.back')}
           </button>
           <button
-            onClick={() => onNext && onNext({ channelConfigs: configs })}
+            onClick={() => onNext && onNext({
+              channelConfigs: configs,
+              ...(platform === 'discord' ? { discord: { ...config.discord, guild_allowlist: selectedGuild ? [selectedGuild] : [] } } : {}),
+            })}
             className="px-6 py-2 bg-accent hover:bg-accent/90 text-white rounded-lg font-medium shadow-sm"
           >
             {t('common.continue')}

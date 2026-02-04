@@ -38,12 +38,14 @@ def save_config(payload: dict) -> V2Config:
 
 def config_to_payload(config: V2Config) -> dict:
     payload = {
+        "platform": config.platform,
         "mode": config.mode,
         "version": config.version,
         "slack": {
             **config.slack.__dict__,
             "require_mention": config.slack.require_mention,
         },
+        "discord": config.discord.__dict__ if config.discord else None,
         "runtime": {
             "default_cwd": config.runtime.default_cwd,
             "log_level": config.runtime.log_level,
@@ -161,12 +163,60 @@ def list_channels(bot_token: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def discord_auth_test(bot_token: str) -> dict:
+    try:
+        data = _discord_api_get(bot_token, "users/@me")
+        return {"ok": True, "response": data}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def discord_list_guilds(bot_token: str) -> dict:
+    try:
+        data = _discord_api_get(bot_token, "users/@me/guilds")
+        return {"ok": True, "guilds": data}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def discord_list_channels(bot_token: str, guild_id: str) -> dict:
+    try:
+        data = _discord_api_get(bot_token, f"guilds/{guild_id}/channels")
+        channels = []
+        for channel in data:
+            channels.append(
+                {
+                    "id": channel.get("id"),
+                    "name": channel.get("name"),
+                    "type": channel.get("type"),
+                }
+            )
+        return {"ok": True, "channels": channels}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def opencode_options(cwd: str) -> dict:
     try:
         return asyncio.run(opencode_options_async(cwd))
     except Exception as exc:
         logger.warning("OpenCode options fetch failed: %s", exc, exc_info=True)
         return {"ok": False, "error": str(exc)}
+
+
+def _discord_api_get(bot_token: str, path: str) -> dict:
+    import urllib.request
+
+    if not bot_token:
+        raise ValueError("bot_token is required")
+    url = f"https://discord.com/api/v10/{path.lstrip('/')}"
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bot {bot_token}", "User-Agent": "vibe-remote"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        payload = resp.read().decode("utf-8")
+        return json.loads(payload)
 
 
 async def opencode_options_async(cwd: str) -> dict:

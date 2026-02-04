@@ -266,6 +266,31 @@ def slack_channels():
     return jsonify(api.list_channels(payload.get("bot_token", "")))
 
 
+@app.route("/discord/auth_test", methods=["POST"])
+def discord_auth_test():
+    from vibe import api
+
+    payload = request.json or {}
+    result = api.discord_auth_test(payload.get("bot_token", ""))
+    return jsonify(result)
+
+
+@app.route("/discord/guilds", methods=["POST"])
+def discord_guilds():
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.discord_list_guilds(payload.get("bot_token", "")))
+
+
+@app.route("/discord/channels", methods=["POST"])
+def discord_channels():
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.discord_list_channels(payload.get("bot_token", ""), payload.get("guild_id", "")))
+
+
 @app.route("/doctor", methods=["POST"])
 def doctor_post():
     from vibe.cli import _doctor

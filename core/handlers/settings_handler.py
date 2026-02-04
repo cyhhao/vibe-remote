@@ -50,6 +50,8 @@ class SettingsHandler:
             # For Slack, use modal dialog
             if self.config.platform == "slack":
                 await self._handle_settings_slack(context)
+            elif self.config.platform == "discord":
+                await self._handle_settings_discord(context)
             else:
                 # For other platforms, use inline keyboard
                 await self._handle_settings_traditional(context)
@@ -145,6 +147,31 @@ class SettingsHandler:
                 keyboard,
             )
 
+    async def _handle_settings_discord(self, context: MessageContext):
+        interaction = context.platform_specific.get("interaction") if context.platform_specific else None
+        settings_key = self._get_settings_key(context)
+        user_settings = self.settings_manager.get_user_settings(settings_key)
+        message_types = self.settings_manager.get_available_message_types()
+        display_names = self._message_type_display_names()
+
+        current_require_mention = self.settings_manager.get_require_mention_override(settings_key)
+        global_require_mention = self.config.discord.require_mention if self.config.discord else False
+        current_language = self.config.language
+
+        if hasattr(self.im_client, "open_settings_modal"):
+            await self.im_client.open_settings_modal(
+                interaction,
+                user_settings,
+                message_types,
+                display_names,
+                context.channel_id,
+                current_require_mention=current_require_mention,
+                global_require_mention=global_require_mention,
+                current_language=current_language,
+            )
+            return
+        await self._handle_settings_traditional(context)
+
     async def handle_toggle_message_type(self, context: MessageContext, msg_type: str):
         """Handle toggle for message type visibility"""
         try:
@@ -237,7 +264,10 @@ class SettingsHandler:
                 title=self._t("info.howItWorksTitle"),
                 emoji="📚",
                 items=[
-                    (self._t("info.howItWorksRealtimeLabel"), self._t("info.howItWorksRealtimeDesc", agent=agent_label)),
+                    (
+                        self._t("info.howItWorksRealtimeLabel"),
+                        self._t("info.howItWorksRealtimeDesc", agent=agent_label),
+                    ),
                     (self._t("info.howItWorksPersistentLabel"), self._t("info.howItWorksPersistentDesc")),
                     (self._t("info.howItWorksCommandsLabel"), self._t("info.howItWorksCommandsDesc")),
                     (self._t("info.howItWorksWorkDirLabel"), self._t("info.howItWorksWorkDirDesc")),
@@ -260,6 +290,8 @@ class SettingsHandler:
             # Only Slack has modal support for now
             if self.config.platform == "slack":
                 await self._handle_routing_slack(context)
+            elif self.config.platform == "discord":
+                await self._handle_routing_discord(context)
             else:
                 # For other platforms, show a simple message
                 await self.im_client.send_message(
@@ -358,6 +390,80 @@ class SettingsHandler:
         try:
             await self.im_client.open_routing_modal(
                 trigger_id=trigger_id,
+                channel_id=context.channel_id,
+                registered_backends=registered_backends,
+                current_backend=current_backend,
+                current_routing=current_routing,
+                opencode_agents=opencode_agents,
+                opencode_models=opencode_models,
+                opencode_default_config=opencode_default_config,
+                claude_agents=claude_agents,
+                claude_models=claude_models,
+                codex_models=codex_models,
+            )
+        except Exception as e:
+            logger.error(f"Error opening routing modal: {e}", exc_info=True)
+            await self.im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
+
+    async def _handle_routing_discord(self, context: MessageContext):
+        interaction = context.platform_specific.get("interaction") if context.platform_specific else None
+
+        settings_key = self._get_settings_key(context)
+        current_routing = self.settings_manager.get_channel_routing(settings_key)
+
+        all_backends = list(self.controller.agent_service.agents.keys())
+        registered_backends = sorted(all_backends, key=lambda x: (x != "opencode", x))
+        current_backend = self.controller.resolve_agent_for_context(context)
+
+        opencode_agents = []
+        opencode_models = {}
+        opencode_default_config = {}
+
+        if "opencode" in registered_backends:
+            try:
+                opencode_agent = self.controller.agent_service.agents.get("opencode")
+                if opencode_agent and hasattr(opencode_agent, "_get_server"):
+                    server = await opencode_agent._get_server()
+                    await server.ensure_running()
+
+                    cwd = self.controller.get_cwd(context)
+                    opencode_agents = await server.get_available_agents(cwd)
+                    opencode_models = await server.get_available_models(cwd)
+                    opencode_default_config = await server.get_default_config(cwd)
+            except Exception as e:
+                logger.warning(f"Failed to fetch OpenCode data: {e}")
+
+        claude_agents = []
+        claude_models = []
+
+        if "claude" in registered_backends:
+            try:
+                from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
+
+                cwd = self.controller.get_cwd(context)
+                agents_result = get_claude_agents(cwd)
+                if agents_result.get("ok"):
+                    claude_agents = agents_result.get("agents", [])
+                models_result = get_claude_models()
+                if models_result.get("ok"):
+                    claude_models = models_result.get("models", [])
+            except Exception as e:
+                logger.warning(f"Failed to fetch Claude data: {e}")
+
+        codex_models = []
+        if "codex" in registered_backends:
+            try:
+                from vibe.api import codex_models as get_codex_models
+
+                models_result = get_codex_models()
+                if models_result.get("ok"):
+                    codex_models = models_result.get("models", [])
+            except Exception as e:
+                logger.warning(f"Failed to fetch Codex data: {e}")
+
+        try:
+            await self.im_client.open_routing_modal(
+                trigger_id=interaction or context,
                 channel_id=context.channel_id,
                 registered_backends=registered_backends,
                 current_backend=current_backend,

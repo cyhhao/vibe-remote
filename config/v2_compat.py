@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from config.v2_config import V2Config, SlackConfig
+from config.v2_config import V2Config, SlackConfig, DiscordConfig
 
 
 @dataclass
@@ -35,6 +35,7 @@ class OpenCodeCompatConfig:
 class AppCompatConfig:
     platform: str
     slack: SlackConfig
+    discord: Optional[DiscordConfig]
     claude: ClaudeCompatConfig
     codex: Optional[CodexCompatConfig]
     opencode: Optional[OpenCodeCompatConfig]
@@ -68,8 +69,9 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         )
     slack = SlackConfig(**v2.slack.__dict__)
     return AppCompatConfig(
-        platform="slack",
+        platform=v2.platform,
         slack=slack,
+        discord=v2.discord,
         claude=claude,
         codex=codex,
         opencode=opencode,

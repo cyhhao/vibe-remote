@@ -4,7 +4,7 @@
 
 # Vibe Remote
 
-### 你的 AI 编码军团，用 Slack 指挥。
+### 你的 AI 编码军团，用 Slack 或 Discord 指挥。
 
 **不用笔记本电脑。不用 IDE。只需 vibe。**
 
@@ -26,7 +26,7 @@
 
 **以前的你：** 慌了。找 WiFi。开电脑。等 IDE 加载。晒伤了。
 
-**用了 Vibe Remote：** 打开 Slack。输入「修一下 login.py 的认证 bug」。看着 Claude Code 实时修复。批准。继续喝玛格丽塔。
+**用了 Vibe Remote：** 打开 Slack 或 Discord。输入「修一下 login.py 的认证 bug」。看着 Claude Code 实时修复。批准。继续喝玛格丽塔。
 
 ```
 让 AI 去忙，你去浪。
@@ -108,11 +108,11 @@ AI 完成任务的那一刻，你就能收到通知。就像老板给员工布�
 
 ### Thread = 会话
 
-每个 Slack 线程是独立工作区。开 5 个线程，跑 5 个并行任务。上下文互不干扰。
+每个 Slack/Discord 线程是独立工作区。开 5 个线程，跑 5 个并行任务。上下文互不干扰。
 
 ### 交互式提示
 
-Agent 需要输入时 — 文件选择、确认、选项 — Slack 弹出按钮或模态框。完整 CLI 交互，零终端。
+Agent 需要输入时 — 文件选择、确认、选项 — Slack 或 Discord 弹出按钮或模态框。完整 CLI 交互，零终端。
 
 ![交互式提示](assets/screenshots/question-zh.jpg)
 
@@ -254,6 +254,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 - **[CLI 参考手册](docs/CLI_ZH.md)** — 命令行使用和服务生命周期
 - **[Slack 配置指南](docs/SLACK_SETUP_ZH.md)** — 详细配置和截图
+- **[Discord 配置指南](docs/DISCORD_SETUP_ZH.md)** — 详细配置和截图
 
 ## 远端服务器提示（SSH）
 

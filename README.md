@@ -4,7 +4,7 @@
 
 # Vibe Remote
 
-### Your AI coding army, commanded from Slack.
+### Your AI coding army, commanded from Slack or Discord.
 
 **No laptop. No IDE. Just vibes.**
 
@@ -26,7 +26,7 @@ You're at the beach. Phone buzzes — production's on fire.
 
 **Old you:** Panic. Find WiFi. Open laptop. Wait for IDE. Lose your tan.
 
-**Vibe Remote you:** Open Slack. Type "Fix the auth bug in login.py". Watch Claude Code fix it in real-time. Approve. Sip margarita.
+**Vibe Remote you:** Open Slack or Discord. Type "Fix the auth bug in login.py". Watch Claude Code fix it in real-time. Approve. Sip margarita.
 
 ```
 AI works. You live.
@@ -108,11 +108,11 @@ Get notified the moment your AI finishes. Like assigning tasks to employees — 
 
 ### Thread = Session
 
-Each Slack thread is an isolated workspace. Open 5 threads, run 5 parallel tasks. Context stays separate.
+Each Slack/Discord thread is an isolated workspace. Open 5 threads, run 5 parallel tasks. Context stays separate.
 
 ### Interactive Prompts
 
-When your agent needs input — file selection, confirmation, options — Slack pops up buttons or a modal. Full CLI interactivity, zero terminal required.
+When your agent needs input — file selection, confirmation, options — Slack or Discord pops up buttons or a modal. Full CLI interactivity, zero terminal required.
 
 ![Interactive Prompts](assets/screenshots/question-en.jpg)
 
@@ -254,6 +254,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 - **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
+- **[Discord Setup Guide](docs/DISCORD_SETUP.md)** — Detailed setup with screenshots
 
 ## Remote Server Tip (SSH)
 

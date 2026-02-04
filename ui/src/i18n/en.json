@@ -49,7 +49,7 @@
   },
   "welcome": {
     "title": "Set up Vibe Remote",
-    "subtitle": "Your local AI coding assistant for Slack.",
+    "subtitle": "Your local AI coding assistant for Slack and Discord.",
     "getStarted": "Get started",
     "feature1": "Runs locally. Your code stays on your computer.",
     "feature2": "SaaS mode uses a cloud relay for Slack delivery, but does not store message content.",
@@ -61,6 +61,31 @@
     "saasDescription": "OAuth install + cloud relay + local execution (coming soon).",
     "selfHostMode": "Self-host Mode",
     "selfHostDescription": "Use your own Slack app + Socket Mode tokens."
+  },
+  "platform": {
+    "title": "Choose a Platform",
+    "subtitle": "Select the chat platform to connect.",
+    "slack": {
+      "title": "Slack",
+      "desc": "Connect a Slack workspace and enable channels."
+    },
+    "discord": {
+      "title": "Discord",
+      "desc": "Connect a Discord bot and choose a guild."
+    }
+  },
+  "discordConfig": {
+    "title": "Discord Configuration",
+    "subtitle": "Add your bot token and validate access.",
+    "botToken": "Bot Token",
+    "botTokenPlaceholder": "Paste your Discord bot token",
+    "botTokenHint": "Use the token from the Discord Developer Portal.",
+    "validateToken": "Validate Token",
+    "tokenValidated": "Token validated",
+    "authFailed": "Validation failed",
+    "guild": "Guild",
+    "guildPlaceholder": "Select a guild",
+    "guildHint": "Choose the guild where the bot is installed."
   },
   "slackConfig": {
     "title": "Slack Configuration",
@@ -130,12 +155,17 @@
     "refreshList": "Refresh List",
     "cantFindChannel": "Can't find your channel?",
     "inviteBotHint": "Invite the bot to your channel first:\n1. Open the channel, click ⚙️ Settings → Integrations → Add apps\n2. Or type /invite @YourBotName in the channel",
+    "discordInviteBotHint": "Add the bot to your guild and grant access to the channel.",
+    "guild": "Guild",
+    "guildPlaceholder": "Select a guild",
+    "discordText": "Text",
+    "discordNews": "News",
     "enabledCount": "{{count}} enabled",
     "accessPolicy": "Access Policy",
     "accessPolicyHint": "Channels are enabled only when checked below.",
     "noChannelsFound": "No channels found. Check token or invite bot.",
     "noChannelsLoaded": "No channels loaded.",
-    "addTokenFirst": "Add a Slack bot token first to load channels.",
+    "addTokenFirst": "Add a bot token first to load channels.",
     "workingDirectory": "Working Directory",
     "useGlobalDefault": "Use global default",
     "backend": "Backend",
@@ -164,8 +194,12 @@
     "title": "Review & Finish",
     "subtitle": "Confirm settings and start Vibe Remote.",
     "mode": "Mode",
+    "platform": "Platform",
     "slackBotToken": "Slack Bot Token",
     "slackAppToken": "Slack App Token",
+    "discordBotToken": "Discord Bot Token",
+    "discordGuild": "Discord Guild",
+    "notSet": "Not set",
     "enabledAgents": "Enabled Agents",
     "channelsConfigured": "Channels Configured",
     "requireMention": "Require @Mention",
@@ -186,6 +220,7 @@
     "subtitle": "Manage your local Vibe Remote instance.",
     "serviceStatus": "Service Status",
     "mode": "Mode",
+    "platform": "Platform",
     "workspace": "Workspace",
     "gateway": "Gateway",
     "health": "Health",

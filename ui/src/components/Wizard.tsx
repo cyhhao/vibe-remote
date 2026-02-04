@@ -3,8 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { Welcome } from './steps/Welcome';
 import { ModeSelection } from './steps/ModeSelection';
+import { PlatformSelection } from './steps/PlatformSelection';
 import { AgentDetection } from './steps/AgentDetection';
 import { SlackConfig } from './steps/SlackConfig';
+import { DiscordConfig } from './steps/DiscordConfig';
 import { ChannelList } from './steps/ChannelList';
 import { Summary } from './steps/Summary';
 import { useApi } from '../context/ApiContext';
@@ -12,6 +14,7 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 import clsx from 'clsx';
 
 const buildConfigPayload = (data: any) => ({
+  platform: data.platform || 'slack',
   mode: data.mode || 'self_host',
   version: 'v2',
   slack: {
@@ -21,6 +24,13 @@ const buildConfigPayload = (data: any) => ({
     bot_token: data.slack?.bot_token || '',
     app_token: data.slack?.app_token || '',
     require_mention: data.slack?.require_mention || false,
+  },
+  discord: {
+    ...data.discord,
+    bot_token: data.discord?.bot_token || '',
+    guild_allowlist: data.discord?.guild_allowlist || [],
+    guild_denylist: data.discord?.guild_denylist || [],
+    require_mention: data.discord?.require_mention || false,
   },
   runtime: {
     // Preserve existing runtime config
@@ -69,21 +79,27 @@ const buildConfigPayload = (data: any) => ({
   language: data.language,
 });
 
-const steps = [
-  { id: 'welcome', title: 'Welcome', component: Welcome },
-  { id: 'mode', title: 'Mode', component: ModeSelection },
-  { id: 'agents', title: 'Agents', component: AgentDetection },
-  { id: 'slack', title: 'Slack', component: SlackConfig },
-  { id: 'channels', title: 'Channels', component: ChannelList },
-  { id: 'summary', title: 'Finish', component: Summary },
-];
-
 export const Wizard: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
   const [currentStep, setCurrentStep] = useState(0);
   const [data, setData] = useState<any>({});
   const [loaded, setLoaded] = useState(false);
+
+  const steps = React.useMemo(() => {
+    const platform = data.platform || 'slack';
+    return [
+      { id: 'welcome', title: 'Welcome', component: Welcome },
+      { id: 'mode', title: 'Mode', component: ModeSelection },
+      { id: 'platform', title: 'Platform', component: PlatformSelection },
+      { id: 'agents', title: 'Agents', component: AgentDetection },
+      platform === 'discord'
+        ? { id: 'discord', title: 'Discord', component: DiscordConfig }
+        : { id: 'slack', title: 'Slack', component: SlackConfig },
+      { id: 'channels', title: 'Channels', component: ChannelList },
+      { id: 'summary', title: 'Finish', component: Summary },
+    ];
+  }, [data.platform]);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -127,7 +143,7 @@ export const Wizard: React.FC = () => {
 
   const persistStep = async (payload: any) => {
     if (!payload) return;
-    if (payload.agents || payload.slack || payload.mode || payload.channelConfigs) {
+    if (payload.agents || payload.slack || payload.discord || payload.mode || payload.platform || payload.channelConfigs) {
       await api.saveConfig(buildConfigPayload(payload));
     }
     if (payload.channelConfigs) {

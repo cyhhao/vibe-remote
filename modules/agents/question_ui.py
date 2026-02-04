@@ -204,9 +204,7 @@ class QuestionUIHandler:
                 )
                 return False
 
-            logger.info(
-                "Answer received for %s, resuming", request.base_session_id
-            )
+            logger.info("Answer received for %s, resuming", request.base_session_id)
             return True
         except asyncio.TimeoutError:
             logger.warning(
@@ -357,9 +355,7 @@ class QuestionUIHandler:
                 exc_info=True,
             )
             # Fallback to text-only
-            await self._im_client.send_message(
-                request.context, text, parse_mode="markdown"
-            )
+            await self._im_client.send_message(request.context, text, parse_mode="markdown")
             return None
 
     async def _render_modal_trigger(
@@ -389,22 +385,20 @@ class QuestionUIHandler:
                 exc_info=True,
             )
             # Fallback to text-only
-            await self._im_client.send_message(
-                request.context, text, parse_mode="markdown"
-            )
+            await self._im_client.send_message(request.context, text, parse_mode="markdown")
             return None
 
-    async def open_modal(
-        self, request: AgentRequest, pending: PendingQuestion
-    ) -> None:
+    async def open_modal(self, request: AgentRequest, pending: PendingQuestion) -> None:
         """Open the question modal."""
         trigger_id = None
+        interaction = None
         if request.context.platform_specific:
             trigger_id = request.context.platform_specific.get("trigger_id")
-        if not trigger_id:
+            interaction = request.context.platform_specific.get("interaction")
+        if not trigger_id and not interaction:
             await self._im_client.send_message(
                 request.context,
-                "Slack did not provide a trigger_id for the modal. Please reply with a custom message.",
+                "Modal UI is not available. Please reply with a custom message.",
             )
             return
 
@@ -417,7 +411,7 @@ class QuestionUIHandler:
 
         try:
             await self._im_client.open_question_modal(
-                trigger_id=trigger_id,
+                trigger_id=interaction or trigger_id,
                 context=request.context,
                 pending=pending,
                 callback_prefix=self._callback_prefix,
@@ -495,12 +489,8 @@ class QuestionUIHandler:
 
         try:
             emoji = "eyes"
-            await self._im_client.add_reaction(
-                request.context, question_message_id, emoji
-            )
+            await self._im_client.add_reaction(request.context, question_message_id, emoji)
             # Save for cleanup when request completes
-            self._answer_reactions[request.base_session_id] = (
-                request.context, question_message_id, emoji
-            )
+            self._answer_reactions[request.base_session_id] = (request.context, question_message_id, emoji)
         except Exception as err:
             logger.debug(f"Failed to add reaction to question message: {err}")
