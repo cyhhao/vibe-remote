@@ -505,9 +505,10 @@ class DiscordBot(BaseIMClient):
         ]
 
         class SettingsView(discord.ui.View):
-            def __init__(self, outer: DiscordBot):
+            def __init__(self, outer: DiscordBot, owner_id: Optional[str]):
                 super().__init__(timeout=900)
                 self.outer = outer
+                self.owner_id = owner_id
                 self.types_select = discord.ui.Select(
                     placeholder="Visible message types",
                     options=type_options,
@@ -532,6 +533,8 @@ class DiscordBot(BaseIMClient):
                 self.add_item(discord.ui.Button(label="Save", style=discord.ButtonStyle.primary))
 
             async def interaction_check(self, interaction: discord.Interaction) -> bool:
+                if self.owner_id and str(interaction.user.id) != self.owner_id:
+                    return False
                 return True
 
             async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
@@ -540,7 +543,8 @@ class DiscordBot(BaseIMClient):
             async def on_timeout(self) -> None:
                 return
 
-        view = SettingsView(self)
+        owner_id = str(interaction.user.id) if interaction else None
+        view = SettingsView(self, owner_id)
 
         async def save_callback(save_interaction: discord.Interaction):
             show_types = list(view.types_select.values or [])
@@ -611,9 +615,10 @@ class DiscordBot(BaseIMClient):
                 await submit_interaction.response.send_message("✅ Session ID captured.", ephemeral=True)
 
         class ResumeView(discord.ui.View):
-            def __init__(self, outer: DiscordBot):
+            def __init__(self, outer: DiscordBot, owner_id: Optional[str]):
                 super().__init__(timeout=900)
                 self.outer = outer
+                self.owner_id = owner_id
                 self.manual_session: Optional[str] = None
                 self.session_select = discord.ui.Select(
                     placeholder="Choose a stored session",
@@ -632,7 +637,8 @@ class DiscordBot(BaseIMClient):
                 self.add_item(discord.ui.Button(label="Enter session ID", style=discord.ButtonStyle.secondary))
                 self.add_item(discord.ui.Button(label="Resume", style=discord.ButtonStyle.primary))
 
-        view = ResumeView(self)
+        owner_id = str(interaction.user.id) if interaction else None
+        view = ResumeView(self, owner_id)
 
         async def manual_callback(manual_interaction: discord.Interaction):
             modal = ManualSessionModal()
@@ -689,9 +695,10 @@ class DiscordBot(BaseIMClient):
         interaction = trigger_id if isinstance(trigger_id, discord.Interaction) else None
 
         class RoutingView(discord.ui.View):
-            def __init__(self, outer: DiscordBot):
+            def __init__(self, outer: DiscordBot, owner_id: Optional[str]):
                 super().__init__(timeout=900)
                 self.outer = outer
+                self.owner_id = owner_id
                 self.step = "backend"
                 self.selected_backend = current_backend or (
                     registered_backends[0] if registered_backends else "opencode"
@@ -906,7 +913,8 @@ class DiscordBot(BaseIMClient):
                     )
                 await interaction.response.edit_message(content="✅ Routing updated.", view=None)
 
-        view = RoutingView(self)
+        owner_id = str(interaction.user.id) if interaction else None
+        view = RoutingView(self, owner_id)
 
         if interaction:
             await interaction.response.send_message("🤖 Agent routing", view=view, ephemeral=True)
@@ -999,10 +1007,17 @@ class _DiscordButtonView(discord.ui.View):
                 )
 
                 async def on_click(interaction: discord.Interaction, data=button.callback_data):
-                    try:
-                        await interaction.response.defer(ephemeral=True)
-                    except Exception:
-                        pass
+                    needs_modal = data.endswith(":open_modal") or data in {
+                        "cmd_change_cwd",
+                        "cmd_settings",
+                        "cmd_routing",
+                        "cmd_resume",
+                    }
+                    if not needs_modal:
+                        try:
+                            await interaction.response.defer(ephemeral=True)
+                        except Exception:
+                            pass
                     channel_id, thread_id = self.outer._extract_context_ids(interaction.channel)
                     guild_id = str(interaction.guild_id) if interaction.guild_id else None
                     if guild_id and not self.outer._is_allowed_guild(guild_id):
@@ -1022,3 +1037,13 @@ class _DiscordButtonView(discord.ui.View):
 
                 item.callback = on_click
                 self.add_item(item)
+
+            async def interaction_check(self, interaction: discord.Interaction) -> bool:
+                if self.owner_id and str(interaction.user.id) != self.owner_id:
+                    return False
+                return True
+
+            async def interaction_check(self, interaction: discord.Interaction) -> bool:
+                if self.owner_id and str(interaction.user.id) != self.owner_id:
+                    return False
+                return True

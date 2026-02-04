@@ -825,7 +825,8 @@ class Controller:
 
             # If we created a fresh top-level message, use it as the new thread anchor
             mapped_thread = target_thread or confirmation_ts
-            base_session_id = f"slack_{mapped_thread}"
+            platform = getattr(self.config, "platform", "slack")
+            base_session_id = f"{platform}_{mapped_thread}"
 
             # Persist mapping
             self.settings_manager.set_agent_session_mapping(settings_key, agent, base_session_id, session_id)
