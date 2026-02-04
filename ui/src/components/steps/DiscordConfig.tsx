@@ -19,6 +19,10 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   const [guilds, setGuilds] = useState<any[]>([]);
   const [selectedGuild, setSelectedGuild] = useState<string>(data.discord?.guild_allowlist?.[0] || '');
 
+  useEffect(() => {
+    setAuthResult(null);
+  }, [botToken]);
+
   const isValid = useMemo(() => botToken.length > 0 && authResult?.ok, [botToken, authResult]);
 
   const runAuthTest = async () => {

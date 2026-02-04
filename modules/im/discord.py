@@ -36,8 +36,8 @@ class DiscordBot(BaseIMClient):
         self._controller = None
         self._on_ready: Optional[Callable] = None
 
-        self.client.event(self._on_ready_event)
-        self.client.event(self._on_message_event)
+        self.client.on_ready = self._on_ready_event
+        self.client.on_message = self._on_message_event
 
     def set_settings_manager(self, settings_manager):
         self.settings_manager = settings_manager
@@ -127,6 +127,15 @@ class DiscordBot(BaseIMClient):
 
     def _clean_message_text(self, text: str) -> str:
         return (text or "").strip()
+
+    def _is_allowed_guild(self, guild_id: Optional[str]) -> bool:
+        allow = set(self.config.guild_allowlist or [])
+        deny = set(self.config.guild_denylist or [])
+        if guild_id and guild_id in deny:
+            return False
+        if allow and (not guild_id or guild_id not in allow):
+            return False
+        return True
 
     async def send_message(
         self,
@@ -359,6 +368,9 @@ class DiscordBot(BaseIMClient):
 
         channel = message.channel
         channel_id, thread_id = self._extract_context_ids(channel)
+
+        if message.guild and not self._is_allowed_guild(str(message.guild.id)):
+            return
 
         # File attachments
         files = None
