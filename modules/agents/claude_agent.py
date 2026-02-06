@@ -132,8 +132,8 @@ class ClaudeAgent(BaseAgent):
                 logger.warning(f"Error closing Claude session {session_key}: {e}")
             finally:
                 self.claude_sessions.pop(session_key, None)
-                # Note: don't pop pending reactions here - let receiver's finally block handle them
-                # so that reactions can be properly removed from IM when receiver ends
+                # Pending reactions are cleaned up by the receiver's
+                # CancelledError / Exception handlers when it terminates.
 
         # Legacy session manager cleanup (best-effort)
         await self.session_manager.clear_session(settings_key)
@@ -332,20 +332,32 @@ class ClaudeAgent(BaseAgent):
                 except Exception as e:
                     logger.error(f"Error processing message from Claude: {e}", exc_info=True)
                     continue
+        except asyncio.CancelledError:
+            # Receiver task was explicitly cancelled (e.g. /stop, /clear,
+            # or a new message replacing the session).  Clean up reactions
+            # because this receiver will never process another result.
+            composite_key = f"{base_session_id}:{working_path}"
+            logger.info("Claude receiver cancelled for session %s", composite_key)
+            await self._clear_pending_reactions(composite_key, context)
+            raise
         except Exception as e:
             composite_key = f"{base_session_id}:{working_path}"
             logger.error(
                 f"Error in Claude receiver for session {composite_key}: {e}",
                 exc_info=True,
             )
-            # Clean up all pending reactions for this session on error
+            # Clean up all pending reactions for this session on error —
+            # the receiver is dead and won't process any more results.
             await self._clear_pending_reactions(composite_key, context)
             await self.session_handler.handle_session_error(composite_key, context, e)
-        finally:
-            # Clean up any remaining reactions when receiver ends normally
-            # (e.g., client closed without sending a result)
-            composite_key = f"{base_session_id}:{working_path}"
-            await self._clear_pending_reactions(composite_key, context)
+        # NOTE: no `finally` cleanup of pending reactions here.
+        # When the receiver ends normally (stream exhausted after a result),
+        # new messages may have already queued their reactions via
+        # handle_message().  Blindly clearing them here would remove the
+        # :eyes: for an in-flight request that hasn't produced a result yet.
+        # The except blocks above handle the cancel/error cases; the
+        # normal-result case is handled by _remove_pending_reaction()
+        # inside the loop.
 
     async def _delete_ack(self, context: MessageContext, request: AgentRequest):
         ack_id = request.ack_message_id
@@ -373,21 +385,6 @@ class ClaudeAgent(BaseAgent):
                 await self.im_client.remove_reaction(context, message_id, emoji)
             except Exception as err:
                 logger.debug(f"Failed to remove reaction ack: {err}")
-
-    async def _remove_ack_reaction_direct(self, context: MessageContext, request: AgentRequest) -> None:
-        """Remove ack reaction directly from request (for error paths before queuing)."""
-        if request.ack_reaction_message_id and request.ack_reaction_emoji:
-            try:
-                await self.im_client.remove_reaction(
-                    context,
-                    request.ack_reaction_message_id,
-                    request.ack_reaction_emoji,
-                )
-            except Exception as err:
-                logger.debug(f"Failed to remove reaction ack: {err}")
-            finally:
-                request.ack_reaction_message_id = None
-                request.ack_reaction_emoji = None
 
     async def _remove_specific_pending_reaction(
         self, composite_key: str, context: MessageContext, request: AgentRequest

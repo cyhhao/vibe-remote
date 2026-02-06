@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -9,6 +10,8 @@ from typing import Any, Dict, List, Optional
 
 from modules.im import MessageContext
 from modules.im.base import FileAttachment
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -66,7 +69,10 @@ class BaseAgent(ABC):
     async def _remove_ack_reaction(self, request: AgentRequest) -> None:
         """Remove the acknowledgement reaction from user's message.
 
-        Called after sending result message to clean up the 👀 reaction.
+        Called after sending result message or on terminal error to clean up
+        the 👀 reaction.  This is the **single** implementation — subclasses
+        should NOT override it.  The guard (check-then-clear) is idempotent so
+        calling it more than once is harmless.
         """
         if request.ack_reaction_message_id and request.ack_reaction_emoji:
             try:
@@ -76,9 +82,7 @@ class BaseAgent(ABC):
                     request.ack_reaction_emoji,
                 )
             except Exception as err:
-                import logging
-
-                logging.getLogger(__name__).debug(f"Failed to remove reaction ack: {err}")
+                logger.debug(f"Failed to remove reaction ack: {err}")
             finally:
                 request.ack_reaction_message_id = None
                 request.ack_reaction_emoji = None

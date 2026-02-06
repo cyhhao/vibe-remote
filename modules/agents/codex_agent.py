@@ -29,9 +29,7 @@ class CodexAgent(BaseAgent):
         self._initialized_sessions: set[str] = set()
         self._pending_assistant_messages: Dict[str, Tuple[str, Optional[str]]] = {}
         self._slack_markdown_converter = (
-            SlackMarkdownConverter()
-            if getattr(self.controller.config, "platform", None) == "slack"
-            else None
+            SlackMarkdownConverter() if getattr(self.controller.config, "platform", None) == "slack" else None
         )
 
     async def handle_message(self, request: AgentRequest) -> None:
@@ -40,8 +38,7 @@ class CodexAgent(BaseAgent):
             await self.controller.emit_agent_message(
                 request.context,
                 "notify",
-                "⚠️ Codex is already processing a task in this thread. "
-                "Cancelling the previous run...",
+                "⚠️ Codex is already processing a task in this thread. Cancelling the previous run...",
             )
             await self._terminate_process(existing)
             await self.controller.emit_agent_message(
@@ -61,10 +58,10 @@ class CodexAgent(BaseAgent):
         # Read channel-level configuration overrides
         channel_settings = self.settings_manager.get_channel_settings(request.context.channel_id)
         routing = channel_settings.routing if channel_settings else None
-        
+
         # Priority: channel config > global default
         effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
-        effective_reasoning_effort = (routing.codex_reasoning_effort if routing else None)
+        effective_reasoning_effort = routing.codex_reasoning_effort if routing else None
 
         cmd = self._build_command(request, resume_id, effective_model, effective_reasoning_effort)
         try:
@@ -86,9 +83,7 @@ class CodexAgent(BaseAgent):
             return
         except Exception as e:
             logger.error(f"Failed to launch Codex CLI: {e}", exc_info=True)
-            await self.controller.emit_agent_message(
-                request.context, "notify", f"❌ Failed to start Codex CLI: {e}"
-            )
+            await self.controller.emit_agent_message(request.context, "notify", f"❌ Failed to start Codex CLI: {e}")
             await self._remove_ack_reaction(request)
             return
 
@@ -100,9 +95,7 @@ class CodexAgent(BaseAgent):
         )
         self.base_process_index[request.base_session_id] = request.composite_session_id
         self.composite_to_base[request.composite_session_id] = request.base_session_id
-        logger.info(
-            f"Codex session {request.composite_session_id} started (pid={process.pid})"
-        )
+        logger.info(f"Codex session {request.composite_session_id} started (pid={process.pid})")
 
         stdout_task = asyncio.create_task(self._consume_stdout(process, request))
         stderr_task = asyncio.create_task(self._consume_stderr(process, request))
@@ -138,9 +131,7 @@ class CodexAgent(BaseAgent):
             key = self.base_process_index.get(request.base_session_id)
             if not key or not await self._terminate_process(key):
                 return False
-        await self.controller.emit_agent_message(
-            request.context, "notify", "🛑 Terminated Codex execution."
-        )
+        await self.controller.emit_agent_message(request.context, "notify", "🛑 Terminated Codex execution.")
         logger.info(f"Codex session {key} terminated via /stop")
         return True
 
@@ -210,9 +201,7 @@ class CodexAgent(BaseAgent):
                 try:
                     line = await process.stdout.readline()
                 except (asyncio.LimitOverrunError, ValueError) as err:
-                    await self._notify_stream_error(
-                        request, f"Codex output too long; stream decode failed: {err}"
-                    )
+                    await self._notify_stream_error(request, f"Codex output too long; stream decode failed: {err}")
                     logger.exception("Codex stdout exceeded buffer limit")
                     break
                 if not line:
@@ -265,9 +254,7 @@ class CodexAgent(BaseAgent):
             session_key = request.composite_session_id
             if session_key not in self._initialized_sessions:
                 self._initialized_sessions.add(session_key)
-                system_text = self.im_client.formatter.format_system_message(
-                    request.working_path, "init", thread_id
-                )
+                system_text = self.im_client.formatter.format_system_message(request.working_path, "init", thread_id)
                 await self.controller.emit_agent_message(
                     request.context,
                     "system",
@@ -294,9 +281,7 @@ class CodexAgent(BaseAgent):
                             parse_mode=pending_parse_mode or "markdown",
                         )
 
-                    self._pending_assistant_messages[session_key] = (
-                        self._prepare_last_message_payload(text)
-                    )
+                    self._pending_assistant_messages[session_key] = self._prepare_last_message_payload(text)
             elif item_type == "command_execution":
                 command = details.get("command")
                 status = details.get("status")
@@ -324,23 +309,17 @@ class CodexAgent(BaseAgent):
 
         if event_type == "error":
             message = event.get("message", "Unknown error")
-            await self.controller.emit_agent_message(
-                request.context, "notify", f"❌ Codex error: {message}"
-            )
+            await self.controller.emit_agent_message(request.context, "notify", f"❌ Codex error: {message}")
             return
 
         if event_type == "turn.failed":
             error = event.get("error", {}).get("message", "Turn failed.")
-            await self.controller.emit_agent_message(
-                request.context, "notify", f"⚠️ Codex turn failed: {error}"
-            )
+            await self.controller.emit_agent_message(request.context, "notify", f"⚠️ Codex turn failed: {error}")
             self._pending_assistant_messages.pop(request.composite_session_id, None)
             return
 
         if event_type == "turn.completed":
-            pending = self._pending_assistant_messages.pop(
-                request.composite_session_id, None
-            )
+            pending = self._pending_assistant_messages.pop(request.composite_session_id, None)
             if pending:
                 pending_text, pending_parse_mode = pending
                 await self.emit_result_message(
@@ -372,20 +351,7 @@ class CodexAgent(BaseAgent):
             finally:
                 request.ack_message_id = None
 
-    async def _remove_ack_reaction(self, request: AgentRequest) -> None:
-        """Remove acknowledgement reaction on error paths."""
-        if request.ack_reaction_message_id and request.ack_reaction_emoji:
-            try:
-                await self.im_client.remove_reaction(
-                    request.context,
-                    request.ack_reaction_message_id,
-                    request.ack_reaction_emoji,
-                )
-            except Exception as err:
-                logger.debug(f"Could not remove ack reaction: {err}")
-            finally:
-                request.ack_reaction_message_id = None
-                request.ack_reaction_emoji = None
+    # _remove_ack_reaction is inherited from BaseAgent
 
     def _prepare_last_message_payload(self, text: str) -> Tuple[str, Optional[str]]:
         """Prepare cached assistant text for reuse in result messages."""
