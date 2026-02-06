@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Hash, CheckSquare, Square, RefreshCw, HelpCircle } from 'lucide-react';
+import { Hash, CheckSquare, Square, RefreshCw, HelpCircle, Globe } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
@@ -54,6 +54,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
   const [channels, setChannels] = useState<any[]>([]);
+  const [browseAll, setBrowseAll] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(false);
   const [configs, setConfigs] = useState<Record<string, ChannelConfig>>(data.channelConfigs || {});
   const [config, setConfig] = useState<any>(data);
   const [opencodeOptionsByCwd, setOpencodeOptionsByCwd] = useState<Record<string, any>>({});
@@ -81,18 +83,25 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   const botToken = config.slack?.bot_token || config.slackBotToken || '';
 
-  const loadChannels = async () => {
+  const loadChannels = async (all?: boolean) => {
     if (!botToken) return;
-    setLoading(true);
+    const isAll = all ?? browseAll;
+    if (isAll) {
+      setLoadingAll(true);
+    } else {
+      setLoading(true);
+    }
     try {
-      const result = await api.slackChannels(botToken);
+      const result = await api.slackChannels(botToken, isAll);
       if (result.ok) {
         setChannels(result.channels || []);
+        if (isAll) setBrowseAll(true);
       }
     } catch (e) {
       console.error('Failed to load channels:', e);
     } finally {
       setLoading(false);
+      setLoadingAll(false);
     }
   };
 
@@ -290,11 +299,24 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
-              onClick={loadChannels}
+              onClick={() => loadChannels(browseAll)}
               className="flex items-center gap-2 px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-text rounded text-sm font-medium transition-colors"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('channelList.refreshList')}
             </button>
+            {!browseAll && (
+              <button
+                onClick={() => loadChannels(true)}
+                disabled={loadingAll}
+                className="flex items-center gap-2 px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-text rounded text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                <Globe size={14} className={loadingAll ? 'animate-spin' : ''} />
+                {loadingAll ? t('common.loading') : t('channelList.browseAll')}
+              </button>
+            )}
+            {browseAll && (
+              <span className="text-xs text-muted">{t('channelList.showingAll')}</span>
+            )}
             <span className="relative group">
               <span className="flex items-center gap-1 text-sm text-muted cursor-help">
                 <HelpCircle size={14} />
