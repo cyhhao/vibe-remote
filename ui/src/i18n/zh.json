@@ -184,6 +184,8 @@
     "title": "频道设置",
     "subtitle": "启用频道并配置每个频道的路由",
     "refreshList": "刷新列表",
+    "browseAll": "浏览所有频道",
+    "showingAll": "已显示工作区所有频道",
     "cantFindChannel": "找不到你想要的频道？",
     "inviteBotHint": "请先将 Bot 邀请到频道：\n1. 打开频道，点击 ⚙️ 设置 → 集成 → 添加应用\n2. 或在频道中输入 /invite @你的Bot名称",
     "discordInviteBotHint": "请确保机器人已加入服务器并具备访问频道的权限。",

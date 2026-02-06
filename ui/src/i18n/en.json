@@ -184,6 +184,8 @@
     "title": "Channel Settings",
     "subtitle": "Enable channels and configure per-channel routing.",
     "refreshList": "Refresh List",
+    "browseAll": "Browse All Channels",
+    "showingAll": "Showing all workspace channels",
     "cantFindChannel": "Can't find your channel?",
     "inviteBotHint": "Invite the bot to your channel first:\n1. Open the channel, click ⚙️ Settings → Integrations → Add apps\n2. Or type /invite @YourBotName in the channel",
     "discordInviteBotHint": "Add the bot to your guild and grant access to the channel.",

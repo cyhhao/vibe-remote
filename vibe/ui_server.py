@@ -263,7 +263,12 @@ def slack_channels():
     from vibe import api
 
     payload = request.json or {}
-    return jsonify(api.list_channels(payload.get("bot_token", "")))
+    return jsonify(
+        api.list_channels(
+            payload.get("bot_token", ""),
+            browse_all=payload.get("browse_all", False),
+        )
+    )
 
 
 @app.route("/discord/auth_test", methods=["POST"])

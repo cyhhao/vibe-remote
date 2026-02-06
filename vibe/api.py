@@ -134,19 +134,64 @@ def slack_auth_test(bot_token: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def list_channels(bot_token: str) -> dict:
-    try:
-        from slack_sdk.web import WebClient
+def list_channels(bot_token: str, browse_all: bool = False) -> dict:
+    """List Slack channels.
 
-        client = WebClient(token=bot_token)
-        channels = []
-        cursor = None
+    When *browse_all* is False (default), only channels the bot has joined are
+    returned via ``users_conversations``.  This is very fast and avoids hitting
+    Slack rate-limits even in large workspaces.
+
+    When *browse_all* is True, all visible channels in the workspace are
+    returned via ``conversations_list``.  Rate-limit retries with exponential
+    back-off are applied automatically.
+    """
+    import time
+
+    from slack_sdk.errors import SlackApiError
+    from slack_sdk.web import WebClient
+
+    client = WebClient(token=bot_token)
+    channels: list[dict] = []
+    cursor = None
+
+    try:
         while True:
-            response = client.conversations_list(
-                types="public_channel,private_channel",
-                limit=200,
-                cursor=cursor,
-            )
+            for attempt in range(5):
+                try:
+                    if browse_all:
+                        response = client.conversations_list(
+                            types="public_channel,private_channel",
+                            exclude_archived=True,
+                            limit=200,
+                            cursor=cursor,
+                        )
+                    else:
+                        response = client.users_conversations(
+                            types="public_channel,private_channel",
+                            exclude_archived=True,
+                            limit=200,
+                            cursor=cursor,
+                        )
+                    break  # success
+                except SlackApiError as e:
+                    if e.response.status_code == 429:
+                        retry_after = int(e.response.headers.get("Retry-After", 1))
+                        wait = max(retry_after, 2**attempt)
+                        logger.warning(
+                            "Slack rate-limited (429), retrying after %ds (attempt %d/5)",
+                            wait,
+                            attempt + 1,
+                        )
+                        time.sleep(wait)
+                    else:
+                        raise
+            else:
+                # Exhausted retries
+                return {
+                    "ok": False,
+                    "error": "Slack rate-limit exceeded after 5 retries",
+                }
+
             for channel in response.get("channels", []):
                 channels.append(
                     {
@@ -158,7 +203,8 @@ def list_channels(bot_token: str) -> dict:
             cursor = response.get("response_metadata", {}).get("next_cursor")
             if not cursor:
                 break
-        return {"ok": True, "channels": channels}
+
+        return {"ok": True, "channels": channels, "is_member_only": not browse_all}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

@@ -9,7 +9,7 @@ export type ApiContextType = {
   detectCli: (binary: string) => Promise<any>;
   installAgent: (name: string) => Promise<InstallResult>;
   slackAuthTest: (botToken: string) => Promise<any>;
-  slackChannels: (botToken: string) => Promise<any>;
+  slackChannels: (botToken: string, browseAll?: boolean) => Promise<any>;
   slackManifest: () => Promise<{ ok: boolean; manifest?: string; manifest_compact?: string; error?: string }>;
   discordAuthTest: (botToken: string) => Promise<any>;
   discordGuilds: (botToken: string) => Promise<any>;
@@ -119,7 +119,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     detectCli: (binary) => getJson(`/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => postJson(`/agent/${encodeURIComponent(name)}/install`, {}),
     slackAuthTest: (botToken) => postJson('/slack/auth_test', { bot_token: botToken }),
-    slackChannels: (botToken) => postJson('/slack/channels', { bot_token: botToken }),
+    slackChannels: (botToken, browseAll) => postJson('/slack/channels', { bot_token: botToken, browse_all: browseAll || false }),
     slackManifest: () => getJson('/slack/manifest'),
     discordAuthTest: (botToken) => postJson('/discord/auth_test', { bot_token: botToken }),
     discordGuilds: (botToken) => postJson('/discord/guilds', { bot_token: botToken }),
