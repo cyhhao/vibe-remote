@@ -331,20 +331,24 @@ class SlackBot(BaseIMClient):
         source_ts = None
 
         for att in shared_attachments:
-            # Log the attachment structure for debugging
+            # Log the attachment structure for debugging (avoid logging full URLs)
             logger.debug(
-                f"Shared attachment keys: {list(att.keys())}, "
-                f"channel_id={att.get('channel_id')}, "
-                f"ts={att.get('ts')}, "
-                f"from_url={att.get('from_url')}"
+                f"Shared attachment keys: {list(att.keys())}, channel_id={att.get('channel_id')}, ts={att.get('ts')}"
             )
 
-            att_text = att.get("text", "")
+            # Extract text with fallback chain for robustness
+            att_text = (
+                att.get("text")
+                or att.get("fallback")
+                or (att.get("original_message") or {}).get("text")
+                or (att.get("message") or {}).get("text")
+                or ""
+            )
             author_name = att.get("author_name") or att.get("author_subname", "")
             channel_name = att.get("channel_name", "")
 
             if att_text:
-                header = f"[Shared message"
+                header = "[Shared message"
                 if author_name:
                     header += f" from {author_name}"
                 if channel_name:
@@ -353,9 +357,18 @@ class SlackBot(BaseIMClient):
                 shared_messages_text.append(f"{header}\n{att_text}")
 
             # Capture source info for potential thread fetch
-            if not source_channel_id:
-                source_channel_id = att.get("channel_id")
-                source_ts = att.get("ts")
+            # Prefer thread_ts (to get full thread) over ts (single message)
+            if not source_channel_id or not source_ts:
+                candidate_channel = att.get("channel_id")
+                candidate_ts = (
+                    att.get("thread_ts")
+                    or (att.get("original_message") or {}).get("thread_ts")
+                    or att.get("ts")
+                    or (att.get("original_message") or {}).get("ts")
+                )
+                if candidate_channel and candidate_ts:
+                    source_channel_id = candidate_channel
+                    source_ts = candidate_ts
 
         # Attempt to fetch the full thread if we have source info
         thread_content = None
@@ -371,12 +384,26 @@ class SlackBot(BaseIMClient):
 
         return None
 
+    @staticmethod
+    def _has_shared_attachments(event: Dict[str, Any]) -> bool:
+        """Quick check whether the event contains shared/forwarded message attachments.
+
+        This is a lightweight check (no API calls) used to decide whether to
+        pass the event to _extract_shared_message_content later.
+        """
+        if event.get("subtype") == "message_share":
+            return True
+        for att in event.get("attachments", []):
+            if att.get("is_share") or att.get("is_msg_unfurl"):
+                return True
+        return False
+
     async def _try_fetch_shared_thread(self, channel_id: str, message_ts: str) -> Optional[str]:
         """Try to fetch the full thread from the source channel.
 
         Args:
             channel_id: The source channel ID where the original message lives
-            message_ts: The timestamp of the shared message
+            message_ts: The timestamp of the shared message (preferably thread_ts)
 
         Returns:
             Formatted thread content string, or None if fetch fails
@@ -384,8 +411,6 @@ class SlackBot(BaseIMClient):
         self._ensure_clients()
 
         try:
-            # First, get the message to check if it's part of a thread
-            # The message_ts could be a thread reply or a thread parent
             result = await self.web_client.conversations_replies(
                 channel=channel_id,
                 ts=message_ts,
@@ -403,12 +428,20 @@ class SlackBot(BaseIMClient):
                 logger.debug(f"Shared message is not a thread (single message), will use attachment text instead")
                 return None
 
+            # Check if there are more messages beyond our limit
+            has_more = result.get("has_more") or bool((result.get("response_metadata") or {}).get("next_cursor"))
+
             # Format the full thread
             logger.info(f"Successfully fetched {len(messages)} messages from shared thread {channel_id}/{message_ts}")
 
-            thread_parts = [f"[Shared thread with {len(messages)} messages]"]
+            header = f"[Shared thread with {len(messages)} messages"
+            if has_more:
+                header += ", showing first 50"
+            header += "]"
+
+            thread_parts = [header]
             for msg in messages:
-                user = msg.get("user", "unknown")
+                user = msg.get("user") or msg.get("username") or msg.get("bot_id") or "unknown"
                 text = msg.get("text", "")
                 if text:
                     thread_parts.append(f"<@{user}>: {text}")
@@ -417,10 +450,13 @@ class SlackBot(BaseIMClient):
 
         except SlackApiError as e:
             error_code = e.response.get("error", "") if e.response else ""
-            logger.info(
-                f"Cannot fetch shared thread from {channel_id}/{message_ts}: "
-                f"{error_code} - Bot may not be in the source channel"
-            )
+            if error_code == "ratelimited":
+                logger.warning(f"Rate limited fetching shared thread {channel_id}/{message_ts}")
+            else:
+                logger.info(
+                    f"Cannot fetch shared thread from {channel_id}/{message_ts}: "
+                    f"{error_code} - Bot may not be in the source channel"
+                )
             return None
         except Exception as e:
             logger.warning(f"Unexpected error fetching shared thread from {channel_id}/{message_ts}: {e}")
@@ -763,21 +799,17 @@ class SlackBot(BaseIMClient):
             # Extract file attachments (slack_files already checked above)
             file_attachments = self._extract_file_attachments(slack_files) if slack_files else None
 
-            # Check for shared/forwarded messages and extract shared content
-            shared_text = await self._extract_shared_message_content(event)
-            if shared_text:
-                # Prepend shared content to user's message
-                if text:
-                    text = f"{text}\n\n{shared_text}"
-                else:
-                    text = shared_text
+            # Detect if this is a shared/forwarded message (check attachments early)
+            # We need to know this before the empty-text check, but defer the
+            # potentially expensive thread fetch until after authorization
+            has_shared_content = self._has_shared_attachments(event)
 
-            # Ignore messages without user or without actual text/files
+            # Ignore messages without user or without actual text/files/shared content
             user_id = event.get("user")
             if not user_id:
                 logger.debug("Ignoring Slack message without user id")
                 return
-            if not text and not file_attachments:
+            if not text and not file_attachments and not has_shared_content:
                 logger.debug("Ignoring Slack message with empty text and no files")
                 return
 
@@ -816,6 +848,16 @@ class SlackBot(BaseIMClient):
                 logger.info(f"Unauthorized message from channel: {channel_id}")
                 await self._send_unauthorized_message(channel_id)
                 return
+
+            # Now extract shared/forwarded message content (after authorization)
+            # This may make API calls to fetch thread context from source channel
+            if has_shared_content:
+                shared_text = await self._extract_shared_message_content(event)
+                if shared_text:
+                    if text:
+                        text = f"{text}\n\n{shared_text}"
+                    else:
+                        text = shared_text
 
             # Extract context
             # For Slack: if no thread_ts, use the message's own ts as thread_id (start of thread)
