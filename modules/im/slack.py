@@ -291,6 +291,141 @@ class SlackBot(BaseIMClient):
             attachments.append(attachment)
         return attachments
 
+    async def _extract_shared_message_content(self, event: Dict[str, Any]) -> Optional[str]:
+        """Extract content from shared/forwarded messages.
+
+        Handles both:
+        - Messages with subtype "message_share"
+        - Messages with attachments containing "is_share: true" (no subtype)
+
+        For thread messages, attempts to fetch the full thread via conversations.replies.
+        Falls back to the single shared message text if thread fetch fails.
+
+        Returns:
+            Formatted string with shared message content, or None if not a shared message.
+        """
+        attachments = event.get("attachments", [])
+        if not attachments:
+            return None
+
+        # Find shared message attachments
+        shared_attachments = [a for a in attachments if a.get("is_share") or a.get("is_msg_unfurl")]
+        if not shared_attachments:
+            # Also check if this is a message_share subtype (may not have is_share flag)
+            if event.get("subtype") != "message_share":
+                return None
+            # For message_share subtype, treat all attachments as shared content
+            shared_attachments = attachments
+
+        if not shared_attachments:
+            return None
+
+        logger.info(
+            f"Detected shared/forwarded message with {len(shared_attachments)} shared attachment(s), "
+            f"subtype={event.get('subtype')}"
+        )
+
+        # Extract the single shared message text first (guaranteed fallback)
+        shared_messages_text = []
+        source_channel_id = None
+        source_ts = None
+
+        for att in shared_attachments:
+            # Log the attachment structure for debugging
+            logger.debug(
+                f"Shared attachment keys: {list(att.keys())}, "
+                f"channel_id={att.get('channel_id')}, "
+                f"ts={att.get('ts')}, "
+                f"from_url={att.get('from_url')}"
+            )
+
+            att_text = att.get("text", "")
+            author_name = att.get("author_name") or att.get("author_subname", "")
+            channel_name = att.get("channel_name", "")
+
+            if att_text:
+                header = f"[Shared message"
+                if author_name:
+                    header += f" from {author_name}"
+                if channel_name:
+                    header += f" in #{channel_name}"
+                header += "]"
+                shared_messages_text.append(f"{header}\n{att_text}")
+
+            # Capture source info for potential thread fetch
+            if not source_channel_id:
+                source_channel_id = att.get("channel_id")
+                source_ts = att.get("ts")
+
+        # Attempt to fetch the full thread if we have source info
+        thread_content = None
+        if source_channel_id and source_ts:
+            thread_content = await self._try_fetch_shared_thread(source_channel_id, source_ts)
+
+        if thread_content:
+            return thread_content
+
+        # Fallback: return the shared attachment text
+        if shared_messages_text:
+            return "\n\n".join(shared_messages_text)
+
+        return None
+
+    async def _try_fetch_shared_thread(self, channel_id: str, message_ts: str) -> Optional[str]:
+        """Try to fetch the full thread from the source channel.
+
+        Args:
+            channel_id: The source channel ID where the original message lives
+            message_ts: The timestamp of the shared message
+
+        Returns:
+            Formatted thread content string, or None if fetch fails
+        """
+        self._ensure_clients()
+
+        try:
+            # First, get the message to check if it's part of a thread
+            # The message_ts could be a thread reply or a thread parent
+            result = await self.web_client.conversations_replies(
+                channel=channel_id,
+                ts=message_ts,
+                limit=50,
+            )
+
+            messages = result.get("messages", [])
+            if not messages:
+                logger.debug(f"No messages found in thread {channel_id}/{message_ts}")
+                return None
+
+            # Check if this is actually a thread (more than one message)
+            # If it's just a single message, no need for thread context
+            if len(messages) <= 1:
+                logger.debug(f"Shared message is not a thread (single message), will use attachment text instead")
+                return None
+
+            # Format the full thread
+            logger.info(f"Successfully fetched {len(messages)} messages from shared thread {channel_id}/{message_ts}")
+
+            thread_parts = [f"[Shared thread with {len(messages)} messages]"]
+            for msg in messages:
+                user = msg.get("user", "unknown")
+                text = msg.get("text", "")
+                if text:
+                    thread_parts.append(f"<@{user}>: {text}")
+
+            return "\n".join(thread_parts)
+
+        except SlackApiError as e:
+            error_code = e.response.get("error", "") if e.response else ""
+            logger.info(
+                f"Cannot fetch shared thread from {channel_id}/{message_ts}: "
+                f"{error_code} - Bot may not be in the source channel"
+            )
+            return None
+        except Exception as e:
+            logger.warning(f"Unexpected error fetching shared thread from {channel_id}/{message_ts}: {e}")
+            return None
+
     async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
         """Add a reaction emoji to a Slack message."""
         self._ensure_clients()
@@ -606,11 +741,11 @@ class SlackBot(BaseIMClient):
             has_files = bool(slack_files)
 
             # Ignore most message subtypes (edited, deleted, joins, etc.)
-            # But allow file-related subtypes when files are present
+            # But allow file-related subtypes and shared/forwarded messages
             event_subtype = event.get("subtype")
-            file_subtypes = {"file_share", "file_comment", "file_mention"}
+            allowed_subtypes = {"file_share", "file_comment", "file_mention", "message_share"}
             if event_subtype:
-                if not has_files and event_subtype not in file_subtypes:
+                if not has_files and event_subtype not in allowed_subtypes:
                     logger.debug(f"Ignoring Slack message with subtype: {event_subtype}")
                     return
 
@@ -627,6 +762,15 @@ class SlackBot(BaseIMClient):
 
             # Extract file attachments (slack_files already checked above)
             file_attachments = self._extract_file_attachments(slack_files) if slack_files else None
+
+            # Check for shared/forwarded messages and extract shared content
+            shared_text = await self._extract_shared_message_content(event)
+            if shared_text:
+                # Prepend shared content to user's message
+                if text:
+                    text = f"{text}\n\n{shared_text}"
+                else:
+                    text = shared_text
 
             # Ignore messages without user or without actual text/files
             user_id = event.get("user")
@@ -737,6 +881,14 @@ class SlackBot(BaseIMClient):
             import re
 
             text = re.sub(r"<@[\w]+>", "", text).strip()
+
+            # Check for shared/forwarded messages in @mention context
+            shared_text = await self._extract_shared_message_content(event)
+            if shared_text:
+                if text:
+                    text = f"{text}\n\n{shared_text}"
+                else:
+                    text = shared_text
 
             logger.info(f"App mention processed: original='{event.get('text')}', cleaned='{text}'")
 
@@ -1722,7 +1874,11 @@ class SlackBot(BaseIMClient):
                         "type": "static_select",
                         "action_id": "session_select",
                         "option_groups": session_option_groups,
-                        "placeholder": {"type": "plain_text", "text": self._t("modal.resume.selectSession"), "emoji": True},
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": self._t("modal.resume.selectSession"),
+                            "emoji": True,
+                        },
                     },
                 }
             )
@@ -1760,7 +1916,11 @@ class SlackBot(BaseIMClient):
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "manual_input",
-                    "placeholder": {"type": "plain_text", "text": self._t("modal.resume.pasteIdPlaceholder"), "emoji": True},
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": self._t("modal.resume.pasteIdPlaceholder"),
+                        "emoji": True,
+                    },
                     "dispatch_action_config": {
                         "trigger_actions_on": ["on_character_entered"],
                     },
@@ -1846,7 +2006,11 @@ class SlackBot(BaseIMClient):
                         "type": "static_select",
                         "action_id": "agent_select",
                         "options": agent_options,
-                        "placeholder": {"type": "plain_text", "text": self._t("modal.resume.selectAgentBackend"), "emoji": True},
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": self._t("modal.resume.selectAgentBackend"),
+                            "emoji": True,
+                        },
                     },
                 }
             )
@@ -2001,7 +2165,9 @@ class SlackBot(BaseIMClient):
             )
 
             # Build agent options
-            agent_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
+            agent_options = [
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
+            ]
             for agent in opencode_agents:
                 agent_name = agent.get("name", "")
                 if agent_name:
@@ -2173,7 +2339,9 @@ class SlackBot(BaseIMClient):
                         break
 
             # Build options from variants or use fallback
-            reasoning_effort_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
+            reasoning_effort_options = [
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
+            ]
 
             if model_variants:
                 # Use model-specific variants with stable ordering
@@ -2283,7 +2451,9 @@ class SlackBot(BaseIMClient):
                 current_cl_model = selected_claude_model
 
             # Build agent options
-            cl_agent_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
+            cl_agent_options = [
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
+            ]
             for agent in claude_agents:
                 agent_id = agent.get("id", "")
                 agent_name = agent.get("name", agent_id)
@@ -2312,7 +2482,9 @@ class SlackBot(BaseIMClient):
             }
 
             # Build model options
-            cl_model_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
+            cl_model_options = [
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
+            ]
             for model in claude_models:
                 if model:
                     cl_model_options.append(
@@ -2395,7 +2567,9 @@ class SlackBot(BaseIMClient):
                 current_cx_reasoning = selected_codex_reasoning
 
             # Build model options
-            cx_model_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
+            cx_model_options = [
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
+            ]
             for model in codex_models:
                 if model:
                     cx_model_options.append(
@@ -2747,7 +2921,11 @@ class SlackBot(BaseIMClient):
 
         # Use callback_prefix to generate callback_id
         callback_id = f"{callback_prefix}_modal"
-        title = self._t("modal.question.claudeCode") if callback_prefix.startswith("claude") else self._t("modal.question.opencode")
+        title = (
+            self._t("modal.question.claudeCode")
+            if callback_prefix.startswith("claude")
+            else self._t("modal.question.opencode")
+        )
 
         view = {
             "type": "modal",
