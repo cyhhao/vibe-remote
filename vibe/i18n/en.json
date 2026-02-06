@@ -3,6 +3,8 @@
     "save": "Save",
     "cancel": "Cancel",
     "submit": "Submit",
+    "next": "Next",
+    "back": "Back",
     "change": "Change",
     "resume": "Resume",
     "on": "On",
@@ -60,6 +62,20 @@
     "visibilityShown": "shown",
     "visibilityHidden": "hidden",
     "messageTypeStatus": "{name} messages are now {action}"
+  },
+  "discord": {
+    "settingsSubtitle": "Adjust message visibility, mention behavior, and language.",
+    "routingSubtitle": "Select backend and model settings for this channel.",
+    "labels": {
+      "messageTypes": "Message types",
+      "mentionPolicy": "Mention policy",
+      "language": "Language",
+      "backend": "Backend",
+      "opencodeAgent": "OpenCode agent",
+      "claudeAgent": "Claude agent",
+      "model": "Model",
+      "reasoningEffort": "Reasoning effort"
+    }
   },
   "info": {
     "messageTypesTitle": "Message Types Info:",

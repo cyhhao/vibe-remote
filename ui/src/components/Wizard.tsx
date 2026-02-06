@@ -91,8 +91,8 @@ export const Wizard: React.FC = () => {
     return [
       { id: 'welcome', title: 'Welcome', component: Welcome },
       { id: 'mode', title: 'Mode', component: ModeSelection },
-      { id: 'platform', title: 'Platform', component: PlatformSelection },
       { id: 'agents', title: 'Agents', component: AgentDetection },
+      { id: 'platform', title: 'Platform', component: PlatformSelection },
       platform === 'discord'
         ? { id: 'discord', title: 'Discord', component: DiscordConfig }
         : { id: 'slack', title: 'Slack', component: SlackConfig },

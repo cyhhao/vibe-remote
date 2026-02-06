@@ -76,6 +76,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     }
   }, [data.discord?.guild_allowlist, isPage]);
 
+
   useEffect(() => {
     if (isPage) {
       api.getConfig().then(c => {
@@ -91,6 +92,15 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const botToken = platform === 'discord'
     ? (config.discord?.bot_token || data.discord?.bot_token || '')
     : (config.slack?.bot_token || config.slackBotToken || '');
+
+  useEffect(() => {
+    if (platform !== 'discord') return;
+    if (selectedGuild) return;
+    const preferredGuild = config.discord?.guild_allowlist?.[0] || data.discord?.guild_allowlist?.[0] || '';
+    if (preferredGuild) {
+      setSelectedGuild(preferredGuild);
+    }
+  }, [platform, config.discord?.guild_allowlist, data.discord?.guild_allowlist, selectedGuild]);
 
   const loadGuilds = async () => {
     if (!botToken) return;

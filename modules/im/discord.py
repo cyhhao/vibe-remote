@@ -11,6 +11,13 @@ from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, Fi
 from config.v2_config import DiscordConfig
 from .formatters import DiscordFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
+from modules.agents.opencode.utils import (
+    build_opencode_model_option_items,
+    build_reasoning_effort_options,
+    resolve_opencode_allowed_providers,
+    resolve_opencode_default_model,
+    resolve_opencode_provider_preferences,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +240,10 @@ class DiscordBot(BaseIMClient):
             return False
         try:
             msg = await target.fetch_message(int(message_id))
-            await msg.add_reaction(emoji)
+            normalized = emoji
+            if normalized in [":eyes:", "eyes", "eye", "👀"]:
+                normalized = "👀"
+            await msg.add_reaction(normalized)
             return True
         except Exception as err:
             logger.debug("Failed to add Discord reaction: %s", err)
@@ -245,7 +255,10 @@ class DiscordBot(BaseIMClient):
             return False
         try:
             msg = await target.fetch_message(int(message_id))
-            await msg.remove_reaction(emoji, self.client.user)
+            normalized = emoji
+            if normalized in [":eyes:", "eyes", "eye", "👀"]:
+                normalized = "👀"
+            await msg.remove_reaction(normalized, self.client.user)
             return True
         except Exception as err:
             logger.debug("Failed to remove Discord reaction: %s", err)
@@ -405,6 +418,8 @@ class DiscordBot(BaseIMClient):
                 channel_id, global_default=self.config.require_mention
             )
 
+        mentioned_bot = bool(self.client.user and message.mentions and self.client.user in message.mentions)
+
         if effective_require_mention and not is_dm:
             if isinstance(channel, discord.Thread):
                 if self.settings_manager:
@@ -440,6 +455,16 @@ class DiscordBot(BaseIMClient):
                 return
 
         if not content and not files:
+            if mentioned_bot and self.on_message_callback:
+                context = MessageContext(
+                    user_id=str(message.author.id),
+                    channel_id=channel_id,
+                    thread_id=thread_id,
+                    message_id=str(message.id),
+                    platform_specific={"message": message},
+                    files=files,
+                )
+                await self.on_message_callback(context, "")
             return
 
         # For non-thread guild messages, create a real thread
@@ -496,59 +521,123 @@ class DiscordBot(BaseIMClient):
     ):
         interaction = trigger_id if isinstance(trigger_id, discord.Interaction) else None
 
-        selected_types = set(user_settings.show_message_types or [])
-        type_options = [
-            discord.SelectOption(
-                label=display_names.get(mt, mt),
-                value=mt,
-                default=mt in selected_types,
-            )
-            for mt in message_types
-        ]
-        require_options = [
-            discord.SelectOption(label="Default", value="__default__", default=current_require_mention is None),
-            discord.SelectOption(label="Require mention", value="true", default=current_require_mention is True),
-            discord.SelectOption(label="No mention required", value="false", default=current_require_mention is False),
-        ]
-        language_options = [
-            discord.SelectOption(label=lang, value=lang, default=lang == current_language)
-            for lang in get_supported_languages()
-        ]
+        def _prefixed_label(prefix_key: str, label: str, limit: int = 100) -> str:
+            prefix = self._t(prefix_key)
+            combined = f"{prefix}: {label}" if prefix else label
+            if len(combined) > limit:
+                return combined[:limit]
+            return combined
 
         class SettingsView(discord.ui.View):
             def __init__(self, outer: DiscordBot, owner_id: Optional[str]):
                 super().__init__(timeout=900)
                 self.outer = outer
                 self.owner_id = owner_id
+                self.selected_types = set(user_settings.show_message_types or [])
+                if current_require_mention is None:
+                    self.require_value = "__default__"
+                elif current_require_mention is True:
+                    self.require_value = "true"
+                else:
+                    self.require_value = "false"
+                self.language_value = current_language or outer._get_lang()
+                self._save_callback = None
+                type_options = []
+                for mt in message_types:
+                    display_name = display_names.get(mt, mt)
+                    label = _prefixed_label("discord.labels.messageTypes", str(display_name))
+                    type_options.append(
+                        discord.SelectOption(
+                            label=label,
+                            value=mt,
+                            default=mt in self.selected_types,
+                        )
+                    )
+                default_status = self.outer._t("common.on") if global_require_mention else self.outer._t("common.off")
+                require_options = [
+                    discord.SelectOption(
+                        label=_prefixed_label(
+                            "discord.labels.mentionPolicy",
+                            self.outer._t("modal.settings.optionDefault", status=default_status),
+                        ),
+                        value="__default__",
+                        default=self.require_value == "__default__",
+                    ),
+                    discord.SelectOption(
+                        label=_prefixed_label(
+                            "discord.labels.mentionPolicy",
+                            self.outer._t("modal.settings.optionRequireMention"),
+                        ),
+                        value="true",
+                        default=self.require_value == "true",
+                    ),
+                    discord.SelectOption(
+                        label=_prefixed_label(
+                            "discord.labels.mentionPolicy",
+                            self.outer._t("modal.settings.optionDontRequireMention"),
+                        ),
+                        value="false",
+                        default=self.require_value == "false",
+                    ),
+                ]
+                language_options = [
+                    discord.SelectOption(
+                        label=_prefixed_label("discord.labels.language", lang),
+                        value=lang,
+                        default=lang == self.language_value,
+                    )
+                    for lang in get_supported_languages()
+                ]
+
                 self.types_select = discord.ui.Select(
-                    placeholder="Visible message types",
+                    placeholder=self.outer._t("modal.settings.showMessageTypesPlaceholder"),
                     options=type_options,
                     min_values=0,
                     max_values=len(type_options) if type_options else 1,
                 )
                 self.require_select = discord.ui.Select(
-                    placeholder="Require mention",
+                    placeholder=self.outer._t("modal.settings.selectMentionBehavior"),
                     options=require_options,
                     min_values=1,
                     max_values=1,
                 )
                 self.lang_select = discord.ui.Select(
-                    placeholder="Language",
+                    placeholder=self.outer._t("modal.settings.language"),
                     options=language_options,
                     min_values=1,
                     max_values=1,
                 )
 
-                async def _defer(interaction: discord.Interaction):
-                    await interaction.response.defer()
+                async def types_callback(select_interaction: discord.Interaction):
+                    self.selected_types = set(self.types_select.values or [])
+                    await select_interaction.response.defer()
 
-                self.types_select.callback = _defer
-                self.require_select.callback = _defer
-                self.lang_select.callback = _defer
+                async def require_callback(select_interaction: discord.Interaction):
+                    if self.require_select.values:
+                        self.require_value = self.require_select.values[0]
+                    await select_interaction.response.defer()
+
+                async def language_callback(select_interaction: discord.Interaction):
+                    if self.lang_select.values:
+                        self.language_value = self.lang_select.values[0]
+                    await select_interaction.response.defer()
+
+                self.types_select.callback = types_callback
+                self.require_select.callback = require_callback
+                self.lang_select.callback = language_callback
                 self.add_item(self.types_select)
                 self.add_item(self.require_select)
                 self.add_item(self.lang_select)
-                self.add_item(discord.ui.Button(label="Save", style=discord.ButtonStyle.primary))
+                save_button = discord.ui.Button(
+                    label=self.outer._t("common.save"),
+                    style=discord.ButtonStyle.primary,
+                )
+                save_button.callback = self._on_save
+                self.add_item(save_button)
+
+            async def _on_save(self, interaction: discord.Interaction):
+                if self._save_callback:
+                    await self._save_callback(interaction)
 
             async def interaction_check(self, interaction: discord.Interaction) -> bool:
                 if self.owner_id and str(interaction.user.id) != self.owner_id:
@@ -565,33 +654,47 @@ class DiscordBot(BaseIMClient):
         view = SettingsView(self, owner_id)
 
         async def save_callback(save_interaction: discord.Interaction):
-            show_types = list(view.types_select.values or [])
-            require_value = view.require_select.values[0] if view.require_select.values else "__default__"
+            show_types = list(view.selected_types or [])
+            require_value = view.require_value
             if require_value == "__default__":
                 require_mention = None
             elif require_value == "true":
                 require_mention = True
             else:
                 require_mention = False
-            language = view.lang_select.values[0] if view.lang_select.values else current_language
-            if hasattr(self, "_on_settings_update"):
-                await self._on_settings_update(
-                    str(save_interaction.user.id),
-                    show_types,
-                    channel_id or str(save_interaction.channel_id or ""),
-                    require_mention,
-                    language,
+            language = view.language_value
+            try:
+                await save_interaction.response.defer()
+                if hasattr(self, "_on_settings_update"):
+                    await self._on_settings_update(
+                        str(save_interaction.user.id),
+                        show_types,
+                        channel_id or str(save_interaction.channel_id or ""),
+                        require_mention,
+                        language,
+                        notify_user=False,
+                    )
+                await save_interaction.edit_original_response(
+                    content=f"✅ {self._t('success.settingsUpdated')}",
+                    embed=None,
+                    view=None,
                 )
-            await save_interaction.response.edit_message(content="✅ Settings updated.", view=None)
+            except Exception as err:
+                await save_interaction.edit_original_response(
+                    content=f"❌ {self._t('error.settingsUpdateFailed', error=str(err))}",
+                    embed=None,
+                    view=None,
+                )
 
-        # Patch the save button callback
-        for item in view.children:
-            if isinstance(item, discord.ui.Button) and item.label == "Save":
-                item.callback = save_callback
-
+        view._save_callback = save_callback
+        settings_title = f"⚙️ {self._t('modal.settings.title')}"
+        settings_embed = discord.Embed(
+            title=settings_title,
+            description=self._t("discord.settingsSubtitle"),
+        )
         if interaction:
             await interaction.response.send_message(
-                "⚙️ Settings",
+                embed=settings_embed,
                 view=view,
                 ephemeral=True,
             )
@@ -599,7 +702,7 @@ class DiscordBot(BaseIMClient):
             channel = await self._fetch_channel(channel_id)
             if channel is None:
                 raise RuntimeError("Discord channel not found")
-            await channel.send("⚙️ Settings", view=view)
+            await channel.send(embed=settings_embed, view=view)
 
     async def open_resume_session_modal(
         self,
@@ -722,6 +825,40 @@ class DiscordBot(BaseIMClient):
     ):
         interaction = trigger_id if isinstance(trigger_id, discord.Interaction) else None
 
+        backend_display_names = {
+            "claude": "ClaudeCode",
+            "codex": "Codex",
+            "opencode": "OpenCode",
+        }
+
+        def _prefixed_label(prefix_key: str, label: str, limit: int = 100) -> str:
+            prefix = self._t(prefix_key)
+            combined = f"{prefix}: {label}" if prefix else label
+            if len(combined) > limit:
+                return combined[:limit]
+            return combined
+
+        def _normalize_agent_name(agent: Any) -> Optional[str]:
+            if isinstance(agent, str):
+                return agent
+            if isinstance(agent, dict):
+                for key in ("name", "id", "label", "agent"):
+                    value = agent.get(key)
+                    if isinstance(value, str) and value:
+                        return value
+            return None
+
+        def _unique_agent_names(agents: list) -> list:
+            seen = set()
+            names = []
+            for agent in agents or []:
+                name = _normalize_agent_name(agent)
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                names.append(name)
+            return names
+
         class RoutingView(discord.ui.View):
             def __init__(self, outer: DiscordBot, owner_id: Optional[str]):
                 super().__init__(timeout=900)
@@ -746,191 +883,352 @@ class DiscordBot(BaseIMClient):
 
             def _render(self):
                 self.clear_items()
-                if self.step == "backend":
-                    options = [
-                        discord.SelectOption(label=backend, value=backend, default=backend == self.selected_backend)
-                        for backend in registered_backends
+                options = []
+                for backend in registered_backends:
+                    display = backend_display_names.get(backend, backend.capitalize())
+                    label = _prefixed_label("discord.labels.backend", display)
+                    options.append(
+                        discord.SelectOption(
+                            label=label,
+                            value=backend,
+                            default=backend == self.selected_backend,
+                        )
+                    )
+                if len(options) > 25:
+                    options = options[:25]
+                backend_select = discord.ui.Select(
+                    placeholder=self.outer._t("modal.routing.selectBackend"),
+                    options=options,
+                    min_values=1,
+                    max_values=1,
+                )
+
+                async def backend_callback(select_interaction: discord.Interaction):
+                    if backend_select.values:
+                        self.selected_backend = backend_select.values[0]
+                    self._render()
+                    updated_embed = discord.Embed(
+                        title=self._content(),
+                        description=self.outer._t("discord.routingSubtitle"),
+                    )
+                    await select_interaction.response.edit_message(embed=updated_embed, view=self)
+
+                backend_select.callback = backend_callback
+                self.add_item(backend_select)
+
+                if self.selected_backend == "opencode":
+                    opencode_agent_names = _unique_agent_names(opencode_agents)
+                    default_model_str = resolve_opencode_default_model(
+                        opencode_default_config,
+                        opencode_agents,
+                        self.oc_agent if self.oc_agent not in ("__default__", None) else None,
+                    )
+                    target_model = (
+                        self.oc_model
+                        if self.oc_model not in (None, "__default__")
+                        else default_model_str
+                    )
+                    preferred_providers = resolve_opencode_provider_preferences(
+                        opencode_default_config,
+                        target_model,
+                    )
+                    allowed_providers = resolve_opencode_allowed_providers(
+                        opencode_default_config,
+                        opencode_models,
+                    )
+                    agent_options = [
+                        discord.SelectOption(
+                            label=_prefixed_label(
+                                "discord.labels.opencodeAgent",
+                                self.outer._t("common.default"),
+                            ),
+                            value="__default__",
+                            default=self.oc_agent in (None, "__default__"),
+                        )
                     ]
-                    if len(options) > 25:
-                        options = options[:25]
-                    backend_select = discord.ui.Select(
-                        placeholder="Select backend",
-                        options=options,
+                    agent_options += [
+                        discord.SelectOption(
+                            label=_prefixed_label("discord.labels.opencodeAgent", a),
+                            value=a,
+                            default=a == self.oc_agent,
+                        )
+                        for a in opencode_agent_names
+                    ]
+                    if len(agent_options) > 25:
+                        agent_options = agent_options[:25]
+                    agent_select = discord.ui.Select(
+                        placeholder=self.outer._t("modal.routing.selectOpencodeAgent"),
+                        options=agent_options,
                         min_values=1,
                         max_values=1,
                     )
 
-                    async def backend_callback(select_interaction: discord.Interaction):
-                        self.selected_backend = backend_select.values[0]
-                        await select_interaction.response.defer()
-
-                    backend_select.callback = backend_callback
-                    self.add_item(backend_select)
-                    next_button = discord.ui.Button(label="Next", style=discord.ButtonStyle.primary)
-                    next_button.callback = self._on_next
-                    self.add_item(next_button)
-                    return
-
-                if self.step == "opencode":
-                    agent_options = [discord.SelectOption(label="Default", value="__default__")]
-                    agent_options += [
-                        discord.SelectOption(label=a, value=a, default=a == self.oc_agent) for a in opencode_agents
-                    ]
-                    model_options = [discord.SelectOption(label="Default", value="__default__")]
-                    model_ids = []
-                    for provider in opencode_models.get("providers", []):
-                        provider_id = provider.get("id") or provider.get("name") or provider.get("provider_id")
-                        if not provider_id:
-                            continue
-                        models = provider.get("models", {})
-                        if isinstance(models, dict):
-                            model_ids.extend([f"{provider_id}/{mid}" for mid in models.keys()])
-                    model_options += [
-                        discord.SelectOption(label=m, value=m, default=m == self.oc_model) for m in model_ids
-                    ]
-                    if len(agent_options) > 25:
-                        agent_options = agent_options[:25]
-                    if len(model_options) > 25:
-                        model_options = model_options[:25]
-                    reasoning_options = [
-                        discord.SelectOption(label="Default", value="__default__"),
-                        discord.SelectOption(label="low", value="low", default=self.oc_reasoning == "low"),
-                        discord.SelectOption(label="medium", value="medium", default=self.oc_reasoning == "medium"),
-                        discord.SelectOption(label="high", value="high", default=self.oc_reasoning == "high"),
-                        discord.SelectOption(label="xhigh", value="xhigh", default=self.oc_reasoning == "xhigh"),
-                    ]
-
-                    agent_select = discord.ui.Select(
-                        placeholder="OpenCode agent", options=agent_options, min_values=1, max_values=1
-                    )
-                    model_select = discord.ui.Select(
-                        placeholder="OpenCode model", options=model_options, min_values=1, max_values=1
-                    )
-                    reasoning_select = discord.ui.Select(
-                        placeholder="Reasoning effort", options=reasoning_options, min_values=1, max_values=1
-                    )
-
                     async def agent_callback(select_interaction: discord.Interaction):
-                        self.oc_agent = agent_select.values[0]
-                        await select_interaction.response.defer()
-
-                    async def model_callback(select_interaction: discord.Interaction):
-                        self.oc_model = model_select.values[0]
-                        await select_interaction.response.defer()
-
-                    async def reasoning_callback(select_interaction: discord.Interaction):
-                        self.oc_reasoning = reasoning_select.values[0]
+                        if agent_select.values:
+                            self.oc_agent = agent_select.values[0]
                         await select_interaction.response.defer()
 
                     agent_select.callback = agent_callback
-                    model_select.callback = model_callback
-                    reasoning_select.callback = reasoning_callback
                     self.add_item(agent_select)
-                    self.add_item(model_select)
-                    self.add_item(reasoning_select)
-                    back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
-                    back_button.callback = self._on_back
-                    save_button = discord.ui.Button(label="Save", style=discord.ButtonStyle.primary)
-                    save_button.callback = self._on_save
-                    self.add_item(back_button)
-                    self.add_item(save_button)
-                    return
 
-                if self.step == "claude":
-                    agent_options = [discord.SelectOption(label="Default", value="__default__")]
-                    agent_options += [
-                        discord.SelectOption(label=a, value=a, default=a == self.claude_agent) for a in claude_agents
-                    ]
-                    model_options = [discord.SelectOption(label="Default", value="__default__")]
-                    model_options += [
-                        discord.SelectOption(label=m, value=m, default=m == self.claude_model) for m in claude_models
-                    ]
-                    if len(agent_options) > 25:
-                        agent_options = agent_options[:25]
-                    if len(model_options) > 25:
-                        model_options = model_options[:25]
-
-                    agent_select = discord.ui.Select(
-                        placeholder="Claude agent", options=agent_options, min_values=1, max_values=1
-                    )
-                    model_select = discord.ui.Select(
-                        placeholder="Claude model", options=model_options, min_values=1, max_values=1
-                    )
-
-                    async def agent_callback(select_interaction: discord.Interaction):
-                        self.claude_agent = agent_select.values[0]
-                        await select_interaction.response.defer()
-
-                    async def model_callback(select_interaction: discord.Interaction):
-                        self.claude_model = model_select.values[0]
-                        await select_interaction.response.defer()
-
-                    agent_select.callback = agent_callback
-                    model_select.callback = model_callback
-                    self.add_item(agent_select)
-                    self.add_item(model_select)
-                    back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
-                    back_button.callback = self._on_back
-                    save_button = discord.ui.Button(label="Save", style=discord.ButtonStyle.primary)
-                    save_button.callback = self._on_save
-                    self.add_item(back_button)
-                    self.add_item(save_button)
-                    return
-
-                if self.step == "codex":
-                    model_options = [discord.SelectOption(label="Default", value="__default__")]
-                    model_options += [
-                        discord.SelectOption(label=m, value=m, default=m == self.codex_model) for m in codex_models
-                    ]
-                    if len(model_options) > 25:
-                        model_options = model_options[:25]
-                    reasoning_options = [
-                        discord.SelectOption(label="Default", value="__default__"),
+                    default_label = self.outer._t("common.default")
+                    if default_model_str:
+                        default_label = f"{default_label} - {default_model_str}"
+                    model_options = [
                         discord.SelectOption(
-                            label="minimal", value="minimal", default=self.codex_reasoning == "minimal"
-                        ),
-                        discord.SelectOption(label="low", value="low", default=self.codex_reasoning == "low"),
-                        discord.SelectOption(label="medium", value="medium", default=self.codex_reasoning == "medium"),
-                        discord.SelectOption(label="high", value="high", default=self.codex_reasoning == "high"),
-                        discord.SelectOption(label="xhigh", value="xhigh", default=self.codex_reasoning == "xhigh"),
+                            label=_prefixed_label("discord.labels.model", default_label),
+                            value="__default__",
+                            default=self.oc_model in (None, "__default__"),
+                        )
                     ]
-                    model_select = discord.ui.Select(
-                        placeholder="Codex model", options=model_options, min_values=1, max_values=1
+                    model_entries = build_opencode_model_option_items(
+                        opencode_models,
+                        max_total=24,
+                        preferred_providers=preferred_providers,
+                        allowed_providers=allowed_providers,
                     )
-                    reasoning_select = discord.ui.Select(
-                        placeholder="Reasoning effort", options=reasoning_options, min_values=1, max_values=1
+                    for entry in model_entries:
+                        label = entry.get("label", "")
+                        value = entry.get("value", "")
+                        if not label or not value:
+                            continue
+                        model_options.append(
+                            discord.SelectOption(
+                                label=_prefixed_label("discord.labels.model", label),
+                                value=value,
+                                default=value == self.oc_model,
+                            )
+                        )
+                    model_select = discord.ui.Select(
+                        placeholder=self.outer._t("modal.routing.selectModel"),
+                        options=model_options,
+                        min_values=1,
+                        max_values=1,
                     )
 
                     async def model_callback(select_interaction: discord.Interaction):
-                        self.codex_model = model_select.values[0]
-                        await select_interaction.response.defer()
-
-                    async def reasoning_callback(select_interaction: discord.Interaction):
-                        self.codex_reasoning = reasoning_select.values[0]
-                        await select_interaction.response.defer()
+                        if model_select.values:
+                            self.oc_model = model_select.values[0]
+                        self._render()
+                        updated_embed = discord.Embed(
+                            title=self._content(),
+                            description=self.outer._t("discord.routingSubtitle"),
+                        )
+                        await select_interaction.response.edit_message(embed=updated_embed, view=self)
 
                     model_select.callback = model_callback
-                    reasoning_select.callback = reasoning_callback
                     self.add_item(model_select)
+
+                    reasoning_entries = build_reasoning_effort_options(opencode_models, target_model)
+                    selected_reasoning = (
+                        self.oc_reasoning if self.oc_reasoning not in (None, "__default__") else "__default__"
+                    )
+                    available_reasoning = {entry.get("value") for entry in reasoning_entries}
+                    if selected_reasoning not in available_reasoning:
+                        selected_reasoning = "__default__"
+                    reasoning_options = []
+                    for entry in reasoning_entries:
+                        value = entry.get("value")
+                        if not value:
+                            continue
+                        if value == "__default__":
+                            label = self.outer._t("common.default")
+                        else:
+                            translated = self.outer._t(f"reasoning.{value}")
+                            label = translated if translated != f"reasoning.{value}" else entry.get("label", value)
+                        reasoning_options.append(
+                            discord.SelectOption(
+                                label=_prefixed_label("discord.labels.reasoningEffort", label),
+                                value=value,
+                                default=value == selected_reasoning,
+                            )
+                        )
+                    reasoning_select = discord.ui.Select(
+                        placeholder=self.outer._t("modal.routing.selectReasoningEffort"),
+                        options=reasoning_options,
+                        min_values=1,
+                        max_values=1,
+                    )
+
+                    async def reasoning_callback(select_interaction: discord.Interaction):
+                        if reasoning_select.values:
+                            self.oc_reasoning = reasoning_select.values[0]
+                        await select_interaction.response.defer()
+
+                    reasoning_select.callback = reasoning_callback
                     self.add_item(reasoning_select)
-                    back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
-                    back_button.callback = self._on_back
-                    save_button = discord.ui.Button(label="Save", style=discord.ButtonStyle.primary)
-                    save_button.callback = self._on_save
-                    self.add_item(back_button)
-                    self.add_item(save_button)
-                    return
 
-            async def _on_next(self, interaction: discord.Interaction):
-                backend = self.selected_backend
-                self.step = backend
-                self._render()
-                await interaction.response.edit_message(content="🤖 Agent routing", view=self)
+                if self.selected_backend == "claude":
+                    claude_agent_names = _unique_agent_names(claude_agents)
+                    agent_options = [
+                        discord.SelectOption(
+                            label=_prefixed_label(
+                                "discord.labels.claudeAgent",
+                                self.outer._t("common.default"),
+                            ),
+                            value="__default__",
+                            default=self.claude_agent in (None, "__default__"),
+                        )
+                    ]
+                    agent_options += [
+                        discord.SelectOption(label=a, value=a, default=a == self.claude_agent) for a in claude_agent_names
+                    ]
+                    if len(agent_options) > 25:
+                        agent_options = agent_options[:25]
+                    agent_select = discord.ui.Select(
+                        placeholder=self.outer._t("modal.routing.selectClaudeAgent"),
+                        options=agent_options,
+                        min_values=1,
+                        max_values=1,
+                    )
 
-            async def _on_back(self, interaction: discord.Interaction):
-                self.step = "backend"
-                self._render()
-                await interaction.response.edit_message(content="🤖 Agent routing", view=self)
+                    async def claude_agent_callback(select_interaction: discord.Interaction):
+                        if agent_select.values:
+                            self.claude_agent = agent_select.values[0]
+                        await select_interaction.response.defer()
+
+                    agent_select.callback = claude_agent_callback
+                    self.add_item(agent_select)
+
+                    model_options = [
+                        discord.SelectOption(
+                            label=_prefixed_label("discord.labels.model", self.outer._t("common.default")),
+                            value="__default__",
+                            default=self.claude_model in (None, "__default__"),
+                        )
+                    ]
+                    model_options += [
+                        discord.SelectOption(
+                            label=_prefixed_label("discord.labels.model", m),
+                            value=m,
+                            default=m == self.claude_model,
+                        )
+                        for m in claude_models
+                    ]
+                    if len(model_options) > 25:
+                        model_options = model_options[:25]
+                    model_select = discord.ui.Select(
+                        placeholder=self.outer._t("modal.routing.selectModel"),
+                        options=model_options,
+                        min_values=1,
+                        max_values=1,
+                    )
+
+                    async def claude_model_callback(select_interaction: discord.Interaction):
+                        if model_select.values:
+                            self.claude_model = model_select.values[0]
+                        await select_interaction.response.defer()
+
+                    model_select.callback = claude_model_callback
+                    self.add_item(model_select)
+
+                if self.selected_backend == "codex":
+                    model_options = [
+                        discord.SelectOption(
+                            label=_prefixed_label("discord.labels.model", self.outer._t("common.default")),
+                            value="__default__",
+                            default=self.codex_model in (None, "__default__"),
+                        )
+                    ]
+                    model_options += [
+                        discord.SelectOption(
+                            label=_prefixed_label("discord.labels.model", m),
+                            value=m,
+                            default=m == self.codex_model,
+                        )
+                        for m in codex_models
+                    ]
+                    if len(model_options) > 25:
+                        model_options = model_options[:25]
+                    model_select = discord.ui.Select(
+                        placeholder=self.outer._t("modal.routing.selectModel"),
+                        options=model_options,
+                        min_values=1,
+                        max_values=1,
+                    )
+
+                    async def codex_model_callback(select_interaction: discord.Interaction):
+                        if model_select.values:
+                            self.codex_model = model_select.values[0]
+                        await select_interaction.response.defer()
+
+                    model_select.callback = codex_model_callback
+                    self.add_item(model_select)
+
+                    reasoning_options = [
+                        discord.SelectOption(
+                            label=_prefixed_label(
+                                "discord.labels.reasoningEffort",
+                                self.outer._t("common.default"),
+                            ),
+                            value="__default__",
+                            default=self.codex_reasoning in (None, "__default__"),
+                        ),
+                        discord.SelectOption(
+                            label=_prefixed_label(
+                                "discord.labels.reasoningEffort",
+                                self.outer._t("reasoning.minimal"),
+                            ),
+                            value="minimal",
+                            default=self.codex_reasoning == "minimal",
+                        ),
+                        discord.SelectOption(
+                            label=_prefixed_label(
+                                "discord.labels.reasoningEffort",
+                                self.outer._t("reasoning.low"),
+                            ),
+                            value="low",
+                            default=self.codex_reasoning == "low",
+                        ),
+                        discord.SelectOption(
+                            label=_prefixed_label(
+                                "discord.labels.reasoningEffort",
+                                self.outer._t("reasoning.medium"),
+                            ),
+                            value="medium",
+                            default=self.codex_reasoning == "medium",
+                        ),
+                        discord.SelectOption(
+                            label=_prefixed_label(
+                                "discord.labels.reasoningEffort",
+                                self.outer._t("reasoning.high"),
+                            ),
+                            value="high",
+                            default=self.codex_reasoning == "high",
+                        ),
+                        discord.SelectOption(
+                            label=_prefixed_label(
+                                "discord.labels.reasoningEffort",
+                                self.outer._t("reasoning.xhigh"),
+                            ),
+                            value="xhigh",
+                            default=self.codex_reasoning == "xhigh",
+                        ),
+                    ]
+                    reasoning_select = discord.ui.Select(
+                        placeholder=self.outer._t("modal.routing.selectReasoningEffort"),
+                        options=reasoning_options,
+                        min_values=1,
+                        max_values=1,
+                    )
+
+                    async def codex_reasoning_callback(select_interaction: discord.Interaction):
+                        if reasoning_select.values:
+                            self.codex_reasoning = reasoning_select.values[0]
+                        await select_interaction.response.defer()
+
+                    reasoning_select.callback = codex_reasoning_callback
+                    self.add_item(reasoning_select)
+
+                save_button = discord.ui.Button(
+                    label=self.outer._t("common.save"),
+                    style=discord.ButtonStyle.primary,
+                )
+                save_button.callback = self._on_save
+                self.add_item(save_button)
+
+            def _content(self) -> str:
+                return f"🤖 {self.outer._t('modal.routing.title')}"
 
             async def _on_save(self, interaction: discord.Interaction):
                 def _normalize(value: Optional[str]) -> Optional[str]:
@@ -938,31 +1236,48 @@ class DiscordBot(BaseIMClient):
                         return None
                     return value
 
-                if hasattr(self.outer, "_on_routing_update"):
-                    await self.outer._on_routing_update(
-                        str(interaction.user.id),
-                        channel_id,
-                        self.selected_backend,
-                        _normalize(self.oc_agent),
-                        _normalize(self.oc_model),
-                        _normalize(self.oc_reasoning),
-                        _normalize(self.claude_agent),
-                        _normalize(self.claude_model),
-                        _normalize(self.codex_model),
-                        _normalize(self.codex_reasoning),
+                try:
+                    await interaction.response.defer()
+                    if hasattr(self.outer, "_on_routing_update"):
+                        await self.outer._on_routing_update(
+                            str(interaction.user.id),
+                            channel_id,
+                            self.selected_backend,
+                            _normalize(self.oc_agent),
+                            _normalize(self.oc_model),
+                            _normalize(self.oc_reasoning),
+                            _normalize(self.claude_agent),
+                            _normalize(self.claude_model),
+                            _normalize(self.codex_model),
+                            _normalize(self.codex_reasoning),
+                            notify_user=False,
+                        )
+                    await interaction.edit_original_response(
+                        content=f"✅ {self.outer._t('success.routingUpdated')}",
+                        embed=None,
+                        view=None,
                     )
-                await interaction.response.edit_message(content="✅ Routing updated.", view=None)
+                except Exception as err:
+                    await interaction.edit_original_response(
+                        content=f"❌ {self.outer._t('error.routingUpdateFailed', error=str(err))}",
+                        embed=None,
+                        view=None,
+                    )
 
         owner_id = str(interaction.user.id) if interaction else None
         view = RoutingView(self, owner_id)
 
+        routing_embed = discord.Embed(
+            title=view._content(),
+            description=self._t("discord.routingSubtitle"),
+        )
         if interaction:
-            await interaction.response.send_message("🤖 Agent routing", view=view, ephemeral=True)
+            await interaction.response.send_message(embed=routing_embed, view=view, ephemeral=True)
         else:
             channel = await self._fetch_channel(channel_id)
             if channel is None:
                 raise RuntimeError("Discord channel not found")
-            await channel.send("🤖 Agent routing", view=view)
+            await channel.send(embed=routing_embed, view=view)
 
     async def open_question_modal(
         self,
@@ -972,7 +1287,10 @@ class DiscordBot(BaseIMClient):
         callback_prefix: str = "opencode_question",
     ):
         interaction = trigger_id if isinstance(trigger_id, discord.Interaction) else None
-        questions = getattr(pending, "questions", None) or []
+        if isinstance(pending, dict):
+            questions = pending.get("questions") or []
+        else:
+            questions = getattr(pending, "questions", None) or []
         if not questions or len(questions) > 4:
             await self.send_message(
                 context,
@@ -980,16 +1298,42 @@ class DiscordBot(BaseIMClient):
             )
             return
 
+        def _normalize_question(raw: Any) -> tuple[str, list, bool]:
+            if isinstance(raw, dict):
+                header = raw.get("header") or raw.get("question") or raw.get("title") or ""
+                options = raw.get("options") or []
+                multiple = bool(raw.get("multiple"))
+                return str(header), options, multiple
+            header = getattr(raw, "header", None) or getattr(raw, "question", None) or ""
+            options = getattr(raw, "options", None) or []
+            multiple = bool(getattr(raw, "multiple", False))
+            return str(header), options, multiple
+
+        def _normalize_option(option: Any) -> str:
+            if isinstance(option, dict):
+                label = option.get("label") or option.get("value") or option.get("name")
+                if label is not None:
+                    return str(label)
+            return str(option)
+
         class QuestionView(discord.ui.View):
             def __init__(self, outer: DiscordBot):
                 super().__init__(timeout=900)
                 self.outer = outer
                 self.answers: list[list[str]] = [[] for _ in questions]
                 for idx, q in enumerate(questions):
-                    options = [discord.SelectOption(label=o.label, value=o.label) for o in q.options]
-                    max_values = len(options) if getattr(q, "multiple", False) else 1
+                    header, options_raw, multiple = _normalize_question(q)
+                    option_labels = [_normalize_option(opt) for opt in options_raw]
+                    option_labels = [label for label in option_labels if label]
+                    if len(option_labels) > 25:
+                        option_labels = option_labels[:25]
+                    options = [
+                        discord.SelectOption(label=label[:100], value=label[:100])
+                        for label in option_labels
+                    ]
+                    max_values = len(options) if multiple else 1
                     select = discord.ui.Select(
-                        placeholder=q.header or f"Question {idx + 1}",
+                        placeholder=header or f"Question {idx + 1}",
                         options=options,
                         min_values=1,
                         max_values=max_values,
@@ -1024,12 +1368,28 @@ class DiscordBot(BaseIMClient):
                 item.callback = submit_callback
 
         if interaction:
-            await interaction.response.send_message("Please answer:", view=view, ephemeral=True)
+            if interaction.response.is_done():
+                await interaction.followup.send("Please answer:", view=view, ephemeral=True)
+            else:
+                await interaction.response.send_message("Please answer:", view=view, ephemeral=True)
         else:
             channel = await self._fetch_channel(context.thread_id or context.channel_id)
             if channel is None:
                 raise RuntimeError("Discord channel not found")
             await channel.send("Please answer:", view=view)
+
+    async def open_opencode_question_modal(
+        self,
+        trigger_id: Any,
+        context: MessageContext,
+        pending: Any,
+    ):
+        await self.open_question_modal(
+            trigger_id=trigger_id,
+            context=context,
+            pending=pending,
+            callback_prefix="opencode_question",
+        )
 
 
 class _DiscordButtonView(discord.ui.View):
@@ -1071,7 +1431,12 @@ class _DiscordButtonView(discord.ui.View):
                             except Exception:
                                 pass
                             return
-                    if not needs_modal:
+                    if data == "opencode_question:open_modal":
+                        try:
+                            await interaction.response.defer(ephemeral=True)
+                        except Exception:
+                            pass
+                    elif not needs_modal:
                         try:
                             await interaction.response.defer(ephemeral=True)
                         except Exception:
@@ -1087,7 +1452,8 @@ class _DiscordButtonView(discord.ui.View):
                         user_id=str(interaction.user.id),
                         channel_id=channel_id,
                         thread_id=thread_id,
-                        message_id=str(interaction.message.id) if interaction.message else None,
+                        message_id=self.base_context.message_id
+                        or (str(interaction.message.id) if interaction.message else None),
                         platform_specific={"interaction": interaction},
                     )
                     if self.outer.on_callback_query_callback:

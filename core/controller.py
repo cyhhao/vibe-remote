@@ -667,6 +667,7 @@ class Controller:
         channel_id: Optional[str] = None,
         require_mention: Optional[bool] = None,
         language: Optional[str] = None,
+        notify_user: bool = True,
     ):
         """Handle settings update (typically from Slack modal)"""
         try:
@@ -713,25 +714,29 @@ class Controller:
             )
 
             # Send confirmation
-            await self.im_client.send_message(context, f"✅ {self._t('success.settingsUpdated')}")
-            if not language_saved:
-                await self.im_client.send_message(
-                    context,
-                    f"⚠️ {self._t('error.languageUpdateFailed')}",
-                )
+            if notify_user:
+                await self.im_client.send_message(context, f"✅ {self._t('success.settingsUpdated')}")
+                if not language_saved:
+                    await self.im_client.send_message(
+                        context,
+                        f"⚠️ {self._t('error.languageUpdateFailed')}",
+                    )
 
         except Exception as e:
             logger.error(f"Error updating settings: {e}")
-            # Create context for error message (without 'message' field)
-            context = MessageContext(
-                user_id=user_id,
-                channel_id=channel_id if channel_id else user_id,
-                platform_specific={},
-            )
-            await self.im_client.send_message(
-                context,
-                f"❌ {self._t('error.settingsUpdateFailed', error=str(e))}",
-            )
+            if notify_user:
+                # Create context for error message (without 'message' field)
+                context = MessageContext(
+                    user_id=user_id,
+                    channel_id=channel_id if channel_id else user_id,
+                    platform_specific={},
+                )
+                await self.im_client.send_message(
+                    context,
+                    f"❌ {self._t('error.settingsUpdateFailed', error=str(e))}",
+                )
+            else:
+                raise
 
     # Working directory change handler (for Slack modal)
     async def handle_change_cwd_submission(self, user_id: str, new_cwd: str, channel_id: Optional[str] = None):
@@ -1032,6 +1037,7 @@ class Controller:
         claude_model: Optional[str] = None,
         codex_model: Optional[str] = None,
         codex_reasoning_effort: Optional[str] = None,
+        notify_user: bool = True,
     ):
         """Handle routing update submission (from Slack modal)"""
         from modules.settings_manager import ChannelRouting
@@ -1102,11 +1108,12 @@ class Controller:
                 platform_specific={},
             )
 
-            await self.im_client.send_message(
-                context,
-                f"✅ {self._t('success.routingUpdated')}\n" + "\n".join(parts),
-                parse_mode="markdown",
-            )
+            if notify_user:
+                await self.im_client.send_message(
+                    context,
+                    f"✅ {self._t('success.routingUpdated')}\n" + "\n".join(parts),
+                    parse_mode="markdown",
+                )
 
             logger.info(
                 f"Routing updated for {settings_key}: backend={backend}, "
@@ -1122,10 +1129,13 @@ class Controller:
                 channel_id=channel_id if channel_id else user_id,
                 platform_specific={},
             )
-            await self.im_client.send_message(
-                context,
-                f"❌ {self._t('error.routingUpdateFailed', error=str(e))}",
-            )
+            if notify_user:
+                await self.im_client.send_message(
+                    context,
+                    f"❌ {self._t('error.routingUpdateFailed', error=str(e))}",
+                )
+            else:
+                raise
 
     # Main run method
     def run(self):
