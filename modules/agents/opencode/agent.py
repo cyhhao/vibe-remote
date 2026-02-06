@@ -380,20 +380,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             finally:
                 request.ack_message_id = None
 
-    async def _remove_ack_reaction(self, request: AgentRequest) -> None:
-        """Remove acknowledgement reaction on error paths."""
-        if request.ack_reaction_message_id and request.ack_reaction_emoji:
-            try:
-                await self.im_client.remove_reaction(
-                    request.context,
-                    request.ack_reaction_message_id,
-                    request.ack_reaction_emoji,
-                )
-            except Exception as err:
-                logger.debug(f"Could not remove ack reaction: {err}")
-            finally:
-                request.ack_reaction_message_id = None
-                request.ack_reaction_emoji = None
+    # _remove_ack_reaction is inherited from BaseAgent
 
     async def restore_active_polls(self) -> int:
         """Restore active poll loops that were interrupted by vibe-remote restart."""
