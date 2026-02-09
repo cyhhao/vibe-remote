@@ -205,11 +205,10 @@ class MessageHandler:
                     )
                 except Exception as err:
                     logger.debug(f"Failed to add subagent reaction: {err}")
-                if ack_reaction_message_id and ack_reaction_emoji:
-                    try:
-                        await self.im_client.remove_reaction(context, ack_reaction_message_id, ack_reaction_emoji)
-                    except Exception as err:
-                        logger.debug(f"Failed to remove reaction ack for subagent: {err}")
+                # Keep :eyes: alive — the agent will remove it on result/error
+                # via the normal ack_reaction lifecycle.  Previously :eyes: was
+                # removed here immediately, leaving no processing indicator
+                # for the entire duration of the subagent run.
 
             # Process file attachments if present
             processed_files = None
@@ -230,9 +229,9 @@ class MessageHandler:
                 subagent_key=matched_prefix,
                 subagent_model=subagent_model,
                 subagent_reasoning_effort=subagent_reasoning_effort,
-                # Pass reaction info for agents to remove when result is sent
-                ack_reaction_message_id=ack_reaction_message_id if not subagent_name else None,
-                ack_reaction_emoji=ack_reaction_emoji if not subagent_name else None,
+                # Reaction info — agent removes :eyes: on result/error
+                ack_reaction_message_id=ack_reaction_message_id,
+                ack_reaction_emoji=ack_reaction_emoji,
                 files=processed_files,
             )
             try:
@@ -258,7 +257,6 @@ class MessageHandler:
                     if (
                         ack_reaction_message_id  # type: ignore[possibly-undefined]
                         and ack_reaction_emoji  # type: ignore[possibly-undefined]
-                        and not subagent_name  # type: ignore[possibly-undefined]
                     ):
                         await self.im_client.remove_reaction(context, ack_reaction_message_id, ack_reaction_emoji)
             except Exception as cleanup_err:

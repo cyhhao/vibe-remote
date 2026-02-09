@@ -297,6 +297,197 @@ class SlackBot(BaseIMClient):
             attachments.append(attachment)
         return attachments
 
+    async def _extract_shared_message_content(self, event: Dict[str, Any]) -> Optional[str]:
+        """Extract content from shared/forwarded messages.
+
+        Handles both:
+        - Messages with subtype "message_share"
+        - Messages with attachments containing "is_share: true" (no subtype)
+
+        For explicit thread shares, attempts to fetch the full thread via
+        conversations.replies. Falls back to the single shared message text
+        if thread fetch fails or the share is not a thread.
+
+        Returns:
+            Formatted string with shared message content, or None if not a shared message.
+        """
+        attachments = event.get("attachments", [])
+        if not attachments:
+            return None
+
+        # Find shared message attachments
+        shared_attachments = [a for a in attachments if a.get("is_share") or a.get("is_msg_unfurl")]
+        if not shared_attachments:
+            # Also check if this is a message_share subtype (may not have is_share flag)
+            if event.get("subtype") != "message_share":
+                return None
+            # For message_share subtype, treat all attachments as shared content
+            shared_attachments = attachments
+
+        if not shared_attachments:
+            return None
+
+        logger.info(
+            f"Detected shared/forwarded message with {len(shared_attachments)} shared attachment(s), "
+            f"subtype={event.get('subtype')}"
+        )
+
+        # Extract the single shared message text (best-effort fallback)
+        shared_messages_text = []
+        source_channel_id = None
+        source_ts = None
+
+        for att in shared_attachments:
+            # Log the attachment structure for debugging (avoid logging full URLs)
+            logger.debug(
+                f"Shared attachment keys: {list(att.keys())}, channel_id={att.get('channel_id')}, ts={att.get('ts')}"
+            )
+
+            # Extract text with fallback chain for robustness
+            att_text = (
+                att.get("text")
+                or att.get("fallback")
+                or att.get("pretext")
+                or (att.get("original_message") or {}).get("text")
+                or (att.get("message") or {}).get("text")
+                or ""
+            )
+            author_name = att.get("author_name") or att.get("author_subname", "")
+            channel_name = att.get("channel_name", "")
+
+            if att_text:
+                header = "[Shared message"
+                if author_name:
+                    header += f" from {author_name}"
+                if channel_name:
+                    header += f" in #{channel_name}"
+                header += "]"
+                shared_messages_text.append(f"{header}\n{att_text}")
+
+            # Only attempt thread fetch for explicit thread shares (not link unfurls)
+            if not source_channel_id and self._is_explicit_thread_share(event, att):
+                candidate_channel = att.get("channel_id")
+                candidate_ts = att.get("thread_ts") or (att.get("original_message") or {}).get("thread_ts")
+                if candidate_channel and candidate_ts:
+                    source_channel_id = candidate_channel
+                    source_ts = candidate_ts
+
+        # Attempt to fetch the full thread only for explicit thread shares
+        thread_content = None
+        if source_channel_id and source_ts:
+            thread_content = await self._try_fetch_shared_thread(source_channel_id, source_ts)
+
+        if thread_content:
+            return thread_content
+
+        # Fallback: return the shared attachment text
+        if shared_messages_text:
+            return "\n\n".join(shared_messages_text)
+
+        return None
+
+    @staticmethod
+    def _is_explicit_thread_share(event: Dict[str, Any], att: Dict[str, Any]) -> bool:
+        """Check if the attachment represents an explicit thread share.
+
+        Only returns True when the shared message is a thread root with replies,
+        not a single message or a link unfurl. This prevents accidentally pulling
+        entire threads when only one message was shared.
+        """
+        # Link unfurls (is_msg_unfurl) should never trigger thread fetch
+        if att.get("is_msg_unfurl"):
+            return False
+        # Only message_share subtype or is_share flag indicates intentional share
+        if event.get("subtype") != "message_share" and not att.get("is_share"):
+            return False
+        # Check if the original message is a thread root with replies
+        msg = att.get("original_message") or att.get("message") or {}
+        thread_ts = att.get("thread_ts") or msg.get("thread_ts")
+        ts = att.get("ts") or msg.get("ts")
+        reply_count = msg.get("reply_count")
+        # Thread root: thread_ts == ts and has replies
+        if thread_ts and ts and thread_ts == ts and reply_count:
+            return True
+        return False
+
+    @staticmethod
+    def _has_shared_attachments(event: Dict[str, Any]) -> bool:
+        """Quick check whether the event contains shared/forwarded message attachments.
+
+        This is a lightweight check (no API calls) used to decide whether to
+        pass the event to _extract_shared_message_content later.
+        """
+        if event.get("subtype") == "message_share":
+            return bool(event.get("attachments"))
+        for att in event.get("attachments", []):
+            if att.get("is_share") or att.get("is_msg_unfurl"):
+                return True
+        return False
+
+    async def _try_fetch_shared_thread(self, channel_id: str, message_ts: str) -> Optional[str]:
+        """Try to fetch the full thread from the source channel.
+
+        Args:
+            channel_id: The source channel ID where the original message lives
+            message_ts: The timestamp of the shared message (preferably thread_ts)
+
+        Returns:
+            Formatted thread content string, or None if fetch fails
+        """
+        self._ensure_clients()
+
+        try:
+            result = await self.web_client.conversations_replies(
+                channel=channel_id,
+                ts=message_ts,
+                limit=50,
+            )
+
+            messages = result.get("messages", [])
+            if not messages:
+                logger.debug(f"No messages found in thread {channel_id}/{message_ts}")
+                return None
+
+            # Check if this is actually a thread (more than one message)
+            # If it's just a single message, no need for thread context
+            if len(messages) <= 1:
+                logger.debug(f"Shared message is not a thread (single message), will use attachment text instead")
+                return None
+
+            # Check if there are more messages beyond our limit
+            has_more = result.get("has_more") or bool((result.get("response_metadata") or {}).get("next_cursor"))
+
+            # Format the full thread
+            logger.info(f"Successfully fetched {len(messages)} messages from shared thread {channel_id}/{message_ts}")
+
+            header = f"[Shared thread with {len(messages)} messages"
+            if has_more:
+                header += ", showing first 50"
+            header += "]"
+
+            thread_parts = [header]
+            for msg in messages:
+                user = msg.get("user") or msg.get("username") or msg.get("bot_id") or "unknown"
+                text = msg.get("text", "")
+                if text:
+                    thread_parts.append(f"<@{user}>: {text}")
+
+            return "\n".join(thread_parts)
+
+        except SlackApiError as e:
+            error_code = e.response.get("error", "") if e.response else ""
+            if error_code == "ratelimited":
+                logger.warning(f"Rate limited fetching shared thread {channel_id}/{message_ts}")
+            else:
+                logger.info(
+                    f"Cannot fetch shared thread from {channel_id}/{message_ts}: "
+                    f"{error_code} - Bot may not be in the source channel"
+                )
+            return None
+        except Exception as e:
+            logger.warning(f"Unexpected error fetching shared thread from {channel_id}/{message_ts}: {e}")
+            return None
+
     async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
         """Add a reaction emoji to a Slack message."""
         self._ensure_clients()
@@ -612,11 +803,11 @@ class SlackBot(BaseIMClient):
             has_files = bool(slack_files)
 
             # Ignore most message subtypes (edited, deleted, joins, etc.)
-            # But allow file-related subtypes when files are present
+            # But allow file-related subtypes and shared/forwarded messages
             event_subtype = event.get("subtype")
-            file_subtypes = {"file_share", "file_comment", "file_mention"}
+            allowed_subtypes = {"file_share", "file_comment", "file_mention", "message_share"}
             if event_subtype:
-                if not has_files and event_subtype not in file_subtypes:
+                if not has_files and event_subtype not in allowed_subtypes:
                     logger.debug(f"Ignoring Slack message with subtype: {event_subtype}")
                     return
 
@@ -634,12 +825,17 @@ class SlackBot(BaseIMClient):
             # Extract file attachments (slack_files already checked above)
             file_attachments = self._extract_file_attachments(slack_files) if slack_files else None
 
-            # Ignore messages without user or without actual text/files
+            # Detect if this is a shared/forwarded message (check attachments early)
+            # We need to know this before the empty-text check, but defer the
+            # potentially expensive thread fetch until after authorization
+            has_shared_content = self._has_shared_attachments(event)
+
+            # Ignore messages without user or without actual text/files/shared content
             user_id = event.get("user")
             if not user_id:
                 logger.debug("Ignoring Slack message without user id")
                 return
-            if not text and not file_attachments:
+            if not text and not file_attachments and not has_shared_content:
                 logger.debug("Ignoring Slack message with empty text and no files")
                 return
 
@@ -679,6 +875,17 @@ class SlackBot(BaseIMClient):
                 await self._send_unauthorized_message(channel_id)
                 return
 
+            # Now extract shared/forwarded message content (after authorization)
+            # This may make API calls to fetch thread context from source channel
+            shared_text = None
+            if has_shared_content:
+                shared_text = await self._extract_shared_message_content(event)
+                # If shared content extraction found nothing and we have no text/files,
+                # there's nothing to process
+                if not shared_text and not text and not file_attachments:
+                    logger.debug("Ignoring shared message with no extractable content")
+                    return
+
             # Extract context
             # For Slack: if no thread_ts, use the message's own ts as thread_id (start of thread)
             thread_id = event.get("thread_ts") or event.get("ts")
@@ -692,7 +899,8 @@ class SlackBot(BaseIMClient):
                 files=file_attachments,
             )
 
-            # Handle slash commands in regular messages
+            # Handle slash commands in regular messages (before appending shared content)
+            # Use only the user's original text for command detection
             if text.startswith("/"):
                 parts = text.split(maxsplit=1)
                 command = parts[0][1:]  # Remove the /
@@ -702,6 +910,13 @@ class SlackBot(BaseIMClient):
                     handler = self.on_command_callbacks[command]
                     await handler(context, args)
                     return
+
+            # Append shared content to user text (after command parsing)
+            if shared_text:
+                if text:
+                    text = f"{text}\n\n{shared_text}"
+                else:
+                    text = shared_text
 
             # Handle as regular message
             if self.on_message_callback:
@@ -744,9 +959,12 @@ class SlackBot(BaseIMClient):
 
             text = re.sub(r"<@[\w]+>", "", text).strip()
 
+            # Extract shared/forwarded message content (defer appending until after command check)
+            shared_text = await self._extract_shared_message_content(event)
+
             logger.info(f"App mention processed: original='{event.get('text')}', cleaned='{text}'")
 
-            # Check if this is a command after mention
+            # Check if this is a command after mention (before appending shared content)
             if text.startswith("/"):
                 parts = text.split(maxsplit=1)
                 command = parts[0][1:]  # Remove the /
@@ -761,6 +979,13 @@ class SlackBot(BaseIMClient):
                     return
                 else:
                     logger.warning(f"Command '{command}' not found in callbacks")
+
+            # Append shared content to user text (after command parsing)
+            if shared_text:
+                if text:
+                    text = f"{text}\n\n{shared_text}"
+                else:
+                    text = shared_text
 
             # Handle as regular message
             logger.info(f"Handling as regular message: '{text}'")
@@ -1728,7 +1953,11 @@ class SlackBot(BaseIMClient):
                         "type": "static_select",
                         "action_id": "session_select",
                         "option_groups": session_option_groups,
-                        "placeholder": {"type": "plain_text", "text": self._t("modal.resume.selectSession"), "emoji": True},
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": self._t("modal.resume.selectSession"),
+                            "emoji": True,
+                        },
                     },
                 }
             )
@@ -1766,7 +1995,11 @@ class SlackBot(BaseIMClient):
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "manual_input",
-                    "placeholder": {"type": "plain_text", "text": self._t("modal.resume.pasteIdPlaceholder"), "emoji": True},
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": self._t("modal.resume.pasteIdPlaceholder"),
+                        "emoji": True,
+                    },
                     "dispatch_action_config": {
                         "trigger_actions_on": ["on_character_entered"],
                     },
@@ -1852,7 +2085,11 @@ class SlackBot(BaseIMClient):
                         "type": "static_select",
                         "action_id": "agent_select",
                         "options": agent_options,
-                        "placeholder": {"type": "plain_text", "text": self._t("modal.resume.selectAgentBackend"), "emoji": True},
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": self._t("modal.resume.selectAgentBackend"),
+                            "emoji": True,
+                        },
                     },
                 }
             )
@@ -2007,7 +2244,9 @@ class SlackBot(BaseIMClient):
             )
 
             # Build agent options
-            agent_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
+            agent_options = [
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
+            ]
             for agent in opencode_agents:
                 agent_name = agent.get("name", "")
                 if agent_name:
@@ -2179,7 +2418,9 @@ class SlackBot(BaseIMClient):
                 current_cl_model = selected_claude_model
 
             # Build agent options
-            cl_agent_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
+            cl_agent_options = [
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
+            ]
             for agent in claude_agents:
                 agent_id = agent.get("id", "")
                 agent_name = agent.get("name", agent_id)
@@ -2208,7 +2449,9 @@ class SlackBot(BaseIMClient):
             }
 
             # Build model options
-            cl_model_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
+            cl_model_options = [
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
+            ]
             for model in claude_models:
                 if model:
                     cl_model_options.append(
@@ -2291,7 +2534,9 @@ class SlackBot(BaseIMClient):
                 current_cx_reasoning = selected_codex_reasoning
 
             # Build model options
-            cx_model_options = [{"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}]
+            cx_model_options = [
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
+            ]
             for model in codex_models:
                 if model:
                     cx_model_options.append(
@@ -2643,7 +2888,11 @@ class SlackBot(BaseIMClient):
 
         # Use callback_prefix to generate callback_id
         callback_id = f"{callback_prefix}_modal"
-        title = self._t("modal.question.claudeCode") if callback_prefix.startswith("claude") else self._t("modal.question.opencode")
+        title = (
+            self._t("modal.question.claudeCode")
+            if callback_prefix.startswith("claude")
+            else self._t("modal.question.opencode")
+        )
 
         view = {
             "type": "modal",
