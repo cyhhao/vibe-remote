@@ -315,6 +315,19 @@ class MessageHandler:
             elif callback_data == "cmd_routing":
                 await settings_handler.handle_routing(context)
 
+            elif callback_data.startswith("vibe_update_now"):
+                # Discord update button handler
+                target_version = None
+                if ":" in callback_data:
+                    target_version = callback_data.split(":", 1)[1] or None
+                if hasattr(self.controller, "update_checker"):
+                    await self.controller.update_checker.handle_update_button_click(context, target_version)
+                else:
+                    await self.im_client.send_message(
+                        context,
+                        self.formatter.format_warning(self._t("error.updateUnavailable")),
+                    )
+
             elif callback_data.startswith("info_") and callback_data != "info_msg_types":
                 # Generic info handler
                 info_type = callback_data.replace("info_", "")

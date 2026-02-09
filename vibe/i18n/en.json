@@ -3,6 +3,8 @@
     "save": "Save",
     "cancel": "Cancel",
     "submit": "Submit",
+    "next": "Next",
+    "back": "Back",
     "change": "Change",
     "resume": "Resume",
     "on": "On",
@@ -34,6 +36,7 @@
     "languageUpdateFailed": "Language update failed. Please try again.",
     "resumeSubmitFailed": "Failed to resume session: {error}",
     "routingUpdateFailed": "Failed to update routing: {error}",
+    "updateUnavailable": "Update action is not available right now.",
     "unknownAction": "Unknown action: {action}",
     "processActionFailed": "Error processing action: {error}",
     "agentNotConfigured": "Agent `{agent}` is not configured. Make sure the Codex CLI is installed and environment variables are set if this channel is routed to Codex.",
@@ -59,6 +62,20 @@
     "visibilityShown": "shown",
     "visibilityHidden": "hidden",
     "messageTypeStatus": "{name} messages are now {action}"
+  },
+  "discord": {
+    "settingsSubtitle": "Adjust message visibility, mention behavior, and language.",
+    "routingSubtitle": "Select backend and model settings for this channel.",
+    "labels": {
+      "messageTypes": "Message types",
+      "mentionPolicy": "Mention policy",
+      "language": "Language",
+      "backend": "Backend",
+      "opencodeAgent": "OpenCode agent",
+      "claudeAgent": "Claude agent",
+      "model": "Model",
+      "reasoningEffort": "Reasoning effort"
+    }
   },
   "info": {
     "messageTypesTitle": "Message Types Info:",

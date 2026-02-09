@@ -3,6 +3,8 @@
     "save": "保存",
     "cancel": "取消",
     "submit": "提交",
+    "next": "下一步",
+    "back": "返回",
     "change": "更改",
     "resume": "恢复",
     "on": "开启",
@@ -34,6 +36,7 @@
     "languageUpdateFailed": "语言更新失败，请重试。",
     "resumeSubmitFailed": "恢复会话失败：{error}",
     "routingUpdateFailed": "更新路由失败：{error}",
+    "updateUnavailable": "当前无法执行更新操作。",
     "unknownAction": "未知操作：{action}",
     "processActionFailed": "处理操作时出错：{error}",
     "agentNotConfigured": "Agent `{agent}` 未配置。若此频道路由到 Codex，请确保已安装 Codex CLI 并设置环境变量。",
@@ -59,6 +62,20 @@
     "visibilityShown": "显示",
     "visibilityHidden": "隐藏",
     "messageTypeStatus": "{name} 消息已设为 {action}"
+  },
+  "discord": {
+    "settingsSubtitle": "调整消息可见性、@提及策略与语言。",
+    "routingSubtitle": "为该频道选择后端与模型配置。",
+    "labels": {
+      "messageTypes": "消息类型",
+      "mentionPolicy": "提及策略",
+      "language": "语言",
+      "backend": "后端",
+      "opencodeAgent": "OpenCode Agent",
+      "claudeAgent": "Claude Agent",
+      "model": "模型",
+      "reasoningEffort": "推理强度"
+    }
   },
   "info": {
     "messageTypesTitle": "消息类型说明：",

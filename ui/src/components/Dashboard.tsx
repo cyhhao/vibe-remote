@@ -138,7 +138,7 @@ export const Dashboard: React.FC = () => {
         return () => window.clearTimeout(timer);
     }, [diagnosticsMessage]);
 
-    const showWorkspaceGateway = config.mode !== 'self_host';
+    const showWorkspaceGateway = config.mode !== 'self_host' && (config.platform || 'slack') === 'slack';
 
     return (
         <div className="max-w-5xl mx-auto space-y-8">
@@ -233,15 +233,19 @@ export const Dashboard: React.FC = () => {
                     <h3 className="font-semibold flex items-center gap-2 text-text"><Settings size={18} /> {t('dashboard.globalPolicy')}</h3>
                     <Link to="/setup" className="text-sm text-accent hover:underline font-medium">{t('common.editSetup')}</Link>
                 </div>
-                <div className="space-y-3 text-sm">
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.mode')}</span>
-                        <span className="font-mono text-xs text-text capitalize">{config.mode || '-'}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.defaultBackend')}</span>
-                        <span className="font-mono text-xs text-text">{config.agents?.default_backend || 'opencode'}</span>
-                    </div>
+                    <div className="space-y-3 text-sm">
+                        <div className="flex justify-between items-center">
+                            <span className="text-muted">{t('dashboard.mode')}</span>
+                            <span className="font-mono text-xs text-text capitalize">{config.mode || '-'}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span className="text-muted">{t('dashboard.platform')}</span>
+                            <span className="font-mono text-xs text-text capitalize">{config.platform || 'slack'}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span className="text-muted">{t('dashboard.defaultBackend')}</span>
+                            <span className="font-mono text-xs text-text">{config.agents?.default_backend || 'opencode'}</span>
+                        </div>
                     {showWorkspaceGateway && (
                         <div className="flex justify-between items-center">
                             <span className="text-muted">{t('dashboard.slackWorkspace')}</span>
@@ -272,27 +276,41 @@ export const Dashboard: React.FC = () => {
                                 </span>
                             </span>
                         </span>
-                            <button
-                                onClick={() => {
-                                    setSettingsMessage(null);
-                                    const newConfig = {
-                                        ...config,
-                                        slack: {
-                                            ...(config.slack || {}),
-                                            require_mention: !config.slack?.require_mention,
-                                        },
-                                    };
-                                    setConfig(newConfig);
-                                    autoSaveMessageConfig(newConfig);
-                                }}
-                                className={`px-2 py-1 rounded text-xs font-semibold border ${
-                                    config.slack?.require_mention
-                                        ? 'bg-success/10 text-success border-success/20'
-                                        : 'bg-neutral-100 text-muted border-border'
-                                }`}
-                            >
-                                {config.slack?.require_mention ? t('common.enabled') : t('common.disabled')}
-                            </button>
+                        <button
+                            onClick={() => {
+                                setSettingsMessage(null);
+                                const platform = config.platform || 'slack';
+                                const toggleValue = platform === 'discord'
+                                    ? !config.discord?.require_mention
+                                    : !config.slack?.require_mention;
+                                const newConfig = {
+                                    ...config,
+                                    discord: {
+                                        ...(config.discord || {}),
+                                        require_mention: platform === 'discord' ? toggleValue : config.discord?.require_mention,
+                                    },
+                                    slack: {
+                                        ...(config.slack || {}),
+                                        require_mention: platform === 'slack' ? toggleValue : config.slack?.require_mention,
+                                    },
+                                };
+                                setConfig(newConfig);
+                                autoSaveMessageConfig(newConfig);
+                            }}
+                            className={`px-2 py-1 rounded text-xs font-semibold border ${
+                                (config.platform === 'discord'
+                                    ? config.discord?.require_mention
+                                    : config.slack?.require_mention)
+                                    ? 'bg-success/10 text-success border-success/20'
+                                    : 'bg-neutral-100 text-muted border-border'
+                            }`}
+                        >
+                            {(config.platform === 'discord'
+                                ? config.discord?.require_mention
+                                : config.slack?.require_mention)
+                                ? t('common.enabled')
+                                : t('common.disabled')}
+                        </button>
 
                     </div>
                     <div className="flex justify-between items-center">

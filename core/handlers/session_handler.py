@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 class SessionHandler:
     """Handles all session-related operations"""
-    
+
     def __init__(self, controller):
         """Initialize with reference to main controller"""
         self.controller = controller
@@ -24,7 +24,7 @@ class SessionHandler:
         self.claude_sessions = controller.claude_sessions
         self.receiver_tasks = controller.receiver_tasks
         self.stored_session_mappings = controller.stored_session_mappings
-    
+
     def _get_settings_key(self, context: MessageContext) -> str:
         """Get settings key - delegate to controller"""
         return self.controller._get_settings_key(context)
@@ -36,36 +36,37 @@ class SessionHandler:
 
     def _t(self, key: str, **kwargs) -> str:
         return i18n_t(key, self._get_lang(), **kwargs)
-    
+
     def get_base_session_id(self, context: MessageContext) -> str:
         """Get base session ID based on platform and context (without path)"""
-        # Slack only in V2; always use thread ID
-        return f"slack_{context.thread_id}"
-    
+        platform = getattr(self.config, "platform", "slack")
+        base_id = context.thread_id or context.message_id or context.channel_id
+        return f"{platform}_{base_id}"
+
     def get_working_path(self, context: MessageContext) -> str:
         """Get working directory - delegate to controller's get_cwd"""
         return self.controller.get_cwd(context)
-    
+
     def _load_agent_file(self, agent_name: str, working_path: str) -> Optional[Dict[str, Any]]:
         """Load an agent file and return its parsed content.
-        
+
         Searches for agent file in:
         1. Project agents: <working_path>/.claude/agents/<agent_name>.md
         2. Global agents: ~/.claude/agents/<agent_name>.md
-        
+
         Returns:
             Dict with keys: name, description, prompt, tools, model
             or None if not found/parse error.
         """
         from pathlib import Path
         from vibe.api import parse_claude_agent_file
-        
+
         # Search paths (project first, then global)
         search_paths = [
             Path(working_path) / ".claude" / "agents" / f"{agent_name}.md",
             Path.home() / ".claude" / "agents" / f"{agent_name}.md",
         ]
-        
+
         for agent_path in search_paths:
             if agent_path.exists() and agent_path.is_file():
                 parsed = parse_claude_agent_file(str(agent_path))
@@ -73,10 +74,10 @@ class SessionHandler:
                     return parsed
                 else:
                     logger.warning(f"Failed to parse agent file: {agent_path}")
-        
+
         logger.warning(f"Agent file not found for '{agent_name}' in {search_paths}")
         return None
-    
+
     def get_session_info(self, context: MessageContext) -> Tuple[str, str, str]:
         """Get session info: base_session_id, working_path, and composite_key"""
         base_session_id = self.get_base_session_id(context)
@@ -84,7 +85,7 @@ class SessionHandler:
         # Create composite key for internal storage
         composite_key = f"{base_session_id}:{working_path}"
         return base_session_id, working_path, composite_key
-    
+
     async def get_or_create_claude_session(
         self,
         context: MessageContext,
@@ -96,14 +97,12 @@ class SessionHandler:
         base_session_id, working_path, composite_key = self.get_session_info(context)
 
         settings_key = self._get_settings_key(context)
-        stored_claude_session_id = self.settings_manager.get_claude_session_id(
-            settings_key, base_session_id
-        )
+        stored_claude_session_id = self.settings_manager.get_claude_session_id(settings_key, base_session_id)
 
         # Read channel-level configuration overrides
         channel_settings = self.settings_manager.get_channel_settings(context.channel_id)
         routing = channel_settings.routing if channel_settings else None
-        
+
         # Priority: subagent params > channel config > agent frontmatter > global default
         # Note: agent frontmatter model is applied later after loading agent file
         effective_agent = subagent_name or (routing.claude_agent if routing else None)
@@ -124,9 +123,7 @@ class SessionHandler:
                 agent_name="claude",
             )
             if cached_key in self.claude_sessions:
-                logger.info(
-                    "Using Claude subagent session for %s at %s", cached_base, working_path
-                )
+                logger.info("Using Claude subagent session for %s at %s", cached_base, working_path)
                 return self.claude_sessions[cached_key]
             # Always use agent-specific key when effective_agent is set
             # This ensures session continuity even on first use
@@ -143,7 +140,7 @@ class SessionHandler:
             except Exception as e:
                 logger.error(f"Failed to create working directory {working_path}: {e}")
                 working_path = os.getcwd()
-        
+
         # Build system prompt from agent file if subagent is specified
         # Claude Code has a bug where ~/.claude/agents/*.md files are not auto-discovered
         # See: https://github.com/anthropics/claude-code/issues/11205
@@ -200,7 +197,7 @@ class SessionHandler:
             disallowed_tools=["AskUserQuestion"],
             env=claude_env,  # Pass Anthropic/Claude env vars
         )
-        
+
         # Log session creation details
         logger.info(f"Creating Claude client for {base_session_id} at {working_path}")
         logger.info(f"  Working directory: {working_path}")
@@ -210,13 +207,13 @@ class SessionHandler:
             logger.info(f"  Subagent: {effective_agent}")
         if effective_model:
             logger.info(f"  Model: {effective_model}")
-        
+
         # Log if we're resuming a session
         if stored_claude_session_id:
             logger.info(f"Attempting to resume Claude session {stored_claude_session_id}")
         else:
             logger.info(f"Creating new Claude session")
-        
+
         # Create new Claude client
         client = ClaudeSDKClient(options=options)
 
@@ -235,9 +232,9 @@ class SessionHandler:
 
         self.claude_sessions[composite_key] = client
         logger.info(f"Created new Claude SDK client for {base_session_id} at {working_path}")
-        
+
         return client
-    
+
     async def cleanup_session(self, composite_key: str):
         """Clean up a specific session by composite key"""
         # Cancel receiver task if exists
@@ -251,7 +248,7 @@ class SessionHandler:
                     pass
             del self.receiver_tasks[composite_key]
             logger.info(f"Cancelled receiver task for session {composite_key}")
-        
+
         # Cleanup Claude session
         if composite_key in self.claude_sessions:
             client = self.claude_sessions[composite_key]
@@ -261,53 +258,44 @@ class SessionHandler:
                 logger.error(f"Error disconnecting Claude session {composite_key}: {e}")
             del self.claude_sessions[composite_key]
             logger.info(f"Cleaned up Claude session {composite_key}")
-    
+
     async def handle_session_error(self, composite_key: str, context: MessageContext, error: Exception):
         """Handle session-related errors"""
         error_msg = str(error)
-        
+
         # Check for specific error types
         if "read() called while another coroutine" in error_msg:
             logger.error(f"Session {composite_key} has concurrent read error - cleaning up")
             await self.cleanup_session(composite_key)
-            
+
             # Notify user and suggest retry
-            await self.im_client.send_message(
-                context,
-                self.formatter.format_error(
-                    self._t("error.sessionReset")
-                )
-            )
+            await self.im_client.send_message(context, self.formatter.format_error(self._t("error.sessionReset")))
         elif "Session is broken" in error_msg or "Connection closed" in error_msg or "Connection lost" in error_msg:
             logger.error(f"Session {composite_key} is broken - cleaning up")
             await self.cleanup_session(composite_key)
-            
+
             # Notify user
             await self.im_client.send_message(
-                context,
-                self.formatter.format_error(
-                    self._t("error.sessionConnectionLost")
-                )
+                context, self.formatter.format_error(self._t("error.sessionConnectionLost"))
             )
         else:
             # Generic error handling
             logger.error(f"Error in session {composite_key}: {error}")
             await self.im_client.send_message(
-                context,
-                self.formatter.format_error(self._t("error.sessionGeneric", error=error_msg))
+                context, self.formatter.format_error(self._t("error.sessionGeneric", error=error_msg))
             )
-    
+
     def capture_session_id(self, base_session_id: str, claude_session_id: str, settings_key: str):
         """Capture and store Claude session ID mapping"""
         # Persist to settings (settings_key is channel_id for Slack)
         self.settings_manager.set_session_mapping(settings_key, base_session_id, claude_session_id)
-        
+
         logger.info(f"Captured Claude session_id: {claude_session_id} for {base_session_id}")
-    
+
     def restore_session_mappings(self):
         """Restore session mappings from settings on startup"""
         logger.info("Initializing session mappings from saved settings...")
-        
+
         session_state = self.settings_manager.sessions_store.state.session_mappings
 
         restored_count = 0
@@ -315,9 +303,7 @@ class SessionHandler:
             claude_map = agent_map.get("claude", {}) if isinstance(agent_map, dict) else {}
             for thread_id, claude_session_id in claude_map.items():
                 if isinstance(claude_session_id, str):
-                    logger.info(
-                        f"  - {thread_id} -> {claude_session_id} (user {user_id})"
-                    )
+                    logger.info(f"  - {thread_id} -> {claude_session_id} (user {user_id})")
                     restored_count += 1
 
         logger.info(f"Session restoration complete. Restored {restored_count} session mappings.")

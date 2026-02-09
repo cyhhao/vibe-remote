@@ -18,9 +18,11 @@ const AuthGuard = ({ children }: { children: any }) => {
 
     useEffect(() => {
         getConfig().then(config => {
-            // Check if minimal config exists
-            // If no mode or no slack bot_token, setup is needed
-            if (!config || !config.mode || !config.slack?.bot_token) {
+            const platform = config?.platform || 'slack';
+            const hasToken = platform === 'discord'
+                ? !!config?.discord?.bot_token
+                : !!config?.slack?.bot_token;
+            if (!config || !config.mode || !hasToken) {
                 setNeedsSetup(true);
             }
             setLoading(false);

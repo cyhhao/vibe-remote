@@ -19,7 +19,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const { control } = useStatus();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [requireMention, setRequireMention] = useState(data.slack?.require_mention || false);
+  const platform = data.platform || 'slack';
+  const [requireMention, setRequireMention] = useState(
+    platform === 'discord' ? (data.discord?.require_mention || false) : (data.slack?.require_mention || false)
+  );
   const [autoUpdate, setAutoUpdate] = useState(data.update?.auto_update ?? true);
   const navigate = useNavigate();
 
@@ -31,6 +34,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         ...data,
         slack: {
           ...data.slack,
+          require_mention: requireMention,
+        },
+        discord: {
+          ...data.discord,
           require_mention: requireMention,
         },
         update: {
@@ -71,8 +78,18 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
 
       <div className="flex-1 space-y-4 overflow-y-auto mb-6">
         <Section title={t('summary.mode')} value={data.mode} />
-        <Section title={t('summary.slackBotToken')} value={mask(data.slack?.bot_token || '')} />
-        <Section title={t('summary.slackAppToken')} value={mask(data.slack?.app_token || '')} />
+        <Section title={t('summary.platform')} value={platform} />
+        {platform === 'discord' ? (
+          <>
+            <Section title={t('summary.discordBotToken')} value={mask(data.discord?.bot_token || '')} />
+            <Section title={t('summary.discordGuild')} value={(data.discord?.guild_allowlist || [])[0] || t('summary.notSet')} />
+          </>
+        ) : (
+          <>
+            <Section title={t('summary.slackBotToken')} value={mask(data.slack?.bot_token || '')} />
+            <Section title={t('summary.slackAppToken')} value={mask(data.slack?.app_token || '')} />
+          </>
+        )}
         <Section title={t('summary.enabledAgents')} value={enabledAgents(data).join(', ')} />
         <Section title={t('summary.channelsConfigured')} value={Object.keys(data.channelConfigs || {}).filter(k => data.channelConfigs[k]?.enabled).length} />
         
@@ -191,6 +208,7 @@ const enabledAgents = (data: any) => {
 const buildConfigPayload = (data: any) => {
   const agents = data.agents || {};
   return {
+    platform: data.platform || 'slack',
     mode: data.mode || 'self_host',
     version: 'v2',
     slack: {
@@ -200,6 +218,13 @@ const buildConfigPayload = (data: any) => {
       bot_token: data.slack?.bot_token || '',
       app_token: data.slack?.app_token || '',
       require_mention: data.slack?.require_mention || false,
+    },
+    discord: {
+      ...data.discord,
+      bot_token: data.discord?.bot_token || '',
+      guild_allowlist: data.discord?.guild_allowlist || [],
+      guild_denylist: data.discord?.guild_denylist || [],
+      require_mention: data.discord?.require_mention || false,
     },
     runtime: {
       // Preserve existing runtime config

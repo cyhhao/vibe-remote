@@ -33,8 +33,8 @@ class CommandHandlers:
 
     def _get_channel_context(self, context: MessageContext) -> MessageContext:
         """Get context for channel messages (no thread)"""
-        # For Slack: send command responses directly to channel, not in thread
-        if self.config.platform == "slack":
+        # For Slack/Discord: send command responses directly to channel, not in thread
+        if self.config.platform in {"slack", "discord"}:
             return MessageContext(
                 user_id=context.user_id,
                 channel_id=context.channel_id,
@@ -62,20 +62,16 @@ class CommandHandlers:
             channel_info = {
                 "id": context.channel_id,
                 "name": (
-                    self._t("command.start.directMessage")
-                    if context.channel_id.startswith("D")
-                    else context.channel_id
+                    self._t("command.start.directMessage") if context.channel_id.startswith("D") else context.channel_id
                 ),
             }
 
         agent_name = self.controller.resolve_agent_for_context(context)
         default_agent = getattr(self.controller.agent_service, "default_agent", None)
-        agent_display_name = get_agent_display_name(
-            agent_name, fallback=default_agent or "Unknown"
-        )
+        agent_display_name = get_agent_display_name(agent_name, fallback=default_agent or "Unknown")
 
-        # For non-Slack platforms, use traditional text message
-        if self.config.platform != "slack":
+        # For non-Slack platforms without buttons, use traditional text message
+        if self.config.platform not in {"slack", "discord"}:
             formatter = self.im_client.formatter
 
             # Build welcome message using formatter to handle escaping properly
@@ -93,17 +89,11 @@ class CommandHandlers:
                 formatter.format_text("@Vibe Remote /cwd - Show current working directory"),
                 formatter.format_text("@Vibe Remote /set_cwd <path> - Set working directory"),
                 formatter.format_text("@Vibe Remote /settings - Personalization settings"),
-                formatter.format_text(
-                    f"@Vibe Remote /stop - Interrupt {agent_display_name} execution"
-                ),
+                formatter.format_text(f"@Vibe Remote /stop - Interrupt {agent_display_name} execution"),
                 "",
                 formatter.format_bold("How it works:"),
-                formatter.format_text(
-                    f"• Send any message and it's immediately sent to {agent_display_name}"
-                ),
-                formatter.format_text(
-                    "• Each chat maintains its own conversation context"
-                ),
+                formatter.format_text(f"• Send any message and it's immediately sent to {agent_display_name}"),
+                formatter.format_text("• Each chat maintains its own conversation context"),
                 formatter.format_text("• Use /clear to reset the conversation"),
             ]
 
@@ -112,7 +102,7 @@ class CommandHandlers:
             await self.im_client.send_message(channel_context, message_text)
             return
 
-        # For Slack, create interactive buttons using Block Kit
+        # For Slack/Discord, create interactive buttons
         user_name = user_info.get("real_name") or user_info.get("name") or "User"
 
         # Create interactive buttons for commands
@@ -143,16 +133,14 @@ class CommandHandlers:
 👋 {self._t("command.start.greeting", name=user_name)}
 🔧 {self._t("command.start.platform", platform=platform_name)}
 🤖 {self._t("command.start.agent", agent=agent_display_name)}
-📍 {self._t("command.start.channel", channel=channel_info.get('name', 'Unknown'))}
+📍 {self._t("command.start.channel", channel=channel_info.get("name", "Unknown"))}
 
 **{self._t("command.start.quickActions")}**
 {self._t("command.start.quickActionsDesc", agent=agent_display_name)}"""
 
         # Send command response to channel (not in thread)
         channel_context = self._get_channel_context(context)
-        await self.im_client.send_message_with_buttons(
-            channel_context, welcome_text, keyboard
-        )
+        await self.im_client.send_message_with_buttons(channel_context, welcome_text, keyboard)
 
     async def handle_clear(self, context: MessageContext, args: str = ""):
         """Handle clear command - clears all sessions across configured agents"""
@@ -178,13 +166,9 @@ class CommandHandlers:
             logger.error(f"Error clearing session: {e}", exc_info=True)
             try:
                 channel_context = self._get_channel_context(context)
-                await self.im_client.send_message(
-                    channel_context, f"❌ {self._t('error.clearSession', error=str(e))}"
-                )
+                await self.im_client.send_message(channel_context, f"❌ {self._t('error.clearSession', error=str(e))}")
             except Exception as send_error:
-                logger.error(
-                    f"Failed to send error message: {send_error}", exc_info=True
-                )
+                logger.error(f"Failed to send error message: {send_error}", exc_info=True)
 
     async def handle_cwd(self, context: MessageContext, args: str = ""):
         """Handle cwd command - show current working directory"""
@@ -215,18 +199,14 @@ class CommandHandlers:
         except Exception as e:
             logger.error(f"Error getting cwd: {e}")
             channel_context = self._get_channel_context(context)
-            await self.im_client.send_message(
-                channel_context, f"❌ {self._t('error.cwdGetFailed', error=str(e))}"
-            )
+            await self.im_client.send_message(channel_context, f"❌ {self._t('error.cwdGetFailed', error=str(e))}")
 
     async def handle_set_cwd(self, context: MessageContext, args: str):
         """Handle set_cwd command - change working directory"""
         try:
             if not args:
                 channel_context = self._get_channel_context(context)
-                await self.im_client.send_message(
-                    channel_context, self._t("command.cwd.usage")
-                )
+                await self.im_client.send_message(channel_context, self._t("command.cwd.usage"))
                 return
 
             new_path = args.strip()
@@ -269,14 +249,26 @@ class CommandHandlers:
         except Exception as e:
             logger.error(f"Error setting cwd: {e}")
             channel_context = self._get_channel_context(context)
-            await self.im_client.send_message(
-                channel_context, f"❌ {self._t('error.cwdSetFailed', error=str(e))}"
-            )
+            await self.im_client.send_message(channel_context, f"❌ {self._t('error.cwdSetFailed', error=str(e))}")
 
     async def handle_change_cwd_modal(self, context: MessageContext):
         """Handle Change Work Dir button - open modal for Slack"""
+        if self.config.platform == "discord":
+            interaction = context.platform_specific.get("interaction") if context.platform_specific else None
+            if interaction and hasattr(self.im_client, "open_change_cwd_modal"):
+                try:
+                    current_cwd = self.controller.get_cwd(context)
+                    await self.im_client.open_change_cwd_modal(interaction, current_cwd, context.channel_id)
+                    return
+                except Exception as e:
+                    logger.error(f"Error opening change CWD modal: {e}")
+            channel_context = self._get_channel_context(context)
+            await self.im_client.send_message(
+                channel_context,
+                f"📂 {self._t('command.cwd.changeInstructions')}",
+            )
+            return
         if self.config.platform != "slack":
-            # For non-Slack platforms, just send instructions
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
                 channel_context,
@@ -285,20 +277,14 @@ class CommandHandlers:
             return
 
         # For Slack, open a modal dialog
-        trigger_id = (
-            context.platform_specific.get("trigger_id")
-            if context.platform_specific
-            else None
-        )
+        trigger_id = context.platform_specific.get("trigger_id") if context.platform_specific else None
 
         if trigger_id and hasattr(self.im_client, "open_change_cwd_modal"):
             try:
                 # Get current CWD based on context
                 current_cwd = self.controller.get_cwd(context)
 
-                await self.im_client.open_change_cwd_modal(
-                    trigger_id, current_cwd, context.channel_id
-                )
+                await self.im_client.open_change_cwd_modal(trigger_id, current_cwd, context.channel_id)
             except Exception as e:
                 logger.error(f"Error opening change CWD modal: {e}")
                 channel_context = self._get_channel_context(context)
@@ -316,6 +302,35 @@ class CommandHandlers:
 
     async def handle_resume(self, context: MessageContext):
         """Open resume-session modal (Slack) or explain availability."""
+        if self.config.platform == "discord":
+            interaction = context.platform_specific.get("interaction") if context.platform_specific else None
+            settings_key = self.controller._get_settings_key(context)
+            sessions_by_agent = self.settings_manager.list_all_agent_sessions(settings_key)
+            if not sessions_by_agent:
+                channel_context = self._get_channel_context(context)
+                await self.im_client.send_message(
+                    channel_context,
+                    f"ℹ️ {self._t('command.resume.noStoredSessions')}",
+                )
+                return
+            if interaction and hasattr(self.im_client, "open_resume_session_modal"):
+                try:
+                    await self.im_client.open_resume_session_modal(
+                        trigger_id=interaction,
+                        sessions_by_agent=sessions_by_agent,
+                        channel_id=context.channel_id,
+                        thread_id=context.thread_id or context.message_id or "",
+                        host_message_ts=context.message_id,
+                    )
+                    return
+                except Exception as e:
+                    logger.error(f"Error opening resume modal: {e}")
+            channel_context = self._get_channel_context(context)
+            await self.im_client.send_message(
+                channel_context,
+                f"⏮️ {self._t('command.resume.clickButton')}",
+            )
+            return
         if self.config.platform != "slack":
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
@@ -324,11 +339,7 @@ class CommandHandlers:
             )
             return
 
-        trigger_id = (
-            context.platform_specific.get("trigger_id")
-            if context.platform_specific
-            else None
-        )
+        trigger_id = context.platform_specific.get("trigger_id") if context.platform_specific else None
         if not trigger_id:
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
@@ -358,17 +369,13 @@ class CommandHandlers:
         except Exception as e:
             logger.error(f"Error opening resume modal: {e}")
             channel_context = self._get_channel_context(context)
-            await self.im_client.send_message(
-                channel_context, f"❌ {self._t('error.resumeFailed')}"
-            )
+            await self.im_client.send_message(channel_context, f"❌ {self._t('error.resumeFailed')}")
 
     async def handle_stop(self, context: MessageContext, args: str = ""):
         """Handle /stop command - send interrupt message to the active agent"""
         try:
             session_handler = self.controller.session_handler
-            base_session_id, working_path, composite_key = (
-                session_handler.get_session_info(context)
-            )
+            base_session_id, working_path, composite_key = session_handler.get_session_info(context)
             settings_key = self.controller._get_settings_key(context)
             agent_name = self.controller.resolve_agent_for_context(context)
             request = AgentRequest(
@@ -380,14 +387,10 @@ class CommandHandlers:
                 settings_key=settings_key,
             )
 
-            handled = await self.controller.agent_service.handle_stop(
-                agent_name, request
-            )
+            handled = await self.controller.agent_service.handle_stop(agent_name, request)
             if not handled:
                 channel_context = self._get_channel_context(context)
-                await self.im_client.send_message(
-                    channel_context, f"ℹ️ {self._t('command.stop.noActiveSession')}"
-                )
+                await self.im_client.send_message(channel_context, f"ℹ️ {self._t('command.stop.noActiveSession')}")
 
         except Exception as e:
             logger.error(f"Error sending stop command: {e}", exc_info=True)

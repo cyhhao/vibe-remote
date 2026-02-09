@@ -15,6 +15,12 @@ from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, Fi
 from config.v2_config import SlackConfig
 from .formatters import SlackFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
+from modules.agents.opencode.utils import (
+    build_opencode_model_option_items,
+    build_reasoning_effort_options,
+    resolve_opencode_allowed_providers,
+    resolve_opencode_provider_preferences,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2273,88 +2279,32 @@ class SlackBot(BaseIMClient):
                 default_label = f"{self._t('common.default')} - {default_model_str}"
             model_options = [{"text": {"type": "plain_text", "text": default_label}, "value": "__default__"}]
 
-            # Add models from providers
-            providers_data = opencode_models.get("providers", [])
-            defaults = opencode_models.get("default", {})
-
-            # Calculate max models per provider to fit within Slack's 100 option limit
-            # Reserve 1 for "(Default)" option
-            num_providers = len(providers_data)
-            max_per_provider = max(5, (99 // num_providers)) if num_providers > 0 else 99
-
-            def model_sort_key(model_item):
-                """Sort models by release_date (newest first), deprioritize utility models."""
-                model_id, model_info = model_item
-                mid_lower = model_id.lower()
-
-                # Deprioritize embedding and utility models (put them at the end)
-                is_utility = any(
-                    kw in mid_lower for kw in ["embedding", "tts", "whisper", "ada", "davinci", "turbo-instruct"]
+            # Add models from providers (sorted, filtered, truncated)
+            preferred_providers = resolve_opencode_provider_preferences(
+                opencode_default_config,
+                current_oc_model or default_model_str,
+            )
+            allowed_providers = resolve_opencode_allowed_providers(
+                opencode_default_config,
+                opencode_models,
+            )
+            model_entries = build_opencode_model_option_items(
+                opencode_models,
+                max_total=99,
+                preferred_providers=preferred_providers,
+                allowed_providers=allowed_providers,
+            )
+            for entry in model_entries:
+                label = entry.get("label", "")
+                value = entry.get("value", "")
+                if not label or not value:
+                    continue
+                model_options.append(
+                    {
+                        "text": {"type": "plain_text", "text": label[:75]},  # Slack limit
+                        "value": value,
+                    }
                 )
-                utility_penalty = 1 if is_utility else 0
-
-                # Get release_date for sorting (newest first)
-                # Default to old date if not available, convert to negative int for DESC sort
-                release_date = "1970-01-01"
-                if isinstance(model_info, dict):
-                    release_date = model_info.get("release_date", "1970-01-01") or "1970-01-01"
-                # Convert YYYY-MM-DD to int (e.g., 20250414) and negate for descending order
-                try:
-                    date_int = -int(release_date.replace("-", ""))
-                except (ValueError, AttributeError):
-                    date_int = 0
-
-                # Sort by: utility_penalty ASC, release_date DESC (via negative int), model_id ASC
-                return (utility_penalty, date_int, model_id)
-
-            for provider in providers_data:
-                provider_id = provider.get("id", "")
-                provider_name = provider.get("name", provider_id)
-                models = provider.get("models", {})
-
-                # Handle both dict and list formats for models
-                if isinstance(models, dict):
-                    model_items = list(models.items())
-                elif isinstance(models, list):
-                    model_items = [(m, m) if isinstance(m, str) else (m.get("id", ""), m) for m in models]
-                else:
-                    model_items = []
-
-                # Sort models by priority
-                model_items.sort(key=model_sort_key)
-
-                # Limit models per provider
-                provider_model_count = 0
-                for model_id, model_info in model_items:
-                    if provider_model_count >= max_per_provider:
-                        break
-
-                    # Get model name
-                    if isinstance(model_info, dict):
-                        model_name = model_info.get("name", model_id)
-                    else:
-                        model_name = model_id
-
-                    if model_id:
-                        full_model = f"{provider_id}/{model_id}"
-                        # Mark if this is the provider's default
-                        is_default = defaults.get(provider_id) == model_id
-                        display = f"{provider_name}: {model_name}"
-                        if is_default:
-                            display += " (default)"
-
-                        model_options.append(
-                            {
-                                "text": {"type": "plain_text", "text": display[:75]},  # Slack limit
-                                "value": full_model,
-                            }
-                        )
-                        provider_model_count += 1
-
-            # Final safety check for Slack's 100 option limit
-            if len(model_options) > 100:
-                model_options = model_options[:100]
-                logger.warning("Truncated model options to 100 for Slack modal")
 
             # Find initial model
             initial_model = model_options[0]  # Default
@@ -2374,84 +2324,28 @@ class SlackBot(BaseIMClient):
 
             # Build reasoning effort options dynamically based on model variants
             target_model = current_oc_model or default_model_str
-            model_variants: Dict[str, Any] = {}
 
             reasoning_model_key = target_model or "__default__"
             reasoning_action_id = (
                 "opencode_reasoning_select__" + hashlib.sha1(reasoning_model_key.encode("utf-8")).hexdigest()[:8]
             )
 
-            if target_model:
-                # Parse provider/model format
-                parts = target_model.split("/", 1)
-                if len(parts) == 2:
-                    target_provider, target_model_id = parts
-                    # Search for this model in providers data
-                    for provider in providers_data:
-                        if provider.get("id") != target_provider:
-                            continue
-
-                        models = provider.get("models", {})
-                        model_info: Optional[dict] = None
-
-                        if isinstance(models, dict):
-                            candidate = models.get(target_model_id)
-                            if isinstance(candidate, dict):
-                                model_info = candidate
-                        elif isinstance(models, list):
-                            for entry in models:
-                                if isinstance(entry, dict) and entry.get("id") == target_model_id:
-                                    model_info = entry
-                                    break
-
-                        if isinstance(model_info, dict):
-                            variants = model_info.get("variants", {})
-                            if isinstance(variants, dict):
-                                model_variants = variants
-
-                        break
-
-            # Build options from variants or use fallback
-            reasoning_effort_options = [
-                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
-            ]
-
-            if model_variants:
-                # Use model-specific variants with stable ordering
-                variant_order = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-                variant_display_names = {
-                    "none": self._t("reasoning.none"),
-                    "minimal": self._t("reasoning.minimal"),
-                    "low": self._t("reasoning.low"),
-                    "medium": self._t("reasoning.medium"),
-                    "high": self._t("reasoning.high"),
-                    "xhigh": self._t("reasoning.xhigh"),
-                    "max": self._t("reasoning.max"),
-                }
-                # Sort variants by predefined order, unknown variants go to end alphabetically
-                sorted_variants = sorted(
-                    model_variants.keys(),
-                    key=lambda x: (
-                        variant_order.index(x) if x in variant_order else len(variant_order),
-                        x,
-                    ),
-                )
-                for variant_key in sorted_variants:
-                    display_name = variant_display_names.get(variant_key, variant_key.capitalize())
-                    reasoning_effort_options.append(
-                        {
-                            "text": {"type": "plain_text", "text": display_name},
-                            "value": variant_key,
-                        }
-                    )
-            else:
-                # Fallback to common options
-                reasoning_effort_options.extend(
-                    [
-                        {"text": {"type": "plain_text", "text": self._t("reasoning.low")}, "value": "low"},
-                        {"text": {"type": "plain_text", "text": self._t("reasoning.medium")}, "value": "medium"},
-                        {"text": {"type": "plain_text", "text": self._t("reasoning.high")}, "value": "high"},
-                    ]
+            reasoning_entries = build_reasoning_effort_options(opencode_models, target_model)
+            reasoning_effort_options = []
+            for entry in reasoning_entries:
+                value = entry.get("value")
+                if not value:
+                    continue
+                if value == "__default__":
+                    label = self._t("common.default")
+                else:
+                    translated = self._t(f"reasoning.{value}")
+                    label = translated if translated != f"reasoning.{value}" else entry.get("label", value)
+                reasoning_effort_options.append(
+                    {
+                        "text": {"type": "plain_text", "text": label},
+                        "value": value,
+                    }
                 )
 
             # Find initial reasoning effort
