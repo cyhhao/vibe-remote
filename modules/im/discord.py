@@ -187,7 +187,11 @@ class DiscordBot(BaseIMClient):
         if target is None:
             raise RuntimeError("Discord channel not found")
 
-        view = _DiscordButtonView(self, context, keyboard)
+        view = (
+            _PersistentStartView(self, keyboard)
+            if _PersistentStartView.is_all_static(keyboard)
+            else _DiscordButtonView(self, context, keyboard)
+        )
         message = await target.send(content=text, view=view)
         if self.settings_manager and context.thread_id:
             try:
@@ -215,7 +219,13 @@ class DiscordBot(BaseIMClient):
             return False
         try:
             msg = await target.fetch_message(int(message_id))
-            view = _DiscordButtonView(self, context, keyboard) if keyboard else None
+            view = None
+            if keyboard:
+                view = (
+                    _PersistentStartView(self, keyboard)
+                    if _PersistentStartView.is_all_static(keyboard)
+                    else _DiscordButtonView(self, context, keyboard)
+                )
             await msg.edit(content=text, view=view)
             return True
         except Exception as err:
@@ -335,6 +345,11 @@ class DiscordBot(BaseIMClient):
     # ---------------------------------------------------------------------
     async def _on_ready_event(self):
         logger.info("Discord client ready")
+        # Register persistent view so /start menu buttons survive restarts.
+        try:
+            self.client.add_view(_PersistentStartView(self))
+        except Exception as err:
+            logger.error("Failed to register persistent start view: %s", err, exc_info=True)
         if self._on_ready:
             try:
                 await self._on_ready()
@@ -923,11 +938,7 @@ class DiscordBot(BaseIMClient):
                         opencode_agents,
                         self.oc_agent if self.oc_agent not in ("__default__", None) else None,
                     )
-                    target_model = (
-                        self.oc_model
-                        if self.oc_model not in (None, "__default__")
-                        else default_model_str
-                    )
+                    target_model = self.oc_model if self.oc_model not in (None, "__default__") else default_model_str
                     preferred_providers = resolve_opencode_provider_preferences(
                         opencode_default_config,
                         target_model,
@@ -1071,7 +1082,8 @@ class DiscordBot(BaseIMClient):
                         )
                     ]
                     agent_options += [
-                        discord.SelectOption(label=a, value=a, default=a == self.claude_agent) for a in claude_agent_names
+                        discord.SelectOption(label=a, value=a, default=a == self.claude_agent)
+                        for a in claude_agent_names
                     ]
                     if len(agent_options) > 25:
                         agent_options = agent_options[:25]
@@ -1327,10 +1339,7 @@ class DiscordBot(BaseIMClient):
                     option_labels = [label for label in option_labels if label]
                     if len(option_labels) > 25:
                         option_labels = option_labels[:25]
-                    options = [
-                        discord.SelectOption(label=label[:100], value=label[:100])
-                        for label in option_labels
-                    ]
+                    options = [discord.SelectOption(label=label[:100], value=label[:100]) for label in option_labels]
                     max_values = len(options) if multiple else 1
                     select = discord.ui.Select(
                         placeholder=header or f"Question {idx + 1}",
@@ -1392,7 +1401,99 @@ class DiscordBot(BaseIMClient):
         )
 
 
+class _PersistentStartView(discord.ui.View):
+    """Persistent view for /start menu buttons.
+
+    Survives bot restarts because:
+    1. timeout=None
+    2. All buttons have explicit static custom_ids
+    3. Registered via client.add_view() on startup
+    """
+
+    # Static custom_ids used by the /start menu
+    KNOWN_IDS = frozenset(
+        {
+            "cmd_cwd",
+            "cmd_change_cwd",
+            "cmd_clear",
+            "cmd_settings",
+            "cmd_resume",
+            "cmd_routing",
+            "info_how_it_works",
+        }
+    )
+
+    def __init__(self, outer: "DiscordBot", keyboard: Optional[InlineKeyboard] = None):
+        super().__init__(timeout=None)
+        self.outer = outer
+        if keyboard is not None:
+            for row_idx, row in enumerate(keyboard.buttons):
+                for button in row:
+                    item = discord.ui.Button(
+                        label=button.text,
+                        style=discord.ButtonStyle.secondary,
+                        custom_id=button.callback_data,
+                        row=row_idx,
+                    )
+                    item.callback = self._make_callback(button.callback_data)
+                    self.add_item(item)
+        else:
+            # Skeleton mode: register callbacks for known IDs so that
+            # interactions on old messages are routed correctly after restart.
+            for cid in sorted(self.KNOWN_IDS):
+                item = discord.ui.Button(
+                    label=cid,  # label is ignored for persistent views
+                    style=discord.ButtonStyle.secondary,
+                    custom_id=cid,
+                )
+                item.callback = self._make_callback(cid)
+                self.add_item(item)
+
+    def _make_callback(self, data: str):
+        async def on_click(interaction: discord.Interaction):
+            needs_modal = data.endswith(":open_modal") or data in {
+                "cmd_change_cwd",
+                "cmd_settings",
+                "cmd_routing",
+                "cmd_resume",
+            }
+            if not needs_modal:
+                try:
+                    await interaction.response.defer(ephemeral=True)
+                except Exception:
+                    pass
+            channel_id, thread_id = self.outer._extract_context_ids(interaction.channel)
+            guild_id = str(interaction.guild_id) if interaction.guild_id else None
+            if guild_id and not self.outer._is_allowed_guild(guild_id):
+                return
+            if not await self.outer._is_authorized_channel(channel_id):
+                await self.outer._send_unauthorized_message(channel_id)
+                return
+            context = MessageContext(
+                user_id=str(interaction.user.id),
+                channel_id=channel_id,
+                thread_id=thread_id,
+                message_id=str(interaction.message.id) if interaction.message else None,
+                platform_specific={"interaction": interaction},
+            )
+            if self.outer.on_callback_query_callback:
+                await self.outer.on_callback_query_callback(context, data)
+
+        return on_click
+
+    @staticmethod
+    def is_all_static(keyboard: InlineKeyboard) -> bool:
+        """Return True if every button in *keyboard* uses a known static custom_id."""
+        for row in keyboard.buttons:
+            for button in row:
+                if button.callback_data not in _PersistentStartView.KNOWN_IDS:
+                    return False
+        return True
+
+
 class _DiscordButtonView(discord.ui.View):
+    """Non-persistent view for dynamic buttons (update prompts, question modals, etc.)."""
+
     def __init__(
         self,
         outer: DiscordBot,
