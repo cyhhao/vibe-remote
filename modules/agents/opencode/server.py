@@ -489,7 +489,7 @@ class OpenCodeServerManager:
         if model:
             body["model"] = model
         if reasoning_effort:
-            body["reasoningEffort"] = reasoning_effort
+            body["variant"] = reasoning_effort
 
         async with session.post(
             f"{self.base_url}/session/{session_id}/message",
@@ -524,7 +524,7 @@ class OpenCodeServerManager:
         if model:
             body["model"] = model
         if reasoning_effort:
-            body["reasoningEffort"] = reasoning_effort
+            body["variant"] = reasoning_effort
 
         async with session.post(
             f"{self.base_url}/session/{session_id}/prompt_async",
