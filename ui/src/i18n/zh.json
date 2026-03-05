@@ -271,6 +271,8 @@
     "ackMessage": "消息回复",
     "errorRetryLimit": "错误重试次数",
     "errorRetryLimitHint": "当 LLM 流式响应出错时，自动发送 'continue' 重试（0 = 不重试）",
+    "showDuration": "显示耗时",
+    "showDurationHint": "在结果消息中显示任务耗时",
     "allowedChannels": "允许的频道",
     "consoleServer": "控制台服务器",
     "host": "主机",

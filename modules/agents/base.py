@@ -100,7 +100,12 @@ class BaseAgent(ABC):
     ) -> None:
         if duration_ms is None:
             duration_ms = self._calculate_duration_ms(started_at)
-        formatted = self.im_client.formatter.format_result_message(subtype or "", duration_ms, result_text)
+        formatted = self.im_client.formatter.format_result_message(
+            subtype or "",
+            duration_ms,
+            result_text,
+            show_duration=getattr(self.config, "show_duration", True),
+        )
         if suffix:
             formatted = f"{formatted}\n{suffix}"
         await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)

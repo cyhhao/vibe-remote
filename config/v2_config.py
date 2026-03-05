@@ -126,6 +126,7 @@ class V2Config:
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "reaction"
+    show_duration: bool = True  # Show task duration in result messages
     language: str = "en"  # Global language setting (see vibe/i18n)
 
     @classmethod
@@ -225,6 +226,10 @@ class V2Config:
         if ack_mode not in {"reaction", "message"}:
             raise ValueError("Config 'ack_mode' must be 'reaction' or 'message'")
 
+        show_duration = payload.get("show_duration", True)
+        if not isinstance(show_duration, bool):
+            show_duration = True
+
         language = normalize_language(payload.get("language"), default="en")
 
         return cls(
@@ -239,6 +244,7 @@ class V2Config:
             ui=ui,
             update=update,
             ack_mode=ack_mode,
+            show_duration=show_duration,
             language=language,
         )
 
@@ -265,6 +271,7 @@ class V2Config:
             "ui": self.ui.__dict__,
             "update": self.update.__dict__,
             "ack_mode": self.ack_mode,
+            "show_duration": self.show_duration,
             "language": self.language,
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

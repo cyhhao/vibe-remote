@@ -128,9 +128,7 @@ class BaseMarkdownFormatter(ABC):
         # Default implementation - subclasses can override for platform-specific needs
         return f"• {self.format_bold(label)} - {self.format_text(description)}"
 
-    def format_definition_list(
-        self, items: List[Tuple[str, str]], bold_key: bool = True
-    ) -> List[str]:
+    def format_definition_list(self, items: List[Tuple[str, str]], bold_key: bool = True) -> List[str]:
         """Format a list of key-value pairs
 
         Args:
@@ -216,9 +214,7 @@ class BaseMarkdownFormatter(ABC):
 
     def format_error(self, error_text: str) -> str:
         """Format error message"""
-        return (
-            f"❌ {self.format_bold('Error')}: {self.escape_special_chars(error_text)}"
-        )
+        return f"❌ {self.format_bold('Error')}: {self.escape_special_chars(error_text)}"
 
     def format_success(self, message: str) -> str:
         """Format success message"""
@@ -244,23 +240,17 @@ class BaseMarkdownFormatter(ABC):
         else:
             return f"{self.format_bold(escaped_key)}:\n{escaped_value}"
 
-    def truncate_text(
-        self, text: str, max_length: int = 50, suffix: str = "..."
-    ) -> str:
+    def truncate_text(self, text: str, max_length: int = 50, suffix: str = "...") -> str:
         """Truncate text to specified length"""
         if len(text) <= max_length:
             return text
         return text[:max_length] + suffix
 
     # Claude message formatting methods
-    def format_system_message(
-        self, cwd: str, subtype: str, session_id: Optional[str] = None
-    ) -> str:
+    def format_system_message(self, cwd: str, subtype: str, session_id: Optional[str] = None) -> str:
         """Format system message"""
         header = self.format_section_header(f"System {subtype}", "🔧")
-        cwd_line = self.format_file_path(cwd, emoji="📁").replace(
-            "File:", "Working directory:"
-        )
+        cwd_line = self.format_file_path(cwd, emoji="📁").replace("File:", "Working directory:")
 
         # Add session ID if available
         if session_id:
@@ -338,26 +328,32 @@ class BaseMarkdownFormatter(ABC):
         return "\n\n".join(parts)
 
     def format_result_message(
-        self, subtype: str, duration_ms: int, result: Optional[str] = None
+        self,
+        subtype: str,
+        duration_ms: int,
+        result: Optional[str] = None,
+        show_duration: bool = True,
     ) -> str:
-        """Format result message"""
-        # Calculate duration
-        total_seconds = duration_ms / 1000
-        minutes = int(total_seconds // 60)
-        seconds = int(total_seconds % 60)
+        """Format result message.
 
-        if minutes > 0:
-            duration_str = f"{minutes}m {seconds}s"
+        Format: ⏱️_Success_: 2m 24s  (when show_duration=True)
+                ⏱️_Success_           (when show_duration=False)
+        """
+        subtype_display = subtype.capitalize() if subtype else "Done"
+
+        if show_duration and duration_ms > 0:
+            total_seconds = duration_ms / 1000
+            minutes = int(total_seconds // 60)
+            seconds = int(total_seconds % 60)
+
+            if minutes > 0:
+                duration_str = f"{minutes}m {seconds}s"
+            else:
+                duration_str = f"{seconds}s"
+
+            result_text = f"⏱️{self.format_italic(subtype_display)}: {duration_str}"
         else:
-            duration_str = f"{seconds}s"
-
-        # Format result - don't include subtype in parentheses to avoid escaping issues
-        header = self.format_section_header("Result", "📊")
-        if subtype:
-            header += f" {self.format_italic(subtype)}"
-        duration_line = self.format_key_value("⏱️ Duration", duration_str)
-
-        result_text = f"{header}\n{duration_line}"
+            result_text = f"⏱️{self.format_italic(subtype_display)}"
 
         if result:
             result_text += f"\n\n{result}"
@@ -418,13 +414,9 @@ class BaseMarkdownFormatter(ABC):
             return f"🔧 {self.format_code_inline(tool_name)}"
         return f"🔧 {self.format_code_inline(tool_name)} {self.format_code_inline(params)}"
 
-    def format_todo_item(
-        self, status: str, priority: str, content: str, completed: bool = False
-    ) -> str:
+    def format_todo_item(self, status: str, priority: str, content: str, completed: bool = False) -> str:
         """Format a todo item with status and priority"""
-        status_emoji = {"pending": "⏳", "in_progress": "🔄", "completed": "✅"}.get(
-            status, "⏳"
-        )
+        status_emoji = {"pending": "⏳", "in_progress": "🔄", "completed": "✅"}.get(status, "⏳")
 
         priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(priority, "🟡")
 
@@ -497,15 +489,11 @@ class BaseMarkdownFormatter(ABC):
 
         # Description
         if "description" in tool_input and tool_input["description"]:
-            input_info.append(
-                f"📝 Description: {self.format_code_inline(tool_input['description'])}"
-            )
+            input_info.append(f"📝 Description: {self.format_code_inline(tool_input['description'])}")
 
         # Pattern/Query
         if "pattern" in tool_input and tool_input["pattern"]:
-            input_info.append(
-                f"🔍 Pattern: {self.format_code_inline(tool_input['pattern'])}"
-            )
+            input_info.append(f"🔍 Pattern: {self.format_code_inline(tool_input['pattern'])}")
 
         if "query" in tool_input and tool_input["query"]:
             query_str = str(tool_input["query"])
@@ -514,9 +502,7 @@ class BaseMarkdownFormatter(ABC):
 
         # URL
         if "url" in tool_input and tool_input["url"]:
-            input_info.append(
-                f"🌐 URL: {self.format_code_inline(str(tool_input['url']))}"
-            )
+            input_info.append(f"🌐 URL: {self.format_code_inline(str(tool_input['url']))}")
 
         # Prompt
         if "prompt" in tool_input and tool_input["prompt"]:
@@ -547,9 +533,7 @@ class BaseMarkdownFormatter(ABC):
 
         # Task tool
         if "subagent_type" in tool_input and tool_input["subagent_type"]:
-            input_info.append(
-                f"🤖 Agent: {self.format_code_inline(str(tool_input['subagent_type']))}"
-            )
+            input_info.append(f"🤖 Agent: {self.format_code_inline(str(tool_input['subagent_type']))}")
 
         if "plan" in tool_input and tool_input["plan"]:
             plan_str = self.truncate_text(str(tool_input["plan"]), 100)
@@ -557,14 +541,10 @@ class BaseMarkdownFormatter(ABC):
 
         # Notebook operations
         if "cell_id" in tool_input and tool_input["cell_id"]:
-            input_info.append(
-                f"📊 Cell ID: {self.format_code_inline(str(tool_input['cell_id']))}"
-            )
+            input_info.append(f"📊 Cell ID: {self.format_code_inline(str(tool_input['cell_id']))}")
 
         if "cell_type" in tool_input and tool_input["cell_type"]:
-            input_info.append(
-                f"📝 Cell Type: {self.format_code_inline(str(tool_input['cell_type']))}"
-            )
+            input_info.append(f"📝 Cell Type: {self.format_code_inline(str(tool_input['cell_type']))}")
 
         # WebSearch
         if "allowed_domains" in tool_input and tool_input["allowed_domains"]:
@@ -577,19 +557,13 @@ class BaseMarkdownFormatter(ABC):
 
         # Grep specific
         if "glob" in tool_input and tool_input["glob"]:
-            input_info.append(
-                f"🎯 Glob: {self.format_code_inline(str(tool_input['glob']))}"
-            )
+            input_info.append(f"🎯 Glob: {self.format_code_inline(str(tool_input['glob']))}")
 
         if "type" in tool_input and tool_input["type"]:
-            input_info.append(
-                f"📄 Type: {self.format_code_inline(str(tool_input['type']))}"
-            )
+            input_info.append(f"📄 Type: {self.format_code_inline(str(tool_input['type']))}")
 
         if "output_mode" in tool_input and tool_input["output_mode"]:
-            input_info.append(
-                f"📊 Output mode: {self.format_code_inline(str(tool_input['output_mode']))}"
-            )
+            input_info.append(f"📊 Output mode: {self.format_code_inline(str(tool_input['output_mode']))}")
 
         # Combine tool info with inputs
         if input_info:
@@ -638,6 +612,4 @@ class BaseMarkdownFormatter(ABC):
             "WebSearch",
             "TodoWrite",
         ]
-        return (
-            tool_name not in no_json_tools and tool_input and len(str(tool_input)) < 200
-        )
+        return tool_name not in no_json_tools and tool_input and len(str(tool_input)) < 200
