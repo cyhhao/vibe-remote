@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Shield, RefreshCw, Check, MessageSquare, KeyRound, Plus, ExternalLink, ChevronDown, ChevronUp, Send, BookOpen, Copy, AlertTriangle } from 'lucide-react';
+import { Shield, RefreshCw, Check, MessageSquare, KeyRound, Plus, ExternalLink, ChevronDown, ChevronUp, BookOpen, Copy, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
@@ -35,7 +35,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
   const [checking, setChecking] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
   const [chats, setChats] = useState<any[]>([]);
-  const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 2: false, 3: false, 4: false, 5: false });
+  const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 2: false, 3: false, 4: false });
   const [copiedJson, setCopiedJson] = useState(false);
 
   useEffect(() => {
@@ -43,8 +43,8 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
   }, [appId, appSecret]);
 
   useEffect(() => {
-    if (appId && appSecret && !expandedSteps[5]) {
-      setExpandedSteps(prev => ({ ...prev, 5: true }));
+    if (appId && appSecret && !expandedSteps[4]) {
+      setExpandedSteps(prev => ({ ...prev, 4: true }));
     }
   }, [appId, appSecret]);
 
@@ -230,7 +230,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
           )}
         </div>
 
-        {/* Step 3: Publish App (must be before Event Subscription) */}
+        {/* Step 3: Publish App */}
         <div className="bg-panel border border-border rounded-xl overflow-hidden">
           <StepHeader
             step={3}
@@ -251,44 +251,17 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
           )}
         </div>
 
-        {/* Step 4: Configure Event Subscription */}
+        {/* Step 4: Enter Credentials & Validate */}
         <div className="bg-panel border border-border rounded-xl overflow-hidden">
           <StepHeader
             step={4}
             title={t('larkConfig.step4Title')}
-            icon={<Send size={16} className="text-accent" />}
+            icon={<KeyRound size={16} className="text-accent" />}
+            completed={isValid}
           />
           {expandedSteps[4] && (
             <div className="p-4 space-y-4 border-t border-border">
               <p className="text-sm text-muted">{t('larkConfig.step4Description')}</p>
-              <ol className="list-decimal list-inside space-y-1.5 text-sm text-muted pl-1">
-                <li>{t('larkConfig.step4Item1')}</li>
-                <li>{t('larkConfig.step4Item2')}</li>
-                <li>{t('larkConfig.step4Item3')}</li>
-              </ol>
-              {/* Long connection FAQ */}
-              <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-3 space-y-1.5">
-                <div className="flex items-center gap-2 text-sm font-medium text-text">
-                  <AlertTriangle size={14} className="text-amber-500" />
-                  {t('larkConfig.step3LongConnFaqTitle')}
-                </div>
-                <p className="text-xs text-muted">{t('larkConfig.step3LongConnFaqDesc')}</p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Step 5: Enter Credentials & Validate */}
-        <div className="bg-panel border border-border rounded-xl overflow-hidden">
-          <StepHeader
-            step={5}
-            title={t('larkConfig.step5Title')}
-            icon={<KeyRound size={16} className="text-accent" />}
-            completed={isValid}
-          />
-          {expandedSteps[5] && (
-            <div className="p-4 space-y-4 border-t border-border">
-              <p className="text-sm text-muted">{t('larkConfig.step5Description')}</p>
 
               <div className="space-y-2 pt-2">
                 <label className="text-sm font-medium text-text flex items-center gap-2">
@@ -365,6 +338,15 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
                   </div>
                 </div>
               )}
+
+              {/* Post-start event subscription note */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-1.5">
+                <div className="flex items-center gap-2 text-sm font-medium text-blue-800">
+                  <AlertTriangle size={14} className="text-blue-600" />
+                  {t('larkConfig.step3LongConnFaqTitle')}
+                </div>
+                <p className="text-xs text-blue-700">{t('larkConfig.step3LongConnFaqDesc')}</p>
+              </div>
             </div>
           )}
         </div>
