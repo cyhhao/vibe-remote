@@ -50,6 +50,17 @@ class DiscordConfig(BaseIMConfig):
 
 
 @dataclass
+class LarkConfig(BaseIMConfig):
+    app_id: str = ""
+    app_secret: str = ""
+    require_mention: bool = False
+
+    def validate(self) -> None:
+        # Allow empty for initial setup
+        pass
+
+
+@dataclass
 class GatewayConfig:
     relay_url: Optional[str] = None
     workspace_token: Optional[str] = None
@@ -122,6 +133,7 @@ class V2Config:
     agents: AgentsConfig
     platform: str = "slack"
     discord: Optional[DiscordConfig] = None
+    lark: Optional[LarkConfig] = None
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
@@ -148,8 +160,8 @@ class V2Config:
             raise ValueError("Config 'mode' must be 'self_host' or 'saas'")
 
         platform = payload.get("platform") or "slack"
-        if platform not in {"slack", "discord"}:
-            raise ValueError("Config 'platform' must be 'slack' or 'discord'")
+        if platform not in {"slack", "discord", "lark"}:
+            raise ValueError("Config 'platform' must be 'slack', 'discord', or 'lark'")
 
         slack_payload = payload.get("slack") or {}
         if not isinstance(slack_payload, dict):
@@ -171,6 +183,17 @@ class V2Config:
             discord.validate()
         if platform == "discord" and discord is None:
             raise ValueError("Config 'discord' must be provided when platform is discord")
+
+        lark_payload = payload.get("lark")
+        if lark_payload is not None and not isinstance(lark_payload, dict):
+            raise ValueError("Config 'lark' must be an object")
+        lark = None
+        if lark_payload is not None:
+            lark = LarkConfig(**_filter_dataclass_fields(LarkConfig, lark_payload))
+            lark.validate()
+        if platform == "lark" and lark is None:
+            raise ValueError("Config 'lark' must be provided when platform is lark")
+
         gateway_payload = payload.get("gateway")
         if gateway_payload is not None and not isinstance(gateway_payload, dict):
             raise ValueError("Config 'gateway' must be an object")
@@ -238,6 +261,7 @@ class V2Config:
             version=payload.get("version", "v2"),
             slack=slack,
             discord=discord,
+            lark=lark,
             runtime=runtime,
             agents=agents,
             gateway=gateway,
@@ -257,6 +281,7 @@ class V2Config:
             "version": self.version,
             "slack": self.slack.__dict__,
             "discord": self.discord.__dict__ if self.discord else None,
+            "lark": self.lark.__dict__ if self.lark else None,
             "runtime": {
                 "default_cwd": self.runtime.default_cwd,
                 "log_level": self.runtime.log_level,

@@ -299,6 +299,23 @@ def discord_channels():
     return jsonify(api.discord_list_channels(payload.get("bot_token", ""), payload.get("guild_id", "")))
 
 
+@app.route("/lark/auth_test", methods=["POST"])
+def lark_auth_test():
+    from vibe import api
+
+    payload = request.json or {}
+    result = api.lark_auth_test(payload.get("app_id", ""), payload.get("app_secret", ""))
+    return jsonify(result)
+
+
+@app.route("/lark/chats", methods=["POST"])
+def lark_chats():
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.lark_list_chats(payload.get("app_id", ""), payload.get("app_secret", "")))
+
+
 @app.route("/doctor", methods=["POST"])
 def doctor_post():
     from vibe.cli import _doctor

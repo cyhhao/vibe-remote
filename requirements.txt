@@ -5,3 +5,4 @@ aiohttp>=3.8.0
 markdown_to_mrkdwn>=0.2.0
 typing_extensions>=4.12.2
 PyYAML>=6.0
+lark-oapi>=1.4.0

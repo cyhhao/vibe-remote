@@ -21,7 +21,9 @@ const AuthGuard = ({ children }: { children: any }) => {
             const platform = config?.platform || 'slack';
             const hasToken = platform === 'discord'
                 ? !!config?.discord?.bot_token
-                : !!config?.slack?.bot_token;
+                : platform === 'lark'
+                  ? !!(config?.lark?.app_id && config?.lark?.app_secret)
+                  : !!config?.slack?.bot_token;
             if (!config || !config.mode || !hasToken) {
                 setNeedsSetup(true);
             }

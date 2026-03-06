@@ -72,6 +72,10 @@
     "discord": {
       "title": "Discord",
       "desc": "连接 Discord 机器人并选择服务器。"
+    },
+    "lark": {
+      "title": "飞书",
+      "desc": "连接飞书工作区，实现团队协作"
     }
   },
   "discordConfig": {
@@ -117,6 +121,47 @@
     "step4Item1": "在「Bot」中点击「Reset Token」或「View Token」",
     "step4Item2": "复制令牌并粘贴到此处",
     "step4Item3": "验证令牌并选择服务器"
+  },
+  "larkConfig": {
+    "title": "配置飞书",
+    "subtitle": "几步完成飞书机器人的配置",
+    "step1Title": "创建飞书应用",
+    "step1Description": "在飞书开放平台创建企业自建应用，并添加机器人能力。",
+    "step1Item1": "进入飞书开放平台，点击「创建企业自建应用」",
+    "step1Item2": "填写应用名称和描述",
+    "step1Item3": "在应用能力中，添加「机器人」",
+    "openFeishuPlatform": "打开飞书开放平台",
+    "step2Title": "配置权限",
+    "step2Description": "在权限管理中，开通以下权限。可以全选后点击「批量开通」。",
+    "step2Item1": "im:message — 收发消息",
+    "step2Item2": "im:message:send_as_bot — 以机器人身份发消息",
+    "step2Item3": "im:message.group_at_msg — 接收群聊 @消息",
+    "step2Item4": "im:message.p2p_msg — 接收私聊消息",
+    "step2Item5": "im:resource — 上传/下载文件和图片",
+    "step2Item6": "im:chat — 访问群聊信息",
+    "step2Item7": "im:message.reactions — 读写表情回复",
+    "step2Item8": "contact:user.base:readonly — 读取用户基本信息",
+    "step3Title": "配置事件订阅",
+    "step3Description": "配置事件订阅，通过 WebSocket 长连接接收消息。",
+    "step3Item1": "进入应用的「事件与回调」设置",
+    "step3Item2": "订阅方式选择「使用长连接接收事件」",
+    "step3Item3": "添加事件：im.message.receive_v1（接收消息）",
+    "step3Tip": "注意：必须先发布应用，长连接才能生效。如需要请先完成第 4 步。",
+    "step4Title": "发布应用",
+    "step4Description": "创建版本并发布应用，使其可用。",
+    "step4Item1": "进入「版本管理与发布」",
+    "step4Item2": "创建新版本并提交发布",
+    "step5Title": "填入凭证并验证",
+    "step5Description": "从「凭证与基础信息」页面获取 App ID 和 App Secret。",
+    "appId": "App ID",
+    "appIdPlaceholder": "cli_xxxxxxxxxx",
+    "appIdHint": "在「凭证与基础信息」页面获取",
+    "appSecret": "App Secret",
+    "appSecretPlaceholder": "输入 App Secret",
+    "appSecretHint": "在飞书开放平台点击显示并复制",
+    "validateCredentials": "验证凭证",
+    "credentialsValidated": "凭证验证通过",
+    "authFailed": "验证失败"
   },
   "slackConfig": {
     "title": "Slack 配置",

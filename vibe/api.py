@@ -46,6 +46,7 @@ def config_to_payload(config: V2Config) -> dict:
             "require_mention": config.slack.require_mention,
         },
         "discord": config.discord.__dict__ if config.discord else None,
+        "lark": config.lark.__dict__ if config.lark else None,
         "runtime": {
             "default_cwd": config.runtime.default_cwd,
             "log_level": config.runtime.log_level,
@@ -968,3 +969,54 @@ def codex_models() -> dict:
 
     uniq = sorted({x for x in options if x})
     return {"ok": True, "models": uniq}
+
+
+def lark_auth_test(app_id: str, app_secret: str) -> dict:
+    """Test Lark/Feishu app credentials by fetching tenant_access_token."""
+    import urllib.request
+
+    try:
+        url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+        data = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("code") == 0:
+                return {"ok": True, "response": result}
+            return {"ok": False, "error": result.get("msg", "Unknown error")}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def lark_list_chats(app_id: str, app_secret: str) -> dict:
+    """List Lark/Feishu group chats the bot has joined."""
+    import urllib.request
+
+    try:
+        # First get token
+        token_result = lark_auth_test(app_id, app_secret)
+        if not token_result.get("ok"):
+            return token_result
+        token = token_result["response"].get("tenant_access_token")
+        if not token:
+            return {"ok": False, "error": "Failed to get access token"}
+
+        # List chats
+        url = "https://open.feishu.cn/open-apis/im/v1/chats?page_size=100"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("code") == 0:
+                items = result.get("data", {}).get("items", [])
+                channels = [
+                    {
+                        "id": c.get("chat_id"),
+                        "name": c.get("name"),
+                        "is_private": c.get("chat_type") == "private",
+                    }
+                    for c in items
+                ]
+                return {"ok": True, "channels": channels}
+            return {"ok": False, "error": result.get("msg", "Unknown error")}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}

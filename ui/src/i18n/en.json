@@ -72,6 +72,10 @@
     "discord": {
       "title": "Discord",
       "desc": "Connect a Discord bot and choose a guild."
+    },
+    "lark": {
+      "title": "Lark",
+      "desc": "Connect to Feishu/Lark workspace for team collaboration"
     }
   },
   "discordConfig": {
@@ -117,6 +121,47 @@
     "step4Item1": "In the Bot tab, click \"Reset Token\" or \"View Token\"",
     "step4Item2": "Copy the token and paste it here",
     "step4Item3": "Validate the token and choose a guild"
+  },
+  "larkConfig": {
+    "title": "Configure Lark",
+    "subtitle": "Set up your Lark/Feishu bot in a few steps",
+    "step1Title": "Create Feishu App",
+    "step1Description": "Create a self-built application on the Feishu Open Platform and add the Bot capability.",
+    "step1Item1": "Go to Feishu Open Platform and click \"Create App\"",
+    "step1Item2": "Select \"Enterprise Self-Built App\" and fill in the app details",
+    "step1Item3": "In the app capabilities, add \"Bot\"",
+    "openFeishuPlatform": "Open Feishu Platform",
+    "step2Title": "Configure Permissions",
+    "step2Description": "In Permission Management, enable the following permissions. You can select all and click \"Batch Enable\".",
+    "step2Item1": "im:message — Send and receive messages",
+    "step2Item2": "im:message:send_as_bot — Send messages as bot",
+    "step2Item3": "im:message.group_at_msg — Receive group @messages",
+    "step2Item4": "im:message.p2p_msg — Receive DM messages",
+    "step2Item5": "im:resource — Upload/download files and images",
+    "step2Item6": "im:chat — Access chat/group information",
+    "step2Item7": "im:message.reactions — Read/write emoji reactions",
+    "step2Item8": "contact:user.base:readonly — Read user basic info",
+    "step3Title": "Configure Event Subscription",
+    "step3Description": "Set up event subscription to receive messages via WebSocket long connection.",
+    "step3Item1": "Go to \"Events & Callbacks\" in your app settings",
+    "step3Item2": "Set subscription method to \"Use Long Connection\"",
+    "step3Item3": "Add event: im.message.receive_v1 (Receive Messages)",
+    "step3Tip": "Important: The app must be published first before long connection can work. Complete Step 4 first if needed.",
+    "step4Title": "Publish App",
+    "step4Description": "Create a version and publish your app to make it available.",
+    "step4Item1": "Go to \"Version Management & Release\"",
+    "step4Item2": "Create a new version and submit for release",
+    "step5Title": "Enter Credentials & Validate",
+    "step5Description": "Enter your App ID and App Secret from the \"Credentials & Basic Info\" page.",
+    "appId": "App ID",
+    "appIdPlaceholder": "cli_xxxxxxxxxx",
+    "appIdHint": "Found in Credentials & Basic Info page",
+    "appSecret": "App Secret",
+    "appSecretPlaceholder": "Enter your App Secret",
+    "appSecretHint": "Click to reveal and copy from Feishu Open Platform",
+    "validateCredentials": "Validate Credentials",
+    "credentialsValidated": "Credentials validated",
+    "authFailed": "Validation failed"
   },
   "slackConfig": {
     "title": "Slack Configuration",
