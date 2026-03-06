@@ -226,6 +226,12 @@ const buildConfigPayload = (data: any) => {
       guild_denylist: data.discord?.guild_denylist || [],
       require_mention: data.discord?.require_mention || false,
     },
+    lark: {
+      ...data.lark,
+      app_id: data.lark?.app_id || '',
+      app_secret: data.lark?.app_secret || '',
+      require_mention: data.lark?.require_mention || false,
+    },
     runtime: {
       // Preserve existing runtime config
       ...data.runtime,
