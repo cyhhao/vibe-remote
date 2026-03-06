@@ -1,8 +1,25 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Shield, RefreshCw, Check, MessageSquare, KeyRound, Plus, ExternalLink, ChevronDown, ChevronUp, Send, BookOpen } from 'lucide-react';
+import { Shield, RefreshCw, Check, MessageSquare, KeyRound, Plus, ExternalLink, ChevronDown, ChevronUp, Send, BookOpen, Copy, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
+
+const LARK_PERMISSIONS_JSON = `{
+  "scopes": {
+    "tenant": [
+      "contact:user.base:readonly",
+      "im:chat",
+      "im:message",
+      "im:message.group_at_msg:readonly",
+      "im:message.p2p_msg:readonly",
+      "im:message.reactions:read",
+      "im:message.reactions:write_only",
+      "im:message:send_as_bot",
+      "im:resource"
+    ],
+    "user": []
+  }
+}`;
 
 interface LarkConfigProps {
   data: any;
@@ -18,8 +35,8 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
   const [checking, setChecking] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
   const [chats, setChats] = useState<any[]>([]);
-  const [selectedChat, setSelectedChat] = useState<string>(data.lark?.chat_id || '');
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 2: false, 3: false, 4: false, 5: false });
+  const [copiedJson, setCopiedJson] = useState(false);
 
   useEffect(() => {
     setAuthResult(null);
@@ -50,7 +67,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
     try {
       const result = await api.larkChats(appId, appSecret);
       if (result.ok) {
-        setChats(result.chats || []);
+        setChats(result.channels || []);
       }
     } catch {
       // ignore
@@ -69,6 +86,16 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
 
   const openFeishuPlatform = () => {
     window.open('https://open.feishu.cn/app', '_blank');
+  };
+
+  const copyPermissionsJson = async () => {
+    try {
+      await navigator.clipboard.writeText(LARK_PERMISSIONS_JSON);
+      setCopiedJson(true);
+      setTimeout(() => setCopiedJson(false), 2000);
+    } catch {
+      // fallback
+    }
   };
 
   const StepHeader: React.FC<{ step: number; title: string; icon: React.ReactNode; completed?: boolean }> = ({
@@ -145,40 +172,60 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
           {expandedSteps[2] && (
             <div className="p-4 space-y-4 border-t border-border">
               <p className="text-sm text-muted">{t('larkConfig.step2Description')}</p>
-              <ul className="space-y-1.5 text-sm text-muted pl-1">
-                <li className="flex items-start gap-2">
-                  <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">1</code>
-                  {t('larkConfig.step2Item1')}
-                </li>
-                <li className="flex items-start gap-2">
-                  <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">2</code>
-                  {t('larkConfig.step2Item2')}
-                </li>
-                <li className="flex items-start gap-2">
-                  <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">3</code>
-                  {t('larkConfig.step2Item3')}
-                </li>
-                <li className="flex items-start gap-2">
-                  <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">4</code>
-                  {t('larkConfig.step2Item4')}
-                </li>
-                <li className="flex items-start gap-2">
-                  <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">5</code>
-                  {t('larkConfig.step2Item5')}
-                </li>
-                <li className="flex items-start gap-2">
-                  <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">6</code>
-                  {t('larkConfig.step2Item6')}
-                </li>
-                <li className="flex items-start gap-2">
-                  <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">7</code>
-                  {t('larkConfig.step2Item7')}
-                </li>
-                <li className="flex items-start gap-2">
-                  <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">8</code>
-                  {t('larkConfig.step2Item8')}
-                </li>
-              </ul>
+
+              {/* Batch import JSON */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-blue-800">{t('larkConfig.step2BatchImport')}</span>
+                  <button
+                    onClick={copyPermissionsJson}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs font-medium transition-colors"
+                  >
+                    {copiedJson ? <Check size={12} /> : <Copy size={12} />}
+                    {copiedJson ? t('larkConfig.step2Copied') : t('larkConfig.step2CopyJson')}
+                  </button>
+                </div>
+                <pre className="text-xs bg-white/70 rounded p-2 overflow-x-auto font-mono text-blue-900 whitespace-pre">{LARK_PERMISSIONS_JSON}</pre>
+                <p className="text-xs text-blue-700">{t('larkConfig.step2BatchImportHint')}</p>
+              </div>
+
+              <details className="text-sm text-muted">
+                <summary className="cursor-pointer font-medium text-text hover:text-accent transition-colors">{t('larkConfig.step2ManualList')}</summary>
+                <ul className="space-y-1.5 mt-2 pl-1">
+                  <li className="flex items-start gap-2">
+                    <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">1</code>
+                    {t('larkConfig.step2Item1')}
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">2</code>
+                    {t('larkConfig.step2Item2')}
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">3</code>
+                    {t('larkConfig.step2Item3')}
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">4</code>
+                    {t('larkConfig.step2Item4')}
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">5</code>
+                    {t('larkConfig.step2Item5')}
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">6</code>
+                    {t('larkConfig.step2Item6')}
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">7</code>
+                    {t('larkConfig.step2Item7')}
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">8</code>
+                    {t('larkConfig.step2Item8')}
+                  </li>
+                </ul>
+              </details>
             </div>
           )}
         </div>
@@ -200,6 +247,14 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
               </ol>
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
                 <strong>{t('slackConfig.important')}:</strong> {t('larkConfig.step3Tip')}
+              </div>
+              {/* Long connection FAQ */}
+              <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-3 space-y-1.5">
+                <div className="flex items-center gap-2 text-sm font-medium text-text">
+                  <AlertTriangle size={14} className="text-amber-500" />
+                  {t('larkConfig.step3LongConnFaqTitle')}
+                </div>
+                <p className="text-xs text-muted">{t('larkConfig.step3LongConnFaqDesc')}</p>
               </div>
             </div>
           )}
@@ -240,7 +295,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
                   <KeyRound size={16} className="text-accent" /> {t('larkConfig.appId')}
                 </label>
                 <input
-                  type="password"
+                  type="text"
                   value={appId}
                   onChange={(e) => setAppId(e.target.value)}
                   placeholder={t('larkConfig.appIdPlaceholder')}
@@ -294,18 +349,20 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
               {authResult?.ok && chats.length > 0 && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-text flex items-center gap-2">
-                    <MessageSquare size={16} className="text-accent" /> {t('channelList.title')}
+                    <MessageSquare size={16} className="text-accent" /> {t('larkConfig.chatListLabel')}
                   </label>
-                  <select
-                    value={selectedChat}
-                    onChange={(e) => setSelectedChat(e.target.value)}
-                    className="w-full bg-bg border border-border rounded-lg p-3 text-text focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
-                  >
-                    <option value="">{t('channelList.noChannelsLoaded')}</option>
-                    {chats.map((c: any) => (
-                      <option key={c.chat_id} value={c.chat_id}>{c.name}</option>
-                    ))}
-                  </select>
+                  <p className="text-xs text-muted">{t('larkConfig.chatListHint')}</p>
+                  <div className="bg-bg border border-border rounded-lg p-3 max-h-32 overflow-y-auto">
+                    <ul className="space-y-1 text-sm text-text">
+                      {chats.map((c: any) => (
+                        <li key={c.id} className="flex items-center gap-2">
+                          <Check size={12} className="text-success shrink-0" />
+                          <span>{c.name}</span>
+                          <span className="text-xs text-muted font-mono">({c.id})</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               )}
             </div>

@@ -971,52 +971,64 @@ def codex_models() -> dict:
     return {"ok": True, "models": uniq}
 
 
-def lark_auth_test(app_id: str, app_secret: str) -> dict:
-    """Test Lark/Feishu app credentials by fetching tenant_access_token."""
+def _lark_tenant_token(app_id: str, app_secret: str) -> Optional[str]:
+    """Get Lark tenant access token (internal helper, not exposed to frontend)."""
     import urllib.request
 
+    url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    data = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        result = json.loads(resp.read().decode())
+        if result.get("code") == 0:
+            return result.get("tenant_access_token")
+    return None
+
+
+def lark_auth_test(app_id: str, app_secret: str) -> dict:
+    """Test Lark/Feishu app credentials. Only returns ok/error, never exposes token."""
     try:
-        url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-        data = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode())
-            if result.get("code") == 0:
-                return {"ok": True, "response": result}
-            return {"ok": False, "error": result.get("msg", "Unknown error")}
+        token = _lark_tenant_token(app_id, app_secret)
+        if not token:
+            return {"ok": False, "error": "Invalid credentials"}
+        return {"ok": True}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
 
 def lark_list_chats(app_id: str, app_secret: str) -> dict:
-    """List Lark/Feishu group chats the bot has joined."""
+    """List Lark/Feishu group chats the bot has joined (with pagination)."""
     import urllib.request
 
     try:
-        # First get token
-        token_result = lark_auth_test(app_id, app_secret)
-        if not token_result.get("ok"):
-            return token_result
-        token = token_result["response"].get("tenant_access_token")
+        token = _lark_tenant_token(app_id, app_secret)
         if not token:
             return {"ok": False, "error": "Failed to get access token"}
 
-        # List chats
-        url = "https://open.feishu.cn/open-apis/im/v1/chats?page_size=100"
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode())
-            if result.get("code") == 0:
-                items = result.get("data", {}).get("items", [])
-                channels = [
-                    {
-                        "id": c.get("chat_id"),
-                        "name": c.get("name"),
-                        "is_private": c.get("chat_type") == "private",
-                    }
-                    for c in items
-                ]
-                return {"ok": True, "channels": channels}
-            return {"ok": False, "error": result.get("msg", "Unknown error")}
+        channels = []
+        page_token = ""
+        while True:
+            url = "https://open.feishu.cn/open-apis/im/v1/chats?page_size=100"
+            if page_token:
+                url = f"{url}&page_token={page_token}"
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read().decode())
+            if result.get("code") != 0:
+                return {"ok": False, "error": result.get("msg", "Unknown error")}
+            data = result.get("data", {})
+            items = data.get("items", [])
+            channels.extend(
+                {
+                    "id": c.get("chat_id"),
+                    "name": c.get("name"),
+                    "is_private": c.get("chat_type") == "private",
+                }
+                for c in items
+            )
+            page_token = data.get("page_token") or ""
+            if not data.get("has_more") or not page_token:
+                break
+        return {"ok": True, "channels": channels}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}

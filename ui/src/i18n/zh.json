@@ -161,7 +161,16 @@
     "appSecretHint": "在飞书开放平台点击显示并复制",
     "validateCredentials": "验证凭证",
     "credentialsValidated": "凭证验证通过",
-    "authFailed": "验证失败"
+    "authFailed": "验证失败",
+    "step2BatchImport": "快捷配置：复制 JSON 后使用「批量导入/导出权限」",
+    "step2CopyJson": "复制 JSON",
+    "step2Copied": "已复制！",
+    "step2BatchImportHint": "在权限管理页面，点击「批量导入/导出权限」，粘贴此 JSON 并确认即可。",
+    "step2ManualList": "或逐个手动开通权限",
+    "step3LongConnFaqTitle": "找不到「使用长连接接收事件」？",
+    "step3LongConnFaqDesc": "如果只看到「将事件发送至开发者服务器」，说明应用尚未开启机器人能力。请回到第 1 步，进入应用 → 添加应用能力 → 开启「机器人」。保存后再回到「事件与回调」页面，就会出现「使用长连接接收事件」选项。",
+    "chatListLabel": "机器人所在群组",
+    "chatListHint": "以下是机器人已加入的群组，你可以在下一步选择启用哪些频道。"
   },
   "slackConfig": {
     "title": "Slack 配置",
@@ -234,6 +243,7 @@
     "cantFindChannel": "找不到你想要的频道？",
     "inviteBotHint": "请先将 Bot 邀请到频道：\n1. 打开频道，点击 ⚙️ 设置 → 集成 → 添加应用\n2. 或在频道中输入 /invite @你的Bot名称",
     "discordInviteBotHint": "请确保机器人已加入服务器并具备访问频道的权限。",
+    "larkInviteBotHint": "将机器人添加到群聊：打开群 → 设置 → 群机器人 → 添加机器人。",
     "guild": "服务器",
     "guildPlaceholder": "选择服务器",
     "discordText": "文本",

@@ -76,6 +76,8 @@ class FeishuBot(BaseIMClient):
         self._stop_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._recent_event_ids: Dict[str, float] = {}
+        self._cached_token: Optional[str] = None
+        self._token_expires_at: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Lifecycle / injection
@@ -133,17 +135,24 @@ class FeishuBot(BaseIMClient):
         )
 
     async def _get_tenant_token(self) -> Optional[str]:
-        """Get tenant access token for raw HTTP calls."""
+        """Get tenant access token for raw HTTP calls (non-blocking)."""
+        # Return cached token if still valid (expires after ~2h, refresh at 1h50m)
+        if self._cached_token and self._token_expires_at and time.time() < self._token_expires_at:
+            return self._cached_token
         try:
-            import urllib.request
-
             url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-            data = json.dumps({"app_id": self.config.app_id, "app_secret": self.config.app_secret}).encode()
-            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                result = json.loads(resp.read().decode())
-                if result.get("code") == 0:
-                    return result.get("tenant_access_token")
+            payload = json.dumps({"app_id": self.config.app_id, "app_secret": self.config.app_secret})
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, data=payload, headers={"Content-Type": "application/json"}) as resp:
+                    result = await resp.json()
+                    if result.get("code") == 0:
+                        token = result.get("tenant_access_token")
+                        expire = result.get("expire", 7200)
+                        self._cached_token = token
+                        # Refresh 10 minutes before expiry
+                        self._token_expires_at = time.time() + max(expire - 600, 60)
+                        return token
         except Exception as exc:
             logger.error("Failed to get tenant_access_token: %s", exc)
         return None
@@ -155,15 +164,14 @@ class FeishuBot(BaseIMClient):
             if not token:
                 return
             url = "https://open.feishu.cn/open-apis/bot/v3/info"
-            req_obj = __import__("urllib.request", fromlist=["Request"]).Request(
-                url, headers={"Authorization": f"Bearer {token}"}
-            )
-            with __import__("urllib.request", fromlist=["urlopen"]).urlopen(req_obj, timeout=10) as resp:
-                result = json.loads(resp.read().decode())
-                if result.get("code") == 0:
-                    bot = result.get("bot", {})
-                    self._bot_open_id = bot.get("open_id")
-                    logger.info("Feishu bot info: open_id=%s", self._bot_open_id)
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
+                    result = await resp.json()
+                    if result.get("code") == 0:
+                        bot = result.get("bot", {})
+                        self._bot_open_id = bot.get("open_id")
+                        logger.info("Feishu bot info: open_id=%s", self._bot_open_id)
         except Exception as exc:
             logger.warning("Failed to fetch bot info: %s", exc)
 
@@ -246,7 +254,10 @@ class FeishuBot(BaseIMClient):
 
         # If replying in thread, use reply API
         if root_id:
-            return await self._reply_message(root_id, text)
+            message_id = await self._reply_message(root_id, text)
+            if self.settings_manager:
+                self.settings_manager.mark_thread_active(context.user_id, context.channel_id, root_id)
+            return message_id
 
         response = await self._lark_client.im.v1.message.acreate(request)
         if not response.success():
@@ -346,7 +357,10 @@ class FeishuBot(BaseIMClient):
         # Thread reply
         root_id = context.thread_id
         if root_id:
-            return await self._reply_message_with_card(root_id, card_json)
+            message_id = await self._reply_message_with_card(root_id, card_json)
+            if self.settings_manager:
+                self.settings_manager.mark_thread_active(context.user_id, context.channel_id, root_id)
+            return message_id
 
         request = (
             CreateMessageRequest.builder()
@@ -696,23 +710,32 @@ class FeishuBot(BaseIMClient):
         if msg_type == "file":
             file_key = msg_content.get("file_key", "")
             file_name = msg_content.get("file_name", "unknown")
+            url = (
+                f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file"
+                if message_id and file_key
+                else None
+            )
             attachments.append(
                 FileAttachment(
                     name=file_name,
                     mimetype="application/octet-stream",
-                    url=None,
+                    url=url,
                     size=msg_content.get("file_size"),
                 )
             )
-            # Store download info in platform_specific later
 
         elif msg_type == "image":
             image_key = msg_content.get("image_key", "")
+            url = (
+                f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{image_key}?type=image"
+                if message_id and image_key
+                else None
+            )
             attachments.append(
                 FileAttachment(
                     name=f"{image_key}.png",
                     mimetype="image/png",
-                    url=None,
+                    url=url,
                     size=None,
                 )
             )
@@ -720,11 +743,16 @@ class FeishuBot(BaseIMClient):
         elif msg_type == "media":
             file_key = msg_content.get("file_key", "")
             file_name = msg_content.get("file_name", "unknown")
+            url = (
+                f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file"
+                if message_id and file_key
+                else None
+            )
             attachments.append(
                 FileAttachment(
                     name=file_name,
                     mimetype=msg_content.get("mime_type", "application/octet-stream"),
-                    url=None,
+                    url=url,
                     size=None,
                 )
             )
@@ -882,7 +910,9 @@ class FeishuBot(BaseIMClient):
             if not user_id:
                 return
 
-            # Require-mention logic
+            # Require-mention logic (bypass for p2p/DM chats)
+            chat_type = message.get("chat_type", "")
+            is_p2p = chat_type == "p2p"
             is_thread_reply = bool(root_id)
             effective_require_mention = self.config.require_mention
             if self.settings_manager:
@@ -890,7 +920,7 @@ class FeishuBot(BaseIMClient):
                     chat_id, global_default=self.config.require_mention
                 )
 
-            if effective_require_mention:
+            if effective_require_mention and not is_p2p:
                 if not is_thread_reply:
                     if not bot_mentioned:
                         logger.debug("Ignoring non-mention message in channel")

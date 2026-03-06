@@ -161,7 +161,16 @@
     "appSecretHint": "Click to reveal and copy from Feishu Open Platform",
     "validateCredentials": "Validate Credentials",
     "credentialsValidated": "Credentials validated",
-    "authFailed": "Validation failed"
+    "authFailed": "Validation failed",
+    "step2BatchImport": "Quick setup: Copy JSON and use \"Batch Import/Export Permissions\"",
+    "step2CopyJson": "Copy JSON",
+    "step2Copied": "Copied!",
+    "step2BatchImportHint": "In Permission Management, click \"Batch Import/Export Permissions\", paste this JSON, and confirm.",
+    "step2ManualList": "Or manually enable permissions one by one",
+    "step3LongConnFaqTitle": "Can't find \"Use Long Connection\"?",
+    "step3LongConnFaqDesc": "If you only see \"Send events to developer server\", your app may not have the Bot capability enabled. Go back to Step 1, enter your app → Add Capabilities → enable \"Bot\". After saving, return to Events & Callbacks and the \"Use Long Connection\" option will appear.",
+    "chatListLabel": "Bot's Chat Groups",
+    "chatListHint": "These are the groups the bot has joined. You can enable specific channels in the next step."
   },
   "slackConfig": {
     "title": "Slack Configuration",
@@ -234,6 +243,7 @@
     "cantFindChannel": "Can't find your channel?",
     "inviteBotHint": "Invite the bot to your channel first:\n1. Open the channel, click ⚙️ Settings → Integrations → Add apps\n2. Or type /invite @YourBotName in the channel",
     "discordInviteBotHint": "Add the bot to your guild and grant access to the channel.",
+    "larkInviteBotHint": "Add the bot to a group chat: Open the group → Settings → Bots → Add Bot.",
     "guild": "Guild",
     "guildPlaceholder": "Select a guild",
     "discordText": "Text",
