@@ -230,12 +230,12 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
           )}
         </div>
 
-        {/* Step 3: Configure Event Subscription */}
+        {/* Step 3: Publish App (must be before Event Subscription) */}
         <div className="bg-panel border border-border rounded-xl overflow-hidden">
           <StepHeader
             step={3}
             title={t('larkConfig.step3Title')}
-            icon={<Send size={16} className="text-accent" />}
+            icon={<BookOpen size={16} className="text-accent" />}
           />
           {expandedSteps[3] && (
             <div className="p-4 space-y-4 border-t border-border">
@@ -243,11 +243,29 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
               <ol className="list-decimal list-inside space-y-1.5 text-sm text-muted pl-1">
                 <li>{t('larkConfig.step3Item1')}</li>
                 <li>{t('larkConfig.step3Item2')}</li>
-                <li>{t('larkConfig.step3Item3')}</li>
               </ol>
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
                 <strong>{t('slackConfig.important')}:</strong> {t('larkConfig.step3Tip')}
               </div>
+            </div>
+          )}
+        </div>
+
+        {/* Step 4: Configure Event Subscription */}
+        <div className="bg-panel border border-border rounded-xl overflow-hidden">
+          <StepHeader
+            step={4}
+            title={t('larkConfig.step4Title')}
+            icon={<Send size={16} className="text-accent" />}
+          />
+          {expandedSteps[4] && (
+            <div className="p-4 space-y-4 border-t border-border">
+              <p className="text-sm text-muted">{t('larkConfig.step4Description')}</p>
+              <ol className="list-decimal list-inside space-y-1.5 text-sm text-muted pl-1">
+                <li>{t('larkConfig.step4Item1')}</li>
+                <li>{t('larkConfig.step4Item2')}</li>
+                <li>{t('larkConfig.step4Item3')}</li>
+              </ol>
               {/* Long connection FAQ */}
               <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-3 space-y-1.5">
                 <div className="flex items-center gap-2 text-sm font-medium text-text">
@@ -256,24 +274,6 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
                 </div>
                 <p className="text-xs text-muted">{t('larkConfig.step3LongConnFaqDesc')}</p>
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* Step 4: Publish App */}
-        <div className="bg-panel border border-border rounded-xl overflow-hidden">
-          <StepHeader
-            step={4}
-            title={t('larkConfig.step4Title')}
-            icon={<BookOpen size={16} className="text-accent" />}
-          />
-          {expandedSteps[4] && (
-            <div className="p-4 space-y-4 border-t border-border">
-              <p className="text-sm text-muted">{t('larkConfig.step4Description')}</p>
-              <ol className="list-decimal list-inside space-y-1.5 text-sm text-muted pl-1">
-                <li>{t('larkConfig.step4Item1')}</li>
-                <li>{t('larkConfig.step4Item2')}</li>
-              </ol>
             </div>
           )}
         </div>
