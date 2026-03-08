@@ -338,6 +338,19 @@ class MessageHandler:
                 )
                 await self.im_client.send_message(context, info_text)
 
+            elif callback_data.startswith("resume_session:"):
+                # Feishu resume button: resume_session:{agent}:{session_id}
+                parts = callback_data.split(":", 2)
+                agent = parts[1] if len(parts) > 1 else None
+                session_id = parts[2] if len(parts) > 2 else None
+                await self.controller.handle_resume_session_submission(
+                    user_id=context.user_id,
+                    channel_id=context.channel_id,
+                    thread_id=context.thread_id,
+                    agent=agent,
+                    session_id=session_id,
+                )
+
             elif callback_data.startswith("opencode_question:"):
                 if not self.session_handler:
                     raise RuntimeError("Session handler not initialized")

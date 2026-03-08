@@ -1019,7 +1019,10 @@ def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu") -> dic
         base = _lark_api_base(domain)
         channels = []
         page_token = ""
-        while True:
+        seen_page_tokens: set = set()
+        max_pages = 50  # safety cap to prevent infinite loop
+        page = 0
+        while page < max_pages:
             url = f"{base}/open-apis/im/v1/chats?page_size=100"
             if page_token:
                 url = f"{url}&page_token={page_token}"
@@ -1041,6 +1044,10 @@ def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu") -> dic
             page_token = data.get("page_token") or ""
             if not data.get("has_more") or not page_token:
                 break
+            if page_token in seen_page_tokens:
+                break  # server returned the same token — avoid loop
+            seen_page_tokens.add(page_token)
+            page += 1
         return {"ok": True, "channels": channels}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}

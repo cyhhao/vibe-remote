@@ -361,13 +361,15 @@ class CommandHandlers:
                 )
                 return
             # Flatten sessions_by_agent dict into a list for Feishu card
+            # list_all_agent_sessions returns {agent: {thread_id: session_id}}
             flat_sessions = []
             for agent_name, agent_sessions in sessions_by_agent.items():
-                for s in agent_sessions:
+                for thread_id, session_id in agent_sessions.items():
                     flat_sessions.append(
                         {
-                            "id": s.get("id", ""),
-                            "label": f"[{agent_name}] {s.get('label', s.get('id', '')[:8])}",
+                            "id": session_id,
+                            "agent": agent_name,
+                            "label": f"[{agent_name}] {session_id[:12]}",
                         }
                     )
             if hasattr(self.im_client, "open_resume_session_modal"):

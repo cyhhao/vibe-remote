@@ -4,7 +4,6 @@ import asyncio
 import io
 import json
 import logging
-import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -94,7 +93,7 @@ class FeishuBot(BaseIMClient):
         self._on_routing_update: Optional[Callable] = None
         self._on_routing_modal_update: Optional[Callable] = None
         self._on_resume_session: Optional[Callable] = None
-        # Cache for two-step routing flow (chat_id -> kwargs from settings_handler)
+        # Cache for two-step routing flow (channel_id:user_id -> kwargs from settings_handler)
         self._routing_cache: Dict[str, Dict[str, Any]] = {}
         self._stop_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -1145,6 +1144,16 @@ class FeishuBot(BaseIMClient):
             message_id = ctx_data.get("open_message_id", "") or event_data.get("open_message_id", "")
             chat_id = ctx_data.get("open_chat_id", "") or event_data.get("open_chat_id", "")
 
+            # --- Dedup: prevent re-delivery of the same card action ---
+            dedup_key = f"card:{message_id}:{button_name or callback_data}:{user_id}"
+            if self._is_duplicate_event(dedup_key):
+                return
+
+            # --- Channel authorization (same as message handler) ---
+            if chat_id and not await self._is_authorized_channel(chat_id):
+                logger.info("Card action from unauthorized channel %s, ignoring", chat_id)
+                return
+
             context = MessageContext(
                 user_id=user_id,
                 channel_id=chat_id,
@@ -1234,14 +1243,16 @@ class FeishuBot(BaseIMClient):
             logger.warning("Routing backend select submitted with empty backend")
             return
 
-        cached = self._routing_cache.get(context.channel_id)
+        cache_key = f"{context.channel_id}:{context.user_id}"
+        cached = self._routing_cache.get(cache_key)
         if not cached:
-            logger.warning("No cached routing data for channel %s", context.channel_id)
+            logger.warning("No cached routing data for %s", cache_key)
             return
 
         await self._send_routing_backend_options_card(
             channel_id=context.channel_id,
             selected_backend=selected_backend,
+            _user_id=context.user_id,
             **cached,
         )
 
@@ -1251,8 +1262,13 @@ class FeishuBot(BaseIMClient):
         backend = form_value.get("backend", "")
         if not backend:
             # Fallback: get from cache
-            cached = self._routing_cache.get(context.channel_id, {})
+            cache_key = f"{context.channel_id}:{context.user_id}"
+            cached = self._routing_cache.get(cache_key, {})
             backend = cached.get("_selected_backend", "")
+
+        if not backend:
+            logger.warning("Routing form submitted with empty backend, ignoring")
+            return
 
         # Helper to normalise "__default__" to None
         def _val(key: str):
@@ -1599,8 +1615,11 @@ class FeishuBot(BaseIMClient):
 
         registered_backends = kwargs.get("registered_backends", [])
 
-        # Cache everything for step 2
-        self._routing_cache[channel_id or ""] = {
+        # Cache everything for step 2, keyed by channel+user to avoid crosstalk
+        # when multiple users open routing in the same channel concurrently.
+        cache_user_id = trigger_id.user_id if isinstance(trigger_id, MessageContext) else "unknown"
+        cache_key = f"{channel_id or ''}:{cache_user_id}"
+        self._routing_cache[cache_key] = {
             "current_routing": kwargs.get("current_routing"),
             "registered_backends": registered_backends,
             "opencode_agents": kwargs.get("opencode_agents", []),
@@ -1696,9 +1715,11 @@ class FeishuBot(BaseIMClient):
         codex_models = kwargs.get("codex_models", [])
 
         # Store selected backend for the final submit handler
-        cache = self._routing_cache.get(channel_id, {})
+        user_id = kwargs.get("_user_id", "unknown")
+        cache_key = f"{channel_id}:{user_id}"
+        cache = self._routing_cache.get(cache_key, {})
         cache["_selected_backend"] = selected_backend
-        self._routing_cache[channel_id] = cache
+        self._routing_cache[cache_key] = cache
 
         form_elements: list = [
             # Show selected backend (read-only display)
@@ -1840,11 +1861,13 @@ class FeishuBot(BaseIMClient):
                     }
                 )
 
-            # Codex reasoning effort
-            reasoning_efforts = ["low", "medium", "high"]
-            cx_re_options = [{"text": {"tag": "plain_text", "content": "(Default)"}, "value": "__default__"}]
-            for re_val in reasoning_efforts:
-                cx_re_options.append({"text": {"tag": "plain_text", "content": re_val}, "value": re_val})
+            # Codex reasoning effort — reuse shared builder for consistency
+            from modules.agents.opencode.utils import build_codex_reasoning_options
+
+            codex_re_defs = build_codex_reasoning_options()
+            cx_re_options = []
+            for item in codex_re_defs:
+                cx_re_options.append({"text": {"tag": "plain_text", "content": item["label"]}, "value": item["value"]})
             cx_current_re = getattr(current_routing, "codex_reasoning_effort", None) if current_routing else None
             form_elements.append({"tag": "markdown", "content": t("modal.routing.codexReasoningEffort")})
             form_elements.append(
@@ -1900,14 +1923,18 @@ class FeishuBot(BaseIMClient):
         **kwargs,
     ):
         """Send an interactive card (v2) for session resume selection."""
+        t = lambda key, **kw: self._t(key, channel_id, **kw)
+
         elements = [
-            {"tag": "markdown", "content": "**Resume Session**"},
+            {"tag": "markdown", "content": f"**{t('modal.resume.title')}**"},
         ]
 
         if sessions:
             for session in sessions[:10]:  # Limit to 10 sessions
                 session_id = session.get("id", "")
+                agent = session.get("agent", "opencode")
                 label = session.get("label", session_id[:8])
+                # Encode agent|session_id so the callback handler can extract both
                 elements.append(
                     {
                         "tag": "button",
@@ -1915,17 +1942,17 @@ class FeishuBot(BaseIMClient):
                         "type": "default",
                         "width": "fill",
                         "behaviors": [
-                            {"type": "callback", "value": {"key": f"resume_{session_id}"}},
+                            {"type": "callback", "value": {"key": f"resume_session:{agent}:{session_id}"}},
                         ],
                     }
                 )
         else:
-            elements.append({"tag": "markdown", "content": "_No active sessions found._"})
+            elements.append({"tag": "markdown", "content": f"_{t('command.resume.noStoredSessions')}_"})
 
         card = {
             "schema": "2.0",
             "header": {
-                "title": {"tag": "plain_text", "content": "Resume Session"},
+                "title": {"tag": "plain_text", "content": t("modal.resume.title")},
                 "template": "blue",
             },
             "body": {
