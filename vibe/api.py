@@ -1048,7 +1048,8 @@ def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu") -> dic
                 break  # server returned the same token — avoid loop
             seen_page_tokens.add(page_token)
             page += 1
-        return {"ok": True, "channels": channels}
+        truncated = page >= max_pages
+        return {"ok": True, "channels": channels, "truncated": truncated}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

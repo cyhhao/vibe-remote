@@ -1145,13 +1145,21 @@ class FeishuBot(BaseIMClient):
             chat_id = ctx_data.get("open_chat_id", "") or event_data.get("open_chat_id", "")
 
             # --- Dedup: prevent re-delivery of the same card action ---
-            dedup_key = f"card:{message_id}:{button_name or callback_data}:{user_id}"
+            # Include a hash of form values so that intentional re-submissions
+            # with different selections are not mistakenly deduplicated.
+            form_hash = ""
+            if form_value:
+                try:
+                    form_hash = str(hash(json.dumps(form_value, sort_keys=True)))
+                except Exception:
+                    form_hash = str(id(form_value))
+            dedup_key = f"card:{message_id}:{button_name or callback_data}:{user_id}:{form_hash}"
             if self._is_duplicate_event(dedup_key):
                 return
 
             # --- Channel authorization (same as message handler) ---
-            if chat_id and not await self._is_authorized_channel(chat_id):
-                logger.info("Card action from unauthorized channel %s, ignoring", chat_id)
+            if not chat_id or not await self._is_authorized_channel(chat_id):
+                logger.info("Card action from unauthorized/unknown channel %s, ignoring", chat_id)
                 return
 
             context = MessageContext(
