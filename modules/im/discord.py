@@ -13,6 +13,7 @@ from .formatters import DiscordFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
     build_opencode_model_option_items,
+    build_codex_reasoning_options,
     build_reasoning_effort_options,
     resolve_opencode_allowed_providers,
     resolve_opencode_default_model,
@@ -1167,56 +1168,30 @@ class DiscordBot(BaseIMClient):
                     model_select.callback = codex_model_callback
                     self.add_item(model_select)
 
-                    reasoning_options = [
-                        discord.SelectOption(
-                            label=_prefixed_label(
-                                "discord.labels.reasoningEffort",
-                                self.outer._t("common.default"),
-                            ),
-                            value="__default__",
-                            default=self.codex_reasoning in (None, "__default__"),
-                        ),
-                        discord.SelectOption(
-                            label=_prefixed_label(
-                                "discord.labels.reasoningEffort",
-                                self.outer._t("reasoning.minimal"),
-                            ),
-                            value="minimal",
-                            default=self.codex_reasoning == "minimal",
-                        ),
-                        discord.SelectOption(
-                            label=_prefixed_label(
-                                "discord.labels.reasoningEffort",
-                                self.outer._t("reasoning.low"),
-                            ),
-                            value="low",
-                            default=self.codex_reasoning == "low",
-                        ),
-                        discord.SelectOption(
-                            label=_prefixed_label(
-                                "discord.labels.reasoningEffort",
-                                self.outer._t("reasoning.medium"),
-                            ),
-                            value="medium",
-                            default=self.codex_reasoning == "medium",
-                        ),
-                        discord.SelectOption(
-                            label=_prefixed_label(
-                                "discord.labels.reasoningEffort",
-                                self.outer._t("reasoning.high"),
-                            ),
-                            value="high",
-                            default=self.codex_reasoning == "high",
-                        ),
-                        discord.SelectOption(
-                            label=_prefixed_label(
-                                "discord.labels.reasoningEffort",
-                                self.outer._t("reasoning.xhigh"),
-                            ),
-                            value="xhigh",
-                            default=self.codex_reasoning == "xhigh",
-                        ),
-                    ]
+                    codex_reasoning_entries = build_codex_reasoning_options()
+                    selected_cx_reasoning = (
+                        self.codex_reasoning if self.codex_reasoning not in (None, "__default__") else "__default__"
+                    )
+                    available_cx_reasoning = {entry.get("value") for entry in codex_reasoning_entries}
+                    if selected_cx_reasoning not in available_cx_reasoning:
+                        selected_cx_reasoning = "__default__"
+                    reasoning_options = []
+                    for entry in codex_reasoning_entries:
+                        value = entry.get("value")
+                        if not value:
+                            continue
+                        if value == "__default__":
+                            label = self.outer._t("common.default")
+                        else:
+                            translated = self.outer._t(f"reasoning.{value}")
+                            label = translated if translated != f"reasoning.{value}" else entry.get("label", value)
+                        reasoning_options.append(
+                            discord.SelectOption(
+                                label=_prefixed_label("discord.labels.reasoningEffort", label),
+                                value=value,
+                                default=value == selected_cx_reasoning,
+                            )
+                        )
                     reasoning_select = discord.ui.Select(
                         placeholder=self.outer._t("modal.routing.selectReasoningEffort"),
                         options=reasoning_options,

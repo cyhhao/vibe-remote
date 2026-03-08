@@ -10,10 +10,11 @@ Public entrypoints:
 
 from .agent import OpenCodeAgent
 from .server import OpenCodeServerManager
-from .utils import build_reasoning_effort_options
+from .utils import build_codex_reasoning_options, build_reasoning_effort_options
 
 __all__ = [
     "OpenCodeAgent",
     "OpenCodeServerManager",
+    "build_codex_reasoning_options",
     "build_reasoning_effort_options",
 ]
