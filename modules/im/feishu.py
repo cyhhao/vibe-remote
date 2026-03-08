@@ -14,18 +14,27 @@ from .base import BaseIMClient, FileAttachment, InlineButton, InlineKeyboard, Me
 from .formatters import FeishuFormatter
 from config.v2_config import LarkConfig
 from vibe.i18n import get_supported_languages, t as i18n_t
+from modules.agents.opencode.utils import (
+    build_opencode_model_option_items,
+    build_reasoning_effort_options,
+    resolve_opencode_allowed_providers,
+    resolve_opencode_provider_preferences,
+)
 
 logger = logging.getLogger(__name__)
 
 # Feishu emoji name mapping (common reactions)
+# See: https://open.feishu.cn/document/server-docs/im-v1/message-reaction/emojis-introduce
 _EMOJI_MAP: Dict[str, str] = {
-    "eyes": "EYES",
-    "👀": "EYES",
+    "eyes": "OnIt",
+    "👀": "OnIt",
+    "robot_face": "SMART",
+    "🤖": "SMART",
     "thumbsup": "THUMBSUP",
     "👍": "THUMBSUP",
     "+1": "THUMBSUP",
-    "thumbsdown": "THUMBSDOWN",
-    "👎": "THUMBSDOWN",
+    "thumbsdown": "ThumbsDown",
+    "👎": "ThumbsDown",
     "heart": "HEART",
     "❤️": "HEART",
     "check": "OK",
@@ -37,6 +46,18 @@ _EMOJI_MAP: Dict[str, str] = {
     "🚀": "ROCKET",
     "smile": "SMILE",
     "😄": "SMILE",
+    "fire": "FIRE",
+    "🔥": "FIRE",
+    "clap": "APPLAUSE",
+    "👏": "APPLAUSE",
+    "muscle": "MUSCLE",
+    "💪": "MUSCLE",
+    "tada": "PARTY",
+    "🎉": "PARTY",
+    "thinking": "THINKING",
+    "🤔": "THINKING",
+    "done": "DONE",
+    "lgtm": "LGTM",
 }
 
 
@@ -73,6 +94,8 @@ class FeishuBot(BaseIMClient):
         self._on_routing_update: Optional[Callable] = None
         self._on_routing_modal_update: Optional[Callable] = None
         self._on_resume_session: Optional[Callable] = None
+        # Cache for two-step routing flow (chat_id -> kwargs from settings_handler)
+        self._routing_cache: Dict[str, Dict[str, Any]] = {}
         self._stop_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._recent_event_ids: Dict[str, float] = {}
@@ -113,6 +136,14 @@ class FeishuBot(BaseIMClient):
     def should_use_thread_for_reply(self) -> bool:
         return True
 
+    def _get_sdk_domain(self) -> str:
+        """Return the lark-oapi SDK domain constant based on config."""
+        import lark_oapi as lark
+
+        if getattr(self.config, "domain", "feishu") == "lark":
+            return lark.LARK_DOMAIN
+        return lark.FEISHU_DOMAIN
+
     def format_markdown(self, text: str) -> str:
         # Feishu's interactive card markdown is close to standard markdown
         return text
@@ -130,6 +161,7 @@ class FeishuBot(BaseIMClient):
             lark.Client.builder()
             .app_id(self.config.app_id)
             .app_secret(self.config.app_secret)
+            .domain(self._get_sdk_domain())
             .log_level(lark.LogLevel.WARNING)
             .build()
         )
@@ -140,7 +172,7 @@ class FeishuBot(BaseIMClient):
         if self._cached_token and self._token_expires_at and time.time() < self._token_expires_at:
             return self._cached_token
         try:
-            url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+            url = f"{self.config.api_base_url}/open-apis/auth/v3/tenant_access_token/internal"
             payload = json.dumps({"app_id": self.config.app_id, "app_secret": self.config.app_secret})
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -163,7 +195,7 @@ class FeishuBot(BaseIMClient):
             token = await self._get_tenant_token()
             if not token:
                 return
-            url = "https://open.feishu.cn/open-apis/bot/v3/info"
+            url = f"{self.config.api_base_url}/open-apis/bot/v3/info"
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
@@ -275,7 +307,12 @@ class FeishuBot(BaseIMClient):
         return message_id
 
     async def _reply_message(self, parent_id: str, text: str) -> str:
-        """Reply to an existing message (thread reply)."""
+        """Reply to an existing message as a topic (reply_in_thread).
+
+        Using ``reply_in_thread=True`` keeps replies collapsed inside
+        a topic, similar to Slack threads, instead of flooding the
+        main channel timeline.
+        """
         self._ensure_client()
         from lark_oapi.api.im.v1 import (
             ReplyMessageRequest,
@@ -286,7 +323,11 @@ class FeishuBot(BaseIMClient):
             ReplyMessageRequest.builder()
             .message_id(parent_id)
             .request_body(
-                ReplyMessageRequestBody.builder().msg_type("interactive").content(self._build_card_json(text)).build()
+                ReplyMessageRequestBody.builder()
+                .msg_type("interactive")
+                .content(self._build_card_json(text))
+                .reply_in_thread(True)
+                .build()
             )
             .build()
         )
@@ -306,25 +347,69 @@ class FeishuBot(BaseIMClient):
         text: str,
         buttons: Optional[List[List[dict]]] = None,
     ) -> str:
-        """Build interactive card JSON for a message with optional buttons."""
+        """Build interactive card JSON (v2) for a message with optional buttons.
+
+        Uses JSON 2.0 card schema so that button callbacks are delivered via
+        the ``card.action.trigger`` event, which supports WebSocket long
+        connections.
+        """
         elements: list = [{"tag": "markdown", "content": text}]
         if buttons:
             for row in buttons:
-                actions = []
-                for btn in row:
-                    actions.append(
+                if len(row) == 1:
+                    btn = row[0]
+                    behaviors_value: dict = {"key": btn["callback_data"]}
+                    if btn.get("thread_id"):
+                        behaviors_value["thread_id"] = btn["thread_id"]
+                    elements.append(
                         {
                             "tag": "button",
                             "text": {"tag": "plain_text", "content": btn["text"]},
                             "type": btn.get("type", "default"),
-                            "value": {"key": btn["callback_data"]},
+                            "width": "fill",
+                            "behaviors": [
+                                {"type": "callback", "value": behaviors_value},
+                            ],
                         }
                     )
-                elements.append({"tag": "action", "actions": actions})
+                else:
+                    columns = []
+                    for btn in row:
+                        behaviors_value = {"key": btn["callback_data"]}
+                        if btn.get("thread_id"):
+                            behaviors_value["thread_id"] = btn["thread_id"]
+                        columns.append(
+                            {
+                                "tag": "column",
+                                "width": "weighted",
+                                "weight": 1,
+                                "elements": [
+                                    {
+                                        "tag": "button",
+                                        "text": {"tag": "plain_text", "content": btn["text"]},
+                                        "type": btn.get("type", "default"),
+                                        "behaviors": [
+                                            {"type": "callback", "value": behaviors_value},
+                                        ],
+                                    }
+                                ],
+                            }
+                        )
+                    elements.append(
+                        {
+                            "tag": "column_set",
+                            "flex_mode": "none",
+                            "background_style": "default",
+                            "columns": columns,
+                        }
+                    )
 
         card = {
-            "config": {"wide_screen_mode": True},
-            "elements": elements,
+            "schema": "2.0",
+            "body": {
+                "direction": "vertical",
+                "elements": elements,
+            },
         }
         return json.dumps(card, ensure_ascii=False)
 
@@ -349,7 +434,13 @@ class FeishuBot(BaseIMClient):
         for row in keyboard.buttons:
             btn_row = []
             for button in row:
-                btn_row.append({"text": button.text, "callback_data": button.callback_data})
+                btn_row.append(
+                    {
+                        "text": button.text,
+                        "callback_data": button.callback_data,
+                        "thread_id": context.thread_id or "",
+                    }
+                )
             button_rows.append(btn_row)
 
         card_json = self._build_card_json(text, button_rows)
@@ -390,7 +481,7 @@ class FeishuBot(BaseIMClient):
         return message_id
 
     async def _reply_message_with_card(self, parent_id: str, card_json: str) -> str:
-        """Reply to a message with an interactive card."""
+        """Reply to a message with an interactive card (as topic)."""
         self._ensure_client()
         from lark_oapi.api.im.v1 import (
             ReplyMessageRequest,
@@ -400,7 +491,13 @@ class FeishuBot(BaseIMClient):
         request = (
             ReplyMessageRequest.builder()
             .message_id(parent_id)
-            .request_body(ReplyMessageRequestBody.builder().msg_type("interactive").content(card_json).build())
+            .request_body(
+                ReplyMessageRequestBody.builder()
+                .msg_type("interactive")
+                .content(card_json)
+                .reply_in_thread(True)
+                .build()
+            )
             .build()
         )
 
@@ -509,7 +606,7 @@ class FeishuBot(BaseIMClient):
             )
             response = await self._lark_client.im.v1.message_reaction.acreate(request)
             if not response.success():
-                logger.debug(
+                logger.warning(
                     "Feishu add_reaction failed: code=%s msg=%s",
                     response.code,
                     response.msg,
@@ -530,7 +627,7 @@ class FeishuBot(BaseIMClient):
                 return False
             emoji_type = _normalize_emoji(emoji)
             # List reactions
-            url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reactions"
+            url = f"{self.config.api_base_url}/open-apis/im/v1/messages/{message_id}/reactions"
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
                     if resp.status != 200:
@@ -572,7 +669,7 @@ class FeishuBot(BaseIMClient):
 
             file_data = (content or "").encode("utf-8")
             # Upload via multipart form
-            url = "https://open.feishu.cn/open-apis/im/v1/files"
+            url = f"{self.config.api_base_url}/open-apis/im/v1/files"
             form = aiohttp.FormData()
             form.add_field("file_type", "stream")
             form.add_field("file_name", title)
@@ -613,7 +710,13 @@ class FeishuBot(BaseIMClient):
                 request = (
                     ReplyMessageRequest.builder()
                     .message_id(context.thread_id)
-                    .request_body(ReplyMessageRequestBody.builder().msg_type("file").content(file_content).build())
+                    .request_body(
+                        ReplyMessageRequestBody.builder()
+                        .msg_type("file")
+                        .content(file_content)
+                        .reply_in_thread(True)
+                        .build()
+                    )
                     .build()
                 )
                 response = await self._lark_client.im.v1.message.areply(request)
@@ -678,7 +781,7 @@ class FeishuBot(BaseIMClient):
             token = await self._get_tenant_token()
             if not token:
                 return None
-            url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file"
+            url = f"{self.config.api_base_url}/open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file"
             timeout = aiohttp.ClientTimeout(total=timeout_seconds)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
@@ -711,7 +814,7 @@ class FeishuBot(BaseIMClient):
             file_key = msg_content.get("file_key", "")
             file_name = msg_content.get("file_name", "unknown")
             url = (
-                f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file"
+                f"{self.config.api_base_url}/open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file"
                 if message_id and file_key
                 else None
             )
@@ -727,7 +830,7 @@ class FeishuBot(BaseIMClient):
         elif msg_type == "image":
             image_key = msg_content.get("image_key", "")
             url = (
-                f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{image_key}?type=image"
+                f"{self.config.api_base_url}/open-apis/im/v1/messages/{message_id}/resources/{image_key}?type=image"
                 if message_id and image_key
                 else None
             )
@@ -744,7 +847,7 @@ class FeishuBot(BaseIMClient):
             file_key = msg_content.get("file_key", "")
             file_name = msg_content.get("file_name", "unknown")
             url = (
-                f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file"
+                f"{self.config.api_base_url}/open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file"
                 if message_id and file_key
                 else None
             )
@@ -795,7 +898,7 @@ class FeishuBot(BaseIMClient):
             token = await self._get_tenant_token()
             if not token:
                 return {"id": user_id}
-            url = f"https://open.feishu.cn/open-apis/contact/v3/users/{user_id}?user_id_type=open_id"
+            url = f"{self.config.api_base_url}/open-apis/contact/v3/users/{user_id}?user_id_type=open_id"
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
                     result = await resp.json()
@@ -819,7 +922,7 @@ class FeishuBot(BaseIMClient):
             token = await self._get_tenant_token()
             if not token:
                 return {"id": channel_id, "name": channel_id}
-            url = f"https://open.feishu.cn/open-apis/im/v1/chats/{channel_id}"
+            url = f"{self.config.api_base_url}/open-apis/im/v1/chats/{channel_id}"
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
                     result = await resp.json()
@@ -848,11 +951,24 @@ class FeishuBot(BaseIMClient):
     async def _async_handle_message(self, event_data: Dict[str, Any]):
         """Process an incoming message event asynchronously."""
         try:
+            # Hot-reload config BEFORE reading any config values (require_mention, etc.)
+            if self._controller and hasattr(self._controller, "_refresh_config_from_disk"):
+                self._controller._refresh_config_from_disk()
+
             event = event_data
             message = event.get("message", {})
             sender = event.get("sender", {})
             sender_id = sender.get("sender_id", {})
             sender_type = sender.get("sender_type", "")
+
+            logger.info(
+                "Feishu message event received: chat_id=%s, msg_id=%s, sender_type=%s, msg_type=%s, chat_type=%s",
+                message.get("chat_id", "?"),
+                message.get("message_id", "?"),
+                sender_type,
+                message.get("message_type", "?"),
+                message.get("chat_type", "?"),
+            )
 
             # Ignore bot messages
             if sender_type == "app":
@@ -884,7 +1000,7 @@ class FeishuBot(BaseIMClient):
                 return
 
             # Extract @mentions from text and clean them
-            mentions = message.get("mentions", [])
+            mentions = message.get("mentions") or []
             bot_mentioned = False
             for mention in mentions:
                 mention_key = mention.get("key", "")
@@ -904,7 +1020,7 @@ class FeishuBot(BaseIMClient):
             if msg_type == "merge_forward":
                 shared_text = await self._extract_shared_message_content(msg_content, msg_type)
 
-            if not text and not file_attachments and not shared_text:
+            if not text and not file_attachments and not shared_text and not bot_mentioned:
                 return
 
             if not user_id:
@@ -919,6 +1035,15 @@ class FeishuBot(BaseIMClient):
                 effective_require_mention = self.settings_manager.get_require_mention(
                     chat_id, global_default=self.config.require_mention
                 )
+
+            logger.info(
+                "Feishu mention check: require_mention=%s, is_p2p=%s, is_thread_reply=%s, bot_mentioned=%s, chat_id=%s",
+                effective_require_mention,
+                is_p2p,
+                is_thread_reply,
+                bot_mentioned,
+                chat_id,
+            )
 
             if effective_require_mention and not is_p2p:
                 if not is_thread_reply:
@@ -1006,83 +1131,251 @@ class FeishuBot(BaseIMClient):
         asyncio.run_coroutine_threadsafe(self._async_handle_card_action(event_data), self._loop)
 
     async def _async_handle_card_action(self, event_data: Dict[str, Any]):
-        """Process a card button click asynchronously."""
+        """Process a card button click or form submission asynchronously."""
         try:
             action = event_data.get("action", {})
-            value = action.get("value", {})
+            value = action.get("value") or {}
             callback_data = value.get("key", "")
+            callback_thread_id = value.get("thread_id", "")
+            form_value = action.get("form_value")
+            button_name = action.get("name", "")
             user_id = event_data.get("operator", {}).get("open_id", "")
-            # The open_message_id refers to the card message
-            message_id = event_data.get("open_message_id", "")
-            chat_id = event_data.get("open_chat_id", "")
-
-            if not callback_data:
-                return
+            # card.action.trigger puts IDs inside a "context" sub-object
+            ctx_data = event_data.get("context", {})
+            message_id = ctx_data.get("open_message_id", "") or event_data.get("open_message_id", "")
+            chat_id = ctx_data.get("open_chat_id", "") or event_data.get("open_chat_id", "")
 
             context = MessageContext(
                 user_id=user_id,
                 channel_id=chat_id,
                 message_id=message_id,
+                thread_id=callback_thread_id or None,
                 platform_specific={
                     "event": event_data,
                     "action": action,
+                    # Provide trigger_id so question_handler.open_question_modal()
+                    # doesn't abort with "Modal UI is not available".
+                    # Feishu doesn't use a real trigger_id (we send cards, not
+                    # popup modals), but the handler checks for a truthy value.
+                    "trigger_id": "feishu_card_action",
                 },
             )
 
-            # Handle specific callback patterns for settings, routing, etc.
-            if callback_data.startswith("settings_"):
-                await self._handle_settings_callback(context, callback_data)
+            # --- Form submissions (action_type: form_submit) ---
+            if form_value is not None:
+                if button_name == "cwd_submit":
+                    await self._handle_cwd_form_submit(context, form_value)
+                elif button_name == "settings_submit":
+                    await self._handle_settings_form_submit(context, form_value)
+                elif button_name == "routing_backend_select":
+                    await self._handle_routing_backend_select(context, form_value)
+                elif button_name == "routing_submit":
+                    await self._handle_routing_form_submit(context, form_value)
+                elif button_name.startswith("question_submit"):
+                    await self._handle_question_form_submit(context, form_value, button_name)
+                else:
+                    logger.warning("Unknown form submit button: %s", button_name)
                 return
 
-            if callback_data.startswith("routing_"):
-                await self._handle_routing_callback(context, callback_data)
+            # --- Regular button callbacks ---
+            if not callback_data:
                 return
 
-            if callback_data.startswith("cwd_"):
-                await self._handle_cwd_callback(context, callback_data)
-                return
-
-            if callback_data.startswith("resume_"):
-                await self._handle_resume_callback(context, callback_data)
-                return
-
-            if callback_data.startswith("question_"):
-                await self._handle_question_callback(context, callback_data)
-                return
-
-            # Generic callback
+            # Route all callbacks through the generic handler, which sends
+            # them to message_handler.handle_callback_query for proper routing.
             if self.on_callback_query_callback:
                 await self.on_callback_query_callback(context, callback_data)
 
         except Exception as exc:
             logger.error("Error handling Feishu card action: %s", exc, exc_info=True)
 
-    async def _handle_settings_callback(self, context: MessageContext, data: str):
-        """Handle settings-related card callbacks."""
-        if hasattr(self, "_on_settings_update") and self._on_settings_update:
-            await self._on_settings_update(context, data)
-
-    async def _handle_routing_callback(self, context: MessageContext, data: str):
-        """Handle routing-related card callbacks."""
-        if hasattr(self, "_on_routing_update") and self._on_routing_update:
-            await self._on_routing_update(context, data)
-
-    async def _handle_cwd_callback(self, context: MessageContext, data: str):
-        """Handle CWD change card callbacks."""
-        if hasattr(self, "_on_change_cwd") and self._on_change_cwd:
-            parts = data.split(":", 1)
-            new_cwd = parts[1] if len(parts) > 1 else ""
+    # ------------------------------------------------------------------
+    # Form submission handlers (JSON 2.0 form container)
+    # ------------------------------------------------------------------
+    async def _handle_cwd_form_submit(self, context: MessageContext, form_value: Dict[str, Any]):
+        """Handle CWD change form submission."""
+        new_cwd = form_value.get("new_cwd", "").strip()
+        if not new_cwd:
+            logger.warning("CWD form submitted with empty path")
+            return
+        if self._on_change_cwd:
             await self._on_change_cwd(context.user_id, new_cwd, context.channel_id)
 
-    async def _handle_resume_callback(self, context: MessageContext, data: str):
-        """Handle session resume card callbacks."""
-        if hasattr(self, "_on_resume_session") and self._on_resume_session:
-            await self._on_resume_session(context, data)
+    async def _handle_settings_form_submit(self, context: MessageContext, form_value: Dict[str, Any]):
+        """Handle settings form submission."""
+        show_message_types = form_value.get("show_message_types", [])
+        # Ensure it's a list (Feishu multi_select_static returns a list)
+        if isinstance(show_message_types, str):
+            show_message_types = [show_message_types]
 
-    async def _handle_question_callback(self, context: MessageContext, data: str):
-        """Handle question answer card callbacks."""
+        require_mention_raw = form_value.get("require_mention", "__default__")
+        if require_mention_raw == "true":
+            require_mention = True
+        elif require_mention_raw == "false":
+            require_mention = False
+        else:
+            require_mention = None  # __default__
+
+        language = form_value.get("language")
+
+        if self._on_settings_update:
+            await self._on_settings_update(
+                context.user_id,
+                show_message_types,
+                context.channel_id,
+                require_mention,
+                language,
+            )
+
+    async def _handle_routing_backend_select(self, context: MessageContext, form_value: Dict[str, Any]):
+        """Handle step 1 of routing: user selected a backend, now show backend-specific options."""
+        selected_backend = form_value.get("backend", "")
+        if not selected_backend:
+            logger.warning("Routing backend select submitted with empty backend")
+            return
+
+        cached = self._routing_cache.get(context.channel_id)
+        if not cached:
+            logger.warning("No cached routing data for channel %s", context.channel_id)
+            return
+
+        await self._send_routing_backend_options_card(
+            channel_id=context.channel_id,
+            selected_backend=selected_backend,
+            **cached,
+        )
+
+    async def _handle_routing_form_submit(self, context: MessageContext, form_value: Dict[str, Any]):
+        """Handle step 2 routing form submission (backend-specific options)."""
+        # Backend is embedded in form as a disabled select or retrieved from cache
+        backend = form_value.get("backend", "")
+        if not backend:
+            # Fallback: get from cache
+            cached = self._routing_cache.get(context.channel_id, {})
+            backend = cached.get("_selected_backend", "")
+
+        # Helper to normalise "__default__" to None
+        def _val(key: str):
+            v = form_value.get(key)
+            if v == "__default__" or not v:
+                return None
+            return v
+
+        opencode_agent = _val("opencode_agent")
+        opencode_model = _val("opencode_model")
+        opencode_reasoning = _val("opencode_reasoning")
+        claude_agent = _val("claude_agent")
+        claude_model = _val("claude_model")
+        codex_model = _val("codex_model")
+        codex_reasoning = _val("codex_reasoning")
+
+        if self._on_routing_update:
+            await self._on_routing_update(
+                context.user_id,
+                context.channel_id,
+                backend,
+                opencode_agent,
+                opencode_model,
+                opencode_reasoning,
+                claude_agent,
+                claude_model,
+                codex_model,
+                codex_reasoning,
+            )
+
+    # ------------------------------------------------------------------
+    # Question form submission handler
+    # ------------------------------------------------------------------
+    async def _handle_question_form_submit(self, context: MessageContext, form_value: Dict[str, Any], button_name: str):
+        """Handle question modal form submission.
+
+        Extracts answers from form fields (q0, q1, ...) and routes them
+        through ``on_callback_query_callback`` as
+        ``{callback_prefix}:modal:{json_payload}`` — the same format that
+        Slack and Discord use, so the agent question handler can parse it
+        identically.
+
+        The button name encodes metadata as
+        ``question_submit:{callback_prefix}:{question_count}:{thread_id}``.
+        """
+        # Parse metadata from button name:  question_submit:opencode_question:2:om_xxx
+        parts = button_name.split(":")
+        callback_prefix = parts[1] if len(parts) > 1 else "opencode_question"
+        question_count = int(parts[2]) if len(parts) > 2 else 1
+        embedded_thread_id = parts[3] if len(parts) > 3 else ""
+
+        # Restore thread_id on context if available from the embedded metadata,
+        # since Feishu form submissions lose the thread context.
+        if embedded_thread_id and not context.thread_id:
+            context = MessageContext(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                message_id=context.message_id,
+                thread_id=embedded_thread_id,
+                platform_specific=context.platform_specific,
+            )
+
+        answers: list = []
+        for idx in range(question_count):
+            field_key = f"q{idx}"
+            raw = form_value.get(field_key)
+            if isinstance(raw, list):
+                # multi_select_static returns a list of selected values
+                answers.append([str(v) for v in raw if v])
+            elif raw:
+                # select_static returns a single string value
+                answers.append([str(raw)])
+            else:
+                answers.append([])
+
+        logger.info(
+            "Question form submitted: prefix=%s, count=%d, answers=%s",
+            callback_prefix,
+            question_count,
+            answers,
+        )
+
+        payload = json.dumps({"answers": answers})
+        callback_data = f"{callback_prefix}:modal:{payload}"
+
+        # Replace the interactive form card with a static confirmation so it
+        # doesn't stay clickable after submission (Feishu cards persist by default).
+        if context.message_id:
+            flat = ", ".join(a for group in answers for a in group) or "-"
+            done_card = json.dumps(
+                {
+                    "schema": "2.0",
+                    "header": {
+                        "title": {
+                            "tag": "plain_text",
+                            "content": "✅ " + self._t("common.submitted", context.channel_id),
+                        },
+                        "template": "green",
+                    },
+                    "body": {
+                        "direction": "vertical",
+                        "elements": [{"tag": "markdown", "content": flat}],
+                    },
+                },
+                ensure_ascii=False,
+            )
+            try:
+                from lark_oapi.api.im.v1 import PatchMessageRequest, PatchMessageRequestBody
+
+                req = (
+                    PatchMessageRequest.builder()
+                    .message_id(context.message_id)
+                    .request_body(PatchMessageRequestBody.builder().content(done_card).build())
+                    .build()
+                )
+                resp = await self._lark_client.im.v1.message.apatch(req)
+                if not resp.success():
+                    logger.warning("Failed to update question card after submit: %s", resp.msg)
+            except Exception as exc:
+                logger.warning("Could not update question card: %s", exc)
+
         if self.on_callback_query_callback:
-            await self.on_callback_query_callback(context, data)
+            await self.on_callback_query_callback(context, callback_data)
 
     # ------------------------------------------------------------------
     # Modal-equivalent: interactive cards sent as messages
@@ -1098,56 +1391,130 @@ class FeishuBot(BaseIMClient):
         global_require_mention: bool = False,
         current_language: str = None,
     ):
-        """Send an interactive card with settings options.
-
-        Since Feishu doesn't have Slack-style modals, we send a settings card.
-        """
+        """Send a JSON 2.0 form card with settings (message types, @mention, language)."""
         t = lambda key, **kw: self._t(key, channel_id, **kw)
 
-        # Build message type options as buttons
-        elements: list = []
-        elements.append({"tag": "markdown", "content": f"**{t('modal.settings.title')}**"})
-
-        # Show message types
-        types_text = ", ".join(f"`{display_names.get(mt, mt)}`" for mt in message_types)
         current_types = getattr(user_settings, "show_message_types", [])
-        current_text = ", ".join(f"`{display_names.get(mt, mt)}`" for mt in current_types)
-        elements.append(
-            {
-                "tag": "markdown",
-                "content": f"{t('modal.settings.showMessageTypes')}: {current_text}",
-            }
-        )
 
-        # Require mention status
-        mention_status = "default"
-        if current_require_mention is True:
-            mention_status = "on"
-        elif current_require_mention is False:
-            mention_status = "off"
-        elements.append(
-            {
-                "tag": "markdown",
-                "content": f"Require @mention: **{mention_status}**",
-            }
-        )
-
-        # Language
-        if current_language:
-            elements.append(
+        # --- Build message type multi-select options ---
+        msg_type_options = []
+        for mt in message_types:
+            msg_type_options.append(
                 {
-                    "tag": "markdown",
-                    "content": f"Language: **{current_language}**",
+                    "text": {"tag": "plain_text", "content": display_names.get(mt, mt)},
+                    "value": mt,
                 }
             )
 
+        # --- Build require-mention single-select options ---
+        global_status = (
+            t("modal.settings.mentionStatusOn") if global_require_mention else t("modal.settings.mentionStatusOff")
+        )
+        mention_options = [
+            {
+                "text": {"tag": "plain_text", "content": t("modal.settings.optionDefault", status=global_status)},
+                "value": "__default__",
+            },
+            {
+                "text": {"tag": "plain_text", "content": t("modal.settings.optionRequireMention")},
+                "value": "true",
+            },
+            {
+                "text": {"tag": "plain_text", "content": t("modal.settings.optionDontRequireMention")},
+                "value": "false",
+            },
+        ]
+        # Determine current mention selection
+        if current_require_mention is True:
+            mention_initial = "true"
+        elif current_require_mention is False:
+            mention_initial = "false"
+        else:
+            mention_initial = "__default__"
+
+        # --- Build language single-select options ---
+        supported_langs = get_supported_languages()
+        lang_options = []
+        for lang in supported_langs:
+            lang_options.append(
+                {
+                    "text": {"tag": "plain_text", "content": lang},
+                    "value": lang,
+                }
+            )
+        lang_initial = current_language if current_language in supported_langs else supported_langs[0]
+
+        # --- Assemble form card ---
+        form_elements: list = [
+            # Message visibility multi-select
+            {"tag": "markdown", "content": f"**{t('modal.settings.showMessageTypes')}**"},
+            {
+                "tag": "multi_select_static",
+                "name": "show_message_types",
+                "placeholder": {
+                    "tag": "plain_text",
+                    "content": t("modal.settings.showMessageTypesPlaceholder"),
+                },
+                "options": msg_type_options,
+                "selected_values": current_types,
+            },
+            # Require @mention single-select
+            {"tag": "markdown", "content": f"**{t('modal.settings.requireMention')}**"},
+            {
+                "tag": "select_static",
+                "name": "require_mention",
+                "placeholder": {
+                    "tag": "plain_text",
+                    "content": t("modal.settings.selectMentionBehavior"),
+                },
+                "options": mention_options,
+                "initial_option": mention_initial,
+            },
+            # Lark permission note for @mention
+            {"tag": "markdown", "content": f"_{t('modal.settings.requireMentionLarkNote')}_"},
+            # Language single-select
+            {"tag": "markdown", "content": f"**{t('modal.settings.language')}**"},
+            {
+                "tag": "select_static",
+                "name": "language",
+                "placeholder": {
+                    "tag": "plain_text",
+                    "content": t("modal.settings.language"),
+                },
+                "options": lang_options,
+                "initial_option": lang_initial,
+            },
+            # Tip
+            {
+                "tag": "markdown",
+                "content": t("modal.settings.tip"),
+            },
+            # Submit button
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": t("common.save")},
+                "type": "primary",
+                "action_type": "form_submit",
+                "name": "settings_submit",
+            },
+        ]
+
         card = {
-            "config": {"wide_screen_mode": True},
+            "schema": "2.0",
             "header": {
                 "title": {"tag": "plain_text", "content": t("modal.settings.title")},
                 "template": "blue",
             },
-            "elements": elements,
+            "body": {
+                "direction": "vertical",
+                "elements": [
+                    {
+                        "tag": "form",
+                        "name": "settings_form",
+                        "elements": form_elements,
+                    },
+                ],
+            },
         }
 
         ctx = MessageContext(user_id="system", channel_id=channel_id or "")
@@ -1157,30 +1524,57 @@ class FeishuBot(BaseIMClient):
             logger.error("Failed to send settings card: %s", exc)
 
     async def open_change_cwd_modal(self, trigger_id: Any, current_cwd: str, channel_id: str = None):
-        """Send an interactive card for CWD change."""
+        """Send a JSON 2.0 form card for changing the working directory."""
         t = lambda key, **kw: self._t(key, channel_id, **kw)
-        elements = [
-            {
-                "tag": "markdown",
-                "content": f"**Change Working Directory**\n\nCurrent: `{current_cwd}`",
-            },
-            {
-                "tag": "note",
-                "elements": [
-                    {
-                        "tag": "plain_text",
-                        "content": "Reply with `/cwd <new_path>` to change the working directory.",
-                    }
-                ],
-            },
-        ]
         card = {
-            "config": {"wide_screen_mode": True},
+            "schema": "2.0",
             "header": {
-                "title": {"tag": "plain_text", "content": "Working Directory"},
+                "title": {"tag": "plain_text", "content": t("modal.cwd.title")},
                 "template": "blue",
             },
-            "elements": elements,
+            "body": {
+                "direction": "vertical",
+                "elements": [
+                    {
+                        "tag": "markdown",
+                        "content": t("modal.cwd.current") + f" `{current_cwd}`",
+                    },
+                    {
+                        "tag": "form",
+                        "name": "cwd_form",
+                        "elements": [
+                            {
+                                "tag": "input",
+                                "name": "new_cwd",
+                                "required": True,
+                                "label": {
+                                    "tag": "plain_text",
+                                    "content": t("modal.cwd.new"),
+                                },
+                                "placeholder": {
+                                    "tag": "plain_text",
+                                    "content": t("modal.cwd.placeholder"),
+                                },
+                                "default_value": current_cwd,
+                            },
+                            {
+                                "tag": "markdown",
+                                "content": t("modal.cwd.hint"),
+                            },
+                            {
+                                "tag": "button",
+                                "text": {
+                                    "tag": "plain_text",
+                                    "content": t("common.submit"),
+                                },
+                                "type": "primary",
+                                "action_type": "form_submit",
+                                "name": "cwd_submit",
+                            },
+                        ],
+                    },
+                ],
+            },
         }
         ctx = MessageContext(user_id="system", channel_id=channel_id or "")
         try:
@@ -1195,35 +1589,308 @@ class FeishuBot(BaseIMClient):
         current_backend: str = None,
         **kwargs,
     ):
-        """Send an interactive card for routing configuration."""
-        elements = [
+        """Step 1: send a card with only the backend selector.
+
+        All backend/model/agent data is cached so that step 2
+        (``_send_routing_backend_options_card``) can render the
+        backend-specific options without re-fetching.
+        """
+        t = lambda key, **kw: self._t(key, channel_id, **kw)
+
+        registered_backends = kwargs.get("registered_backends", [])
+
+        # Cache everything for step 2
+        self._routing_cache[channel_id or ""] = {
+            "current_routing": kwargs.get("current_routing"),
+            "registered_backends": registered_backends,
+            "opencode_agents": kwargs.get("opencode_agents", []),
+            "opencode_models": kwargs.get("opencode_models", {}),
+            "opencode_default_config": kwargs.get("opencode_default_config", {}),
+            "claude_agents": kwargs.get("claude_agents", []),
+            "claude_models": kwargs.get("claude_models", []),
+            "codex_models": kwargs.get("codex_models", []),
+        }
+
+        # --- Backend selector options ---
+        backend_options = []
+        for b in registered_backends:
+            backend_options.append(
+                {
+                    "text": {"tag": "plain_text", "content": b},
+                    "value": b,
+                }
+            )
+        backend_initial = (
+            current_backend
+            if current_backend and current_backend in registered_backends
+            else (registered_backends[0] if registered_backends else None)
+        )
+
+        if not backend_options:
+            # No backends — just show info
+            ctx = MessageContext(user_id="system", channel_id=channel_id or "")
+            await self.send_message(ctx, "No agent backends available.")
+            return
+
+        form_elements: list = [
+            {"tag": "markdown", "content": f"**{t('modal.routing.backend')}**"},
             {
-                "tag": "markdown",
-                "content": f"**Agent Routing**\n\nCurrent backend: `{current_backend or 'default'}`",
+                "tag": "select_static",
+                "name": "backend",
+                "placeholder": {"tag": "plain_text", "content": t("modal.routing.selectBackend")},
+                "options": backend_options,
+                **({"initial_option": backend_initial} if backend_initial else {}),
             },
+            {"tag": "markdown", "content": t("modal.routing.tip")},
             {
-                "tag": "note",
-                "elements": [
-                    {
-                        "tag": "plain_text",
-                        "content": "Use /routing <backend> to change the agent backend.",
-                    }
-                ],
+                "tag": "button",
+                "text": {
+                    "tag": "plain_text",
+                    "content": t("common.next"),
+                },
+                "type": "primary",
+                "action_type": "form_submit",
+                "name": "routing_backend_select",
             },
         ]
+
         card = {
-            "config": {"wide_screen_mode": True},
+            "schema": "2.0",
             "header": {
-                "title": {"tag": "plain_text", "content": "Agent Routing"},
+                "title": {"tag": "plain_text", "content": t("modal.routing.title")},
                 "template": "blue",
             },
-            "elements": elements,
+            "body": {
+                "direction": "vertical",
+                "elements": [
+                    {
+                        "tag": "form",
+                        "name": "routing_backend_form",
+                        "elements": form_elements,
+                    },
+                ],
+            },
         }
+
         ctx = MessageContext(user_id="system", channel_id=channel_id or "")
         try:
             await self._send_card_to_channel(ctx, card)
         except Exception as exc:
-            logger.error("Failed to send routing card: %s", exc)
+            logger.error("Failed to send routing backend card: %s", exc)
+
+    async def _send_routing_backend_options_card(
+        self,
+        channel_id: str,
+        selected_backend: str,
+        **kwargs,
+    ):
+        """Step 2: send a card with options specific to the selected backend."""
+        t = lambda key, **kw: self._t(key, channel_id, **kw)
+
+        current_routing = kwargs.get("current_routing")
+        opencode_agents = kwargs.get("opencode_agents", [])
+        opencode_models = kwargs.get("opencode_models", {})
+        opencode_default_config = kwargs.get("opencode_default_config", {})
+        claude_agents = kwargs.get("claude_agents", [])
+        claude_models = kwargs.get("claude_models", [])
+        codex_models = kwargs.get("codex_models", [])
+
+        # Store selected backend for the final submit handler
+        cache = self._routing_cache.get(channel_id, {})
+        cache["_selected_backend"] = selected_backend
+        self._routing_cache[channel_id] = cache
+
+        form_elements: list = [
+            # Show selected backend (read-only display)
+            {"tag": "markdown", "content": f"**{t('modal.routing.backend')}**: `{selected_backend}`"},
+        ]
+
+        # ---- OpenCode section ----
+        if selected_backend == "opencode":
+            # OpenCode agent selector
+            if opencode_agents:
+                oc_agent_options = [{"text": {"tag": "plain_text", "content": "(Default)"}, "value": "__default__"}]
+                for agent_info in opencode_agents:
+                    name = agent_info if isinstance(agent_info, str) else agent_info.get("name", str(agent_info))
+                    oc_agent_options.append({"text": {"tag": "plain_text", "content": name}, "value": name})
+                oc_current_agent = getattr(current_routing, "opencode_agent", None) if current_routing else None
+                form_elements.append({"tag": "markdown", "content": t("modal.routing.opencodeAgent")})
+                form_elements.append(
+                    {
+                        "tag": "select_static",
+                        "name": "opencode_agent",
+                        "placeholder": {"tag": "plain_text", "content": t("modal.routing.selectOpencodeAgent")},
+                        "options": oc_agent_options,
+                        "initial_option": oc_current_agent if oc_current_agent else "__default__",
+                    }
+                )
+
+            # OpenCode model selector (using shared utility)
+            oc_current_model = getattr(current_routing, "opencode_model", None) if current_routing else None
+            preferred_providers = resolve_opencode_provider_preferences(
+                opencode_default_config,
+                oc_current_model,
+            )
+            allowed_providers = resolve_opencode_allowed_providers(
+                opencode_default_config,
+                opencode_models,
+            )
+            model_entries = build_opencode_model_option_items(
+                opencode_models,
+                max_total=99,
+                preferred_providers=preferred_providers,
+                allowed_providers=allowed_providers,
+            )
+            if model_entries:
+                oc_model_options = [{"text": {"tag": "plain_text", "content": "(Default)"}, "value": "__default__"}]
+                for entry in model_entries:
+                    label = entry.get("label", "")
+                    value = entry.get("value", "")
+                    if not label or not value:
+                        continue
+                    oc_model_options.append({"text": {"tag": "plain_text", "content": label[:60]}, "value": value})
+                form_elements.append({"tag": "markdown", "content": t("modal.routing.model")})
+                form_elements.append(
+                    {
+                        "tag": "select_static",
+                        "name": "opencode_model",
+                        "placeholder": {"tag": "plain_text", "content": t("modal.routing.selectModel")},
+                        "options": oc_model_options,
+                        "initial_option": oc_current_model if oc_current_model else "__default__",
+                    }
+                )
+
+            # OpenCode reasoning effort (using shared utility)
+            re_entries = build_reasoning_effort_options(opencode_models, oc_current_model)
+            re_options = []
+            for entry in re_entries:
+                label = entry.get("label", "")
+                value = entry.get("value", "")
+                if not label or not value:
+                    continue
+                re_options.append({"text": {"tag": "plain_text", "content": label}, "value": value})
+            oc_current_re = getattr(current_routing, "opencode_reasoning_effort", None) if current_routing else None
+            if re_options:
+                form_elements.append({"tag": "markdown", "content": t("modal.routing.reasoningEffort")})
+                form_elements.append(
+                    {
+                        "tag": "select_static",
+                        "name": "opencode_reasoning",
+                        "placeholder": {"tag": "plain_text", "content": t("modal.routing.selectReasoningEffort")},
+                        "options": re_options,
+                        "initial_option": oc_current_re if oc_current_re else "__default__",
+                    }
+                )
+
+        # ---- Claude section ----
+        elif selected_backend == "claude":
+            # Claude agent selector
+            if claude_agents:
+                cl_agent_options = [{"text": {"tag": "plain_text", "content": "(Default)"}, "value": "__default__"}]
+                for agent_info in claude_agents:
+                    name = agent_info if isinstance(agent_info, str) else agent_info.get("name", str(agent_info))
+                    cl_agent_options.append({"text": {"tag": "plain_text", "content": name}, "value": name})
+                cl_current_agent = getattr(current_routing, "claude_agent", None) if current_routing else None
+                form_elements.append({"tag": "markdown", "content": t("modal.routing.claudeAgent")})
+                form_elements.append(
+                    {
+                        "tag": "select_static",
+                        "name": "claude_agent",
+                        "placeholder": {"tag": "plain_text", "content": t("modal.routing.selectClaudeAgent")},
+                        "options": cl_agent_options,
+                        "initial_option": cl_current_agent if cl_current_agent else "__default__",
+                    }
+                )
+
+            # Claude model selector
+            if claude_models:
+                cl_model_options = [{"text": {"tag": "plain_text", "content": "(Default)"}, "value": "__default__"}]
+                for m in claude_models:
+                    mid = m if isinstance(m, str) else m.get("id", str(m))
+                    cl_model_options.append({"text": {"tag": "plain_text", "content": mid}, "value": mid})
+                cl_current_model = getattr(current_routing, "claude_model", None) if current_routing else None
+                form_elements.append({"tag": "markdown", "content": t("modal.routing.model")})
+                form_elements.append(
+                    {
+                        "tag": "select_static",
+                        "name": "claude_model",
+                        "placeholder": {"tag": "plain_text", "content": t("modal.routing.selectModel")},
+                        "options": cl_model_options,
+                        "initial_option": cl_current_model if cl_current_model else "__default__",
+                    }
+                )
+
+        # ---- Codex section ----
+        elif selected_backend == "codex":
+            # Codex model selector
+            if codex_models:
+                cx_model_options = [{"text": {"tag": "plain_text", "content": "(Default)"}, "value": "__default__"}]
+                for m in codex_models:
+                    mid = m if isinstance(m, str) else m.get("id", str(m))
+                    cx_model_options.append({"text": {"tag": "plain_text", "content": mid}, "value": mid})
+                cx_current_model = getattr(current_routing, "codex_model", None) if current_routing else None
+                form_elements.append({"tag": "markdown", "content": t("modal.routing.model")})
+                form_elements.append(
+                    {
+                        "tag": "select_static",
+                        "name": "codex_model",
+                        "placeholder": {"tag": "plain_text", "content": t("modal.routing.selectModel")},
+                        "options": cx_model_options,
+                        "initial_option": cx_current_model if cx_current_model else "__default__",
+                    }
+                )
+
+            # Codex reasoning effort
+            reasoning_efforts = ["low", "medium", "high"]
+            cx_re_options = [{"text": {"tag": "plain_text", "content": "(Default)"}, "value": "__default__"}]
+            for re_val in reasoning_efforts:
+                cx_re_options.append({"text": {"tag": "plain_text", "content": re_val}, "value": re_val})
+            cx_current_re = getattr(current_routing, "codex_reasoning_effort", None) if current_routing else None
+            form_elements.append({"tag": "markdown", "content": t("modal.routing.codexReasoningEffort")})
+            form_elements.append(
+                {
+                    "tag": "select_static",
+                    "name": "codex_reasoning",
+                    "placeholder": {"tag": "plain_text", "content": t("modal.routing.selectReasoningEffort")},
+                    "options": cx_re_options,
+                    "initial_option": cx_current_re if cx_current_re else "__default__",
+                }
+            )
+
+        # Submit button
+        form_elements.append(
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": t("common.save")},
+                "type": "primary",
+                "action_type": "form_submit",
+                "name": "routing_submit",
+            }
+        )
+
+        card = {
+            "schema": "2.0",
+            "header": {
+                "title": {"tag": "plain_text", "content": f"{t('modal.routing.title')} — {selected_backend}"},
+                "template": "blue",
+            },
+            "body": {
+                "direction": "vertical",
+                "elements": [
+                    {
+                        "tag": "form",
+                        "name": "routing_options_form",
+                        "elements": form_elements,
+                    },
+                ],
+            },
+        }
+
+        ctx = MessageContext(user_id="system", channel_id=channel_id or "")
+        try:
+            await self._send_card_to_channel(ctx, card)
+        except Exception as exc:
+            logger.error("Failed to send routing options card: %s", exc)
 
     async def open_resume_session_modal(
         self,
@@ -1232,36 +1899,39 @@ class FeishuBot(BaseIMClient):
         channel_id: str = None,
         **kwargs,
     ):
-        """Send an interactive card for session resume selection."""
+        """Send an interactive card (v2) for session resume selection."""
         elements = [
             {"tag": "markdown", "content": "**Resume Session**"},
         ]
 
         if sessions:
-            actions = []
             for session in sessions[:10]:  # Limit to 10 sessions
                 session_id = session.get("id", "")
                 label = session.get("label", session_id[:8])
-                actions.append(
+                elements.append(
                     {
                         "tag": "button",
                         "text": {"tag": "plain_text", "content": label},
                         "type": "default",
-                        "value": {"key": f"resume_{session_id}"},
+                        "width": "fill",
+                        "behaviors": [
+                            {"type": "callback", "value": {"key": f"resume_{session_id}"}},
+                        ],
                     }
                 )
-            if actions:
-                elements.append({"tag": "action", "actions": actions})
         else:
             elements.append({"tag": "markdown", "content": "_No active sessions found._"})
 
         card = {
-            "config": {"wide_screen_mode": True},
+            "schema": "2.0",
             "header": {
                 "title": {"tag": "plain_text", "content": "Resume Session"},
                 "template": "blue",
             },
-            "elements": elements,
+            "body": {
+                "direction": "vertical",
+                "elements": elements,
+            },
         }
         ctx = MessageContext(user_id="system", channel_id=channel_id or "")
         try:
@@ -1272,50 +1942,180 @@ class FeishuBot(BaseIMClient):
     async def open_question_modal(
         self,
         trigger_id: Any,
-        question: str = "",
-        options: list = None,
-        channel_id: str = None,
-        thread_id: str = None,
+        context: MessageContext = None,
+        pending: Any = None,
+        callback_prefix: str = "opencode_question",
         **kwargs,
     ):
-        """Send an interactive card with question options."""
-        elements = [
-            {"tag": "markdown", "content": question or "Please select an option:"},
-        ]
+        """Send a JSON 2.0 form card with question select fields.
 
-        if options:
-            actions = []
-            for idx, opt in enumerate(options):
-                if isinstance(opt, dict):
-                    label = opt.get("label", opt.get("text", f"Option {idx + 1}"))
-                    value = opt.get("value", opt.get("callback_data", f"question_{idx}"))
+        Aligns with the Slack/Discord ``open_question_modal`` signature so that
+        ``question_handler.py`` can call it identically across platforms.
+
+        ``pending`` can be:
+        - A dict with ``"questions"`` key (OpenCode question handler format).
+        - A ``PendingQuestion`` dataclass with ``.questions`` attribute.
+
+        Each question has ``header``, ``question``, ``multiple``, and ``options``
+        (each option has ``label`` and optionally ``description``).
+        """
+        if pending is None:
+            logger.warning("open_question_modal called with pending=None, nothing to show")
+            return
+
+        # Support both dict and dataclass
+        if hasattr(pending, "questions"):
+            questions = pending.questions or []
+        elif isinstance(pending, dict):
+            questions = pending.get("questions") or []
+        else:
+            questions = []
+
+        if not questions:
+            logger.warning("open_question_modal called with empty questions list")
+            return
+
+        # Determine channel/thread from the context
+        channel_id = context.channel_id if context else ""
+        thread_id = context.thread_id if context else None
+
+        t = lambda key, **kw: self._t(key, channel_id, **kw)
+
+        form_elements: list = []
+
+        for idx, q in enumerate(questions):
+            # Support both Question dataclass and dict
+            if hasattr(q, "header"):
+                header = (q.header or f"Question {idx + 1}").strip()
+                prompt = (q.question or "").strip()
+                multiple = bool(q.multiple)
+                options = q.options or []
+            elif isinstance(q, dict):
+                header = (q.get("header") or f"Question {idx + 1}").strip()
+                prompt = (q.get("question") or "").strip()
+                multiple = bool(q.get("multiple") or q.get("multiSelect"))
+                options = q.get("options") if isinstance(q.get("options"), list) else []
+            else:
+                continue
+
+            # Build option items for the select component
+            option_items = []
+            for opt in options:
+                if hasattr(opt, "label"):
+                    label = opt.label
+                    desc = getattr(opt, "description", "")
+                elif isinstance(opt, dict):
+                    label = opt.get("label")
+                    desc = opt.get("description", "")
                 else:
                     label = str(opt)
-                    value = f"question_{idx}"
-                actions.append(
+                    desc = ""
+                if label is None:
+                    continue
+                option_items.append(
                     {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": label},
-                        "type": "default",
-                        "value": {"key": value},
+                        "text": {"tag": "plain_text", "content": str(label)[:75]},
+                        "value": str(label),
                     }
                 )
-            if actions:
-                elements.append({"tag": "action", "actions": actions})
+
+            if not option_items:
+                continue
+
+            # Label text (markdown element before the select — Feishu selects don't support label)
+            label_text = header
+            if prompt:
+                label_text = f"{header}: {prompt}"
+            form_elements.append(
+                {
+                    "tag": "markdown",
+                    "content": f"**{label_text}**",
+                }
+            )
+
+            field_name = f"q{idx}"
+            if multiple:
+                form_elements.append(
+                    {
+                        "tag": "multi_select_static",
+                        "name": field_name,
+                        "placeholder": {"tag": "plain_text", "content": t("common.selectOneOrMore")},
+                        "options": option_items,
+                    }
+                )
+            else:
+                form_elements.append(
+                    {
+                        "tag": "select_static",
+                        "name": field_name,
+                        "placeholder": {"tag": "plain_text", "content": t("common.selectOne")},
+                        "options": option_items,
+                    }
+                )
+
+        if not form_elements:
+            logger.warning("open_question_modal: no valid questions produced form elements")
+            return
+
+        # Submit button — encode metadata in button name since Feishu
+        # does NOT include behaviors.value for form_submit actions.
+        # Format: question_submit:{callback_prefix}:{question_count}:{thread_id}
+        thread_id_enc = thread_id or ""
+        submit_name = f"question_submit:{callback_prefix}:{len(questions)}:{thread_id_enc}"
+        form_elements.append(
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": t("common.submit")},
+                "type": "primary",
+                "width": "fill",
+                "action_type": "form_submit",
+                "name": submit_name,
+            }
+        )
+
+        title = t("modal.question.claudeCode") if callback_prefix.startswith("claude") else t("modal.question.opencode")
 
         card = {
-            "config": {"wide_screen_mode": True},
-            "elements": elements,
+            "schema": "2.0",
+            "header": {
+                "title": {"tag": "plain_text", "content": title},
+                "template": "blue",
+            },
+            "body": {
+                "direction": "vertical",
+                "elements": [
+                    {
+                        "tag": "form",
+                        "name": "question_form",
+                        "elements": form_elements,
+                    },
+                ],
+            },
         }
+
         ctx = MessageContext(
-            user_id="system",
-            channel_id=channel_id or "",
+            user_id=context.user_id if context else "system",
+            channel_id=channel_id,
             thread_id=thread_id,
         )
         try:
             await self._send_card_to_channel(ctx, card)
         except Exception as exc:
             logger.error("Failed to send question card: %s", exc)
+
+    async def open_opencode_question_modal(
+        self,
+        trigger_id: Any,
+        context: MessageContext = None,
+        pending: Any = None,
+    ):
+        """Convenience wrapper matching the preferred OpenCode question handler call."""
+        await self.open_question_modal(
+            trigger_id=trigger_id,
+            context=context,
+            pending=pending,
+            callback_prefix="opencode_question",
+        )
 
     async def _send_card_to_channel(self, context: MessageContext, card: dict) -> str:
         """Send a raw card JSON to a channel."""
@@ -1414,7 +2214,13 @@ class FeishuBot(BaseIMClient):
                 logger.error("Error in on_message_receive: %s", exc, exc_info=True)
 
         def on_card_action(data):
-            """Callback for card.action.trigger events."""
+            """Callback for card.action.trigger events.
+
+            Must return a P2CardActionTriggerResponse so the SDK can
+            reply to Feishu within the 3-second window.
+            """
+            from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
+
             try:
                 event_dict = {}
                 if hasattr(data, "event") and data.event:
@@ -1426,6 +2232,8 @@ class FeishuBot(BaseIMClient):
                 self._handle_card_action(event_dict)
             except Exception as exc:
                 logger.error("Error in on_card_action: %s", exc, exc_info=True)
+            # Always return a response to avoid Feishu "request failed" toast
+            return P2CardActionTriggerResponse({})
 
         handler = (
             lark.EventDispatcherHandler.builder("", "")
@@ -1475,12 +2283,20 @@ class FeishuBot(BaseIMClient):
                 app_id=self.config.app_id,
                 app_secret=self.config.app_secret,
                 event_handler=event_handler,
-                log_level=lark.LogLevel.WARNING,
+                log_level=lark.LogLevel.INFO,
+                domain=self._get_sdk_domain(),
             )
 
             import threading
 
-            ws_thread = threading.Thread(target=self._ws_client.start, daemon=True, name="feishu-ws")
+            def _ws_thread_target():
+                try:
+                    logger.info("Feishu WS thread starting, domain=%s", self._get_sdk_domain())
+                    self._ws_client.start()
+                except Exception as exc:
+                    logger.error("Feishu WS thread crashed: %s", exc, exc_info=True)
+
+            ws_thread = threading.Thread(target=_ws_thread_target, daemon=True, name="feishu-ws")
             ws_thread.start()
 
             logger.info("Feishu WebSocket client started")

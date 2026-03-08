@@ -65,13 +65,12 @@ class ActivePollInfo:
 class SessionState:
     # session_mappings: user_id -> agent_name -> thread_id -> session_id
     session_mappings: Dict[str, Dict[str, Dict[str, str]]] = field(default_factory=dict)
-    active_slack_threads: Dict[str, Dict[str, Dict[str, float]]] = field(
-        default_factory=dict
-    )
+    active_slack_threads: Dict[str, Dict[str, Dict[str, float]]] = field(default_factory=dict)
     # active_polls: opencode_session_id -> ActivePollInfo
     active_polls: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    # processed_message_ts: channel_id -> thread_ts -> last_processed_message_ts
-    processed_message_ts: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # processed_message_ts: channel_id -> thread_ts -> list of processed message IDs
+    # (set-based dedup, supports all platforms including Feishu non-monotonic IDs)
+    processed_message_ts: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     last_activity: Optional[str] = None
 
 
@@ -119,22 +118,51 @@ class SessionsStore:
             self.state.active_slack_threads[user_id][channel_id] = channel_map
         return channel_map
 
-    def get_last_processed_message_ts(
-        self, channel_id: str, thread_ts: str
-    ) -> Optional[str]:
-        """Get the last processed message ts for a thread."""
-        channel_map = self.state.processed_message_ts.get(channel_id)
-        if channel_map:
-            return channel_map.get(thread_ts)
-        return None
+    # Max number of message IDs to keep per thread for dedup
+    _DEDUP_SET_MAX = 200
 
-    def set_last_processed_message_ts(
-        self, channel_id: str, thread_ts: str, message_ts: str
-    ) -> None:
-        """Set the last processed message ts for a thread."""
+    def _get_processed_set(self, channel_id: str, thread_ts: str) -> List[str]:
+        """Get the processed message ID list for a thread.
+
+        Handles backward-compat: old format stored a single string (high-water mark).
+        New format stores a list of message IDs.
+        """
+        channel_map = self.state.processed_message_ts.get(channel_id)
+        if not channel_map:
+            return []
+        value = channel_map.get(thread_ts)
+        if value is None:
+            return []
+        # Backward compat: old format was a single string
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return value
+        return []
+
+    def is_message_in_processed_set(self, channel_id: str, thread_ts: str, message_ts: str) -> bool:
+        """Check if a message ID is in the processed set."""
+        return message_ts in self._get_processed_set(channel_id, thread_ts)
+
+    def add_to_processed_set(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
+        """Add a message ID to the processed set (bounded)."""
         if channel_id not in self.state.processed_message_ts:
             self.state.processed_message_ts[channel_id] = {}
-        self.state.processed_message_ts[channel_id][thread_ts] = message_ts
+        value = self.state.processed_message_ts[channel_id].get(thread_ts)
+        # Backward compat: migrate old string format to list
+        if isinstance(value, str):
+            processed = [value]
+        elif isinstance(value, list):
+            processed = value
+        else:
+            processed = []
+
+        if message_ts not in processed:
+            processed.append(message_ts)
+            # Trim to keep only the most recent entries
+            if len(processed) > self._DEDUP_SET_MAX:
+                processed = processed[-self._DEDUP_SET_MAX :]
+        self.state.processed_message_ts[channel_id][thread_ts] = processed
         self.save()
 
     def add_active_poll(self, poll_info: ActivePollInfo) -> None:
@@ -157,10 +185,7 @@ class SessionsStore:
 
     def get_all_active_polls(self) -> Dict[str, ActivePollInfo]:
         """Get all active polls."""
-        return {
-            sid: ActivePollInfo.from_dict(data)
-            for sid, data in self.state.active_polls.items()
-        }
+        return {sid: ActivePollInfo.from_dict(data) for sid, data in self.state.active_polls.items()}
 
     def update_active_poll(self, poll_info: ActivePollInfo) -> None:
         """Update an existing active poll."""

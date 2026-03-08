@@ -54,10 +54,18 @@ class LarkConfig(BaseIMConfig):
     app_id: str = ""
     app_secret: str = ""
     require_mention: bool = False
+    domain: str = "feishu"  # "feishu" for domestic (open.feishu.cn), "lark" for international (open.larksuite.com)
 
     def validate(self) -> None:
-        # Allow empty for initial setup
-        pass
+        if self.domain not in ("feishu", "lark"):
+            raise ValueError(f"Invalid lark domain: {self.domain!r}. Must be 'feishu' or 'lark'.")
+
+    @property
+    def api_base_url(self) -> str:
+        """Return the base API URL for the configured domain."""
+        if self.domain == "lark":
+            return "https://open.larksuite.com"
+        return "https://open.feishu.cn"
 
 
 @dataclass

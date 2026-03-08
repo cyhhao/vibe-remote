@@ -98,6 +98,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       : (config.slack?.bot_token || config.slackBotToken || '');
   const larkAppId = config.lark?.app_id || data.lark?.app_id || '';
   const larkAppSecret = config.lark?.app_secret || data.lark?.app_secret || '';
+  const larkDomain = config.lark?.domain || data.lark?.domain || 'feishu';
 
   useEffect(() => {
     if (platform !== 'discord') return;
@@ -134,7 +135,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     }
     try {
       if (platform === 'lark') {
-        const result = await api.larkChats(larkAppId, larkAppSecret);
+        const result = await api.larkChats(larkAppId, larkAppSecret, larkDomain);
         if (result.ok) {
           setChannels(result.channels || []);
         }
@@ -528,10 +529,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                       >
                         <option value="">
                           {t('common.default')} ({platform === 'discord'
-                            ? (config.discord?.require_mention ? t('common.enabled') : t('common.disabled'))
+                            ? (config.discord?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))
                             : platform === 'lark'
-                              ? (config.lark?.require_mention ? t('common.enabled') : t('common.disabled'))
-                              : (config.slack?.require_mention ? t('common.enabled') : t('common.disabled'))})
+                              ? (config.lark?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))
+                              : (config.slack?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))})
                         </option>
                         <option value="true">{t('channelList.requireMentionOn')}</option>
                         <option value="false">{t('channelList.requireMentionOff')}</option>

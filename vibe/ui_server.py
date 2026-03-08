@@ -304,7 +304,9 @@ def lark_auth_test():
     from vibe import api
 
     payload = request.json or {}
-    result = api.lark_auth_test(payload.get("app_id", ""), payload.get("app_secret", ""))
+    result = api.lark_auth_test(
+        payload.get("app_id", ""), payload.get("app_secret", ""), payload.get("domain", "feishu")
+    )
     return jsonify(result)
 
 
@@ -313,7 +315,28 @@ def lark_chats():
     from vibe import api
 
     payload = request.json or {}
-    return jsonify(api.lark_list_chats(payload.get("app_id", ""), payload.get("app_secret", "")))
+    return jsonify(
+        api.lark_list_chats(payload.get("app_id", ""), payload.get("app_secret", ""), payload.get("domain", "feishu"))
+    )
+
+
+@app.route("/lark/temp_ws/start", methods=["POST"])
+def lark_temp_ws_start():
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(
+        api.lark_temp_ws_start(
+            payload.get("app_id", ""), payload.get("app_secret", ""), payload.get("domain", "feishu")
+        )
+    )
+
+
+@app.route("/lark/temp_ws/stop", methods=["POST"])
+def lark_temp_ws_stop():
+    from vibe import api
+
+    return jsonify(api.lark_temp_ws_stop())
 
 
 @app.route("/doctor", methods=["POST"])

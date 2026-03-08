@@ -62,6 +62,7 @@ def config_to_payload(config: V2Config) -> dict:
         "update": config.update.__dict__,
         "ack_mode": config.ack_mode,
         "language": config.language,
+        "show_duration": config.show_duration,
     }
     return payload
 
@@ -974,11 +975,18 @@ def codex_models() -> dict:
     return {"ok": True, "models": uniq}
 
 
-def _lark_tenant_token(app_id: str, app_secret: str) -> Optional[str]:
+def _lark_api_base(domain: str = "feishu") -> str:
+    """Return the API base URL for the given Lark/Feishu domain."""
+    if domain == "lark":
+        return "https://open.larksuite.com"
+    return "https://open.feishu.cn"
+
+
+def _lark_tenant_token(app_id: str, app_secret: str, domain: str = "feishu") -> Optional[str]:
     """Get Lark tenant access token (internal helper, not exposed to frontend)."""
     import urllib.request
 
-    url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    url = f"{_lark_api_base(domain)}/open-apis/auth/v3/tenant_access_token/internal"
     data = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as resp:
@@ -988,10 +996,10 @@ def _lark_tenant_token(app_id: str, app_secret: str) -> Optional[str]:
     return None
 
 
-def lark_auth_test(app_id: str, app_secret: str) -> dict:
+def lark_auth_test(app_id: str, app_secret: str, domain: str = "feishu") -> dict:
     """Test Lark/Feishu app credentials. Only returns ok/error, never exposes token."""
     try:
-        token = _lark_tenant_token(app_id, app_secret)
+        token = _lark_tenant_token(app_id, app_secret, domain)
         if not token:
             return {"ok": False, "error": "Invalid credentials"}
         return {"ok": True}
@@ -999,19 +1007,20 @@ def lark_auth_test(app_id: str, app_secret: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def lark_list_chats(app_id: str, app_secret: str) -> dict:
+def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu") -> dict:
     """List Lark/Feishu group chats the bot has joined (with pagination)."""
     import urllib.request
 
     try:
-        token = _lark_tenant_token(app_id, app_secret)
+        token = _lark_tenant_token(app_id, app_secret, domain)
         if not token:
             return {"ok": False, "error": "Failed to get access token"}
 
+        base = _lark_api_base(domain)
         channels = []
         page_token = ""
         while True:
-            url = "https://open.feishu.cn/open-apis/im/v1/chats?page_size=100"
+            url = f"{base}/open-apis/im/v1/chats?page_size=100"
             if page_token:
                 url = f"{url}&page_token={page_token}"
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
@@ -1035,3 +1044,83 @@ def lark_list_chats(app_id: str, app_secret: str) -> dict:
         return {"ok": True, "channels": channels}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Lark temporary WebSocket connection (for setup wizard)
+# ---------------------------------------------------------------------------
+# The Feishu console only shows the "Use Long Connection" option when an
+# active WebSocket connection exists.  During the setup wizard we start a
+# temporary WS client so the user can configure event subscriptions.
+
+_temp_ws_lock = __import__("threading").Lock()
+_temp_ws_client = None
+_temp_ws_thread = None
+
+
+def lark_temp_ws_start(app_id: str, app_secret: str, domain: str = "feishu") -> dict:
+    """Start a temporary WebSocket connection so the Feishu console shows the long-connection option."""
+    global _temp_ws_client, _temp_ws_thread
+
+    with _temp_ws_lock:
+        # Stop any existing temp connection first
+        _stop_temp_ws_internal()
+
+        try:
+            import lark_oapi as lark
+
+            sdk_domain = lark.LARK_DOMAIN if domain == "lark" else lark.FEISHU_DOMAIN
+
+            # Minimal event handler (does nothing, just keeps the connection alive)
+            handler = lark.EventDispatcherHandler.builder("", "").build()
+
+            client = lark.ws.Client(
+                app_id=app_id,
+                app_secret=app_secret,
+                event_handler=handler,
+                log_level=lark.LogLevel.INFO,
+                domain=sdk_domain,
+            )
+
+            import threading
+
+            def _run():
+                try:
+                    client.start()
+                except Exception:
+                    pass  # Thread exits silently on stop
+
+            t = threading.Thread(target=_run, daemon=True, name="lark-temp-ws")
+            t.start()
+
+            _temp_ws_client = client
+            _temp_ws_thread = t
+
+            return {"ok": True, "message": "Temporary WebSocket connection started"}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+
+def lark_temp_ws_stop() -> dict:
+    """Stop the temporary WebSocket connection."""
+    with _temp_ws_lock:
+        _stop_temp_ws_internal()
+    return {"ok": True}
+
+
+def _stop_temp_ws_internal():
+    """Internal helper to stop temp WS (caller must hold _temp_ws_lock)."""
+    global _temp_ws_client, _temp_ws_thread
+    if _temp_ws_client is not None:
+        try:
+            # Prevent auto-reconnect and close the underlying connection
+            _temp_ws_client._auto_reconnect = False
+            from lark_oapi.ws.client import loop as ws_loop
+
+            import asyncio
+
+            asyncio.run_coroutine_threadsafe(_temp_ws_client._disconnect(), ws_loop)
+        except Exception:
+            pass
+        _temp_ws_client = None
+        _temp_ws_thread = None

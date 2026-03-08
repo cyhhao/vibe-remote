@@ -35,12 +35,12 @@ def get_ui_dist_path() -> Path:
     dev_ui_path = project_root / "ui" / "dist"
     if dev_ui_path.exists():
         return dev_ui_path
-    
+
     # Then check if UI is bundled with the package
     package_ui_path = get_package_root() / "ui" / "dist"
     if package_ui_path.exists():
         return package_ui_path
-    
+
     # Fallback to development path
     return dev_ui_path
 
@@ -52,12 +52,12 @@ def get_service_main_path() -> Path:
     dev_main_path = project_root / "main.py"
     if dev_main_path.exists():
         return dev_main_path
-    
+
     # Then check if service_main.py is bundled with the package
     package_main_path = get_package_root() / "service_main.py"
     if package_main_path.exists():
         return package_main_path
-    
+
     # Fallback to development path
     return dev_main_path
 
@@ -68,7 +68,7 @@ def get_working_dir() -> Path:
     project_root = get_project_root()
     if (project_root / "main.py").exists():
         return project_root
-    
+
     # In installed mode, use package root
     return get_package_root()
 
@@ -146,7 +146,7 @@ def spawn_background(args, pid_path, stdout_name: str, stderr_name: str):
     return process.pid
 
 
-def stop_process(pid_path):
+def stop_process(pid_path, timeout=5):
     if not pid_path.exists():
         return False
     pid = int(pid_path.read_text(encoding="utf-8").strip())
@@ -155,6 +155,17 @@ def stop_process(pid_path):
         return False
     os.kill(pid, signal.SIGTERM)
     pid_path.unlink(missing_ok=True)
+    # Wait for the process to actually exit; SIGKILL if it doesn't
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not pid_alive(pid):
+            return True
+        time.sleep(0.2)
+    # Process didn't exit in time — force kill
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
     return True
 
 
@@ -194,9 +205,7 @@ def start_service():
 
 
 def start_ui(host, port):
-    command = "from vibe.ui_server import run_ui_server; run_ui_server('{}', {})".format(
-        host, port
-    )
+    command = "from vibe.ui_server import run_ui_server; run_ui_server('{}', {})".format(host, port)
     return spawn_background(
         [sys.executable, "-c", command],
         paths.get_runtime_ui_pid_path(),

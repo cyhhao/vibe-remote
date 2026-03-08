@@ -37,6 +37,7 @@ const buildConfigPayload = (data: any) => ({
     ...data.lark,
     app_id: data.lark?.app_id || '',
     app_secret: data.lark?.app_secret || '',
+    domain: data.lark?.domain || 'feishu',
     require_mention: data.lark?.require_mention || false,
   },
   runtime: {

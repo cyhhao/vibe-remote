@@ -282,6 +282,8 @@ export const Dashboard: React.FC = () => {
                                 const platform = config.platform || 'slack';
                                 const toggleValue = platform === 'discord'
                                     ? !config.discord?.require_mention
+                                    : platform === 'lark'
+                                    ? !config.lark?.require_mention
                                     : !config.slack?.require_mention;
                                 const newConfig = {
                                     ...config,
@@ -293,6 +295,10 @@ export const Dashboard: React.FC = () => {
                                         ...(config.slack || {}),
                                         require_mention: platform === 'slack' ? toggleValue : config.slack?.require_mention,
                                     },
+                                    lark: {
+                                        ...(config.lark || {}),
+                                        require_mention: platform === 'lark' ? toggleValue : config.lark?.require_mention,
+                                    },
                                 };
                                 setConfig(newConfig);
                                 autoSaveMessageConfig(newConfig);
@@ -300,6 +306,8 @@ export const Dashboard: React.FC = () => {
                             className={`px-2 py-1 rounded text-xs font-semibold border ${
                                 (config.platform === 'discord'
                                     ? config.discord?.require_mention
+                                    : config.platform === 'lark'
+                                    ? config.lark?.require_mention
                                     : config.slack?.require_mention)
                                     ? 'bg-success/10 text-success border-success/20'
                                     : 'bg-neutral-100 text-muted border-border'
@@ -307,6 +315,8 @@ export const Dashboard: React.FC = () => {
                         >
                             {(config.platform === 'discord'
                                 ? config.discord?.require_mention
+                                : config.platform === 'lark'
+                                ? config.lark?.require_mention
                                 : config.slack?.require_mention)
                                 ? t('common.enabled')
                                 : t('common.disabled')}

@@ -485,9 +485,10 @@ class MessageHandler:
             try:
                 # Download the file content
                 if hasattr(self.im_client, "download_file") and attachment.url:
-                    # Create a dict for Slack's download_file method
+                    # Platform-agnostic download info dict
                     file_info = {
-                        "url_private_download": attachment.url,
+                        "url": attachment.url,
+                        "url_private_download": attachment.url,  # Slack compat
                         "name": attachment.name,
                         "size": attachment.size,
                     }

@@ -795,6 +795,10 @@ class SlackBot(BaseIMClient):
             return
 
         if event_type == "message":
+            # Hot-reload config BEFORE reading any config values (require_mention, etc.)
+            if self._controller and hasattr(self._controller, "_refresh_config_from_disk"):
+                self._controller._refresh_config_from_disk()
+
             # Ignore bot messages
             if event.get("bot_id"):
                 return
@@ -1640,7 +1644,9 @@ class SlackBot(BaseIMClient):
             multi_select_element["initial_options"] = selected_options
 
         # Build require_mention selector
-        global_mention_label = t("common.on") if global_require_mention else t("common.off")
+        global_mention_label = (
+            t("modal.settings.mentionStatusOn") if global_require_mention else t("modal.settings.mentionStatusOff")
+        )
         require_mention_options = [
             {
                 "text": {"type": "plain_text", "text": t("modal.settings.optionDefault", status=global_mention_label)},

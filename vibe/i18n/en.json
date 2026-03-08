@@ -12,7 +12,8 @@
     "default": "(Default)",
     "selectOne": "Select one",
     "selectOneOrMore": "Select one or more",
-    "processing": "Processing `/{command}`..."
+    "processing": "Processing `/{command}`...",
+    "submitted": "Submitted"
   },
   "error": {
     "channelNotEnabled": "This channel is not enabled. Please go to the control panel to enable it.",
@@ -110,6 +111,9 @@
       "optionDefault": "(Default) - {status}",
       "optionRequireMention": "Require @mention",
       "optionDontRequireMention": "Don't require @mention",
+      "mentionStatusOn": "Require @",
+      "mentionStatusOff": "Don't require @",
+      "requireMentionLarkNote": "Note: To receive non-mention messages in groups, the Feishu app needs the `im:message.group_msg` permission.",
       "language": "Language / \u8bed\u8a00",
       "languageHint": "Changes the language for bot messages in Slack and the Web UI."
     },

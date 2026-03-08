@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from config.v2_config import V2Config, SlackConfig, DiscordConfig
+from config.v2_config import V2Config, SlackConfig, DiscordConfig, LarkConfig
 
 
 @dataclass
@@ -36,12 +36,14 @@ class AppCompatConfig:
     platform: str
     slack: SlackConfig
     discord: Optional[DiscordConfig]
+    lark: Optional[LarkConfig]
     claude: ClaudeCompatConfig
     codex: Optional[CodexCompatConfig]
     opencode: Optional[OpenCodeCompatConfig]
     log_level: str
     ack_mode: str
     language: str
+    show_duration: bool = True
     default_backend: str = "opencode"
 
 
@@ -72,11 +74,13 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         platform=v2.platform,
         slack=slack,
         discord=v2.discord,
+        lark=v2.lark,
         claude=claude,
         codex=codex,
         opencode=opencode,
         log_level=v2.runtime.log_level,
         ack_mode=v2.ack_mode,
         language=v2.language,
+        show_duration=v2.show_duration,
         default_backend=v2.agents.default_backend,
     )
