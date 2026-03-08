@@ -17,6 +17,7 @@ from .formatters import SlackFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
     build_opencode_model_option_items,
+    build_codex_reasoning_options,
     build_reasoning_effort_options,
     resolve_opencode_allowed_providers,
     resolve_opencode_provider_preferences,
@@ -2575,13 +2576,24 @@ class SlackBot(BaseIMClient):
                 "initial_option": initial_cx_model,
             }
 
-            # Build reasoning effort options
-            cx_reasoning_options = [
-                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"},
-                {"text": {"type": "plain_text", "text": self._t("reasoning.low")}, "value": "low"},
-                {"text": {"type": "plain_text", "text": self._t("reasoning.medium")}, "value": "medium"},
-                {"text": {"type": "plain_text", "text": self._t("reasoning.high")}, "value": "high"},
-            ]
+            # Build reasoning effort options from centralized Codex definition
+            codex_reasoning_entries = build_codex_reasoning_options()
+            cx_reasoning_options = []
+            for entry in codex_reasoning_entries:
+                value = entry.get("value")
+                if not value:
+                    continue
+                if value == "__default__":
+                    label = self._t("common.default")
+                else:
+                    translated = self._t(f"reasoning.{value}")
+                    label = translated if translated != f"reasoning.{value}" else entry.get("label", value)
+                cx_reasoning_options.append(
+                    {
+                        "text": {"type": "plain_text", "text": label},
+                        "value": value,
+                    }
+                )
 
             # Find initial reasoning
             initial_cx_reasoning = cx_reasoning_options[0]
