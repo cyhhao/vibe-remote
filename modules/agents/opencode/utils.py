@@ -1,6 +1,7 @@
-"""OpenCode helper utilities.
+"""Agent helper utilities (reasoning options, model lists, etc.).
 
 Keep this module free of agent state. It should only contain pure helpers.
+Shared by OpenCode and Codex backends for reasoning-effort option building.
 """
 
 from __future__ import annotations
@@ -247,8 +248,7 @@ def build_opencode_model_option_items(
             model_items = list(models.items())
         elif isinstance(models, list):
             model_items = [
-                (entry, entry) if isinstance(entry, str) else (entry.get("id", ""), entry)
-                for entry in models
+                (entry, entry) if isinstance(entry, str) else (entry.get("id", ""), entry) for entry in models
             ]
         else:
             model_items = []
@@ -311,4 +311,32 @@ def build_reasoning_effort_options(
         options.extend(_build_reasoning_options_from_variants(variants))
         return options
     options.extend(_REASONING_FALLBACK_OPTIONS)
+    return options
+
+
+# ---------------------------------------------------------------------------
+# Codex reasoning options
+# ---------------------------------------------------------------------------
+# Codex supports a fixed set of reasoning effort levels.  Unlike OpenCode
+# (which derives options from live model metadata), these are static.
+# Defined here so that every IM module shares a single source of truth.
+
+_CODEX_REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"]
+
+
+def build_codex_reasoning_options() -> List[Dict[str, str]]:
+    """Return the canonical Codex reasoning-effort option list.
+
+    The returned format mirrors ``build_reasoning_effort_options`` so that
+    IM modules can render both OpenCode and Codex dropdowns with the same
+    helper logic.
+    """
+    options: List[Dict[str, str]] = [{"value": "__default__", "label": "(Default)"}]
+    for effort in _CODEX_REASONING_EFFORTS:
+        options.append(
+            {
+                "value": effort,
+                "label": _REASONING_VARIANT_LABELS.get(effort, effort.capitalize()),
+            }
+        )
     return options

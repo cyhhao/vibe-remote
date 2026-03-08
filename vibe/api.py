@@ -767,6 +767,7 @@ def claude_models() -> dict:
     # Common full model names (latest versions)
     options: list[str] = [
         "claude-opus-4-6",
+        "claude-sonnet-4-6",
         "claude-opus-4-5",
         "claude-sonnet-4-5",
         "claude-haiku-4-5",
@@ -931,11 +932,13 @@ def codex_models() -> dict:
 
     # Common OpenAI model names used with Codex
     options: list[str] = [
-        # GPT series
-        "gpt-5",
-        "gpt-5.1",
-        "gpt-5.2",
+        # GPT series (newest first)
+        "gpt-5.4",
+        "gpt-5.3-codex",
         "gpt-5.2-codex",
+        "gpt-5.2",
+        "gpt-5.1",
+        "gpt-5",
     ]
     config_path = Path.home() / ".codex" / "config.toml"
 
