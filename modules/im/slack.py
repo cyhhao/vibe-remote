@@ -2578,6 +2578,13 @@ class SlackBot(BaseIMClient):
 
             # Build reasoning effort options from centralized Codex definition
             codex_reasoning_entries = build_codex_reasoning_options()
+            selected_cx_reasoning = (
+                current_cx_reasoning if current_cx_reasoning not in (None, "__default__") else "__default__"
+            )
+            available_cx_reasoning = {entry.get("value") for entry in codex_reasoning_entries}
+            if selected_cx_reasoning not in available_cx_reasoning:
+                selected_cx_reasoning = "__default__"
+
             cx_reasoning_options = []
             for entry in codex_reasoning_entries:
                 value = entry.get("value")
@@ -2596,12 +2603,10 @@ class SlackBot(BaseIMClient):
                 )
 
             # Find initial reasoning
-            initial_cx_reasoning = cx_reasoning_options[0]
-            if current_cx_reasoning:
-                for opt in cx_reasoning_options:
-                    if opt["value"] == current_cx_reasoning:
-                        initial_cx_reasoning = opt
-                        break
+            initial_cx_reasoning = next(
+                (opt for opt in cx_reasoning_options if opt["value"] == selected_cx_reasoning),
+                cx_reasoning_options[0],
+            )
 
             cx_reasoning_select = {
                 "type": "static_select",
