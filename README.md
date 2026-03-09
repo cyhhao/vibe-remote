@@ -250,10 +250,11 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 - [x] Web UI setup wizard & dashboard
 - [x] Per-channel agent routing
 - [x] Interactive prompts (buttons, modals)
+- [x] File attachments
 - [ ] SaaS Mode
 - [ ] Vibe Remote Coding Agent (one agent to rule them all)
-- [ ] File attachments
-- [ ] Multi-workspace
+- [ ] Skills Manager
+- [ ] Best practices & multi-workspace guide
 
 ---
 

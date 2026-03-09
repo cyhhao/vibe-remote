@@ -250,10 +250,11 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 - [x] Web UI 设置向导 & 仪表盘
 - [x] 按频道路由 Agent
 - [x] 交互式提示（按钮、模态框）
+- [x] 文件附件
 - [ ] SaaS Mode
 - [ ] Vibe Remote Coding Agent（一个 Agent 统领全局）
-- [ ] 文件附件
-- [ ] 多工作区
+- [ ] Skills 管理器
+- [ ] 最佳实践 & 多工作区指南
 
 ---
 

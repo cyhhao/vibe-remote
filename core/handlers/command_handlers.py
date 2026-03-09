@@ -122,8 +122,8 @@ class CommandHandlers:
                 InlineButton(text=f"⏮️ {self._t('button.resumeSession')}", callback_data="cmd_resume"),
                 InlineButton(text=f"🤖 {self._t('button.agentSettings')}", callback_data="cmd_routing"),
             ],
-            # Row 4: Help
-            [InlineButton(text=f"ℹ️ {self._t('button.howItWorks')}", callback_data="info_how_it_works")],
+            # Row 4: Features
+            [InlineButton(text=f"✨ {self._t('button.howItWorks')}", callback_data="info_how_it_works")],
         ]
 
         keyboard = InlineKeyboard(buttons=buttons)
