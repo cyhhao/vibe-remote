@@ -161,7 +161,6 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="font-semibold capitalize text-lg text-text font-display">{name}</h3>
-                <p className="text-sm text-muted">{t('agentDetection.cliPathDetection')}</p>
               </div>
               <StatusBadge status={agent.status || 'unknown'} loading={checking} />
             </div>
