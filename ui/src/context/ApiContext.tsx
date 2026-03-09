@@ -27,6 +27,7 @@ export type ApiContextType = {
   getLogs: (lines?: number) => Promise<{ logs: LogEntry[]; total: number }>;
   getVersion: () => Promise<VersionInfo>;
   doUpgrade: () => Promise<UpgradeResult>;
+  browseDirectory: (path: string) => Promise<{ ok: boolean; path?: string; parent?: string | null; dirs?: { name: string; path: string }[]; error?: string }>;
 };
 
 export type LogEntry = {
@@ -141,6 +142,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getLogs: (lines = 500) => postJson('/logs', { lines }),
     getVersion: () => getJson('/version'),
     doUpgrade: () => postJson('/upgrade', {}),
+    browseDirectory: (path) => postJson('/browse', { path }),
   };
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;

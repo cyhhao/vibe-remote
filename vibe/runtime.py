@@ -86,7 +86,7 @@ def default_config():
         mode="self_host",
         version="v2",
         slack=SlackConfig(bot_token="", app_token=""),
-        runtime=RuntimeConfig(default_cwd=str(Path.cwd())),
+        runtime=RuntimeConfig(default_cwd=str(Path.home() / "work")),
         agents=AgentsConfig(
             default_backend="opencode",
             opencode=OpenCodeConfig(enabled=True, cli_path="opencode"),

@@ -409,5 +409,10 @@
     "switchLanguage": "语言",
     "en": "English",
     "zh": "中文"
+  },
+  "directoryBrowser": {
+    "title": "浏览目录",
+    "select": "选择",
+    "empty": "没有子目录"
   }
 }

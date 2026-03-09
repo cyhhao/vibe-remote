@@ -409,5 +409,10 @@
     "switchLanguage": "Language",
     "en": "English",
     "zh": "Chinese"
+  },
+  "directoryBrowser": {
+    "title": "Browse Directory",
+    "select": "Select",
+    "empty": "No subdirectories"
   }
 }

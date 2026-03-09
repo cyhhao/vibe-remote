@@ -472,6 +472,15 @@ def agent_install(name):
     return jsonify(result)
 
 
+@app.route("/browse", methods=["POST"])
+def browse_directory():
+    """List sub-directories of a given path for the directory picker UI."""
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.browse_directory(payload.get("path", "~")))
+
+
 # =============================================================================
 # Static Files (SPA)
 # =============================================================================

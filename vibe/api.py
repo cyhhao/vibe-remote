@@ -25,6 +25,42 @@ logger = logging.getLogger(__name__)
 _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
+# Directories to hide in the browse_directory listing
+_HIDDEN_DIR_PREFIXES = (".", "__")
+
+
+def browse_directory(path: str) -> dict:
+    """List sub-directories of *path* for the directory browser UI.
+
+    Returns ``{"ok": True, "path": <abs>, "parent": <abs|None>, "dirs": [...]}``
+    where each entry in *dirs* is ``{"name": ..., "path": ...}``.
+    """
+    try:
+        expanded = os.path.expanduser(path or "~")
+        abs_path = os.path.abspath(expanded)
+
+        if not os.path.isdir(abs_path):
+            return {"ok": False, "error": f"Not a directory: {abs_path}"}
+
+        parent = os.path.dirname(abs_path) if abs_path != "/" else None
+
+        entries: list[dict[str, str]] = []
+        try:
+            names = sorted(os.listdir(abs_path), key=str.lower)
+        except PermissionError:
+            return {"ok": True, "path": abs_path, "parent": parent, "dirs": []}
+
+        for name in names:
+            if any(name.startswith(p) for p in _HIDDEN_DIR_PREFIXES):
+                continue
+            full = os.path.join(abs_path, name)
+            if os.path.isdir(full):
+                entries.append({"name": name, "path": full})
+
+        return {"ok": True, "path": abs_path, "parent": parent, "dirs": entries}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
 
 def load_config() -> V2Config:
     return V2Config.load()

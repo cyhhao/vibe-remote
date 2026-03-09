@@ -83,7 +83,7 @@ def _default_config():
         mode="self_host",
         version="v2",
         slack=SlackConfig(bot_token="", app_token=""),
-        runtime=RuntimeConfig(default_cwd=str(Path.cwd())),
+        runtime=RuntimeConfig(default_cwd=str(Path.home() / "work")),
         agents=AgentsConfig(
             default_backend="opencode",
             opencode=OpenCodeConfig(enabled=True, cli_path="opencode"),
@@ -157,7 +157,7 @@ def _render_status():
 
 def _doctor():
     """Run diagnostic checks and return results in UI-compatible format.
-    
+
     Returns:
         {
             "groups": [{"name": "...", "items": [{"status": "pass|warn|fail", "message": "...", "action": "..."}]}],
@@ -167,99 +167,121 @@ def _doctor():
     """
     groups = []
     summary = {"pass": 0, "warn": 0, "fail": 0}
-    
+
     # Configuration Group
     config_items = []
     config_path = paths.get_config_path()
-    
+
     if config_path.exists():
-        config_items.append({
-            "status": "pass",
-            "message": f"Configuration file found: {config_path}",
-        })
+        config_items.append(
+            {
+                "status": "pass",
+                "message": f"Configuration file found: {config_path}",
+            }
+        )
         summary["pass"] += 1
     else:
-        config_items.append({
-            "status": "fail",
-            "message": "Configuration file not found",
-            "action": "Run 'vibe' to create initial configuration",
-        })
+        config_items.append(
+            {
+                "status": "fail",
+                "message": "Configuration file not found",
+                "action": "Run 'vibe' to create initial configuration",
+            }
+        )
         summary["fail"] += 1
-    
+
     config = None
     try:
         config = V2Config.load(config_path)
-        config_items.append({
-            "status": "pass",
-            "message": "Configuration loaded successfully",
-        })
+        config_items.append(
+            {
+                "status": "pass",
+                "message": "Configuration loaded successfully",
+            }
+        )
         summary["pass"] += 1
     except Exception as exc:
-        config_items.append({
-            "status": "fail",
-            "message": f"Failed to load configuration: {exc}",
-            "action": "Check config.json syntax or delete and reconfigure",
-        })
+        config_items.append(
+            {
+                "status": "fail",
+                "message": f"Failed to load configuration: {exc}",
+                "action": "Check config.json syntax or delete and reconfigure",
+            }
+        )
         summary["fail"] += 1
-    
+
     groups.append({"name": "Configuration", "items": config_items})
-    
+
     # Slack Group
     slack_items = []
     if config:
         try:
             config.slack.validate()
-            slack_items.append({
-                "status": "pass",
-                "message": "Slack token format is valid",
-            })
+            slack_items.append(
+                {
+                    "status": "pass",
+                    "message": "Slack token format is valid",
+                }
+            )
             summary["pass"] += 1
-            
+
             # Check if tokens are actually set
             if config.slack.bot_token:
-                slack_items.append({
-                    "status": "pass",
-                    "message": "Bot token is configured",
-                })
+                slack_items.append(
+                    {
+                        "status": "pass",
+                        "message": "Bot token is configured",
+                    }
+                )
                 summary["pass"] += 1
             else:
-                slack_items.append({
-                    "status": "warn",
-                    "message": "Bot token is not configured",
-                    "action": "Add your Slack bot token in the setup wizard",
-                })
+                slack_items.append(
+                    {
+                        "status": "warn",
+                        "message": "Bot token is not configured",
+                        "action": "Add your Slack bot token in the setup wizard",
+                    }
+                )
                 summary["warn"] += 1
-                
+
             if config.slack.app_token:
-                slack_items.append({
-                    "status": "pass",
-                    "message": "App token is configured (Socket Mode)",
-                })
+                slack_items.append(
+                    {
+                        "status": "pass",
+                        "message": "App token is configured (Socket Mode)",
+                    }
+                )
                 summary["pass"] += 1
             else:
-                slack_items.append({
-                    "status": "warn",
-                    "message": "App token is not configured",
-                    "action": "Add your Slack app token for Socket Mode",
-                })
+                slack_items.append(
+                    {
+                        "status": "warn",
+                        "message": "App token is not configured",
+                        "action": "Add your Slack app token for Socket Mode",
+                    }
+                )
                 summary["warn"] += 1
-                
+
         except Exception as exc:
-            slack_items.append({
-                "status": "fail",
-                "message": f"Slack token validation failed: {exc}",
-                "action": "Check your Slack tokens in the setup wizard",
-            })
+            slack_items.append(
+                {
+                    "status": "fail",
+                    "message": f"Slack token validation failed: {exc}",
+                    "action": "Check your Slack tokens in the setup wizard",
+                }
+            )
             summary["fail"] += 1
     else:
-        slack_items.append({
-            "status": "fail",
-            "message": "Cannot check Slack: configuration not loaded",
-        })
+        slack_items.append(
+            {
+                "status": "fail",
+                "message": "Cannot check Slack: configuration not loaded",
+            }
+        )
         summary["fail"] += 1
-    
+
     groups.append({"name": "Slack", "items": slack_items})
-    
+
     # Agent Backends Group
     agent_items = []
     if config:
@@ -267,152 +289,186 @@ def _doctor():
         if config.agents.opencode.enabled:
             cli_path = config.agents.opencode.cli_path
             import shutil
+
             found_path = shutil.which(cli_path) if cli_path else None
             if found_path:
-                agent_items.append({
-                    "status": "pass",
-                    "message": f"OpenCode CLI found: {found_path}",
-                })
+                agent_items.append(
+                    {
+                        "status": "pass",
+                        "message": f"OpenCode CLI found: {found_path}",
+                    }
+                )
                 summary["pass"] += 1
             else:
-                agent_items.append({
-                    "status": "warn",
-                    "message": f"OpenCode CLI not found: {cli_path}",
-                    "action": "Install OpenCode or update CLI path",
-                })
+                agent_items.append(
+                    {
+                        "status": "warn",
+                        "message": f"OpenCode CLI not found: {cli_path}",
+                        "action": "Install OpenCode or update CLI path",
+                    }
+                )
                 summary["warn"] += 1
         else:
-            agent_items.append({
-                "status": "pass",
-                "message": "OpenCode: disabled",
-            })
+            agent_items.append(
+                {
+                    "status": "pass",
+                    "message": "OpenCode: disabled",
+                }
+            )
             summary["pass"] += 1
-        
+
         # Claude
         if config.agents.claude.enabled:
             cli_path = config.agents.claude.cli_path
             import shutil
+
             # Check preferred location first
             preferred = Path.home() / ".claude" / "local" / "claude"
             if preferred.exists() and os.access(preferred, os.X_OK):
                 found_path = str(preferred)
             else:
                 found_path = shutil.which(cli_path) if cli_path else None
-            
+
             if found_path:
-                agent_items.append({
-                    "status": "pass",
-                    "message": f"Claude CLI found: {found_path}",
-                })
+                agent_items.append(
+                    {
+                        "status": "pass",
+                        "message": f"Claude CLI found: {found_path}",
+                    }
+                )
                 summary["pass"] += 1
             else:
-                agent_items.append({
-                    "status": "warn",
-                    "message": f"Claude CLI not found: {cli_path}",
-                    "action": "Install Claude Code or update CLI path",
-                })
+                agent_items.append(
+                    {
+                        "status": "warn",
+                        "message": f"Claude CLI not found: {cli_path}",
+                        "action": "Install Claude Code or update CLI path",
+                    }
+                )
                 summary["warn"] += 1
         else:
-            agent_items.append({
-                "status": "pass",
-                "message": "Claude: disabled",
-            })
+            agent_items.append(
+                {
+                    "status": "pass",
+                    "message": "Claude: disabled",
+                }
+            )
             summary["pass"] += 1
-        
+
         # Codex
         if config.agents.codex.enabled:
             cli_path = config.agents.codex.cli_path
             import shutil
+
             found_path = shutil.which(cli_path) if cli_path else None
             if found_path:
-                agent_items.append({
-                    "status": "pass",
-                    "message": f"Codex CLI found: {found_path}",
-                })
+                agent_items.append(
+                    {
+                        "status": "pass",
+                        "message": f"Codex CLI found: {found_path}",
+                    }
+                )
                 summary["pass"] += 1
             else:
-                agent_items.append({
-                    "status": "warn",
-                    "message": f"Codex CLI not found: {cli_path}",
-                    "action": "Install Codex or update CLI path",
-                })
+                agent_items.append(
+                    {
+                        "status": "warn",
+                        "message": f"Codex CLI not found: {cli_path}",
+                        "action": "Install Codex or update CLI path",
+                    }
+                )
                 summary["warn"] += 1
         else:
-            agent_items.append({
-                "status": "pass",
-                "message": "Codex: disabled",
-            })
+            agent_items.append(
+                {
+                    "status": "pass",
+                    "message": "Codex: disabled",
+                }
+            )
             summary["pass"] += 1
-        
+
         # Default backend check
         default_backend = config.agents.default_backend
-        agent_items.append({
-            "status": "pass",
-            "message": f"Default backend: {default_backend}",
-        })
+        agent_items.append(
+            {
+                "status": "pass",
+                "message": f"Default backend: {default_backend}",
+            }
+        )
         summary["pass"] += 1
     else:
-        agent_items.append({
-            "status": "fail",
-            "message": "Cannot check agents: configuration not loaded",
-        })
+        agent_items.append(
+            {
+                "status": "fail",
+                "message": "Cannot check agents: configuration not loaded",
+            }
+        )
         summary["fail"] += 1
-    
+
     groups.append({"name": "Agent Backends", "items": agent_items})
-    
+
     # Runtime Group
     runtime_items = []
     if config:
         cwd = config.runtime.default_cwd
         if cwd and os.path.isdir(cwd):
-            runtime_items.append({
-                "status": "pass",
-                "message": f"Working directory: {cwd}",
-            })
+            runtime_items.append(
+                {
+                    "status": "pass",
+                    "message": f"Working directory: {cwd}",
+                }
+            )
             summary["pass"] += 1
         else:
-            runtime_items.append({
-                "status": "warn",
-                "message": f"Working directory does not exist: {cwd}",
-                "action": "Update default_cwd in settings",
-            })
+            runtime_items.append(
+                {
+                    "status": "warn",
+                    "message": f"Working directory does not exist: {cwd}",
+                    "action": "Update default_cwd in settings",
+                }
+            )
             summary["warn"] += 1
-        
-        runtime_items.append({
-            "status": "pass",
-            "message": f"Log level: {config.runtime.log_level}",
-        })
+
+        runtime_items.append(
+            {
+                "status": "pass",
+                "message": f"Log level: {config.runtime.log_level}",
+            }
+        )
         summary["pass"] += 1
-    
+
     # Check log file
     log_path = paths.get_logs_dir() / "vibe_remote.log"
     if log_path.exists():
-        runtime_items.append({
-            "status": "pass",
-            "message": f"Log file: {log_path}",
-        })
+        runtime_items.append(
+            {
+                "status": "pass",
+                "message": f"Log file: {log_path}",
+            }
+        )
         summary["pass"] += 1
     else:
-        runtime_items.append({
-            "status": "pass",
-            "message": "Log file will be created on first run",
-        })
+        runtime_items.append(
+            {
+                "status": "pass",
+                "message": "Log file will be created on first run",
+            }
+        )
         summary["pass"] += 1
-    
+
     groups.append({"name": "Runtime", "items": runtime_items})
-    
+
     # Calculate overall status
     ok = summary["fail"] == 0
-    
+
     result = {
         "groups": groups,
         "summary": summary,
         "ok": ok,
     }
-    
+
     _write_json(paths.get_runtime_doctor_path(), result)
     return result
-
 
 
 def cmd_vibe():
@@ -456,27 +512,27 @@ def cmd_vibe():
     return 0
 
 
-
 def _stop_opencode_server():
     """Terminate the OpenCode server if running."""
     pid_file = paths.get_logs_dir() / "opencode_server.json"
     if not pid_file.exists():
         return False
-    
+
     try:
         info = json.loads(pid_file.read_text(encoding="utf-8"))
     except Exception as e:
         logger.debug("Failed to parse OpenCode PID file: %s", e)
         return False
-    
+
     pid = info.get("pid") if isinstance(info, dict) else None
     if not isinstance(pid, int) or not _pid_alive(pid):
         pid_file.unlink(missing_ok=True)
         return False
-    
+
     # Verify it's actually an opencode serve process
     try:
         import subprocess
+
         result = subprocess.run(
             ["ps", "-p", str(pid), "-o", "command="],
             capture_output=True,
@@ -488,7 +544,7 @@ def _stop_opencode_server():
     except Exception as e:
         logger.debug("Failed to verify OpenCode process (pid=%s): %s", pid, e)
         return False
-    
+
     try:
         os.kill(pid, signal.SIGTERM)
         pid_file.unlink(missing_ok=True)
@@ -501,11 +557,11 @@ def _stop_opencode_server():
 def cmd_stop():
     runtime.stop_service()
     runtime.stop_ui()
-    
+
     # Also terminate OpenCode server on full stop
     if _stop_opencode_server():
         print("OpenCode server stopped")
-    
+
     _write_status("stopped")
     return 0
 
@@ -517,11 +573,11 @@ def cmd_status():
 
 def cmd_doctor():
     result = _doctor()
-    
+
     # Terminal-friendly output
     print("\n  Vibe Remote Diagnostics")
     print("  " + "=" * 40)
-    
+
     for group in result.get("groups", []):
         print(f"\n  {group['name']}")
         print("  " + "-" * 30)
@@ -533,18 +589,20 @@ def cmd_doctor():
                 icon = "\033[33m!\033[0m"  # Yellow warning
             else:
                 icon = "\033[31m✗\033[0m"  # Red X
-            
+
             print(f"  {icon} {item['message']}")
             if item.get("action"):
                 print(f"      → {item['action']}")
-    
+
     summary = result.get("summary", {})
     print("\n  " + "-" * 30)
-    print(f"  \033[32m{summary.get('pass', 0)} passed\033[0m  "
-          f"\033[33m{summary.get('warn', 0)} warnings\033[0m  "
-          f"\033[31m{summary.get('fail', 0)} failed\033[0m")
+    print(
+        f"  \033[32m{summary.get('pass', 0)} passed\033[0m  "
+        f"\033[33m{summary.get('warn', 0)} warnings\033[0m  "
+        f"\033[31m{summary.get('fail', 0)} failed\033[0m"
+    )
     print()
-    
+
     return 0 if result["ok"] else 1
 
 
@@ -556,13 +614,13 @@ def cmd_version():
 
 def get_latest_version() -> dict:
     """Fetch latest version info from PyPI.
-    
+
     Returns:
         {"current": str, "latest": str, "has_update": bool, "error": str|None}
     """
     current = __version__
     result = {"current": current, "latest": None, "has_update": False, "error": None}
-    
+
     try:
         url = "https://pypi.org/pypi/vibe-remote/json"
         req = urllib.request.Request(url, headers={"User-Agent": "vibe-remote"})
@@ -570,7 +628,7 @@ def get_latest_version() -> dict:
             data = json.loads(resp.read().decode("utf-8"))
             latest = data.get("info", {}).get("version", "")
             result["latest"] = latest
-            
+
             # Simple version comparison (works for semver)
             if latest and latest != current:
                 # Compare version tuples
@@ -583,7 +641,7 @@ def get_latest_version() -> dict:
                     result["has_update"] = latest != current
     except Exception as e:
         result["error"] = str(e)
-    
+
     return result
 
 
@@ -591,19 +649,19 @@ def cmd_check_update():
     """Check for available updates."""
     print(f"Current version: {__version__}")
     print("Checking for updates...")
-    
+
     info = get_latest_version()
-    
+
     if info["error"]:
         print(f"\033[33mFailed to check for updates: {info['error']}\033[0m")
         return 1
-    
+
     if info["has_update"]:
         print(f"\033[32mNew version available: {info['latest']}\033[0m")
         print(f"\nRun '\033[1mvibe upgrade\033[0m' to update.")
     else:
         print("\033[32mYou are using the latest version.\033[0m")
-    
+
     return 0
 
 
@@ -611,9 +669,9 @@ def cmd_upgrade():
     """Upgrade vibe-remote to the latest version."""
     print(f"Current version: {__version__}")
     print("Checking for updates...")
-    
+
     info = get_latest_version()
-    
+
     if info["error"]:
         print(f"\033[33mFailed to check for updates: {info['error']}\033[0m")
         print("Attempting upgrade anyway...")
@@ -622,16 +680,16 @@ def cmd_upgrade():
         return 0
     else:
         print(f"New version available: {info['latest']}")
-    
+
     print("\nUpgrading...")
-    
+
     # Determine upgrade method based on how vibe was installed
     # Check if running from uv tool environment
     exe_path = sys.executable
     is_uv_tool = ".local/share/uv/tools/" in exe_path or "/uv/tools/" in exe_path
-    
+
     uv_path = shutil.which("uv")
-    
+
     if is_uv_tool and uv_path:
         # Installed via uv tool, upgrade with uv
         cmd = [uv_path, "tool", "install", "vibe-remote", "--upgrade"]
@@ -640,7 +698,7 @@ def cmd_upgrade():
         # Installed via pip or other method, use current Python's pip
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "vibe-remote"]
         print(f"Using pip: {' '.join(cmd)}")
-    
+
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
