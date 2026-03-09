@@ -26,7 +26,7 @@ _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
 
-def browse_directory(path: str) -> dict:
+def browse_directory(path: str, show_hidden: bool = False) -> dict:
     """List sub-directories of *path* for the directory browser UI.
 
     Symlinks are not followed when scanning entries.
@@ -46,7 +46,7 @@ def browse_directory(path: str) -> dict:
         entries: list[dict[str, str]] = []
         try:
             for entry in sorted(os.scandir(abs_path), key=lambda e: e.name.lower()):
-                if entry.name.startswith("."):
+                if not show_hidden and entry.name.startswith("."):
                     continue
                 if entry.is_dir(follow_symlinks=False):
                     entries.append({"name": entry.name, "path": str(target / entry.name)})
