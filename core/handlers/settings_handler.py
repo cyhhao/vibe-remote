@@ -293,7 +293,7 @@ class SettingsHandler:
             # Use format_info_message for clean, platform-agnostic formatting
             info_text = formatter.format_info_message(
                 title=self._t("info.howItWorksTitle"),
-                emoji="📚",
+                emoji="✨",
                 items=[
                     (
                         self._t("info.howItWorksRealtimeLabel"),

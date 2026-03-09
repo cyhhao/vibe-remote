@@ -4,7 +4,7 @@
 
 # Vibe Remote
 
-### Your AI coding army, commanded from Slack or Discord.
+### Your AI agent army, commanded from Slack, Discord & Lark.
 
 **No laptop. No IDE. Just vibes.**
 
@@ -26,7 +26,7 @@ You're at the beach. Phone buzzes — production's on fire.
 
 **Old you:** Panic. Find WiFi. Open laptop. Wait for IDE. Lose your tan.
 
-**Vibe Remote you:** Open Slack or Discord. Type "Fix the auth bug in login.py". Watch Claude Code fix it in real-time. Approve. Sip margarita.
+**Vibe Remote you:** Open Slack, Discord, or Lark. Type "Fix the auth bug in login.py". Watch Claude Code fix it in real-time. Approve. Sip margarita.
 
 ```
 AI works. You live.
@@ -56,10 +56,10 @@ irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | ie
 
 | Problem | Solution |
 |---------|----------|
-| Claude Code is amazing but needs a terminal | Slack IS your terminal now |
+| Claude Code is amazing but needs a terminal | Slack/Discord/Lark IS your terminal now |
 | Context-switching kills flow | Stay in one app |
 | Can't code from phone | Yes you can |
-| Multiple agents, multiple setups | One Slack, any agent |
+| Multiple agents, multiple setups | One chat app, any agent |
 
 **Supported Agents:**
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Deep reasoning, complex refactors
@@ -108,11 +108,11 @@ Get notified the moment your AI finishes. Like assigning tasks to employees — 
 
 ### Thread = Session
 
-Each Slack/Discord thread is an isolated workspace. Open 5 threads, run 5 parallel tasks. Context stays separate.
+Each Slack/Discord/Lark thread is an isolated workspace. Open 5 threads, run 5 parallel tasks. Context stays separate.
 
 ### Interactive Prompts
 
-When your agent needs input — file selection, confirmation, options — Slack or Discord pops up buttons or a modal. Full CLI interactivity, zero terminal required.
+When your agent needs input — file selection, confirmation, options — your chat app pops up buttons or a modal. Full CLI interactivity, zero terminal required.
 
 ![Interactive Prompts](assets/screenshots/question-en.jpg)
 
@@ -121,31 +121,32 @@ When your agent needs input — file selection, confirmation, options — Slack 
 ## How It Works
 
 ```
-┌──────────────┐         ┌──────────────┐         ┌──────────────┐
-│     You      │  Slack  │ Vibe Remote  │  stdio  │  AI Agent    │
-│  (anywhere)  │ ──────▶ │  (your Mac)  │ ──────▶ │ (your code)  │
-└──────────────┘         └──────────────┘         └──────────────┘
+┌──────────────┐             ┌──────────────┐             ┌──────────────┐
+│     You      │   Slack     │              │   stdio     │  Claude Code │
+│  (anywhere)  │   Discord   │ Vibe Remote  │ ──────────▶ │  OpenCode    │
+│              │   Lark      │  (your Mac)  │ ◀────────── │  Codex       │
+└──────────────┘             └──────────────┘             └──────────────┘
 ```
 
-1. **You type** in Slack: *"Add dark mode to the settings page"*
+1. **You type** in Slack/Discord/Lark: *"Add dark mode to the settings page"*
 2. **Vibe Remote** routes to your configured agent
 3. **Agent** reads your codebase, writes code, streams back
-4. **You review** in Slack, iterate in thread
+4. **You review** in your chat app, iterate in thread
 
-**Your code never leaves your machine.** Vibe Remote runs locally and connects via Slack's Socket Mode.
+**Your code never leaves your machine.** Vibe Remote runs locally and connects via Slack Socket Mode, Discord Gateway, or Lark WebSocket.
 
 ---
 
 ## Commands
 
-| In Slack | What it does |
+| In chat | What it does |
 |----------|--------------|
 | `@Vibe Remote /start` | Open control panel |
 | `/stop` | Kill current session |
 | Just type | Talk to your agent |
 | Reply in thread | Continue conversation |
 
-**Pro tip:** Each Slack thread = isolated session. Start multiple threads for parallel tasks.
+**Pro tip:** Each thread = isolated session. Start multiple threads for parallel tasks.
 
 ---
 
@@ -227,7 +228,7 @@ npm install -g @openai/codex
 ## Security
 
 - **Local-first** — Vibe Remote runs on your machine
-- **Socket Mode** — No public URLs, no webhooks
+- **Socket Mode / WebSocket** — No public URLs, no webhooks
 - **Your tokens** — Stored in `~/.vibe_remote/`, never uploaded
 - **Your code** — Stays on your disk, sent only to your chosen AI provider
 
@@ -243,10 +244,17 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## Roadmap
 
+- [x] Slack support
+- [x] Discord support
+- [x] Lark (Feishu) support
+- [x] Web UI setup wizard & dashboard
+- [x] Per-channel agent routing
+- [x] Interactive prompts (buttons, modals)
+- [x] File attachments
 - [ ] SaaS Mode
 - [ ] Vibe Remote Coding Agent (one agent to rule them all)
-- [ ] File attachments in Slack
-- [ ] Multi-workspace
+- [ ] Skills Manager
+- [ ] Best practices & multi-workspace guide
 
 ---
 
@@ -255,6 +263,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 - **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
 - **[Discord Setup Guide](docs/DISCORD_SETUP.md)** — Detailed setup with screenshots
+- **Lark Setup Guide** — Follow the in-app wizard (`vibe` → choose Lark)
 
 ## Remote Server Tip (SSH)
 
@@ -272,7 +281,7 @@ See: **[CLI Reference](docs/CLI.md)** (search for "Remote Web UI Access")
 
 **Stop context-switching. Start vibe coding.**
 
-[Install Now](#install-in-10-seconds) · [Setup Guide](docs/SLACK_SETUP.md) · [Report Bug](https://github.com/cyhhao/vibe-remote/issues)
+[Install Now](#install-in-10-seconds) · [Setup Guide](docs/SLACK_SETUP.md) · [Report Bug](https://github.com/cyhhao/vibe-remote/issues) · [Follow @alex_metacraft](https://x.com/alex_metacraft)
 
 ---
 
