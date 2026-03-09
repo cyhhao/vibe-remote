@@ -82,11 +82,13 @@ def ensure_dirs():
 
 
 def default_config():
+    work_dir = Path.home() / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
     return V2Config(
         mode="self_host",
         version="v2",
         slack=SlackConfig(bot_token="", app_token=""),
-        runtime=RuntimeConfig(default_cwd=str(Path.cwd())),
+        runtime=RuntimeConfig(default_cwd=str(work_dir)),
         agents=AgentsConfig(
             default_backend="opencode",
             opencode=OpenCodeConfig(enabled=True, cli_path="opencode"),

@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Hash, CheckSquare, Square, RefreshCw, HelpCircle, Globe } from 'lucide-react';
+import { Hash, CheckSquare, Square, RefreshCw, HelpCircle, Globe, FolderOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { Combobox } from '../ui/combobox';
+import { DirectoryBrowser } from '../ui/directory-browser';
 import clsx from 'clsx';
 
 /** Input that only commits value on blur */
@@ -65,6 +66,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
   const [guilds, setGuilds] = useState<any[]>([]);
   const [selectedGuild, setSelectedGuild] = useState<string>(data.discord?.guild_allowlist?.[0] || '');
+  // Directory browser state — tracks which channel's cwd picker is open
+  const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isPage) {
@@ -240,7 +243,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   useEffect(() => {
     if (!channels.length) return;
-    const defaultCwd = config.runtime?.default_cwd || '.';
+    const defaultCwd = config.runtime?.default_cwd || '~/work';
     const defaultBackend = config.agents?.default_backend || 'opencode';
 
     const neededOpenCodeCwds = new Set<string>();
@@ -358,6 +361,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   }, [channels, configs]);
 
   return (
+    <>
     <div className={clsx('flex flex-col h-full', isPage ? 'max-w-5xl mx-auto' : '')}>
       <div className="flex justify-between items-center mb-6">
         <div>
@@ -449,7 +453,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             require_mention: rawConfig.require_mention !== undefined ? rawConfig.require_mention : def.require_mention,
           };
 
-          const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '.';
+          const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
           const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
           const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
           return (
@@ -491,13 +495,23 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-muted uppercase">{t('channelList.workingDirectory')}</label>
-                      <BlurInput
-                        type="text"
-                        placeholder={config.runtime?.default_cwd || t('channelList.useGlobalDefault')}
-                        value={channelConfig.custom_cwd}
-                        onCommit={(v) => updateConfig(channel.id, { custom_cwd: v })}
-                        className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text placeholder:text-muted/50 font-mono"
-                      />
+                      <div className="flex gap-1.5">
+                        <BlurInput
+                          type="text"
+                          placeholder={config.runtime?.default_cwd || t('channelList.useGlobalDefault')}
+                          value={channelConfig.custom_cwd}
+                          onCommit={(v) => updateConfig(channel.id, { custom_cwd: v })}
+                          className="flex-1 bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text placeholder:text-muted/50 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setBrowsingCwdFor(channel.id)}
+                          title={t('directoryBrowser.title')}
+                          className="px-2 py-2 bg-neutral-100 hover:bg-neutral-200 border border-border rounded text-muted hover:text-text transition-colors shrink-0"
+                        >
+                          <FolderOpen size={14} />
+                        </button>
+                      </div>
                     </div>
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-muted uppercase">{t('channelList.backend')}</label>
@@ -789,5 +803,18 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         </div>
       )}
     </div>
+
+    {/* Directory browser modal */}
+    {browsingCwdFor && (
+      <DirectoryBrowser
+        initialPath={configs[browsingCwdFor]?.custom_cwd || config.runtime?.default_cwd || '~/work'}
+        onSelect={(path) => {
+          updateConfig(browsingCwdFor, { custom_cwd: path });
+          setBrowsingCwdFor(null);
+        }}
+        onClose={() => setBrowsingCwdFor(null)}
+      />
+    )}
+    </>
   );
 };

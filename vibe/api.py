@@ -26,6 +26,46 @@ _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
 
+def browse_directory(path: str) -> dict:
+    """List sub-directories of *path* for the directory browser UI.
+
+    Restricted to the user's home directory tree.  Symlinks are not
+    followed when scanning entries, preventing escape via crafted links.
+
+    Returns ``{"ok": True, "path": <abs>, "parent": <abs|None>, "dirs": [...]}``
+    where each entry in *dirs* is ``{"name": ..., "path": ...}``.
+    """
+    try:
+        home = Path.home().resolve()
+        target = Path(os.path.expanduser(path or "~")).resolve()
+
+        # Restrict browsing to within the user's home directory
+        try:
+            target.relative_to(home)
+        except ValueError:
+            return {"ok": False, "error": "path_out_of_scope"}
+
+        if not target.is_dir():
+            return {"ok": False, "error": f"Not a directory: {target}"}
+
+        abs_path = str(target)
+        parent = str(target.parent) if target != home else None
+
+        entries: list[dict[str, str]] = []
+        try:
+            for entry in sorted(os.scandir(abs_path), key=lambda e: e.name.lower()):
+                if entry.name.startswith("."):
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    entries.append({"name": entry.name, "path": str(target / entry.name)})
+        except PermissionError:
+            return {"ok": False, "error": "permission_denied"}
+
+        return {"ok": True, "path": abs_path, "parent": parent, "dirs": entries}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def load_config() -> V2Config:
     return V2Config.load()
 
