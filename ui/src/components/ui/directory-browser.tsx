@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Folder, FolderOpen, ChevronRight, ArrowUp, X, Check, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
@@ -27,12 +27,31 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Guard against setState after unmount / stale responses
+  const mountedRef = useRef(true);
+  const reqIdRef = useRef(0);
+
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // Esc key to close
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const browse = useCallback(
     async (path: string) => {
+      const id = ++reqIdRef.current;
       setLoading(true);
       setError(null);
       try {
         const result = await api.browseDirectory(path);
+        if (!mountedRef.current || reqIdRef.current !== id) return;
         if (result.ok) {
           setCurrentPath(result.path ?? path);
           setParent(result.parent ?? null);
@@ -41,9 +60,12 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
           setError(result.error ?? 'Unknown error');
         }
       } catch (e: any) {
+        if (!mountedRef.current || reqIdRef.current !== id) return;
         setError(e.message ?? String(e));
       } finally {
-        setLoading(false);
+        if (mountedRef.current && reqIdRef.current === id) {
+          setLoading(false);
+        }
       }
     },
     [api],
@@ -67,8 +89,16 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
       }, [])
     : [];
 
+  const canConfirm = !!currentPath && !loading && !error;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('directoryBrowser.title')}
+      onClick={onClose}
+    >
       <div
         className="bg-panel border border-border rounded-xl shadow-xl w-full max-w-lg max-h-[70vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
@@ -140,11 +170,17 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
         {/* Footer — current path + confirm */}
         <div className="px-4 py-3 border-t border-border flex items-center gap-2">
           <code className="flex-1 text-xs font-mono text-text bg-bg border border-border rounded px-2 py-1.5 truncate">
-            {currentPath}
+            {currentPath || '—'}
           </code>
           <button
-            onClick={() => onSelect(currentPath)}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-accent hover:bg-accent/90 text-white rounded-lg text-sm font-medium transition-colors shrink-0"
+            onClick={() => canConfirm && onSelect(currentPath)}
+            disabled={!canConfirm}
+            className={clsx(
+              'flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors shrink-0',
+              canConfirm
+                ? 'bg-accent hover:bg-accent/90 text-white'
+                : 'bg-neutral-200 text-muted cursor-not-allowed',
+            )}
           >
             <Check size={14} />
             {t('directoryBrowser.select')}

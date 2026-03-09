@@ -453,7 +453,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             require_mention: rawConfig.require_mention !== undefined ? rawConfig.require_mention : def.require_mention,
           };
 
-          const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '.';
+          const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
           const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
           const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
           return (
