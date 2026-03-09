@@ -137,7 +137,8 @@ class Controller:
         """Hot-reload mutable message-processing settings from config.json.
 
         Called on every ``_t()`` invocation (guarded by mtime check).
-        Refreshes: language, show_duration, ack_mode, require_mention (global).
+        Refreshes: language, show_duration, ack_mode, include_user_info,
+        require_mention (global).
         """
         try:
             config_path = paths.get_config_path()
@@ -151,6 +152,7 @@ class Controller:
                 self.config.language = v2_config.language
                 self.config.show_duration = v2_config.show_duration
                 self.config.ack_mode = v2_config.ack_mode
+                self.config.include_user_info = v2_config.include_user_info
 
                 # Sync global require_mention into the IM client's platform config
                 platform = getattr(self.config, "platform", "")

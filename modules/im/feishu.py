@@ -100,6 +100,7 @@ class FeishuBot(BaseIMClient):
         self._recent_event_ids: Dict[str, float] = {}
         self._cached_token: Optional[str] = None
         self._token_expires_at: Optional[float] = None
+        self._user_info_cache: Dict[str, Dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle / injection
@@ -893,7 +894,10 @@ class FeishuBot(BaseIMClient):
     # User / channel info
     # ------------------------------------------------------------------
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
-        """Get information about a Feishu user by open_id."""
+        """Get information about a Feishu user by open_id (cached permanently)."""
+        cached = self._user_info_cache.get(user_id)
+        if cached is not None:
+            return cached
         self._ensure_client()
         try:
             token = await self._get_tenant_token()
@@ -906,12 +910,14 @@ class FeishuBot(BaseIMClient):
                     if result.get("code") != 0:
                         return {"id": user_id}
                     user = result.get("data", {}).get("user", {})
-                    return {
+                    info = {
                         "id": user_id,
                         "name": user.get("name", ""),
                         "display_name": user.get("name", ""),
                         "email": user.get("email"),
                     }
+                    self._user_info_cache[user_id] = info
+                    return info
         except Exception as exc:
             logger.error("Error getting Feishu user info: %s", exc)
             return {"id": user_id}

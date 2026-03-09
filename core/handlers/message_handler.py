@@ -217,6 +217,10 @@ class MessageHandler:
                 if processed_files:
                     logger.info(f"Processed {len(processed_files)} file attachments for message")
 
+            # Prepend user identity when include_user_info is enabled
+            if self.config.include_user_info:
+                message = await self._prepend_user_info(context, message)
+
             request = AgentRequest(
                 context=context,
                 message=message,
@@ -265,6 +269,25 @@ class MessageHandler:
                 context,
                 self.formatter.format_error(self._t("error.processMessageFailed", error=str(e))),
             )
+
+    @staticmethod
+    def _sanitize_identity(value: str) -> str:
+        """Strip control chars and delimiters that could break the [name<id>] format."""
+        token = (value or "").replace("\n", " ").replace("\r", " ").strip()
+        token = token.replace("[", "(").replace("]", ")").replace("<", "(").replace(">", ")")
+        return token[:80] or "unknown"
+
+    async def _prepend_user_info(self, context: MessageContext, message: str) -> str:
+        """Prepend user identity as [username<user_id>] to the message."""
+        try:
+            user_info = await self.im_client.get_user_info(context.user_id)
+            raw_name = user_info.get("display_name") or user_info.get("name") or "unknown"
+        except Exception as e:
+            logger.debug(f"Failed to fetch user info for {context.user_id}: {e}")
+            raw_name = "unknown"
+        name = self._sanitize_identity(raw_name)
+        uid = self._sanitize_identity(context.user_id)
+        return f"[{name}<{uid}>] {message}"
 
     async def handle_callback_query(self, context: MessageContext, callback_data: str):
         """Route callback queries to appropriate handlers"""

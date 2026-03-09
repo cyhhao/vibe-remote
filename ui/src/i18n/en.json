@@ -352,6 +352,8 @@
     "errorRetryLimitHint": "Auto-retry with 'continue' when LLM stream errors occur (0 = no retry)",
     "showDuration": "Show Duration",
     "showDurationHint": "Display task elapsed time in result messages",
+    "includeUserInfo": "Include User Info",
+    "includeUserInfoHint": "Prepend [username<user_id>] to messages sent to agents",
     "allowedChannels": "Allowed Channels",
     "consoleServer": "Console Server",
     "host": "Host",
@@ -409,5 +411,10 @@
     "switchLanguage": "Language",
     "en": "English",
     "zh": "Chinese"
+  },
+  "directoryBrowser": {
+    "title": "Browse Directory",
+    "select": "Select",
+    "empty": "No subdirectories"
   }
 }

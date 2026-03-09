@@ -57,6 +57,7 @@ class SlackBot(BaseIMClient):
         # Controller reference for update button handling (will be injected later)
         self._controller = None
         self._recent_event_ids: Dict[str, float] = {}
+        self._user_info_cache: Dict[str, Dict[str, Any]] = {}
         self._stop_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._on_ready: Optional[Callable] = None
@@ -1529,12 +1530,15 @@ class SlackBot(BaseIMClient):
                 logger.debug(f"Slack web client close failed: {exc}")
 
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
-        """Get information about a Slack user"""
+        """Get information about a Slack user (cached permanently)"""
+        cached = self._user_info_cache.get(user_id)
+        if cached is not None:
+            return cached
         self._ensure_clients()
         try:
             response = await self.web_client.users_info(user=user_id)
             user = response["user"]
-            return {
+            info = {
                 "id": user["id"],
                 "name": user.get("name"),
                 "real_name": user.get("real_name"),
@@ -1544,7 +1548,9 @@ class SlackBot(BaseIMClient):
             }
         except SlackApiError as e:
             logger.error(f"Error getting user info: {e}")
-            raise
+            info = {"id": user_id}
+        self._user_info_cache[user_id] = info
+        return info
 
     async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
         """Get information about a Slack channel"""

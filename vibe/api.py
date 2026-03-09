@@ -26,6 +26,38 @@ _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
 
+def browse_directory(path: str) -> dict:
+    """List sub-directories of *path* for the directory browser UI.
+
+    Symlinks are not followed when scanning entries.
+
+    Returns ``{"ok": True, "path": <abs>, "parent": <abs|None>, "dirs": [...]}``
+    where each entry in *dirs* is ``{"name": ..., "path": ...}``.
+    """
+    try:
+        target = Path(os.path.expanduser(path or "~")).resolve()
+
+        if not target.is_dir():
+            return {"ok": False, "error": f"Not a directory: {target}"}
+
+        abs_path = str(target)
+        parent = str(target.parent) if target.parent != target else None
+
+        entries: list[dict[str, str]] = []
+        try:
+            for entry in sorted(os.scandir(abs_path), key=lambda e: e.name.lower()):
+                if entry.name.startswith("."):
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    entries.append({"name": entry.name, "path": str(target / entry.name)})
+        except PermissionError:
+            return {"ok": False, "error": "permission_denied"}
+
+        return {"ok": True, "path": abs_path, "parent": parent, "dirs": entries}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def load_config() -> V2Config:
     return V2Config.load()
 
@@ -63,6 +95,7 @@ def config_to_payload(config: V2Config) -> dict:
         "ack_mode": config.ack_mode,
         "language": config.language,
         "show_duration": config.show_duration,
+        "include_user_info": config.include_user_info,
     }
     return payload
 
