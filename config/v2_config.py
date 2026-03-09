@@ -147,6 +147,7 @@ class V2Config:
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "reaction"
     show_duration: bool = True  # Show task duration in result messages
+    include_user_info: bool = True  # Prepend user identity to agent messages
     language: str = "en"  # Global language setting (see vibe/i18n)
 
     @classmethod
@@ -261,6 +262,10 @@ class V2Config:
         if not isinstance(show_duration, bool):
             show_duration = True
 
+        include_user_info = payload.get("include_user_info", True)
+        if not isinstance(include_user_info, bool):
+            include_user_info = True
+
         language = normalize_language(payload.get("language"), default="en")
 
         return cls(
@@ -277,6 +282,7 @@ class V2Config:
             update=update,
             ack_mode=ack_mode,
             show_duration=show_duration,
+            include_user_info=include_user_info,
             language=language,
         )
 
@@ -305,6 +311,7 @@ class V2Config:
             "update": self.update.__dict__,
             "ack_mode": self.ack_mode,
             "show_duration": self.show_duration,
+            "include_user_info": self.include_user_info,
             "language": self.language,
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
