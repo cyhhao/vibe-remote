@@ -353,31 +353,15 @@ class CommandHandlers:
         if self.config.platform == "lark":
             settings_key = self.controller._get_settings_key(context)
             sessions_by_agent = self.settings_manager.list_all_agent_sessions(settings_key)
-            if not sessions_by_agent:
-                channel_context = self._get_channel_context(context)
-                await self.im_client.send_message(
-                    channel_context,
-                    f"ℹ️ {self._t('command.resume.noStoredSessions')}",
-                )
-                return
-            # Flatten sessions_by_agent dict into a list for Feishu card
-            # list_all_agent_sessions returns {agent: {thread_id: session_id}}
-            flat_sessions = []
-            for agent_name, agent_sessions in sessions_by_agent.items():
-                for thread_id, session_id in agent_sessions.items():
-                    flat_sessions.append(
-                        {
-                            "id": session_id,
-                            "agent": agent_name,
-                            "label": f"[{agent_name}] {session_id[:12]}",
-                        }
-                    )
+            # Allow opening modal even with no sessions (user can paste manually)
             if hasattr(self.im_client, "open_resume_session_modal"):
                 try:
                     await self.im_client.open_resume_session_modal(
                         trigger_id=context,
-                        sessions=flat_sessions,
+                        sessions_by_agent=sessions_by_agent or {},
                         channel_id=context.channel_id,
+                        thread_id=context.thread_id or context.message_id or "",
+                        host_message_ts=context.message_id,
                     )
                     return
                 except Exception as e:

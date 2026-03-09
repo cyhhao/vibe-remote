@@ -550,23 +550,60 @@ class OpenCodeQuestionHandler:
 
             if matched_item is None and session_items:
                 matched_item = session_items[0]
+                logger.warning(
+                    "Question match for session %s: no callID/messageID match, "
+                    "falling back to first item in same session (id=%s, callID=%s)",
+                    opencode_session_id,
+                    matched_item.get("id"),
+                    (matched_item.get("tool") or {}).get("callID"),
+                )
 
+            # Cross-session fallback by callID — only if exactly one item
+            # matches the callID across all sessions (callID is unique per
+            # tool invocation, so a single match is reliable).
             if matched_item is None and tool_part.get("callID"):
-                for item in questions_listing:
-                    tool_meta = item.get("tool") or {}
-                    if tool_meta.get("callID") == tool_part.get("callID"):
-                        matched_item = item
-                        break
+                call_matches = [
+                    item
+                    for item in questions_listing
+                    if (item.get("tool") or {}).get("callID") == tool_part.get("callID")
+                ]
+                if len(call_matches) == 1:
+                    matched_item = call_matches[0]
+                    item_sid = (
+                        matched_item.get("sessionID") or matched_item.get("sessionId") or matched_item.get("session_id")
+                    )
+                    logger.warning(
+                        "Question match: cross-session callID fallback "
+                        "(current=%s, matched=%s, question_id=%s, callID=%s)",
+                        opencode_session_id,
+                        item_sid,
+                        matched_item.get("id"),
+                        tool_part.get("callID"),
+                    )
+                elif len(call_matches) > 1:
+                    logger.warning(
+                        "Question match ambiguous by callID; skip fallback (session=%s, callID=%s, matches=%s)",
+                        opencode_session_id,
+                        tool_part.get("callID"),
+                        len(call_matches),
+                    )
 
-            if matched_item is None and message_id:
-                for item in questions_listing:
-                    tool_meta = item.get("tool") or {}
-                    if tool_meta.get("messageID") == message_id:
-                        matched_item = item
-                        break
+            # REMOVED: cross-session messageID fallback — messageID is NOT
+            # unique across sessions and can bind question_id to the wrong
+            # session, causing the current session to hang forever.
 
-            if matched_item is None and len(questions_listing) == 1:
-                matched_item = questions_listing[0]
+            # REMOVED: blind len==1 fallback — grabbed questions from
+            # unrelated sessions.
+
+            if matched_item is None:
+                logger.warning(
+                    "Question match failed for session=%s (callID=%s, messageID=%s, listed=%s, session_items=%s)",
+                    opencode_session_id,
+                    tool_part.get("callID"),
+                    message_id,
+                    len(questions_listing),
+                    len(session_items),
+                )
 
         if matched_item:
             question_id = matched_item.get("id")

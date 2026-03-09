@@ -96,21 +96,33 @@ class OpenCodePollLoop:
                     tool_state = part.get("state") or {}
                     tool_input = tool_state.get("input") or {}
 
-                    if (
-                        tool_name == "question"
-                        and tool_state.get("status") != "completed"
-                    ):
-                        answered = (
-                            await self._question_handler.handle_question_toolcall(
-                                request=request,
-                                server=server,
-                                opencode_session_id=session_id,
-                                message_id=message_id,
-                                tool_part=part,
-                                tool_input=tool_input,
-                                call_key=call_key,
-                                seen_tool_calls=seen_tool_calls,
-                            )
+                    if tool_name == "question" and tool_state.get("status") != "completed":
+                        # Emit any assistant text from this message BEFORE the
+                        # question form, so the user sees the context first.
+                        # Without this, the form/buttons appear first and the
+                        # assistant's explanatory text only shows up after the
+                        # user answers (because the parts loop breaks on the
+                        # question and lines below never run).
+                        if message_id not in emitted_assistant_messages:
+                            pre_text = self._agent._extract_response_text(message)
+                            if pre_text:
+                                await self._agent.controller.emit_agent_message(
+                                    request.context,
+                                    "assistant",
+                                    pre_text,
+                                    parse_mode="markdown",
+                                )
+                            emitted_assistant_messages.add(message_id)
+
+                        answered = await self._question_handler.handle_question_toolcall(
+                            request=request,
+                            server=server,
+                            opencode_session_id=session_id,
+                            message_id=message_id,
+                            tool_part=part,
+                            tool_input=tool_input,
+                            call_key=call_key,
+                            seen_tool_calls=seen_tool_calls,
                         )
                         if answered:
                             restart_poll = True
@@ -150,9 +162,7 @@ class OpenCodePollLoop:
                     emitted_assistant_messages.add(message_id)
 
             if restart_poll:
-                logger.info(
-                    "Restarting poll loop for %s after question answer", session_id
-                )
+                logger.info("Restarting poll loop for %s after question answer", session_id)
                 continue
 
             if messages:
@@ -171,11 +181,7 @@ class OpenCodePollLoop:
                         last_error_message_id = last_id
                         error_name = msg_error.get("name", "UnknownError")
                         error_data = msg_error.get("data", {})
-                        error_msg = (
-                            error_data.get("message", "")
-                            if isinstance(error_data, dict)
-                            else str(error_data)
-                        )
+                        error_msg = error_data.get("message", "") if isinstance(error_data, dict) else str(error_data)
 
                         logger.warning(
                             "OpenCode message error detected for %s: %s - %s (retry %d/%d)",
@@ -299,9 +305,7 @@ class OpenCodePollLoop:
                             bool(last_info.get("error")),
                         )
                 except Exception as poll_err:
-                    logger.warning(
-                        f"Failed to poll OpenCode messages (restored): {poll_err}"
-                    )
+                    logger.warning(f"Failed to poll OpenCode messages (restored): {poll_err}")
                     await asyncio.sleep(poll_interval_seconds)
                     continue
 
@@ -323,10 +327,7 @@ class OpenCodePollLoop:
                         tool_state = part.get("state") or {}
                         tool_input = tool_state.get("input") or {}
 
-                        if (
-                            tool_name == "question"
-                            and tool_state.get("status") != "completed"
-                        ):
+                        if tool_name == "question" and tool_state.get("status") != "completed":
                             logger.info(
                                 "Detected question in restored poll for %s, exiting poll loop",
                                 session_id,
@@ -359,22 +360,14 @@ class OpenCodePollLoop:
                             if tool_name == "bash":
                                 cmd = tool_input.get("command", "")
                                 if cmd:
-                                    cmd_preview = (
-                                        cmd[:50] + "..." if len(cmd) > 50 else cmd
-                                    )
+                                    cmd_preview = cmd[:50] + "..." if len(cmd) > 50 else cmd
                                     tool_summary = f"`bash`: `{cmd_preview}`"
                             elif tool_name in ("read", "write", "edit"):
-                                path = tool_input.get("file_path") or tool_input.get(
-                                    "path", ""
-                                )
+                                path = tool_input.get("file_path") or tool_input.get("path", "")
                                 if path:
-                                    tool_summary = (
-                                        f"`{tool_name}`: `{_relative_path(path)}`"
-                                    )
+                                    tool_summary = f"`{tool_name}`: `{_relative_path(path)}`"
 
-                            await self._agent.controller.emit_agent_message(
-                                context, "tool_call", tool_summary
-                            )
+                            await self._agent.controller.emit_agent_message(context, "tool_call", tool_summary)
 
                 if messages:
                     last_message = messages[-1]
@@ -395,18 +388,14 @@ class OpenCodePollLoop:
                                         "notify",
                                         f"OpenCode error: {error_text}",
                                     )
-                                    self._agent.settings_manager.remove_active_poll(
-                                        session_id
-                                    )
+                                    self._agent.settings_manager.remove_active_poll(session_id)
                                     await _remove_ack_reaction()
                                     return
 
                             if last_info.get("finish") != "tool-calls":
                                 if not msg_error:
                                     error_retry_count = 0
-                                final_text = self._agent._extract_response_text(
-                                    last_message
-                                )
+                                final_text = self._agent._extract_response_text(last_message)
                                 break
 
                 await asyncio.sleep(poll_interval_seconds)
@@ -434,9 +423,7 @@ class OpenCodePollLoop:
             self._agent.settings_manager.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
-            logger.info(
-                f"Restored OpenCode poll cancelled for {poll_info.base_session_id}"
-            )
+            logger.info(f"Restored OpenCode poll cancelled for {poll_info.base_session_id}")
             await _remove_ack_reaction()
             await self._question_handler.clear(poll_info.base_session_id)
             self._agent.settings_manager.remove_active_poll(session_id)
@@ -444,17 +431,13 @@ class OpenCodePollLoop:
         except Exception as e:
             error_name = type(e).__name__
             error_details = str(e).strip()
-            error_text = (
-                f"{error_name}: {error_details}" if error_details else error_name
-            )
+            error_text = f"{error_name}: {error_details}" if error_details else error_name
 
             logger.error(f"Restored OpenCode poll failed: {error_text}", exc_info=True)
             try:
                 await server.abort_session(session_id, poll_info.working_path)
             except Exception as abort_err:
-                logger.warning(
-                    f"Failed to abort OpenCode session after error: {abort_err}"
-                )
+                logger.warning(f"Failed to abort OpenCode session after error: {abort_err}")
 
             self._agent.settings_manager.remove_active_poll(session_id)
             await _remove_ack_reaction()

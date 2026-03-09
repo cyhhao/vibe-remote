@@ -1188,6 +1188,8 @@ class FeishuBot(BaseIMClient):
                     await self._handle_routing_backend_select(context, form_value)
                 elif button_name == "routing_submit":
                     await self._handle_routing_form_submit(context, form_value)
+                elif button_name.startswith("resume_submit"):
+                    await self._handle_resume_form_submit(context, form_value, button_name)
                 elif button_name.startswith("question_submit"):
                     await self._handle_question_form_submit(context, form_value, button_name)
                 else:
@@ -1400,6 +1402,116 @@ class FeishuBot(BaseIMClient):
 
         if self.on_callback_query_callback:
             await self.on_callback_query_callback(context, callback_data)
+
+    # ------------------------------------------------------------------
+    # Resume session form submission handler
+    # ------------------------------------------------------------------
+    async def _handle_resume_form_submit(self, context: MessageContext, form_value: Dict[str, Any], button_name: str):
+        """Handle resume session form submission.
+
+        Extracts the selected or manually entered session ID and agent,
+        then delegates to ``_on_resume_session`` (same as Slack/Discord).
+
+        Button name encodes metadata as ``resume_submit:{thread_id}:{host_message_ts}``.
+        """
+        # Parse metadata from button name
+        parts = button_name.split(":")
+        embedded_thread_id = parts[1] if len(parts) > 1 and parts[1] else None
+        host_message_ts = parts[2] if len(parts) > 2 and parts[2] else None
+
+        # Restore thread_id on context if available from embedded metadata
+        if embedded_thread_id and not context.thread_id:
+            context = MessageContext(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                message_id=context.message_id,
+                thread_id=embedded_thread_id,
+                platform_specific=context.platform_specific,
+            )
+
+        # Extract form values
+        session_select = form_value.get("session_select", "")  # "agent|session_id"
+        manual_session_id = (form_value.get("manual_session_id") or "").strip()
+        agent_select = form_value.get("agent_select", "")
+
+        chosen_agent = None
+        chosen_session = None
+
+        # Manual input takes precedence (same logic as Slack/Discord)
+        if manual_session_id:
+            chosen_session = manual_session_id
+            chosen_agent = agent_select or "opencode"
+        elif session_select and "|" in session_select:
+            chosen_agent, chosen_session = session_select.split("|", 1)
+        elif session_select:
+            # No pipe — treat as session_id with agent from selector
+            chosen_session = session_select
+            chosen_agent = agent_select or "opencode"
+
+        logger.info(
+            "Resume form submitted: agent=%s, session=%s, manual=%s, select=%s",
+            chosen_agent,
+            chosen_session,
+            manual_session_id,
+            session_select,
+        )
+
+        if not chosen_session:
+            # Nothing selected or entered — send hint
+            t = lambda key, **kw: self._t(key, context.channel_id, **kw)
+            await self.send_message(context, f"⚠️ {t('modal.resume.description')}")
+            return
+
+        # Replace the form card with a confirmation
+        if context.message_id:
+            agent_label = (chosen_agent or "").capitalize()
+            done_card = json.dumps(
+                {
+                    "schema": "2.0",
+                    "header": {
+                        "title": {
+                            "tag": "plain_text",
+                            "content": "✅ " + self._t("common.submitted", context.channel_id),
+                        },
+                        "template": "green",
+                    },
+                    "body": {
+                        "direction": "vertical",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": f"Agent: **{agent_label}**\nSession: `{chosen_session[:60]}`",
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            )
+            try:
+                from lark_oapi.api.im.v1 import PatchMessageRequest, PatchMessageRequestBody
+
+                req = (
+                    PatchMessageRequest.builder()
+                    .message_id(context.message_id)
+                    .request_body(PatchMessageRequestBody.builder().content(done_card).build())
+                    .build()
+                )
+                resp = await self._lark_client.im.v1.message.apatch(req)
+                if not resp.success():
+                    logger.warning("Failed to update resume card after submit: %s", resp.msg)
+            except Exception as exc:
+                logger.warning("Could not update resume card: %s", exc)
+
+        # Delegate to the resume session callback (same as Slack/Discord)
+        if hasattr(self, "_on_resume_session") and self._on_resume_session:
+            await self._on_resume_session(
+                context.user_id,
+                context.channel_id,
+                context.thread_id,
+                chosen_agent,
+                chosen_session,
+                host_message_ts,
+            )
 
     # ------------------------------------------------------------------
     # Modal-equivalent: interactive cards sent as messages
@@ -1926,36 +2038,129 @@ class FeishuBot(BaseIMClient):
     async def open_resume_session_modal(
         self,
         trigger_id: Any,
-        sessions: list = None,
+        sessions_by_agent: Dict[str, Dict[str, str]] = None,
         channel_id: str = None,
+        thread_id: str = None,
+        host_message_ts: str = None,
+        # Legacy compat — ignored; use sessions_by_agent instead
+        sessions: list = None,
         **kwargs,
     ):
-        """Send an interactive card (v2) for session resume selection."""
+        """Send an interactive JSON 2.0 form card for session resume.
+
+        Aligned with Slack/Discord: session selector dropdown (grouped by agent),
+        manual session ID text input, agent backend selector, and a submit button.
+        """
         t = lambda key, **kw: self._t(key, channel_id, **kw)
 
-        elements = [
-            {"tag": "markdown", "content": f"**{t('modal.resume.title')}**"},
-        ]
+        if sessions_by_agent is None:
+            sessions_by_agent = {}
 
-        if sessions:
-            for session in sessions[:10]:  # Limit to 10 sessions
-                session_id = session.get("id", "")
-                agent = session.get("agent", "opencode")
-                label = session.get("label", session_id[:8])
-                # Encode agent|session_id so the callback handler can extract both
-                elements.append(
+        # --- Build agent options (from registered backends or fallback) ---
+        common_agents = ["claude", "codex", "opencode"]
+        registered_backends = None
+        if getattr(self, "_controller", None) and getattr(self._controller, "agent_service", None):
+            registered_backends = list(self._controller.agent_service.agents.keys())
+        allowed_agents = set(registered_backends) if registered_backends else set(common_agents)
+        agent_options = []
+        for agent in sorted(allowed_agents):
+            agent_options.append({"text": {"tag": "plain_text", "content": agent.capitalize()}, "value": agent})
+
+        # --- Build session options for select_static ---
+        session_options = []
+        total = 0
+        max_options = 100
+        for agent_name, mapping in sessions_by_agent.items():
+            if agent_name not in allowed_agents:
+                continue
+            if not mapping:
+                continue
+            for thread_key, session_id in mapping.items():
+                if total >= max_options:
+                    break
+                thread_label = thread_key.replace("lark_", "", 1) if thread_key.startswith("lark_") else thread_key
+                label = f"[{agent_name}] {session_id[:24]}"
+                desc = f"thread {thread_label[:30]}"
+                session_options.append(
                     {
-                        "tag": "button",
                         "text": {"tag": "plain_text", "content": label},
-                        "type": "default",
-                        "width": "fill",
-                        "behaviors": [
-                            {"type": "callback", "value": {"key": f"resume_session:{agent}:{session_id}"}},
-                        ],
+                        "value": f"{agent_name}|{session_id}",
                     }
                 )
+                total += 1
+            if total >= max_options:
+                break
+
+        # --- Build form elements ---
+        form_elements: list = []
+
+        # Description
+        form_elements.append({"tag": "markdown", "content": t("modal.resume.description")})
+
+        # 1) Session selector (optional — only if sessions exist)
+        if session_options:
+            form_elements.append({"tag": "markdown", "content": f"**{t('modal.resume.pickExisting')}**"})
+            form_elements.append(
+                {
+                    "tag": "select_static",
+                    "name": "session_select",
+                    "placeholder": {"tag": "plain_text", "content": t("modal.resume.selectSession")},
+                    "options": session_options,
+                }
+            )
+            if total >= max_options:
+                form_elements.append({"tag": "markdown", "content": f"_{t('modal.resume.showingFirst100')}_"})
         else:
-            elements.append({"tag": "markdown", "content": f"_{t('command.resume.noStoredSessions')}_"})
+            form_elements.append({"tag": "markdown", "content": f"_{t('modal.resume.noSessionsFound')}_"})
+
+        # Divider
+        form_elements.append({"tag": "column_set", "flex_mode": "none", "columns": []})
+
+        # 2) Manual session ID input
+        form_elements.append({"tag": "markdown", "content": f"**{t('modal.resume.pasteId')}**"})
+        form_elements.append(
+            {
+                "tag": "input",
+                "name": "manual_session_id",
+                "placeholder": {"tag": "plain_text", "content": t("modal.resume.pasteIdPlaceholder")},
+                "label": {"tag": "plain_text", "content": " "},
+            }
+        )
+
+        # 3) Agent backend selector (always shown — needed when using manual input)
+        form_elements.append({"tag": "markdown", "content": f"**{t('modal.resume.agentBackend')}**"})
+        if agent_options:
+            form_elements.append(
+                {
+                    "tag": "select_static",
+                    "name": "agent_select",
+                    "placeholder": {"tag": "plain_text", "content": t("modal.resume.selectAgentBackend")},
+                    "options": agent_options,
+                    "value": {"value": agent_options[0]["value"]} if agent_options else None,
+                }
+            )
+        else:
+            form_elements.append({"tag": "markdown", "content": "_No agent backends available_"})
+
+        # Submit button — encode thread context in name field
+        # (form_value loses behaviors.value, so we encode metadata in button name)
+        meta_parts = [
+            "resume_submit",
+            thread_id or "",
+            host_message_ts or "",
+        ]
+        submit_button_name = ":".join(meta_parts)
+
+        form_elements.append(
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": t("common.resume")},
+                "type": "primary",
+                "width": "fill",
+                "action_type": "form_submit",
+                "name": submit_button_name,
+            }
+        )
 
         card = {
             "schema": "2.0",
@@ -1965,7 +2170,13 @@ class FeishuBot(BaseIMClient):
             },
             "body": {
                 "direction": "vertical",
-                "elements": elements,
+                "elements": [
+                    {
+                        "tag": "form",
+                        "name": "resume_form",
+                        "elements": form_elements,
+                    },
+                ],
             },
         }
         ctx = MessageContext(user_id="system", channel_id=channel_id or "")
