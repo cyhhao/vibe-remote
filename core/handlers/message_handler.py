@@ -507,6 +507,16 @@ class MessageHandler:
                     }
                     content = await self.im_client.download_file(file_info)
                     if content:
+                        # Detect actual MIME type from magic bytes for images
+                        # (some platforms don't provide accurate MIME, e.g. Feishu)
+                        detected = self._detect_image_mime(content)
+                        if detected:
+                            attachment.mimetype = detected[0]
+                            # Fix filename extension to match actual type
+                            ext = detected[1]
+                            base = os.path.splitext(attachment.name)[0]
+                            attachment.name = f"{base}{ext}"
+
                         # Generate filename: {timestamp}_{original_name}
                         timestamp = int(time.time())
                         safe_name = self._sanitize_filename(attachment.name)
@@ -536,6 +546,26 @@ class MessageHandler:
                 continue
 
         return processed if processed else None
+
+    def _detect_image_mime(self, data: bytes) -> Optional[tuple]:
+        """Detect image MIME type from magic bytes.
+
+        Returns:
+            (mimetype, extension) tuple if recognized image, else None.
+        """
+        if len(data) < 12:
+            return None
+        if data[:3] == b"\xff\xd8\xff":
+            return ("image/jpeg", ".jpg")
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            return ("image/png", ".png")
+        if data[:4] == b"GIF8":
+            return ("image/gif", ".gif")
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            return ("image/webp", ".webp")
+        if data[:2] == b"BM":
+            return ("image/bmp", ".bmp")
+        return None
 
     def _sanitize_filename(self, filename: str) -> str:
         """Sanitize filename to be safe for filesystem.
