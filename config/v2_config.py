@@ -147,7 +147,7 @@ class V2Config:
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "reaction"
     show_duration: bool = True  # Show task duration in result messages
-    include_user_info: bool = False  # Prepend user identity to agent messages
+    include_user_info: bool = True  # Prepend user identity to agent messages
     language: str = "en"  # Global language setting (see vibe/i18n)
 
     @classmethod
@@ -262,9 +262,9 @@ class V2Config:
         if not isinstance(show_duration, bool):
             show_duration = True
 
-        include_user_info = payload.get("include_user_info", False)
+        include_user_info = payload.get("include_user_info", True)
         if not isinstance(include_user_info, bool):
-            include_user_info = False
+            include_user_info = True
 
         language = normalize_language(payload.get("language"), default="en")
 
