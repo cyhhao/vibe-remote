@@ -336,8 +336,8 @@ class BaseMarkdownFormatter(ABC):
     ) -> str:
         """Format result message.
 
-        Format: ⏱️_Success_: 2m 24s  (when show_duration=True)
-                ⏱️_Success_           (when show_duration=False)
+        Format: ⏱️ Success: 2m 24s  (when show_duration=True)
+                ⏱️ Success           (when show_duration=False)
         """
         subtype_display = subtype.capitalize() if subtype else "Done"
 
@@ -351,9 +351,9 @@ class BaseMarkdownFormatter(ABC):
             else:
                 duration_str = f"{seconds}s"
 
-            result_text = f"⏱️{self.format_italic(subtype_display)}: {duration_str}"
+            result_text = f"⏱️ {subtype_display}: {duration_str}"
         else:
-            result_text = f"⏱️{self.format_italic(subtype_display)}"
+            result_text = f"⏱️ {subtype_display}"
 
         if result:
             result_text += f"\n\n{result}"

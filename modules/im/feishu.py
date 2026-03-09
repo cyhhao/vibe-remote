@@ -833,10 +833,12 @@ class FeishuBot(BaseIMClient):
                 if message_id and image_key
                 else None
             )
+            # Don't assume PNG — use generic mimetype; actual type is
+            # detected from magic bytes after download in message_handler.
             attachments.append(
                 FileAttachment(
-                    name=f"{image_key}.png",
-                    mimetype="image/png",
+                    name=f"{image_key}.image",
+                    mimetype="image/unknown",
                     url=url,
                     size=None,
                 )
