@@ -415,6 +415,8 @@
   "directoryBrowser": {
     "title": "浏览目录",
     "select": "选择",
-    "empty": "没有子目录"
+    "empty": "没有子目录",
+    "showHidden": "显示隐藏目录",
+    "hideHidden": "隐藏隐藏目录"
   }
 }

@@ -478,7 +478,12 @@ def browse_directory():
     from vibe import api
 
     payload = request.json or {}
-    return jsonify(api.browse_directory(payload.get("path", "~")))
+    return jsonify(
+        api.browse_directory(
+            payload.get("path", "~"),
+            show_hidden=bool(payload.get("show_hidden", False)),
+        )
+    )
 
 
 # =============================================================================

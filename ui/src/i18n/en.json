@@ -415,6 +415,8 @@
   "directoryBrowser": {
     "title": "Browse Directory",
     "select": "Select",
-    "empty": "No subdirectories"
+    "empty": "No subdirectories",
+    "showHidden": "Show hidden directories",
+    "hideHidden": "Hide hidden directories"
   }
 }

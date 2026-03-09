@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Folder, FolderOpen, ChevronRight, ArrowUp, X, Check, RefreshCw } from 'lucide-react';
+import { Folder, FolderOpen, ChevronRight, ArrowUp, X, Check, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import clsx from 'clsx';
@@ -26,6 +26,7 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
   const [dirs, setDirs] = useState<{ name: string; path: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
 
   // Guard against setState after unmount / stale responses
   const mountedRef = useRef(true);
@@ -45,12 +46,13 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
   }, [onClose]);
 
   const browse = useCallback(
-    async (path: string) => {
+    async (path: string, hidden?: boolean) => {
       const id = ++reqIdRef.current;
       setLoading(true);
       setError(null);
+      const useHidden = hidden ?? showHidden;
       try {
-        const result = await api.browseDirectory(path);
+        const result = await api.browseDirectory(path, useHidden);
         if (!mountedRef.current || reqIdRef.current !== id) return;
         if (result.ok) {
           setCurrentPath(result.path ?? path);
@@ -68,7 +70,7 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
         }
       }
     },
-    [api],
+    [api, showHidden],
   );
 
   useEffect(() => {
@@ -106,9 +108,25 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h3 className="font-semibold text-text text-sm">{t('directoryBrowser.title')}</h3>
-          <button onClick={onClose} className="text-muted hover:text-text transition-colors">
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const next = !showHidden;
+                setShowHidden(next);
+                browse(currentPath, next);
+              }}
+              className={clsx(
+                'p-1 rounded transition-colors',
+                showHidden ? 'text-accent' : 'text-muted hover:text-text',
+              )}
+              title={showHidden ? t('directoryBrowser.hideHidden') : t('directoryBrowser.showHidden')}
+            >
+              {showHidden ? <Eye size={15} /> : <EyeOff size={15} />}
+            </button>
+            <button onClick={onClose} className="text-muted hover:text-text transition-colors">
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* Breadcrumb */}
