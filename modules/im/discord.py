@@ -43,6 +43,7 @@ class DiscordBot(BaseIMClient):
         self.settings_manager = None
         self._controller = None
         self._on_ready: Optional[Callable] = None
+        self._user_info_cache: Dict[str, Dict[str, Any]] = {}
 
         self.client.on_ready = self._on_ready_event
         self.client.on_message = self._on_message_event
@@ -321,6 +322,9 @@ class DiscordBot(BaseIMClient):
             return None
 
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
+        cached = self._user_info_cache.get(user_id)
+        if cached is not None:
+            return cached
         uid = self._to_int_id(user_id)
         if uid is None:
             return {"id": user_id}
@@ -332,7 +336,9 @@ class DiscordBot(BaseIMClient):
                 user = None
         if user is None:
             return {"id": user_id}
-        return {"id": str(user.id), "name": user.name, "display_name": user.display_name}
+        info = {"id": str(user.id), "name": user.name, "display_name": user.display_name}
+        self._user_info_cache[user_id] = info
+        return info
 
     async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
         channel = await self._fetch_channel(channel_id)
