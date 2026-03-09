@@ -81,6 +81,10 @@ class Controller:
         # Create platform-specific formatter
         if self.config.platform == "discord":
             formatter = DiscordFormatter()
+        elif self.config.platform == "lark":
+            from modules.im.formatters.feishu_formatter import FeishuFormatter
+
+            formatter = FeishuFormatter()
         else:
             formatter = SlackFormatter()
 
@@ -114,15 +118,27 @@ class Controller:
                 self.im_client.set_settings_manager(self.settings_manager)
                 self.im_client.set_controller(self)
                 logger.info("Injected settings_manager and controller into DiscordBot")
+        elif self.config.platform == "lark":
+            from modules.im.feishu import FeishuBot
+
+            if isinstance(self.im_client, FeishuBot):
+                self.im_client.set_settings_manager(self.settings_manager)
+                self.im_client.set_controller(self)
+                logger.info("Injected settings_manager and controller into FeishuBot")
 
     def _get_lang(self) -> str:
-        self._refresh_language_from_config()
+        self._refresh_config_from_disk()
         return getattr(self.config, "language", "en")
 
     def _t(self, key: str, **kwargs) -> str:
         return i18n_t(key, self._get_lang(), **kwargs)
 
-    def _refresh_language_from_config(self) -> None:
+    def _refresh_config_from_disk(self) -> None:
+        """Hot-reload mutable message-processing settings from config.json.
+
+        Called on every ``_t()`` invocation (guarded by mtime check).
+        Refreshes: language, show_duration, ack_mode, require_mention (global).
+        """
         try:
             config_path = paths.get_config_path()
             if not config_path.exists():
@@ -133,9 +149,23 @@ class Controller:
 
                 v2_config = V2Config.load()
                 self.config.language = v2_config.language
+                self.config.show_duration = v2_config.show_duration
+                self.config.ack_mode = v2_config.ack_mode
+
+                # Sync global require_mention into the IM client's platform config
+                platform = getattr(self.config, "platform", "")
+                im_cfg = getattr(self.im_client, "config", None)
+                if im_cfg is not None and hasattr(im_cfg, "require_mention"):
+                    if platform == "lark" and v2_config.lark:
+                        im_cfg.require_mention = v2_config.lark.require_mention
+                    elif platform == "slack":
+                        im_cfg.require_mention = v2_config.slack.require_mention
+                    elif platform == "discord" and v2_config.discord:
+                        im_cfg.require_mention = v2_config.discord.require_mention
+
                 self._config_mtime = mtime
         except Exception as err:
-            logger.debug("Failed to reload language from config: %s", err)
+            logger.debug("Failed to reload config from disk: %s", err)
 
     def _migrate_language_from_settings(self) -> None:
         """Persist legacy per-channel language into global config if missing."""
@@ -518,7 +548,7 @@ class Controller:
             summary = self._build_result_summary(text, self._get_result_max_chars())
             await self.im_client.send_message(target_context, summary, parse_mode=parse_mode)
 
-            if self.config.platform in {"slack", "discord"} and hasattr(self.im_client, "upload_markdown"):
+            if self.config.platform in {"slack", "discord", "lark"} and hasattr(self.im_client, "upload_markdown"):
                 try:
                     await self.im_client.upload_markdown(
                         target_context,

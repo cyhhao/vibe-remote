@@ -36,6 +36,7 @@ dependencies = [
     "typing_extensions>=4.12.2",
     "PyYAML>=6.0",
     "flask>=3.0.0",
+    "lark-oapi>=1.4.0",
 ]
 
 [project.urls]

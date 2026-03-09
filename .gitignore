@@ -170,3 +170,6 @@ sessions/
 *.bak
 *.swp
 *~
+
+# Worktrees
+.worktrees/

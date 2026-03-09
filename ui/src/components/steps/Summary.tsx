@@ -21,7 +21,9 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const [error, setError] = useState<string | null>(null);
   const platform = data.platform || 'slack';
   const [requireMention, setRequireMention] = useState(
-    platform === 'discord' ? (data.discord?.require_mention || false) : (data.slack?.require_mention || false)
+    platform === 'discord' ? (data.discord?.require_mention || false)
+    : platform === 'lark' ? (data.lark?.require_mention || false)
+    : (data.slack?.require_mention || false)
   );
   const [autoUpdate, setAutoUpdate] = useState(data.update?.auto_update ?? true);
   const navigate = useNavigate();
@@ -34,11 +36,15 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         ...data,
         slack: {
           ...data.slack,
-          require_mention: requireMention,
+          require_mention: platform === 'slack' ? requireMention : data.slack?.require_mention,
         },
         discord: {
           ...data.discord,
-          require_mention: requireMention,
+          require_mention: platform === 'discord' ? requireMention : data.discord?.require_mention,
+        },
+        lark: {
+          ...data.lark,
+          require_mention: platform === 'lark' ? requireMention : data.lark?.require_mention,
         },
         update: {
           ...data.update,
@@ -225,6 +231,13 @@ const buildConfigPayload = (data: any) => {
       guild_allowlist: data.discord?.guild_allowlist || [],
       guild_denylist: data.discord?.guild_denylist || [],
       require_mention: data.discord?.require_mention || false,
+    },
+    lark: {
+      ...data.lark,
+      app_id: data.lark?.app_id || '',
+      app_secret: data.lark?.app_secret || '',
+      domain: data.lark?.domain || 'feishu',
+      require_mention: data.lark?.require_mention || false,
     },
     runtime: {
       // Preserve existing runtime config

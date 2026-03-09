@@ -396,6 +396,10 @@ class DiscordBot(BaseIMClient):
         if message.author and message.author.bot:
             return
 
+        # Hot-reload config BEFORE reading any config values (require_mention, etc.)
+        if self._controller and hasattr(self._controller, "_refresh_config_from_disk"):
+            self._controller._refresh_config_from_disk()
+
         content = self._clean_message_text(message.content)
 
         channel = message.channel
@@ -569,7 +573,11 @@ class DiscordBot(BaseIMClient):
                             default=mt in self.selected_types,
                         )
                     )
-                default_status = self.outer._t("common.on") if global_require_mention else self.outer._t("common.off")
+                default_status = (
+                    self.outer._t("modal.settings.mentionStatusOn")
+                    if global_require_mention
+                    else self.outer._t("modal.settings.mentionStatusOff")
+                )
                 require_options = [
                     discord.SelectOption(
                         label=_prefixed_label(

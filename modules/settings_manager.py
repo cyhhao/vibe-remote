@@ -494,18 +494,16 @@ class SettingsManager:
     def is_message_already_processed(self, channel_id: str, thread_ts: str, message_ts: str) -> bool:
         """Check if a message has already been processed.
 
-        Compares the message_ts with the last processed message ts for the thread.
-        Returns True if message_ts <= last_processed_ts (i.e., already processed).
+        Uses set-based exact-match dedup to support all platforms:
+        - Slack timestamps (epoch.sequence) — monotonic but set-match still works
+        - Feishu message IDs (om_xxxxx) — NOT monotonic, need exact match
+        - Discord message IDs — snowflake integers
         """
-        last_ts = self.sessions_store.get_last_processed_message_ts(channel_id, thread_ts)
-        if not last_ts:
-            return False
-        # Slack ts format is "epoch.sequence", can be compared as strings
-        return message_ts <= last_ts
+        return self.sessions_store.is_message_in_processed_set(channel_id, thread_ts, message_ts)
 
     def record_processed_message(self, channel_id: str, thread_ts: str, message_ts: str) -> None:
         """Record that a message has been processed."""
-        self.sessions_store.set_last_processed_message_ts(channel_id, thread_ts, message_ts)
+        self.sessions_store.add_to_processed_set(channel_id, thread_ts, message_ts)
         logger.debug(f"Recorded processed message: channel={channel_id}, thread={thread_ts}, message={message_ts}")
 
     # ---------------------------------------------

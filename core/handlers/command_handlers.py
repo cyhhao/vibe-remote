@@ -33,8 +33,8 @@ class CommandHandlers:
 
     def _get_channel_context(self, context: MessageContext) -> MessageContext:
         """Get context for channel messages (no thread)"""
-        # For Slack/Discord: send command responses directly to channel, not in thread
-        if self.config.platform in {"slack", "discord"}:
+        # Send command responses directly to channel, not in thread/topic
+        if self.config.platform in {"slack", "discord", "lark"}:
             return MessageContext(
                 user_id=context.user_id,
                 channel_id=context.channel_id,
@@ -70,8 +70,8 @@ class CommandHandlers:
         default_agent = getattr(self.controller.agent_service, "default_agent", None)
         agent_display_name = get_agent_display_name(agent_name, fallback=default_agent or "Unknown")
 
-        # For non-Slack platforms without buttons, use traditional text message
-        if self.config.platform not in {"slack", "discord"}:
+        # For non-interactive platforms, use traditional text message
+        if self.config.platform not in {"slack", "discord", "lark"}:
             formatter = self.im_client.formatter
 
             # Build welcome message using formatter to handle escaping properly
@@ -268,7 +268,26 @@ class CommandHandlers:
                 f"📂 {self._t('command.cwd.changeInstructions')}",
             )
             return
-        if self.config.platform != "slack":
+        if self.config.platform == "lark":
+            if hasattr(self.im_client, "open_change_cwd_modal"):
+                try:
+                    current_cwd = self.controller.get_cwd(context)
+                    await self.im_client.open_change_cwd_modal(
+                        trigger_id=context,
+                        current_cwd=current_cwd,
+                        channel_id=context.channel_id,
+                    )
+                    return
+                except Exception as e:
+                    logger.error(f"Error opening change CWD card for Lark: {e}")
+            channel_context = self._get_channel_context(context)
+            await self.im_client.send_message(
+                channel_context,
+                f"📂 {self._t('command.cwd.changeInstructions')}",
+            )
+            return
+
+        if self.config.platform not in {"slack"}:
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
                 channel_context,
@@ -331,7 +350,30 @@ class CommandHandlers:
                 f"⏮️ {self._t('command.resume.clickButton')}",
             )
             return
-        if self.config.platform != "slack":
+        if self.config.platform == "lark":
+            settings_key = self.controller._get_settings_key(context)
+            sessions_by_agent = self.settings_manager.list_all_agent_sessions(settings_key)
+            # Allow opening modal even with no sessions (user can paste manually)
+            if hasattr(self.im_client, "open_resume_session_modal"):
+                try:
+                    await self.im_client.open_resume_session_modal(
+                        trigger_id=context,
+                        sessions_by_agent=sessions_by_agent or {},
+                        channel_id=context.channel_id,
+                        thread_id=context.thread_id or context.message_id or "",
+                        host_message_ts=context.message_id,
+                    )
+                    return
+                except Exception as e:
+                    logger.error(f"Error opening resume session card for Lark: {e}")
+            channel_context = self._get_channel_context(context)
+            await self.im_client.send_message(
+                channel_context,
+                f"⏮️ {self._t('command.resume.clickButton')}",
+            )
+            return
+
+        if self.config.platform not in {"slack"}:
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(
                 channel_context,

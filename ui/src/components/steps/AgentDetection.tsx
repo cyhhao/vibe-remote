@@ -42,9 +42,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   const isAnyInstalling = Object.values(installingAgents).some(Boolean);
 
   useEffect(() => {
-    if (!data.agents) {
-      detectAll();
-    }
+    detectAll();
   }, []);
 
   const detect = async (name: string) => {
@@ -163,20 +161,29 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="font-semibold capitalize text-lg text-text font-display">{name}</h3>
-                <p className="text-sm text-muted">{t('agentDetection.cliPathDetection')}</p>
               </div>
               <StatusBadge status={agent.status || 'unknown'} loading={checking} />
             </div>
 
             <div className="flex flex-col gap-4">
-              <label className="flex items-center gap-2 text-sm text-text font-medium cursor-pointer w-fit">
-                <input
-                  type="checkbox"
-                  checked={agent.enabled}
-                  onChange={(e) => toggle(name, e.target.checked)}
-                  className="w-4 h-4 text-accent rounded focus:ring-accent border-gray-300"
-                />
-                {t('common.enabled')}
+              <label className="flex items-center gap-2.5 text-sm text-text font-medium cursor-pointer w-fit select-none">
+                <button
+                  role="switch"
+                  aria-checked={agent.enabled}
+                  onClick={() => toggle(name, !agent.enabled)}
+                  className={clsx(
+                    'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40',
+                    agent.enabled ? 'bg-accent' : 'bg-neutral-300'
+                  )}
+                >
+                  <span
+                    className={clsx(
+                      'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                      agent.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                    )}
+                  />
+                </button>
+                {t('common.enable')}
               </label>
 
               <div className="flex-1">

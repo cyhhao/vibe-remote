@@ -7,6 +7,7 @@ import { PlatformSelection } from './steps/PlatformSelection';
 import { AgentDetection } from './steps/AgentDetection';
 import { SlackConfig } from './steps/SlackConfig';
 import { DiscordConfig } from './steps/DiscordConfig';
+import { LarkConfig } from './steps/LarkConfig';
 import { ChannelList } from './steps/ChannelList';
 import { Summary } from './steps/Summary';
 import { useApi } from '../context/ApiContext';
@@ -31,6 +32,13 @@ const buildConfigPayload = (data: any) => ({
     guild_allowlist: data.discord?.guild_allowlist || [],
     guild_denylist: data.discord?.guild_denylist || [],
     require_mention: data.discord?.require_mention || false,
+  },
+  lark: {
+    ...data.lark,
+    app_id: data.lark?.app_id || '',
+    app_secret: data.lark?.app_secret || '',
+    domain: data.lark?.domain || 'feishu',
+    require_mention: data.lark?.require_mention || false,
   },
   runtime: {
     // Preserve existing runtime config
@@ -95,7 +103,9 @@ export const Wizard: React.FC = () => {
       { id: 'platform', title: 'Platform', component: PlatformSelection },
       platform === 'discord'
         ? { id: 'discord', title: 'Discord', component: DiscordConfig }
-        : { id: 'slack', title: 'Slack', component: SlackConfig },
+        : platform === 'lark'
+          ? { id: 'lark', title: 'Lark', component: LarkConfig }
+          : { id: 'slack', title: 'Slack', component: SlackConfig },
       { id: 'channels', title: 'Channels', component: ChannelList },
       { id: 'summary', title: 'Finish', component: Summary },
     ];
@@ -143,7 +153,7 @@ export const Wizard: React.FC = () => {
 
   const persistStep = async (payload: any) => {
     if (!payload) return;
-    if (payload.agents || payload.slack || payload.discord || payload.mode || payload.platform || payload.channelConfigs) {
+    if (payload.agents || payload.slack || payload.discord || payload.lark || payload.mode || payload.platform || payload.channelConfigs) {
       await api.saveConfig(buildConfigPayload(payload));
     }
     if (payload.channelConfigs) {

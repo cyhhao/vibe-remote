@@ -43,6 +43,13 @@ class IMFactory:
                 raise ValueError("Discord configuration not found")
             logger.info("Creating Discord client")
             return DiscordBot(config.discord)
+        if platform == "lark":
+            from .feishu import FeishuBot
+
+            if not config.lark:
+                raise ValueError("Lark configuration not found")
+            logger.info("Creating Lark/Feishu client")
+            return FeishuBot(config.lark)
         raise ValueError(f"Unsupported platform: {platform}")
 
     @staticmethod
@@ -52,7 +59,7 @@ class IMFactory:
         Returns:
             List of supported platform names
         """
-        return ["slack", "discord"]
+        return ["slack", "discord", "lark"]
 
     @staticmethod
     def validate_platform_config(config) -> None:
@@ -74,5 +81,10 @@ class IMFactory:
             if config.discord is None:
                 raise ValueError("Missing configuration for platform: discord")
             config.discord.validate()
+            return
+        if platform == "lark":
+            if config.lark is None:
+                raise ValueError("Missing configuration for platform: lark")
+            config.lark.validate()
             return
         raise ValueError(f"Unsupported platform: {platform}")

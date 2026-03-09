@@ -98,17 +98,32 @@ class BaseAgent(ABC):
         suffix: Optional[str] = None,
         request: Optional[AgentRequest] = None,
     ) -> None:
+        show_duration = getattr(self.config, "show_duration", True)
         if duration_ms is None:
             duration_ms = self._calculate_duration_ms(started_at)
-        formatted = self.im_client.formatter.format_result_message(
-            subtype or "",
-            duration_ms,
-            result_text,
-            show_duration=getattr(self.config, "show_duration", True),
-        )
-        if suffix:
-            formatted = f"{formatted}\n{suffix}"
-        await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
+
+        # When show_duration is disabled, skip the entire result line
+        # unless there is actual result_text or suffix to deliver.
+        if not show_duration:
+            parts = []
+            if result_text and result_text.strip():
+                parts.append(result_text)
+            if suffix:
+                parts.append(suffix)
+            if parts:
+                formatted = "\n".join(parts)
+                await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
+        else:
+            formatted = self.im_client.formatter.format_result_message(
+                subtype or "",
+                duration_ms,
+                result_text,
+                show_duration=True,
+            )
+            if suffix:
+                formatted = f"{formatted}\n{suffix}"
+            await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
+
         # Remove ack reaction after result is sent
         if request:
             await self._remove_ack_reaction(request)

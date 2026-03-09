@@ -93,7 +93,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const platform = config.platform || data.platform || 'slack';
   const botToken = platform === 'discord'
     ? (config.discord?.bot_token || data.discord?.bot_token || '')
-    : (config.slack?.bot_token || config.slackBotToken || '');
+    : platform === 'lark'
+      ? '' // Lark uses app_id + app_secret, not bot_token
+      : (config.slack?.bot_token || config.slackBotToken || '');
+  const larkAppId = config.lark?.app_id || data.lark?.app_id || '';
+  const larkAppSecret = config.lark?.app_secret || data.lark?.app_secret || '';
+  const larkDomain = config.lark?.domain || data.lark?.domain || 'feishu';
 
   useEffect(() => {
     if (platform !== 'discord') return;
@@ -117,7 +122,11 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   };
 
   const loadChannels = async (all?: boolean) => {
-    if (!botToken) return;
+    if (platform === 'lark') {
+      if (!larkAppId || !larkAppSecret) return;
+    } else if (!botToken) {
+      return;
+    }
     const isAll = all ?? browseAll;
     if (isAll) {
       setLoadingAll(true);
@@ -125,7 +134,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       setLoading(true);
     }
     try {
-      if (platform === 'discord') {
+      if (platform === 'lark') {
+        const result = await api.larkChats(larkAppId, larkAppSecret, larkDomain);
+        if (result.ok) {
+          setChannels(result.channels || []);
+        }
+      } else if (platform === 'discord') {
         if (!selectedGuild) {
           setLoading(false);
           return;
@@ -195,6 +209,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   };
 
   useEffect(() => {
+    if (platform === 'lark') {
+      if (larkAppId && larkAppSecret) {
+        loadChannels();
+      }
+      return;
+    }
     if (!botToken) return;
     if (platform === 'discord') {
       loadGuilds();
@@ -204,7 +224,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     } else {
       loadChannels();
     }
-  }, [botToken, platform, selectedGuild]);
+  }, [botToken, platform, selectedGuild, larkAppId, larkAppSecret]);
 
   useEffect(() => {
     if (config.agents?.claude?.enabled) {
@@ -355,7 +375,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('channelList.refreshList')}
             </button>
-            {!browseAll && (
+            {!browseAll && platform !== 'lark' && (
               <button
                 onClick={() => loadChannels(true)}
                 disabled={loadingAll}
@@ -374,7 +394,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 {t('channelList.cantFindChannel')}
               </span>
               <span className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-text text-bg text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-64 whitespace-normal">
-                {platform === 'discord' ? t('channelList.discordInviteBotHint') : t('channelList.inviteBotHint')}
+                {platform === 'discord' ? t('channelList.discordInviteBotHint') : platform === 'lark' ? t('channelList.larkInviteBotHint') : t('channelList.inviteBotHint')}
               </span>
             </span>
             {channels.length === 0 && !loading && (
@@ -407,7 +427,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       </div>
 
       <div className="flex-1 overflow-y-auto border border-border rounded-xl divide-y divide-border bg-panel shadow-sm">
-        {!loading && channels.length === 0 && !botToken && (
+        {!loading && channels.length === 0 && !botToken && platform !== 'lark' && (
           <div className="p-8 text-center text-muted">
             {t('channelList.addTokenFirst')}
           </div>
@@ -509,8 +529,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                       >
                         <option value="">
                           {t('common.default')} ({platform === 'discord'
-                            ? (config.discord?.require_mention ? t('common.enabled') : t('common.disabled'))
-                            : (config.slack?.require_mention ? t('common.enabled') : t('common.disabled'))})
+                            ? (config.discord?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))
+                            : platform === 'lark'
+                              ? (config.lark?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))
+                              : (config.slack?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))})
                         </option>
                         <option value="true">{t('channelList.requireMentionOn')}</option>
                         <option value="false">{t('channelList.requireMentionOff')}</option>

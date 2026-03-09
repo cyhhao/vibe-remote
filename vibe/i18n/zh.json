@@ -12,7 +12,8 @@
     "default": "(默认)",
     "selectOne": "选择一个",
     "selectOneOrMore": "选择一个或多个",
-    "processing": "正在处理 `/{command}`..."
+    "processing": "正在处理 `/{command}`...",
+    "submitted": "已提交"
   },
   "error": {
     "channelNotEnabled": "此频道未启用。请前往控制面板启用它。",
@@ -110,6 +111,9 @@
       "optionDefault": "(默认) - {status}",
       "optionRequireMention": "需要 @提及",
       "optionDontRequireMention": "不需要 @提及",
+      "mentionStatusOn": "需要 @",
+      "mentionStatusOff": "不需要 @",
+      "requireMentionLarkNote": "注意：要在群组中接收非 @提及消息，飞书应用需要 `im:message.group_msg` 权限。",
       "language": "语言 / Language",
       "languageHint": "更改 Slack 与 Web UI 中机器人消息的语言。"
     },
