@@ -90,8 +90,8 @@
     "howItWorksCommandsDesc": "Each thread is an isolated session. Open multiple threads to run parallel tasks.",
     "howItWorksWorkDirLabel": "File Attachments",
     "howItWorksWorkDirDesc": "Attach images or files to your message — the agent can read them directly.",
-    "howItWorksSettingsLabel": "Resume Session",
-    "howItWorksSettingsDesc": "Use /start → Resume Session to continue a previous conversation in a new thread.",
+    "howItWorksSettingsLabel": "Flexible Settings",
+    "howItWorksSettingsDesc": "Use /start → Settings to switch agents, models, reasoning effort, or hide verbose message types.",
     "howItWorksFooter": "Just type to chat with {agent}. No special commands needed!",
     "genericTitle": "Info: {topic}",
     "genericFooter": "This feature is coming soon!"
