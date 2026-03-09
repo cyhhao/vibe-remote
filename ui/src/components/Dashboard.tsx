@@ -318,8 +318,8 @@ export const Dashboard: React.FC = () => {
                                 : config.platform === 'lark'
                                 ? config.lark?.require_mention
                                 : config.slack?.require_mention)
-                                ? t('common.enabled')
-                                : t('common.disabled')}
+                                ? t('channelList.mentionStatusOn')
+                                : t('channelList.mentionStatusOff')}
                         </button>
 
                     </div>
