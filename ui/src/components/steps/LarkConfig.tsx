@@ -11,7 +11,7 @@ const LARK_PERMISSIONS_JSON = `{
       "im:chat",
       "im:message",
       "im:message.group_at_msg:readonly",
-      "im:message.group_msg:readonly",
+      "im:message.group_msg",
       "im:message.p2p_msg:readonly",
       "im:message.reactions:read",
       "im:message.reactions:write_only",
