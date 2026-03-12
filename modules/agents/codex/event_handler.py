@@ -84,13 +84,17 @@ class CodexEventHandler:
         turn_obj = params.get("turn", {})
         turn_id = turn_obj.get("id", "") if isinstance(turn_obj, dict) else ""
         status = turn_obj.get("status", "") if isinstance(turn_obj, dict) else ""
-        self._agent._session_mgr.clear_active_turn(request.base_session_id)
-        # Clean up active request on turn completion
-        self._agent._active_requests.pop(request.base_session_id, None)
+        # Only clean up active request if this turn is still the active one
+        # (avoids race where a new request already replaced it)
+        current_turn = self._agent._session_mgr.get_active_turn(request.base_session_id)
+        if current_turn == turn_id or not current_turn:
+            self._agent._session_mgr.clear_active_turn(request.base_session_id)
+            self._agent._active_requests.pop(request.base_session_id, None)
 
         if status == "interrupted":
             # Turn was interrupted — discard pending text, no result message
             self._pending_assistant.pop(turn_id, None)
+            await self._agent._remove_ack_reaction(request)
             return
 
         if status == "failed":
@@ -103,6 +107,7 @@ class CodexEventHandler:
                 "notify",
                 f"❌ Codex turn failed: {error_msg}",
             )
+            await self._agent._remove_ack_reaction(request)
             return
 
         pending = self._pending_assistant.pop(turn_id, None)

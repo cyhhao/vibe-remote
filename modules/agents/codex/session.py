@@ -49,6 +49,13 @@ class CodexSessionManager:
     def set_settings_key(self, base_session_id: str, settings_key: str) -> None:
         self._settings_keys[base_session_id] = settings_key
 
+    def get_settings_key(self, base_session_id: str) -> Optional[str]:
+        return self._settings_keys.get(base_session_id)
+
+    def get_sessions_by_settings_key(self, settings_key: str) -> list[str]:
+        """Return base_session_ids associated with a given settings_key."""
+        return [bid for bid, sk in self._settings_keys.items() if sk == settings_key]
+
     def clear_by_settings_key(self, settings_key: str) -> int:
         """Remove all sessions associated with a given settings_key. Returns count cleared."""
         to_remove = [bid for bid, sk in self._settings_keys.items() if sk == settings_key]

@@ -43,6 +43,10 @@ class CodexTransport:
         self._notification_cb: Optional[Callable[[str, dict[str, Any]], Awaitable[None]]] = None
         self._server_request_cb: Optional[Callable[[int | str, str, dict[str, Any]], Awaitable[dict[str, Any]]]] = None
 
+        # Ordered notification queue
+        self._notify_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+        self._notify_task: Optional[asyncio.Task[None]] = None
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -73,6 +77,7 @@ class CodexTransport:
         # Start background readers
         self._reader_task = asyncio.create_task(self._reader_loop())
         self._stderr_task = asyncio.create_task(self._stderr_reader())
+        self._notify_task = asyncio.create_task(self._notify_worker())
 
         # Perform initialize handshake
         try:
@@ -136,11 +141,12 @@ class CodexTransport:
         logger.info("Codex app-server stopped")
 
     def _cleanup_tasks(self) -> None:
-        for task in (self._reader_task, self._stderr_task):
+        for task in (self._reader_task, self._stderr_task, self._notify_task):
             if task and not task.done():
                 task.cancel()
         self._reader_task = None
         self._stderr_task = None
+        self._notify_task = None
 
     @property
     def is_alive(self) -> bool:
@@ -280,19 +286,24 @@ class CodexTransport:
         # Notification (no id, has method)
         if method:
             if self._notification_cb:
-                # Fire-and-forget to avoid blocking the reader loop
-                asyncio.create_task(self._safe_notify(method, params))
+                # Queue to preserve ordering instead of fire-and-forget
+                self._notify_queue.put_nowait((method, params))
             return
 
         logger.debug("Unrecognized Codex message: %s", str(msg)[:200])
 
-    async def _safe_notify(self, method: str, params: dict[str, Any]) -> None:
-        """Run notification callback with error handling (used as fire-and-forget task)."""
+    async def _notify_worker(self) -> None:
+        """Process notifications in order from the queue."""
         try:
-            assert self._notification_cb is not None
-            await self._notification_cb(method, params)
-        except Exception:
-            logger.exception("Error in notification handler for %s", method)
+            while True:
+                method, params = await self._notify_queue.get()
+                try:
+                    assert self._notification_cb is not None
+                    await self._notification_cb(method, params)
+                except Exception:
+                    logger.exception("Error in notification handler for %s", method)
+        except asyncio.CancelledError:
+            return
 
     async def _send_response(self, req_id: int | str, result: dict[str, Any]) -> None:
         await self._write_message({"jsonrpc": "2.0", "id": req_id, "result": result})

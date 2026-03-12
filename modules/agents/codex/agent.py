@@ -132,7 +132,12 @@ class CodexAgent(BaseAgent):
                     turn_params["effort"] = effective_effort
 
                 resp = await transport.send_request("turn/start", turn_params)
+                # turn/start returns Turn directly OR may nest under "turn"
                 turn_id = resp.get("id", "")
+                if not turn_id:
+                    turn_obj = resp.get("turn")
+                    if isinstance(turn_obj, dict):
+                        turn_id = turn_obj.get("id", "")
                 if turn_id:
                     self._session_mgr.set_active_turn(request.base_session_id, turn_id)
                 logger.info(
@@ -189,7 +194,7 @@ class CodexAgent(BaseAgent):
         to_clear = [
             bid
             for bid in self._session_mgr.all_base_sessions()
-            if self._session_mgr._settings_keys.get(bid) == settings_key
+            if self._session_mgr.get_settings_key(bid) == settings_key
         ]
 
         count = self._session_mgr.clear_by_settings_key(settings_key)
@@ -256,11 +261,23 @@ class CodexAgent(BaseAgent):
         }
 
         resp = await transport.send_request("thread/start", params)
+        # thread/start returns Thread directly OR may nest under "thread"
         thread_id = resp.get("id", "")
+        if not thread_id:
+            thread_obj = resp.get("thread")
+            if isinstance(thread_obj, dict):
+                thread_id = thread_obj.get("id", "")
         if not thread_id:
             raise RuntimeError("Codex thread/start returned no thread id")
 
         self._session_mgr.set_thread_id(request.base_session_id, thread_id)
+        # Also persist for resume support
+        self.settings_manager.set_agent_session_mapping(
+            request.settings_key,
+            self.name,
+            request.base_session_id,
+            thread_id,
+        )
         return thread_id
 
     async def _start_or_resume_thread(
@@ -281,7 +298,12 @@ class CodexAgent(BaseAgent):
                     "thread/resume",
                     {"threadId": persisted},
                 )
+                # thread/resume returns Thread directly OR may nest under "thread"
                 thread_id = resp.get("id", "")
+                if not thread_id:
+                    thread_obj = resp.get("thread")
+                    if isinstance(thread_obj, dict):
+                        thread_id = thread_obj.get("id", "")
                 if thread_id:
                     self._session_mgr.set_thread_id(request.base_session_id, thread_id)
                     logger.info("Resumed Codex thread %s for session %s", thread_id, request.base_session_id)
