@@ -25,13 +25,24 @@ class OpenCodePollLoop:
         messages: list[Dict[str, Any]],
         baseline_message_ids: set[str],
         last_message_id: Optional[str] = None,
+        emitted_message_ids: Optional[set[str]] = None,
     ) -> Optional[str]:
         """Walk backward through messages to find response text.
 
         When the last completed message has no text parts (e.g. it only
         contains tool calls or step markers), search earlier messages for
         the actual assistant response text.
+
+        Messages in *emitted_message_ids* are skipped so that text already
+        sent to the user (e.g. question preface text) is not re-sent as the
+        final result.
         """
+        skip_ids: set[str] = set()
+        if last_message_id:
+            skip_ids.add(last_message_id)
+        if emitted_message_ids:
+            skip_ids.update(emitted_message_ids)
+
         for message in reversed(messages):
             info = message.get("info", {})
             msg_id = info.get("id")
@@ -39,8 +50,8 @@ class OpenCodePollLoop:
                 continue
             if info.get("role") != "assistant":
                 continue
-            if msg_id == last_message_id:
-                continue  # already tried this one
+            if msg_id in skip_ids:
+                continue
             text = self._agent._extract_response_text(message)
             if text:
                 logger.info(
@@ -273,6 +284,7 @@ class OpenCodePollLoop:
                                 messages,
                                 baseline_message_ids,
                                 last_message_id=last_id,
+                                emitted_message_ids=emitted_assistant_messages,
                             )
                         break
 
@@ -439,7 +451,7 @@ class OpenCodePollLoop:
                                 if not msg_error:
                                     error_retry_count = 0
                                 final_text = self._agent._extract_response_text(last_message)
-                                if not final_text:
+                                if not final_text and not msg_error:
                                     logger.warning(
                                         "Restored poll: last message %s has no text parts (finish=%s); "
                                         "searching earlier messages for response text",
@@ -450,6 +462,7 @@ class OpenCodePollLoop:
                                         messages,
                                         baseline_message_ids,
                                         last_message_id=last_info.get("id"),
+                                        emitted_message_ids=emitted_assistant_messages,
                                     )
                                 break
 
