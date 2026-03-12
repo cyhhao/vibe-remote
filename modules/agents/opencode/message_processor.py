@@ -26,7 +26,7 @@ class OpenCodeMessageProcessorMixin:
         if not text_parts and parts:
             part_types = [p.get("type") for p in parts]
             msg_id = response.get("info", {}).get("id", "unknown")
-            logger.warning(
+            logger.info(
                 "OpenCode message %s has no text parts; part types: %s",
                 msg_id,
                 part_types,

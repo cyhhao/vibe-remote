@@ -273,7 +273,7 @@ class OpenCodePollLoop:
                         if not msg_error:
                             error_retry_count = 0
                         final_text = self._agent._extract_response_text(last_message)
-                        if not final_text:
+                        if not final_text and not msg_error:
                             logger.warning(
                                 "Last message %s has no text parts (finish=%s); "
                                 "searching earlier messages for response text",
