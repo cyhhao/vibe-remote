@@ -20,6 +20,37 @@ class OpenCodePollLoop:
         self._agent = agent
         self._question_handler = question_handler
 
+    def _fallback_extract_text(
+        self,
+        messages: list[Dict[str, Any]],
+        baseline_message_ids: set[str],
+        last_message_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Walk backward through messages to find response text.
+
+        When the last completed message has no text parts (e.g. it only
+        contains tool calls or step markers), search earlier messages for
+        the actual assistant response text.
+        """
+        for message in reversed(messages):
+            info = message.get("info", {})
+            msg_id = info.get("id")
+            if not msg_id or msg_id in baseline_message_ids:
+                continue
+            if info.get("role") != "assistant":
+                continue
+            if msg_id == last_message_id:
+                continue  # already tried this one
+            text = self._agent._extract_response_text(message)
+            if text:
+                logger.info(
+                    "Fallback: found response text in message %s instead of last message %s",
+                    msg_id,
+                    last_message_id,
+                )
+                return text
+        return None
+
     async def run_prompt_poll(
         self,
         request: AgentRequest,
@@ -231,6 +262,18 @@ class OpenCodePollLoop:
                         if not msg_error:
                             error_retry_count = 0
                         final_text = self._agent._extract_response_text(last_message)
+                        if not final_text:
+                            logger.warning(
+                                "Last message %s has no text parts (finish=%s); "
+                                "searching earlier messages for response text",
+                                last_id,
+                                last_info.get("finish"),
+                            )
+                            final_text = self._fallback_extract_text(
+                                messages,
+                                baseline_message_ids,
+                                last_message_id=last_id,
+                            )
                         break
 
             await asyncio.sleep(poll_interval_seconds)
@@ -396,6 +439,18 @@ class OpenCodePollLoop:
                                 if not msg_error:
                                     error_retry_count = 0
                                 final_text = self._agent._extract_response_text(last_message)
+                                if not final_text:
+                                    logger.warning(
+                                        "Restored poll: last message %s has no text parts (finish=%s); "
+                                        "searching earlier messages for response text",
+                                        last_info.get("id"),
+                                        last_info.get("finish"),
+                                    )
+                                    final_text = self._fallback_extract_text(
+                                        messages,
+                                        baseline_message_ids,
+                                        last_message_id=last_info.get("id"),
+                                    )
                                 break
 
                 await asyncio.sleep(poll_interval_seconds)
