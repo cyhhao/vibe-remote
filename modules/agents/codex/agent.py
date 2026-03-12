@@ -73,9 +73,6 @@ class CodexAgent(BaseAgent):
             await self._remove_ack_reaction(request)
             return
 
-        # Store the active request so notifications can route to the right context
-        self._active_requests[request.base_session_id] = request
-
         # Track settings_key for scoped clear
         self._session_mgr.set_settings_key(request.base_session_id, request.settings_key)
 
@@ -86,6 +83,9 @@ class CodexAgent(BaseAgent):
             self._session_locks[request.base_session_id] = asyncio.Lock()
 
         async with self._session_locks[request.base_session_id]:
+            # Set active request INSIDE the lock to prevent race where
+            # request B overwrites while request A's turn is still completing
+            self._active_requests[request.base_session_id] = request
             try:
                 # Get or create thread (with resume support)
                 thread_id = self._session_mgr.get_thread_id(request.base_session_id)

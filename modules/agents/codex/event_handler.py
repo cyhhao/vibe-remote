@@ -87,27 +87,38 @@ class CodexEventHandler:
         # Only clean up active request if this turn is still the active one
         # (avoids race where a new request already replaced it)
         current_turn = self._agent._session_mgr.get_active_turn(request.base_session_id)
-        if current_turn == turn_id or not current_turn:
+        is_current = current_turn == turn_id or not current_turn
+        if is_current:
             self._agent._session_mgr.clear_active_turn(request.base_session_id)
             self._agent._active_requests.pop(request.base_session_id, None)
 
         if status == "interrupted":
             # Turn was interrupted — discard pending text, no result message
             self._pending_assistant.pop(turn_id, None)
-            await self._agent._remove_ack_reaction(request)
+            if is_current:
+                await self._agent._remove_ack_reaction(request)
             return
 
         if status == "failed":
             # Turn failed — emit error, discard pending text
             self._pending_assistant.pop(turn_id, None)
-            error_obj = turn_obj.get("error", {}) if isinstance(turn_obj, dict) else {}
-            error_msg = error_obj.get("message", "Unknown error") if isinstance(error_obj, dict) else "Unknown error"
-            await self._agent.controller.emit_agent_message(
-                request.context,
-                "notify",
-                f"❌ Codex turn failed: {error_msg}",
-            )
-            await self._agent._remove_ack_reaction(request)
+            if is_current:
+                error_obj = turn_obj.get("error", {}) if isinstance(turn_obj, dict) else {}
+                error_msg = (
+                    error_obj.get("message", "Unknown error") if isinstance(error_obj, dict) else "Unknown error"
+                )
+                await self._agent.controller.emit_agent_message(
+                    request.context,
+                    "notify",
+                    f"❌ Codex turn failed: {error_msg}",
+                )
+                await self._agent._remove_ack_reaction(request)
+            return
+
+        # Stale turn completion — discard pending text, no side effects
+        if not is_current:
+            self._pending_assistant.pop(turn_id, None)
+            logger.debug("Ignoring stale turn/completed for turn %s (current: %s)", turn_id, current_turn)
             return
 
         pending = self._pending_assistant.pop(turn_id, None)
@@ -135,6 +146,12 @@ class CodexEventHandler:
         item = params.get("item", {})
         item_type = item.get("type")
         turn_id = params.get("turnId", "")
+
+        # Ignore items from stale turns to avoid leaking output into a new turn
+        current_turn = self._agent._session_mgr.get_active_turn(request.base_session_id)
+        if current_turn and turn_id and current_turn != turn_id:
+            logger.debug("Ignoring stale item/%s for turn %s (current: %s)", item_type, turn_id, current_turn)
+            return
 
         if item_type == "agentMessage":
             text = item.get("text", "")
