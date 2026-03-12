@@ -75,18 +75,23 @@ class CodexTransport:
         self._stderr_task = asyncio.create_task(self._stderr_reader())
 
         # Perform initialize handshake
-        resp = await self.send_request(
-            "initialize",
-            {
-                "clientInfo": {
-                    "name": "vibe-remote",
-                    "version": "1.0.0",
+        try:
+            resp = await self.send_request(
+                "initialize",
+                {
+                    "clientInfo": {
+                        "name": "vibe-remote",
+                        "version": "1.0.0",
+                    },
                 },
-            },
-        )
-        logger.info("Codex app-server initialized: %s", resp)
-        await self.send_notification("initialized")
-        self._initialized = True
+            )
+            logger.info("Codex app-server initialized: %s", resp)
+            await self.send_notification("initialized")
+            self._initialized = True
+        except Exception:
+            logger.exception("Codex app-server handshake failed, cleaning up")
+            await self.stop()
+            raise
 
     async def stop(self) -> None:
         """Gracefully shut down the app-server process."""
@@ -174,7 +179,15 @@ class CodexTransport:
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
         self._pending[req_id] = fut
 
-        await self._write_message(msg)
+        try:
+            await self._write_message(msg)
+        except Exception:
+            # Clean up the pending future so it doesn't leak
+            self._pending.pop(req_id, None)
+            if not fut.done():
+                fut.set_exception(ConnectionError(f"Failed to send {method}"))
+            raise
+
         try:
             return await asyncio.wait_for(fut, timeout=120.0)
         except asyncio.TimeoutError:
@@ -267,13 +280,19 @@ class CodexTransport:
         # Notification (no id, has method)
         if method:
             if self._notification_cb:
-                try:
-                    await self._notification_cb(method, params)
-                except Exception:
-                    logger.exception("Error in notification handler for %s", method)
+                # Fire-and-forget to avoid blocking the reader loop
+                asyncio.create_task(self._safe_notify(method, params))
             return
 
         logger.debug("Unrecognized Codex message: %s", str(msg)[:200])
+
+    async def _safe_notify(self, method: str, params: dict[str, Any]) -> None:
+        """Run notification callback with error handling (used as fire-and-forget task)."""
+        try:
+            assert self._notification_cb is not None
+            await self._notification_cb(method, params)
+        except Exception:
+            logger.exception("Error in notification handler for %s", method)
 
     async def _send_response(self, req_id: int | str, result: dict[str, Any]) -> None:
         await self._write_message({"jsonrpc": "2.0", "id": req_id, "result": result})

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import Any, Dict, Optional
 
 from modules.agents.base import AgentRequest, BaseAgent
@@ -38,8 +37,8 @@ class CodexAgent(BaseAgent):
 
         # base_session_id → active AgentRequest (for routing notifications)
         self._active_requests: Dict[str, AgentRequest] = {}
-        # Track which base_sessions have emitted the init system message
-        self._initialized_sessions: set[str] = set()
+        # base_session_id → asyncio.Lock (serialize turn lifecycle per session)
+        self._session_locks: Dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------
     # BaseAgent interface
@@ -77,72 +76,80 @@ class CodexAgent(BaseAgent):
         # Store the active request so notifications can route to the right context
         self._active_requests[request.base_session_id] = request
 
+        # Track settings_key for scoped clear
+        self._session_mgr.set_settings_key(request.base_session_id, request.settings_key)
+
         await self._delete_ack(request)
 
-        try:
-            # Get or create thread
-            thread_id = self._session_mgr.get_thread_id(request.base_session_id)
+        # Serialize turn lifecycle per session
+        if request.base_session_id not in self._session_locks:
+            self._session_locks[request.base_session_id] = asyncio.Lock()
 
-            if not thread_id:
-                thread_id = await self._start_thread(transport, request)
+        async with self._session_locks[request.base_session_id]:
+            try:
+                # Get or create thread (with resume support)
+                thread_id = self._session_mgr.get_thread_id(request.base_session_id)
 
-            # If a turn is active, interrupt it first
-            active_turn = self._session_mgr.get_active_turn(request.base_session_id)
-            if active_turn:
+                if not thread_id:
+                    thread_id = await self._start_or_resume_thread(transport, request)
+
+                # If a turn is active, interrupt it first
+                active_turn = self._session_mgr.get_active_turn(request.base_session_id)
+                if active_turn:
+                    await self.controller.emit_agent_message(
+                        request.context,
+                        "notify",
+                        "⚠️ Interrupting previous Codex task...",
+                    )
+                    try:
+                        await transport.send_request(
+                            "turn/interrupt",
+                            {"threadId": thread_id, "turnId": active_turn},
+                        )
+                        # Clear pending text for the interrupted turn
+                        self._event_handler.clear_pending(active_turn)
+                        self._session_mgr.clear_active_turn(request.base_session_id)
+                    except Exception as e:
+                        logger.warning("Failed to interrupt turn %s: %s", active_turn, e)
+
+                # Build input items
+                input_items = self._build_input(request)
+
+                # Read channel-level configuration overrides
+                channel_settings = self.settings_manager.get_channel_settings(request.context.channel_id)
+                routing = channel_settings.routing if channel_settings else None
+                effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
+                effective_effort = routing.codex_reasoning_effort if routing else None
+
+                # Start a new turn
+                turn_params: Dict[str, Any] = {
+                    "threadId": thread_id,
+                    "input": input_items,
+                }
+                if effective_model:
+                    turn_params["model"] = effective_model
+                if effective_effort:
+                    turn_params["effort"] = effective_effort
+
+                resp = await transport.send_request("turn/start", turn_params)
+                turn_id = resp.get("id", "")
+                if turn_id:
+                    self._session_mgr.set_active_turn(request.base_session_id, turn_id)
+                logger.info(
+                    "Codex turn started: thread=%s turn=%s session=%s",
+                    thread_id,
+                    turn_id,
+                    request.composite_session_id,
+                )
+
+            except Exception as e:
+                logger.error("Error in Codex handle_message: %s", e, exc_info=True)
                 await self.controller.emit_agent_message(
                     request.context,
                     "notify",
-                    "⚠️ Interrupting previous Codex task...",
+                    f"❌ Codex error: {e}",
                 )
-                try:
-                    await transport.send_request(
-                        "turn/interrupt",
-                        {"threadId": thread_id, "turnId": active_turn},
-                    )
-                    # Clear pending text for the interrupted turn
-                    self._event_handler.clear_pending(active_turn)
-                    self._session_mgr.clear_active_turn(request.base_session_id)
-                except Exception as e:
-                    logger.warning("Failed to interrupt turn %s: %s", active_turn, e)
-
-            # Build input items
-            input_items = self._build_input(request)
-
-            # Read channel-level configuration overrides
-            channel_settings = self.settings_manager.get_channel_settings(request.context.channel_id)
-            routing = channel_settings.routing if channel_settings else None
-            effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
-            effective_effort = routing.codex_reasoning_effort if routing else None
-
-            # Start a new turn
-            turn_params: Dict[str, Any] = {
-                "threadId": thread_id,
-                "input": input_items,
-            }
-            if effective_model:
-                turn_params["model"] = effective_model
-            if effective_effort:
-                turn_params["effort"] = effective_effort
-
-            resp = await transport.send_request("turn/start", turn_params)
-            turn_id = resp.get("turnId", "")
-            if turn_id:
-                self._session_mgr.set_active_turn(request.base_session_id, turn_id)
-            logger.info(
-                "Codex turn started: thread=%s turn=%s session=%s",
-                thread_id,
-                turn_id,
-                request.composite_session_id,
-            )
-
-        except Exception as e:
-            logger.error("Error in Codex handle_message: %s", e, exc_info=True)
-            await self.controller.emit_agent_message(
-                request.context,
-                "notify",
-                f"❌ Codex error: {e}",
-            )
-            await self._remove_ack_reaction(request)
+                await self._remove_ack_reaction(request)
 
     async def handle_stop(self, request: AgentRequest) -> bool:
         """Gracefully interrupt the active turn."""
@@ -175,21 +182,22 @@ class CodexAgent(BaseAgent):
             return False
 
     async def clear_sessions(self, settings_key: str) -> int:
-        """Clear all sessions and optionally stop transports."""
+        """Clear sessions scoped to a specific settings_key."""
         self.settings_manager.clear_agent_sessions(settings_key, self.name)
 
-        count = self._session_mgr.clear_all()
+        # Get base_session_ids to clear before removing them
+        to_clear = [
+            bid
+            for bid in self._session_mgr.all_base_sessions()
+            if self._session_mgr._settings_keys.get(bid) == settings_key
+        ]
 
-        # Stop all transports — they'll be recreated on next message
-        for cwd, transport in list(self._transports.items()):
-            try:
-                await transport.stop()
-            except Exception as e:
-                logger.warning("Error stopping transport for %s: %s", cwd, e)
-        self._transports.clear()
-        self._transport_locks.clear()
-        self._active_requests.clear()
-        self._initialized_sessions.clear()
+        count = self._session_mgr.clear_by_settings_key(settings_key)
+
+        # Clean up active requests and session locks for cleared sessions
+        for bid in to_clear:
+            self._active_requests.pop(bid, None)
+            self._session_locks.pop(bid, None)
 
         return count
 
@@ -248,12 +256,40 @@ class CodexAgent(BaseAgent):
         }
 
         resp = await transport.send_request("thread/start", params)
-        thread_id = resp.get("threadId", "")
+        thread_id = resp.get("id", "")
         if not thread_id:
-            raise RuntimeError("Codex thread/start returned no threadId")
+            raise RuntimeError("Codex thread/start returned no thread id")
 
         self._session_mgr.set_thread_id(request.base_session_id, thread_id)
         return thread_id
+
+    async def _start_or_resume_thread(
+        self,
+        transport: CodexTransport,
+        request: AgentRequest,
+    ) -> str:
+        """Try to resume a persisted thread, fall back to creating a new one."""
+        # Check if we have a persisted Codex thread_id from settings_manager
+        persisted = self.settings_manager.get_agent_session_id(
+            request.settings_key,
+            request.base_session_id,
+            self.name,
+        )
+        if persisted:
+            try:
+                resp = await transport.send_request(
+                    "thread/resume",
+                    {"threadId": persisted},
+                )
+                thread_id = resp.get("id", "")
+                if thread_id:
+                    self._session_mgr.set_thread_id(request.base_session_id, thread_id)
+                    logger.info("Resumed Codex thread %s for session %s", thread_id, request.base_session_id)
+                    return thread_id
+            except Exception as e:
+                logger.warning("Failed to resume Codex thread %s: %s, starting new", persisted, e)
+
+        return await self._start_thread(transport, request)
 
     # ------------------------------------------------------------------
     # Input building
@@ -297,8 +333,14 @@ class CodexAgent(BaseAgent):
 
     async def _on_notification(self, method: str, params: Dict[str, Any]) -> None:
         """Route a server notification to the event handler."""
-        # Find the active request by threadId
+        # Find the active request by threadId.
+        # Most notifications have threadId at top level, but thread/started
+        # nests it under params.thread.id per v2 protocol.
         thread_id = params.get("threadId", "")
+        if not thread_id:
+            thread_obj = params.get("thread")
+            if isinstance(thread_obj, dict):
+                thread_id = thread_obj.get("id", "")
         request = self._find_request_for_thread(thread_id)
         if not request:
             logger.debug(

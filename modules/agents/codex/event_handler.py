@@ -45,7 +45,8 @@ class CodexEventHandler:
     # ------------------------------------------------------------------
 
     async def _on_thread_started(self, params: dict[str, Any], request: AgentRequest) -> None:
-        thread_id = params.get("threadId", "")
+        thread_obj = params.get("thread", {})
+        thread_id = thread_obj.get("id", "") if isinstance(thread_obj, dict) else ""
         if thread_id:
             self._agent._session_mgr.set_thread_id(request.base_session_id, thread_id)
             # Persist thread_id in settings_manager for /clear resume
@@ -69,7 +70,8 @@ class CodexEventHandler:
         )
 
     async def _on_turn_started(self, params: dict[str, Any], request: AgentRequest) -> None:
-        turn_id = params.get("turnId", "")
+        turn_obj = params.get("turn", {})
+        turn_id = turn_obj.get("id", "") if isinstance(turn_obj, dict) else ""
         if turn_id:
             self._agent._session_mgr.set_active_turn(request.base_session_id, turn_id)
         logger.info(
@@ -79,8 +81,29 @@ class CodexEventHandler:
         )
 
     async def _on_turn_completed(self, params: dict[str, Any], request: AgentRequest) -> None:
-        turn_id = params.get("turnId", "")
+        turn_obj = params.get("turn", {})
+        turn_id = turn_obj.get("id", "") if isinstance(turn_obj, dict) else ""
+        status = turn_obj.get("status", "") if isinstance(turn_obj, dict) else ""
         self._agent._session_mgr.clear_active_turn(request.base_session_id)
+        # Clean up active request on turn completion
+        self._agent._active_requests.pop(request.base_session_id, None)
+
+        if status == "interrupted":
+            # Turn was interrupted — discard pending text, no result message
+            self._pending_assistant.pop(turn_id, None)
+            return
+
+        if status == "failed":
+            # Turn failed — emit error, discard pending text
+            self._pending_assistant.pop(turn_id, None)
+            error_obj = turn_obj.get("error", {}) if isinstance(turn_obj, dict) else {}
+            error_msg = error_obj.get("message", "Unknown error") if isinstance(error_obj, dict) else "Unknown error"
+            await self._agent.controller.emit_agent_message(
+                request.context,
+                "notify",
+                f"❌ Codex turn failed: {error_msg}",
+            )
+            return
 
         pending = self._pending_assistant.pop(turn_id, None)
         if pending:
@@ -108,15 +131,8 @@ class CodexEventHandler:
         item_type = item.get("type")
         turn_id = params.get("turnId", "")
 
-        if item_type == "agent_message":
-            text = ""
-            # Extract text from content array
-            for content in item.get("content", []):
-                if isinstance(content, dict) and content.get("type") == "Text":
-                    text += content.get("text", "")
-            # Fallback to top-level text field
-            if not text:
-                text = item.get("text", "")
+        if item_type == "agentMessage":
+            text = item.get("text", "")
             if text:
                 # Emit previous pending message as assistant, buffer this one
                 prev = self._pending_assistant.get(turn_id)
@@ -130,11 +146,11 @@ class CodexEventHandler:
                     )
                 self._pending_assistant[turn_id] = (text, "markdown")
 
-        elif item_type == "command_execution":
+        elif item_type == "commandExecution":
             command = item.get("command", "")
             status = item.get("status", "")
             exit_code = item.get("exitCode")
-            output = item.get("output", "")
+            output = item.get("aggregatedOutput", "")
             if command:
                 toolcall = self._agent.im_client.formatter.format_toolcall(
                     "bash",
@@ -152,28 +168,36 @@ class CodexEventHandler:
                     parse_mode="markdown",
                 )
 
-        elif item_type == "file_change":
-            file_path = item.get("filePath", "")
-            change_type = item.get("changeType", "")
-            if file_path:
-                toolcall = self._agent.im_client.formatter.format_toolcall(
-                    "file_change",
-                    {"file": file_path, "type": change_type},
-                )
-                await self._agent.controller.emit_agent_message(
-                    request.context,
-                    "toolcall",
-                    toolcall,
-                    parse_mode="markdown",
-                )
+        elif item_type == "fileChange":
+            changes = item.get("changes", [])
+            for change in changes:
+                if not isinstance(change, dict):
+                    continue
+                file_path = change.get("path", "")
+                change_kind = change.get("kind", "")
+                if file_path:
+                    toolcall = self._agent.im_client.formatter.format_toolcall(
+                        "file_change",
+                        {"file": file_path, "type": change_kind},
+                    )
+                    await self._agent.controller.emit_agent_message(
+                        request.context,
+                        "toolcall",
+                        toolcall,
+                        parse_mode="markdown",
+                    )
 
         elif item_type == "reasoning":
-            text = item.get("text", "")
-            # Try extracting from summary array
-            if not text:
-                for summary in item.get("summary", []):
-                    if isinstance(summary, dict):
-                        text += summary.get("text", "")
+            # Extract from summary array (list of strings) or content array
+            parts: list[str] = []
+            for s in item.get("summary", []):
+                if isinstance(s, str):
+                    parts.append(s)
+            if not parts:
+                for c in item.get("content", []):
+                    if isinstance(c, str):
+                        parts.append(c)
+            text = "\n".join(parts)
             if text:
                 await self._agent.controller.emit_agent_message(
                     request.context,

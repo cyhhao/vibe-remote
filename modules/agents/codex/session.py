@@ -21,6 +21,8 @@ class CodexSessionManager:
         self._threads: dict[str, str] = {}
         # base_session_id → currently active Codex turnId
         self._active_turns: dict[str, str] = {}
+        # base_session_id → settings_key (for scoped clear)
+        self._settings_keys: dict[str, str] = {}
 
     # -- Thread mapping ---------------------------------------------------
 
@@ -42,18 +44,34 @@ class CodexSessionManager:
     def clear_active_turn(self, base_session_id: str) -> None:
         self._active_turns.pop(base_session_id, None)
 
+    # -- Settings-key tracking --------------------------------------------
+
+    def set_settings_key(self, base_session_id: str, settings_key: str) -> None:
+        self._settings_keys[base_session_id] = settings_key
+
+    def clear_by_settings_key(self, settings_key: str) -> int:
+        """Remove all sessions associated with a given settings_key. Returns count cleared."""
+        to_remove = [bid for bid, sk in self._settings_keys.items() if sk == settings_key]
+        for bid in to_remove:
+            self._threads.pop(bid, None)
+            self._active_turns.pop(bid, None)
+            self._settings_keys.pop(bid, None)
+        return len(to_remove)
+
     # -- Cleanup ----------------------------------------------------------
 
     def clear(self, base_session_id: str) -> None:
         """Remove all state for a session."""
         self._threads.pop(base_session_id, None)
         self._active_turns.pop(base_session_id, None)
+        self._settings_keys.pop(base_session_id, None)
 
     def clear_all(self) -> int:
         """Remove all tracked sessions. Returns count cleared."""
         count = len(self._threads)
         self._threads.clear()
         self._active_turns.clear()
+        self._settings_keys.clear()
         return count
 
     def all_thread_ids(self) -> list[str]:
