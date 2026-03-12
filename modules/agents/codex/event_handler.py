@@ -87,7 +87,7 @@ class CodexEventHandler:
         # Only clean up active request if this turn is still the active one
         # (avoids race where a new request already replaced it)
         current_turn = self._agent._session_mgr.get_active_turn(request.base_session_id)
-        is_current = current_turn == turn_id or not current_turn
+        is_current = current_turn == turn_id
         if is_current:
             self._agent._session_mgr.clear_active_turn(request.base_session_id)
             self._agent._active_requests.pop(request.base_session_id, None)
