@@ -2,7 +2,7 @@ from typing import Optional
 
 from .base import BaseAgent, AgentRequest, AgentMessage
 from .claude_agent import ClaudeAgent
-from .codex_agent import CodexAgent
+from .codex import CodexAgent
 from .opencode import OpenCodeAgent
 from .service import AgentService
 
