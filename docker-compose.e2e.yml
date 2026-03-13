@@ -1,0 +1,19 @@
+services:
+  vibe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${VIBE_E2E_PORT:-15123}:5123"
+    environment:
+      - VIBE_REMOTE_HOME=/data/vibe_remote
+      - VIBE_UI_PORT=5123
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5123/health')"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # Default: UI server only (sufficient for most API tests)
+    # Override with: command: ["full"] to also start the service process
+    command: ["ui"]
