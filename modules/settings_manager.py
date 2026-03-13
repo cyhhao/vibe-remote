@@ -1,5 +1,4 @@
 import logging
-import hashlib
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Union
@@ -8,6 +7,7 @@ from pathlib import Path
 from config import paths
 from config.v2_sessions import SessionsStore
 from config.v2_settings import SettingsStore, ChannelSettings, RoutingSettings
+from config.v2_settings import UserSettings as BoundUserSettings
 
 
 logger = logging.getLogger(__name__)
@@ -102,12 +102,12 @@ class SettingsManager:
     def __init__(self, settings_file: Optional[str] = None):
         paths.ensure_data_dirs()
         self.settings_file = Path(settings_file) if settings_file else paths.get_settings_path()
-        self._settings_mtime_ns: Optional[int] = None
-        self._settings_fingerprint: Optional[str] = None
-        self.settings: Dict[Union[int, str], UserSettings] = {}
-        self.store = SettingsStore(self.settings_file)
+        self.channel_settings: Dict[str, UserSettings] = {}
+        self.dm_user_settings: Dict[str, UserSettings] = {}
+        self.store = SettingsStore.get_instance(self.settings_file)
         self.sessions_store = SessionsStore()
         self.sessions_store.load()
+        self._last_seen_store_mtime: Optional[float] = None
         self._load_settings()
 
     # ---------------------------------------------
@@ -139,6 +139,25 @@ class SettingsManager:
             enabled=channel_settings.enabled,
         )
 
+    def _from_bound_user_settings(self, bound_user: BoundUserSettings) -> UserSettings:
+        """Convert a bound user's settings (from v2_settings.UserSettings) to runtime UserSettings."""
+        routing = ChannelRouting(
+            agent_backend=bound_user.routing.agent_backend,
+            opencode_agent=bound_user.routing.opencode_agent,
+            opencode_model=bound_user.routing.opencode_model,
+            opencode_reasoning_effort=bound_user.routing.opencode_reasoning_effort,
+            claude_agent=bound_user.routing.claude_agent,
+            claude_model=bound_user.routing.claude_model,
+            codex_model=bound_user.routing.codex_model,
+            codex_reasoning_effort=bound_user.routing.codex_reasoning_effort,
+        )
+        return UserSettings(
+            show_message_types=self._normalize_show_message_types(bound_user.show_message_types),
+            custom_cwd=bound_user.custom_cwd,
+            channel_routing=routing,
+            enabled=bound_user.enabled,
+        )
+
     def _to_channel_settings(self, settings: UserSettings) -> ChannelSettings:
         routing = settings.channel_routing or ChannelRouting()
         return ChannelSettings(
@@ -157,93 +176,113 @@ class SettingsManager:
             ),
         )
 
+    def _sync_to_bound_user(self, user_id: str, settings: UserSettings) -> None:
+        """Sync runtime UserSettings back to the bound-user record in store.settings.users."""
+        bound = self.store.settings.users.get(user_id)
+        if not bound:
+            return
+        routing = settings.channel_routing or ChannelRouting()
+        bound.enabled = settings.enabled
+        bound.show_message_types = self._normalize_show_message_types(settings.show_message_types)
+        bound.custom_cwd = settings.custom_cwd
+        bound.routing = RoutingSettings(
+            agent_backend=routing.agent_backend,
+            opencode_agent=routing.opencode_agent,
+            opencode_model=routing.opencode_model,
+            opencode_reasoning_effort=routing.opencode_reasoning_effort,
+            claude_agent=routing.claude_agent,
+            claude_model=routing.claude_model,
+            codex_model=routing.codex_model,
+            codex_reasoning_effort=routing.codex_reasoning_effort,
+        )
+
     def _load_settings(self):
         """Load settings from JSON file"""
-        self.store = SettingsStore(self.settings_file)
-        self.settings = {}
-
-        if not self.store.settings.channels:
-            logger.info("No settings file found, starting with empty settings")
-            return
-
-        for channel_id, channel_settings in self.store.settings.channels.items():
-            self.settings[str(channel_id)] = self._from_channel_settings(channel_settings)
-
-        try:
-            self._settings_mtime_ns = self.settings_file.stat().st_mtime_ns
-            self._settings_fingerprint = self._compute_settings_fingerprint()
-        except FileNotFoundError:
-            self._settings_mtime_ns = None
-            self._settings_fingerprint = None
-
-        logger.info(f"Loaded settings for {len(self.settings)} channels")
-
-    def _compute_settings_fingerprint(self) -> Optional[str]:
-        try:
-            data = self.settings_file.read_bytes()
-        except FileNotFoundError:
-            return None
-        return hashlib.sha256(data).hexdigest()
+        self.store = SettingsStore.get_instance(self.settings_file)
+        self._rebuild_runtime_settings()
+        self._last_seen_store_mtime = self.store._file_mtime
 
     def _reload_if_changed(self) -> None:
-        if not self.settings_file.exists():
-            return
-        try:
-            mtime_ns = self.settings_file.stat().st_mtime_ns
-        except FileNotFoundError:
-            return
-        fingerprint = None
-        if self._settings_mtime_ns is None or mtime_ns != self._settings_mtime_ns:
-            fingerprint = self._compute_settings_fingerprint()
-        elif self._settings_fingerprint is None:
-            fingerprint = self._compute_settings_fingerprint()
-        if fingerprint and fingerprint != self._settings_fingerprint:
-            logger.info("Settings file changed on disk, reloading")
-            self._load_settings()
-        elif fingerprint:
-            self._settings_fingerprint = fingerprint
-            self._settings_mtime_ns = mtime_ns
-        else:
-            self._settings_mtime_ns = mtime_ns
+        """Reload runtime settings if the underlying store has changed on disk.
+
+        Uses a locally tracked mtime so that same-process writes (e.g. from
+        the UI API hitting the singleton store) are detected correctly.
+        """
+        self.store.maybe_reload()
+        if self.store._file_mtime != self._last_seen_store_mtime:
+            logger.info("Settings file changed on disk, rebuilding runtime settings")
+            self._rebuild_runtime_settings()
+            self._last_seen_store_mtime = self.store._file_mtime
+
+    def _rebuild_runtime_settings(self) -> None:
+        """Rebuild the in-memory settings dicts from the store."""
+        self.channel_settings = {}
+        self.dm_user_settings = {}
+        for cid, cs in self.store.settings.channels.items():
+            self.channel_settings[str(cid)] = self._from_channel_settings(cs)
+        for uid, us in self.store.settings.users.items():
+            self.dm_user_settings[str(uid)] = self._from_bound_user_settings(us)
+        logger.info(
+            f"Rebuilt runtime settings for {len(self.channel_settings)} channels, {len(self.dm_user_settings)} DM users"
+        )
 
     def _save_settings(self):
-        """Save settings to JSON file"""
+        """Save settings to JSON file.
+
+        Writes channel-keyed entries from ``self.channel_settings`` back to
+        ``store.settings.channels``, and syncs DM user entries from
+        ``self.dm_user_settings`` back to ``store.settings.users``.
+        """
         try:
             channels: Dict[str, ChannelSettings] = {}
-            for settings_key, settings in self.settings.items():
-                existing = self.store.settings.channels.get(str(settings_key))
-                channel_settings = self._to_channel_settings(settings)
+            for cid, s in self.channel_settings.items():
+                existing = self.store.settings.channels.get(cid)
+                cs = self._to_channel_settings(s)
                 if existing is not None:
-                    channel_settings.enabled = existing.enabled
-                    # Preserve require_mention setting (it's managed separately)
-                    channel_settings.require_mention = existing.require_mention
-                channels[str(settings_key)] = channel_settings
+                    cs.enabled = existing.enabled
+                    cs.require_mention = existing.require_mention
+                channels[cid] = cs
             self.store.settings.channels = channels
+            for uid, s in self.dm_user_settings.items():
+                self._sync_to_bound_user(uid, s)
             self.store.save()
-            try:
-                self._settings_mtime_ns = self.settings_file.stat().st_mtime_ns
-                self._settings_fingerprint = self._compute_settings_fingerprint()
-            except FileNotFoundError:
-                self._settings_mtime_ns = None
-                self._settings_fingerprint = None
+            # Keep local mtime in sync so _reload_if_changed doesn't
+            # trigger an unnecessary rebuild right after our own save.
+            self._last_seen_store_mtime = self.store._file_mtime
             logger.info("Settings saved successfully")
         except Exception as e:
             logger.error(f"Error saving settings: {e}")
 
     def get_user_settings(self, user_id: Union[int, str]) -> UserSettings:
-        """Get settings for a specific user"""
+        """Get settings for a specific user/channel context.
+
+        Checks dm_user_settings first, then channel_settings, then falls back
+        to the store, and finally creates a default in channel_settings.
+        """
         normalized_id = self._normalize_user_id(user_id)
 
         self._reload_if_changed()
 
-        # Return existing or create new
-        if normalized_id not in self.settings:
-            settings = UserSettings()
-            if normalized_id in self.store.settings.channels:
-                settings = self._from_channel_settings(self.store.settings.channels[normalized_id])
-            self.settings[normalized_id] = settings
-            self._save_settings()
-        return self.settings[normalized_id]
+        if normalized_id in self.dm_user_settings:
+            return self.dm_user_settings[normalized_id]
+        if normalized_id in self.channel_settings:
+            return self.channel_settings[normalized_id]
+
+        # New key — check store
+        if normalized_id in self.store.settings.users:
+            settings = self._from_bound_user_settings(self.store.settings.users[normalized_id])
+            self.dm_user_settings[normalized_id] = settings
+            return settings
+        if normalized_id in self.store.settings.channels:
+            settings = self._from_channel_settings(self.store.settings.channels[normalized_id])
+            self.channel_settings[normalized_id] = settings
+            return settings
+
+        # Truly new — create default in channels
+        settings = UserSettings()
+        self.channel_settings[normalized_id] = settings
+        self._save_settings()
+        return settings
 
     def update_user_settings(self, user_id: Union[int, str], settings: UserSettings):
         """Update settings for a specific user"""
@@ -251,7 +290,14 @@ class SettingsManager:
 
         settings.show_message_types = self._normalize_show_message_types(settings.show_message_types)
 
-        self.settings[normalized_id] = settings
+        if normalized_id in self.dm_user_settings:
+            self.dm_user_settings[normalized_id] = settings
+        elif normalized_id in self.channel_settings:
+            self.channel_settings[normalized_id] = settings
+        elif normalized_id in self.store.settings.users:
+            self.dm_user_settings[normalized_id] = settings
+        else:
+            self.channel_settings[normalized_id] = settings
         self._save_settings()
 
     def toggle_show_message_type(self, user_id: Union[int, str], message_type: str) -> bool:

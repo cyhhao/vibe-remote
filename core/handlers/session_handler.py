@@ -99,8 +99,8 @@ class SessionHandler:
         settings_key = self._get_settings_key(context)
         stored_claude_session_id = self.settings_manager.get_claude_session_id(settings_key, base_session_id)
 
-        # Read channel-level configuration overrides
-        channel_settings = self.settings_manager.get_channel_settings(context.channel_id)
+        # Read configuration overrides using settings_key (user_id for DM, channel_id for channels)
+        channel_settings = self.settings_manager.get_channel_settings(settings_key)
         routing = channel_settings.routing if channel_settings else None
 
         # Priority: subagent params > channel config > agent frontmatter > global default

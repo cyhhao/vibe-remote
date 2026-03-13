@@ -302,6 +302,9 @@ class MessageHandler:
             command_handlers = CommandHandlers(self.controller)
 
             # Route based on callback data
+            # Note: admin permission for protected callbacks is enforced by
+            # the centralized auth pipeline (core.auth.check_auth) in IM
+            # entry points before reaching this handler.
             if callback_data.startswith("toggle_msg_"):
                 # Toggle message type visibility
                 msg_type = callback_data.replace("toggle_msg_", "")
@@ -372,6 +375,7 @@ class MessageHandler:
                     thread_id=context.thread_id,
                     agent=agent,
                     session_id=session_id,
+                    is_dm=(context.platform_specific or {}).get("is_dm", False),
                 )
 
             elif callback_data.startswith("opencode_question:"):

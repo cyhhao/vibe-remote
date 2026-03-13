@@ -115,8 +115,8 @@ class CodexAgent(BaseAgent):
                 # Build input items
                 input_items = self._build_input(request)
 
-                # Read channel-level configuration overrides
-                channel_settings = self.settings_manager.get_channel_settings(request.context.channel_id)
+                # Read configuration overrides using settings_key (user_id for DM, channel_id for channels)
+                channel_settings = self.settings_manager.get_channel_settings(request.settings_key)
                 routing = channel_settings.routing if channel_settings else None
                 effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
                 effective_effort = routing.codex_reasoning_effort if routing else None

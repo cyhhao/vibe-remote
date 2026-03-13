@@ -243,6 +243,19 @@
     "xhigh": "超高",
     "max": "最大"
   },
+  "bind": {
+    "success": "✅ 绑定成功！欢迎，{name}。你现在可以通过私信使用 Vibe Remote。",
+    "successAdmin": "✅ 绑定成功！欢迎，{name}。你是第一个用户，已被自动授予管理员权限。",
+    "alreadyBound": "你已经绑定过了，无需再次操作。",
+    "invalidCode": "❌ 无效或已过期的绑定码，请检查后重试。",
+    "usage": "用法：`/bind <绑定码>`\n\n请输入管理员提供的绑定码。",
+    "dmOnly": "`/bind` 命令只能在私信中使用。请私聊机器人并发送 `/bind <绑定码>`。",
+    "dmNotBound": "🔒 你还未绑定账号。\n使用 `/bind <绑定码>` 开始使用。",
+    "error": "❌ 绑定失败：{error}"
+  },
+  "permission": {
+    "adminOnly": "🔒 仅管理员可以修改 Bot 设置。如需权限请联系管理员。"
+  },
   "language": {
     "systemDefault": "(系统默认)",
     "en": "English",

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle2, MessageSquare, Zap, Terminal } from 'lucide-react';
+import { CheckCircle2, MessageSquare, Zap, Terminal, Copy, Check, Key } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useStatus } from '../../context/StatusContext';
@@ -19,6 +19,8 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const { control } = useStatus();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bindCode, setBindCode] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
   const platform = data.platform || 'slack';
   const [requireMention, setRequireMention] = useState(
     platform === 'discord' ? (data.discord?.require_mention || false)
@@ -27,6 +29,17 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   );
   const [autoUpdate, setAutoUpdate] = useState(data.update?.auto_update ?? true);
   const navigate = useNavigate();
+
+  const copyBindCode = async () => {
+    if (!bindCode) return;
+    try {
+      await navigator.clipboard.writeText(`/bind ${bindCode}`);
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 2000);
+    } catch {
+      // Fallback: select text
+    }
+  };
 
   const saveAll = async () => {
     setSaving(true);
@@ -56,8 +69,21 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
       await api.saveSettings(buildSettingsPayload(updatedData));
       
       // Start service
-      await control('start'); // Use start, fallback to restart if running? Or just start.
-      // Wait a bit then redirect
+      await control('start');
+
+      // Fetch first bind code (auto-generated on first access)
+      try {
+        const resp = await api.getFirstBindCode();
+        if (resp?.code) {
+          setBindCode(resp.code);
+          setSaving(false);
+          return; // Don't navigate yet — show bind code first
+        }
+      } catch {
+        // Non-critical: skip bind code display
+      }
+
+      // No bind code — redirect immediately
       setTimeout(() => {
            navigate('/dashboard');
       }, 1000);
@@ -69,6 +95,51 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
       setSaving(false);
     }
   };
+
+  // If bind code is available, show the bind code screen
+  if (bindCode) {
+    return (
+      <div className="flex flex-col h-full max-w-2xl mx-auto items-center justify-center">
+        <div className="w-16 h-16 bg-success/10 text-success rounded-full flex items-center justify-center border border-success/20 mb-6">
+          <CheckCircle2 size={40} />
+        </div>
+        <h2 className="text-2xl font-display font-bold text-text mb-2">{t('summary.title')}</h2>
+        <p className="text-muted mb-8">{t('summary.serviceRunning')}</p>
+
+        <div className="bg-panel border border-border rounded-lg p-6 shadow-sm w-full max-w-md">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 bg-warning/10 text-warning rounded-lg flex items-center justify-center flex-shrink-0">
+              <Key size={20} />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-text">{t('summary.bindCodeTitle')}</h3>
+              <p className="text-xs text-muted">{t('summary.bindCodeDesc')}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 bg-bg border border-border rounded-md p-3">
+            <code className="flex-1 text-sm font-mono text-text select-all">/bind {bindCode}</code>
+            <button
+              onClick={copyBindCode}
+              className="p-2 text-muted hover:text-text transition-colors rounded-md hover:bg-panel"
+              title="Copy"
+            >
+              {codeCopied ? <Check size={16} className="text-success" /> : <Copy size={16} />}
+            </button>
+          </div>
+          {codeCopied && (
+            <p className="text-xs text-success mt-2">{t('summary.bindCodeCopied')}</p>
+          )}
+        </div>
+
+        <button
+          onClick={() => navigate('/dashboard')}
+          className="mt-8 px-8 py-3 bg-primary hover:bg-primary/90 text-white rounded-lg font-bold transition-colors shadow-sm"
+        >
+          {t('summary.goToDashboard')}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full max-w-2xl mx-auto">

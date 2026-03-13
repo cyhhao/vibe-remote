@@ -13,8 +13,11 @@ from config.v2_config import V2Config
 from config.v2_settings import (
     SettingsStore,
     ChannelSettings,
+    UserSettings,
     RoutingSettings,
     normalize_show_message_types,
+    _parse_routing,
+    _routing_to_dict,
 )
 from config.v2_sessions import SessionsStore
 
@@ -101,30 +104,19 @@ def config_to_payload(config: V2Config) -> dict:
 
 
 def get_settings() -> dict:
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     return _settings_to_payload(store)
 
 
 def save_settings(payload: dict) -> dict:
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     channels = {}
     for channel_id, channel_payload in (payload.get("channels") or {}).items():
-        routing_payload = channel_payload.get("routing") or {}
-        routing = RoutingSettings(
-            agent_backend=routing_payload.get("agent_backend"),
-            opencode_agent=routing_payload.get("opencode_agent"),
-            opencode_model=routing_payload.get("opencode_model"),
-            opencode_reasoning_effort=routing_payload.get("opencode_reasoning_effort"),
-            claude_agent=routing_payload.get("claude_agent"),
-            claude_model=routing_payload.get("claude_model"),
-            codex_model=routing_payload.get("codex_model"),
-            codex_reasoning_effort=routing_payload.get("codex_reasoning_effort"),
-        )
         channels[channel_id] = ChannelSettings(
             enabled=channel_payload.get("enabled", True),
             show_message_types=normalize_show_message_types(channel_payload.get("show_message_types")),
             custom_cwd=channel_payload.get("custom_cwd"),
-            routing=routing,
+            routing=_parse_routing(channel_payload.get("routing") or {}),
             require_mention=channel_payload.get("require_mention"),
         )
     store.settings.channels = channels
@@ -374,24 +366,36 @@ async def opencode_options_async(cwd: str) -> dict:
 
 
 def _settings_to_payload(store: SettingsStore) -> dict:
-    payload = {"channels": {}}
+    payload: dict = {"channels": {}, "users": {}, "bind_codes": []}
     for channel_id, settings in store.settings.channels.items():
         payload["channels"][channel_id] = {
             "enabled": settings.enabled,
             "show_message_types": normalize_show_message_types(settings.show_message_types),
             "custom_cwd": settings.custom_cwd,
             "require_mention": settings.require_mention,
-            "routing": {
-                "agent_backend": settings.routing.agent_backend,
-                "opencode_agent": settings.routing.opencode_agent,
-                "opencode_model": settings.routing.opencode_model,
-                "opencode_reasoning_effort": settings.routing.opencode_reasoning_effort,
-                "claude_agent": settings.routing.claude_agent,
-                "claude_model": settings.routing.claude_model,
-                "codex_model": settings.routing.codex_model,
-                "codex_reasoning_effort": settings.routing.codex_reasoning_effort,
-            },
+            "routing": _routing_to_dict(settings.routing),
         }
+    for user_id, u in store.settings.users.items():
+        payload["users"][user_id] = {
+            "display_name": u.display_name,
+            "is_admin": u.is_admin,
+            "bound_at": u.bound_at,
+            "enabled": u.enabled,
+            "show_message_types": u.show_message_types,
+            "custom_cwd": u.custom_cwd,
+            "routing": _routing_to_dict(u.routing),
+        }
+    for bc in store.settings.bind_codes:
+        payload["bind_codes"].append(
+            {
+                "code": bc.code,
+                "type": bc.type,
+                "created_at": bc.created_at,
+                "expires_at": bc.expires_at,
+                "is_active": bc.is_active,
+                "used_by": bc.used_by,
+            }
+        )
     return payload
 
 
@@ -1085,6 +1089,150 @@ def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu") -> dic
         return {"ok": True, "channels": channels, "truncated": truncated}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# User and Bind Code management (for admin permission feature)
+# ---------------------------------------------------------------------------
+
+
+def get_users() -> dict:
+    """Get all bound users."""
+    store = SettingsStore.get_instance()
+    users = {}
+    for user_id, u in store.settings.users.items():
+        users[user_id] = {
+            "display_name": u.display_name,
+            "is_admin": u.is_admin,
+            "bound_at": u.bound_at,
+            "enabled": u.enabled,
+            "show_message_types": u.show_message_types,
+            "custom_cwd": u.custom_cwd,
+            "routing": _routing_to_dict(u.routing),
+        }
+    return {"ok": True, "users": users}
+
+
+def save_users(payload: dict) -> dict:
+    """Save user settings (bulk update from UI).
+
+    Preserves admin invariant: if there were admins before, at least one must remain.
+    """
+    store = SettingsStore.get_instance()
+    had_admins = store.has_any_admin()
+
+    users = {}
+    for user_id, up in (payload.get("users") or {}).items():
+        if not isinstance(up, dict):
+            continue
+        # Preserve dm_chat_id from existing user (not editable via UI)
+        existing = store.settings.users.get(user_id)
+        users[user_id] = UserSettings(
+            display_name=up.get("display_name", ""),
+            is_admin=up.get("is_admin", False),
+            bound_at=up.get("bound_at", ""),
+            enabled=up.get("enabled", True),
+            show_message_types=normalize_show_message_types(up.get("show_message_types")),
+            custom_cwd=up.get("custom_cwd"),
+            routing=_parse_routing(up.get("routing") or {}),
+            dm_chat_id=existing.dm_chat_id if existing else "",
+        )
+
+    # Enforce admin invariant: if admins existed before, at least one must remain
+    if had_admins:
+        new_admin_count = sum(1 for u in users.values() if u.is_admin)
+        if new_admin_count == 0:
+            return {"ok": False, "error": "Cannot remove all admins"}
+
+    # Merge instead of replace: update existing users and add new ones,
+    # but preserve users not included in the payload (e.g. concurrently bound)
+    for uid, user_settings in users.items():
+        store.settings.users[uid] = user_settings
+    store.save()
+    return get_users()
+
+
+def toggle_admin(user_id: str, is_admin: bool) -> dict:
+    """Toggle admin status for a user."""
+    store = SettingsStore.get_instance()
+    if not store.set_admin(user_id, is_admin):
+        if not store.is_bound_user(user_id):
+            return {"ok": False, "error": "User not found"}
+        return {"ok": False, "error": "Cannot remove the last admin"}
+    return {"ok": True}
+
+
+def remove_user(user_id: str) -> dict:
+    """Remove a bound user."""
+    store = SettingsStore.get_instance()
+    user = store.get_user(user_id)
+    if user is None:
+        return {"ok": False, "error": "User not found"}
+    # Prevent removing the last admin
+    if user.is_admin:
+        admin_count = sum(1 for u in store.settings.users.values() if u.is_admin)
+        if admin_count <= 1:
+            return {"ok": False, "error": "Cannot remove the last admin"}
+    store.remove_user(user_id)
+    return {"ok": True}
+
+
+def get_bind_codes() -> dict:
+    """Get all bind codes."""
+    store = SettingsStore.get_instance()
+    codes = []
+    for bc in store.get_bind_codes():
+        codes.append(
+            {
+                "code": bc.code,
+                "type": bc.type,
+                "created_at": bc.created_at,
+                "expires_at": bc.expires_at,
+                "is_active": bc.is_active,
+                "used_by": bc.used_by,
+            }
+        )
+    return {"ok": True, "bind_codes": codes}
+
+
+def create_bind_code(code_type: str = "one_time", expires_at: Optional[str] = None) -> dict:
+    """Create a new bind code."""
+    if code_type not in ("one_time", "expiring"):
+        return {"ok": False, "error": "type must be 'one_time' or 'expiring'"}
+    if code_type == "expiring" and not expires_at:
+        return {"ok": False, "error": "expires_at is required for expiring bind codes"}
+    store = SettingsStore.get_instance()
+    bc = store.create_bind_code(code_type, expires_at)
+    return {
+        "ok": True,
+        "bind_code": {
+            "code": bc.code,
+            "type": bc.type,
+            "created_at": bc.created_at,
+            "expires_at": bc.expires_at,
+            "is_active": bc.is_active,
+        },
+    }
+
+
+def delete_bind_code(code: str) -> dict:
+    """Deactivate a bind code."""
+    store = SettingsStore.get_instance()
+    if store.deactivate_bind_code(code):
+        return {"ok": True}
+    return {"ok": False, "error": "Bind code not found"}
+
+
+def get_first_bind_code() -> dict:
+    """Get or create the initial bind code for setup wizard."""
+    store = SettingsStore.get_instance()
+    # If any valid (active + not expired) code exists, return it
+    for bc in store.get_bind_codes():
+        if bc.is_active and store.validate_bind_code(bc.code) is not None:
+            return {"ok": True, "code": bc.code, "is_new": False}
+    # Otherwise create a new one-time code
+    bc = store.create_bind_code("one_time")
+    return {"ok": True, "code": bc.code, "is_new": True}
 
 
 # ---------------------------------------------------------------------------

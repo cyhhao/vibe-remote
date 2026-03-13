@@ -243,6 +243,19 @@
     "xhigh": "Extra High",
     "max": "Max"
   },
+  "bind": {
+    "success": "✅ Bind successful! Welcome, {name}. You can now use Vibe Remote via DM.",
+    "successAdmin": "✅ Bind successful! Welcome, {name}. You are the first user and have been granted admin privileges.",
+    "alreadyBound": "You are already bound. No action needed.",
+    "invalidCode": "❌ Invalid or expired bind code. Please check and try again.",
+    "usage": "Usage: `/bind <code>`\n\nPlease enter the bind code provided by an admin.",
+    "dmOnly": "The `/bind` command can only be used in a direct message. Please DM the bot with `/bind <code>`.",
+    "dmNotBound": "🔒 You haven't bound your account yet.\nUse `/bind <code>` to get started.",
+    "error": "❌ Bind failed: {error}"
+  },
+  "permission": {
+    "adminOnly": "🔒 Only admins can change bot settings. Contact an admin if you need access."
+  },
   "language": {
     "systemDefault": "(System Default)",
     "en": "English",

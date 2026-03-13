@@ -9,6 +9,7 @@ import discord
 
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
 from config.v2_config import DiscordConfig
+from core.auth import check_auth
 from .formatters import DiscordFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
@@ -145,6 +146,24 @@ class DiscordBot(BaseIMClient):
         if allow and (not guild_id or guild_id not in allow):
             return False
         return True
+
+    async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
+        """Send a direct message to a Discord user."""
+        try:
+            uid = self._to_int_id(user_id)
+            if uid is None:
+                return None
+            user = self.client.get_user(uid)
+            if user is None:
+                user = await self.client.fetch_user(uid)
+            if user is None:
+                return None
+            dm_channel = user.dm_channel or await user.create_dm()
+            message = await dm_channel.send(content=text)
+            return str(message.id)
+        except Exception as e:
+            logger.error("Failed to send DM to Discord user %s: %s", user_id, e)
+            return None
 
     async def send_message(
         self,
@@ -382,6 +401,29 @@ class DiscordBot(BaseIMClient):
         except Exception as err:
             logger.debug("Failed to send unauthorized message: %s", err)
 
+    async def _send_auth_denial(self, channel_id: str, user_id: str, auth_result, interaction=None):
+        """Send denial message for failed auth check."""
+        if auth_result.denial == "unbound_dm":
+            hint = self._t("bind.dmNotBound", channel_id)
+            if interaction:
+                try:
+                    await interaction.response.send_message(hint, ephemeral=True)
+                except Exception:
+                    pass
+            else:
+                channel = self.client.get_channel(int(channel_id))
+                if channel:
+                    await channel.send(content=hint)
+        elif auth_result.denial == "unauthorized_channel":
+            await self._send_unauthorized_message(channel_id)
+        elif auth_result.denial == "not_admin":
+            msg = i18n_t("permission.adminOnly")
+            if interaction:
+                try:
+                    await interaction.response.send_message(msg, ephemeral=True)
+                except Exception:
+                    pass
+
     async def _maybe_create_thread(self, message: discord.Message) -> Optional[discord.Thread]:
         if isinstance(message.channel, discord.Thread):
             return message.channel
@@ -431,13 +473,28 @@ class DiscordBot(BaseIMClient):
         if not content and not files:
             return
 
-        # Authorization
-        if not await self._is_authorized_channel(channel_id):
-            await self._send_unauthorized_message(channel_id)
+        # Determine if this is a DM
+        is_dm = isinstance(channel, discord.DMChannel) or message.guild is None
+
+        # Centralized auth check — parse command name before auth so
+        # admin-protected text commands (e.g. /settings, /set_cwd) are checked.
+        if content.startswith("/"):
+            _cmd_parts = content.split(maxsplit=1)
+            action = _cmd_parts[0][1:]  # strip leading "/"
+        else:
+            action = ""
+        auth_result = check_auth(
+            user_id=str(message.author.id),
+            channel_id=channel_id,
+            is_dm=is_dm,
+            action=action,
+            store=self.settings_manager.store if self.settings_manager else None,
+        )
+        if not auth_result.allowed:
+            await self._send_auth_denial(channel_id, str(message.author.id), auth_result)
             return
 
         # Mention logic for guild channels
-        is_dm = isinstance(channel, discord.DMChannel) or message.guild is None
         effective_require_mention = self.config.require_mention
         if self.settings_manager:
             effective_require_mention = self.settings_manager.get_require_mention(
@@ -469,7 +526,7 @@ class DiscordBot(BaseIMClient):
                 channel_id=channel_id,
                 thread_id=thread_id,
                 message_id=str(message.id),
-                platform_specific={"message": message},
+                platform_specific={"message": message, "is_dm": is_dm},
                 files=files,
             )
             parts = content.split(maxsplit=1)
@@ -487,7 +544,7 @@ class DiscordBot(BaseIMClient):
                     channel_id=channel_id,
                     thread_id=thread_id,
                     message_id=str(message.id),
-                    platform_specific={"message": message},
+                    platform_specific={"message": message, "is_dm": is_dm},
                     files=files,
                 )
                 await self.on_message_callback(context, "")
@@ -504,7 +561,7 @@ class DiscordBot(BaseIMClient):
             channel_id=channel_id,
             thread_id=thread_id,
             message_id=str(message.id),
-            platform_specific={"message": message},
+            platform_specific={"message": message, "is_dm": is_dm},
             files=files,
         )
 
@@ -523,10 +580,12 @@ class DiscordBot(BaseIMClient):
                     return
                 outer: DiscordBot = getattr(self, "_outer")
                 if hasattr(outer, "_on_change_cwd"):
+                    _is_dm = submit_interaction.guild is None
                     await outer._on_change_cwd(
                         str(submit_interaction.user.id),
                         str(self.new_cwd.value or ""),
                         channel_id,
+                        _is_dm,
                     )
                 await submit_interaction.response.send_message("✅ Working directory updated.", ephemeral=True)
 
@@ -544,6 +603,7 @@ class DiscordBot(BaseIMClient):
         current_require_mention: object = None,
         global_require_mention: bool = False,
         current_language: str = None,
+        owner_user_id: Optional[str] = None,
     ):
         interaction = trigger_id if isinstance(trigger_id, discord.Interaction) else None
 
@@ -680,10 +740,25 @@ class DiscordBot(BaseIMClient):
             async def on_timeout(self) -> None:
                 return
 
-        owner_id = str(interaction.user.id) if interaction else None
+        owner_id = owner_user_id or (str(interaction.user.id) if interaction else None)
         view = SettingsView(self, owner_id)
 
         async def save_callback(save_interaction: discord.Interaction):
+            # Re-check auth before saving (defense-in-depth against shared views)
+            save_uid = str(save_interaction.user.id)
+            save_cid = channel_id or str(save_interaction.channel_id or "")
+            save_is_dm = save_interaction.guild is None
+            auth = check_auth(
+                user_id=save_uid,
+                channel_id=save_cid,
+                is_dm=save_is_dm,
+                action="settings",
+                store=self.settings_manager.store if self.settings_manager else None,
+            )
+            if not auth.allowed:
+                await self._send_auth_denial(save_cid, save_uid, auth, interaction=save_interaction)
+                return
+
             show_types = list(view.selected_types or [])
             require_value = view.require_value
             if require_value == "__default__":
@@ -703,6 +778,7 @@ class DiscordBot(BaseIMClient):
                         require_mention,
                         language,
                         notify_user=False,
+                        is_dm=save_interaction.guild is None,
                     )
                 await save_interaction.edit_original_response(
                     content=f"✅ {self._t('success.settingsUpdated')}",
@@ -822,6 +898,7 @@ class DiscordBot(BaseIMClient):
                     chosen_agent,
                     chosen_session,
                     host_message_ts,
+                    resume_interaction.guild is None,
                 )
             await resume_interaction.response.edit_message(content="✅ Session resumed.", view=None)
 
@@ -1252,6 +1329,7 @@ class DiscordBot(BaseIMClient):
                             _normalize(self.codex_model),
                             _normalize(self.codex_reasoning),
                             notify_user=False,
+                            is_dm=interaction.guild is None,
                         )
                     await interaction.edit_original_response(
                         content=f"✅ {self.outer._t('success.routingUpdated')}",
@@ -1356,7 +1434,10 @@ class DiscordBot(BaseIMClient):
                     channel_id=context.channel_id,
                     thread_id=context.thread_id,
                     message_id=context.message_id,
-                    platform_specific={"interaction": submit_interaction},
+                    platform_specific={
+                        "interaction": submit_interaction,
+                        "is_dm": (context.platform_specific or {}).get("is_dm", False),
+                    },
                 )
                 await self.on_callback_query_callback(ctx, callback_data)
             await submit_interaction.response.edit_message(content="✅ Answer submitted.", view=None)
@@ -1455,15 +1536,25 @@ class _PersistentStartView(discord.ui.View):
             guild_id = str(interaction.guild_id) if interaction.guild_id else None
             if guild_id and not self.outer._is_allowed_guild(guild_id):
                 return
-            if not await self.outer._is_authorized_channel(channel_id):
-                await self.outer._send_unauthorized_message(channel_id)
+            is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+            auth_result = check_auth(
+                user_id=str(interaction.user.id),
+                channel_id=channel_id,
+                is_dm=is_dm,
+                action=data,
+                store=self.outer.settings_manager.store if self.outer.settings_manager else None,
+            )
+            if not auth_result.allowed:
+                await self.outer._send_auth_denial(
+                    channel_id, str(interaction.user.id), auth_result, interaction=interaction
+                )
                 return
             context = MessageContext(
                 user_id=str(interaction.user.id),
                 channel_id=channel_id,
                 thread_id=thread_id,
                 message_id=str(interaction.message.id) if interaction.message else None,
-                platform_specific={"interaction": interaction},
+                platform_specific={"interaction": interaction, "is_dm": is_dm},
             )
             if self.outer.on_callback_query_callback:
                 await self.outer.on_callback_query_callback(context, data)
@@ -1510,17 +1601,6 @@ class _DiscordButtonView(discord.ui.View):
                         "cmd_routing",
                         "cmd_resume",
                     }
-                    if data.startswith("vibe_update_now") and interaction.guild:
-                        is_owner = interaction.user.id == interaction.guild.owner_id
-                        is_admin = getattr(interaction.user, "guild_permissions", None)
-                        if not (is_owner or (is_admin and is_admin.administrator)):
-                            try:
-                                await interaction.response.send_message(
-                                    "You do not have permission to run updates.", ephemeral=True
-                                )
-                            except Exception:
-                                pass
-                            return
                     if data == "opencode_question:open_modal":
                         try:
                             await interaction.response.defer(ephemeral=True)
@@ -1535,8 +1615,18 @@ class _DiscordButtonView(discord.ui.View):
                     guild_id = str(interaction.guild_id) if interaction.guild_id else None
                     if guild_id and not self.outer._is_allowed_guild(guild_id):
                         return
-                    if not await self.outer._is_authorized_channel(channel_id):
-                        await self.outer._send_unauthorized_message(channel_id)
+                    is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+                    auth_result = check_auth(
+                        user_id=str(interaction.user.id),
+                        channel_id=channel_id,
+                        is_dm=is_dm,
+                        action=data,
+                        store=self.outer.settings_manager.store if self.outer.settings_manager else None,
+                    )
+                    if not auth_result.allowed:
+                        await self.outer._send_auth_denial(
+                            channel_id, str(interaction.user.id), auth_result, interaction=interaction
+                        )
                         return
                     context = MessageContext(
                         user_id=str(interaction.user.id),
@@ -1544,7 +1634,7 @@ class _DiscordButtonView(discord.ui.View):
                         thread_id=thread_id,
                         message_id=self.base_context.message_id
                         or (str(interaction.message.id) if interaction.message else None),
-                        platform_specific={"interaction": interaction},
+                        platform_specific={"interaction": interaction, "is_dm": is_dm},
                     )
                     if self.outer.on_callback_query_callback:
                         await self.outer.on_callback_query_callback(context, data)

@@ -101,6 +101,7 @@ class FeishuBot(BaseIMClient):
         self._cached_token: Optional[str] = None
         self._token_expires_at: Optional[float] = None
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
+        self._dm_chat_ids: set = set()
 
     # ------------------------------------------------------------------
     # Lifecycle / injection
@@ -112,6 +113,13 @@ class FeishuBot(BaseIMClient):
     def set_controller(self, controller):
         """Set the controller reference for handling update button clicks."""
         self._controller = controller
+
+    def _populate_dm_chat_ids(self):
+        """Pre-populate DM chat IDs from bound users for restart survival."""
+        if self.settings_manager:
+            for user_id, user in self.settings_manager.store.settings.users.items():
+                if user.dm_chat_id:
+                    self._dm_chat_ids.add(user.dm_chat_id)
 
     # ------------------------------------------------------------------
     # i18n helpers
@@ -250,9 +258,53 @@ class FeishuBot(BaseIMClient):
         except Exception as exc:
             logger.error("Failed to send unauthorized message to %s: %s", channel_id, exc)
 
+    async def _send_auth_denial(self, chat_id: str, user_id: str, auth_result):
+        """Send denial message for failed auth check."""
+        ctx = MessageContext(user_id="system", channel_id=chat_id)
+        if auth_result.denial == "unbound_dm":
+            hint = self._t("bind.dmNotBound", chat_id)
+            await self.send_message(ctx, hint)
+        elif auth_result.denial == "unauthorized_channel":
+            await self._send_unauthorized_message(chat_id)
+        elif auth_result.denial == "not_admin":
+            msg = i18n_t("permission.adminOnly")
+            await self.send_message(ctx, msg)
+
     # ------------------------------------------------------------------
     # Sending messages
     # ------------------------------------------------------------------
+    async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
+        """Send a direct message to a Feishu/Lark user by open_id.
+
+        Uses receive_id_type=open_id to send directly to the user without
+        needing to open a DM chat first.
+        """
+        self._ensure_client()
+        try:
+            from lark_oapi.api.im.v1 import (
+                CreateMessageRequest,
+                CreateMessageRequestBody,
+            )
+
+            content = self._build_card_json(text)
+            body = (
+                CreateMessageRequestBody.builder().receive_id(user_id).msg_type("interactive").content(content).build()
+            )
+            request = CreateMessageRequest.builder().receive_id_type("open_id").request_body(body).build()
+            response = await self._lark_client.im.v1.message.acreate(request)
+            if not response.success():
+                logger.error(
+                    "Failed to send Feishu DM to %s: code=%s msg=%s",
+                    user_id,
+                    response.code,
+                    response.msg,
+                )
+                return None
+            return response.data.message_id
+        except Exception as e:
+            logger.error("Failed to send DM to Feishu user %s: %s", user_id, e)
+            return None
+
     async def send_message(
         self,
         context: MessageContext,
@@ -1036,6 +1088,8 @@ class FeishuBot(BaseIMClient):
             # Require-mention logic (bypass for p2p/DM chats)
             chat_type = message.get("chat_type", "")
             is_p2p = chat_type == "p2p"
+            if is_p2p and chat_id:
+                self._dm_chat_ids.add(chat_id)
             is_thread_reply = bool(root_id)
             effective_require_mention = self.config.require_mention
             if self.settings_manager:
@@ -1065,10 +1119,27 @@ class FeishuBot(BaseIMClient):
                     else:
                         return
 
-            # Channel authorisation
-            if not await self._is_authorized_channel(chat_id):
-                logger.info("Unauthorized message from channel: %s", chat_id)
-                await self._send_unauthorized_message(chat_id)
+            # Centralized auth check — parse command name before auth so
+            # admin-protected text commands (e.g. /settings, /set_cwd) are checked.
+            from core.auth import check_auth
+
+            if text.startswith("/"):
+                _cmd_parts = text.split(maxsplit=1)
+                _action = _cmd_parts[0][1:]  # strip leading "/"
+            else:
+                _action = ""
+            auth_result = check_auth(
+                user_id=user_id,
+                channel_id=chat_id,
+                is_dm=is_p2p,
+                action=_action,
+                store=self.settings_manager.store if self.settings_manager else None,
+            )
+            if not auth_result.allowed:
+                try:
+                    await self._send_auth_denial(chat_id, user_id, auth_result)
+                except Exception as exc:
+                    logger.error("Failed to send auth denial: %s", exc)
                 return
 
             # Determine thread ID: use root_id if in thread, else use message_id as thread root
@@ -1083,6 +1154,7 @@ class FeishuBot(BaseIMClient):
                     "event": event_data,
                     "msg_type": msg_type,
                     "mentions": mentions,
+                    "is_dm": is_p2p,
                 },
                 files=file_attachments,
             )
@@ -1165,9 +1237,29 @@ class FeishuBot(BaseIMClient):
             if self._is_duplicate_event(dedup_key):
                 return
 
-            # --- Channel authorization (same as message handler) ---
-            if not chat_id or not await self._is_authorized_channel(chat_id):
-                logger.info("Card action from unauthorized/unknown channel %s, ignoring", chat_id)
+            # --- Centralized auth check ---
+            is_dm = chat_id in self._dm_chat_ids
+            _card_action = button_name if form_value is not None else (callback_data or "")
+            from core.auth import check_auth
+
+            auth_result = check_auth(
+                user_id=user_id,
+                channel_id=chat_id,
+                is_dm=is_dm,
+                action=_card_action,
+                store=self.settings_manager.store if self.settings_manager else None,
+            )
+            if not auth_result.allowed:
+                if auth_result.denial == "not_admin":
+                    logger.info("Permission denied: %s attempted card action %s", user_id, _card_action)
+                else:
+                    logger.info(
+                        "Card action from unauthorized context %s (denial=%s), ignoring", chat_id, auth_result.denial
+                    )
+                try:
+                    await self._send_auth_denial(chat_id, user_id, auth_result)
+                except Exception as exc:
+                    logger.error("Failed to send card auth denial: %s", exc)
                 return
 
             context = MessageContext(
@@ -1178,6 +1270,7 @@ class FeishuBot(BaseIMClient):
                 platform_specific={
                     "event": event_data,
                     "action": action,
+                    "is_dm": is_dm,
                     # Provide trigger_id so question_handler.open_question_modal()
                     # doesn't abort with "Modal UI is not available".
                     # Feishu doesn't use a real trigger_id (we send cards, not
@@ -1226,7 +1319,8 @@ class FeishuBot(BaseIMClient):
             logger.warning("CWD form submitted with empty path")
             return
         if self._on_change_cwd:
-            await self._on_change_cwd(context.user_id, new_cwd, context.channel_id)
+            is_dm = context.platform_specific.get("is_dm", False) if context.platform_specific else False
+            await self._on_change_cwd(context.user_id, new_cwd, context.channel_id, is_dm)
 
     async def _handle_settings_form_submit(self, context: MessageContext, form_value: Dict[str, Any]):
         """Handle settings form submission."""
@@ -1252,6 +1346,7 @@ class FeishuBot(BaseIMClient):
                 context.channel_id,
                 require_mention,
                 language,
+                is_dm=context.platform_specific.get("is_dm", False),
             )
 
     async def _handle_routing_backend_select(self, context: MessageContext, form_value: Dict[str, Any]):
@@ -1315,6 +1410,7 @@ class FeishuBot(BaseIMClient):
                 claude_model,
                 codex_model,
                 codex_reasoning,
+                is_dm=context.platform_specific.get("is_dm", False),
             )
 
     # ------------------------------------------------------------------
@@ -1512,6 +1608,7 @@ class FeishuBot(BaseIMClient):
 
         # Delegate to the resume session callback (same as Slack/Discord)
         if hasattr(self, "_on_resume_session") and self._on_resume_session:
+            is_dm = context.platform_specific.get("is_dm", False) if context.platform_specific else False
             await self._on_resume_session(
                 context.user_id,
                 context.channel_id,
@@ -1519,6 +1616,7 @@ class FeishuBot(BaseIMClient):
                 chosen_agent,
                 chosen_session,
                 host_message_ts,
+                is_dm,
             )
 
     # ------------------------------------------------------------------
@@ -2531,6 +2629,9 @@ class FeishuBot(BaseIMClient):
 
             # Fetch bot info
             await self._fetch_bot_info()
+
+            # Pre-populate DM chat IDs from persisted user settings
+            self._populate_dm_chat_ids()
 
             # Start WebSocket client in a background thread
             self._ws_client = lark.ws.Client(

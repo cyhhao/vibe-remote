@@ -13,6 +13,7 @@ from markdown_to_mrkdwn import SlackMarkdownConverter
 
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
 from config.v2_config import SlackConfig
+from core.auth import check_auth, AuthResult
 from .formatters import SlackFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
@@ -135,6 +136,25 @@ class SlackBot(BaseIMClient):
             logger.warning(f"Error converting markdown to mrkdwn: {e}, using original text")
             # Fallback to original text if conversion fails
             return text
+
+    async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
+        """Send a direct message to a Slack user by opening a DM channel first."""
+        self._ensure_clients()
+        try:
+            resp = await self.web_client.conversations_open(users=[user_id])
+            if not resp.get("ok"):
+                logger.warning("Failed to open DM channel with user %s", user_id)
+                return None
+            dm_channel = resp.get("channel", {}).get("id")
+            if not dm_channel:
+                return None
+            msg_kwargs = {"channel": dm_channel, "text": text}
+            msg_kwargs.update(kwargs)
+            result = await self.web_client.chat_postMessage(**msg_kwargs)
+            return result.get("ts")
+        except Exception as e:
+            logger.error("Failed to send DM to Slack user %s: %s", user_id, e)
+            return None
 
     async def send_message(
         self,
@@ -875,10 +895,23 @@ class SlackBot(BaseIMClient):
                         logger.debug(f"No settings_manager, ignoring thread message: '{text}'")
                         return
 
-            # Only check channel authorization for messages we're actually going to process
-            if not await self._is_authorized_channel(channel_id):
-                logger.info(f"Unauthorized message from channel: {channel_id}")
-                await self._send_unauthorized_message(channel_id)
+            # Centralized auth gate — parse command name before auth so
+            # admin-protected text commands (e.g. /settings, /set_cwd) are checked.
+            is_dm = channel_id.startswith("D")
+            if text.startswith("/"):
+                _cmd_parts = text.split(maxsplit=1)
+                auth_action = _cmd_parts[0][1:]  # strip leading "/"
+            else:
+                auth_action = ""
+            auth = check_auth(
+                user_id=user_id,
+                channel_id=channel_id,
+                is_dm=is_dm,
+                action=auth_action,
+                store=self.settings_manager.store if self.settings_manager else None,
+            )
+            if not auth.allowed:
+                await self._send_auth_denial(channel_id, user_id, auth)
                 return
 
             # Now extract shared/forwarded message content (after authorization)
@@ -901,7 +934,11 @@ class SlackBot(BaseIMClient):
                 channel_id=channel_id,
                 thread_id=thread_id,  # Always have a thread_id
                 message_id=event.get("ts"),
-                platform_specific={"team_id": payload.get("team_id"), "event": event},
+                platform_specific={
+                    "team_id": payload.get("team_id"),
+                    "event": event,
+                    "is_dm": channel_id.startswith("D"),
+                },
                 files=file_attachments,
             )
 
@@ -932,10 +969,17 @@ class SlackBot(BaseIMClient):
             # Handle @mentions
             channel_id = event.get("channel")
 
-            # Check if channel is authorized based on whitelist
-            if not await self._is_authorized_channel(channel_id):
-                logger.info(f"Unauthorized mention from channel: {channel_id}")
-                await self._send_unauthorized_message(channel_id)
+            # Centralized auth gate (app_mention is always in a channel, not DM)
+            user_id_mention = event.get("user")
+            auth = check_auth(
+                user_id=user_id_mention or "",
+                channel_id=channel_id,
+                is_dm=False,
+                action="",
+                store=self.settings_manager.store if self.settings_manager else None,
+            )
+            if not auth.allowed:
+                await self._send_auth_denial(channel_id, user_id_mention or "", auth)
                 return
 
             # For Slack: if no thread_ts, use the message's own ts as thread_id (start of thread)
@@ -950,7 +994,11 @@ class SlackBot(BaseIMClient):
                 channel_id=channel_id,
                 thread_id=thread_id,  # Always have a thread_id
                 message_id=event.get("ts"),
-                platform_specific={"team_id": payload.get("team_id"), "event": event},
+                platform_specific={
+                    "team_id": payload.get("team_id"),
+                    "event": event,
+                    "is_dm": channel_id.startswith("D"),
+                },
                 files=file_attachments,
             )
 
@@ -1002,17 +1050,20 @@ class SlackBot(BaseIMClient):
         """Handle native Slack slash commands"""
         command = payload.get("command", "").lstrip("/")
         channel_id = payload.get("channel_id")
+        user_id = payload.get("user_id", "")
+        response_url = payload.get("response_url")
 
-        # Check if channel is authorized based on whitelist
-        if not await self._is_authorized_channel(channel_id):
-            logger.info(f"Unauthorized slash command from channel: {channel_id}")
-            # Send a response to user about unauthorized channel
-            response_url = payload.get("response_url")
-            if response_url:
-                await self.send_slash_response(
-                    response_url,
-                    f"❌ {self._t('error.channelNotEnabled', channel_id)}",
-                )
+        # Centralized auth gate
+        is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
+        auth = check_auth(
+            user_id=user_id,
+            channel_id=channel_id,
+            is_dm=is_dm,
+            action=command,
+            store=self.settings_manager.store if self.settings_manager else None,
+        )
+        if not auth.allowed:
+            await self._send_auth_denial(channel_id, user_id, auth, response_url=response_url)
             return
 
         # Map Slack slash commands to internal commands
@@ -1032,11 +1083,11 @@ class SlackBot(BaseIMClient):
                 "command": command,
                 "text": payload.get("text"),
                 "payload": payload,
+                "is_dm": is_dm,
             },
         )
 
         # Send immediate acknowledgment to Slack
-        response_url = payload.get("response_url")
 
         # Try to handle as registered command
         if actual_command in self.on_command_callbacks:
@@ -1074,15 +1125,6 @@ class SlackBot(BaseIMClient):
             actions = payload.get("actions", [])
             view = payload.get("view", {})
 
-            # Check for update button click (handled before channel authorization)
-            for action in actions:
-                if action.get("action_id") == "vibe_update_now":
-                    from core.update_checker import handle_update_button_click
-
-                    if hasattr(self, "_controller") and self._controller:
-                        await handle_update_button_click(self._controller, payload)
-                    return
-
             # In Slack modals, `channel` is often missing. We store the originating
             # channel_id in `view.private_metadata` when opening the modal.
             channel_id = payload.get("channel", {}).get("id") or payload.get("container", {}).get("channel_id")
@@ -1100,16 +1142,34 @@ class SlackBot(BaseIMClient):
                         # Fallback: treat private_metadata as channel_id directly (legacy behavior)
                         channel_id = private_metadata
 
-            # Check if channel is authorized for interactive components
-            if not await self._is_authorized_channel(channel_id):
-                logger.info(f"Unauthorized interactive action from channel: {channel_id}")
+            # Determine the primary action for auth check
+            primary_action = actions[0].get("action_id", "") if actions else ""
+
+            # Centralized auth gate
+            is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
+            auth = check_auth(
+                user_id=user.get("id", ""),
+                channel_id=channel_id or "",
+                is_dm=is_dm,
+                action=primary_action,
+                store=self.settings_manager.store if self.settings_manager else None,
+            )
+            if not auth.allowed:
                 try:
-                    await self._send_unauthorized_message(channel_id)
+                    await self._send_auth_denial(channel_id or "", user.get("id", ""), auth)
                 except Exception as e:
-                    logger.debug("Failed to send unauthorized message to channel %s: %s", channel_id, e)
+                    logger.debug("Failed to send auth denial to channel %s: %s", channel_id, e)
                 return
 
-            view = payload.get("view", {})
+            # Handle update button click
+            for action in actions:
+                if action.get("action_id") == "vibe_update_now":
+                    from core.update_checker import handle_update_button_click
+
+                    if hasattr(self, "_controller") and self._controller:
+                        await handle_update_button_click(self._controller, payload)
+                    return
+
             for action in actions:
                 action_type = action.get("type")
                 if action_type == "button":
@@ -1132,6 +1192,7 @@ class SlackBot(BaseIMClient):
                                 "response_url": payload.get("response_url"),
                                 "action": action,
                                 "payload": payload,
+                                "is_dm": is_dm,
                             },
                         )
 
@@ -1156,11 +1217,13 @@ class SlackBot(BaseIMClient):
                     if should_update:
                         if hasattr(self, "_on_routing_modal_update"):
                             channel_from_view = view.get("private_metadata")
+                            effective_channel = channel_from_view or channel_id
                             await self._on_routing_modal_update(
                                 user.get("id"),
-                                channel_from_view or channel_id,
+                                effective_channel,
                                 view,
                                 action,
+                                is_dm=isinstance(effective_channel, str) and effective_channel.startswith("D"),
                             )
                 elif action_type == "plain_text_input":
                     action_id = action.get("action_id")
@@ -1215,7 +1278,14 @@ class SlackBot(BaseIMClient):
 
             # Update settings - need access to settings manager
             if hasattr(self, "_on_settings_update"):
-                await self._on_settings_update(user_id, show_types, channel_id, require_mention, language)
+                await self._on_settings_update(
+                    user_id,
+                    show_types,
+                    channel_id,
+                    require_mention,
+                    language,
+                    is_dm=isinstance(channel_id, str) and channel_id.startswith("D"),
+                )
 
         elif callback_id == "change_cwd_modal":
             # Handle change CWD modal submission
@@ -1231,7 +1301,8 @@ class SlackBot(BaseIMClient):
 
             # Update CWD - need access to controller or settings manager
             if hasattr(self, "_on_change_cwd"):
-                await self._on_change_cwd(user_id, new_cwd, channel_id)
+                is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
+                await self._on_change_cwd(user_id, new_cwd, channel_id, is_dm)
 
             # Send success message to the user (via DM or channel)
             # We need to find the right channel to send the message
@@ -1281,8 +1352,9 @@ class SlackBot(BaseIMClient):
                 chosen_agent = selected_agent or agent
 
             if hasattr(self, "_on_resume_session"):
+                is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
                 await self._on_resume_session(
-                    user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts
+                    user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts, is_dm
                 )
 
         elif callback_id == "opencode_question_modal" or callback_id == "claude_question_modal":
@@ -1326,7 +1398,10 @@ class SlackBot(BaseIMClient):
                     user_id=user_id,
                     channel_id=str(channel_id) if channel_id else "",
                     thread_id=str(thread_id) if thread_id else None,
-                    platform_specific={"payload": payload},
+                    platform_specific={
+                        "payload": payload,
+                        "is_dm": isinstance(channel_id, str) and channel_id.startswith("D"),
+                    },
                 )
                 # Use callback_prefix to route to correct agent
                 await self.on_callback_query_callback(
@@ -1430,6 +1505,7 @@ class SlackBot(BaseIMClient):
                     claude_model,
                     codex_model,
                     codex_reasoning,
+                    is_dm=isinstance(channel_id, str) and channel_id.startswith("D"),
                 )
 
     def run(self):
@@ -3107,6 +3183,34 @@ class SlackBot(BaseIMClient):
 
         logger.info("Channel not enabled in settings.json: %s", channel_id)
         return False
+
+    async def _send_auth_denial(self, channel_id: str, user_id: str, auth: AuthResult, response_url: str = None):
+        """Send appropriate denial message based on auth result."""
+        if auth.denial == "unbound_dm":
+            hint = self._t("bind.dmNotBound", channel_id)
+            if response_url:
+                await self.send_slash_response(response_url, f"🔑 {hint}")
+            else:
+                try:
+                    self._ensure_clients()
+                    await self.web_client.chat_postMessage(channel=channel_id, text=hint)
+                except Exception as e:
+                    logger.error(f"Failed to send DM bind hint: {e}")
+        elif auth.denial == "unauthorized_channel":
+            if response_url:
+                await self.send_slash_response(response_url, f"❌ {self._t('error.channelNotEnabled', channel_id)}")
+            else:
+                await self._send_unauthorized_message(channel_id)
+        elif auth.denial == "not_admin":
+            msg = i18n_t("permission.adminOnly")
+            if response_url:
+                await self.send_slash_response(response_url, msg)
+            else:
+                try:
+                    self._ensure_clients()
+                    await self.web_client.chat_postMessage(channel=channel_id, text=msg)
+                except Exception as e:
+                    logger.error(f"Failed to send admin denial: {e}")
 
     async def _send_unauthorized_message(self, channel_id: str):
         """Send unauthorized access message to channel"""

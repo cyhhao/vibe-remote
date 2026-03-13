@@ -274,7 +274,10 @@ class Controller:
 
     def _setup_callbacks(self):
         """Setup callback connections between modules"""
-        # Create command handlers dict
+
+        # Command handlers dict
+        # Admin protection for "set_cwd" and "settings" is now handled by
+        # the centralized auth pipeline (core.auth.check_auth) in IM entry points.
         command_handlers = {
             "start": self.command_handler.handle_start,
             "clear": self.command_handler.handle_clear,
@@ -282,6 +285,7 @@ class Controller:
             "set_cwd": self.command_handler.handle_set_cwd,
             "settings": self.settings_handler.handle_settings,
             "stop": self.command_handler.handle_stop,
+            "bind": self.command_handler.handle_bind,
         }
 
         # Register callbacks with the IM client
@@ -353,9 +357,16 @@ class Controller:
         return os.getcwd()
 
     def _get_settings_key(self, context: MessageContext) -> str:
-        """Get settings key based on context"""
-        # Slack only in V2
-        return context.channel_id
+        """Get settings key based on context.
+
+        For DM contexts, returns user_id so per-user settings apply.
+        For channel contexts, returns channel_id for per-channel settings.
+
+        Relies on the ``is_dm`` flag set by the IM layer in
+        ``context.platform_specific`` (see Phase 2 of the refactoring).
+        """
+        is_dm = (context.platform_specific or {}).get("is_dm", False)
+        return context.user_id if is_dm else context.channel_id
 
     def _get_target_context(self, context: MessageContext) -> MessageContext:
         """Get target context for sending messages"""
@@ -700,14 +711,12 @@ class Controller:
         require_mention: Optional[bool] = None,
         language: Optional[str] = None,
         notify_user: bool = True,
+        is_dm: bool = False,
     ):
         """Handle settings update (typically from Slack modal)"""
         try:
-            # Determine settings key - for Slack, always use channel_id
-            if self.config.platform == "slack":
-                settings_key = channel_id if channel_id else user_id  # fallback to user_id if no channel
-            else:
-                settings_key = channel_id if channel_id else user_id
+            # Determine settings key — for DM contexts use user_id
+            settings_key = user_id if is_dm else (channel_id or user_id)
 
             # Update settings
             user_settings = self.settings_manager.get_user_settings(settings_key)
@@ -716,8 +725,9 @@ class Controller:
             # Save settings - using the correct method name
             self.settings_manager.update_user_settings(settings_key, user_settings)
 
-            # Save require_mention setting
-            self.settings_manager.set_require_mention(settings_key, require_mention)
+            # Save require_mention setting (channel-only, not applicable in DM)
+            if not is_dm:
+                self.settings_manager.set_require_mention(settings_key, require_mention)
 
             # Save language setting to global config
             language_saved = True
@@ -771,14 +781,16 @@ class Controller:
                 raise
 
     # Working directory change handler (for Slack modal)
-    async def handle_change_cwd_submission(self, user_id: str, new_cwd: str, channel_id: Optional[str] = None):
+    async def handle_change_cwd_submission(
+        self, user_id: str, new_cwd: str, channel_id: Optional[str] = None, is_dm: bool = False
+    ):
         """Handle working directory change submission (from Slack modal) - reuse command handler logic"""
         try:
             # Create context for messages (without 'message' field which doesn't exist in MessageContext)
             context = MessageContext(
                 user_id=user_id,
                 channel_id=channel_id if channel_id else user_id,
-                platform_specific={},
+                platform_specific={"is_dm": is_dm},
             )
 
             # Reuse the same logic from handle_set_cwd command handler
@@ -790,7 +802,7 @@ class Controller:
             context = MessageContext(
                 user_id=user_id,
                 channel_id=channel_id if channel_id else user_id,
-                platform_specific={},
+                platform_specific={"is_dm": is_dm},
             )
             await self.im_client.send_message(
                 context,
@@ -805,6 +817,7 @@ class Controller:
         agent: Optional[str],
         session_id: Optional[str],
         host_message_ts: Optional[str] = None,
+        is_dm: bool = False,
     ) -> None:
         """Bind a provided session_id to the current thread for the chosen agent."""
         from modules.settings_manager import ChannelRouting
@@ -832,7 +845,7 @@ class Controller:
                 user_id=user_id,
                 channel_id=channel_id or user_id,
                 thread_id=target_thread or None,
-                platform_specific={},
+                platform_specific={"is_dm": is_dm},
             )
 
             settings_key = self._get_settings_key(context)
@@ -875,7 +888,7 @@ class Controller:
                 user_id=user_id,
                 channel_id=channel_id or user_id,
                 thread_id=thread_id or None,
-                platform_specific={},
+                platform_specific={"is_dm": is_dm},
             )
             await self.im_client.send_message(
                 context,
@@ -888,6 +901,7 @@ class Controller:
         channel_id: str,
         view: dict,
         action: dict,
+        is_dm: bool = False,
     ) -> None:
         """Handle routing modal updates when selections change."""
         try:
@@ -901,7 +915,7 @@ class Controller:
             context = MessageContext(
                 user_id=user_id,
                 channel_id=resolved_channel_id,
-                platform_specific={},
+                platform_specific={"is_dm": is_dm},
             )
 
             settings_key = self._get_settings_key(context)
@@ -1070,13 +1084,14 @@ class Controller:
         codex_model: Optional[str] = None,
         codex_reasoning_effort: Optional[str] = None,
         notify_user: bool = True,
+        is_dm: bool = False,
     ):
         """Handle routing update submission (from Slack modal)"""
         from modules.settings_manager import ChannelRouting
 
         try:
             # Get settings key
-            settings_key = channel_id if channel_id else user_id
+            settings_key = user_id if is_dm else (channel_id or user_id)
 
             # Get existing routing to preserve settings for other backends
             existing_routing = self.settings_manager.get_channel_routing(settings_key)
