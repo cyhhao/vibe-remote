@@ -1,0 +1,39 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+.env
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Tests & CI
+.pytest_cache/
+htmlcov/
+.coverage
+.tox/
+.nox/
+
+# Project
+_tmp/
+tmp/
+logs/
+.vibe_remote/
+.worktrees/
+docs/
+
+# UI (built separately or not needed for API-only testing)
+ui/node_modules/
+ui/.vite/
