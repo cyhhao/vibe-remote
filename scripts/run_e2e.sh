@@ -16,11 +16,13 @@ export VIBE_E2E_PORT="${VIBE_E2E_PORT:-15123}"
 
 KEEP=false
 DOWN_ONLY=false
+PYTEST_ARGS=()
 
 for arg in "$@"; do
     case "$arg" in
         --keep) KEEP=true ;;
         --down) DOWN_ONLY=true ;;
+        *) PYTEST_ARGS+=("$arg") ;;
     esac
 done
 
@@ -37,6 +39,9 @@ if [ "$DOWN_ONLY" = true ]; then
     docker compose -f "$COMPOSE_FILE" down -v
     exit 0
 fi
+
+# Export KEEP flag so pytest fixture can respect it
+export VIBE_E2E_KEEP="$KEEP"
 
 # Build
 echo "Building Docker image..."
@@ -66,7 +71,9 @@ done
 echo "Running E2E tests..."
 trap cleanup EXIT
 
-pytest tests/e2e/ -v --tb=short "$@" 2>&1 | grep -v "^--keep$\|^--down$" || true
-TEST_EXIT=${PIPESTATUS[0]}
+set +e
+pytest tests/e2e/ -v --tb=short "${PYTEST_ARGS[@]}"
+TEST_EXIT=$?
+set -e
 
-exit ${TEST_EXIT:-0}
+exit "$TEST_EXIT"

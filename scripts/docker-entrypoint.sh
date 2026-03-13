@@ -34,8 +34,12 @@ run_ui_server('0.0.0.0', ${VIBE_UI_PORT:-5123})
         UI_PID=$!
         echo "$UI_PID" > "$RUNTIME_DIR/vibe-ui.pid"
 
-        # Wait for either process to exit
-        wait -n "$SERVICE_PID" "$UI_PID" 2>/dev/null || true
+        # Wait for either process to exit; propagate its exit code
+        wait -n "$SERVICE_PID" "$UI_PID" 2>/dev/null
+        EXIT_CODE=$?
+        # Terminate the sibling process
+        kill "$SERVICE_PID" "$UI_PID" 2>/dev/null || true
+        exit "$EXIT_CODE"
         ;;
     cli)
         # Run a vibe CLI command (e.g., docker run ... cli doctor)

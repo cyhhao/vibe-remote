@@ -3,8 +3,6 @@
 import os
 import subprocess
 
-import pytest
-
 COMPOSE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "docker-compose.e2e.yml")
 
 

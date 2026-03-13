@@ -5,7 +5,7 @@ from pathlib import Path
 def get_vibe_remote_dir() -> Path:
     custom = os.environ.get("VIBE_REMOTE_HOME")
     if custom:
-        return Path(custom)
+        return Path(custom).expanduser().resolve()
     return Path.home() / ".vibe_remote"
 
 

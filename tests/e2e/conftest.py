@@ -15,9 +15,26 @@ E2E_BASE_URL = f"http://127.0.0.1:{E2E_PORT}"
 # Compose file path (relative to repo root)
 COMPOSE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "docker-compose.e2e.yml")
 
+# When true, skip container teardown (set by run_e2e.sh --keep)
+KEEP_CONTAINER = os.environ.get("VIBE_E2E_KEEP", "false").lower() == "true"
+
 
 def _url(path: str) -> str:
     return f"{E2E_BASE_URL}{path}"
+
+
+def _compose_env() -> dict:
+    env = os.environ.copy()
+    env["VIBE_E2E_PORT"] = str(E2E_PORT)
+    return env
+
+
+def _compose_down(compose_file: str, env: dict) -> None:
+    subprocess.run(
+        ["docker", "compose", "-f", compose_file, "down", "-v"],
+        env=env,
+        capture_output=True,
+    )
 
 
 def _wait_for_healthy(timeout: int = 60) -> bool:
@@ -38,45 +55,41 @@ def _wait_for_healthy(timeout: int = 60) -> bool:
 def vibe_container():
     """Start Vibe container for the entire test session, tear down after."""
     compose_file = os.path.abspath(COMPOSE_FILE)
+    env = _compose_env()
 
-    # Build and start
-    env = os.environ.copy()
-    env["VIBE_E2E_PORT"] = str(E2E_PORT)
-
-    subprocess.run(
-        ["docker", "compose", "-f", compose_file, "build"],
-        check=True,
-        env=env,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["docker", "compose", "-f", compose_file, "up", "-d"],
-        check=True,
-        env=env,
-        capture_output=True,
-    )
-
-    # Wait for healthy
-    if not _wait_for_healthy(timeout=60):
-        # Dump logs for debugging
-        logs = subprocess.run(
-            ["docker", "compose", "-f", compose_file, "logs"],
-            capture_output=True,
-            text=True,
+    try:
+        subprocess.run(
+            ["docker", "compose", "-f", compose_file, "build"],
+            check=True,
             env=env,
         )
-        pytest.fail(
-            f"Vibe container did not become healthy within 60s.\nSTDOUT:\n{logs.stdout}\nSTDERR:\n{logs.stderr}"
+        subprocess.run(
+            ["docker", "compose", "-f", compose_file, "up", "-d"],
+            check=True,
+            env=env,
         )
+
+        # Wait for healthy
+        if not _wait_for_healthy(timeout=60):
+            logs = subprocess.run(
+                ["docker", "compose", "-f", compose_file, "logs"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            pytest.fail(
+                f"Vibe container did not become healthy within 60s.\nSTDOUT:\n{logs.stdout}\nSTDERR:\n{logs.stderr}"
+            )
+    except Exception:
+        # Always clean up on startup failure
+        _compose_down(compose_file, env)
+        raise
 
     yield E2E_BASE_URL
 
-    # Teardown
-    subprocess.run(
-        ["docker", "compose", "-f", compose_file, "down", "-v"],
-        env=env,
-        capture_output=True,
-    )
+    # Teardown (skip if --keep)
+    if not KEEP_CONTAINER:
+        _compose_down(compose_file, env)
 
 
 @pytest.fixture(scope="session")

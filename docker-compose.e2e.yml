@@ -9,7 +9,7 @@ services:
       - VIBE_REMOTE_HOME=/data/vibe_remote
       - VIBE_UI_PORT=5123
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5123/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5123/health', timeout=3)"]
       interval: 3s
       timeout: 5s
       retries: 10
