@@ -506,7 +506,7 @@ class DiscordBot(BaseIMClient):
                 channel_id=channel_id,
                 thread_id=thread_id,
                 message_id=str(message.id),
-                platform_specific={"message": message},
+                platform_specific={"message": message, "is_dm": is_dm},
                 files=files,
             )
             parts = content.split(maxsplit=1)
@@ -524,7 +524,7 @@ class DiscordBot(BaseIMClient):
                     channel_id=channel_id,
                     thread_id=thread_id,
                     message_id=str(message.id),
-                    platform_specific={"message": message},
+                    platform_specific={"message": message, "is_dm": is_dm},
                     files=files,
                 )
                 await self.on_message_callback(context, "")
@@ -541,7 +541,7 @@ class DiscordBot(BaseIMClient):
             channel_id=channel_id,
             thread_id=thread_id,
             message_id=str(message.id),
-            platform_specific={"message": message},
+            platform_specific={"message": message, "is_dm": is_dm},
             files=files,
         )
 
@@ -1393,7 +1393,10 @@ class DiscordBot(BaseIMClient):
                     channel_id=context.channel_id,
                     thread_id=context.thread_id,
                     message_id=context.message_id,
-                    platform_specific={"interaction": submit_interaction},
+                    platform_specific={
+                        "interaction": submit_interaction,
+                        "is_dm": (context.platform_specific or {}).get("is_dm", False),
+                    },
                 )
                 await self.on_callback_query_callback(ctx, callback_data)
             await submit_interaction.response.edit_message(content="✅ Answer submitted.", view=None)
@@ -1502,7 +1505,7 @@ class _PersistentStartView(discord.ui.View):
                 channel_id=channel_id,
                 thread_id=thread_id,
                 message_id=str(interaction.message.id) if interaction.message else None,
-                platform_specific={"interaction": interaction},
+                platform_specific={"interaction": interaction, "is_dm": is_dm},
             )
             if self.outer.on_callback_query_callback:
                 await self.outer.on_callback_query_callback(context, data)
@@ -1585,7 +1588,7 @@ class _DiscordButtonView(discord.ui.View):
                         thread_id=thread_id,
                         message_id=self.base_context.message_id
                         or (str(interaction.message.id) if interaction.message else None),
-                        platform_specific={"interaction": interaction},
+                        platform_specific={"interaction": interaction, "is_dm": is_dm},
                     )
                     if self.outer.on_callback_query_callback:
                         await self.outer.on_callback_query_callback(context, data)

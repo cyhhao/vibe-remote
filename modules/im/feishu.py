@@ -1131,6 +1131,7 @@ class FeishuBot(BaseIMClient):
                     "event": event_data,
                     "msg_type": msg_type,
                     "mentions": mentions,
+                    "is_dm": is_p2p,
                 },
                 files=file_attachments,
             )
@@ -1235,6 +1236,7 @@ class FeishuBot(BaseIMClient):
                 platform_specific={
                     "event": event_data,
                     "action": action,
+                    "is_dm": is_bound_dm,
                     # Provide trigger_id so question_handler.open_question_modal()
                     # doesn't abort with "Modal UI is not available".
                     # Feishu doesn't use a real trigger_id (we send cards, not

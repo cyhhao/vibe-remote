@@ -177,6 +177,26 @@ class SettingsManager:
             ),
         )
 
+    def _sync_to_bound_user(self, user_id: str, settings: UserSettings) -> None:
+        """Sync runtime UserSettings back to the bound-user record in store.settings.users."""
+        bound = self.store.settings.users.get(user_id)
+        if not bound:
+            return
+        routing = settings.channel_routing or ChannelRouting()
+        bound.enabled = settings.enabled
+        bound.show_message_types = self._normalize_show_message_types(settings.show_message_types)
+        bound.custom_cwd = settings.custom_cwd
+        bound.routing = RoutingSettings(
+            agent_backend=routing.agent_backend,
+            opencode_agent=routing.opencode_agent,
+            opencode_model=routing.opencode_model,
+            opencode_reasoning_effort=routing.opencode_reasoning_effort,
+            claude_agent=routing.claude_agent,
+            claude_model=routing.claude_model,
+            codex_model=routing.codex_model,
+            codex_reasoning_effort=routing.codex_reasoning_effort,
+        )
+
     def _load_settings(self):
         """Load settings from JSON file"""
         self.store = SettingsStore(self.settings_file)
@@ -226,18 +246,33 @@ class SettingsManager:
         else:
             self._settings_mtime_ns = mtime_ns
 
+    def _is_bound_user_key(self, key: str) -> bool:
+        """Check if a settings key belongs to a bound DM user (not a channel)."""
+        return key in self.store.settings.users
+
     def _save_settings(self):
-        """Save settings to JSON file"""
+        """Save settings to JSON file.
+
+        Only writes channel-keyed entries back to ``store.settings.channels``.
+        Bound DM user entries (keyed by user_id present in ``store.settings.users``)
+        are synced back to ``store.settings.users`` instead, preventing them from
+        shadowing the authoritative ``users`` dict on subsequent reloads.
+        """
         try:
             channels: Dict[str, ChannelSettings] = {}
             for settings_key, settings in self.settings.items():
-                existing = self.store.settings.channels.get(str(settings_key))
+                sk = str(settings_key)
+                if self._is_bound_user_key(sk):
+                    # Sync runtime changes back to the bound-user record
+                    self._sync_to_bound_user(sk, settings)
+                    continue
+                existing = self.store.settings.channels.get(sk)
                 channel_settings = self._to_channel_settings(settings)
                 if existing is not None:
                     channel_settings.enabled = existing.enabled
                     # Preserve require_mention setting (it's managed separately)
                     channel_settings.require_mention = existing.require_mention
-                channels[str(settings_key)] = channel_settings
+                channels[sk] = channel_settings
             self.store.settings.channels = channels
             self.store.save()
             try:
