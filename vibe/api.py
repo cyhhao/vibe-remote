@@ -1223,9 +1223,9 @@ def delete_bind_code(code: str) -> dict:
 def get_first_bind_code() -> dict:
     """Get or create the initial bind code for setup wizard."""
     store = SettingsStore()
-    # If any active code exists, return it
+    # If any valid (active + not expired) code exists, return it
     for bc in store.get_bind_codes():
-        if bc.is_active:
+        if bc.is_active and store.validate_bind_code(bc.code) is not None:
             return {"ok": True, "code": bc.code, "is_new": False}
     # Otherwise create a new one-time code
     bc = store.create_bind_code("one_time")

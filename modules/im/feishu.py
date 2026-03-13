@@ -1230,13 +1230,10 @@ class FeishuBot(BaseIMClient):
                         is_dm = True
             if not is_bound_user or not is_dm:
                 if not chat_id or not await self._is_authorized_channel(chat_id):
-                    if is_bound_user:
-                        # Bound user in a non-authorized channel — allow through
-                        # but don't mark as DM (it's a channel context)
-                        pass
-                    else:
-                        logger.info("Card action from unauthorized/unknown channel %s, ignoring", chat_id)
-                        return
+                    logger.info(
+                        "Card action from unauthorized/unknown channel %s (bound=%s), ignoring", chat_id, is_bound_user
+                    )
+                    return
 
             context = MessageContext(
                 user_id=user_id,

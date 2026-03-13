@@ -293,6 +293,10 @@ class SettingsStore:
         Thread-safe: uses a lock to prevent concurrent bind races.
         """
         with self._bind_lock:
+            # Reload from disk so we pick up bind codes created by the UI API
+            # (which uses a separate SettingsStore instance).
+            self._load()
+
             # Check already bound
             if self.is_bound_user(user_id):
                 return False, False
