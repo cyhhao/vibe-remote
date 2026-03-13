@@ -146,6 +146,24 @@ class DiscordBot(BaseIMClient):
             return False
         return True
 
+    async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
+        """Send a direct message to a Discord user."""
+        try:
+            uid = self._to_int_id(user_id)
+            if uid is None:
+                return None
+            user = self.client.get_user(uid)
+            if user is None:
+                user = await self.client.fetch_user(uid)
+            if user is None:
+                return None
+            dm_channel = user.dm_channel or await user.create_dm()
+            message = await dm_channel.send(content=text)
+            return str(message.id)
+        except Exception as e:
+            logger.error("Failed to send DM to Discord user %s: %s", user_id, e)
+            return None
+
     async def send_message(
         self,
         context: MessageContext,
@@ -461,6 +479,21 @@ class DiscordBot(BaseIMClient):
         if self.client.user:
             bot_id = str(self.client.user.id)
             content = content.replace(f"<@{bot_id}>", "").replace(f"<@!{bot_id}>", "").strip()
+
+        # DM authorization gate: require user to be bound for DM access
+        if is_dm and self.settings_manager:
+            store = self.settings_manager.store
+            if not store.is_bound_user(str(message.author.id)):
+                # Allow /bind command through for unbound users
+                if content.startswith("/bind ") or content == "/bind":
+                    pass  # Will be handled by command routing below
+                else:
+                    try:
+                        hint = self._t("bind.dmNotBound", channel_id)
+                        await channel.send(content=hint)
+                    except Exception as e:
+                        logger.error(f"Failed to send DM bind hint: {e}")
+                    return
 
         # Handle slash-like commands in plain messages
         if content.startswith("/"):

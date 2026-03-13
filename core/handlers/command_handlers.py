@@ -413,6 +413,65 @@ class CommandHandlers:
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(channel_context, f"❌ {self._t('error.resumeFailed')}")
 
+    async def handle_bind(self, context: MessageContext, args: str = ""):
+        """Handle /bind command - bind a user to this Vibe Remote instance via bind code"""
+        try:
+            code = args.strip()
+            if not code:
+                channel_context = self._get_channel_context(context)
+                await self.im_client.send_message(channel_context, self._t("bind.usage"))
+                return
+
+            store = self.settings_manager.store
+
+            # Check if user is already bound
+            if store.is_bound_user(context.user_id):
+                channel_context = self._get_channel_context(context)
+                await self.im_client.send_message(channel_context, self._t("bind.alreadyBound"))
+                return
+
+            # Validate the bind code
+            bind_code = store.validate_bind_code(code)
+            if bind_code is None:
+                channel_context = self._get_channel_context(context)
+                await self.im_client.send_message(channel_context, self._t("bind.invalidCode"))
+                return
+
+            # Fetch user info for display name
+            try:
+                user_info = await self.im_client.get_user_info(context.user_id)
+            except Exception as e:
+                logger.warning(f"Failed to get user info during bind: {e}")
+                user_info = {"id": context.user_id}
+
+            display_name = (
+                user_info.get("display_name") or user_info.get("real_name") or user_info.get("name") or context.user_id
+            )
+
+            # Auto-admin: if no admins exist, first user becomes admin
+            is_admin = not store.has_any_admin()
+
+            # Add user and consume the bind code
+            store.add_user(context.user_id, display_name, is_admin=is_admin)
+            store.use_bind_code(code, context.user_id)
+
+            if is_admin:
+                msg = self._t("bind.successAdmin", name=display_name)
+            else:
+                msg = self._t("bind.success", name=display_name)
+
+            channel_context = self._get_channel_context(context)
+            await self.im_client.send_message(channel_context, msg)
+            logger.info(f"User {context.user_id} ({display_name}) bound successfully (admin={is_admin})")
+
+        except Exception as e:
+            logger.error(f"Error handling bind command: {e}", exc_info=True)
+            try:
+                channel_context = self._get_channel_context(context)
+                await self.im_client.send_message(channel_context, self._t("bind.error", error=str(e)))
+            except Exception as send_error:
+                logger.error(f"Failed to send bind error message: {send_error}", exc_info=True)
+
     async def handle_stop(self, context: MessageContext, args: str = ""):
         """Handle /stop command - send interrupt message to the active agent"""
         try:

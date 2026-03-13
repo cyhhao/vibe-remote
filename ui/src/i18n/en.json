@@ -40,6 +40,7 @@
   "nav": {
     "dashboard": "Dashboard",
     "channels": "Channels",
+    "users": "Users",
     "doctor": "Doctor"
   },
   "appShell": {
@@ -325,7 +326,11 @@
     "tipAgentSwitchDesc": "Prefix your message with AgentName: to route to a specific agent. E.g., \"Plan: Design the API\"",
     "tipThread": "Thread = Session",
     "tipThreadDesc": "Each thread is an isolated session. Start multiple threads for parallel tasks.",
-    "finishAndStart": "Finish & Start"
+    "finishAndStart": "Finish & Start",
+    "bindCodeTitle": "Your First Bind Code",
+    "bindCodeDesc": "Send this command to the bot in a DM to become the first admin:",
+    "bindCodeCommand": "/bind",
+    "bindCodeCopied": "Copied!"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -418,5 +423,40 @@
     "empty": "No subdirectories",
     "showHidden": "Show hidden directories",
     "hideHidden": "Hide hidden directories"
+  },
+  "userList": {
+    "title": "Users",
+    "subtitle": "Manage bound users and their settings",
+    "noUsers": "No bound users yet. Create a bind code and share it with users.",
+    "settingsSaved": "User settings saved",
+    "settingsSaveFailed": "Failed to save user settings",
+    "admin": "Admin",
+    "user": "User",
+    "boundAt": "Bound",
+    "removeUser": "Remove",
+    "removeConfirm": "Remove this user? This cannot be undone.",
+    "cannotRemoveLastAdmin": "Cannot remove the last admin",
+    "adminToggled": "Admin status updated",
+    "userRemoved": "User removed"
+  },
+  "bindCode": {
+    "title": "Bind Codes",
+    "newCode": "New Code",
+    "oneTime": "One-time",
+    "expiring": "Expiring",
+    "active": "Active",
+    "used": "Used",
+    "expired": "Expired",
+    "inactive": "Inactive",
+    "usedBy": "{{count}} used",
+    "expiresAt": "Expires {{date}}",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "delete": "Delete",
+    "generate": "Generate",
+    "codeType": "Type",
+    "expirationDate": "Expiration date",
+    "created": "Bind code created",
+    "deleted": "Bind code deleted"
   }
 }

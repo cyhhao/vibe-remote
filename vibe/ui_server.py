@@ -487,6 +487,82 @@ def browse_directory():
 
 
 # =============================================================================
+# User & Bind Code Endpoints
+# =============================================================================
+
+
+@app.route("/users", methods=["GET"])
+def users_get():
+    from vibe import api
+
+    return jsonify(api.get_users())
+
+
+@app.route("/users", methods=["POST"])
+def users_post():
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.save_users(payload))
+
+
+@app.route("/users/<user_id>/admin", methods=["POST"])
+def users_toggle_admin(user_id):
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.toggle_admin(user_id, payload.get("is_admin", False)))
+
+
+@app.route("/users/<user_id>", methods=["DELETE"])
+def users_delete(user_id):
+    from vibe import api
+
+    result = api.remove_user(user_id)
+    if not result.get("ok"):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.route("/bind-codes", methods=["GET"])
+def bind_codes_get():
+    from vibe import api
+
+    return jsonify(api.get_bind_codes())
+
+
+@app.route("/bind-codes", methods=["POST"])
+def bind_codes_post():
+    from vibe import api
+
+    payload = request.json or {}
+    result = api.create_bind_code(
+        code_type=payload.get("type", "one_time"),
+        expires_at=payload.get("expires_at"),
+    )
+    if not result.get("ok"):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.route("/bind-codes/<code>", methods=["DELETE"])
+def bind_codes_delete(code):
+    from vibe import api
+
+    result = api.delete_bind_code(code)
+    if not result.get("ok"):
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+@app.route("/setup/first-bind-code", methods=["GET"])
+def setup_first_bind_code():
+    from vibe import api
+
+    return jsonify(api.get_first_bind_code())
+
+
+# =============================================================================
 # Static Files (SPA)
 # =============================================================================
 

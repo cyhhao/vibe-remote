@@ -3,6 +3,7 @@ import { Wizard } from './components/Wizard';
 import { AppShell } from './components/AppShell';
 import { Dashboard } from './components/Dashboard';
 import { ChannelList } from './components/steps/ChannelList';
+import { UserList } from './components/steps/UserList';
 import { DoctorPanel } from './components/steps/DoctorPanel';
 import { LogsPanel } from './components/steps/LogsPanel';
 import { StatusProvider } from './context/StatusContext';
@@ -47,6 +48,7 @@ function AppRoutes() {
       <Route element={<AuthGuard><AppShell /></AuthGuard>}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/channels" element={<ChannelList isPage />} />
+        <Route path="/users" element={<UserList />} />
         <Route path="/doctor" element={<DoctorPanel isPage />} />
         <Route path="/doctor/logs" element={<LogsPanel />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

@@ -253,6 +253,38 @@ class FeishuBot(BaseIMClient):
     # ------------------------------------------------------------------
     # Sending messages
     # ------------------------------------------------------------------
+    async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
+        """Send a direct message to a Feishu/Lark user by open_id.
+
+        Uses receive_id_type=open_id to send directly to the user without
+        needing to open a DM chat first.
+        """
+        self._ensure_client()
+        try:
+            from lark_oapi.api.im.v1 import (
+                CreateMessageRequest,
+                CreateMessageRequestBody,
+            )
+
+            content = self._build_card_json(text)
+            body = (
+                CreateMessageRequestBody.builder().receive_id(user_id).msg_type("interactive").content(content).build()
+            )
+            request = CreateMessageRequest.builder().receive_id_type("open_id").request_body(body).build()
+            response = await self._lark_client.im.v1.message.acreate(request)
+            if not response.success():
+                logger.error(
+                    "Failed to send Feishu DM to %s: code=%s msg=%s",
+                    user_id,
+                    response.code,
+                    response.msg,
+                )
+                return None
+            return response.data.message_id
+        except Exception as e:
+            logger.error("Failed to send DM to Feishu user %s: %s", user_id, e)
+            return None
+
     async def send_message(
         self,
         context: MessageContext,
@@ -1063,6 +1095,22 @@ class FeishuBot(BaseIMClient):
                             logger.debug("Ignoring message in inactive thread %s", root_id)
                             return
                     else:
+                        return
+
+            # DM (p2p) authorization gate: require user to be bound for DM access
+            if is_p2p and self.settings_manager:
+                store = self.settings_manager.store
+                if not store.is_bound_user(user_id):
+                    # Allow /bind command through for unbound users
+                    if text.startswith("/bind ") or text == "/bind":
+                        pass  # Will be handled by command routing below
+                    else:
+                        try:
+                            hint_ctx = MessageContext(user_id="system", channel_id=chat_id)
+                            hint = self._t("bind.dmNotBound", chat_id)
+                            await self.send_message(hint_ctx, hint)
+                        except Exception as exc:
+                            logger.error("Failed to send DM bind hint: %s", exc)
                         return
 
             # Channel authorisation

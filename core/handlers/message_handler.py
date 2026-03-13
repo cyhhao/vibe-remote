@@ -301,6 +301,19 @@ class MessageHandler:
             settings_handler = SettingsHandler(self.controller)
             command_handlers = CommandHandlers(self.controller)
 
+            # --- Admin permission check for protected operations ---
+            admin_protected = ("cmd_settings", "cmd_routing", "cmd_change_cwd", "vibe_update_now")
+            if any(callback_data.startswith(p) for p in admin_protected):
+                store = self.settings_manager.store
+                # Only enforce if at least one admin exists (backward compat)
+                if store.has_any_admin() and not store.is_admin(context.user_id):
+                    logger.info(f"Permission denied: {context.user_id} attempted {callback_data}")
+                    try:
+                        await self.im_client.send_message(context, self._t("permission.adminOnly"))
+                    except Exception:
+                        pass
+                    return
+
             # Route based on callback data
             if callback_data.startswith("toggle_msg_"):
                 # Toggle message type visibility

@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { LayoutDashboard, MessageSquare, Activity } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, Activity, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStatus } from '../context/StatusContext';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -53,6 +53,7 @@ export const AppShell: React.FC = () => {
         <nav className="flex-1 p-4 space-y-1">
           <NavItem to="/dashboard" icon={LayoutDashboard}>{t('nav.dashboard')}</NavItem>
           <NavItem to="/channels" icon={MessageSquare}>{t('nav.channels')}</NavItem>
+          <NavItem to="/users" icon={Users}>{t('nav.users')}</NavItem>
           <NavItem to="/doctor" icon={Activity}>{t('nav.doctor')}</NavItem>
         </nav>
 
@@ -76,6 +77,7 @@ export const AppShell: React.FC = () => {
        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-panel border-t border-border flex justify-around p-3 z-50 pb-safe">
           <NavLink to="/dashboard" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><LayoutDashboard /></NavLink>
           <NavLink to="/channels" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><MessageSquare /></NavLink>
+          <NavLink to="/users" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><Users /></NavLink>
           <NavLink to="/doctor" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><Activity /></NavLink>
        </nav>
     </div>

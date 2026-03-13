@@ -6,6 +6,14 @@ export type ApiContextType = {
   saveConfig: (payload: any) => Promise<any>;
   getSettings: () => Promise<any>;
   saveSettings: (payload: any) => Promise<any>;
+  getUsers: () => Promise<any>;
+  saveUsers: (payload: any) => Promise<any>;
+  toggleAdmin: (userId: string, isAdmin: boolean) => Promise<any>;
+  removeUser: (userId: string) => Promise<any>;
+  getBindCodes: () => Promise<any>;
+  createBindCode: (type: string, expiresAt?: string) => Promise<any>;
+  deleteBindCode: (code: string) => Promise<any>;
+  getFirstBindCode: () => Promise<any>;
   detectCli: (binary: string) => Promise<any>;
   installAgent: (name: string) => Promise<InstallResult>;
   slackAuthTest: (botToken: string) => Promise<any>;
@@ -121,6 +129,14 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveConfig: (payload) => postJson('/config', payload),
     getSettings: () => getJson('/settings'),
     saveSettings: (payload) => postJson('/settings', payload),
+    getUsers: () => getJson('/users'),
+    saveUsers: (payload) => postJson('/users', payload),
+    toggleAdmin: (userId, isAdmin) => postJson(`/users/${encodeURIComponent(userId)}/admin`, { is_admin: isAdmin }),
+    removeUser: (userId) => fetch(`/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
+    getBindCodes: () => getJson('/bind-codes'),
+    createBindCode: (type, expiresAt) => postJson('/bind-codes', { type, expires_at: expiresAt }),
+    deleteBindCode: (code) => fetch(`/bind-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),
+    getFirstBindCode: () => getJson('/setup/first-bind-code'),
     detectCli: (binary) => getJson(`/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => postJson(`/agent/${encodeURIComponent(name)}/install`, {}),
     slackAuthTest: (botToken) => postJson('/slack/auth_test', { bot_token: botToken }),

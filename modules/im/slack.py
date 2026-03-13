@@ -136,6 +136,25 @@ class SlackBot(BaseIMClient):
             # Fallback to original text if conversion fails
             return text
 
+    async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
+        """Send a direct message to a Slack user by opening a DM channel first."""
+        self._ensure_clients()
+        try:
+            resp = await self.web_client.conversations_open(users=[user_id])
+            if not resp.get("ok"):
+                logger.warning("Failed to open DM channel with user %s", user_id)
+                return None
+            dm_channel = resp.get("channel", {}).get("id")
+            if not dm_channel:
+                return None
+            msg_kwargs = {"channel": dm_channel, "text": text}
+            msg_kwargs.update(kwargs)
+            result = await self.web_client.chat_postMessage(**msg_kwargs)
+            return result.get("ts")
+        except Exception as e:
+            logger.error("Failed to send DM to Slack user %s: %s", user_id, e)
+            return None
+
     async def send_message(
         self,
         context: MessageContext,
@@ -873,6 +892,22 @@ class SlackBot(BaseIMClient):
                     else:
                         # Without settings_manager, fall back to ignoring non-mention in threads
                         logger.debug(f"No settings_manager, ignoring thread message: '{text}'")
+                        return
+
+            # DM authorization gate: require user to be bound for DM access
+            if channel_id.startswith("D") and self.settings_manager:
+                store = self.settings_manager.store
+                if not store.is_bound_user(user_id):
+                    # Allow /bind command through for unbound users
+                    if text.startswith("/bind ") or text == "/bind":
+                        pass  # Will be handled by command routing below
+                    else:
+                        try:
+                            self._ensure_clients()
+                            hint = self._t("bind.dmNotBound", channel_id)
+                            await self.web_client.chat_postMessage(channel=channel_id, text=hint)
+                        except Exception as e:
+                            logger.error(f"Failed to send DM bind hint: {e}")
                         return
 
             # Only check channel authorization for messages we're actually going to process

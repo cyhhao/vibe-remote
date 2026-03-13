@@ -282,6 +282,7 @@ class Controller:
             "set_cwd": self.command_handler.handle_set_cwd,
             "settings": self.settings_handler.handle_settings,
             "stop": self.command_handler.handle_stop,
+            "bind": self.command_handler.handle_bind,
         }
 
         # Register callbacks with the IM client

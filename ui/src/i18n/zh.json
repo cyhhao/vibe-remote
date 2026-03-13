@@ -40,6 +40,7 @@
   "nav": {
     "dashboard": "仪表盘",
     "channels": "频道",
+    "users": "用户",
     "doctor": "诊断"
   },
   "appShell": {
@@ -325,7 +326,11 @@
     "tipAgentSwitchDesc": "在消息前加 AgentName: 前缀即可路由到指定 Agent，如 \"Plan: 设计 API\"",
     "tipThread": "Thread = 会话",
     "tipThreadDesc": "每个 Thread 是独立会话，可开多个 Thread 并行执行任务。",
-    "finishAndStart": "完成并启动"
+    "finishAndStart": "完成并启动",
+    "bindCodeTitle": "您的首个绑定码",
+    "bindCodeDesc": "在私聊中向机器人发送以下命令，成为第一个管理员：",
+    "bindCodeCommand": "/bind",
+    "bindCodeCopied": "已复制！"
   },
   "dashboard": {
     "title": "仪表盘",
@@ -418,5 +423,40 @@
     "empty": "没有子目录",
     "showHidden": "显示隐藏目录",
     "hideHidden": "隐藏隐藏目录"
+  },
+  "userList": {
+    "title": "用户",
+    "subtitle": "管理已绑定的用户及其设置",
+    "noUsers": "暂无绑定用户。创建绑定码并分享给用户。",
+    "settingsSaved": "用户设置已保存",
+    "settingsSaveFailed": "保存用户设置失败",
+    "admin": "管理员",
+    "user": "用户",
+    "boundAt": "绑定于",
+    "removeUser": "移除",
+    "removeConfirm": "确定要移除此用户吗？此操作不可撤销。",
+    "cannotRemoveLastAdmin": "无法移除最后一个管理员",
+    "adminToggled": "管理员状态已更新",
+    "userRemoved": "用户已移除"
+  },
+  "bindCode": {
+    "title": "绑定码",
+    "newCode": "新建绑定码",
+    "oneTime": "一次性",
+    "expiring": "有效期",
+    "active": "可用",
+    "used": "已使用",
+    "expired": "已过期",
+    "inactive": "已失效",
+    "usedBy": "已使用 {{count}} 次",
+    "expiresAt": "{{date}} 到期",
+    "copy": "复制",
+    "copied": "已复制！",
+    "delete": "删除",
+    "generate": "生成",
+    "codeType": "类型",
+    "expirationDate": "到期日期",
+    "created": "绑定码已创建",
+    "deleted": "绑定码已删除"
   }
 }

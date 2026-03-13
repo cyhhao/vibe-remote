@@ -322,6 +322,24 @@ class BaseIMClient(ABC):
         """
         return False
 
+    async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
+        """Send a direct message to a user by their platform user ID.
+
+        This is a convenience method for sending DMs without requiring a
+        pre-existing MessageContext.  Subclasses should override with
+        platform-specific DM-open + send logic.
+
+        Args:
+            user_id: Platform-specific user ID
+            text: Message text
+            **kwargs: Additional platform-specific arguments (e.g. blocks for Slack)
+
+        Returns:
+            Message ID of the sent message, or None on failure
+        """
+        logger.warning("send_dm not implemented for this platform")
+        return None
+
     @abstractmethod
     def format_markdown(self, text: str) -> str:
         """Format markdown text for the specific platform
