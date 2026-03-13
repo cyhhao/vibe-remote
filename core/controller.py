@@ -900,6 +900,7 @@ class Controller:
         channel_id: str,
         view: dict,
         action: dict,
+        is_dm: bool = False,
     ) -> None:
         """Handle routing modal updates when selections change."""
         try:
@@ -913,7 +914,7 @@ class Controller:
             context = MessageContext(
                 user_id=user_id,
                 channel_id=resolved_channel_id,
-                platform_specific={"is_dm": isinstance(channel_id, str) and channel_id.startswith("D")},
+                platform_specific={"is_dm": is_dm},
             )
 
             settings_key = self._get_settings_key(context)

@@ -1217,11 +1217,13 @@ class SlackBot(BaseIMClient):
                     if should_update:
                         if hasattr(self, "_on_routing_modal_update"):
                             channel_from_view = view.get("private_metadata")
+                            effective_channel = channel_from_view or channel_id
                             await self._on_routing_modal_update(
                                 user.get("id"),
-                                channel_from_view or channel_id,
+                                effective_channel,
                                 view,
                                 action,
+                                is_dm=isinstance(effective_channel, str) and effective_channel.startswith("D"),
                             )
                 elif action_type == "plain_text_input":
                     action_id = action.get("action_id")
