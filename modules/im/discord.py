@@ -449,13 +449,32 @@ class DiscordBot(BaseIMClient):
         if not content and not files:
             return
 
-        # Authorization
-        if not await self._is_authorized_channel(channel_id):
-            await self._send_unauthorized_message(channel_id)
-            return
+        # Determine if this is a DM
+        is_dm = isinstance(channel, discord.DMChannel) or message.guild is None
+
+        # DM authorization gate: require user to be bound for DM access
+        # Must run before channel authorization so unbound DM users get bind hint (not channel error)
+        if is_dm and self.settings_manager:
+            store = self.settings_manager.store
+            if not store.is_bound_user(str(message.author.id)):
+                # Allow /bind command through for unbound users
+                if content.startswith("/bind ") or content == "/bind":
+                    pass  # Will be handled by command routing below
+                else:
+                    try:
+                        hint = self._t("bind.dmNotBound", channel_id)
+                        await channel.send(content=hint)
+                    except Exception as e:
+                        logger.error(f"Failed to send DM bind hint: {e}")
+                    return
+
+        # Channel authorization (skip for DMs — DMs are authorized via bind system)
+        if not is_dm:
+            if not await self._is_authorized_channel(channel_id):
+                await self._send_unauthorized_message(channel_id)
+                return
 
         # Mention logic for guild channels
-        is_dm = isinstance(channel, discord.DMChannel) or message.guild is None
         effective_require_mention = self.config.require_mention
         if self.settings_manager:
             effective_require_mention = self.settings_manager.get_require_mention(
@@ -479,21 +498,6 @@ class DiscordBot(BaseIMClient):
         if self.client.user:
             bot_id = str(self.client.user.id)
             content = content.replace(f"<@{bot_id}>", "").replace(f"<@!{bot_id}>", "").strip()
-
-        # DM authorization gate: require user to be bound for DM access
-        if is_dm and self.settings_manager:
-            store = self.settings_manager.store
-            if not store.is_bound_user(str(message.author.id)):
-                # Allow /bind command through for unbound users
-                if content.startswith("/bind ") or content == "/bind":
-                    pass  # Will be handled by command routing below
-                else:
-                    try:
-                        hint = self._t("bind.dmNotBound", channel_id)
-                        await channel.send(content=hint)
-                    except Exception as e:
-                        logger.error(f"Failed to send DM bind hint: {e}")
-                    return
 
         # Handle slash-like commands in plain messages
         if content.startswith("/"):

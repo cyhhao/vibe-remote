@@ -8,6 +8,7 @@ from pathlib import Path
 from config import paths
 from config.v2_sessions import SessionsStore
 from config.v2_settings import SettingsStore, ChannelSettings, RoutingSettings
+from config.v2_settings import UserSettings as BoundUserSettings
 
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,25 @@ class SettingsManager:
             enabled=channel_settings.enabled,
         )
 
+    def _from_bound_user_settings(self, bound_user: BoundUserSettings) -> UserSettings:
+        """Convert a bound user's settings (from v2_settings.UserSettings) to runtime UserSettings."""
+        routing = ChannelRouting(
+            agent_backend=bound_user.routing.agent_backend,
+            opencode_agent=bound_user.routing.opencode_agent,
+            opencode_model=bound_user.routing.opencode_model,
+            opencode_reasoning_effort=bound_user.routing.opencode_reasoning_effort,
+            claude_agent=bound_user.routing.claude_agent,
+            claude_model=bound_user.routing.claude_model,
+            codex_model=bound_user.routing.codex_model,
+            codex_reasoning_effort=bound_user.routing.codex_reasoning_effort,
+        )
+        return UserSettings(
+            show_message_types=self._normalize_show_message_types(bound_user.show_message_types),
+            custom_cwd=bound_user.custom_cwd,
+            channel_routing=routing,
+            enabled=bound_user.enabled,
+        )
+
     def _to_channel_settings(self, settings: UserSettings) -> ChannelSettings:
         routing = settings.channel_routing or ChannelRouting()
         return ChannelSettings(
@@ -231,7 +251,11 @@ class SettingsManager:
             logger.error(f"Error saving settings: {e}")
 
     def get_user_settings(self, user_id: Union[int, str]) -> UserSettings:
-        """Get settings for a specific user"""
+        """Get settings for a specific user/channel context.
+
+        Checks channels dict first, then bound users dict (for DM contexts
+        where _get_settings_key returns user_id).
+        """
         normalized_id = self._normalize_user_id(user_id)
 
         self._reload_if_changed()
@@ -241,6 +265,8 @@ class SettingsManager:
             settings = UserSettings()
             if normalized_id in self.store.settings.channels:
                 settings = self._from_channel_settings(self.store.settings.channels[normalized_id])
+            elif normalized_id in self.store.settings.users:
+                settings = self._from_bound_user_settings(self.store.settings.users[normalized_id])
             self.settings[normalized_id] = settings
             self._save_settings()
         return self.settings[normalized_id]

@@ -428,16 +428,22 @@ class UpdateChecker:
             ]
             for uid in admin_ids:
                 try:
-                    await im_client.send_dm(uid, text, blocks=blocks)
-                    logger.info(f"Sent update notification to admin {uid}")
+                    result = await im_client.send_dm(uid, text, blocks=blocks)
+                    if result:
+                        logger.info(f"Sent update notification to admin {uid}")
+                    else:
+                        logger.warning(f"Failed to send update notification to admin {uid}: send_dm returned None")
                 except Exception as e:
                     logger.error(f"Failed to send update notification to admin {uid}: {e}")
         elif platform == "discord":
             text = f"🚀 **Vibe Remote Update Available**\n\nUpdate from `{current}` → `{latest}`"
             for uid in admin_ids:
                 try:
-                    await im_client.send_dm(uid, text)
-                    logger.info(f"Sent update notification to admin {uid}")
+                    result = await im_client.send_dm(uid, text)
+                    if result:
+                        logger.info(f"Sent update notification to admin {uid}")
+                    else:
+                        logger.warning(f"Failed to send update notification to admin {uid}: send_dm returned None")
                 except Exception as e:
                     logger.error(f"Failed to send update notification to admin {uid}: {e}")
         else:
@@ -445,8 +451,11 @@ class UpdateChecker:
             text = f"🚀 Vibe Remote Update Available\n\nUpdate from {current} → {latest}"
             for uid in admin_ids:
                 try:
-                    await im_client.send_dm(uid, text)
-                    logger.info(f"Sent update notification to admin {uid}")
+                    result = await im_client.send_dm(uid, text)
+                    if result:
+                        logger.info(f"Sent update notification to admin {uid}")
+                    else:
+                        logger.warning(f"Failed to send update notification to admin {uid}: send_dm returned None")
                 except Exception as e:
                     logger.error(f"Failed to send update notification to admin {uid}: {e}")
 

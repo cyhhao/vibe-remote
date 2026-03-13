@@ -910,8 +910,9 @@ class SlackBot(BaseIMClient):
                             logger.error(f"Failed to send DM bind hint: {e}")
                         return
 
-            # Only check channel authorization for messages we're actually going to process
-            if not await self._is_authorized_channel(channel_id):
+            # Only check channel authorization for non-DM messages
+            # DMs are authorized via the bind system above
+            if not channel_id.startswith("D") and not await self._is_authorized_channel(channel_id):
                 logger.info(f"Unauthorized message from channel: {channel_id}")
                 await self._send_unauthorized_message(channel_id)
                 return
@@ -1112,6 +1113,14 @@ class SlackBot(BaseIMClient):
             # Check for update button click (handled before channel authorization)
             for action in actions:
                 if action.get("action_id") == "vibe_update_now":
+                    # Admin permission check for update button
+                    user_id = payload.get("user", {}).get("id")
+                    if self.settings_manager:
+                        store = self.settings_manager.store
+                        if store.has_any_admin() and not store.is_admin(user_id):
+                            logger.info(f"Permission denied: {user_id} attempted update via Slack button")
+                            return
+
                     from core.update_checker import handle_update_button_click
 
                     if hasattr(self, "_controller") and self._controller:

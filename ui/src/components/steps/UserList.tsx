@@ -178,7 +178,7 @@ const BindCodeSection: React.FC = () => {
       )}
 
       {codes.length === 0 ? (
-        <p className="text-sm text-muted">{t('userList.noUsers')}</p>
+        <p className="text-sm text-muted">{t('bindCode.noCodes')}</p>
       ) : (
         <div className="divide-y divide-border">
           {codes.map((bc) => {

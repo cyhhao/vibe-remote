@@ -1114,8 +1114,13 @@ def get_users() -> dict:
 
 
 def save_users(payload: dict) -> dict:
-    """Save user settings (bulk update from UI)."""
+    """Save user settings (bulk update from UI).
+
+    Preserves admin invariant: if there were admins before, at least one must remain.
+    """
     store = SettingsStore()
+    had_admins = store.has_any_admin()
+
     users = {}
     for user_id, up in (payload.get("users") or {}).items():
         if not isinstance(up, dict):
@@ -1129,6 +1134,13 @@ def save_users(payload: dict) -> dict:
             custom_cwd=up.get("custom_cwd"),
             routing=_parse_routing(up.get("routing") or {}),
         )
+
+    # Enforce admin invariant: if admins existed before, at least one must remain
+    if had_admins:
+        new_admin_count = sum(1 for u in users.values() if u.is_admin)
+        if new_admin_count == 0:
+            return {"ok": False, "error": "Cannot remove all admins"}
+
     store.settings.users = users
     store.save()
     return get_users()

@@ -2,10 +2,11 @@ import json
 import logging
 import secrets
 import string
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from config import paths
 
@@ -128,6 +129,7 @@ class SettingsStore:
     def __init__(self, settings_path: Optional[Path] = None):
         self.settings_path = settings_path or paths.get_settings_path()
         self.settings: SettingsState = SettingsState()
+        self._bind_lock = threading.Lock()  # Guards atomic bind operations
         self._load()
 
     def _load(self) -> None:
@@ -284,6 +286,42 @@ class SettingsStore:
         self.save()
         return user
 
+    def bind_user_with_code(self, user_id: str, display_name: str, code: str) -> Tuple[bool, bool]:
+        """Atomically validate code, create user, and consume code.
+
+        Returns (success, is_admin).
+        Thread-safe: uses a lock to prevent concurrent bind races.
+        """
+        with self._bind_lock:
+            # Check already bound
+            if self.is_bound_user(user_id):
+                return False, False
+
+            # Validate code
+            bc = self.validate_bind_code(code)
+            if bc is None:
+                return False, False
+
+            # Auto-admin for first user
+            is_admin = not self.has_any_admin()
+
+            # Create user
+            user = UserSettings(
+                display_name=display_name,
+                is_admin=is_admin,
+                bound_at=_now_iso(),
+                enabled=True,
+            )
+            self.settings.users[user_id] = user
+
+            # Consume code
+            bc.used_by.append(user_id)
+            if bc.type == "one_time":
+                bc.is_active = False
+
+            self.save()
+            return True, is_admin
+
     def update_user(self, user_id: str, settings: UserSettings) -> None:
         self.settings.users[user_id] = settings
         self.save()
@@ -335,10 +373,15 @@ class SettingsStore:
             if bc.type == "expiring" and bc.expires_at:
                 try:
                     expires = datetime.fromisoformat(bc.expires_at)
+                    # Ensure timezone-aware comparison
+                    if expires.tzinfo is None:
+                        expires = expires.replace(tzinfo=timezone.utc)
                     if datetime.now(timezone.utc) > expires:
                         return None
                 except (ValueError, TypeError):
-                    pass
+                    # Fail closed: reject codes with unparseable expiration
+                    logger.warning("Bind code %s has unparseable expires_at: %s", code, bc.expires_at)
+                    return None
             return bc
         return None
 

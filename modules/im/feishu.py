@@ -1113,8 +1113,8 @@ class FeishuBot(BaseIMClient):
                             logger.error("Failed to send DM bind hint: %s", exc)
                         return
 
-            # Channel authorisation
-            if not await self._is_authorized_channel(chat_id):
+            # Channel authorisation (skip for p2p/DM — authorized via bind system)
+            if not is_p2p and not await self._is_authorized_channel(chat_id):
                 logger.info("Unauthorized message from channel: %s", chat_id)
                 await self._send_unauthorized_message(chat_id)
                 return

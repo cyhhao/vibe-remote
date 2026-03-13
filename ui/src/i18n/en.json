@@ -327,6 +327,8 @@
     "tipThread": "Thread = Session",
     "tipThreadDesc": "Each thread is an isolated session. Start multiple threads for parallel tasks.",
     "finishAndStart": "Finish & Start",
+    "serviceRunning": "Vibe Remote is running!",
+    "goToDashboard": "Go to Dashboard",
     "bindCodeTitle": "Your First Bind Code",
     "bindCodeDesc": "Send this command to the bot in a DM to become the first admin:",
     "bindCodeCommand": "/bind",
@@ -457,6 +459,7 @@
     "codeType": "Type",
     "expirationDate": "Expiration date",
     "created": "Bind code created",
-    "deleted": "Bind code deleted"
+    "deleted": "Bind code deleted",
+    "noCodes": "No bind codes yet. Create one to get started."
   }
 }

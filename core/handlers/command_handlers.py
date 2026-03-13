@@ -414,8 +414,19 @@ class CommandHandlers:
             await self.im_client.send_message(channel_context, f"❌ {self._t('error.resumeFailed')}")
 
     async def handle_bind(self, context: MessageContext, args: str = ""):
-        """Handle /bind command - bind a user to this Vibe Remote instance via bind code"""
+        """Handle /bind command - bind a user to this Vibe Remote instance via bind code.
+
+        Only allowed in DM context. In channels, instructs the user to DM the bot.
+        """
         try:
+            # Check if this is a DM context (settings_key == user_id means DM)
+            settings_key = self.controller._get_settings_key(context)
+            if settings_key != context.user_id:
+                # Not a DM — instruct user to use DM
+                channel_context = self._get_channel_context(context)
+                await self.im_client.send_message(channel_context, self._t("bind.dmOnly"))
+                return
+
             code = args.strip()
             if not code:
                 channel_context = self._get_channel_context(context)
@@ -430,13 +441,6 @@ class CommandHandlers:
                 await self.im_client.send_message(channel_context, self._t("bind.alreadyBound"))
                 return
 
-            # Validate the bind code
-            bind_code = store.validate_bind_code(code)
-            if bind_code is None:
-                channel_context = self._get_channel_context(context)
-                await self.im_client.send_message(channel_context, self._t("bind.invalidCode"))
-                return
-
             # Fetch user info for display name
             try:
                 user_info = await self.im_client.get_user_info(context.user_id)
@@ -448,12 +452,18 @@ class CommandHandlers:
                 user_info.get("display_name") or user_info.get("real_name") or user_info.get("name") or context.user_id
             )
 
-            # Auto-admin: if no admins exist, first user becomes admin
-            is_admin = not store.has_any_admin()
+            # Atomic bind: validate code + create user + consume code in one operation
+            success, is_admin = store.bind_user_with_code(context.user_id, display_name, code)
 
-            # Add user and consume the bind code
-            store.add_user(context.user_id, display_name, is_admin=is_admin)
-            store.use_bind_code(code, context.user_id)
+            if not success:
+                # Could be already bound (race) or invalid code
+                if store.is_bound_user(context.user_id):
+                    channel_context = self._get_channel_context(context)
+                    await self.im_client.send_message(channel_context, self._t("bind.alreadyBound"))
+                else:
+                    channel_context = self._get_channel_context(context)
+                    await self.im_client.send_message(channel_context, self._t("bind.invalidCode"))
+                return
 
             if is_admin:
                 msg = self._t("bind.successAdmin", name=display_name)

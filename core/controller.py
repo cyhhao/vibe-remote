@@ -274,13 +274,36 @@ class Controller:
 
     def _setup_callbacks(self):
         """Setup callback connections between modules"""
+
+        # Admin guard wrapper for sensitive text commands
+        def _admin_guard(handler):
+            """Wrap a command handler with admin permission check."""
+            from functools import wraps
+
+            @wraps(handler)
+            async def guarded(context, args=""):
+                store = self.settings_manager.store
+                if store.has_any_admin() and not store.is_admin(context.user_id):
+                    logger.info(f"Permission denied: {context.user_id} attempted text command")
+                    try:
+                        from vibe.i18n import t as i18n_t
+
+                        msg = i18n_t("permission.adminOnly")
+                        await self.im_client.send_message(context, msg)
+                    except Exception:
+                        pass
+                    return
+                await handler(context, args)
+
+            return guarded
+
         # Create command handlers dict
         command_handlers = {
             "start": self.command_handler.handle_start,
             "clear": self.command_handler.handle_clear,
             "cwd": self.command_handler.handle_cwd,
-            "set_cwd": self.command_handler.handle_set_cwd,
-            "settings": self.settings_handler.handle_settings,
+            "set_cwd": _admin_guard(self.command_handler.handle_set_cwd),
+            "settings": _admin_guard(self.settings_handler.handle_settings),
             "stop": self.command_handler.handle_stop,
             "bind": self.command_handler.handle_bind,
         }
@@ -354,8 +377,31 @@ class Controller:
         return os.getcwd()
 
     def _get_settings_key(self, context: MessageContext) -> str:
-        """Get settings key based on context"""
-        # Slack only in V2
+        """Get settings key based on context.
+
+        For DM contexts, returns user_id so per-user settings apply.
+        For channel contexts, returns channel_id for per-channel settings.
+        """
+        platform = getattr(self.config, "platform", "slack")
+        if platform == "slack" and context.channel_id.startswith("D"):
+            return context.user_id
+        if platform == "discord":
+            # Check if this is a DM by looking at platform_specific or channel type
+            ps = context.platform_specific or {}
+            msg = ps.get("message")
+            if msg is not None:
+                try:
+                    import discord
+
+                    if isinstance(msg.channel, discord.DMChannel) or msg.guild is None:
+                        return context.user_id
+                except Exception:
+                    pass
+        if platform == "lark":
+            ps = context.platform_specific or {}
+            event = ps.get("event", {})
+            if isinstance(event, dict) and event.get("message", {}).get("chat_type") == "p2p":
+                return context.user_id
         return context.channel_id
 
     def _get_target_context(self, context: MessageContext) -> MessageContext:

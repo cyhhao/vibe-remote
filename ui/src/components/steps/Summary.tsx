@@ -104,7 +104,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
           <CheckCircle2 size={40} />
         </div>
         <h2 className="text-2xl font-display font-bold text-text mb-2">{t('summary.title')}</h2>
-        <p className="text-muted mb-8">Vibe Remote is running!</p>
+        <p className="text-muted mb-8">{t('summary.serviceRunning')}</p>
 
         <div className="bg-panel border border-border rounded-lg p-6 shadow-sm w-full max-w-md">
           <div className="flex items-center gap-3 mb-4">
@@ -135,7 +135,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
           onClick={() => navigate('/dashboard')}
           className="mt-8 px-8 py-3 bg-primary hover:bg-primary/90 text-white rounded-lg font-bold transition-colors shadow-sm"
         >
-          Go to Dashboard
+          {t('summary.goToDashboard')}
         </button>
       </div>
     );
