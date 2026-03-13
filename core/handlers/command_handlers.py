@@ -453,7 +453,9 @@ class CommandHandlers:
             )
 
             # Atomic bind: validate code + create user + consume code in one operation
-            success, is_admin = store.bind_user_with_code(context.user_id, display_name, code)
+            success, is_admin = store.bind_user_with_code(
+                context.user_id, display_name, code, dm_chat_id=context.channel_id
+            )
 
             if not success:
                 # Could be already bound (race) or invalid code

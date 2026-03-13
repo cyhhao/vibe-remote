@@ -937,7 +937,11 @@ class SlackBot(BaseIMClient):
                 channel_id=channel_id,
                 thread_id=thread_id,  # Always have a thread_id
                 message_id=event.get("ts"),
-                platform_specific={"team_id": payload.get("team_id"), "event": event},
+                platform_specific={
+                    "team_id": payload.get("team_id"),
+                    "event": event,
+                    "is_dm": channel_id.startswith("D"),
+                },
                 files=file_attachments,
             )
 
@@ -986,7 +990,11 @@ class SlackBot(BaseIMClient):
                 channel_id=channel_id,
                 thread_id=thread_id,  # Always have a thread_id
                 message_id=event.get("ts"),
-                platform_specific={"team_id": payload.get("team_id"), "event": event},
+                platform_specific={
+                    "team_id": payload.get("team_id"),
+                    "event": event,
+                    "is_dm": channel_id.startswith("D"),
+                },
                 files=file_attachments,
             )
 
@@ -1083,6 +1091,7 @@ class SlackBot(BaseIMClient):
                 "command": command,
                 "text": payload.get("text"),
                 "payload": payload,
+                "is_dm": is_dm,
             },
         )
 
@@ -1193,6 +1202,7 @@ class SlackBot(BaseIMClient):
                                 "response_url": payload.get("response_url"),
                                 "action": action,
                                 "payload": payload,
+                                "is_dm": is_dm,
                             },
                         )
 
@@ -1387,7 +1397,10 @@ class SlackBot(BaseIMClient):
                     user_id=user_id,
                     channel_id=str(channel_id) if channel_id else "",
                     thread_id=str(thread_id) if thread_id else None,
-                    platform_specific={"payload": payload},
+                    platform_specific={
+                        "payload": payload,
+                        "is_dm": isinstance(channel_id, str) and channel_id.startswith("D"),
+                    },
                 )
                 # Use callback_prefix to route to correct agent
                 await self.on_callback_query_callback(

@@ -101,6 +101,7 @@ class FeishuBot(BaseIMClient):
         self._cached_token: Optional[str] = None
         self._token_expires_at: Optional[float] = None
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
+        self._dm_chat_ids: set = set()
 
     # ------------------------------------------------------------------
     # Lifecycle / injection
@@ -112,6 +113,13 @@ class FeishuBot(BaseIMClient):
     def set_controller(self, controller):
         """Set the controller reference for handling update button clicks."""
         self._controller = controller
+
+    def _populate_dm_chat_ids(self):
+        """Pre-populate DM chat IDs from bound users for restart survival."""
+        if self.settings_manager:
+            for user_id, user in self.settings_manager.store.settings.users.items():
+                if user.dm_chat_id:
+                    self._dm_chat_ids.add(user.dm_chat_id)
 
     # ------------------------------------------------------------------
     # i18n helpers
@@ -1068,6 +1076,8 @@ class FeishuBot(BaseIMClient):
             # Require-mention logic (bypass for p2p/DM chats)
             chat_type = message.get("chat_type", "")
             is_p2p = chat_type == "p2p"
+            if is_p2p and chat_id:
+                self._dm_chat_ids.add(chat_id)
             is_thread_reply = bool(root_id)
             effective_require_mention = self.config.require_mention
             if self.settings_manager:
@@ -1215,24 +1225,13 @@ class FeishuBot(BaseIMClient):
                 return
 
             # --- Channel authorization ---
-            # Feishu card actions don't carry chat_type, so we need heuristics
-            # to distinguish DM vs channel contexts.
-            is_bound_user = False
-            is_dm = False
-            if self.settings_manager and user_id:
-                store = self.settings_manager.store
-                is_bound_user = store.is_bound_user(user_id)
-                # If chat_id is NOT a known authorized channel but user is bound,
-                # this is likely a DM context
-                if is_bound_user and chat_id:
-                    is_known_channel = chat_id in store.settings.channels
-                    if not is_known_channel:
-                        is_dm = True
-            if not is_bound_user or not is_dm:
+            # Use positive DM lookup instead of fragile heuristics.
+            # _dm_chat_ids is populated from real p2p messages and persisted
+            # user settings, so it reliably identifies DM chats.
+            is_dm = chat_id in self._dm_chat_ids
+            if not is_dm:
                 if not chat_id or not await self._is_authorized_channel(chat_id):
-                    logger.info(
-                        "Card action from unauthorized/unknown channel %s (bound=%s), ignoring", chat_id, is_bound_user
-                    )
+                    logger.info("Card action from unauthorized/unknown channel %s, ignoring", chat_id)
                     return
 
             context = MessageContext(
@@ -2607,6 +2606,9 @@ class FeishuBot(BaseIMClient):
 
             # Fetch bot info
             await self._fetch_bot_info()
+
+            # Pre-populate DM chat IDs from persisted user settings
+            self._populate_dm_chat_ids()
 
             # Start WebSocket client in a background thread
             self._ws_client = lark.ws.Client(

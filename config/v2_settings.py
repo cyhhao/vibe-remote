@@ -76,6 +76,7 @@ class UserSettings:
     show_message_types: List[str] = field(default_factory=lambda: DEFAULT_SHOW_MESSAGE_TYPES.copy())
     custom_cwd: Optional[str] = None
     routing: RoutingSettings = field(default_factory=RoutingSettings)
+    dm_chat_id: str = ""
 
 
 @dataclass
@@ -214,6 +215,7 @@ class SettingsStore:
                     show_message_types=normalize_show_message_types(up.get("show_message_types")),
                     custom_cwd=up.get("custom_cwd"),
                     routing=_parse_routing(up.get("routing") or {}),
+                    dm_chat_id=up.get("dm_chat_id", ""),
                 )
 
         # --- Bind Codes ---
@@ -264,6 +266,7 @@ class SettingsStore:
                 "show_message_types": u.show_message_types,
                 "custom_cwd": u.custom_cwd,
                 "routing": _routing_to_dict(u.routing),
+                "dm_chat_id": u.dm_chat_id,
             }
 
         # Bind codes
@@ -329,7 +332,9 @@ class SettingsStore:
         self.save()
         return user
 
-    def bind_user_with_code(self, user_id: str, display_name: str, code: str) -> Tuple[bool, bool]:
+    def bind_user_with_code(
+        self, user_id: str, display_name: str, code: str, dm_chat_id: str = ""
+    ) -> Tuple[bool, bool]:
         """Atomically validate code, create user, and consume code.
 
         Returns (success, is_admin).
@@ -358,6 +363,7 @@ class SettingsStore:
                 is_admin=is_admin,
                 bound_at=_now_iso(),
                 enabled=True,
+                dm_chat_id=dm_chat_id,
             )
             self.settings.users[user_id] = user
 
