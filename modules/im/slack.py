@@ -1042,7 +1042,20 @@ class SlackBot(BaseIMClient):
         # Check if channel is authorized based on whitelist
         # Skip channel auth for DM channels (authorized via bind system)
         is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
-        if not is_dm and not await self._is_authorized_channel(channel_id):
+        if is_dm:
+            # DM slash commands require the user to be bound (except /bind itself)
+            user_id = payload.get("user_id", "")
+            if self.settings_manager and command != "bind":
+                store = self.settings_manager.store
+                if not store.is_bound_user(user_id):
+                    response_url = payload.get("response_url")
+                    if response_url:
+                        await self.send_slash_response(
+                            response_url,
+                            f"🔑 {self._t('bind.dmNotBound', channel_id)}",
+                        )
+                    return
+        elif not await self._is_authorized_channel(channel_id):
             logger.info(f"Unauthorized slash command from channel: {channel_id}")
             # Send a response to user about unauthorized channel
             response_url = payload.get("response_url")

@@ -1196,6 +1196,8 @@ def create_bind_code(code_type: str = "one_time", expires_at: Optional[str] = No
     """Create a new bind code."""
     if code_type not in ("one_time", "expiring"):
         return {"ok": False, "error": "type must be 'one_time' or 'expiring'"}
+    if code_type == "expiring" and not expires_at:
+        return {"ok": False, "error": "expires_at is required for expiring bind codes"}
     store = SettingsStore()
     bc = store.create_bind_code(code_type, expires_at)
     return {
