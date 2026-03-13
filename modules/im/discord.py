@@ -603,6 +603,7 @@ class DiscordBot(BaseIMClient):
         current_require_mention: object = None,
         global_require_mention: bool = False,
         current_language: str = None,
+        owner_user_id: Optional[str] = None,
     ):
         interaction = trigger_id if isinstance(trigger_id, discord.Interaction) else None
 
@@ -739,10 +740,25 @@ class DiscordBot(BaseIMClient):
             async def on_timeout(self) -> None:
                 return
 
-        owner_id = str(interaction.user.id) if interaction else None
+        owner_id = owner_user_id or (str(interaction.user.id) if interaction else None)
         view = SettingsView(self, owner_id)
 
         async def save_callback(save_interaction: discord.Interaction):
+            # Re-check auth before saving (defense-in-depth against shared views)
+            save_uid = str(save_interaction.user.id)
+            save_cid = channel_id or str(save_interaction.channel_id or "")
+            save_is_dm = save_interaction.guild is None
+            auth = check_auth(
+                user_id=save_uid,
+                channel_id=save_cid,
+                is_dm=save_is_dm,
+                action="settings",
+                store=self.settings_manager.store if self.settings_manager else None,
+            )
+            if not auth.allowed:
+                await self._send_auth_denial(save_cid, save_uid, auth, interaction=save_interaction)
+                return
+
             show_types = list(view.selected_types or [])
             require_value = view.require_value
             if require_value == "__default__":

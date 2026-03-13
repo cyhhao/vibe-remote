@@ -1125,6 +1125,8 @@ def save_users(payload: dict) -> dict:
     for user_id, up in (payload.get("users") or {}).items():
         if not isinstance(up, dict):
             continue
+        # Preserve dm_chat_id from existing user (not editable via UI)
+        existing = store.settings.users.get(user_id)
         users[user_id] = UserSettings(
             display_name=up.get("display_name", ""),
             is_admin=up.get("is_admin", False),
@@ -1133,6 +1135,7 @@ def save_users(payload: dict) -> dict:
             show_message_types=normalize_show_message_types(up.get("show_message_types")),
             custom_cwd=up.get("custom_cwd"),
             routing=_parse_routing(up.get("routing") or {}),
+            dm_chat_id=existing.dm_chat_id if existing else "",
         )
 
     # Enforce admin invariant: if admins existed before, at least one must remain

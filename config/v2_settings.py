@@ -426,6 +426,9 @@ class SettingsStore:
             if bc.type == "expiring" and bc.expires_at:
                 try:
                     expires = datetime.fromisoformat(bc.expires_at)
+                    # If only a date was provided (no time component), treat as end-of-day
+                    if expires.hour == 0 and expires.minute == 0 and expires.second == 0 and "T" not in bc.expires_at:
+                        expires = expires.replace(hour=23, minute=59, second=59)
                     # Ensure timezone-aware comparison
                     if expires.tzinfo is None:
                         expires = expires.replace(tzinfo=timezone.utc)

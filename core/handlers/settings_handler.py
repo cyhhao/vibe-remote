@@ -170,6 +170,7 @@ class SettingsHandler:
                 current_require_mention=current_require_mention,
                 global_require_mention=global_require_mention,
                 current_language=current_language,
+                owner_user_id=context.user_id,
             )
             return
         await self._handle_settings_traditional(context)

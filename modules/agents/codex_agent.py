@@ -55,8 +55,8 @@ class CodexAgent(BaseAgent):
         if not os.path.exists(request.working_path):
             os.makedirs(request.working_path, exist_ok=True)
 
-        # Read channel-level configuration overrides
-        channel_settings = self.settings_manager.get_channel_settings(request.context.channel_id)
+        # Read configuration overrides using settings_key (user_id for DM, channel_id for channels)
+        channel_settings = self.settings_manager.get_channel_settings(request.settings_key)
         routing = channel_settings.routing if channel_settings else None
 
         # Priority: channel config > global default

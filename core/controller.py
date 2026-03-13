@@ -725,8 +725,9 @@ class Controller:
             # Save settings - using the correct method name
             self.settings_manager.update_user_settings(settings_key, user_settings)
 
-            # Save require_mention setting
-            self.settings_manager.set_require_mention(settings_key, require_mention)
+            # Save require_mention setting (channel-only, not applicable in DM)
+            if not is_dm:
+                self.settings_manager.set_require_mention(settings_key, require_mention)
 
             # Save language setting to global config
             language_saved = True
