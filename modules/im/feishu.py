@@ -1213,10 +1213,19 @@ class FeishuBot(BaseIMClient):
             if self._is_duplicate_event(dedup_key):
                 return
 
-            # --- Channel authorization (same as message handler) ---
-            if not chat_id or not await self._is_authorized_channel(chat_id):
-                logger.info("Card action from unauthorized/unknown channel %s, ignoring", chat_id)
-                return
+            # --- Channel authorization ---
+            # Skip for bound users in DM (p2p) contexts.
+            # Feishu card actions don't carry chat_type, so we check if the user
+            # is a bound user — bound users are explicitly authorized for DM access.
+            is_bound_dm = False
+            if self.settings_manager and user_id:
+                store = self.settings_manager.store
+                if store.is_bound_user(user_id):
+                    is_bound_dm = True
+            if not is_bound_dm:
+                if not chat_id or not await self._is_authorized_channel(chat_id):
+                    logger.info("Card action from unauthorized/unknown channel %s, ignoring", chat_id)
+                    return
 
             context = MessageContext(
                 user_id=user_id,

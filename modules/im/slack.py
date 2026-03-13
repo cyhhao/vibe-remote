@@ -1040,7 +1040,9 @@ class SlackBot(BaseIMClient):
         channel_id = payload.get("channel_id")
 
         # Check if channel is authorized based on whitelist
-        if not await self._is_authorized_channel(channel_id):
+        # Skip channel auth for DM channels (authorized via bind system)
+        is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
+        if not is_dm and not await self._is_authorized_channel(channel_id):
             logger.info(f"Unauthorized slash command from channel: {channel_id}")
             # Send a response to user about unauthorized channel
             response_url = payload.get("response_url")
@@ -1145,7 +1147,9 @@ class SlackBot(BaseIMClient):
                         channel_id = private_metadata
 
             # Check if channel is authorized for interactive components
-            if not await self._is_authorized_channel(channel_id):
+            # Skip channel auth for DM channels (authorized via bind system)
+            is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
+            if not is_dm and not await self._is_authorized_channel(channel_id):
                 logger.info(f"Unauthorized interactive action from channel: {channel_id}")
                 try:
                     await self._send_unauthorized_message(channel_id)

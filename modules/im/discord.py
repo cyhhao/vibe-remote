@@ -1492,7 +1492,9 @@ class _PersistentStartView(discord.ui.View):
             guild_id = str(interaction.guild_id) if interaction.guild_id else None
             if guild_id and not self.outer._is_allowed_guild(guild_id):
                 return
-            if not await self.outer._is_authorized_channel(channel_id):
+            # Skip channel auth for DM interactions (authorized via bind system)
+            is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+            if not is_dm and not await self.outer._is_authorized_channel(channel_id):
                 await self.outer._send_unauthorized_message(channel_id)
                 return
             context = MessageContext(
@@ -1572,7 +1574,9 @@ class _DiscordButtonView(discord.ui.View):
                     guild_id = str(interaction.guild_id) if interaction.guild_id else None
                     if guild_id and not self.outer._is_allowed_guild(guild_id):
                         return
-                    if not await self.outer._is_authorized_channel(channel_id):
+                    # Skip channel auth for DM interactions
+                    is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+                    if not is_dm and not await self.outer._is_authorized_channel(channel_id):
                         await self.outer._send_unauthorized_message(channel_id)
                         return
                     context = MessageContext(
