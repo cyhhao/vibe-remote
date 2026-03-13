@@ -441,9 +441,12 @@ class Controller:
         if platform == "slack" and effective_channel.startswith("D"):
             return user_id
         if platform in ("discord", "lark"):
-            # For DM updates, check if the user is a bound DM user
-            if self.settings_manager and hasattr(self.settings_manager, "store"):
-                if self.settings_manager.store.is_bound_user(user_id):
+            # For DM updates: the user is bound AND the channel_id is NOT a
+            # known configured channel (i.e. it's a DM chat, not a workspace channel)
+            if effective_channel and self.settings_manager and hasattr(self.settings_manager, "store"):
+                store = self.settings_manager.store
+                is_known_channel = effective_channel in store.settings.channels
+                if not is_known_channel and store.is_bound_user(user_id):
                     return user_id
         return effective_channel if effective_channel else user_id
 

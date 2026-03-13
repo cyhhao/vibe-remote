@@ -1141,7 +1141,10 @@ def save_users(payload: dict) -> dict:
         if new_admin_count == 0:
             return {"ok": False, "error": "Cannot remove all admins"}
 
-    store.settings.users = users
+    # Merge instead of replace: update existing users and add new ones,
+    # but preserve users not included in the payload (e.g. concurrently bound)
+    for uid, user_settings in users.items():
+        store.settings.users[uid] = user_settings
     store.save()
     return get_users()
 

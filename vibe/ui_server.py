@@ -491,14 +491,14 @@ def browse_directory():
 # =============================================================================
 
 
-@app.route("/users", methods=["GET"])
+@app.route("/api/users", methods=["GET"])
 def users_get():
     from vibe import api
 
     return jsonify(api.get_users())
 
 
-@app.route("/users", methods=["POST"])
+@app.route("/api/users", methods=["POST"])
 def users_post():
     from vibe import api
 
@@ -506,7 +506,7 @@ def users_post():
     return jsonify(api.save_users(payload))
 
 
-@app.route("/users/<user_id>/admin", methods=["POST"])
+@app.route("/api/users/<user_id>/admin", methods=["POST"])
 def users_toggle_admin(user_id):
     from vibe import api
 
@@ -514,7 +514,7 @@ def users_toggle_admin(user_id):
     return jsonify(api.toggle_admin(user_id, payload.get("is_admin", False)))
 
 
-@app.route("/users/<user_id>", methods=["DELETE"])
+@app.route("/api/users/<user_id>", methods=["DELETE"])
 def users_delete(user_id):
     from vibe import api
 
@@ -524,14 +524,14 @@ def users_delete(user_id):
     return jsonify(result)
 
 
-@app.route("/bind-codes", methods=["GET"])
+@app.route("/api/bind-codes", methods=["GET"])
 def bind_codes_get():
     from vibe import api
 
     return jsonify(api.get_bind_codes())
 
 
-@app.route("/bind-codes", methods=["POST"])
+@app.route("/api/bind-codes", methods=["POST"])
 def bind_codes_post():
     from vibe import api
 
@@ -545,7 +545,7 @@ def bind_codes_post():
     return jsonify(result)
 
 
-@app.route("/bind-codes/<code>", methods=["DELETE"])
+@app.route("/api/bind-codes/<code>", methods=["DELETE"])
 def bind_codes_delete(code):
     from vibe import api
 
@@ -555,7 +555,7 @@ def bind_codes_delete(code):
     return jsonify(result)
 
 
-@app.route("/setup/first-bind-code", methods=["GET"])
+@app.route("/api/setup/first-bind-code", methods=["GET"])
 def setup_first_bind_code():
     from vibe import api
 
