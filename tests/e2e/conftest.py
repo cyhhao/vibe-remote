@@ -1,6 +1,7 @@
 """E2E test fixtures: manage Docker container lifecycle."""
 
 import os
+import shutil
 import subprocess
 import time
 
@@ -17,6 +18,21 @@ COMPOSE_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "docker-compo
 
 # When true, skip container teardown (set by run_e2e.sh --keep)
 KEEP_CONTAINER = os.environ.get("VIBE_E2E_KEEP", "false").lower() == "true"
+
+
+def _docker_available() -> bool:
+    """Check if Docker CLI is installed and the daemon is reachable."""
+    if not shutil.which("docker"):
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def _url(path: str) -> str:
@@ -54,6 +70,9 @@ def _wait_for_healthy(timeout: int = 60) -> bool:
 @pytest.fixture(scope="session")
 def vibe_container():
     """Start Vibe container for the entire test session, tear down after."""
+    if not _docker_available():
+        pytest.skip("Docker is not available — skipping E2E tests")
+
     compose_file = os.path.abspath(COMPOSE_FILE)
     env = _compose_env()
 

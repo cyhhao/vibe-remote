@@ -1,8 +1,15 @@
 #!/bin/bash
 set -e
 
-# Ensure runtime directories exist
-python -c "from config.paths import ensure_data_dirs; ensure_data_dirs()"
+# Ensure runtime directories exist and seed default config if missing
+python -c "
+from config.paths import ensure_data_dirs, get_config_path
+ensure_data_dirs()
+config_path = get_config_path()
+if not config_path.exists():
+    from vibe.runtime import default_config
+    default_config().save(config_path)
+"
 
 MODE="${1:-ui}"
 
