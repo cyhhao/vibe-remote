@@ -1271,7 +1271,14 @@ class SlackBot(BaseIMClient):
 
             # Update settings - need access to settings manager
             if hasattr(self, "_on_settings_update"):
-                await self._on_settings_update(user_id, show_types, channel_id, require_mention, language)
+                await self._on_settings_update(
+                    user_id,
+                    show_types,
+                    channel_id,
+                    require_mention,
+                    language,
+                    is_dm=isinstance(channel_id, str) and channel_id.startswith("D"),
+                )
 
         elif callback_id == "change_cwd_modal":
             # Handle change CWD modal submission
@@ -1489,6 +1496,7 @@ class SlackBot(BaseIMClient):
                     claude_model,
                     codex_model,
                     codex_reasoning,
+                    is_dm=isinstance(channel_id, str) and channel_id.startswith("D"),
                 )
 
     def run(self):

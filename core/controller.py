@@ -361,74 +361,12 @@ class Controller:
 
         For DM contexts, returns user_id so per-user settings apply.
         For channel contexts, returns channel_id for per-channel settings.
+
+        Relies on the ``is_dm`` flag set by the IM layer in
+        ``context.platform_specific`` (see Phase 2 of the refactoring).
         """
-        platform = getattr(self.config, "platform", "slack")
-        if platform == "slack" and context.channel_id.startswith("D"):
-            return context.user_id
-        if platform == "discord":
-            if self._is_discord_dm(context):
-                return context.user_id
-        if platform == "lark":
-            if self._is_lark_dm(context):
-                return context.user_id
-        return context.channel_id
-
-    def _is_discord_dm(self, context: MessageContext) -> bool:
-        """Detect Discord DM from message or interaction context."""
-        ps = context.platform_specific or {}
-        # Explicit is_dm flag set by IM layer (works for all context types)
-        if ps.get("is_dm"):
-            return True
-        try:
-            import discord as discord_lib
-
-            # Message context (normal messages)
-            msg = ps.get("message")
-            if msg is not None:
-                if isinstance(msg.channel, discord_lib.DMChannel) or msg.guild is None:
-                    return True
-            # Interaction context (button/slash callbacks)
-            interaction = ps.get("interaction")
-            if interaction is not None:
-                if interaction.guild is None or isinstance(interaction.channel, discord_lib.DMChannel):
-                    return True
-        except Exception:
-            pass
-        return False
-
-    def _is_lark_dm(self, context: MessageContext) -> bool:
-        """Detect Lark/Feishu DM from message or callback event context."""
-        ps = context.platform_specific or {}
-        # Explicit is_dm flag set by IM layer (works for all context types)
-        if ps.get("is_dm"):
-            return True
-        event = ps.get("event", {})
-        if isinstance(event, dict):
-            # Message path: event.message.chat_type == "p2p"
-            chat_type = event.get("message", {}).get("chat_type")
-            if chat_type == "p2p":
-                return True
-        return False
-
-    def _resolve_settings_key(self, user_id: str, channel_id: Optional[str]) -> str:
-        """Resolve settings key for update handlers that don't have a MessageContext.
-
-        Uses the same DM-detection logic as ``_get_settings_key``:
-        for DM contexts the key is ``user_id``, otherwise ``channel_id``.
-        """
-        platform = getattr(self.config, "platform", "slack")
-        effective_channel = channel_id or ""
-        if platform == "slack" and effective_channel.startswith("D"):
-            return user_id
-        if platform in ("discord", "lark"):
-            # For DM updates: the user is bound AND the channel_id is NOT a
-            # known configured channel (i.e. it's a DM chat, not a workspace channel)
-            if effective_channel and self.settings_manager and hasattr(self.settings_manager, "store"):
-                store = self.settings_manager.store
-                is_known_channel = effective_channel in store.settings.channels
-                if not is_known_channel and store.is_bound_user(user_id):
-                    return user_id
-        return effective_channel if effective_channel else user_id
+        is_dm = (context.platform_specific or {}).get("is_dm", False)
+        return context.user_id if is_dm else context.channel_id
 
     def _get_target_context(self, context: MessageContext) -> MessageContext:
         """Get target context for sending messages"""
@@ -773,11 +711,12 @@ class Controller:
         require_mention: Optional[bool] = None,
         language: Optional[str] = None,
         notify_user: bool = True,
+        is_dm: bool = False,
     ):
         """Handle settings update (typically from Slack modal)"""
         try:
             # Determine settings key — for DM contexts use user_id
-            settings_key = self._resolve_settings_key(user_id, channel_id)
+            settings_key = user_id if is_dm else (channel_id or user_id)
 
             # Update settings
             user_settings = self.settings_manager.get_user_settings(settings_key)
@@ -1140,13 +1079,14 @@ class Controller:
         codex_model: Optional[str] = None,
         codex_reasoning_effort: Optional[str] = None,
         notify_user: bool = True,
+        is_dm: bool = False,
     ):
         """Handle routing update submission (from Slack modal)"""
         from modules.settings_manager import ChannelRouting
 
         try:
             # Get settings key
-            settings_key = self._resolve_settings_key(user_id, channel_id)
+            settings_key = user_id if is_dm else (channel_id or user_id)
 
             # Get existing routing to preserve settings for other backends
             existing_routing = self.settings_manager.get_channel_routing(settings_key)

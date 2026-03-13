@@ -1340,6 +1340,7 @@ class FeishuBot(BaseIMClient):
                 context.channel_id,
                 require_mention,
                 language,
+                is_dm=context.platform_specific.get("is_dm", False),
             )
 
     async def _handle_routing_backend_select(self, context: MessageContext, form_value: Dict[str, Any]):
@@ -1403,6 +1404,7 @@ class FeishuBot(BaseIMClient):
                 claude_model,
                 codex_model,
                 codex_reasoning,
+                is_dm=context.platform_specific.get("is_dm", False),
             )
 
     # ------------------------------------------------------------------

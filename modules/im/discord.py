@@ -755,6 +755,7 @@ class DiscordBot(BaseIMClient):
                         require_mention,
                         language,
                         notify_user=False,
+                        is_dm=save_interaction.guild is None,
                     )
                 await save_interaction.edit_original_response(
                     content=f"✅ {self._t('success.settingsUpdated')}",
@@ -1304,6 +1305,7 @@ class DiscordBot(BaseIMClient):
                             _normalize(self.codex_model),
                             _normalize(self.codex_reasoning),
                             notify_user=False,
+                            is_dm=interaction.guild is None,
                         )
                     await interaction.edit_original_response(
                         content=f"✅ {self.outer._t('success.routingUpdated')}",
