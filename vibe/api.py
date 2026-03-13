@@ -104,12 +104,12 @@ def config_to_payload(config: V2Config) -> dict:
 
 
 def get_settings() -> dict:
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     return _settings_to_payload(store)
 
 
 def save_settings(payload: dict) -> dict:
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     channels = {}
     for channel_id, channel_payload in (payload.get("channels") or {}).items():
         channels[channel_id] = ChannelSettings(
@@ -1098,7 +1098,7 @@ def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu") -> dic
 
 def get_users() -> dict:
     """Get all bound users."""
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     users = {}
     for user_id, u in store.settings.users.items():
         users[user_id] = {
@@ -1118,7 +1118,7 @@ def save_users(payload: dict) -> dict:
 
     Preserves admin invariant: if there were admins before, at least one must remain.
     """
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     had_admins = store.has_any_admin()
 
     users = {}
@@ -1151,7 +1151,7 @@ def save_users(payload: dict) -> dict:
 
 def toggle_admin(user_id: str, is_admin: bool) -> dict:
     """Toggle admin status for a user."""
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     if not store.set_admin(user_id, is_admin):
         if not store.is_bound_user(user_id):
             return {"ok": False, "error": "User not found"}
@@ -1161,7 +1161,7 @@ def toggle_admin(user_id: str, is_admin: bool) -> dict:
 
 def remove_user(user_id: str) -> dict:
     """Remove a bound user."""
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     user = store.get_user(user_id)
     if user is None:
         return {"ok": False, "error": "User not found"}
@@ -1176,7 +1176,7 @@ def remove_user(user_id: str) -> dict:
 
 def get_bind_codes() -> dict:
     """Get all bind codes."""
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     codes = []
     for bc in store.get_bind_codes():
         codes.append(
@@ -1198,7 +1198,7 @@ def create_bind_code(code_type: str = "one_time", expires_at: Optional[str] = No
         return {"ok": False, "error": "type must be 'one_time' or 'expiring'"}
     if code_type == "expiring" and not expires_at:
         return {"ok": False, "error": "expires_at is required for expiring bind codes"}
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     bc = store.create_bind_code(code_type, expires_at)
     return {
         "ok": True,
@@ -1214,7 +1214,7 @@ def create_bind_code(code_type: str = "one_time", expires_at: Optional[str] = No
 
 def delete_bind_code(code: str) -> dict:
     """Deactivate a bind code."""
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     if store.deactivate_bind_code(code):
         return {"ok": True}
     return {"ok": False, "error": "Bind code not found"}
@@ -1222,7 +1222,7 @@ def delete_bind_code(code: str) -> dict:
 
 def get_first_bind_code() -> dict:
     """Get or create the initial bind code for setup wizard."""
-    store = SettingsStore()
+    store = SettingsStore.get_instance()
     # If any valid (active + not expired) code exists, return it
     for bc in store.get_bind_codes():
         if bc.is_active and store.validate_bind_code(bc.code) is not None:

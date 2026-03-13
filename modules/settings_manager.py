@@ -1,5 +1,4 @@
 import logging
-import hashlib
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Union
@@ -103,10 +102,8 @@ class SettingsManager:
     def __init__(self, settings_file: Optional[str] = None):
         paths.ensure_data_dirs()
         self.settings_file = Path(settings_file) if settings_file else paths.get_settings_path()
-        self._settings_mtime_ns: Optional[int] = None
-        self._settings_fingerprint: Optional[str] = None
         self.settings: Dict[Union[int, str], UserSettings] = {}
-        self.store = SettingsStore(self.settings_file)
+        self.store = SettingsStore.get_instance(self.settings_file)
         self.sessions_store = SessionsStore()
         self.sessions_store.load()
         self._load_settings()
@@ -199,58 +196,26 @@ class SettingsManager:
 
     def _load_settings(self):
         """Load settings from JSON file"""
-        self.store = SettingsStore(self.settings_file)
-        self.settings = {}
-
-        if not self.store.settings.channels:
-            logger.info("No settings file found, starting with empty settings")
-            return
-
-        for channel_id, channel_settings in self.store.settings.channels.items():
-            key = str(channel_id)
-            # Skip legacy channel entries that collide with bound users —
-            # the authoritative source for bound users is store.settings.users
-            if key in self.store.settings.users:
-                logger.info("Skipping channels[%s] — shadowed by users[%s]", key, key)
-                continue
-            self.settings[key] = self._from_channel_settings(channel_settings)
-
-        try:
-            self._settings_mtime_ns = self.settings_file.stat().st_mtime_ns
-            self._settings_fingerprint = self._compute_settings_fingerprint()
-        except FileNotFoundError:
-            self._settings_mtime_ns = None
-            self._settings_fingerprint = None
-
-        logger.info(f"Loaded settings for {len(self.settings)} channels")
-
-    def _compute_settings_fingerprint(self) -> Optional[str]:
-        try:
-            data = self.settings_file.read_bytes()
-        except FileNotFoundError:
-            return None
-        return hashlib.sha256(data).hexdigest()
+        self.store = SettingsStore.get_instance(self.settings_file)
+        self._rebuild_runtime_settings()
 
     def _reload_if_changed(self) -> None:
-        if not self.settings_file.exists():
-            return
-        try:
-            mtime_ns = self.settings_file.stat().st_mtime_ns
-        except FileNotFoundError:
-            return
-        fingerprint = None
-        if self._settings_mtime_ns is None or mtime_ns != self._settings_mtime_ns:
-            fingerprint = self._compute_settings_fingerprint()
-        elif self._settings_fingerprint is None:
-            fingerprint = self._compute_settings_fingerprint()
-        if fingerprint and fingerprint != self._settings_fingerprint:
-            logger.info("Settings file changed on disk, reloading")
-            self._load_settings()
-        elif fingerprint:
-            self._settings_fingerprint = fingerprint
-            self._settings_mtime_ns = mtime_ns
-        else:
-            self._settings_mtime_ns = mtime_ns
+        """Reload runtime settings if the underlying store has changed on disk."""
+        old_mtime = self.store._file_mtime
+        self.store.maybe_reload()
+        if self.store._file_mtime != old_mtime:
+            logger.info("Settings file changed on disk, rebuilding runtime settings")
+            self._rebuild_runtime_settings()
+
+    def _rebuild_runtime_settings(self) -> None:
+        """Rebuild the in-memory settings dict from the store."""
+        self.settings = {}
+        for channel_id, channel_settings in self.store.settings.channels.items():
+            key = str(channel_id)
+            if key in self.store.settings.users:
+                continue  # authoritative source is users dict
+            self.settings[key] = self._from_channel_settings(channel_settings)
+        logger.info(f"Rebuilt runtime settings for {len(self.settings)} channels")
 
     def _is_bound_user_key(self, key: str) -> bool:
         """Check if a settings key belongs to a bound DM user (not a channel)."""
@@ -281,12 +246,6 @@ class SettingsManager:
                 channels[sk] = channel_settings
             self.store.settings.channels = channels
             self.store.save()
-            try:
-                self._settings_mtime_ns = self.settings_file.stat().st_mtime_ns
-                self._settings_fingerprint = self._compute_settings_fingerprint()
-            except FileNotFoundError:
-                self._settings_mtime_ns = None
-                self._settings_fingerprint = None
             logger.info("Settings saved successfully")
         except Exception as e:
             logger.error(f"Error saving settings: {e}")

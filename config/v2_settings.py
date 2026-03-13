@@ -126,11 +126,46 @@ def _routing_to_dict(routing: RoutingSettings) -> dict:
 
 
 class SettingsStore:
+    # ------------------------------------------------------------------
+    # Singleton: one store shared by bot process AND UI API handlers.
+    # ------------------------------------------------------------------
+    _instance: Optional["SettingsStore"] = None
+    _instance_lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls, settings_path: Optional[Path] = None) -> "SettingsStore":
+        """Return the process-wide singleton, creating it on first call.
+
+        Automatically reloads from disk if the file has changed.
+        """
+        with cls._instance_lock:
+            if cls._instance is None:
+                cls._instance = cls(settings_path)
+            else:
+                cls._instance.maybe_reload()
+            return cls._instance
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Reset singleton (for tests only)."""
+        with cls._instance_lock:
+            cls._instance = None
+
     def __init__(self, settings_path: Optional[Path] = None):
         self.settings_path = settings_path or paths.get_settings_path()
         self.settings: SettingsState = SettingsState()
         self._bind_lock = threading.Lock()  # Guards atomic bind operations
+        self._file_mtime: float = 0
         self._load()
+
+    def maybe_reload(self) -> None:
+        """Reload from disk if the file has been modified since last load."""
+        try:
+            mtime = self.settings_path.stat().st_mtime
+            if mtime > self._file_mtime:
+                self._load()
+        except FileNotFoundError:
+            pass
 
     def _load(self) -> None:
         if not self.settings_path.exists():
@@ -200,6 +235,10 @@ class SettingsStore:
                 )
 
         self.settings = SettingsState(channels=channels, users=users, bind_codes=bind_codes)
+        try:
+            self._file_mtime = self.settings_path.stat().st_mtime
+        except FileNotFoundError:
+            self._file_mtime = 0
 
     def save(self) -> None:
         paths.ensure_data_dirs()
@@ -241,6 +280,10 @@ class SettingsStore:
             )
 
         self.settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        try:
+            self._file_mtime = self.settings_path.stat().st_mtime
+        except FileNotFoundError:
+            self._file_mtime = 0
 
     # --- Channel helpers ---
 
@@ -293,9 +336,9 @@ class SettingsStore:
         Thread-safe: uses a lock to prevent concurrent bind races.
         """
         with self._bind_lock:
-            # Reload from disk so we pick up bind codes created by the UI API
-            # (which uses a separate SettingsStore instance).
-            self._load()
+            # Ensure we have the latest data from disk (UI API may have
+            # created bind codes via the same singleton after we last read).
+            self.maybe_reload()
 
             # Check already bound
             if self.is_bound_user(user_id):
