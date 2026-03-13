@@ -102,7 +102,8 @@ class SettingsManager:
     def __init__(self, settings_file: Optional[str] = None):
         paths.ensure_data_dirs()
         self.settings_file = Path(settings_file) if settings_file else paths.get_settings_path()
-        self.settings: Dict[Union[int, str], UserSettings] = {}
+        self.channel_settings: Dict[str, UserSettings] = {}
+        self.dm_user_settings: Dict[str, UserSettings] = {}
         self.store = SettingsStore.get_instance(self.settings_file)
         self.sessions_store = SessionsStore()
         self.sessions_store.load()
@@ -208,43 +209,36 @@ class SettingsManager:
             self._rebuild_runtime_settings()
 
     def _rebuild_runtime_settings(self) -> None:
-        """Rebuild the in-memory settings dict from the store."""
-        self.settings = {}
-        for channel_id, channel_settings in self.store.settings.channels.items():
-            key = str(channel_id)
-            if key in self.store.settings.users:
-                continue  # authoritative source is users dict
-            self.settings[key] = self._from_channel_settings(channel_settings)
-        logger.info(f"Rebuilt runtime settings for {len(self.settings)} channels")
-
-    def _is_bound_user_key(self, key: str) -> bool:
-        """Check if a settings key belongs to a bound DM user (not a channel)."""
-        return key in self.store.settings.users
+        """Rebuild the in-memory settings dicts from the store."""
+        self.channel_settings = {}
+        self.dm_user_settings = {}
+        for cid, cs in self.store.settings.channels.items():
+            self.channel_settings[str(cid)] = self._from_channel_settings(cs)
+        for uid, us in self.store.settings.users.items():
+            self.dm_user_settings[str(uid)] = self._from_bound_user_settings(us)
+        logger.info(
+            f"Rebuilt runtime settings for {len(self.channel_settings)} channels, {len(self.dm_user_settings)} DM users"
+        )
 
     def _save_settings(self):
         """Save settings to JSON file.
 
-        Only writes channel-keyed entries back to ``store.settings.channels``.
-        Bound DM user entries (keyed by user_id present in ``store.settings.users``)
-        are synced back to ``store.settings.users`` instead, preventing them from
-        shadowing the authoritative ``users`` dict on subsequent reloads.
+        Writes channel-keyed entries from ``self.channel_settings`` back to
+        ``store.settings.channels``, and syncs DM user entries from
+        ``self.dm_user_settings`` back to ``store.settings.users``.
         """
         try:
             channels: Dict[str, ChannelSettings] = {}
-            for settings_key, settings in self.settings.items():
-                sk = str(settings_key)
-                if self._is_bound_user_key(sk):
-                    # Sync runtime changes back to the bound-user record
-                    self._sync_to_bound_user(sk, settings)
-                    continue
-                existing = self.store.settings.channels.get(sk)
-                channel_settings = self._to_channel_settings(settings)
+            for cid, s in self.channel_settings.items():
+                existing = self.store.settings.channels.get(cid)
+                cs = self._to_channel_settings(s)
                 if existing is not None:
-                    channel_settings.enabled = existing.enabled
-                    # Preserve require_mention setting (it's managed separately)
-                    channel_settings.require_mention = existing.require_mention
-                channels[sk] = channel_settings
+                    cs.enabled = existing.enabled
+                    cs.require_mention = existing.require_mention
+                channels[cid] = cs
             self.store.settings.channels = channels
+            for uid, s in self.dm_user_settings.items():
+                self._sync_to_bound_user(uid, s)
             self.store.save()
             logger.info("Settings saved successfully")
         except Exception as e:
@@ -253,23 +247,33 @@ class SettingsManager:
     def get_user_settings(self, user_id: Union[int, str]) -> UserSettings:
         """Get settings for a specific user/channel context.
 
-        Checks channels dict first, then bound users dict (for DM contexts
-        where _get_settings_key returns user_id).
+        Checks dm_user_settings first, then channel_settings, then falls back
+        to the store, and finally creates a default in channel_settings.
         """
         normalized_id = self._normalize_user_id(user_id)
 
         self._reload_if_changed()
 
-        # Return existing or create new
-        if normalized_id not in self.settings:
-            settings = UserSettings()
-            if normalized_id in self.store.settings.channels:
-                settings = self._from_channel_settings(self.store.settings.channels[normalized_id])
-            elif normalized_id in self.store.settings.users:
-                settings = self._from_bound_user_settings(self.store.settings.users[normalized_id])
-            self.settings[normalized_id] = settings
-            self._save_settings()
-        return self.settings[normalized_id]
+        if normalized_id in self.dm_user_settings:
+            return self.dm_user_settings[normalized_id]
+        if normalized_id in self.channel_settings:
+            return self.channel_settings[normalized_id]
+
+        # New key — check store
+        if normalized_id in self.store.settings.users:
+            settings = self._from_bound_user_settings(self.store.settings.users[normalized_id])
+            self.dm_user_settings[normalized_id] = settings
+            return settings
+        if normalized_id in self.store.settings.channels:
+            settings = self._from_channel_settings(self.store.settings.channels[normalized_id])
+            self.channel_settings[normalized_id] = settings
+            return settings
+
+        # Truly new — create default in channels
+        settings = UserSettings()
+        self.channel_settings[normalized_id] = settings
+        self._save_settings()
+        return settings
 
     def update_user_settings(self, user_id: Union[int, str], settings: UserSettings):
         """Update settings for a specific user"""
@@ -277,7 +281,14 @@ class SettingsManager:
 
         settings.show_message_types = self._normalize_show_message_types(settings.show_message_types)
 
-        self.settings[normalized_id] = settings
+        if normalized_id in self.dm_user_settings:
+            self.dm_user_settings[normalized_id] = settings
+        elif normalized_id in self.channel_settings:
+            self.channel_settings[normalized_id] = settings
+        elif normalized_id in self.store.settings.users:
+            self.dm_user_settings[normalized_id] = settings
+        else:
+            self.channel_settings[normalized_id] = settings
         self._save_settings()
 
     def toggle_show_message_type(self, user_id: Union[int, str], message_type: str) -> bool:
