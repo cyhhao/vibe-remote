@@ -35,10 +35,13 @@ run_ui_server('0.0.0.0', ${VIBE_UI_PORT:-5123})
         echo "$UI_PID" > "$RUNTIME_DIR/vibe-ui.pid"
 
         # Wait for either process to exit; propagate its exit code
+        set +e
         wait -n "$SERVICE_PID" "$UI_PID" 2>/dev/null
         EXIT_CODE=$?
+        set -e
         # Terminate the sibling process
         kill "$SERVICE_PID" "$UI_PID" 2>/dev/null || true
+        wait "$SERVICE_PID" "$UI_PID" 2>/dev/null || true
         exit "$EXIT_CODE"
         ;;
     cli)
