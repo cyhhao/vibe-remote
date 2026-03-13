@@ -430,6 +430,23 @@ class Controller:
                 return True
         return False
 
+    def _resolve_settings_key(self, user_id: str, channel_id: Optional[str]) -> str:
+        """Resolve settings key for update handlers that don't have a MessageContext.
+
+        Uses the same DM-detection logic as ``_get_settings_key``:
+        for DM contexts the key is ``user_id``, otherwise ``channel_id``.
+        """
+        platform = getattr(self.config, "platform", "slack")
+        effective_channel = channel_id or ""
+        if platform == "slack" and effective_channel.startswith("D"):
+            return user_id
+        if platform in ("discord", "lark"):
+            # For DM updates, check if the user is a bound DM user
+            if self.settings_manager and hasattr(self.settings_manager, "store"):
+                if self.settings_manager.store.is_bound_user(user_id):
+                    return user_id
+        return effective_channel if effective_channel else user_id
+
     def _get_target_context(self, context: MessageContext) -> MessageContext:
         """Get target context for sending messages"""
         if self.im_client.should_use_thread_for_reply() and context.thread_id:
@@ -776,11 +793,8 @@ class Controller:
     ):
         """Handle settings update (typically from Slack modal)"""
         try:
-            # Determine settings key - for Slack, always use channel_id
-            if self.config.platform == "slack":
-                settings_key = channel_id if channel_id else user_id  # fallback to user_id if no channel
-            else:
-                settings_key = channel_id if channel_id else user_id
+            # Determine settings key — for DM contexts use user_id
+            settings_key = self._resolve_settings_key(user_id, channel_id)
 
             # Update settings
             user_settings = self.settings_manager.get_user_settings(settings_key)
@@ -1149,7 +1163,7 @@ class Controller:
 
         try:
             # Get settings key
-            settings_key = channel_id if channel_id else user_id
+            settings_key = self._resolve_settings_key(user_id, channel_id)
 
             # Get existing routing to preserve settings for other backends
             existing_routing = self.settings_manager.get_channel_routing(settings_key)

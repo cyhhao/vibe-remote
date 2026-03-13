@@ -207,7 +207,13 @@ class SettingsManager:
             return
 
         for channel_id, channel_settings in self.store.settings.channels.items():
-            self.settings[str(channel_id)] = self._from_channel_settings(channel_settings)
+            key = str(channel_id)
+            # Skip legacy channel entries that collide with bound users —
+            # the authoritative source for bound users is store.settings.users
+            if key in self.store.settings.users:
+                logger.info("Skipping channels[%s] — shadowed by users[%s]", key, key)
+                continue
+            self.settings[key] = self._from_channel_settings(channel_settings)
 
         try:
             self._settings_mtime_ns = self.settings_file.stat().st_mtime_ns

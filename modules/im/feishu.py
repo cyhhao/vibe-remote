@@ -1215,18 +1215,28 @@ class FeishuBot(BaseIMClient):
                 return
 
             # --- Channel authorization ---
-            # Skip for bound users in DM (p2p) contexts.
-            # Feishu card actions don't carry chat_type, so we check if the user
-            # is a bound user — bound users are explicitly authorized for DM access.
-            is_bound_dm = False
+            # Feishu card actions don't carry chat_type, so we need heuristics
+            # to distinguish DM vs channel contexts.
+            is_bound_user = False
+            is_dm = False
             if self.settings_manager and user_id:
                 store = self.settings_manager.store
-                if store.is_bound_user(user_id):
-                    is_bound_dm = True
-            if not is_bound_dm:
+                is_bound_user = store.is_bound_user(user_id)
+                # If chat_id is NOT a known authorized channel but user is bound,
+                # this is likely a DM context
+                if is_bound_user and chat_id:
+                    is_known_channel = chat_id in store.settings.channels
+                    if not is_known_channel:
+                        is_dm = True
+            if not is_bound_user or not is_dm:
                 if not chat_id or not await self._is_authorized_channel(chat_id):
-                    logger.info("Card action from unauthorized/unknown channel %s, ignoring", chat_id)
-                    return
+                    if is_bound_user:
+                        # Bound user in a non-authorized channel — allow through
+                        # but don't mark as DM (it's a channel context)
+                        pass
+                    else:
+                        logger.info("Card action from unauthorized/unknown channel %s, ignoring", chat_id)
+                        return
 
             context = MessageContext(
                 user_id=user_id,
@@ -1236,7 +1246,7 @@ class FeishuBot(BaseIMClient):
                 platform_specific={
                     "event": event_data,
                     "action": action,
-                    "is_dm": is_bound_dm,
+                    "is_dm": is_dm,
                     # Provide trigger_id so question_handler.open_question_modal()
                     # doesn't abort with "Modal UI is not available".
                     # Feishu doesn't use a real trigger_id (we send cards, not
