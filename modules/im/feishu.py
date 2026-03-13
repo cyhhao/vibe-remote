@@ -1254,6 +1254,16 @@ class FeishuBot(BaseIMClient):
 
             # --- Form submissions (action_type: form_submit) ---
             if form_value is not None:
+                # Admin-only form submissions: settings, CWD, routing
+                # Feishu cards are shared in the channel, so any member can
+                # submit them — enforce admin check here.
+                admin_forms = ("cwd_submit", "settings_submit", "routing_backend_select", "routing_submit")
+                if button_name in admin_forms and self.settings_manager:
+                    store = self.settings_manager.store
+                    if store.has_any_admin() and not store.is_admin(user_id):
+                        logger.info("Permission denied: %s attempted form %s", user_id, button_name)
+                        return
+
                 if button_name == "cwd_submit":
                     await self._handle_cwd_form_submit(context, form_value)
                 elif button_name == "settings_submit":
