@@ -275,35 +275,15 @@ class Controller:
     def _setup_callbacks(self):
         """Setup callback connections between modules"""
 
-        # Admin guard wrapper for sensitive text commands
-        def _admin_guard(handler):
-            """Wrap a command handler with admin permission check."""
-            from functools import wraps
-
-            @wraps(handler)
-            async def guarded(context, args=""):
-                store = self.settings_manager.store
-                if store.has_any_admin() and not store.is_admin(context.user_id):
-                    logger.info(f"Permission denied: {context.user_id} attempted text command")
-                    try:
-                        from vibe.i18n import t as i18n_t
-
-                        msg = i18n_t("permission.adminOnly")
-                        await self.im_client.send_message(context, msg)
-                    except Exception:
-                        pass
-                    return
-                await handler(context, args)
-
-            return guarded
-
-        # Create command handlers dict
+        # Command handlers dict
+        # Admin protection for "set_cwd" and "settings" is now handled by
+        # the centralized auth pipeline (core.auth.check_auth) in IM entry points.
         command_handlers = {
             "start": self.command_handler.handle_start,
             "clear": self.command_handler.handle_clear,
             "cwd": self.command_handler.handle_cwd,
-            "set_cwd": _admin_guard(self.command_handler.handle_set_cwd),
-            "settings": _admin_guard(self.settings_handler.handle_settings),
+            "set_cwd": self.command_handler.handle_set_cwd,
+            "settings": self.settings_handler.handle_settings,
             "stop": self.command_handler.handle_stop,
             "bind": self.command_handler.handle_bind,
         }

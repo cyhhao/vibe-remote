@@ -9,6 +9,7 @@ import discord
 
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
 from config.v2_config import DiscordConfig
+from core.auth import check_auth
 from .formatters import DiscordFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
@@ -400,6 +401,29 @@ class DiscordBot(BaseIMClient):
         except Exception as err:
             logger.debug("Failed to send unauthorized message: %s", err)
 
+    async def _send_auth_denial(self, channel_id: str, user_id: str, auth_result, interaction=None):
+        """Send denial message for failed auth check."""
+        if auth_result.denial == "unbound_dm":
+            hint = self._t("bind.dmNotBound", channel_id)
+            if interaction:
+                try:
+                    await interaction.response.send_message(hint, ephemeral=True)
+                except Exception:
+                    pass
+            else:
+                channel = self.client.get_channel(int(channel_id))
+                if channel:
+                    await channel.send(content=hint)
+        elif auth_result.denial == "unauthorized_channel":
+            await self._send_unauthorized_message(channel_id)
+        elif auth_result.denial == "not_admin":
+            msg = i18n_t("permission.adminOnly")
+            if interaction:
+                try:
+                    await interaction.response.send_message(msg, ephemeral=True)
+                except Exception:
+                    pass
+
     async def _maybe_create_thread(self, message: discord.Message) -> Optional[discord.Thread]:
         if isinstance(message.channel, discord.Thread):
             return message.channel
@@ -452,27 +476,18 @@ class DiscordBot(BaseIMClient):
         # Determine if this is a DM
         is_dm = isinstance(channel, discord.DMChannel) or message.guild is None
 
-        # DM authorization gate: require user to be bound for DM access
-        # Must run before channel authorization so unbound DM users get bind hint (not channel error)
-        if is_dm and self.settings_manager:
-            store = self.settings_manager.store
-            if not store.is_bound_user(str(message.author.id)):
-                # Allow /bind command through for unbound users
-                if content.startswith("/bind ") or content == "/bind":
-                    pass  # Will be handled by command routing below
-                else:
-                    try:
-                        hint = self._t("bind.dmNotBound", channel_id)
-                        await channel.send(content=hint)
-                    except Exception as e:
-                        logger.error(f"Failed to send DM bind hint: {e}")
-                    return
-
-        # Channel authorization (skip for DMs — DMs are authorized via bind system)
-        if not is_dm:
-            if not await self._is_authorized_channel(channel_id):
-                await self._send_unauthorized_message(channel_id)
-                return
+        # Centralized auth check
+        action = "bind" if (content.startswith("/bind ") or content == "/bind") else ""
+        auth_result = check_auth(
+            user_id=str(message.author.id),
+            channel_id=channel_id,
+            is_dm=is_dm,
+            action=action,
+            store=self.settings_manager.store if self.settings_manager else None,
+        )
+        if not auth_result.allowed:
+            await self._send_auth_denial(channel_id, str(message.author.id), auth_result)
+            return
 
         # Mention logic for guild channels
         effective_require_mention = self.config.require_mention
@@ -1495,10 +1510,18 @@ class _PersistentStartView(discord.ui.View):
             guild_id = str(interaction.guild_id) if interaction.guild_id else None
             if guild_id and not self.outer._is_allowed_guild(guild_id):
                 return
-            # Skip channel auth for DM interactions (authorized via bind system)
             is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
-            if not is_dm and not await self.outer._is_authorized_channel(channel_id):
-                await self.outer._send_unauthorized_message(channel_id)
+            auth_result = check_auth(
+                user_id=str(interaction.user.id),
+                channel_id=channel_id,
+                is_dm=is_dm,
+                action=data,
+                store=self.outer.settings_manager.store if self.outer.settings_manager else None,
+            )
+            if not auth_result.allowed:
+                await self.outer._send_auth_denial(
+                    channel_id, str(interaction.user.id), auth_result, interaction=interaction
+                )
                 return
             context = MessageContext(
                 user_id=str(interaction.user.id),
@@ -1552,17 +1575,6 @@ class _DiscordButtonView(discord.ui.View):
                         "cmd_routing",
                         "cmd_resume",
                     }
-                    if data.startswith("vibe_update_now") and interaction.guild:
-                        is_owner = interaction.user.id == interaction.guild.owner_id
-                        is_admin = getattr(interaction.user, "guild_permissions", None)
-                        if not (is_owner or (is_admin and is_admin.administrator)):
-                            try:
-                                await interaction.response.send_message(
-                                    "You do not have permission to run updates.", ephemeral=True
-                                )
-                            except Exception:
-                                pass
-                            return
                     if data == "opencode_question:open_modal":
                         try:
                             await interaction.response.defer(ephemeral=True)
@@ -1577,10 +1589,18 @@ class _DiscordButtonView(discord.ui.View):
                     guild_id = str(interaction.guild_id) if interaction.guild_id else None
                     if guild_id and not self.outer._is_allowed_guild(guild_id):
                         return
-                    # Skip channel auth for DM interactions
                     is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
-                    if not is_dm and not await self.outer._is_authorized_channel(channel_id):
-                        await self.outer._send_unauthorized_message(channel_id)
+                    auth_result = check_auth(
+                        user_id=str(interaction.user.id),
+                        channel_id=channel_id,
+                        is_dm=is_dm,
+                        action=data,
+                        store=self.outer.settings_manager.store if self.outer.settings_manager else None,
+                    )
+                    if not auth_result.allowed:
+                        await self.outer._send_auth_denial(
+                            channel_id, str(interaction.user.id), auth_result, interaction=interaction
+                        )
                         return
                     context = MessageContext(
                         user_id=str(interaction.user.id),

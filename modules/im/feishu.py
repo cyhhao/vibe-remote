@@ -258,6 +258,18 @@ class FeishuBot(BaseIMClient):
         except Exception as exc:
             logger.error("Failed to send unauthorized message to %s: %s", channel_id, exc)
 
+    async def _send_auth_denial(self, chat_id: str, user_id: str, auth_result):
+        """Send denial message for failed auth check."""
+        ctx = MessageContext(user_id="system", channel_id=chat_id)
+        if auth_result.denial == "unbound_dm":
+            hint = self._t("bind.dmNotBound", chat_id)
+            await self.send_message(ctx, hint)
+        elif auth_result.denial == "unauthorized_channel":
+            await self._send_unauthorized_message(chat_id)
+        elif auth_result.denial == "not_admin":
+            msg = i18n_t("permission.adminOnly")
+            await self.send_message(ctx, msg)
+
     # ------------------------------------------------------------------
     # Sending messages
     # ------------------------------------------------------------------
@@ -1107,26 +1119,22 @@ class FeishuBot(BaseIMClient):
                     else:
                         return
 
-            # DM (p2p) authorization gate: require user to be bound for DM access
-            if is_p2p and self.settings_manager:
-                store = self.settings_manager.store
-                if not store.is_bound_user(user_id):
-                    # Allow /bind command through for unbound users
-                    if text.startswith("/bind ") or text == "/bind":
-                        pass  # Will be handled by command routing below
-                    else:
-                        try:
-                            hint_ctx = MessageContext(user_id="system", channel_id=chat_id)
-                            hint = self._t("bind.dmNotBound", chat_id)
-                            await self.send_message(hint_ctx, hint)
-                        except Exception as exc:
-                            logger.error("Failed to send DM bind hint: %s", exc)
-                        return
+            # Centralized auth check
+            from core.auth import check_auth
 
-            # Channel authorisation (skip for p2p/DM — authorized via bind system)
-            if not is_p2p and not await self._is_authorized_channel(chat_id):
-                logger.info("Unauthorized message from channel: %s", chat_id)
-                await self._send_unauthorized_message(chat_id)
+            _action = "bind" if (text.startswith("/bind ") or text == "/bind") else ""
+            auth_result = check_auth(
+                user_id=user_id,
+                channel_id=chat_id,
+                is_dm=is_p2p,
+                action=_action,
+                store=self.settings_manager.store if self.settings_manager else None,
+            )
+            if not auth_result.allowed:
+                try:
+                    await self._send_auth_denial(chat_id, user_id, auth_result)
+                except Exception as exc:
+                    logger.error("Failed to send auth denial: %s", exc)
                 return
 
             # Determine thread ID: use root_id if in thread, else use message_id as thread root
@@ -1224,15 +1232,30 @@ class FeishuBot(BaseIMClient):
             if self._is_duplicate_event(dedup_key):
                 return
 
-            # --- Channel authorization ---
-            # Use positive DM lookup instead of fragile heuristics.
-            # _dm_chat_ids is populated from real p2p messages and persisted
-            # user settings, so it reliably identifies DM chats.
+            # --- Centralized auth check ---
             is_dm = chat_id in self._dm_chat_ids
-            if not is_dm:
-                if not chat_id or not await self._is_authorized_channel(chat_id):
-                    logger.info("Card action from unauthorized/unknown channel %s, ignoring", chat_id)
-                    return
+            _card_action = button_name if form_value is not None else (callback_data or "")
+            from core.auth import check_auth
+
+            auth_result = check_auth(
+                user_id=user_id,
+                channel_id=chat_id,
+                is_dm=is_dm,
+                action=_card_action,
+                store=self.settings_manager.store if self.settings_manager else None,
+            )
+            if not auth_result.allowed:
+                if auth_result.denial == "not_admin":
+                    logger.info("Permission denied: %s attempted card action %s", user_id, _card_action)
+                else:
+                    logger.info(
+                        "Card action from unauthorized context %s (denial=%s), ignoring", chat_id, auth_result.denial
+                    )
+                try:
+                    await self._send_auth_denial(chat_id, user_id, auth_result)
+                except Exception as exc:
+                    logger.error("Failed to send card auth denial: %s", exc)
+                return
 
             context = MessageContext(
                 user_id=user_id,
@@ -1253,16 +1276,6 @@ class FeishuBot(BaseIMClient):
 
             # --- Form submissions (action_type: form_submit) ---
             if form_value is not None:
-                # Admin-only form submissions: settings, CWD, routing
-                # Feishu cards are shared in the channel, so any member can
-                # submit them — enforce admin check here.
-                admin_forms = ("cwd_submit", "settings_submit", "routing_backend_select", "routing_submit")
-                if button_name in admin_forms and self.settings_manager:
-                    store = self.settings_manager.store
-                    if store.has_any_admin() and not store.is_admin(user_id):
-                        logger.info("Permission denied: %s attempted form %s", user_id, button_name)
-                        return
-
                 if button_name == "cwd_submit":
                     await self._handle_cwd_form_submit(context, form_value)
                 elif button_name == "settings_submit":
