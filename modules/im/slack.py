@@ -895,9 +895,14 @@ class SlackBot(BaseIMClient):
                         logger.debug(f"No settings_manager, ignoring thread message: '{text}'")
                         return
 
-            # Centralized auth gate
+            # Centralized auth gate — parse command name before auth so
+            # admin-protected text commands (e.g. /settings, /set_cwd) are checked.
             is_dm = channel_id.startswith("D")
-            auth_action = "bind" if (text.startswith("/bind ") or text == "/bind") else ""
+            if text.startswith("/"):
+                _cmd_parts = text.split(maxsplit=1)
+                auth_action = _cmd_parts[0][1:]  # strip leading "/"
+            else:
+                auth_action = ""
             auth = check_auth(
                 user_id=user_id,
                 channel_id=channel_id,
@@ -1294,7 +1299,8 @@ class SlackBot(BaseIMClient):
 
             # Update CWD - need access to controller or settings manager
             if hasattr(self, "_on_change_cwd"):
-                await self._on_change_cwd(user_id, new_cwd, channel_id)
+                is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
+                await self._on_change_cwd(user_id, new_cwd, channel_id, is_dm)
 
             # Send success message to the user (via DM or channel)
             # We need to find the right channel to send the message
@@ -1344,8 +1350,9 @@ class SlackBot(BaseIMClient):
                 chosen_agent = selected_agent or agent
 
             if hasattr(self, "_on_resume_session"):
+                is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
                 await self._on_resume_session(
-                    user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts
+                    user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts, is_dm
                 )
 
         elif callback_id == "opencode_question_modal" or callback_id == "claude_question_modal":

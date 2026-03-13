@@ -35,6 +35,19 @@ ADMIN_PROTECTED_ACTIONS: frozenset = frozenset(
 BIND_EXEMPT_COMMANDS: frozenset = frozenset({"bind"})
 
 
+def _is_admin_protected(action: str) -> bool:
+    """Check if an action requires admin permission.
+
+    Handles both exact matches and prefix matches (e.g. ``vibe_update_now:v1.2``).
+    """
+    if action in ADMIN_PROTECTED_ACTIONS:
+        return True
+    # Prefix match for actions with dynamic suffixes
+    if action.startswith("vibe_update_now"):
+        return True
+    return False
+
+
 @dataclass
 class AuthResult:
     """Result of an authorization check."""
@@ -90,7 +103,7 @@ def check_auth(
             return AuthResult(allowed=False, denial="unauthorized_channel", is_dm=False)
 
     # 3. Admin check for protected actions
-    if action in ADMIN_PROTECTED_ACTIONS:
+    if _is_admin_protected(action):
         if store.has_any_admin() and not store.is_admin(user_id):
             return AuthResult(allowed=False, denial="not_admin", is_dm=is_dm)
 

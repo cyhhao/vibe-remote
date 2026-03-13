@@ -375,6 +375,7 @@ class MessageHandler:
                     thread_id=context.thread_id,
                     agent=agent,
                     session_id=session_id,
+                    is_dm=(context.platform_specific or {}).get("is_dm", False),
                 )
 
             elif callback_data.startswith("opencode_question:"):

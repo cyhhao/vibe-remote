@@ -107,6 +107,7 @@ class SettingsManager:
         self.store = SettingsStore.get_instance(self.settings_file)
         self.sessions_store = SessionsStore()
         self.sessions_store.load()
+        self._last_seen_store_mtime: Optional[float] = None
         self._load_settings()
 
     # ---------------------------------------------
@@ -199,14 +200,19 @@ class SettingsManager:
         """Load settings from JSON file"""
         self.store = SettingsStore.get_instance(self.settings_file)
         self._rebuild_runtime_settings()
+        self._last_seen_store_mtime = self.store._file_mtime
 
     def _reload_if_changed(self) -> None:
-        """Reload runtime settings if the underlying store has changed on disk."""
-        old_mtime = self.store._file_mtime
+        """Reload runtime settings if the underlying store has changed on disk.
+
+        Uses a locally tracked mtime so that same-process writes (e.g. from
+        the UI API hitting the singleton store) are detected correctly.
+        """
         self.store.maybe_reload()
-        if self.store._file_mtime != old_mtime:
+        if self.store._file_mtime != self._last_seen_store_mtime:
             logger.info("Settings file changed on disk, rebuilding runtime settings")
             self._rebuild_runtime_settings()
+            self._last_seen_store_mtime = self.store._file_mtime
 
     def _rebuild_runtime_settings(self) -> None:
         """Rebuild the in-memory settings dicts from the store."""
@@ -240,6 +246,9 @@ class SettingsManager:
             for uid, s in self.dm_user_settings.items():
                 self._sync_to_bound_user(uid, s)
             self.store.save()
+            # Keep local mtime in sync so _reload_if_changed doesn't
+            # trigger an unnecessary rebuild right after our own save.
+            self._last_seen_store_mtime = self.store._file_mtime
             logger.info("Settings saved successfully")
         except Exception as e:
             logger.error(f"Error saving settings: {e}")

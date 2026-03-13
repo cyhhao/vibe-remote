@@ -1119,10 +1119,15 @@ class FeishuBot(BaseIMClient):
                     else:
                         return
 
-            # Centralized auth check
+            # Centralized auth check — parse command name before auth so
+            # admin-protected text commands (e.g. /settings, /set_cwd) are checked.
             from core.auth import check_auth
 
-            _action = "bind" if (text.startswith("/bind ") or text == "/bind") else ""
+            if text.startswith("/"):
+                _cmd_parts = text.split(maxsplit=1)
+                _action = _cmd_parts[0][1:]  # strip leading "/"
+            else:
+                _action = ""
             auth_result = check_auth(
                 user_id=user_id,
                 channel_id=chat_id,
@@ -1314,7 +1319,8 @@ class FeishuBot(BaseIMClient):
             logger.warning("CWD form submitted with empty path")
             return
         if self._on_change_cwd:
-            await self._on_change_cwd(context.user_id, new_cwd, context.channel_id)
+            is_dm = context.platform_specific.get("is_dm", False) if context.platform_specific else False
+            await self._on_change_cwd(context.user_id, new_cwd, context.channel_id, is_dm)
 
     async def _handle_settings_form_submit(self, context: MessageContext, form_value: Dict[str, Any]):
         """Handle settings form submission."""
@@ -1602,6 +1608,7 @@ class FeishuBot(BaseIMClient):
 
         # Delegate to the resume session callback (same as Slack/Discord)
         if hasattr(self, "_on_resume_session") and self._on_resume_session:
+            is_dm = context.platform_specific.get("is_dm", False) if context.platform_specific else False
             await self._on_resume_session(
                 context.user_id,
                 context.channel_id,
@@ -1609,6 +1616,7 @@ class FeishuBot(BaseIMClient):
                 chosen_agent,
                 chosen_session,
                 host_message_ts,
+                is_dm,
             )
 
     # ------------------------------------------------------------------

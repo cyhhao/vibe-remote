@@ -780,14 +780,16 @@ class Controller:
                 raise
 
     # Working directory change handler (for Slack modal)
-    async def handle_change_cwd_submission(self, user_id: str, new_cwd: str, channel_id: Optional[str] = None):
+    async def handle_change_cwd_submission(
+        self, user_id: str, new_cwd: str, channel_id: Optional[str] = None, is_dm: bool = False
+    ):
         """Handle working directory change submission (from Slack modal) - reuse command handler logic"""
         try:
             # Create context for messages (without 'message' field which doesn't exist in MessageContext)
             context = MessageContext(
                 user_id=user_id,
                 channel_id=channel_id if channel_id else user_id,
-                platform_specific={},
+                platform_specific={"is_dm": is_dm},
             )
 
             # Reuse the same logic from handle_set_cwd command handler
@@ -799,7 +801,7 @@ class Controller:
             context = MessageContext(
                 user_id=user_id,
                 channel_id=channel_id if channel_id else user_id,
-                platform_specific={},
+                platform_specific={"is_dm": is_dm},
             )
             await self.im_client.send_message(
                 context,
@@ -814,6 +816,7 @@ class Controller:
         agent: Optional[str],
         session_id: Optional[str],
         host_message_ts: Optional[str] = None,
+        is_dm: bool = False,
     ) -> None:
         """Bind a provided session_id to the current thread for the chosen agent."""
         from modules.settings_manager import ChannelRouting
@@ -841,7 +844,7 @@ class Controller:
                 user_id=user_id,
                 channel_id=channel_id or user_id,
                 thread_id=target_thread or None,
-                platform_specific={},
+                platform_specific={"is_dm": is_dm},
             )
 
             settings_key = self._get_settings_key(context)
@@ -884,7 +887,7 @@ class Controller:
                 user_id=user_id,
                 channel_id=channel_id or user_id,
                 thread_id=thread_id or None,
-                platform_specific={},
+                platform_specific={"is_dm": is_dm},
             )
             await self.im_client.send_message(
                 context,
@@ -910,7 +913,7 @@ class Controller:
             context = MessageContext(
                 user_id=user_id,
                 channel_id=resolved_channel_id,
-                platform_specific={},
+                platform_specific={"is_dm": isinstance(channel_id, str) and channel_id.startswith("D")},
             )
 
             settings_key = self._get_settings_key(context)

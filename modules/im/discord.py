@@ -476,8 +476,13 @@ class DiscordBot(BaseIMClient):
         # Determine if this is a DM
         is_dm = isinstance(channel, discord.DMChannel) or message.guild is None
 
-        # Centralized auth check
-        action = "bind" if (content.startswith("/bind ") or content == "/bind") else ""
+        # Centralized auth check — parse command name before auth so
+        # admin-protected text commands (e.g. /settings, /set_cwd) are checked.
+        if content.startswith("/"):
+            _cmd_parts = content.split(maxsplit=1)
+            action = _cmd_parts[0][1:]  # strip leading "/"
+        else:
+            action = ""
         auth_result = check_auth(
             user_id=str(message.author.id),
             channel_id=channel_id,
@@ -575,10 +580,12 @@ class DiscordBot(BaseIMClient):
                     return
                 outer: DiscordBot = getattr(self, "_outer")
                 if hasattr(outer, "_on_change_cwd"):
+                    _is_dm = submit_interaction.guild is None
                     await outer._on_change_cwd(
                         str(submit_interaction.user.id),
                         str(self.new_cwd.value or ""),
                         channel_id,
+                        _is_dm,
                     )
                 await submit_interaction.response.send_message("✅ Working directory updated.", ephemeral=True)
 
@@ -875,6 +882,7 @@ class DiscordBot(BaseIMClient):
                     chosen_agent,
                     chosen_session,
                     host_message_ts,
+                    resume_interaction.guild is None,
                 )
             await resume_interaction.response.edit_message(content="✅ Session resumed.", view=None)
 
