@@ -254,10 +254,13 @@ class CodexAgent(BaseAgent):
         request: AgentRequest,
     ) -> str:
         """Create a new Codex thread and return its threadId."""
+        from core.reply_enhancer import REPLY_ENHANCEMENTS_PROMPT
+
         params: Dict[str, Any] = {
             "cwd": request.working_path,
             "approvalPolicy": "never",
             "sandbox": "danger-full-access",
+            "developerInstructions": REPLY_ENHANCEMENTS_PROMPT,
         }
 
         resp = await transport.send_request("thread/start", params)

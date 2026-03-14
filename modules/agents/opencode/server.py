@@ -94,25 +94,15 @@ class OpenCodeServerManager:
     async def _get_http_session(self) -> aiohttp.ClientSession:
         current_loop = asyncio.get_running_loop()
         # Recreate session if it's closed or bound to a different event loop
-        if (
-            self._http_session is None
-            or self._http_session.closed
-            or self._http_session_loop is not current_loop
-        ):
+        if self._http_session is None or self._http_session.closed or self._http_session_loop is not current_loop:
             # Close old session if it exists and is not closed
             if self._http_session is not None and not self._http_session.closed:
                 try:
                     await self._http_session.close()
                 except Exception:
                     pass
-            total_timeout: Optional[int] = (
-                None
-                if self.request_timeout_seconds <= 0
-                else self.request_timeout_seconds
-            )
-            self._http_session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=total_timeout)
-            )
+            total_timeout: Optional[int] = None if self.request_timeout_seconds <= 0 else self.request_timeout_seconds
+            self._http_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=total_timeout))
             self._http_session_loop = current_loop
         return self._http_session
 
@@ -183,11 +173,7 @@ class OpenCodeServerManager:
     def _is_opencode_serve_cmd(command: str, port: int) -> bool:
         if not command:
             return False
-        return (
-            "opencode" in command
-            and " serve" in command
-            and f"--port={port}" in command
-        )
+        return "opencode" in command and " serve" in command and f"--port={port}" in command
 
     def _is_port_available(self) -> bool:
         try:
@@ -259,11 +245,7 @@ class OpenCodeServerManager:
             self._clear_pid_file()
             return
 
-        if (
-            self._process
-            and self._process.returncode is None
-            and self._process.pid == pid
-        ):
+        if self._process and self._process.returncode is None and self._process.pid == pid:
             return
 
         # Check if the server is healthy before deciding to kill it.
@@ -275,28 +257,18 @@ class OpenCodeServerManager:
             if actual_pids:
                 actual_pid = actual_pids[0]
                 if actual_pid != pid:
-                    logger.info(
-                        f"Adopting healthy OpenCode server (updating stale PID {pid} -> {actual_pid})"
-                    )
+                    logger.info(f"Adopting healthy OpenCode server (updating stale PID {pid} -> {actual_pid})")
                     self._write_pid_file(actual_pid)
                 else:
-                    logger.info(
-                        f"Adopting healthy OpenCode server pid={pid} from previous run"
-                    )
+                    logger.info(f"Adopting healthy OpenCode server pid={pid} from previous run")
             else:
                 # Server is healthy but we can't find its PID - clear stale file
-                logger.info(
-                    f"Adopting healthy OpenCode server (clearing stale PID file, pid={pid} not found)"
-                )
+                logger.info(f"Adopting healthy OpenCode server (clearing stale PID file, pid={pid} not found)")
                 self._clear_pid_file()
             return
 
         cmd = self._get_pid_command(pid)
-        if (
-            cmd
-            and self._is_opencode_serve_cmd(cmd, self.port)
-            and self._pid_exists(pid)
-        ):
+        if cmd and self._is_opencode_serve_cmd(cmd, self.port) and self._pid_exists(pid):
             await self._terminate_pid(pid, reason="orphaned and unhealthy")
         self._clear_pid_file()
 
@@ -335,9 +307,7 @@ class OpenCodeServerManager:
     async def _is_healthy(self) -> bool:
         try:
             session = await self._get_http_session()
-            async with session.get(
-                f"{self.base_url}/global/health", timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp:
+            async with session.get(f"{self.base_url}/global/health", timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     return data.get("healthy", False)
@@ -379,8 +349,7 @@ class OpenCodeServerManager:
                 self._write_pid_file(self._process.pid)
         except FileNotFoundError:
             raise RuntimeError(
-                f"OpenCode CLI not found at '{self.binary}'. "
-                "Please install OpenCode or set OPENCODE_CLI_PATH."
+                f"OpenCode CLI not found at '{self.binary}'. Please install OpenCode or set OPENCODE_CLI_PATH."
             )
 
         start_time = time.monotonic()
@@ -395,8 +364,7 @@ class OpenCodeServerManager:
         self._clear_pid_file()
         self._process = None
         raise RuntimeError(
-            f"OpenCode server failed to start within {SERVER_START_TIMEOUT}s. "
-            f"Process exit code: {exit_code}"
+            f"OpenCode server failed to start within {SERVER_START_TIMEOUT}s. Process exit code: {exit_code}"
         )
 
     async def stop(self) -> None:
@@ -409,9 +377,7 @@ class OpenCodeServerManager:
             # Don't terminate OpenCode server on vibe-remote shutdown.
             # Let it continue running so the next vibe-remote instance can adopt it.
             # This prevents interrupting tasks that are still in progress.
-            logger.info(
-                "OpenCode server left running for next vibe-remote instance to adopt"
-            )
+            logger.info("OpenCode server left running for next vibe-remote instance to adopt")
 
             # Keep pid_file so next instance knows about the running server.
             self._process = None
@@ -419,9 +385,7 @@ class OpenCodeServerManager:
     def stop_sync(self) -> None:
         if self._http_session and self._http_session_loop:
             try:
-                future = asyncio.run_coroutine_threadsafe(
-                    self._http_session.close(), self._http_session_loop
-                )
+                future = asyncio.run_coroutine_threadsafe(self._http_session.close(), self._http_session_loop)
                 future.result(timeout=5)
             except Exception as e:
                 logger.debug(f"Failed to close OpenCode HTTP session: {e}")
@@ -432,9 +396,7 @@ class OpenCodeServerManager:
         # Don't terminate OpenCode server on vibe-remote shutdown.
         # Let it continue running so the next vibe-remote instance can adopt it.
         # This prevents interrupting tasks that are still in progress.
-        logger.info(
-            "OpenCode server left running for next vibe-remote instance to adopt"
-        )
+        logger.info("OpenCode server left running for next vibe-remote instance to adopt")
 
         # Keep pid_file so next instance knows about the running server.
         # Don't clear _process reference - just let it be garbage collected.
@@ -448,13 +410,9 @@ class OpenCodeServerManager:
 
         # Don't terminate OpenCode server on vibe-remote shutdown.
         # Let it continue running so the next vibe-remote instance can adopt it.
-        logger.info(
-            "OpenCode server left running for next vibe-remote instance to adopt"
-        )
+        logger.info("OpenCode server left running for next vibe-remote instance to adopt")
 
-    async def create_session(
-        self, directory: str, title: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def create_session(self, directory: str, title: Optional[str] = None) -> Dict[str, Any]:
         session = await self._get_http_session()
         body: Dict[str, Any] = {}
         if title:
@@ -498,9 +456,7 @@ class OpenCodeServerManager:
         ) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
-                raise RuntimeError(
-                    f"Failed to send message: {resp.status} {error_text}"
-                )
+                raise RuntimeError(f"Failed to send message: {resp.status} {error_text}")
             return await resp.json()
 
     async def prompt_async(
@@ -511,6 +467,7 @@ class OpenCodeServerManager:
         agent: Optional[str] = None,
         model: Optional[Dict[str, str]] = None,
         reasoning_effort: Optional[str] = None,
+        system: Optional[str] = None,
     ) -> None:
         """Start a prompt asynchronously without holding the HTTP request open."""
 
@@ -525,6 +482,8 @@ class OpenCodeServerManager:
             body["model"] = model
         if reasoning_effort:
             body["variant"] = reasoning_effort
+        if system:
+            body["system"] = system
 
         async with session.post(
             f"{self.base_url}/session/{session_id}/prompt_async",
@@ -534,13 +493,9 @@ class OpenCodeServerManager:
             # OpenCode returns 204 when accepted.
             if resp.status not in (200, 204):
                 error_text = await resp.text()
-                raise RuntimeError(
-                    f"Failed to start async prompt: {resp.status} {error_text}"
-                )
+                raise RuntimeError(f"Failed to start async prompt: {resp.status} {error_text}")
 
-    async def list_messages(
-        self, session_id: str, directory: str
-    ) -> List[Dict[str, Any]]:
+    async def list_messages(self, session_id: str, directory: str) -> List[Dict[str, Any]]:
         session = await self._get_http_session()
         async with session.get(
             f"{self.base_url}/session/{session_id}/message",
@@ -548,14 +503,10 @@ class OpenCodeServerManager:
         ) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
-                raise RuntimeError(
-                    f"Failed to list messages: {resp.status} {error_text}"
-                )
+                raise RuntimeError(f"Failed to list messages: {resp.status} {error_text}")
             return await resp.json()
 
-    async def get_message(
-        self, session_id: str, message_id: str, directory: str
-    ) -> Dict[str, Any]:
+    async def get_message(self, session_id: str, message_id: str, directory: str) -> Dict[str, Any]:
         session = await self._get_http_session()
         async with session.get(
             f"{self.base_url}/session/{session_id}/message/{message_id}",
@@ -566,9 +517,7 @@ class OpenCodeServerManager:
                 raise RuntimeError(f"Failed to get message: {resp.status} {error_text}")
             return await resp.json()
 
-    async def list_questions(
-        self, directory: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+    async def list_questions(self, directory: Optional[str] = None) -> List[Dict[str, Any]]:
         session = await self._get_http_session()
         params = {"directory": directory} if directory else None
         async with session.get(
@@ -577,15 +526,11 @@ class OpenCodeServerManager:
         ) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
-                raise RuntimeError(
-                    f"Failed to list questions: {resp.status} {error_text}"
-                )
+                raise RuntimeError(f"Failed to list questions: {resp.status} {error_text}")
             data = await resp.json()
             return data if isinstance(data, list) else []
 
-    async def reply_question(
-        self, question_id: str, directory: str, answers: List[List[str]]
-    ) -> bool:
+    async def reply_question(self, question_id: str, directory: str, answers: List[List[str]]) -> bool:
         session = await self._get_http_session()
         async with session.post(
             f"{self.base_url}/question/{question_id}/reply",
@@ -594,9 +539,7 @@ class OpenCodeServerManager:
         ) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
-                raise RuntimeError(
-                    f"Failed to reply question: {resp.status} {error_text}"
-                )
+                raise RuntimeError(f"Failed to reply question: {resp.status} {error_text}")
             data = await resp.json()
             return bool(data)
 
@@ -613,9 +556,7 @@ class OpenCodeServerManager:
             logger.warning(f"Failed to abort session {session_id}: {e}")
             return False
 
-    async def get_session(
-        self, session_id: str, directory: str
-    ) -> Optional[Dict[str, Any]]:
+    async def get_session(self, session_id: str, directory: str) -> Optional[Dict[str, Any]]:
         session = await self._get_http_session()
         try:
             async with session.get(
@@ -645,11 +586,7 @@ class OpenCodeServerManager:
                 if resp.status == 200:
                     agents = await resp.json()
                     # Filter to primary agents (build, plan), exclude hidden/subagent
-                    return [
-                        a
-                        for a in agents
-                        if a.get("mode") == "primary" and not a.get("hidden", False)
-                    ]
+                    return [a for a in agents if a.get("mode") == "primary" and not a.get("hidden", False)]
                 return []
         except Exception as e:
             logger.warning(f"Failed to get available agents: {e}")
@@ -728,9 +665,7 @@ class OpenCodeServerManager:
 
         return None
 
-    def _get_agent_config(
-        self, config: Dict[str, Any], agent_name: Optional[str]
-    ) -> Dict[str, Any]:
+    def _get_agent_config(self, config: Dict[str, Any], agent_name: Optional[str]) -> Dict[str, Any]:
         """Get agent-specific config from opencode.json with type safety."""
 
         if not agent_name:
@@ -758,9 +693,7 @@ class OpenCodeServerManager:
         agent_config = self._get_agent_config(config, agent_name)
         model = agent_config.get("model")
         if isinstance(model, str) and model:
-            logger.debug(
-                f"Found model '{model}' for agent '{agent_name}' in opencode.json"
-            )
+            logger.debug(f"Found model '{model}' for agent '{agent_name}' in opencode.json")
             return model
 
         # Fall back to global default model
@@ -770,9 +703,7 @@ class OpenCodeServerManager:
             return model
         return None
 
-    def get_agent_reasoning_effort_from_config(
-        self, agent_name: Optional[str]
-    ) -> Optional[str]:
+    def get_agent_reasoning_effort_from_config(self, agent_name: Optional[str]) -> Optional[str]:
         """Read agent's reasoningEffort from user's opencode.json config file."""
 
         config = self._load_opencode_user_config()
@@ -787,27 +718,19 @@ class OpenCodeServerManager:
         reasoning_effort = agent_config.get("reasoningEffort")
         if isinstance(reasoning_effort, str) and reasoning_effort:
             if reasoning_effort in valid_efforts:
-                logger.debug(
-                    f"Found reasoningEffort '{reasoning_effort}' for agent '{agent_name}' in opencode.json"
-                )
+                logger.debug(f"Found reasoningEffort '{reasoning_effort}' for agent '{agent_name}' in opencode.json")
                 return reasoning_effort
             else:
-                logger.debug(
-                    f"Ignoring unknown reasoningEffort '{reasoning_effort}' for agent '{agent_name}'"
-                )
+                logger.debug(f"Ignoring unknown reasoningEffort '{reasoning_effort}' for agent '{agent_name}'")
 
         # Fall back to global default reasoningEffort
         reasoning_effort = config.get("reasoningEffort")
         if isinstance(reasoning_effort, str) and reasoning_effort:
             if reasoning_effort in valid_efforts:
-                logger.debug(
-                    f"Using global default reasoningEffort '{reasoning_effort}' from opencode.json"
-                )
+                logger.debug(f"Using global default reasoningEffort '{reasoning_effort}' from opencode.json")
                 return reasoning_effort
             else:
-                logger.debug(
-                    f"Ignoring unknown global reasoningEffort '{reasoning_effort}'"
-                )
+                logger.debug(f"Ignoring unknown global reasoningEffort '{reasoning_effort}'")
         return None
 
     def get_default_agent_from_config(self) -> Optional[str]:

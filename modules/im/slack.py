@@ -242,6 +242,31 @@ class SlackBot(BaseIMClient):
             file_id = result.get("files", [{}])[0].get("id")
         return file_id or ""
 
+    async def upload_file_from_path(
+        self,
+        context: MessageContext,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> str:
+        """Upload a local file to the Slack conversation."""
+        import os
+
+        self._ensure_clients()
+        filename = os.path.basename(file_path)
+        display_title = title or filename
+
+        result = await self.web_client.files_upload_v2(
+            channel=context.channel_id,
+            thread_ts=context.thread_id,
+            file=file_path,
+            filename=filename,
+            title=display_title,
+        )
+        file_id = result.get("file", {}).get("id")
+        if not file_id:
+            file_id = result.get("files", [{}])[0].get("id")
+        return file_id or ""
+
     async def download_file(
         self,
         file_info: Dict[str, Any],

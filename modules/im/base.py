@@ -240,6 +240,24 @@ class BaseIMClient(ABC):
         """Upload markdown content as a file (optional per platform)."""
         raise NotImplementedError
 
+    async def upload_file_from_path(
+        self,
+        context: MessageContext,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> str:
+        """Upload a local file to the conversation (optional per platform).
+
+        Args:
+            context: Message context (channel, thread, etc)
+            file_path: Absolute path to the local file
+            title: Display title (defaults to the file basename)
+
+        Returns:
+            File ID or empty string on failure
+        """
+        raise NotImplementedError
+
     @abstractmethod
     async def edit_message(
         self,

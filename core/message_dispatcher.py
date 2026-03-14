@@ -11,6 +11,7 @@ import asyncio
 from typing import Optional
 
 from modules.im import MessageContext
+from core.reply_enhancer import process_reply
 
 logger = logging.getLogger(__name__)
 
@@ -142,30 +143,48 @@ class ConsolidatedMessageDispatcher:
 
         if canonical_type == "result":
             target_context = self._get_target_context(context)
-            if len(text) <= self._get_result_max_chars():
-                await im_client.send_message(target_context, text, parse_mode=parse_mode)
-                return
 
-            summary = self._build_result_summary(text, self._get_result_max_chars())
-            await im_client.send_message(target_context, summary, parse_mode=parse_mode)
+            # --- Reply enhancements: extract file links & quick-reply buttons ---
+            enhanced = process_reply(text)
+            display_text = enhanced.text or text
 
-            if self.controller.config.platform in {"slack", "discord", "lark"} and hasattr(
-                im_client, "upload_markdown"
-            ):
-                try:
-                    await im_client.upload_markdown(
+            if len(display_text) <= self._get_result_max_chars():
+                if enhanced.buttons:
+                    await self._send_with_quick_replies(
+                        im_client,
                         target_context,
-                        title="result.md",
-                        content=text,
-                        filetype="markdown",
+                        display_text,
+                        enhanced.buttons,
+                        parse_mode,
                     )
-                except Exception as err:
-                    logger.warning(f"Failed to upload result attachment: {err}")
-                    await im_client.send_message(
-                        target_context,
-                        "Failed to upload attachment. Want me to split the result into multiple messages?",
-                        parse_mode=parse_mode,
-                    )
+                else:
+                    await im_client.send_message(target_context, display_text, parse_mode=parse_mode)
+            else:
+                summary = self._build_result_summary(display_text, self._get_result_max_chars())
+                await im_client.send_message(target_context, summary, parse_mode=parse_mode)
+
+                if self.controller.config.platform in {"slack", "discord", "lark"} and hasattr(
+                    im_client, "upload_markdown"
+                ):
+                    try:
+                        await im_client.upload_markdown(
+                            target_context,
+                            title="result.md",
+                            content=display_text,
+                            filetype="markdown",
+                        )
+                    except Exception as err:
+                        logger.warning(f"Failed to upload result attachment: {err}")
+                        await im_client.send_message(
+                            target_context,
+                            "Failed to upload attachment. Want me to split the result into multiple messages?",
+                            parse_mode=parse_mode,
+                        )
+
+            # Upload extracted file attachments
+            if enhanced.files:
+                await self._upload_file_links(im_client, target_context, enhanced.files)
+
             return
 
         if canonical_type not in {"system", "assistant", "toolcall"}:
@@ -281,3 +300,58 @@ class ConsolidatedMessageDispatcher:
                 self._consolidated_message_ids[consolidated_key] = new_id
             except Exception as err:
                 logger.error(f"Failed to send Log Message: {err}", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Reply-enhancement helpers
+    # ------------------------------------------------------------------
+
+    async def _send_with_quick_replies(
+        self,
+        im_client,
+        context: MessageContext,
+        text: str,
+        buttons,
+        parse_mode,
+    ) -> None:
+        """Send a message with quick-reply buttons appended."""
+        from modules.im.base import InlineButton, InlineKeyboard
+
+        row = []
+        for btn in buttons:
+            display = f":{btn.emoji}: {btn.text}"
+            callback = f"quick_reply:{btn.text}"
+            row.append(InlineButton(text=display, callback_data=callback))
+
+        keyboard = InlineKeyboard(buttons=[row])
+        await im_client.send_message_with_buttons(
+            context,
+            text,
+            keyboard,
+            parse_mode=parse_mode,
+        )
+
+    async def _upload_file_links(
+        self,
+        im_client,
+        context: MessageContext,
+        files,
+    ) -> None:
+        """Upload local files referenced by ``file://`` links."""
+        import os
+
+        if not hasattr(im_client, "upload_file_from_path"):
+            logger.debug("IM client does not support upload_file_from_path; skipping file uploads")
+            return
+
+        for fl in files:
+            if not os.path.isfile(fl.path):
+                logger.warning("File not found, skipping upload: %s", fl.path)
+                continue
+            try:
+                await im_client.upload_file_from_path(
+                    context,
+                    file_path=fl.path,
+                    title=fl.label or os.path.basename(fl.path),
+                )
+            except Exception as err:
+                logger.warning("Failed to upload file %s: %s", fl.path, err)

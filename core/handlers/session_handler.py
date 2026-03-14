@@ -154,8 +154,22 @@ class SessionHandler(BaseHandler):
         # Determine final model: explicit override > agent frontmatter > global default
         effective_model = explicit_model or agent_model or self.config.claude.default_model
 
-        # Determine final system prompt: agent prompt takes precedence over config
-        final_system_prompt = agent_system_prompt or self.config.claude.system_prompt
+        # Determine final system prompt: agent prompt takes precedence over config.
+        # When neither is set, use the claude_code preset with our enhancements
+        # appended so the built-in tools/instructions remain intact.
+        from core.reply_enhancer import REPLY_ENHANCEMENTS_PROMPT
+
+        base_prompt = agent_system_prompt or self.config.claude.system_prompt
+        if base_prompt:
+            # Agent file or config already specifies a full prompt – append ours
+            final_system_prompt = f"{base_prompt}\n\n{REPLY_ENHANCEMENTS_PROMPT}"
+        else:
+            # No explicit prompt – use the claude_code preset + append
+            final_system_prompt = {
+                "type": "preset",
+                "preset": "claude_code",
+                "append": REPLY_ENHANCEMENTS_PROMPT,
+            }
 
         # Create extra_args for CLI passthrough (fallback for model)
         extra_args: Dict[str, str | None] = {}
