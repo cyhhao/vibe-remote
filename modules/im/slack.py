@@ -3215,31 +3215,19 @@ class SlackBot(BaseIMClient):
 
     async def _send_auth_denial(self, channel_id: str, user_id: str, auth: AuthResult, response_url: str = None):
         """Send appropriate denial message based on auth result."""
-        if auth.denial == "unbound_dm":
-            hint = self._t("bind.dmNotBound", channel_id)
-            if response_url:
-                await self.send_slash_response(response_url, f"🔑 {hint}")
-            else:
-                try:
-                    self._ensure_clients()
-                    await self.web_client.chat_postMessage(channel=channel_id, text=hint)
-                except Exception as e:
-                    logger.error(f"Failed to send DM bind hint: {e}")
-        elif auth.denial == "unauthorized_channel":
-            if response_url:
-                await self.send_slash_response(response_url, f"❌ {self._t('error.channelNotEnabled', channel_id)}")
-            else:
-                await self._send_unauthorized_message(channel_id)
-        elif auth.denial == "not_admin":
-            msg = i18n_t("permission.adminOnly")
-            if response_url:
-                await self.send_slash_response(response_url, msg)
-            else:
-                try:
-                    self._ensure_clients()
-                    await self.web_client.chat_postMessage(channel=channel_id, text=msg)
-                except Exception as e:
-                    logger.error(f"Failed to send admin denial: {e}")
+        msg = self.build_auth_denial_text(auth.denial, channel_id)
+        if not msg:
+            return
+
+        if response_url:
+            await self.send_slash_response(response_url, msg)
+            return
+
+        try:
+            self._ensure_clients()
+            await self.web_client.chat_postMessage(channel=channel_id, text=msg)
+        except Exception as e:
+            logger.error(f"Failed to send auth denial message: {e}")
 
     async def _send_unauthorized_message(self, channel_id: str):
         """Send unauthorized access message to channel"""

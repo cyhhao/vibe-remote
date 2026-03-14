@@ -52,7 +52,7 @@
     "sessionResumed": "已恢复 {agent} 会话。\n会话ID：`{sessionId}`",
     "sessionResumedTip1": "💬 *点击此消息并在右侧线程中回复* 以继续该会话。",
     "sessionResumedTip2": "_(在频道中发送新消息将开始新的会话。)_",
-    "routingUpdated": "Agent 路由已更新！"
+    "routingUpdated": "Agent设置已更新！"
   },
   "settings": {
     "personalizationTitle": "个性化设置",
@@ -227,7 +227,8 @@
     }
   },
   "message": {
-    "ack": "{agent} 已收到，正在处理..."
+    "ack": "{agent} 已收到，正在处理...",
+    "quickReplyNote": "回复：{text}"
   },
   "backend": {
     "claude": "ClaudeCode",

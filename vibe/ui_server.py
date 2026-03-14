@@ -606,6 +606,7 @@ if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                 # Merge settings into existing store (not wholesale replace)
                 from config.v2_settings import SettingsStore, ChannelSettings, normalize_show_message_types
                 from vibe.api import _parse_routing
+                from vibe.api import _current_platform
 
                 settings_key = modal_values.get("settings_key") or modal_values.get("channel_id")
                 if not settings_key:
@@ -613,10 +614,11 @@ if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
 
                 store = SettingsStore.get_instance()
                 store.maybe_reload()
-                ch = store.settings.channels.get(settings_key)
+                platform = _current_platform()
+                ch = store.find_channel(settings_key, platform=platform)
                 if not ch:
                     ch = ChannelSettings(enabled=True)
-                    store.settings.channels[settings_key] = ch
+                    store.update_channel(settings_key, ch, platform=platform)
 
                 if "show_message_types" in modal_values:
                     ch.show_message_types = normalize_show_message_types(modal_values["show_message_types"])
@@ -638,7 +640,10 @@ if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
 
                 store = SettingsStore.get_instance()
                 store.maybe_reload()
-                ch = store.settings.channels.get(channel_id)
+                from vibe.api import _current_platform
+
+                platform = _current_platform()
+                ch = store.find_channel(channel_id, platform=platform)
                 if ch:
                     from config.v2_settings import RoutingSettings
 
@@ -675,7 +680,10 @@ if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
 
                 store = SettingsStore.get_instance()
                 store.maybe_reload()
-                ch = store.settings.channels.get(channel_id)
+                from vibe.api import _current_platform
+
+                platform = _current_platform()
+                ch = store.find_channel(channel_id, platform=platform)
                 if ch:
                     from config.v2_settings import RoutingSettings
 

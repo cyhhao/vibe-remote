@@ -293,22 +293,19 @@ class ClaudeAgent(BaseAgent):
                         continue
 
                     if message_type == "result":
-                        pending = self._pending_assistant_message.pop(composite_key, None)
+                        self._pending_assistant_message.pop(composite_key, None)
                         result_text = getattr(message, "result", None)
-                        used_fallback = False
                         if not result_text:
+                            # ResultMessage had no text; use the last assistant
+                            # text as a fallback so the user still sees output.
                             fallback = self._last_assistant_text.get(composite_key)
                             if fallback:
                                 result_text = fallback
-                                used_fallback = True
 
-                        if pending and not used_fallback:
-                            await self.controller.emit_agent_message(
-                                context,
-                                "assistant",
-                                pending,
-                                parse_mode="markdown",
-                            )
+                        # NOTE: The pending assistant message is intentionally
+                        # NOT emitted here.  ResultMessage.result already
+                        # contains the same text as the last AssistantMessage,
+                        # so sending both would duplicate the content.
 
                         await self.emit_result_message(
                             context,

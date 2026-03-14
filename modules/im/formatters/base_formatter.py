@@ -263,7 +263,6 @@ class BaseMarkdownFormatter(ABC):
 
     def format_assistant_message(self, content_parts: List[str]) -> str:
         """Format assistant message"""
-        header = self.format_section_header("Assistant", "🤖")
         # Escape content parts that are plain text
         escaped_parts = []
         for part in content_parts:
@@ -291,8 +290,7 @@ class BaseMarkdownFormatter(ABC):
             else:
                 # Already formatted tool output, don't escape
                 escaped_parts.append(part)
-        parts = [header] + escaped_parts
-        return "\n\n".join(parts)
+        return "\n\n".join(escaped_parts)
 
     def format_user_message(self, content_parts: List[str]) -> str:
         """Format user/response message"""

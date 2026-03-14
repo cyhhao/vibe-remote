@@ -96,11 +96,6 @@ class CodexAgent(BaseAgent):
                 # If a turn is active, interrupt it first
                 active_turn = self._session_mgr.get_active_turn(request.base_session_id)
                 if active_turn:
-                    await self.controller.emit_agent_message(
-                        request.context,
-                        "notify",
-                        "⚠️ Interrupting previous Codex task...",
-                    )
                     try:
                         await transport.send_request(
                             "turn/interrupt",
@@ -125,6 +120,9 @@ class CodexAgent(BaseAgent):
                 turn_params: Dict[str, Any] = {
                     "threadId": thread_id,
                     "input": input_items,
+                    # Enforce non-interactive execution for Codex backend.
+                    "approvalPolicy": "never",
+                    "sandbox": "danger-full-access",
                 }
                 if effective_model:
                     turn_params["model"] = effective_model

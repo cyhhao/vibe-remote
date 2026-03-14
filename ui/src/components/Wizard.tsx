@@ -137,9 +137,18 @@ export const Wizard: React.FC = () => {
   }, []);
 
   const next = async (stepData: any) => {
-    const nextData = { ...data, ...stepData };
+    const platformChanged =
+      typeof stepData?.platform === 'string' &&
+      !!data?.platform &&
+      stepData.platform !== data.platform;
+
+    const nextData = {
+      ...data,
+      ...(platformChanged ? { channelConfigs: {} } : {}),
+      ...stepData,
+    };
     setData(nextData);
-    await persistStep(nextData);
+    await persistStep(stepData, nextData);
     if (currentStep < steps.length - 1) {
       setCurrentStep(currentStep + 1);
     }
@@ -151,13 +160,22 @@ export const Wizard: React.FC = () => {
     }
   };
 
-  const persistStep = async (payload: any) => {
-    if (!payload) return;
-    if (payload.agents || payload.slack || payload.discord || payload.lark || payload.mode || payload.platform || payload.channelConfigs) {
-      await api.saveConfig(buildConfigPayload(payload));
+  const persistStep = async (stepData: any, mergedData: any) => {
+    if (!mergedData) return;
+    if (
+      mergedData.agents ||
+      mergedData.slack ||
+      mergedData.discord ||
+      mergedData.lark ||
+      mergedData.mode ||
+      mergedData.platform ||
+      mergedData.channelConfigs
+    ) {
+      await api.saveConfig(buildConfigPayload(mergedData));
     }
-    if (payload.channelConfigs) {
-      await api.saveSettings({ channels: payload.channelConfigs });
+    // Only persist channel settings when this step actually updated them.
+    if (stepData && Object.prototype.hasOwnProperty.call(stepData, 'channelConfigs')) {
+      await api.saveSettings({ channels: stepData.channelConfigs || {} });
     }
   };
 

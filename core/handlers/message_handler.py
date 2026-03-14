@@ -266,10 +266,10 @@ class MessageHandler(BaseHandler):
         """Prepend user identity as [username<user_id>] to the message."""
         try:
             user_info = await self.im_client.get_user_info(context.user_id)
-            raw_name = user_info.get("display_name") or user_info.get("name") or "unknown"
+            raw_name = user_info.get("display_name") or user_info.get("name") or context.user_id
         except Exception as e:
             logger.debug(f"Failed to fetch user info for {context.user_id}: {e}")
-            raw_name = "unknown"
+            raw_name = context.user_id
         name = self._sanitize_identity(raw_name)
         uid = self._sanitize_identity(context.user_id)
         return f"[{name}<{uid}>] {message}"
@@ -395,14 +395,30 @@ class MessageHandler(BaseHandler):
                 # Quick-reply button: treat the button text as a new user message
                 reply_text = callback_data[len("quick_reply:") :]
                 if reply_text:
-                    # Remove buttons from the original message
+                    # Update the card: preserve original text, append user
+                    # action, and strip the buttons.
                     if context.message_id:
                         try:
-                            await self.im_client.remove_inline_keyboard(context, context.message_id)
+                            original = self.controller.message_dispatcher.pop_quick_reply_text(context.message_id)
+                            if original is not None:
+                                note = self._t("message.quickReplyNote", text=reply_text)
+                                updated = f"{original}\n\n---\n{note}"
+                            else:
+                                updated = None
+                            await self.im_client.remove_inline_keyboard(context, context.message_id, text=updated)
                         except Exception as err:
                             logger.debug(f"Failed to remove quick-reply buttons: {err}")
 
-                    # Dispatch as a normal user message
+                    # Add ack reaction on the card message before dispatching
+                    if context.message_id:
+                        try:
+                            await self.im_client.add_reaction(context, context.message_id, ":eyes:")
+                        except Exception as err:
+                            logger.debug(f"Failed to add quick-reply ack reaction: {err}")
+
+                    # Dispatch as a normal user message (message_id=None to
+                    # bypass dedup — this is a synthetic message, not a real
+                    # platform message that could be replayed).
                     context_for_reply = MessageContext(
                         user_id=context.user_id,
                         channel_id=context.channel_id,

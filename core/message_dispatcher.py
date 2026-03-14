@@ -25,6 +25,9 @@ class ConsolidatedMessageDispatcher:
         self._consolidated_message_buffers: dict[str, str] = {}
         self._consolidated_message_locks: dict[str, asyncio.Lock] = {}
         self._thread_current_message_id: dict[str, str] = {}
+        # Cache the body text of quick-reply card messages so the callback
+        # handler can retrieve the original text when updating the card.
+        self._quick_reply_text_cache: dict[str, str] = {}
 
     def _get_settings_key(self, context: MessageContext) -> str:
         return self.controller._get_settings_key(context)
@@ -190,6 +193,15 @@ class ConsolidatedMessageDispatcher:
             if enhanced and enhanced.files:
                 await self._upload_file_links(im_client, target_context, enhanced.files)
 
+            # Final result closes the current turn: clear consolidated
+            # assistant/tool/system message state so the next user turn starts
+            # a fresh log message instead of appending to the previous one.
+            consolidated_key = self._get_consolidated_message_key(context)
+            lock = self._get_consolidated_message_lock(consolidated_key)
+            async with lock:
+                self._consolidated_message_ids.pop(consolidated_key, None)
+                self._consolidated_message_buffers.pop(consolidated_key, None)
+
             return
 
         if canonical_type not in {"system", "assistant", "toolcall"}:
@@ -327,12 +339,18 @@ class ConsolidatedMessageDispatcher:
             row.append(InlineButton(text=btn.text, callback_data=callback))
 
         keyboard = InlineKeyboard(buttons=[row])
-        await im_client.send_message_with_buttons(
+        msg_id = await im_client.send_message_with_buttons(
             context,
             text,
             keyboard,
             parse_mode=parse_mode,
         )
+        if msg_id:
+            self._quick_reply_text_cache[msg_id] = text
+
+    def pop_quick_reply_text(self, message_id: str) -> str | None:
+        """Pop and return the cached text for a quick-reply card message."""
+        return self._quick_reply_text_cache.pop(message_id, None)
 
     async def _upload_file_links(
         self,
@@ -369,11 +387,41 @@ class ConsolidatedMessageDispatcher:
             if not any(resolved == root or resolved.is_relative_to(root) for root in allowed_roots):
                 logger.warning("File outside allowed roots, skipping: %s", fl.path)
                 continue
+
+            # Use link label as title, but preserve file extension so users can
+            # download/open files correctly on all platforms.
+            upload_title = (fl.label or "").strip() or os.path.basename(fl.path)
+            src_ext = resolved.suffix
+            if src_ext and not Path(upload_title).suffix:
+                upload_title = f"{upload_title}{src_ext}"
+
             try:
-                await im_client.upload_file_from_path(
-                    context,
-                    file_path=str(resolved),
-                    title=fl.label or os.path.basename(fl.path),
-                )
+                if getattr(fl, "is_image", False):
+                    try:
+                        await im_client.upload_image_from_path(
+                            context,
+                            file_path=str(resolved),
+                            title=upload_title,
+                        )
+                    except Exception as image_err:
+                        logger.warning(
+                            "Image upload failed for %s, fallback to file upload: %r",
+                            fl.path,
+                            image_err,
+                        )
+                        await im_client.upload_file_from_path(
+                            context,
+                            file_path=str(resolved),
+                            title=upload_title,
+                        )
+                else:
+                    await im_client.upload_file_from_path(
+                        context,
+                        file_path=str(resolved),
+                        title=upload_title,
+                    )
+            except NotImplementedError:
+                logger.debug("IM client does not implement file uploads; skipping")
+                return
             except Exception as err:
-                logger.warning("Failed to upload file %s: %s", fl.path, err)
+                logger.warning("Failed to upload file %s: %r", fl.path, err)

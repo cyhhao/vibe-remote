@@ -70,10 +70,28 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isPage) {
-      setConfigs(data.channelConfigs || {});
-    }
-  }, [data.channelConfigs, isPage]);
+    if (isPage) return;
+    let cancelled = false;
+
+    const loadWizardPlatformSettings = async () => {
+      try {
+        const settings = await api.getSettings();
+        if (!cancelled) {
+          setConfigs(settings.channels || {});
+        }
+      } catch {
+        if (!cancelled) {
+          // Fallback to wizard-local state if API fetch fails.
+          setConfigs(data.channelConfigs || {});
+        }
+      }
+    };
+
+    loadWizardPlatformSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, [isPage, data.platform]);
 
   useEffect(() => {
     if (!isPage) {

@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 from typing import Dict, Any, Optional, Callable, List
 
 import aiohttp
@@ -101,7 +102,29 @@ class DiscordBot(BaseIMClient):
     def run(self):
         if not self.config.bot_token:
             raise ValueError("Discord bot token is required")
-        self.client.run(self.config.bot_token)
+
+        async def _run():
+            # Inject SOCKS proxy connector inside the event loop (required
+            # by aiohttp).  Must happen before login() creates the session.
+            from vibe.proxy import get_system_socks_proxy
+
+            socks_url = get_system_socks_proxy()
+            if socks_url:
+                try:
+                    from aiohttp_socks import ProxyConnector
+
+                    self.client.http.connector = ProxyConnector.from_url(socks_url, rdns=True)
+                    logger.info("Discord using SOCKS proxy: %s", socks_url)
+                except ImportError:
+                    logger.warning("SOCKS proxy detected but aiohttp_socks not installed")
+
+            async with self.client:
+                await self.client.start(self.config.bot_token)
+
+        try:
+            asyncio.run(_run())
+        except KeyboardInterrupt:
+            return
 
     async def shutdown(self) -> None:
         await self.client.close()
@@ -263,6 +286,19 @@ class DiscordBot(BaseIMClient):
         text: Optional[str] = None,
         parse_mode: Optional[str] = None,
     ) -> bool:
+        # When called from a button callback, use the interaction's message
+        # object to edit directly (the interaction response is already deferred).
+        interaction = (context.platform_specific or {}).get("interaction") if context.platform_specific else None
+        if interaction is not None and interaction.message is not None:
+            try:
+                kwargs: dict = {"view": None}
+                if text is not None:
+                    kwargs["content"] = text
+                await interaction.message.edit(**kwargs)
+                return True
+            except Exception as err:
+                logger.info("Failed to remove Discord keyboard via interaction.message: %s", err)
+                return False
         return await self.edit_message(context, message_id, text=text, keyboard=None, parse_mode=parse_mode)
 
     async def answer_callback(self, callback_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
@@ -310,6 +346,23 @@ class DiscordBot(BaseIMClient):
             raise RuntimeError("Discord channel not found")
         data = (content or "").encode("utf-8")
         file_obj = discord.File(io.BytesIO(data), filename=title)
+        message = await target.send(file=file_obj)
+        return str(message.id)
+
+    async def upload_file_from_path(
+        self,
+        context: MessageContext,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> str:
+        """Upload a local file to the Discord conversation."""
+        target = await self._fetch_channel(context.thread_id or context.channel_id)
+        if target is None:
+            raise RuntimeError("Discord channel not found")
+
+        # Keep original extension for proper Discord preview handling.
+        filename = os.path.basename(file_path)
+        file_obj = discord.File(file_path, filename=filename)
         message = await target.send(file=file_obj)
         return str(message.id)
 
@@ -406,26 +459,27 @@ class DiscordBot(BaseIMClient):
 
     async def _send_auth_denial(self, channel_id: str, user_id: str, auth_result, interaction=None):
         """Send denial message for failed auth check."""
-        if auth_result.denial == "unbound_dm":
-            hint = self._t("bind.dmNotBound", channel_id)
-            if interaction:
-                try:
-                    await interaction.response.send_message(hint, ephemeral=True)
-                except Exception:
-                    pass
-            else:
-                channel = self.client.get_channel(int(channel_id))
-                if channel:
-                    await channel.send(content=hint)
-        elif auth_result.denial == "unauthorized_channel":
-            await self._send_unauthorized_message(channel_id)
-        elif auth_result.denial == "not_admin":
-            msg = i18n_t("permission.adminOnly")
-            if interaction:
-                try:
+        msg = self.build_auth_denial_text(auth_result.denial, channel_id)
+        if not msg:
+            return
+
+        if interaction:
+            try:
+                if not interaction.response.is_done():
                     await interaction.response.send_message(msg, ephemeral=True)
-                except Exception:
-                    pass
+                else:
+                    await interaction.followup.send(msg, ephemeral=True)
+            except Exception as err:
+                logger.debug("Failed to send interaction auth denial: %s", err)
+            return
+
+        channel = await self._fetch_channel(channel_id)
+        if channel is None:
+            return
+        try:
+            await channel.send(content=msg)
+        except Exception as err:
+            logger.debug("Failed to send channel auth denial: %s", err)
 
     async def _maybe_create_thread(self, message: discord.Message) -> Optional[discord.Thread]:
         if isinstance(message.channel, discord.Thread):
@@ -583,7 +637,7 @@ class DiscordBot(BaseIMClient):
                         channel_id,
                         _is_dm,
                     )
-                await submit_interaction.response.send_message("✅ Working directory updated.", ephemeral=True)
+                await submit_interaction.response.defer(ephemeral=True)
 
         modal = ChangeCwdModal()
         modal._outer = self
@@ -773,11 +827,11 @@ class DiscordBot(BaseIMClient):
                         channel_id or str(save_interaction.channel_id or ""),
                         require_mention,
                         language,
-                        notify_user=False,
+                        notify_user=True,
                         is_dm=save_interaction.guild is None,
                     )
                 await save_interaction.edit_original_response(
-                    content=f"✅ {self._t('success.settingsUpdated')}",
+                    content=f"✅ {self._t('common.submitted')}",
                     embed=None,
                     view=None,
                 )
@@ -1339,11 +1393,11 @@ class DiscordBot(BaseIMClient):
                             _normalize(self.claude_model),
                             _normalize(self.codex_model),
                             _normalize(self.codex_reasoning),
-                            notify_user=False,
+                            notify_user=True,
                             is_dm=interaction.guild is None,
                         )
                     await interaction.edit_original_response(
-                        content=f"✅ {self.outer._t('success.routingUpdated')}",
+                        content=f"✅ {self.outer._t('common.submitted')}",
                         embed=None,
                         view=None,
                     )
@@ -1643,8 +1697,7 @@ class _DiscordButtonView(discord.ui.View):
                         user_id=str(interaction.user.id),
                         channel_id=channel_id,
                         thread_id=thread_id,
-                        message_id=self.base_context.message_id
-                        or (str(interaction.message.id) if interaction.message else None),
+                        message_id=str(interaction.message.id) if interaction.message else None,
                         platform_specific={"interaction": interaction, "is_dm": is_dm},
                     )
                     if self.outer.on_callback_query_callback:

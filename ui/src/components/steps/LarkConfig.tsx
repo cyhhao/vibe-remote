@@ -7,6 +7,7 @@ import { useApi } from '../../context/ApiContext';
 const LARK_PERMISSIONS_JSON = `{
   "scopes": {
     "tenant": [
+      "contact:contact.base:readonly",
       "contact:user.base:readonly",
       "im:chat",
       "im:message",
@@ -352,7 +353,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
               <details className="text-sm text-muted">
                 <summary className="cursor-pointer font-medium text-text hover:text-accent transition-colors">{t('larkConfig.step3ManualList')}</summary>
                 <ul className="space-y-1.5 mt-2 pl-1">
-                  {[1,2,3,4,5,6,7,8,9,10,11,12,13].map(i => (
+                  {[1,2,3,4,5,6,7,8,9,10,11,12,13,14].map(i => (
                     <li key={i} className="flex items-start gap-2">
                       <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">{i}</code>
                       {t(`larkConfig.step3Item${i}`)}

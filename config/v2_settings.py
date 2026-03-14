@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SHOW_MESSAGE_TYPES: List[str] = []
 ALLOWED_MESSAGE_TYPES = {"system", "assistant", "toolcall"}
+SCHEMA_VERSION = 3
+SCOPED_KEY_SEP = "::"
 
 # Bind code prefix and length
 _BIND_CODE_PREFIX = "vr-"
@@ -36,6 +38,40 @@ def _generate_bind_code() -> str:
 def _now_iso() -> str:
     """Return current UTC time as ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _make_scoped_key(platform: str, item_id: str) -> str:
+    return f"{platform}{SCOPED_KEY_SEP}{item_id}"
+
+
+def _split_scoped_key(scoped_key: str) -> Tuple[Optional[str], str]:
+    if SCOPED_KEY_SEP in scoped_key:
+        platform, raw_id = scoped_key.split(SCOPED_KEY_SEP, 1)
+        if platform:
+            return platform, raw_id
+    return None, scoped_key
+
+
+def _infer_channel_platform(channel_id: str) -> str:
+    cid = str(channel_id)
+    if cid.startswith("oc_"):
+        return "lark"
+    if cid and cid[0] in {"C", "G", "D"}:
+        return "slack"
+    if cid.isdigit() and len(cid) >= 15:
+        return "discord"
+    return "unknown"
+
+
+def _infer_user_platform(user_id: str) -> str:
+    uid = str(user_id)
+    if uid.startswith("ou_"):
+        return "lark"
+    if uid and uid[0] in {"U", "W"}:
+        return "slack"
+    if uid.isdigit() and len(uid) >= 15:
+        return "discord"
+    return "unknown"
 
 
 @dataclass
@@ -180,43 +216,86 @@ class SettingsStore:
             logger.error("Failed to load settings: invalid format")
             return
 
-        # --- Channels ---
-        raw_channels = payload.get("channels")
-        if raw_channels is None:
-            # Legacy format or empty — tolerate missing channels key
-            raw_channels = {}
-        if not isinstance(raw_channels, dict):
-            logger.error("Failed to load settings: channels must be an object")
-            raw_channels = {}
         channels: Dict[str, ChannelSettings] = {}
-        for channel_id, cp in raw_channels.items():
-            if not isinstance(cp, dict):
-                continue
-            channels[channel_id] = ChannelSettings(
-                enabled=cp.get("enabled", False),
-                show_message_types=normalize_show_message_types(cp.get("show_message_types")),
-                custom_cwd=cp.get("custom_cwd"),
-                routing=_parse_routing(cp.get("routing") or {}),
-                require_mention=cp.get("require_mention"),
-            )
-
-        # --- Users ---
-        raw_users = payload.get("users") or {}
         users: Dict[str, UserSettings] = {}
-        if isinstance(raw_users, dict):
-            for user_id, up in raw_users.items():
-                if not isinstance(up, dict):
+        migrated_legacy_channels = False
+
+        # --- New schema (v3): payload["scopes"]["channel"|"user"][platform][id] ---
+        scopes = payload.get("scopes")
+        if isinstance(scopes, dict):
+            raw_channel_scopes = scopes.get("channel") or {}
+            if isinstance(raw_channel_scopes, dict):
+                for platform, items in raw_channel_scopes.items():
+                    if not isinstance(items, dict):
+                        continue
+                    for channel_id, cp in items.items():
+                        if not isinstance(cp, dict):
+                            continue
+                        key = _make_scoped_key(str(platform), str(channel_id))
+                        channels[key] = ChannelSettings(
+                            enabled=cp.get("enabled", False),
+                            show_message_types=normalize_show_message_types(cp.get("show_message_types")),
+                            custom_cwd=cp.get("custom_cwd"),
+                            routing=_parse_routing(cp.get("routing") or {}),
+                            require_mention=cp.get("require_mention"),
+                        )
+
+            raw_user_scopes = scopes.get("user") or {}
+            if isinstance(raw_user_scopes, dict):
+                for platform, items in raw_user_scopes.items():
+                    if not isinstance(items, dict):
+                        continue
+                    for user_id, up in items.items():
+                        if not isinstance(up, dict):
+                            continue
+                        key = _make_scoped_key(str(platform), str(user_id))
+                        users[key] = UserSettings(
+                            display_name=up.get("display_name", ""),
+                            is_admin=up.get("is_admin", False),
+                            bound_at=up.get("bound_at", ""),
+                            enabled=up.get("enabled", True),
+                            show_message_types=normalize_show_message_types(up.get("show_message_types")),
+                            custom_cwd=up.get("custom_cwd"),
+                            routing=_parse_routing(up.get("routing") or {}),
+                            dm_chat_id=up.get("dm_chat_id", ""),
+                        )
+        else:
+            # --- Legacy schema: flat payload["channels"] / payload["users"] ---
+            raw_channels = payload.get("channels") or {}
+            if not isinstance(raw_channels, dict):
+                logger.error("Failed to load settings: channels must be an object")
+                raw_channels = {}
+            for channel_id, cp in raw_channels.items():
+                if not isinstance(cp, dict):
                     continue
-                users[user_id] = UserSettings(
-                    display_name=up.get("display_name", ""),
-                    is_admin=up.get("is_admin", False),
-                    bound_at=up.get("bound_at", ""),
-                    enabled=up.get("enabled", True),
-                    show_message_types=normalize_show_message_types(up.get("show_message_types")),
-                    custom_cwd=up.get("custom_cwd"),
-                    routing=_parse_routing(up.get("routing") or {}),
-                    dm_chat_id=up.get("dm_chat_id", ""),
+                platform = _infer_channel_platform(str(channel_id))
+                scoped_key = _make_scoped_key(platform, str(channel_id))
+                channels[scoped_key] = ChannelSettings(
+                    enabled=cp.get("enabled", False),
+                    show_message_types=normalize_show_message_types(cp.get("show_message_types")),
+                    custom_cwd=cp.get("custom_cwd"),
+                    routing=_parse_routing(cp.get("routing") or {}),
+                    require_mention=cp.get("require_mention"),
                 )
+                migrated_legacy_channels = True
+
+            raw_users = payload.get("users") or {}
+            if isinstance(raw_users, dict):
+                for user_id, up in raw_users.items():
+                    if not isinstance(up, dict):
+                        continue
+                    platform = _infer_user_platform(str(user_id))
+                    scoped_key = _make_scoped_key(platform, str(user_id))
+                    users[scoped_key] = UserSettings(
+                        display_name=up.get("display_name", ""),
+                        is_admin=up.get("is_admin", False),
+                        bound_at=up.get("bound_at", ""),
+                        enabled=up.get("enabled", True),
+                        show_message_types=normalize_show_message_types(up.get("show_message_types")),
+                        custom_cwd=up.get("custom_cwd"),
+                        routing=_parse_routing(up.get("routing") or {}),
+                        dm_chat_id=up.get("dm_chat_id", ""),
+                    )
 
         # --- Bind Codes ---
         raw_codes = payload.get("bind_codes") or []
@@ -237,6 +316,11 @@ class SettingsStore:
                 )
 
         self.settings = SettingsState(channels=channels, users=users, bind_codes=bind_codes)
+
+        if migrated_legacy_channels:
+            logger.info("Migrating legacy channel settings to platform-scoped schema")
+            self.save()
+
         try:
             self._file_mtime = self.settings_path.stat().st_mtime
         except FileNotFoundError:
@@ -244,11 +328,18 @@ class SettingsStore:
 
     def save(self) -> None:
         paths.ensure_data_dirs()
-        payload: dict = {"channels": {}, "users": {}, "bind_codes": []}
+        payload: dict = {
+            "schema_version": SCHEMA_VERSION,
+            "scopes": {"channel": {}, "user": {}},
+            "bind_codes": [],
+        }
 
-        # Channels
-        for channel_id, s in self.settings.channels.items():
-            payload["channels"][channel_id] = {
+        # Channels (platform-scoped)
+        for scoped_key, s in self.settings.channels.items():
+            platform, channel_id = _split_scoped_key(scoped_key)
+            if not platform:
+                platform = _infer_channel_platform(channel_id)
+            payload["scopes"]["channel"].setdefault(platform, {})[channel_id] = {
                 "enabled": s.enabled,
                 "show_message_types": s.show_message_types,
                 "custom_cwd": s.custom_cwd,
@@ -256,9 +347,12 @@ class SettingsStore:
                 "require_mention": s.require_mention,
             }
 
-        # Users
-        for user_id, u in self.settings.users.items():
-            payload["users"][user_id] = {
+        # Users (platform-scoped)
+        for scoped_key, u in self.settings.users.items():
+            platform, user_id = _split_scoped_key(scoped_key)
+            if not platform:
+                platform = _infer_user_platform(user_id)
+            payload["scopes"]["user"].setdefault(platform, {})[user_id] = {
                 "display_name": u.display_name,
                 "is_admin": u.is_admin,
                 "bound_at": u.bound_at,
@@ -290,37 +384,118 @@ class SettingsStore:
 
     # --- Channel helpers ---
 
-    def get_channel(self, channel_id: str) -> ChannelSettings:
-        if channel_id not in self.settings.channels:
-            self.settings.channels[channel_id] = ChannelSettings()
-        return self.settings.channels[channel_id]
+    def _channel_key(self, channel_id: str, platform: Optional[str] = None) -> str:
+        return _make_scoped_key(platform, channel_id) if platform else channel_id
 
-    def update_channel(self, channel_id: str, settings: ChannelSettings) -> None:
-        self.settings.channels[channel_id] = settings
+    def _user_key(self, user_id: str, platform: Optional[str] = None) -> str:
+        return _make_scoped_key(platform, user_id) if platform else user_id
+
+    def get_channels_for_platform(self, platform: str) -> Dict[str, ChannelSettings]:
+        result: Dict[str, ChannelSettings] = {}
+        prefix = f"{platform}{SCOPED_KEY_SEP}"
+        for key, settings in self.settings.channels.items():
+            if key.startswith(prefix):
+                result[key[len(prefix) :]] = settings
+        return result
+
+    def set_channels_for_platform(self, platform: str, channels: Dict[str, ChannelSettings]) -> None:
+        prefix = f"{platform}{SCOPED_KEY_SEP}"
+        self.settings.channels = {k: v for k, v in self.settings.channels.items() if not k.startswith(prefix)}
+        for channel_id, settings in channels.items():
+            self.settings.channels[self._channel_key(str(channel_id), platform)] = settings
+
+    def get_users_for_platform(self, platform: str) -> Dict[str, UserSettings]:
+        result: Dict[str, UserSettings] = {}
+        prefix = f"{platform}{SCOPED_KEY_SEP}"
+        for key, settings in self.settings.users.items():
+            if key.startswith(prefix):
+                result[key[len(prefix) :]] = settings
+        return result
+
+    def set_users_for_platform(self, platform: str, users: Dict[str, UserSettings]) -> None:
+        prefix = f"{platform}{SCOPED_KEY_SEP}"
+        self.settings.users = {k: v for k, v in self.settings.users.items() if not k.startswith(prefix)}
+        for user_id, settings in users.items():
+            self.settings.users[self._user_key(str(user_id), platform)] = settings
+
+    def get_channel(self, channel_id: str, platform: Optional[str] = None) -> ChannelSettings:
+        key = self._channel_key(channel_id, platform)
+        if platform is None and key not in self.settings.channels:
+            suffix = f"{SCOPED_KEY_SEP}{channel_id}"
+            for scoped_key, settings in self.settings.channels.items():
+                if scoped_key.endswith(suffix):
+                    return settings
+        if key not in self.settings.channels:
+            self.settings.channels[key] = ChannelSettings()
+        return self.settings.channels[key]
+
+    def find_channel(self, channel_id: str, platform: Optional[str] = None) -> Optional[ChannelSettings]:
+        key = self._channel_key(channel_id, platform)
+        if key in self.settings.channels:
+            return self.settings.channels[key]
+        if platform is None:
+            suffix = f"{SCOPED_KEY_SEP}{channel_id}"
+            for scoped_key, settings in self.settings.channels.items():
+                if scoped_key.endswith(suffix):
+                    return settings
+        return None
+
+    def update_channel(self, channel_id: str, settings: ChannelSettings, platform: Optional[str] = None) -> None:
+        key = self._channel_key(channel_id, platform)
+        self.settings.channels[key] = settings
         self.save()
 
     # --- User helpers ---
 
-    def get_user(self, user_id: str) -> Optional[UserSettings]:
+    def get_user(self, user_id: str, platform: Optional[str] = None) -> Optional[UserSettings]:
         """Get user settings, or None if user is not bound."""
-        return self.settings.users.get(user_id)
+        key = self._user_key(user_id, platform)
+        user = self.settings.users.get(key)
+        if user is not None or platform:
+            return user
+        suffix = f"{SCOPED_KEY_SEP}{user_id}"
+        for scoped_key, value in self.settings.users.items():
+            if scoped_key.endswith(suffix):
+                return value
+        return None
 
-    def is_bound_user(self, user_id: str) -> bool:
-        return user_id in self.settings.users
+    def is_bound_user(self, user_id: str, platform: Optional[str] = None) -> bool:
+        if platform:
+            return self._user_key(user_id, platform) in self.settings.users
+        if user_id in self.settings.users:
+            return True
+        suffix = f"{SCOPED_KEY_SEP}{user_id}"
+        return any(key.endswith(suffix) for key in self.settings.users.keys())
 
-    def is_admin(self, user_id: str) -> bool:
-        user = self.settings.users.get(user_id)
-        return user is not None and user.is_admin
+    def is_admin(self, user_id: str, platform: Optional[str] = None) -> bool:
+        if platform:
+            user = self.settings.users.get(self._user_key(user_id, platform))
+            return user is not None and user.is_admin
+        if user_id in self.settings.users:
+            return self.settings.users[user_id].is_admin
+        suffix = f"{SCOPED_KEY_SEP}{user_id}"
+        for key, value in self.settings.users.items():
+            if key.endswith(suffix):
+                return value.is_admin
+        return False
 
-    def has_any_admin(self) -> bool:
+    def has_any_admin(self, platform: Optional[str] = None) -> bool:
         """Return True if at least one admin exists."""
+        if platform:
+            prefix = f"{platform}{SCOPED_KEY_SEP}"
+            return any(u.is_admin for key, u in self.settings.users.items() if key.startswith(prefix))
         return any(u.is_admin for u in self.settings.users.values())
 
-    def get_admins(self) -> Dict[str, UserSettings]:
+    def get_admins(self, platform: Optional[str] = None) -> Dict[str, UserSettings]:
         """Return all admin users."""
+        if platform:
+            prefix = f"{platform}{SCOPED_KEY_SEP}"
+            return {uid: u for uid, u in self.settings.users.items() if uid.startswith(prefix) and u.is_admin}
         return {uid: u for uid, u in self.settings.users.items() if u.is_admin}
 
-    def add_user(self, user_id: str, display_name: str, is_admin: bool = False) -> UserSettings:
+    def add_user(
+        self, user_id: str, display_name: str, is_admin: bool = False, platform: Optional[str] = None
+    ) -> UserSettings:
         """Add a new bound user. Returns the created UserSettings."""
         user = UserSettings(
             display_name=display_name,
@@ -328,12 +503,12 @@ class SettingsStore:
             bound_at=_now_iso(),
             enabled=True,
         )
-        self.settings.users[user_id] = user
+        self.settings.users[self._user_key(user_id, platform)] = user
         self.save()
         return user
 
     def bind_user_with_code(
-        self, user_id: str, display_name: str, code: str, dm_chat_id: str = ""
+        self, user_id: str, display_name: str, code: str, dm_chat_id: str = "", platform: Optional[str] = None
     ) -> Tuple[bool, bool]:
         """Atomically validate code, create user, and consume code.
 
@@ -346,7 +521,7 @@ class SettingsStore:
             self.maybe_reload()
 
             # Check already bound
-            if self.is_bound_user(user_id):
+            if self.is_bound_user(user_id, platform=platform):
                 return False, False
 
             # Validate code
@@ -355,7 +530,7 @@ class SettingsStore:
                 return False, False
 
             # Auto-admin for first user
-            is_admin = not self.has_any_admin()
+            is_admin = not self.has_any_admin(platform=platform)
 
             # Create user
             user = UserSettings(
@@ -365,37 +540,35 @@ class SettingsStore:
                 enabled=True,
                 dm_chat_id=dm_chat_id,
             )
-            self.settings.users[user_id] = user
+            scoped_user_id = self._user_key(user_id, platform)
+            self.settings.users[scoped_user_id] = user
 
             # Consume code
-            bc.used_by.append(user_id)
+            bc.used_by.append(scoped_user_id)
             if bc.type == "one_time":
                 bc.is_active = False
 
             self.save()
             return True, is_admin
 
-    def update_user(self, user_id: str, settings: UserSettings) -> None:
-        self.settings.users[user_id] = settings
+    def update_user(self, user_id: str, settings: UserSettings, platform: Optional[str] = None) -> None:
+        self.settings.users[self._user_key(user_id, platform)] = settings
         self.save()
 
-    def remove_user(self, user_id: str) -> bool:
-        if user_id in self.settings.users:
-            del self.settings.users[user_id]
+    def remove_user(self, user_id: str, platform: Optional[str] = None) -> bool:
+        key = self._user_key(user_id, platform)
+        if key in self.settings.users:
+            del self.settings.users[key]
             self.save()
             return True
         return False
 
-    def set_admin(self, user_id: str, is_admin: bool) -> bool:
-        """Set admin flag for a user. Returns False if user not found or trying to remove last admin."""
-        user = self.settings.users.get(user_id)
+    def set_admin(self, user_id: str, is_admin: bool, platform: Optional[str] = None) -> bool:
+        """Set admin flag for a user. Returns False if user not found."""
+        key = self._user_key(user_id, platform)
+        user = self.settings.users.get(key)
         if user is None:
             return False
-        if not is_admin:
-            # Prevent removing the last admin
-            admin_count = sum(1 for u in self.settings.users.values() if u.is_admin)
-            if admin_count <= 1 and user.is_admin:
-                return False
         user.is_admin = is_admin
         self.save()
         return True

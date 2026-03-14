@@ -106,11 +106,12 @@ def config_to_payload(config: V2Config) -> dict:
 
 def get_settings() -> dict:
     store = SettingsStore.get_instance()
-    return _settings_to_payload(store)
+    return _settings_to_payload(store, platform=_current_platform())
 
 
 def save_settings(payload: dict) -> dict:
     store = SettingsStore.get_instance()
+    platform = _current_platform()
     channels = {}
     for channel_id, channel_payload in (payload.get("channels") or {}).items():
         channels[channel_id] = ChannelSettings(
@@ -120,9 +121,9 @@ def save_settings(payload: dict) -> dict:
             routing=_parse_routing(channel_payload.get("routing") or {}),
             require_mention=channel_payload.get("require_mention"),
         )
-    store.settings.channels = channels
+    store.set_channels_for_platform(platform, channels)
     store.save()
-    return _settings_to_payload(store)
+    return _settings_to_payload(store, platform=platform)
 
 
 def init_sessions() -> None:
@@ -366,9 +367,13 @@ async def opencode_options_async(cwd: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def _settings_to_payload(store: SettingsStore) -> dict:
+def _current_platform() -> str:
+    return load_config().platform
+
+
+def _settings_to_payload(store: SettingsStore, platform: str) -> dict:
     payload: dict = {"channels": {}, "users": {}, "bind_codes": []}
-    for channel_id, settings in store.settings.channels.items():
+    for channel_id, settings in store.get_channels_for_platform(platform).items():
         payload["channels"][channel_id] = {
             "enabled": settings.enabled,
             "show_message_types": normalize_show_message_types(settings.show_message_types),
@@ -376,7 +381,7 @@ def _settings_to_payload(store: SettingsStore) -> dict:
             "require_mention": settings.require_mention,
             "routing": _routing_to_dict(settings.routing),
         }
-    for user_id, u in store.settings.users.items():
+    for user_id, u in store.get_users_for_platform(platform).items():
         payload["users"][user_id] = {
             "display_name": u.display_name,
             "is_admin": u.is_admin,
@@ -1100,8 +1105,9 @@ def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu") -> dic
 def get_users() -> dict:
     """Get all bound users."""
     store = SettingsStore.get_instance()
+    platform = _current_platform()
     users = {}
-    for user_id, u in store.settings.users.items():
+    for user_id, u in store.get_users_for_platform(platform).items():
         users[user_id] = {
             "display_name": u.display_name,
             "is_admin": u.is_admin,
@@ -1115,19 +1121,16 @@ def get_users() -> dict:
 
 
 def save_users(payload: dict) -> dict:
-    """Save user settings (bulk update from UI).
-
-    Preserves admin invariant: if there were admins before, at least one must remain.
-    """
+    """Save user settings (bulk update from UI)."""
     store = SettingsStore.get_instance()
-    had_admins = store.has_any_admin()
+    platform = _current_platform()
 
     users = {}
     for user_id, up in (payload.get("users") or {}).items():
         if not isinstance(up, dict):
             continue
         # Preserve dm_chat_id from existing user (not editable via UI)
-        existing = store.settings.users.get(user_id)
+        existing = store.get_user(user_id, platform=platform)
         users[user_id] = UserSettings(
             display_name=up.get("display_name", ""),
             is_admin=up.get("is_admin", False),
@@ -1139,16 +1142,12 @@ def save_users(payload: dict) -> dict:
             dm_chat_id=existing.dm_chat_id if existing else "",
         )
 
-    # Enforce admin invariant: if admins existed before, at least one must remain
-    if had_admins:
-        new_admin_count = sum(1 for u in users.values() if u.is_admin)
-        if new_admin_count == 0:
-            return {"ok": False, "error": "Cannot remove all admins"}
-
     # Merge instead of replace: update existing users and add new ones,
     # but preserve users not included in the payload (e.g. concurrently bound)
+    current_users = store.get_users_for_platform(platform)
     for uid, user_settings in users.items():
-        store.settings.users[uid] = user_settings
+        current_users[uid] = user_settings
+    store.set_users_for_platform(platform, current_users)
     store.save()
     return get_users()
 
@@ -1156,25 +1155,22 @@ def save_users(payload: dict) -> dict:
 def toggle_admin(user_id: str, is_admin: bool) -> dict:
     """Toggle admin status for a user."""
     store = SettingsStore.get_instance()
-    if not store.set_admin(user_id, is_admin):
-        if not store.is_bound_user(user_id):
+    platform = _current_platform()
+    if not store.set_admin(user_id, is_admin, platform=platform):
+        if not store.is_bound_user(user_id, platform=platform):
             return {"ok": False, "error": "User not found"}
-        return {"ok": False, "error": "Cannot remove the last admin"}
+        return {"ok": False, "error": "Failed to update admin status"}
     return {"ok": True}
 
 
 def remove_user(user_id: str) -> dict:
     """Remove a bound user."""
     store = SettingsStore.get_instance()
-    user = store.get_user(user_id)
+    platform = _current_platform()
+    user = store.get_user(user_id, platform=platform)
     if user is None:
         return {"ok": False, "error": "User not found"}
-    # Prevent removing the last admin
-    if user.is_admin:
-        admin_count = sum(1 for u in store.settings.users.values() if u.is_admin)
-        if admin_count <= 1:
-            return {"ok": False, "error": "Cannot remove the last admin"}
-    store.remove_user(user_id)
+    store.remove_user(user_id, platform=platform)
     return {"ok": True}
 
 

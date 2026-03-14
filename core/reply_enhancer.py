@@ -32,6 +32,7 @@ class FileLink:
 
     label: str  # Markdown link text (e.g. "screenshot")
     path: str  # Absolute local path (e.g. "/tmp/shot.png")
+    is_image: bool = False  # True when parsed from ![alt](file://...)
 
 
 @dataclass
@@ -54,8 +55,10 @@ class EnhancedReply:
 # Regex patterns
 # ---------------------------------------------------------------------------
 
-# Matches markdown links with file:// URLs:  [label](file:///path)
-_FILE_LINK_RE = re.compile(r"\[([^\]]*)\]\((file://[^)]+)\)")
+# Matches markdown links with file:// URLs, including image links:
+#   [label](file:///path)
+#   ![alt](file:///path)
+_FILE_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\((file://[^)]+)\)")
 
 # Matches the quick-reply button block at the end of the text.
 # A horizontal rule (``---``) on its own line, followed by one or more
@@ -95,7 +98,7 @@ def process_reply(text: str) -> EnhancedReply:
 def _extract_file_links(text: str) -> List[FileLink]:
     """Return all ``FileLink`` instances found in *text*."""
     results: List[FileLink] = []
-    for label, url in _FILE_LINK_RE.findall(text):
+    for bang, label, url in _FILE_LINK_RE.findall(text):
         parsed = urlparse(url)
         if parsed.scheme != "file":
             continue
@@ -103,7 +106,7 @@ def _extract_file_links(text: str) -> List[FileLink]:
         if not os.path.isabs(path):
             logger.warning("Skipping non-absolute file link: %s", url)
             continue
-        results.append(FileLink(label=label, path=path))
+        results.append(FileLink(label=label, path=path, is_image=(bang == "!")))
     return results
 
 
@@ -111,8 +114,8 @@ def _strip_file_links(text: str) -> str:
     """Replace ``[label](file://…)`` with just the label."""
 
     def _replacer(m: re.Match) -> str:
-        label = m.group(1)
-        url = m.group(2)
+        label = m.group(2)
+        url = m.group(3)
         if url.startswith("file://"):
             return label  # keep the label text, drop the link
         return m.group(0)
@@ -148,25 +151,30 @@ def _extract_buttons(text: str) -> Tuple[List[QuickReplyButton], str]:
 # ---------------------------------------------------------------------------
 
 REPLY_ENHANCEMENTS_PROMPT = """\
-# Vibe Remote 增强回复
+# Vibe Remote
 
-用户正在通过 Vibe Remote 与你交互——Vibe Remote 是一个将 AI Agent 接入 Slack 等 IM 平台的中间层，\
-用户在聊天窗口中向你发送消息，你的回复经由 Vibe Remote 转发给用户。\
+Vibe Remote 是一个将 AI Agent 接入 Slack 等 IM 平台的中间层，\
+用户正使用 IM 软件通过 Vibe Remote 的转发与你进行交互。
+
 你有两个可选的回复增强能力：
 
 ## 1. 发送文件
 用 Markdown 链接 + `file://` 协议即可将本地文件发送给用户：
-[描述](file:///绝对路径)
-示例：[截图](file:///tmp/result.png)
+示例：[文件1](file:///tmp/result.pdf)
 Vibe Remote 会自动将文件作为附件发送。
+
+### 图片语法
+如果你希望按“图片附件”发送（而不是普通文件），请使用 Markdown 图片语法：
+示例：![页面截图](file:///tmp/screenshot.jpg)
 
 ## 2. 快捷回复按钮
 在消息最末尾，用 `---` 分隔线后跟 `[按钮文字]` 提供可点击的快捷回复，示例：
 ---
-[👌好的] | [✅提交PR] | [先review一下]
+[👌 继续吧] | [✅ 提交PR] | [👀 先review一下]
 规则：
+- 根据对话上下文和用户习惯推测用户可能的回复意图，仅在确实对用户有帮助时添加
+- 不要添加与用户下一步意图无关的废话，如：知道了、收到、谢谢
 - 必须放在消息最末尾，`---` 分隔线之后
-- 每个按钮用 `[文字]` 包裹，用 `|` 分隔，文字中可包含 emoji
-- 根据对话上下文和用户习惯推测用户可能的回复，仅在确实有帮助时添加
-- 最多 2-4 个按钮，每个不超过 20 字符\
+- 每个按钮用 `[文字]` 包裹，用 `|` 分隔，可用 emoji 开头优化表达
+- 最多 2-4 个按钮，每个不超过 20 字符
 """

@@ -87,9 +87,10 @@ class SettingsManager:
         "tool": "toolcall",
     }
 
-    def __init__(self, settings_file: Optional[str] = None):
+    def __init__(self, settings_file: Optional[str] = None, platform: str = "slack"):
         paths.ensure_data_dirs()
         self.settings_file = Path(settings_file) if settings_file else paths.get_settings_path()
+        self.platform = platform
         self.channel_settings: Dict[str, UserSettings] = {}
         self.dm_user_settings: Dict[str, UserSettings] = {}
         self.store = SettingsStore.get_instance(self.settings_file)
@@ -121,11 +122,11 @@ class SettingsManager:
     def iter_bound_users(self):
         """Iterate over bound users from persisted settings."""
         self._reload_if_changed()
-        return self.store.settings.users.items()
+        return self.store.get_users_for_platform(self.platform).items()
 
     def is_bound_user(self, user_id: Union[int, str]) -> bool:
         """Check whether a user is already bound."""
-        return self.store.is_bound_user(str(user_id))
+        return self.store.is_bound_user(str(user_id), platform=self.platform)
 
     def bind_user_with_code(
         self,
@@ -135,7 +136,13 @@ class SettingsManager:
         dm_chat_id: str = "",
     ) -> tuple[bool, bool]:
         """Atomically validate bind code and create user binding."""
-        return self.store.bind_user_with_code(str(user_id), display_name, code, dm_chat_id=dm_chat_id)
+        return self.store.bind_user_with_code(
+            str(user_id),
+            display_name,
+            code,
+            dm_chat_id=dm_chat_id,
+            platform=self.platform,
+        )
 
     def _from_channel_settings(self, channel_settings: ChannelSettings) -> UserSettings:
         return UserSettings(
@@ -165,7 +172,7 @@ class SettingsManager:
 
     def _sync_to_bound_user(self, user_id: str, settings: UserSettings) -> None:
         """Sync runtime UserSettings back to the bound-user record in store.settings.users."""
-        bound = self.store.settings.users.get(user_id)
+        bound = self.store.get_user(user_id, platform=self.platform)
         if not bound:
             return
         bound.enabled = settings.enabled
@@ -195,9 +202,9 @@ class SettingsManager:
         """Rebuild the in-memory settings dicts from the store."""
         self.channel_settings = {}
         self.dm_user_settings = {}
-        for cid, cs in self.store.settings.channels.items():
+        for cid, cs in self.store.get_channels_for_platform(self.platform).items():
             self.channel_settings[str(cid)] = self._from_channel_settings(cs)
-        for uid, us in self.store.settings.users.items():
+        for uid, us in self.store.get_users_for_platform(self.platform).items():
             self.dm_user_settings[str(uid)] = self._from_bound_user_settings(us)
         logger.info(
             f"Rebuilt runtime settings for {len(self.channel_settings)} channels, {len(self.dm_user_settings)} DM users"
@@ -212,14 +219,15 @@ class SettingsManager:
         """
         try:
             channels: Dict[str, ChannelSettings] = {}
+            existing_platform_channels = self.store.get_channels_for_platform(self.platform)
             for cid, s in self.channel_settings.items():
-                existing = self.store.settings.channels.get(cid)
+                existing = existing_platform_channels.get(cid)
                 cs = self._to_channel_settings(s)
                 if existing is not None:
                     cs.enabled = existing.enabled
                     cs.require_mention = existing.require_mention
                 channels[cid] = cs
-            self.store.settings.channels = channels
+            self.store.set_channels_for_platform(self.platform, channels)
             for uid, s in self.dm_user_settings.items():
                 self._sync_to_bound_user(uid, s)
             self.store.save()
@@ -246,12 +254,14 @@ class SettingsManager:
             return self.channel_settings[normalized_id]
 
         # New key — check store
-        if normalized_id in self.store.settings.users:
-            settings = self._from_bound_user_settings(self.store.settings.users[normalized_id])
+        platform_users = self.store.get_users_for_platform(self.platform)
+        platform_channels = self.store.get_channels_for_platform(self.platform)
+        if normalized_id in platform_users:
+            settings = self._from_bound_user_settings(platform_users[normalized_id])
             self.dm_user_settings[normalized_id] = settings
             return settings
-        if normalized_id in self.store.settings.channels:
-            settings = self._from_channel_settings(self.store.settings.channels[normalized_id])
+        if normalized_id in platform_channels:
+            settings = self._from_channel_settings(platform_channels[normalized_id])
             self.channel_settings[normalized_id] = settings
             return settings
 
@@ -271,7 +281,7 @@ class SettingsManager:
             self.dm_user_settings[normalized_id] = settings
         elif normalized_id in self.channel_settings:
             self.channel_settings[normalized_id] = settings
-        elif normalized_id in self.store.settings.users:
+        elif normalized_id in self.store.get_users_for_platform(self.platform):
             self.dm_user_settings[normalized_id] = settings
         else:
             self.channel_settings[normalized_id] = settings
@@ -307,7 +317,7 @@ class SettingsManager:
         """Get raw ChannelSettings for a channel without creating defaults."""
         self._reload_if_changed()
         key = str(channel_id)
-        return self.store.settings.channels.get(key)
+        return self.store.get_channels_for_platform(self.platform).get(key)
 
     def is_message_type_hidden(self, user_id: Union[int, str], message_type: str) -> bool:
         """Check if a message type is hidden for user (not in show_message_types)"""
@@ -400,7 +410,7 @@ class SettingsManager:
         """
         self._reload_if_changed()
         key = str(channel_id)
-        channel_settings = self.store.settings.channels.get(key)
+        channel_settings = self.store.get_channels_for_platform(self.platform).get(key)
 
         if channel_settings is not None and channel_settings.require_mention is not None:
             return channel_settings.require_mention
@@ -415,16 +425,16 @@ class SettingsManager:
             value: True=require mention, False=don't require, None=use global default
         """
         key = str(channel_id)
-        channel_settings = self.store.get_channel(key)
+        channel_settings = self.store.get_channel(key, platform=self.platform)
         channel_settings.require_mention = value
-        self.store.update_channel(key, channel_settings)
+        self.store.update_channel(key, channel_settings, platform=self.platform)
         logger.info(f"Updated require_mention for channel {key}: {value}")
 
     def get_require_mention_override(self, channel_id: Union[int, str]) -> Optional[bool]:
         """Get the raw per-channel require_mention override (may be None)."""
         self._reload_if_changed()
         key = str(channel_id)
-        channel_settings = self.store.settings.channels.get(key)
+        channel_settings = self.store.get_channels_for_platform(self.platform).get(key)
         if channel_settings is not None:
             return channel_settings.require_mention
         return None

@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -263,13 +264,8 @@ class FeishuBot(BaseIMClient):
     async def _send_auth_denial(self, chat_id: str, user_id: str, auth_result):
         """Send denial message for failed auth check."""
         ctx = MessageContext(user_id="system", channel_id=chat_id)
-        if auth_result.denial == "unbound_dm":
-            hint = self._t("bind.dmNotBound", chat_id)
-            await self.send_message(ctx, hint)
-        elif auth_result.denial == "unauthorized_channel":
-            await self._send_unauthorized_message(chat_id)
-        elif auth_result.denial == "not_admin":
-            msg = i18n_t("permission.adminOnly")
+        msg = self.build_auth_denial_text(auth_result.denial, chat_id)
+        if msg:
             await self.send_message(ctx, msg)
 
     # ------------------------------------------------------------------
@@ -627,9 +623,13 @@ class FeishuBot(BaseIMClient):
         text: Optional[str] = None,
         parse_mode: Optional[str] = None,
     ) -> bool:
-        """Remove interactive buttons from a Feishu message."""
-        # Re-patch the card with only markdown content (no actions)
-        display_text = text or ""
+        """Remove interactive buttons from a Feishu message.
+
+        Feishu cards must be rebuilt entirely, so *text* should contain
+        the desired card body.  When *text* is ``None`` the card is
+        re-sent with an empty body (callers should pass text explicitly).
+        """
+        display_text = text if text is not None else ""
         return await self.edit_message(context, message_id, text=display_text, keyboard=None, parse_mode=parse_mode)
 
     # ------------------------------------------------------------------
@@ -800,6 +800,165 @@ class FeishuBot(BaseIMClient):
             logger.error("Error uploading markdown to Feishu: %s", exc)
             raise
 
+    async def upload_file_from_path(
+        self,
+        context: MessageContext,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> str:
+        """Upload a local file to Feishu chat/thread."""
+        self._ensure_client()
+        try:
+            token = await self._get_tenant_token()
+            if not token:
+                raise RuntimeError("Failed to obtain tenant token for file upload")
+
+            filename = os.path.basename(file_path)
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+
+            url = f"{self.config.api_base_url}/open-apis/im/v1/files"
+            form = aiohttp.FormData()
+            form.add_field("file_type", "stream")
+            form.add_field("file_name", title or filename)
+            form.add_field(
+                "file",
+                io.BytesIO(file_bytes),
+                filename=filename,
+                content_type="application/octet-stream",
+            )
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    data=form,
+                    headers={"Authorization": f"Bearer {token}"},
+                ) as resp:
+                    result = await resp.json()
+                    if result.get("code") != 0:
+                        raise RuntimeError(f"Feishu file upload failed: {result.get('msg')}")
+                    file_key = result.get("data", {}).get("file_key", "")
+
+            from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+
+            file_content = json.dumps({"file_key": file_key})
+            if context.thread_id:
+                from lark_oapi.api.im.v1 import ReplyMessageRequest, ReplyMessageRequestBody
+
+                request = (
+                    ReplyMessageRequest.builder()
+                    .message_id(context.thread_id)
+                    .request_body(
+                        ReplyMessageRequestBody.builder()
+                        .msg_type("file")
+                        .content(file_content)
+                        .reply_in_thread(True)
+                        .build()
+                    )
+                    .build()
+                )
+                response = await self._lark_client.im.v1.message.areply(request)
+            else:
+                request = (
+                    CreateMessageRequest.builder()
+                    .receive_id_type("chat_id")
+                    .request_body(
+                        CreateMessageRequestBody.builder()
+                        .receive_id(context.channel_id)
+                        .msg_type("file")
+                        .content(file_content)
+                        .build()
+                    )
+                    .build()
+                )
+                response = await self._lark_client.im.v1.message.acreate(request)
+
+            if not response.success():
+                raise RuntimeError(f"Feishu file message failed: {response.msg}")
+            return response.data.message_id
+        except Exception as exc:
+            logger.error("Error uploading file to Feishu: %s", exc)
+            raise
+
+    async def upload_image_from_path(
+        self,
+        context: MessageContext,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> str:
+        """Upload a local image to Feishu as an image message."""
+        self._ensure_client()
+        try:
+            token = await self._get_tenant_token()
+            if not token:
+                raise RuntimeError("Failed to obtain tenant token for image upload")
+
+            filename = os.path.basename(file_path)
+            with open(file_path, "rb") as f:
+                image_bytes = f.read()
+
+            url = f"{self.config.api_base_url}/open-apis/im/v1/images"
+            form = aiohttp.FormData()
+            form.add_field("image_type", "message")
+            form.add_field(
+                "image",
+                io.BytesIO(image_bytes),
+                filename=filename,
+                content_type="application/octet-stream",
+            )
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    data=form,
+                    headers={"Authorization": f"Bearer {token}"},
+                ) as resp:
+                    result = await resp.json()
+                    if result.get("code") != 0:
+                        raise RuntimeError(f"Feishu image upload failed: {result.get('msg')}")
+                    image_key = result.get("data", {}).get("image_key", "")
+
+            from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+
+            image_content = json.dumps({"image_key": image_key})
+            if context.thread_id:
+                from lark_oapi.api.im.v1 import ReplyMessageRequest, ReplyMessageRequestBody
+
+                request = (
+                    ReplyMessageRequest.builder()
+                    .message_id(context.thread_id)
+                    .request_body(
+                        ReplyMessageRequestBody.builder()
+                        .msg_type("image")
+                        .content(image_content)
+                        .reply_in_thread(True)
+                        .build()
+                    )
+                    .build()
+                )
+                response = await self._lark_client.im.v1.message.areply(request)
+            else:
+                request = (
+                    CreateMessageRequest.builder()
+                    .receive_id_type("chat_id")
+                    .request_body(
+                        CreateMessageRequestBody.builder()
+                        .receive_id(context.channel_id)
+                        .msg_type("image")
+                        .content(image_content)
+                        .build()
+                    )
+                    .build()
+                )
+                response = await self._lark_client.im.v1.message.acreate(request)
+
+            if not response.success():
+                raise RuntimeError(f"Feishu image message failed: {response.msg}")
+            return response.data.message_id
+        except Exception as exc:
+            logger.error("Error uploading image to Feishu: %s", exc)
+            raise
+
     async def download_file(
         self,
         file_info: Dict[str, Any],
@@ -966,7 +1125,15 @@ class FeishuBot(BaseIMClient):
                 async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
                     result = await resp.json()
                     if result.get("code") != 0:
-                        return {"id": user_id}
+                        logger.warning(
+                            "Feishu get_user_info failed for %s: code=%s msg=%s",
+                            user_id,
+                            result.get("code"),
+                            result.get("msg"),
+                        )
+                        info = {"id": user_id}
+                        self._user_info_cache[user_id] = info
+                        return info
                     user = result.get("data", {}).get("user", {})
                     info = {
                         "id": user_id,
@@ -978,7 +1145,9 @@ class FeishuBot(BaseIMClient):
                     return info
         except Exception as exc:
             logger.error("Error getting Feishu user info: %s", exc)
-            return {"id": user_id}
+            info = {"id": user_id}
+            self._user_info_cache[user_id] = info
+            return info
 
     async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
         """Get information about a Feishu chat."""
@@ -1287,6 +1456,8 @@ class FeishuBot(BaseIMClient):
                     await self._handle_question_form_submit(context, form_value, button_name)
                 else:
                     logger.warning("Unknown form submit button: %s", button_name)
+                # Dismiss the form card after any successful submission
+                await self.dismiss_form_message(context)
                 return
 
             # --- Regular button callbacks ---
@@ -1300,6 +1471,23 @@ class FeishuBot(BaseIMClient):
 
         except Exception as exc:
             logger.error("Error handling Feishu card action: %s", exc, exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Form submission helpers
+    # ------------------------------------------------------------------
+    async def dismiss_form_message(self, context: MessageContext) -> None:
+        """Delete (recall) the interactive form card after submission."""
+        if not context.message_id:
+            return
+        try:
+            from lark_oapi.api.im.v1 import DeleteMessageRequest
+
+            req = DeleteMessageRequest.builder().message_id(context.message_id).build()
+            resp = await self._lark_client.im.v1.message.adelete(req)
+            if not resp.success():
+                logger.warning("Failed to recall form card: %s", resp.msg)
+        except Exception as exc:
+            logger.warning("Could not recall form card: %s", exc)
 
     # ------------------------------------------------------------------
     # Form submission handlers (JSON 2.0 form container)
@@ -1460,42 +1648,6 @@ class FeishuBot(BaseIMClient):
         payload = json.dumps({"answers": answers})
         callback_data = f"{callback_prefix}:modal:{payload}"
 
-        # Replace the interactive form card with a static confirmation so it
-        # doesn't stay clickable after submission (Feishu cards persist by default).
-        if context.message_id:
-            flat = ", ".join(a for group in answers for a in group) or "-"
-            done_card = json.dumps(
-                {
-                    "schema": "2.0",
-                    "header": {
-                        "title": {
-                            "tag": "plain_text",
-                            "content": "✅ " + self._t("common.submitted", context.channel_id),
-                        },
-                        "template": "green",
-                    },
-                    "body": {
-                        "direction": "vertical",
-                        "elements": [{"tag": "markdown", "content": flat}],
-                    },
-                },
-                ensure_ascii=False,
-            )
-            try:
-                from lark_oapi.api.im.v1 import PatchMessageRequest, PatchMessageRequestBody
-
-                req = (
-                    PatchMessageRequest.builder()
-                    .message_id(context.message_id)
-                    .request_body(PatchMessageRequestBody.builder().content(done_card).build())
-                    .build()
-                )
-                resp = await self._lark_client.im.v1.message.apatch(req)
-                if not resp.success():
-                    logger.warning("Failed to update question card after submit: %s", resp.msg)
-            except Exception as exc:
-                logger.warning("Could not update question card: %s", exc)
-
         if self.on_callback_query_callback:
             await self.on_callback_query_callback(context, callback_data)
 
@@ -1557,46 +1709,6 @@ class FeishuBot(BaseIMClient):
             t = lambda key, **kw: self._t(key, context.channel_id, **kw)
             await self.send_message(context, f"⚠️ {t('modal.resume.description')}")
             return
-
-        # Replace the form card with a confirmation
-        if context.message_id:
-            agent_label = (chosen_agent or "").capitalize()
-            done_card = json.dumps(
-                {
-                    "schema": "2.0",
-                    "header": {
-                        "title": {
-                            "tag": "plain_text",
-                            "content": "✅ " + self._t("common.submitted", context.channel_id),
-                        },
-                        "template": "green",
-                    },
-                    "body": {
-                        "direction": "vertical",
-                        "elements": [
-                            {
-                                "tag": "markdown",
-                                "content": f"Agent: **{agent_label}**\nSession: `{chosen_session[:60]}`",
-                            }
-                        ],
-                    },
-                },
-                ensure_ascii=False,
-            )
-            try:
-                from lark_oapi.api.im.v1 import PatchMessageRequest, PatchMessageRequestBody
-
-                req = (
-                    PatchMessageRequest.builder()
-                    .message_id(context.message_id)
-                    .request_body(PatchMessageRequestBody.builder().content(done_card).build())
-                    .build()
-                )
-                resp = await self._lark_client.im.v1.message.apatch(req)
-                if not resp.success():
-                    logger.warning("Failed to update resume card after submit: %s", resp.msg)
-            except Exception as exc:
-                logger.warning("Could not update resume card: %s", exc)
 
         # Delegate to the resume session callback (same as Slack/Discord)
         if hasattr(self, "_on_resume_session") and self._on_resume_session:
