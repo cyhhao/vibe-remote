@@ -502,9 +502,12 @@ class DiscordBot(BaseIMClient):
         if effective_require_mention and not is_dm:
             if isinstance(channel, discord.Thread):
                 if self.settings_manager:
-                    if self.sessions and not self.sessions.is_thread_active(
-                        str(message.author.id), channel_id, str(channel.id)
-                    ):
+                    thread_active = (
+                        self.sessions.is_thread_active(str(message.author.id), channel_id, str(channel.id))
+                        if self.sessions
+                        else False
+                    )
+                    if not thread_active:
                         return
                 else:
                     return
@@ -1309,6 +1312,21 @@ class DiscordBot(BaseIMClient):
 
                 try:
                     await interaction.response.defer()
+                    # Re-check auth before saving (defense-in-depth)
+                    save_uid = str(interaction.user.id)
+                    save_cid = channel_id or str(interaction.channel_id or "")
+                    save_is_dm = interaction.guild is None
+                    auth = self.outer.check_authorization(
+                        user_id=save_uid,
+                        channel_id=save_cid,
+                        is_dm=save_is_dm,
+                        action="cmd_routing",
+                        settings_manager=self.outer.settings_manager,
+                    )
+                    if not auth.allowed:
+                        await self.outer._send_auth_denial(save_cid, save_uid, auth, interaction=interaction)
+                        return
+
                     if hasattr(self.outer, "_on_routing_update"):
                         await self.outer._on_routing_update(
                             str(interaction.user.id),

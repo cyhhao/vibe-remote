@@ -892,7 +892,10 @@ class SlackBot(BaseIMClient):
                     thread_ts = event.get("thread_ts")
                     # If we have settings_manager, check if thread is active
                     if self.settings_manager:
-                        if self.sessions and not self.sessions.is_thread_active(user_id, channel_id, thread_ts):
+                        thread_active = (
+                            self.sessions.is_thread_active(user_id, channel_id, thread_ts) if self.sessions else False
+                        )
+                        if not thread_active:
                             logger.debug(f"Ignoring message in inactive thread {thread_ts}: '{text}'")
                             return
                     else:
@@ -959,14 +962,24 @@ class SlackBot(BaseIMClient):
         elif event_type == "app_mention":
             # Handle @mentions
             channel_id = event.get("channel")
+            user_id_mention = event.get("user")
+
+            # Remove the mention from the text first so we can parse commands for auth
+            text = event.get("text", "")
+            import re
+
+            text = re.sub(r"<@[\w]+>", "", text).strip()
+
+            # Parse command action for proper admin-protected auth check
+            parsed_command = self.parse_text_command(text)
+            auth_action = parsed_command[0] if parsed_command else ""
 
             # Centralized auth gate (app_mention is always in a channel, not DM)
-            user_id_mention = event.get("user")
             auth = self.check_authorization(
                 user_id=user_id_mention or "",
                 channel_id=channel_id,
                 is_dm=False,
-                action="",
+                action=auth_action,
                 settings_manager=self.settings_manager,
             )
             if not auth.allowed:
@@ -999,19 +1012,12 @@ class SlackBot(BaseIMClient):
                     self.sessions.mark_thread_active(event.get("user"), channel_id, thread_id)
                 logger.info(f"Marked thread {thread_id} as active due to @mention")
 
-            # Remove the mention from the text
-            text = event.get("text", "")
-            import re
-
-            text = re.sub(r"<@[\w]+>", "", text).strip()
-
             # Extract shared/forwarded message content (defer appending until after command check)
             shared_text = await self._extract_shared_message_content(event)
 
             logger.info(f"App mention processed: original='{event.get('text')}', cleaned='{text}'")
 
-            # Check if this is a command after mention (before appending shared content)
-            parsed_command = self.parse_text_command(text)
+            # Check if this is a command after mention (command already parsed above for auth)
             if parsed_command:
                 command, args = parsed_command
                 logger.info(f"Command detected: '{command}', available: {list(self.on_command_callbacks.keys())}")
