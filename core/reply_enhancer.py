@@ -6,8 +6,8 @@ Extracts two special syntaxes from agent reply text:
    e.g. ``[screenshot](file:///tmp/shot.png)``
 
 2. **Quick-reply buttons** – A ``---`` separator followed by
-   ``[:emoji:label]`` tokens separated by ``|``
-   e.g. ``---\\n[:ok_hand:好的] | [:white_check_mark:提PR吧]``
+   ``[button text]`` tokens separated by ``|``
+   e.g. ``---\\n[👌好的] | [✅提交PR] | [先review一下]``
 """
 
 from __future__ import annotations
@@ -38,8 +38,7 @@ class FileLink:
 class QuickReplyButton:
     """A quick-reply button extracted from the trailing block."""
 
-    emoji: str  # Slack emoji name without colons (e.g. "ok_hand")
-    text: str  # Button label / reply text (e.g. "好的")
+    text: str  # Button label / reply text (e.g. "👌好的" or "好的")
 
 
 @dataclass
@@ -60,16 +59,15 @@ _FILE_LINK_RE = re.compile(r"\[([^\]]*)\]\((file://[^)]+)\)")
 
 # Matches the quick-reply button block at the end of the text.
 # A horizontal rule (``---``) on its own line, followed by one or more
-# ``[:emoji:text]`` tokens separated by ``|`` or full-width ``｜``.
-# We allow optional whitespace and tolerance for the Chinese full-width pipe.
+# ``[text]`` tokens separated by ``|`` or full-width ``｜``.
 _BUTTON_BLOCK_RE = re.compile(
     r"\n-{3,}\s*\n"  # --- separator line
-    r"((?:\s*\[:[\w+-]+:\s*[^\]]*\]\s*(?:[|｜]\s*)?)+)"  # button tokens
+    r"((?:\s*\[[^\]]+\]\s*(?:[|｜]\s*)?)+)"  # [text] tokens
     r"\s*$",  # trailing whitespace / end of string
 )
 
-# Individual button token:  [:emoji_name:button text]
-_BUTTON_TOKEN_RE = re.compile(r"\[:([\w+-]+):\s*([^\]]*)\]")
+# Individual button token:  [button text]
+_BUTTON_TOKEN_RE = re.compile(r"\[([^\]]+)\]")
 
 
 # ---------------------------------------------------------------------------
@@ -130,10 +128,10 @@ def _extract_buttons(text: str) -> Tuple[List[QuickReplyButton], str]:
 
     block = m.group(1)
     buttons: List[QuickReplyButton] = []
-    for emoji, label in _BUTTON_TOKEN_RE.findall(block):
+    for (label,) in _BUTTON_TOKEN_RE.findall(block):
         label = label.strip()
         if label:
-            buttons.append(QuickReplyButton(emoji=emoji, text=label))
+            buttons.append(QuickReplyButton(text=label))
 
     if not buttons:
         return [], text
@@ -147,26 +145,25 @@ def _extract_buttons(text: str) -> Tuple[List[QuickReplyButton], str]:
 # ---------------------------------------------------------------------------
 
 REPLY_ENHANCEMENTS_PROMPT = """\
-## Vibe Remote Enhanced Reply
+# Vibe Remote 增强回复
 
-You have two optional reply capabilities:
+用户正在通过 Vibe Remote 与你交互——Vibe Remote 是一个将 AI Agent 接入 Slack 等 IM 平台的中间层，\
+用户在聊天窗口中向你发送消息，你的回复经由 Vibe Remote 转发给用户。\
+你有两个可选的回复增强能力：
 
-### 1. Send Files
-To send a local file to the user, use a Markdown link with `file://` protocol:
-[description](file:///absolute/path/to/file)
-Example: [screenshot](file:///tmp/result.png)
-The system will auto-attach the file. Use this for images, logs, diffs, etc.
+## 1. 发送文件
+用 Markdown 链接 + `file://` 协议即可将本地文件发送给用户：
+[描述](file:///绝对路径)
+示例：[截图](file:///tmp/result.png)
+Vibe Remote 会自动将文件作为附件发送。
 
-### 2. Quick Reply Buttons
-To offer the user clickable shortcut buttons, append a `---` block at the very end of your message:
+## 2. 快捷回复按钮
+在消息最末尾，用 `---` 分隔线后跟 `[按钮文字]` 提供可点击的快捷回复，示例：
 ---
-[:emoji_name:button text] | [:emoji_name:button text]
-Example:
----
-[:ok_hand:好的] | [:white_check_mark:提交PR] | [:mag:先review一下]
-Rules:
-- Must be the last content in your message, after a `---` line.
-- Each button: `[:slack_emoji_name:short text]`, separated by `|`.
-- Infer likely user replies from conversation context; only add when genuinely helpful.
-- Keep 2-4 buttons max, each label under 20 chars.\
+[👌好的] | [✅提交PR] | [先review一下]
+规则：
+- 必须放在消息最末尾，`---` 分隔线之后
+- 每个按钮用 `[文字]` 包裹，用 `|` 分隔，文字中可包含 emoji
+- 根据对话上下文和用户习惯推测用户可能的回复，仅在确实有帮助时添加
+- 最多 2-4 个按钮，每个不超过 20 字符\
 """

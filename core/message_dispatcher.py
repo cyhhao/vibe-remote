@@ -318,9 +318,8 @@ class ConsolidatedMessageDispatcher:
 
         row = []
         for btn in buttons:
-            display = f":{btn.emoji}: {btn.text}"
             callback = f"quick_reply:{btn.text}"
-            row.append(InlineButton(text=display, callback_data=callback))
+            row.append(InlineButton(text=btn.text, callback_data=callback))
 
         keyboard = InlineKeyboard(buttons=[row])
         await im_client.send_message_with_buttons(
