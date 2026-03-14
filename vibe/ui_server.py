@@ -563,6 +563,97 @@ def setup_first_bind_code():
 
 
 # =============================================================================
+# E2E Test-Only Endpoints (gated by E2E_TEST_MODE env var)
+# =============================================================================
+
+import os as _os
+
+if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
+
+    @app.route("/e2e/simulate-interaction", methods=["POST"])
+    def e2e_simulate_interaction():
+        """Simulate a modal submission via the settings/config APIs.
+
+        Only registered when E2E_TEST_MODE=true.
+
+        NOTE: Button clicks (cmd_settings, cmd_routing, etc.) should be
+        triggered by sending text commands via Bot B (/settings, /routing, etc.).
+        This endpoint handles modal *submissions* that Bot B cannot trigger
+        because they require UI interaction (select dropdowns, click Save).
+
+        The UI server and the service process are separate processes, so this
+        endpoint operates through the SettingsStore (shared JSON file) rather
+        than invoking the controller directly.
+
+        JSON fields:
+            action (str):       "settings_submit" | "routing_submit" | "cwd_submit"
+            modal_values (dict): the values to submit
+        """
+        from vibe import api as vibe_api
+        from config.v2_settings import SettingsStore
+
+        payload = request.json or {}
+        action = payload.get("action", "")
+        modal_values = payload.get("modal_values", {})
+
+        if not action:
+            return jsonify({"ok": False, "error": "action required"}), 400
+
+        try:
+            if action == "settings_submit":
+                # Write settings via the existing settings API
+                result = vibe_api.save_settings(modal_values)
+                return jsonify({"ok": True, "action": action, "result": result})
+
+            elif action == "routing_submit":
+                # Write routing config for a specific channel/user
+                channel_id = modal_values.get("channel_id") or modal_values.get("settings_key")
+                if not channel_id:
+                    return jsonify({"ok": False, "error": "channel_id required in modal_values"}), 400
+
+                store = SettingsStore.get_instance()
+                store.maybe_reload()
+                ch = store.settings.channels.get(channel_id)
+                if ch:
+                    from config.v2_settings import RoutingSettings
+
+                    ch.routing = RoutingSettings(
+                        agent_backend=modal_values.get("backend", "opencode"),
+                        opencode_agent=modal_values.get("opencode_agent"),
+                        opencode_model=modal_values.get("opencode_model"),
+                        opencode_reasoning_effort=modal_values.get("opencode_reasoning_effort"),
+                        claude_agent=modal_values.get("claude_agent"),
+                        claude_model=modal_values.get("claude_model"),
+                        codex_model=modal_values.get("codex_model"),
+                        codex_reasoning_effort=modal_values.get("codex_reasoning_effort"),
+                    )
+                    store.save()
+                    return jsonify({"ok": True, "action": action})
+                else:
+                    return jsonify({"ok": False, "error": f"channel {channel_id} not found in settings"}), 404
+
+            elif action == "cwd_submit":
+                # Update CWD via config API
+                new_cwd = modal_values.get("cwd", "/tmp")
+                result = vibe_api.save_config({"runtime": {"default_cwd": new_cwd}})
+                return jsonify({"ok": True, "action": action, "result": result})
+
+            else:
+                return jsonify({"ok": False, "error": f"unknown action: {action}"}), 400
+
+        except Exception as e:
+            logger.exception("E2E simulate-interaction failed")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route("/e2e/ping", methods=["GET"])
+    def e2e_ping():
+        """Simple check that E2E test mode is active."""
+        return jsonify({"ok": True, "e2e_test_mode": True})
+
+    logger.info("E2E_TEST_MODE enabled: /e2e/* endpoints registered")
+
+
+# =============================================================================
 # Static Files (SPA)
 # =============================================================================
 
