@@ -5,31 +5,19 @@ import logging
 from typing import Optional
 from modules.agents import AgentRequest, get_agent_display_name
 from modules.im import MessageContext, InlineKeyboard, InlineButton
-from vibe.i18n import t as i18n_t
+
+from .base import BaseHandler
 
 logger = logging.getLogger(__name__)
 
 
-class CommandHandlers:
+class CommandHandlers(BaseHandler):
     """Handles all bot command operations"""
 
     def __init__(self, controller):
         """Initialize with reference to main controller"""
-        self.controller = controller
-        self.config = controller.config
-        self.im_client = controller.im_client
+        super().__init__(controller)
         self.session_manager = controller.session_manager
-        self.settings_manager = controller.settings_manager
-
-    def _get_lang(self) -> str:
-        """Get the global language setting from config."""
-        if hasattr(self.controller, "_get_lang"):
-            return self.controller._get_lang()
-        return getattr(self.config, "language", "en")
-
-    def _t(self, key: str, **kwargs) -> str:
-        """Translate a key using the global language setting."""
-        return i18n_t(key, self._get_lang(), **kwargs)
 
     def _get_channel_context(self, context: MessageContext) -> MessageContext:
         """Get context for channel messages (no thread)"""
@@ -146,7 +134,7 @@ class CommandHandlers:
         """Handle clear command - clears all sessions across configured agents"""
         try:
             # Get the correct settings key (channel_id for Slack, not user_id)
-            settings_key = self.controller._get_settings_key(context)
+            settings_key = self._get_settings_key(context)
 
             cleared = await self.controller.agent_service.clear_sessions(settings_key)
             if not cleared:
@@ -236,7 +224,7 @@ class CommandHandlers:
                 return
 
             # Save to user settings
-            settings_key = self.controller._get_settings_key(context)
+            settings_key = self._get_settings_key(context)
             self.settings_manager.set_custom_cwd(settings_key, absolute_path)
 
             logger.info(f"User {context.user_id} changed cwd to: {absolute_path}")
@@ -250,6 +238,29 @@ class CommandHandlers:
             logger.error(f"Error setting cwd: {e}")
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(channel_context, f"❌ {self._t('error.cwdSetFailed', error=str(e))}")
+
+    async def handle_change_cwd_submission(
+        self, user_id: str, new_cwd: str, channel_id: Optional[str] = None, is_dm: bool = False
+    ):
+        """Handle working directory change submission from modal."""
+        try:
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id if channel_id else user_id,
+                platform_specific={"is_dm": is_dm},
+            )
+            await self.handle_set_cwd(context, new_cwd.strip())
+        except Exception as e:
+            logger.error(f"Error changing working directory: {e}")
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id if channel_id else user_id,
+                platform_specific={"is_dm": is_dm},
+            )
+            await self.im_client.send_message(
+                context,
+                f"❌ {self._t('error.cwdSetFailed', error=str(e))}",
+            )
 
     async def handle_change_cwd_modal(self, context: MessageContext):
         """Handle Change Work Dir button - open modal for Slack"""
@@ -323,8 +334,8 @@ class CommandHandlers:
         """Open resume-session modal (Slack) or explain availability."""
         if self.config.platform == "discord":
             interaction = context.platform_specific.get("interaction") if context.platform_specific else None
-            settings_key = self.controller._get_settings_key(context)
-            sessions_by_agent = self.settings_manager.list_all_agent_sessions(settings_key)
+            settings_key = self._get_settings_key(context)
+            sessions_by_agent = self.sessions.list_all_agent_sessions(settings_key)
             if not sessions_by_agent:
                 channel_context = self._get_channel_context(context)
                 await self.im_client.send_message(
@@ -351,8 +362,8 @@ class CommandHandlers:
             )
             return
         if self.config.platform == "lark":
-            settings_key = self.controller._get_settings_key(context)
-            sessions_by_agent = self.settings_manager.list_all_agent_sessions(settings_key)
+            settings_key = self._get_settings_key(context)
+            sessions_by_agent = self.sessions.list_all_agent_sessions(settings_key)
             # Allow opening modal even with no sessions (user can paste manually)
             if hasattr(self.im_client, "open_resume_session_modal"):
                 try:
@@ -390,8 +401,8 @@ class CommandHandlers:
             )
             return
 
-        settings_key = self.controller._get_settings_key(context)
-        sessions_by_agent = self.settings_manager.list_all_agent_sessions(settings_key)
+        settings_key = self._get_settings_key(context)
+        sessions_by_agent = self.sessions.list_all_agent_sessions(settings_key)
 
         if not sessions_by_agent:
             channel_context = self._get_channel_context(context)
@@ -420,7 +431,7 @@ class CommandHandlers:
         """
         try:
             # Check if this is a DM context (settings_key == user_id means DM)
-            settings_key = self.controller._get_settings_key(context)
+            settings_key = self._get_settings_key(context)
             if settings_key != context.user_id:
                 # Not a DM — instruct user to use DM
                 channel_context = self._get_channel_context(context)
@@ -433,10 +444,8 @@ class CommandHandlers:
                 await self.im_client.send_message(channel_context, self._t("bind.usage"))
                 return
 
-            store = self.settings_manager.store
-
             # Check if user is already bound
-            if store.is_bound_user(context.user_id):
+            if self.settings_manager.is_bound_user(context.user_id):
                 channel_context = self._get_channel_context(context)
                 await self.im_client.send_message(channel_context, self._t("bind.alreadyBound"))
                 return
@@ -453,13 +462,13 @@ class CommandHandlers:
             )
 
             # Atomic bind: validate code + create user + consume code in one operation
-            success, is_admin = store.bind_user_with_code(
+            success, is_admin = self.settings_manager.bind_user_with_code(
                 context.user_id, display_name, code, dm_chat_id=context.channel_id
             )
 
             if not success:
                 # Could be already bound (race) or invalid code
-                if store.is_bound_user(context.user_id):
+                if self.settings_manager.is_bound_user(context.user_id):
                     channel_context = self._get_channel_context(context)
                     await self.im_client.send_message(channel_context, self._t("bind.alreadyBound"))
                 else:
@@ -489,7 +498,7 @@ class CommandHandlers:
         try:
             session_handler = self.controller.session_handler
             base_session_id, working_path, composite_key = session_handler.get_session_info(context)
-            settings_key = self.controller._get_settings_key(context)
+            settings_key = self._get_settings_key(context)
             agent_name = self.controller.resolve_agent_for_context(context)
             request = AgentRequest(
                 context=context,

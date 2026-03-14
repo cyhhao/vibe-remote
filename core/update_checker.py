@@ -270,8 +270,8 @@ class UpdateChecker:
         """Check if any agent has active sessions."""
         try:
             # Check OpenCode active polls
-            if hasattr(self.controller, "settings_manager"):
-                active_polls = self.controller.settings_manager.get_all_active_polls()
+            if hasattr(self.controller, "sessions"):
+                active_polls = self.controller.sessions.get_all_active_polls()
                 if active_polls:
                     return True
 
@@ -296,7 +296,7 @@ class UpdateChecker:
         """
         try:
             if hasattr(self.controller, "settings_manager"):
-                store = getattr(self.controller.settings_manager, "store", None)
+                store = self.controller.settings_manager.get_store()
                 if store and hasattr(store, "get_admins"):
                     admins = store.get_admins()
                     return list(admins.keys())

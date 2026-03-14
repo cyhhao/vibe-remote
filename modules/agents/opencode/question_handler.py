@@ -157,7 +157,8 @@ class OpenCodeQuestionHandler:
         self._pending_questions.pop(request.base_session_id, None)
 
         # Stop restoring this on restart (since we're abandoning the run)
-        self._settings_manager.remove_active_poll(session_id)
+        sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
+        sessions.remove_active_poll(session_id)
 
         # Abort the OpenCode session so rerun starts fresh
         directory = pending.get("directory")

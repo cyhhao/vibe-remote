@@ -5,37 +5,22 @@ import logging
 from typing import Optional, Dict, Any, Tuple
 from modules.im import MessageContext
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
-from vibe.i18n import t as i18n_t
+
+from .base import BaseHandler
 
 logger = logging.getLogger(__name__)
 
 
-class SessionHandler:
+class SessionHandler(BaseHandler):
     """Handles all session-related operations"""
 
     def __init__(self, controller):
         """Initialize with reference to main controller"""
-        self.controller = controller
-        self.config = controller.config
-        self.im_client = controller.im_client
+        super().__init__(controller)
         self.session_manager = controller.session_manager
-        self.settings_manager = controller.settings_manager
-        self.formatter = controller.im_client.formatter
         self.claude_sessions = controller.claude_sessions
         self.receiver_tasks = controller.receiver_tasks
         self.stored_session_mappings = controller.stored_session_mappings
-
-    def _get_settings_key(self, context: MessageContext) -> str:
-        """Get settings key - delegate to controller"""
-        return self.controller._get_settings_key(context)
-
-    def _get_lang(self) -> str:
-        if hasattr(self.controller, "_get_lang"):
-            return self.controller._get_lang()
-        return getattr(self.config, "language", "en")
-
-    def _t(self, key: str, **kwargs) -> str:
-        return i18n_t(key, self._get_lang(), **kwargs)
 
     def get_base_session_id(self, context: MessageContext) -> str:
         """Get base session ID based on platform and context (without path)"""
@@ -97,7 +82,7 @@ class SessionHandler:
         base_session_id, working_path, composite_key = self.get_session_info(context)
 
         settings_key = self._get_settings_key(context)
-        stored_claude_session_id = self.settings_manager.get_claude_session_id(settings_key, base_session_id)
+        stored_claude_session_id = self.sessions.get_claude_session_id(settings_key, base_session_id)
 
         # Read configuration overrides using settings_key (user_id for DM, channel_id for channels)
         channel_settings = self.settings_manager.get_channel_settings(settings_key)
@@ -117,7 +102,7 @@ class SessionHandler:
         if effective_agent:
             cached_base = f"{base_session_id}:{effective_agent}"
             cached_key = f"{cached_base}:{working_path}"
-            cached_session_id = self.settings_manager.get_agent_session_id(
+            cached_session_id = self.sessions.get_agent_session_id(
                 settings_key,
                 cached_base,
                 agent_name="claude",
@@ -183,20 +168,24 @@ class SessionHandler:
             if key.startswith("ANTHROPIC_") or key.startswith("CLAUDE_"):
                 claude_env[key] = os.environ[key]
 
-        options = ClaudeAgentOptions(
-            permission_mode=self.config.claude.permission_mode,
-            cwd=working_path,
-            system_prompt=final_system_prompt,
-            resume=stored_claude_session_id if stored_claude_session_id else None,
-            extra_args=extra_args,
-            # Only set allowed_tools if agent file specifies tools; None = use SDK defaults
-            allowed_tools=agent_allowed_tools if agent_allowed_tools else None,
-            setting_sources=["user"],  # Load user settings from ~/.claude/settings.json
+        option_kwargs: Dict[str, Any] = {
+            "permission_mode": self.config.claude.permission_mode,
+            "cwd": working_path,
+            "system_prompt": final_system_prompt,
+            "resume": stored_claude_session_id if stored_claude_session_id else None,
+            "extra_args": extra_args,
+            "setting_sources": ["user"],  # Load user settings from ~/.claude/settings.json
             # Disable AskUserQuestion tool - SDK cannot respond to it programmatically
             # See: https://github.com/anthropics/claude-code/issues/10168
-            disallowed_tools=["AskUserQuestion"],
-            env=claude_env,  # Pass Anthropic/Claude env vars
-        )
+            "disallowed_tools": ["AskUserQuestion"],
+            "env": claude_env,  # Pass Anthropic/Claude env vars
+        }
+        # Only set allowed_tools if agent file specifies tools.
+        # Omitting the field keeps SDK default tool behavior.
+        if agent_allowed_tools:
+            option_kwargs["allowed_tools"] = agent_allowed_tools
+
+        options = ClaudeAgentOptions(**option_kwargs)
 
         # Log session creation details
         logger.info(f"Creating Claude client for {base_session_id} at {working_path}")
@@ -234,6 +223,85 @@ class SessionHandler:
         logger.info(f"Created new Claude SDK client for {base_session_id} at {working_path}")
 
         return client
+
+    async def handle_resume_session_submission(
+        self,
+        user_id: str,
+        channel_id: Optional[str],
+        thread_id: Optional[str],
+        agent: Optional[str],
+        session_id: Optional[str],
+        host_message_ts: Optional[str] = None,
+        is_dm: bool = False,
+    ) -> None:
+        """Bind a provided session_id to the current thread for the chosen agent."""
+        from modules.settings_manager import ChannelRouting
+
+        try:
+            if not agent or not session_id:
+                raise ValueError("Agent and session ID are required to resume.")
+
+            if getattr(self.controller, "agent_service", None):
+                available_agents = set(self.controller.agent_service.agents.keys())
+                if agent not in available_agents:
+                    raise ValueError(f"Agent '{agent}' is not enabled.")
+
+            reuse_thread = True
+            if host_message_ts and thread_id and thread_id == host_message_ts:
+                reuse_thread = False
+
+            target_thread = thread_id if reuse_thread else None
+
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id or user_id,
+                thread_id=target_thread or None,
+                platform_specific={"is_dm": is_dm},
+            )
+
+            settings_key = self._get_settings_key(context)
+            current_routing = self.settings_manager.get_channel_routing(settings_key)
+            opencode_agent = current_routing.opencode_agent if current_routing else None
+            opencode_model = current_routing.opencode_model if current_routing else None
+            opencode_reasoning_effort = current_routing.opencode_reasoning_effort if current_routing else None
+
+            routing = ChannelRouting(
+                agent_backend=agent,
+                opencode_agent=opencode_agent,
+                opencode_model=opencode_model,
+                opencode_reasoning_effort=opencode_reasoning_effort,
+            )
+            self.settings_manager.set_channel_routing(settings_key, routing)
+
+            agent_label = agent.capitalize()
+            confirmation = "\n".join(
+                [
+                    f"✅ {self._t('success.sessionResumed', agent=agent_label, sessionId=session_id)}",
+                    self._t("success.sessionResumedTip1"),
+                    self._t("success.sessionResumedTip2"),
+                ]
+            )
+
+            confirmation_ts = await self.im_client.send_message(context, confirmation, parse_mode="markdown")
+
+            mapped_thread = target_thread or confirmation_ts
+            platform = getattr(self.config, "platform", "slack")
+            base_session_id = f"{platform}_{mapped_thread}"
+
+            self.sessions.set_agent_session_mapping(settings_key, agent, base_session_id, session_id)
+            self.sessions.mark_thread_active(user_id, context.channel_id, mapped_thread)
+        except Exception as e:
+            logger.error(f"Error resuming session: {e}", exc_info=True)
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id or user_id,
+                thread_id=thread_id or None,
+                platform_specific={"is_dm": is_dm},
+            )
+            await self.im_client.send_message(
+                context,
+                f"❌ {self._t('error.resumeSubmitFailed', error=str(e))}",
+            )
 
     async def cleanup_session(self, composite_key: str):
         """Clean up a specific session by composite key"""
@@ -288,7 +356,7 @@ class SessionHandler:
     def capture_session_id(self, base_session_id: str, claude_session_id: str, settings_key: str):
         """Capture and store Claude session ID mapping"""
         # Persist to settings (settings_key is channel_id for Slack)
-        self.settings_manager.set_session_mapping(settings_key, base_session_id, claude_session_id)
+        self.sessions.set_session_mapping(settings_key, base_session_id, claude_session_id)
 
         logger.info(f"Captured Claude session_id: {claude_session_id} for {base_session_id}")
 
@@ -296,7 +364,7 @@ class SessionHandler:
         """Restore session mappings from settings on startup"""
         logger.info("Initializing session mappings from saved settings...")
 
-        session_state = self.settings_manager.sessions_store.state.session_mappings
+        session_state = self.sessions.get_all_session_mappings()
 
         restored_count = 0
         for user_id, agent_map in session_state.items():

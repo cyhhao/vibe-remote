@@ -50,7 +50,7 @@ class CodexEventHandler:
         if thread_id:
             self._agent._session_mgr.set_thread_id(request.base_session_id, thread_id)
             # Persist thread_id in settings_manager for /clear resume
-            self._agent.settings_manager.set_agent_session_mapping(
+            self._agent.sessions.set_agent_session_mapping(
                 request.settings_key,
                 self._agent.name,
                 request.base_session_id,

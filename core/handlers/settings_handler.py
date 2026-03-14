@@ -1,35 +1,23 @@
 """Settings and configuration handlers"""
 
 import logging
+from typing import Optional
+
 from modules.agents import get_agent_display_name
 from modules.im import MessageContext, InlineKeyboard, InlineButton
-from vibe.i18n import t as i18n_t
+from core.modals import RoutingModalData, RoutingModalSelection
+
+from .base import BaseHandler
 
 logger = logging.getLogger(__name__)
 
 
-class SettingsHandler:
+class SettingsHandler(BaseHandler):
     """Handles settings and configuration operations"""
 
     def __init__(self, controller):
         """Initialize with reference to main controller"""
-        self.controller = controller
-        self.config = controller.config
-        self.im_client = controller.im_client
-        self.settings_manager = controller.settings_manager
-        self.formatter = controller.im_client.formatter
-
-    def _get_settings_key(self, context: MessageContext) -> str:
-        """Get settings key - delegate to controller"""
-        return self.controller._get_settings_key(context)
-
-    def _get_lang(self) -> str:
-        if hasattr(self.controller, "_get_lang"):
-            return self.controller._get_lang()
-        return getattr(self.config, "language", "en")
-
-    def _t(self, key: str, **kwargs) -> str:
-        return i18n_t(key, self._get_lang(), **kwargs)
+        super().__init__(controller)
 
     def _message_type_display_names(self) -> dict:
         return {
@@ -336,6 +324,72 @@ class SettingsHandler:
             logger.error(f"Error showing routing settings: {e}", exc_info=True)
             await self.im_client.send_message(context, f"❌ {self._t('error.routingFailed', error=str(e))}")
 
+    async def _gather_routing_modal_data(self, context: MessageContext) -> RoutingModalData:
+        """Collect backend/agent/model data for routing modal renderers."""
+        settings_key = self._get_settings_key(context)
+        current_routing = self.settings_manager.get_channel_routing(settings_key)
+
+        all_backends = list(self.controller.agent_service.agents.keys())
+        registered_backends = sorted(all_backends, key=lambda x: (x != "opencode", x))
+        current_backend = self.controller.resolve_agent_for_context(context)
+
+        opencode_agents = []
+        opencode_models = {}
+        opencode_default_config = {}
+        claude_agents = []
+        claude_models = []
+        codex_models = []
+
+        if "opencode" in registered_backends:
+            try:
+                opencode_agent = self.controller.agent_service.agents.get("opencode")
+                if opencode_agent and hasattr(opencode_agent, "_get_server"):
+                    server = await opencode_agent._get_server()  # type: ignore[attr-defined]
+                    await server.ensure_running()
+
+                    cwd = self.controller.get_cwd(context)
+                    opencode_agents = await server.get_available_agents(cwd)
+                    opencode_models = await server.get_available_models(cwd)
+                    opencode_default_config = await server.get_default_config(cwd)
+            except Exception as e:
+                logger.warning(f"Failed to fetch OpenCode data: {e}")
+
+        if "claude" in registered_backends:
+            try:
+                from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
+
+                cwd = self.controller.get_cwd(context)
+                agents_result = get_claude_agents(cwd)
+                if agents_result.get("ok"):
+                    claude_agents = agents_result.get("agents", [])
+                models_result = get_claude_models()
+                if models_result.get("ok"):
+                    claude_models = models_result.get("models", [])
+            except Exception as e:
+                logger.warning(f"Failed to fetch Claude data: {e}")
+
+        if "codex" in registered_backends:
+            try:
+                from vibe.api import codex_models as get_codex_models
+
+                models_result = get_codex_models()
+                if models_result.get("ok"):
+                    codex_models = models_result.get("models", [])
+            except Exception as e:
+                logger.warning(f"Failed to fetch Codex data: {e}")
+
+        return RoutingModalData(
+            registered_backends=registered_backends,
+            current_backend=current_backend,
+            current_routing=current_routing,
+            opencode_agents=opencode_agents,
+            opencode_models=opencode_models,
+            opencode_default_config=opencode_default_config,
+            claude_agents=claude_agents,
+            claude_models=claude_models,
+            codex_models=codex_models,
+        )
+
     async def _handle_routing_slack(self, context: MessageContext):
         """Handle routing for Slack using modal dialog"""
         trigger_id = context.platform_specific.get("trigger_id") if context.platform_specific else None
@@ -358,82 +412,14 @@ class SettingsHandler:
             )
             return
 
-        # Gather data for the modal
-        settings_key = self._get_settings_key(context)
-        current_routing = self.settings_manager.get_channel_routing(settings_key)
-
-        # Get registered backends, prioritize opencode first
-        all_backends = list(self.controller.agent_service.agents.keys())
-        registered_backends = sorted(all_backends, key=lambda x: (x != "opencode", x))
-
-        # Get current backend (from routing or default)
-        current_backend = self.controller.resolve_agent_for_context(context)
-
-        # Get OpenCode agents/models if available
-        opencode_agents = []
-        opencode_models = {}
-        opencode_default_config = {}
-
-        if "opencode" in registered_backends:
-            try:
-                # Get OpenCode server manager
-                opencode_agent = self.controller.agent_service.agents.get("opencode")
-                if opencode_agent and hasattr(opencode_agent, "_get_server"):
-                    server = await opencode_agent._get_server()
-                    await server.ensure_running()
-
-                    cwd = self.controller.get_cwd(context)
-                    opencode_agents = await server.get_available_agents(cwd)
-                    opencode_models = await server.get_available_models(cwd)
-                    opencode_default_config = await server.get_default_config(cwd)
-            except Exception as e:
-                logger.warning(f"Failed to fetch OpenCode data: {e}")
-
-        # Get Claude agents/models if available
-        claude_agents = []
-        claude_models = []
-
-        if "claude" in registered_backends:
-            try:
-                from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
-
-                cwd = self.controller.get_cwd(context)
-                agents_result = get_claude_agents(cwd)
-                if agents_result.get("ok"):
-                    claude_agents = agents_result.get("agents", [])
-                models_result = get_claude_models()
-                if models_result.get("ok"):
-                    claude_models = models_result.get("models", [])
-            except Exception as e:
-                logger.warning(f"Failed to fetch Claude data: {e}")
-
-        # Get Codex models if available
-        codex_models = []
-
-        if "codex" in registered_backends:
-            try:
-                from vibe.api import codex_models as get_codex_models
-
-                models_result = get_codex_models()
-                if models_result.get("ok"):
-                    codex_models = models_result.get("models", [])
-            except Exception as e:
-                logger.warning(f"Failed to fetch Codex data: {e}")
+        routing_data = await self._gather_routing_modal_data(context)
 
         # Open modal
         try:
             await self.im_client.open_routing_modal(
                 trigger_id=trigger_id,
                 channel_id=context.channel_id,
-                registered_backends=registered_backends,
-                current_backend=current_backend,
-                current_routing=current_routing,
-                opencode_agents=opencode_agents,
-                opencode_models=opencode_models,
-                opencode_default_config=opencode_default_config,
-                claude_agents=claude_agents,
-                claude_models=claude_models,
-                codex_models=codex_models,
+                **routing_data.as_kwargs(),
             )
         except Exception as e:
             logger.error(f"Error opening routing modal: {e}", exc_info=True)
@@ -441,73 +427,13 @@ class SettingsHandler:
 
     async def _handle_routing_discord(self, context: MessageContext):
         interaction = context.platform_specific.get("interaction") if context.platform_specific else None
-
-        settings_key = self._get_settings_key(context)
-        current_routing = self.settings_manager.get_channel_routing(settings_key)
-
-        all_backends = list(self.controller.agent_service.agents.keys())
-        registered_backends = sorted(all_backends, key=lambda x: (x != "opencode", x))
-        current_backend = self.controller.resolve_agent_for_context(context)
-
-        opencode_agents = []
-        opencode_models = {}
-        opencode_default_config = {}
-
-        if "opencode" in registered_backends:
-            try:
-                opencode_agent = self.controller.agent_service.agents.get("opencode")
-                if opencode_agent and hasattr(opencode_agent, "_get_server"):
-                    server = await opencode_agent._get_server()
-                    await server.ensure_running()
-
-                    cwd = self.controller.get_cwd(context)
-                    opencode_agents = await server.get_available_agents(cwd)
-                    opencode_models = await server.get_available_models(cwd)
-                    opencode_default_config = await server.get_default_config(cwd)
-            except Exception as e:
-                logger.warning(f"Failed to fetch OpenCode data: {e}")
-
-        claude_agents = []
-        claude_models = []
-
-        if "claude" in registered_backends:
-            try:
-                from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
-
-                cwd = self.controller.get_cwd(context)
-                agents_result = get_claude_agents(cwd)
-                if agents_result.get("ok"):
-                    claude_agents = agents_result.get("agents", [])
-                models_result = get_claude_models()
-                if models_result.get("ok"):
-                    claude_models = models_result.get("models", [])
-            except Exception as e:
-                logger.warning(f"Failed to fetch Claude data: {e}")
-
-        codex_models = []
-        if "codex" in registered_backends:
-            try:
-                from vibe.api import codex_models as get_codex_models
-
-                models_result = get_codex_models()
-                if models_result.get("ok"):
-                    codex_models = models_result.get("models", [])
-            except Exception as e:
-                logger.warning(f"Failed to fetch Codex data: {e}")
+        routing_data = await self._gather_routing_modal_data(context)
 
         try:
             await self.im_client.open_routing_modal(
                 trigger_id=interaction or context,
                 channel_id=context.channel_id,
-                registered_backends=registered_backends,
-                current_backend=current_backend,
-                current_routing=current_routing,
-                opencode_agents=opencode_agents,
-                opencode_models=opencode_models,
-                opencode_default_config=opencode_default_config,
-                claude_agents=claude_agents,
-                claude_models=claude_models,
-                codex_models=codex_models,
+                **routing_data.as_kwargs(),
             )
         except Exception as e:
             logger.error(f"Error opening routing modal: {e}", exc_info=True)
@@ -519,73 +445,239 @@ class SettingsHandler:
         Gathers the same backend/model/agent data as Slack/Discord so the
         Feishu card can display selectors for all available options.
         """
-        settings_key = self._get_settings_key(context)
-        current_routing = self.settings_manager.get_channel_routing(settings_key)
-
-        all_backends = list(self.controller.agent_service.agents.keys())
-        registered_backends = sorted(all_backends, key=lambda x: (x != "opencode", x))
-        current_backend = self.controller.resolve_agent_for_context(context)
-
-        opencode_agents = []
-        opencode_models = {}
-        opencode_default_config = {}
-
-        if "opencode" in registered_backends:
-            try:
-                opencode_agent = self.controller.agent_service.agents.get("opencode")
-                if opencode_agent and hasattr(opencode_agent, "_get_server"):
-                    server = await opencode_agent._get_server()
-                    await server.ensure_running()
-
-                    cwd = self.controller.get_cwd(context)
-                    opencode_agents = await server.get_available_agents(cwd)
-                    opencode_models = await server.get_available_models(cwd)
-                    opencode_default_config = await server.get_default_config(cwd)
-            except Exception as e:
-                logger.warning(f"Failed to fetch OpenCode data: {e}")
-
-        claude_agents = []
-        claude_models = []
-
-        if "claude" in registered_backends:
-            try:
-                from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
-
-                cwd = self.controller.get_cwd(context)
-                agents_result = get_claude_agents(cwd)
-                if agents_result.get("ok"):
-                    claude_agents = agents_result.get("agents", [])
-                models_result = get_claude_models()
-                if models_result.get("ok"):
-                    claude_models = models_result.get("models", [])
-            except Exception as e:
-                logger.warning(f"Failed to fetch Claude data: {e}")
-
-        codex_models = []
-        if "codex" in registered_backends:
-            try:
-                from vibe.api import codex_models as get_codex_models
-
-                models_result = get_codex_models()
-                if models_result.get("ok"):
-                    codex_models = models_result.get("models", [])
-            except Exception as e:
-                logger.warning(f"Failed to fetch Codex data: {e}")
+        routing_data = await self._gather_routing_modal_data(context)
 
         try:
             await self.im_client.open_routing_modal(
                 trigger_id=context,
                 channel_id=context.channel_id,
-                registered_backends=registered_backends,
-                current_backend=current_backend,
-                current_routing=current_routing,
-                opencode_agents=opencode_agents,
-                opencode_models=opencode_models,
-                opencode_default_config=opencode_default_config,
-                claude_agents=claude_agents,
-                claude_models=claude_models,
-                codex_models=codex_models,
+                **routing_data.as_kwargs(),
             )
         except Exception as e:
             logger.error(f"Error opening routing card for Lark: {e}", exc_info=True)
             await self.im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
+
+    async def handle_settings_update(
+        self,
+        user_id: str,
+        show_message_types: list,
+        channel_id: Optional[str] = None,
+        require_mention: Optional[bool] = None,
+        language: Optional[str] = None,
+        notify_user: bool = True,
+        is_dm: bool = False,
+    ):
+        """Handle settings update (typically from modal submissions)."""
+        try:
+            settings_key = user_id if is_dm else (channel_id or user_id)
+
+            user_settings = self.settings_manager.get_user_settings(settings_key)
+            user_settings.show_message_types = show_message_types
+            self.settings_manager.update_user_settings(settings_key, user_settings)
+
+            if not is_dm:
+                self.settings_manager.set_require_mention(settings_key, require_mention)
+
+            language_saved = True
+            if language is not None and language != self.config.language:
+                try:
+                    from config.v2_config import V2Config
+
+                    v2_config = V2Config.load()
+                    v2_config.language = language
+                    v2_config.save()
+                    self.config.language = language
+                except Exception as err:
+                    language_saved = False
+                    logger.error(f"Failed to persist language setting: {err}")
+
+            logger.info(
+                f"Updated settings for {settings_key}: show types = {show_message_types}, "
+                f"require_mention = {require_mention}, language = {language}"
+            )
+
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id if channel_id else user_id,
+                platform_specific={},
+            )
+
+            if notify_user:
+                await self.im_client.send_message(context, f"✅ {self._t('success.settingsUpdated')}")
+                if not language_saved:
+                    await self.im_client.send_message(
+                        context,
+                        f"⚠️ {self._t('error.languageUpdateFailed')}",
+                    )
+
+        except Exception as e:
+            logger.error(f"Error updating settings: {e}")
+            if notify_user:
+                context = MessageContext(
+                    user_id=user_id,
+                    channel_id=channel_id if channel_id else user_id,
+                    platform_specific={},
+                )
+                await self.im_client.send_message(
+                    context,
+                    f"❌ {self._t('error.settingsUpdateFailed', error=str(e))}",
+                )
+            else:
+                raise
+
+    async def handle_routing_modal_update(
+        self,
+        user_id: str,
+        channel_id: str,
+        view_id: str,
+        view_hash: str,
+        selection: RoutingModalSelection,
+        is_dm: bool = False,
+    ) -> None:
+        """Handle routing modal updates using normalized selection data."""
+        try:
+            if not view_id or not view_hash:
+                logger.warning("Routing modal update missing view id/hash")
+                return
+
+            resolved_channel_id = channel_id if channel_id else user_id
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=resolved_channel_id,
+                platform_specific={"is_dm": is_dm},
+            )
+
+            routing_data = await self._gather_routing_modal_data(context)
+            current_routing = routing_data.current_routing
+            registered_backends = routing_data.registered_backends
+            current_backend = routing_data.current_backend
+            selected_backend = selection.selected_backend or current_backend
+
+            if hasattr(self.im_client, "update_routing_modal"):
+                await self.im_client.update_routing_modal(  # type: ignore[attr-defined]
+                    view_id=view_id,
+                    view_hash=view_hash,
+                    channel_id=resolved_channel_id,
+                    registered_backends=registered_backends,
+                    current_backend=current_backend,
+                    current_routing=current_routing,
+                    opencode_agents=routing_data.opencode_agents,
+                    opencode_models=routing_data.opencode_models,
+                    opencode_default_config=routing_data.opencode_default_config,
+                    claude_agents=routing_data.claude_agents,
+                    claude_models=routing_data.claude_models,
+                    codex_models=routing_data.codex_models,
+                    selected_backend=selected_backend,
+                    selected_opencode_agent=selection.selected_opencode_agent,
+                    selected_opencode_model=selection.selected_opencode_model,
+                    selected_opencode_reasoning=selection.selected_opencode_reasoning,
+                    selected_claude_agent=selection.selected_claude_agent,
+                    selected_claude_model=selection.selected_claude_model,
+                    selected_codex_model=selection.selected_codex_model,
+                    selected_codex_reasoning=selection.selected_codex_reasoning,
+                )
+        except Exception as e:
+            logger.error(f"Error updating routing modal: {e}", exc_info=True)
+
+    async def handle_routing_update(
+        self,
+        user_id: str,
+        channel_id: str,
+        backend: str,
+        opencode_agent: Optional[str],
+        opencode_model: Optional[str],
+        opencode_reasoning_effort: Optional[str] = None,
+        claude_agent: Optional[str] = None,
+        claude_model: Optional[str] = None,
+        codex_model: Optional[str] = None,
+        codex_reasoning_effort: Optional[str] = None,
+        notify_user: bool = True,
+        is_dm: bool = False,
+    ):
+        """Handle routing update submission (from modal)."""
+        from config.v2_settings import RoutingSettings
+
+        try:
+            settings_key = user_id if is_dm else (channel_id or user_id)
+            existing_routing = self.settings_manager.get_channel_routing(settings_key)
+
+            routing = RoutingSettings(
+                agent_backend=backend,
+                opencode_agent=opencode_agent
+                if backend == "opencode"
+                else (existing_routing.opencode_agent if existing_routing else None),
+                opencode_model=opencode_model
+                if backend == "opencode"
+                else (existing_routing.opencode_model if existing_routing else None),
+                opencode_reasoning_effort=opencode_reasoning_effort
+                if backend == "opencode"
+                else (existing_routing.opencode_reasoning_effort if existing_routing else None),
+                claude_agent=claude_agent
+                if backend == "claude"
+                else (existing_routing.claude_agent if existing_routing else None),
+                claude_model=claude_model
+                if backend == "claude"
+                else (existing_routing.claude_model if existing_routing else None),
+                codex_model=codex_model
+                if backend == "codex"
+                else (existing_routing.codex_model if existing_routing else None),
+                codex_reasoning_effort=codex_reasoning_effort
+                if backend == "codex"
+                else (existing_routing.codex_reasoning_effort if existing_routing else None),
+            )
+
+            self.settings_manager.set_channel_routing(settings_key, routing)
+
+            parts = [f"{self._t('routing.label.backend')}: **{backend}**"]
+            if backend == "opencode":
+                if opencode_agent:
+                    parts.append(f"{self._t('routing.label.agent')}: **{opencode_agent}**")
+                if opencode_model:
+                    parts.append(f"{self._t('routing.label.model')}: **{opencode_model}**")
+                if opencode_reasoning_effort:
+                    parts.append(f"{self._t('routing.label.reasoningEffort')}: **{opencode_reasoning_effort}**")
+            elif backend == "claude":
+                if claude_agent:
+                    parts.append(f"{self._t('routing.label.agent')}: **{claude_agent}**")
+                if claude_model:
+                    parts.append(f"{self._t('routing.label.model')}: **{claude_model}**")
+            elif backend == "codex":
+                if codex_model:
+                    parts.append(f"{self._t('routing.label.model')}: **{codex_model}**")
+                if codex_reasoning_effort:
+                    parts.append(f"{self._t('routing.label.reasoningEffort')}: **{codex_reasoning_effort}**")
+
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id if channel_id else user_id,
+                platform_specific={},
+            )
+
+            if notify_user:
+                await self.im_client.send_message(
+                    context,
+                    f"✅ {self._t('success.routingUpdated')}\n" + "\n".join(parts),
+                    parse_mode="markdown",
+                )
+
+            logger.info(
+                f"Routing updated for {settings_key}: backend={backend}, "
+                f"opencode_agent={opencode_agent}, opencode_model={opencode_model}, "
+                f"claude_agent={claude_agent}, claude_model={claude_model}, "
+                f"codex_model={codex_model}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error updating routing: {e}")
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id if channel_id else user_id,
+                platform_specific={},
+            )
+            if notify_user:
+                await self.im_client.send_message(
+                    context,
+                    f"❌ {self._t('error.routingUpdateFailed', error=str(e))}",
+                )
+            else:
+                raise

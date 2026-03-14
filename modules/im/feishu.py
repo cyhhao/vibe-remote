@@ -86,6 +86,7 @@ class FeishuBot(BaseIMClient):
         self._bot_open_id: Optional[str] = None
 
         self.settings_manager = None
+        self.sessions = None
         self._controller = None
         self._on_ready: Optional[Callable] = None
         self._on_settings_update: Optional[Callable] = None
@@ -109,6 +110,7 @@ class FeishuBot(BaseIMClient):
     def set_settings_manager(self, settings_manager):
         """Set the settings manager for thread tracking."""
         self.settings_manager = settings_manager
+        self.sessions = getattr(settings_manager, "sessions", None)
 
     def set_controller(self, controller):
         """Set the controller reference for handling update button clicks."""
@@ -117,7 +119,7 @@ class FeishuBot(BaseIMClient):
     def _populate_dm_chat_ids(self):
         """Pre-populate DM chat IDs from bound users for restart survival."""
         if self.settings_manager:
-            for user_id, user in self.settings_manager.store.settings.users.items():
+            for user_id, user in self.settings_manager.iter_bound_users():
                 if user.dm_chat_id:
                     self._dm_chat_ids.add(user.dm_chat_id)
 
@@ -340,7 +342,8 @@ class FeishuBot(BaseIMClient):
         if root_id:
             message_id = await self._reply_message(root_id, text)
             if self.settings_manager:
-                self.settings_manager.mark_thread_active(context.user_id, context.channel_id, root_id)
+                if self.sessions:
+                    self.sessions.mark_thread_active(context.user_id, context.channel_id, root_id)
             return message_id
 
         response = await self._lark_client.im.v1.message.acreate(request)
@@ -355,7 +358,8 @@ class FeishuBot(BaseIMClient):
         message_id = response.data.message_id
         if self.settings_manager and (context.thread_id or reply_to):
             thread = context.thread_id or reply_to
-            self.settings_manager.mark_thread_active(context.user_id, context.channel_id, thread)
+            if self.sessions:
+                self.sessions.mark_thread_active(context.user_id, context.channel_id, thread)
         return message_id
 
     async def _reply_message(self, parent_id: str, text: str) -> str:
@@ -502,7 +506,8 @@ class FeishuBot(BaseIMClient):
         if root_id:
             message_id = await self._reply_message_with_card(root_id, card_json)
             if self.settings_manager:
-                self.settings_manager.mark_thread_active(context.user_id, context.channel_id, root_id)
+                if self.sessions:
+                    self.sessions.mark_thread_active(context.user_id, context.channel_id, root_id)
             return message_id
 
         request = (
@@ -529,7 +534,8 @@ class FeishuBot(BaseIMClient):
 
         message_id = response.data.message_id
         if self.settings_manager and context.thread_id:
-            self.settings_manager.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
+            if self.sessions:
+                self.sessions.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
         return message_id
 
     async def _reply_message_with_card(self, parent_id: str, card_json: str) -> str:
@@ -1113,27 +1119,18 @@ class FeishuBot(BaseIMClient):
                         return
                 else:
                     if self.settings_manager:
-                        if not self.settings_manager.is_thread_active(user_id, chat_id, root_id):
+                        if self.sessions and not self.sessions.is_thread_active(user_id, chat_id, root_id):
                             logger.debug("Ignoring message in inactive thread %s", root_id)
                             return
                     else:
                         return
 
-            # Centralized auth check — parse command name before auth so
-            # admin-protected text commands (e.g. /settings, /set_cwd) are checked.
-            from core.auth import check_auth
-
-            if text.startswith("/"):
-                _cmd_parts = text.split(maxsplit=1)
-                _action = _cmd_parts[0][1:]  # strip leading "/"
-            else:
-                _action = ""
-            auth_result = check_auth(
+            auth_result = self.check_authorization(
                 user_id=user_id,
                 channel_id=chat_id,
                 is_dm=is_p2p,
-                action=_action,
-                store=self.settings_manager.store if self.settings_manager else None,
+                text=text,
+                settings_manager=self.settings_manager,
             )
             if not auth_result.allowed:
                 try:
@@ -1160,14 +1157,8 @@ class FeishuBot(BaseIMClient):
             )
 
             # Handle commands (messages starting with /)
-            if text.startswith("/"):
-                parts = text.split(maxsplit=1)
-                command = parts[0][1:]
-                args = parts[1] if len(parts) > 1 else ""
-                if command in self.on_command_callbacks:
-                    handler = self.on_command_callbacks[command]
-                    await handler(context, args)
-                    return
+            if await self.dispatch_text_command(context, text):
+                return
 
             # Append shared content
             if shared_text:
@@ -1240,14 +1231,12 @@ class FeishuBot(BaseIMClient):
             # --- Centralized auth check ---
             is_dm = chat_id in self._dm_chat_ids
             _card_action = button_name if form_value is not None else (callback_data or "")
-            from core.auth import check_auth
-
-            auth_result = check_auth(
+            auth_result = self.check_authorization(
                 user_id=user_id,
                 channel_id=chat_id,
                 is_dm=is_dm,
                 action=_card_action,
-                store=self.settings_manager.store if self.settings_manager else None,
+                settings_manager=self.settings_manager,
             )
             if not auth_result.allowed:
                 if auth_result.denial == "not_admin":

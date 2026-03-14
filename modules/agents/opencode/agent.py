@@ -241,7 +241,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 request.working_path,
             )
 
-            self.settings_manager.add_active_poll(
+            self.sessions.add_active_poll(
                 opencode_session_id=session_id,
                 base_session_id=request.base_session_id,
                 channel_id=request.context.channel_id,
@@ -288,14 +288,14 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
             # Clean up answer reaction after result is sent
             await self._question_handler.clear(request.base_session_id)
-            self.settings_manager.remove_active_poll(session_id)
+            self.sessions.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
             logger.info(f"OpenCode request cancelled for {request.base_session_id}")
             await self._question_handler.clear(request.base_session_id)
             await self._remove_ack_reaction(request)
             if session_id:
-                self.settings_manager.remove_active_poll(session_id)
+                self.sessions.remove_active_poll(session_id)
             raise
         except Exception as e:
             error_name = type(e).__name__
@@ -312,7 +312,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             await self._question_handler.clear(request.base_session_id)
             await self._remove_ack_reaction(request)
             if session_id:
-                self.settings_manager.remove_active_poll(session_id)
+                self.sessions.remove_active_poll(session_id)
 
             await self.controller.emit_agent_message(
                 request.context,
@@ -342,14 +342,14 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             pass
 
         if opencode_session_id:
-            self.settings_manager.remove_active_poll(opencode_session_id)
+            self.sessions.remove_active_poll(opencode_session_id)
 
         await self.controller.emit_agent_message(request.context, "notify", "Terminated OpenCode execution.")
         logger.info(f"OpenCode session {request.base_session_id} terminated via /stop")
         return True
 
     async def clear_sessions(self, settings_key: str) -> int:
-        self.settings_manager.clear_agent_sessions(settings_key, self.name)
+        self.sessions.clear_agent_sessions(settings_key, self.name)
         terminated = 0
         for base_id, task in list(self._active_requests.items()):
             req_info = self._session_manager.get_request_session(base_id)
@@ -367,7 +367,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     except asyncio.CancelledError:
                         pass
                     terminated += 1
-                self.settings_manager.remove_active_poll(opencode_session_id)
+                self.sessions.remove_active_poll(opencode_session_id)
         return terminated
 
     async def _delete_ack(self, request: AgentRequest) -> None:
@@ -385,7 +385,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
     async def restore_active_polls(self) -> int:
         """Restore active poll loops that were interrupted by vibe-remote restart."""
 
-        active_polls = self.settings_manager.get_all_active_polls()
+        active_polls = self.sessions.get_all_active_polls()
         if not active_polls:
             logger.debug("No active polls to restore")
             return 0
@@ -439,7 +439,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             restored_count += 1
 
         for session_id in stale_poll_ids:
-            self.settings_manager.remove_active_poll(session_id)
+            self.sessions.remove_active_poll(session_id)
 
         if restored_count > 0:
             logger.info(f"Restored {restored_count} active poll loop(s)")

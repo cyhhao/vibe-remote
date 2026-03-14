@@ -6,40 +6,25 @@ from typing import Optional, List
 from modules.agents import AgentRequest
 from modules.im import MessageContext
 from modules.im.base import FileAttachment
-from vibe.i18n import t as i18n_t
+
+from .base import BaseHandler
 
 logger = logging.getLogger(__name__)
 
 
-class MessageHandler:
+class MessageHandler(BaseHandler):
     """Handles message routing and Claude communication"""
 
     def __init__(self, controller):
         """Initialize with reference to main controller"""
-        self.controller = controller
-        self.config = controller.config
-        self.im_client = controller.im_client
+        super().__init__(controller)
         self.session_manager = controller.session_manager
-        self.settings_manager = controller.settings_manager
-        self.formatter = controller.im_client.formatter
         self.session_handler = None  # Will be set after creation
         self.receiver_tasks = controller.receiver_tasks
 
     def set_session_handler(self, session_handler):
         """Set reference to session handler"""
         self.session_handler = session_handler
-
-    def _get_settings_key(self, context: MessageContext) -> str:
-        """Get settings key - delegate to controller"""
-        return self.controller._get_settings_key(context)
-
-    def _get_lang(self) -> str:
-        if hasattr(self.controller, "_get_lang"):
-            return self.controller._get_lang()
-        return getattr(self.config, "language", "en")
-
-    def _t(self, key: str, **kwargs) -> str:
-        return i18n_t(key, self._get_lang(), **kwargs)
 
     def _get_target_context(self, context: MessageContext) -> MessageContext:
         """Get target context for sending messages"""
@@ -74,7 +59,7 @@ class MessageHandler:
             message_ts = context.message_id
             thread_ts = context.thread_id or context.message_id
             if message_ts and thread_ts:
-                if self.settings_manager.is_message_already_processed(context.channel_id, thread_ts, message_ts):
+                if self.sessions.is_message_already_processed(context.channel_id, thread_ts, message_ts):
                     logger.info(
                         f"Skipping already processed message: channel={context.channel_id}, "
                         f"thread={thread_ts}, message={message_ts}"
@@ -82,7 +67,7 @@ class MessageHandler:
                     return
                 # Record this message as processed immediately to prevent duplicates
                 # even if processing fails (we don't want to retry failed messages forever)
-                self.settings_manager.record_processed_message(context.channel_id, thread_ts, message_ts)
+                self.sessions.record_processed_message(context.channel_id, thread_ts, message_ts)
 
             # Skip automatic cleanup; receiver tasks are retained until shutdown
 
@@ -294,12 +279,8 @@ class MessageHandler:
         try:
             logger.info(f"handle_callback_query called with data: {callback_data} for user {context.user_id}")
 
-            # Import handlers to avoid circular dependency
-            from .settings_handler import SettingsHandler
-            from .command_handlers import CommandHandlers
-
-            settings_handler = SettingsHandler(self.controller)
-            command_handlers = CommandHandlers(self.controller)
+            settings_handler = self.controller.settings_handler
+            command_handlers = self.controller.command_handler
 
             # Route based on callback data
             # Note: admin permission for protected callbacks is enforced by
@@ -369,7 +350,7 @@ class MessageHandler:
                 parts = callback_data.split(":", 2)
                 agent = parts[1] if len(parts) > 1 else None
                 session_id = parts[2] if len(parts) > 2 else None
-                await self.controller.handle_resume_session_submission(
+                await self.controller.session_handler.handle_resume_session_submission(
                     user_id=context.user_id,
                     channel_id=context.channel_id,
                     thread_id=context.thread_id,
