@@ -148,6 +148,7 @@ class V2Config:
     ack_mode: str = "reaction"
     show_duration: bool = True  # Show task duration in result messages
     include_user_info: bool = True  # Prepend user identity to agent messages
+    reply_enhancements: bool = True  # Enable file sending & quick-reply buttons
     language: str = "en"  # Global language setting (see vibe/i18n)
 
     @classmethod
@@ -266,6 +267,10 @@ class V2Config:
         if not isinstance(include_user_info, bool):
             include_user_info = True
 
+        reply_enhancements = payload.get("reply_enhancements", True)
+        if not isinstance(reply_enhancements, bool):
+            reply_enhancements = True
+
         language = normalize_language(payload.get("language"), default="en")
 
         return cls(
@@ -283,6 +288,7 @@ class V2Config:
             ack_mode=ack_mode,
             show_duration=show_duration,
             include_user_info=include_user_info,
+            reply_enhancements=reply_enhancements,
             language=language,
         )
 
@@ -312,6 +318,7 @@ class V2Config:
             "ack_mode": self.ack_mode,
             "show_duration": self.show_duration,
             "include_user_info": self.include_user_info,
+            "reply_enhancements": self.reply_enhancements,
             "language": self.language,
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

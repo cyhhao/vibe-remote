@@ -145,11 +145,16 @@ class ConsolidatedMessageDispatcher:
             target_context = self._get_target_context(context)
 
             # --- Reply enhancements: extract file links & quick-reply buttons ---
-            enhanced = process_reply(text)
-            display_text = enhanced.text or text
+            reply_enhancements_on = getattr(self.controller.config, "reply_enhancements", True)
+            if reply_enhancements_on:
+                enhanced = process_reply(text)
+                display_text = enhanced.text or text
+            else:
+                enhanced = None
+                display_text = text
 
             if len(display_text) <= self._get_result_max_chars():
-                if enhanced.buttons:
+                if enhanced and enhanced.buttons:
                     await self._send_with_quick_replies(
                         im_client,
                         target_context,
@@ -182,7 +187,7 @@ class ConsolidatedMessageDispatcher:
                         )
 
             # Upload extracted file attachments
-            if enhanced.files:
+            if enhanced and enhanced.files:
                 await self._upload_file_links(im_client, target_context, enhanced.files)
 
             return
