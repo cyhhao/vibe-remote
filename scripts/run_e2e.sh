@@ -72,7 +72,7 @@ echo "Running E2E tests..."
 trap cleanup EXIT
 
 set +e
-pytest tests/e2e/ -v --tb=short "${PYTEST_ARGS[@]}"
+pytest tests/e2e/ -v --tb=short ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"}
 TEST_EXIT=$?
 set -e
 
