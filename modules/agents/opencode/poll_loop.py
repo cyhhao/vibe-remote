@@ -387,7 +387,7 @@ class OpenCodePollLoop:
                                 "Detected question in restored poll for %s, exiting poll loop",
                                 session_id,
                             )
-                            self._agent.settings_manager.remove_active_poll(session_id)
+                            self._agent.sessions.remove_active_poll(session_id)
                             await _remove_ack_reaction()
                             await self._agent.controller.emit_agent_message(
                                 context,
@@ -399,7 +399,7 @@ class OpenCodePollLoop:
                         seen_tool_calls.add(call_key)
 
                         poll_info.seen_tool_calls = list(seen_tool_calls)
-                        self._agent.settings_manager.update_active_poll_state(
+                        self._agent.sessions.update_active_poll_state(
                             session_id, seen_tool_calls=poll_info.seen_tool_calls
                         )
 
@@ -443,7 +443,7 @@ class OpenCodePollLoop:
                                         "notify",
                                         f"OpenCode error: {error_text}",
                                     )
-                                    self._agent.settings_manager.remove_active_poll(session_id)
+                                    self._agent.sessions.remove_active_poll(session_id)
                                     await _remove_ack_reaction()
                                     return
 
@@ -488,13 +488,13 @@ class OpenCodePollLoop:
             await _remove_ack_reaction()
             # Clean up answer reaction after result is sent
             await self._question_handler.clear(poll_info.base_session_id)
-            self._agent.settings_manager.remove_active_poll(session_id)
+            self._agent.sessions.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
             logger.info(f"Restored OpenCode poll cancelled for {poll_info.base_session_id}")
             await _remove_ack_reaction()
             await self._question_handler.clear(poll_info.base_session_id)
-            self._agent.settings_manager.remove_active_poll(session_id)
+            self._agent.sessions.remove_active_poll(session_id)
             raise
         except Exception as e:
             error_name = type(e).__name__
@@ -507,7 +507,7 @@ class OpenCodePollLoop:
             except Exception as abort_err:
                 logger.warning(f"Failed to abort OpenCode session after error: {abort_err}")
 
-            self._agent.settings_manager.remove_active_poll(session_id)
+            self._agent.sessions.remove_active_poll(session_id)
             await _remove_ack_reaction()
 
             await self._agent.controller.emit_agent_message(

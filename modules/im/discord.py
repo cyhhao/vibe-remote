@@ -9,7 +9,6 @@ import discord
 
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
 from config.v2_config import DiscordConfig
-from core.auth import check_auth
 from .formatters import DiscordFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
@@ -42,6 +41,7 @@ class DiscordBot(BaseIMClient):
         self.formatter = DiscordFormatter()
 
         self.settings_manager = None
+        self.sessions = None
         self._controller = None
         self._on_ready: Optional[Callable] = None
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
@@ -51,6 +51,7 @@ class DiscordBot(BaseIMClient):
 
     def set_settings_manager(self, settings_manager):
         self.settings_manager = settings_manager
+        self.sessions = getattr(settings_manager, "sessions", None)
 
     def set_controller(self, controller):
         self._controller = controller
@@ -186,7 +187,8 @@ class DiscordBot(BaseIMClient):
         message = await target.send(content=text)
         if self.settings_manager and context.thread_id:
             try:
-                self.settings_manager.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
+                if self.sessions:
+                    self.sessions.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
             except Exception:
                 pass
         return str(message.id)
@@ -216,7 +218,8 @@ class DiscordBot(BaseIMClient):
         message = await target.send(content=text, view=view)
         if self.settings_manager and context.thread_id:
             try:
-                self.settings_manager.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
+                if self.sessions:
+                    self.sessions.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
             except Exception:
                 pass
         return str(message.id)
@@ -476,19 +479,12 @@ class DiscordBot(BaseIMClient):
         # Determine if this is a DM
         is_dm = isinstance(channel, discord.DMChannel) or message.guild is None
 
-        # Centralized auth check — parse command name before auth so
-        # admin-protected text commands (e.g. /settings, /set_cwd) are checked.
-        if content.startswith("/"):
-            _cmd_parts = content.split(maxsplit=1)
-            action = _cmd_parts[0][1:]  # strip leading "/"
-        else:
-            action = ""
-        auth_result = check_auth(
+        auth_result = self.check_authorization(
             user_id=str(message.author.id),
             channel_id=channel_id,
             is_dm=is_dm,
-            action=action,
-            store=self.settings_manager.store if self.settings_manager else None,
+            text=content,
+            settings_manager=self.settings_manager,
         )
         if not auth_result.allowed:
             await self._send_auth_denial(channel_id, str(message.author.id), auth_result)
@@ -506,7 +502,12 @@ class DiscordBot(BaseIMClient):
         if effective_require_mention and not is_dm:
             if isinstance(channel, discord.Thread):
                 if self.settings_manager:
-                    if not self.settings_manager.is_thread_active(str(message.author.id), channel_id, str(channel.id)):
+                    thread_active = (
+                        self.sessions.is_thread_active(str(message.author.id), channel_id, str(channel.id))
+                        if self.sessions
+                        else False
+                    )
+                    if not thread_active:
                         return
                 else:
                     return
@@ -520,7 +521,7 @@ class DiscordBot(BaseIMClient):
             content = content.replace(f"<@{bot_id}>", "").replace(f"<@!{bot_id}>", "").strip()
 
         # Handle slash-like commands in plain messages
-        if content.startswith("/"):
+        if self.parse_text_command(content):
             command_context = MessageContext(
                 user_id=str(message.author.id),
                 channel_id=channel_id,
@@ -529,12 +530,7 @@ class DiscordBot(BaseIMClient):
                 platform_specific={"message": message, "is_dm": is_dm},
                 files=files,
             )
-            parts = content.split(maxsplit=1)
-            command = parts[0][1:]
-            args = parts[1] if len(parts) > 1 else ""
-            if command in self.on_command_callbacks:
-                handler = self.on_command_callbacks[command]
-                await handler(command_context, args)
+            if await self.dispatch_text_command(command_context, content):
                 return
 
         if not content and not files:
@@ -748,12 +744,12 @@ class DiscordBot(BaseIMClient):
             save_uid = str(save_interaction.user.id)
             save_cid = channel_id or str(save_interaction.channel_id or "")
             save_is_dm = save_interaction.guild is None
-            auth = check_auth(
+            auth = self.check_authorization(
                 user_id=save_uid,
                 channel_id=save_cid,
                 is_dm=save_is_dm,
                 action="settings",
-                store=self.settings_manager.store if self.settings_manager else None,
+                settings_manager=self.settings_manager,
             )
             if not auth.allowed:
                 await self._send_auth_denial(save_cid, save_uid, auth, interaction=save_interaction)
@@ -1316,6 +1312,21 @@ class DiscordBot(BaseIMClient):
 
                 try:
                     await interaction.response.defer()
+                    # Re-check auth before saving (defense-in-depth)
+                    save_uid = str(interaction.user.id)
+                    save_cid = channel_id or str(interaction.channel_id or "")
+                    save_is_dm = interaction.guild is None
+                    auth = self.outer.check_authorization(
+                        user_id=save_uid,
+                        channel_id=save_cid,
+                        is_dm=save_is_dm,
+                        action="cmd_routing",
+                        settings_manager=self.outer.settings_manager,
+                    )
+                    if not auth.allowed:
+                        await self.outer._send_auth_denial(save_cid, save_uid, auth, interaction=interaction)
+                        return
+
                     if hasattr(self.outer, "_on_routing_update"):
                         await self.outer._on_routing_update(
                             str(interaction.user.id),
@@ -1537,12 +1548,12 @@ class _PersistentStartView(discord.ui.View):
             if guild_id and not self.outer._is_allowed_guild(guild_id):
                 return
             is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
-            auth_result = check_auth(
+            auth_result = self.outer.check_authorization(
                 user_id=str(interaction.user.id),
                 channel_id=channel_id,
                 is_dm=is_dm,
                 action=data,
-                store=self.outer.settings_manager.store if self.outer.settings_manager else None,
+                settings_manager=self.outer.settings_manager,
             )
             if not auth_result.allowed:
                 await self.outer._send_auth_denial(
@@ -1616,12 +1627,12 @@ class _DiscordButtonView(discord.ui.View):
                     if guild_id and not self.outer._is_allowed_guild(guild_id):
                         return
                     is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
-                    auth_result = check_auth(
+                    auth_result = self.outer.check_authorization(
                         user_id=str(interaction.user.id),
                         channel_id=channel_id,
                         is_dm=is_dm,
                         action=data,
-                        store=self.outer.settings_manager.store if self.outer.settings_manager else None,
+                        settings_manager=self.outer.settings_manager,
                     )
                     if not auth_result.allowed:
                         await self.outer._send_auth_denial(

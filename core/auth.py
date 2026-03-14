@@ -63,6 +63,7 @@ def check_auth(
     channel_id: str,
     is_dm: bool,
     action: str = "",
+    settings_manager: object | None = None,
     store: "SettingsStore | None" = None,
 ) -> AuthResult:
     """Run the centralized authorization pipeline.
@@ -83,6 +84,12 @@ def check_auth(
     store:       ``SettingsStore`` instance for permission lookups.
                  When *None* (no settings configured), everything is allowed.
     """
+    if store is None and settings_manager is not None and hasattr(settings_manager, "get_store"):
+        try:
+            store = settings_manager.get_store()
+        except Exception:
+            store = None
+
     if store is None:
         return AuthResult(allowed=True, is_dm=is_dm)
 

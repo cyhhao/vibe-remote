@@ -188,7 +188,7 @@ class CodexAgent(BaseAgent):
 
     async def clear_sessions(self, settings_key: str) -> int:
         """Clear sessions scoped to a specific settings_key."""
-        self.settings_manager.clear_agent_sessions(settings_key, self.name)
+        self.sessions.clear_agent_sessions(settings_key, self.name)
 
         # Get base_session_ids to clear before removing them
         to_clear = [
@@ -272,7 +272,7 @@ class CodexAgent(BaseAgent):
 
         self._session_mgr.set_thread_id(request.base_session_id, thread_id)
         # Also persist for resume support
-        self.settings_manager.set_agent_session_mapping(
+        self.sessions.set_agent_session_mapping(
             request.settings_key,
             self.name,
             request.base_session_id,
@@ -287,7 +287,7 @@ class CodexAgent(BaseAgent):
     ) -> str:
         """Try to resume a persisted thread, fall back to creating a new one."""
         # Check if we have a persisted Codex thread_id from settings_manager
-        persisted = self.settings_manager.get_agent_session_id(
+        persisted = self.sessions.get_agent_session_id(
             request.settings_key,
             request.base_session_id,
             self.name,

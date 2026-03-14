@@ -13,8 +13,9 @@ from markdown_to_mrkdwn import SlackMarkdownConverter
 
 from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
 from config.v2_config import SlackConfig
-from core.auth import check_auth, AuthResult
+from core.auth import AuthResult
 from .formatters import SlackFormatter
+from .slack_modal import parse_routing_modal_selection
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
     build_opencode_model_option_items,
@@ -55,6 +56,7 @@ class SlackBot(BaseIMClient):
 
         # Settings manager for thread tracking (will be injected later)
         self.settings_manager = None
+        self.sessions = None
         # Controller reference for update button handling (will be injected later)
         self._controller = None
         self._recent_event_ids: Dict[str, float] = {}
@@ -66,6 +68,7 @@ class SlackBot(BaseIMClient):
     def set_settings_manager(self, settings_manager):
         """Set the settings manager for thread tracking"""
         self.settings_manager = settings_manager
+        self.sessions = getattr(settings_manager, "sessions", None)
 
     def set_controller(self, controller):
         """Set the controller reference for handling update button clicks"""
@@ -208,7 +211,8 @@ class SlackBot(BaseIMClient):
             # Mark thread as active if we sent a message to a thread
             if self.settings_manager and (context.thread_id or reply_to):
                 thread_ts = context.thread_id or reply_to
-                self.settings_manager.mark_thread_active(context.user_id, context.channel_id, thread_ts)
+                if self.sessions:
+                    self.sessions.mark_thread_active(context.user_id, context.channel_id, thread_ts)
                 logger.debug(f"Marked thread {thread_ts} as active after bot message")
 
             return response["ts"]
@@ -649,7 +653,8 @@ class SlackBot(BaseIMClient):
 
             # Mark thread as active if we sent a message to a thread
             if self.settings_manager and context.thread_id:
-                self.settings_manager.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
+                if self.sessions:
+                    self.sessions.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
                 logger.debug(f"Marked thread {context.thread_id} as active after bot message with buttons")
 
             return response["ts"]
@@ -887,7 +892,10 @@ class SlackBot(BaseIMClient):
                     thread_ts = event.get("thread_ts")
                     # If we have settings_manager, check if thread is active
                     if self.settings_manager:
-                        if not self.settings_manager.is_thread_active(user_id, channel_id, thread_ts):
+                        thread_active = (
+                            self.sessions.is_thread_active(user_id, channel_id, thread_ts) if self.sessions else False
+                        )
+                        if not thread_active:
                             logger.debug(f"Ignoring message in inactive thread {thread_ts}: '{text}'")
                             return
                     else:
@@ -895,20 +903,13 @@ class SlackBot(BaseIMClient):
                         logger.debug(f"No settings_manager, ignoring thread message: '{text}'")
                         return
 
-            # Centralized auth gate — parse command name before auth so
-            # admin-protected text commands (e.g. /settings, /set_cwd) are checked.
             is_dm = channel_id.startswith("D")
-            if text.startswith("/"):
-                _cmd_parts = text.split(maxsplit=1)
-                auth_action = _cmd_parts[0][1:]  # strip leading "/"
-            else:
-                auth_action = ""
-            auth = check_auth(
+            auth = self.check_authorization(
                 user_id=user_id,
                 channel_id=channel_id,
                 is_dm=is_dm,
-                action=auth_action,
-                store=self.settings_manager.store if self.settings_manager else None,
+                text=text,
+                settings_manager=self.settings_manager,
             )
             if not auth.allowed:
                 await self._send_auth_denial(channel_id, user_id, auth)
@@ -944,15 +945,8 @@ class SlackBot(BaseIMClient):
 
             # Handle slash commands in regular messages (before appending shared content)
             # Use only the user's original text for command detection
-            if text.startswith("/"):
-                parts = text.split(maxsplit=1)
-                command = parts[0][1:]  # Remove the /
-                args = parts[1] if len(parts) > 1 else ""
-
-                if command in self.on_command_callbacks:
-                    handler = self.on_command_callbacks[command]
-                    await handler(context, args)
-                    return
+            if await self.dispatch_text_command(context, text):
+                return
 
             # Append shared content to user text (after command parsing)
             if shared_text:
@@ -968,15 +962,25 @@ class SlackBot(BaseIMClient):
         elif event_type == "app_mention":
             # Handle @mentions
             channel_id = event.get("channel")
+            user_id_mention = event.get("user")
+
+            # Remove the mention from the text first so we can parse commands for auth
+            text = event.get("text", "")
+            import re
+
+            text = re.sub(r"<@[\w]+>", "", text).strip()
+
+            # Parse command action for proper admin-protected auth check
+            parsed_command = self.parse_text_command(text)
+            auth_action = parsed_command[0] if parsed_command else ""
 
             # Centralized auth gate (app_mention is always in a channel, not DM)
-            user_id_mention = event.get("user")
-            auth = check_auth(
+            auth = self.check_authorization(
                 user_id=user_id_mention or "",
                 channel_id=channel_id,
                 is_dm=False,
-                action="",
-                store=self.settings_manager.store if self.settings_manager else None,
+                action=auth_action,
+                settings_manager=self.settings_manager,
             )
             if not auth.allowed:
                 await self._send_auth_denial(channel_id, user_id_mention or "", auth)
@@ -1004,35 +1008,26 @@ class SlackBot(BaseIMClient):
 
             # Mark thread as active when bot is @mentioned
             if self.settings_manager and thread_id:
-                self.settings_manager.mark_thread_active(event.get("user"), channel_id, thread_id)
+                if self.sessions:
+                    self.sessions.mark_thread_active(event.get("user"), channel_id, thread_id)
                 logger.info(f"Marked thread {thread_id} as active due to @mention")
-
-            # Remove the mention from the text
-            text = event.get("text", "")
-            import re
-
-            text = re.sub(r"<@[\w]+>", "", text).strip()
 
             # Extract shared/forwarded message content (defer appending until after command check)
             shared_text = await self._extract_shared_message_content(event)
 
             logger.info(f"App mention processed: original='{event.get('text')}', cleaned='{text}'")
 
-            # Check if this is a command after mention (before appending shared content)
-            if text.startswith("/"):
-                parts = text.split(maxsplit=1)
-                command = parts[0][1:]  # Remove the /
-                args = parts[1] if len(parts) > 1 else ""
-
+            # Check if this is a command after mention (command already parsed above for auth)
+            if parsed_command:
+                command, args = parsed_command
                 logger.info(f"Command detected: '{command}', available: {list(self.on_command_callbacks.keys())}")
 
-                if command in self.on_command_callbacks:
+                handler = self.on_command_callbacks.get(command)
+                if handler:
                     logger.info(f"Executing command handler for: {command}")
-                    handler = self.on_command_callbacks[command]
                     await handler(context, args)
                     return
-                else:
-                    logger.warning(f"Command '{command}' not found in callbacks")
+                logger.warning(f"Command '{command}' not found in callbacks")
 
             # Append shared content to user text (after command parsing)
             if shared_text:
@@ -1055,12 +1050,12 @@ class SlackBot(BaseIMClient):
 
         # Centralized auth gate
         is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
-        auth = check_auth(
+        auth = self.check_authorization(
             user_id=user_id,
             channel_id=channel_id,
             is_dm=is_dm,
             action=command,
-            store=self.settings_manager.store if self.settings_manager else None,
+            settings_manager=self.settings_manager,
         )
         if not auth.allowed:
             await self._send_auth_denial(channel_id, user_id, auth, response_url=response_url)
@@ -1147,12 +1142,12 @@ class SlackBot(BaseIMClient):
 
             # Centralized auth gate
             is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
-            auth = check_auth(
+            auth = self.check_authorization(
                 user_id=user.get("id", ""),
                 channel_id=channel_id or "",
                 is_dm=is_dm,
                 action=primary_action,
-                store=self.settings_manager.store if self.settings_manager else None,
+                settings_manager=self.settings_manager,
             )
             if not auth.allowed:
                 try:
@@ -1218,11 +1213,17 @@ class SlackBot(BaseIMClient):
                         if hasattr(self, "_on_routing_modal_update"):
                             channel_from_view = view.get("private_metadata")
                             effective_channel = channel_from_view or channel_id
+                            selection = parse_routing_modal_selection(
+                                view=view,
+                                action=action,
+                                default_backend="",
+                            )
                             await self._on_routing_modal_update(
                                 user.get("id"),
                                 effective_channel,
-                                view,
-                                action,
+                                view.get("id"),
+                                view.get("hash"),
+                                selection,
                                 is_dm=isinstance(effective_channel, str) and effective_channel.startswith("D"),
                             )
                 elif action_type == "plain_text_input":
@@ -1353,9 +1354,12 @@ class SlackBot(BaseIMClient):
 
             if hasattr(self, "_on_resume_session"):
                 is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
-                await self._on_resume_session(
-                    user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts, is_dm
-                )
+                callback = self._on_resume_session
+                try:
+                    await callback(user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts, is_dm)
+                except TypeError:
+                    # Backward compatibility: older callback signature omitted is_dm.
+                    await callback(user_id, channel_id, thread_id, chosen_agent, chosen_session, host_message_ts)
 
         elif callback_id == "opencode_question_modal" or callback_id == "claude_question_modal":
             # Generic question modal handling for both OpenCode and Claude

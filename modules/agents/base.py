@@ -59,6 +59,11 @@ class BaseAgent(ABC):
         self.config = controller.config
         self.im_client = controller.im_client
         self.settings_manager = controller.settings_manager
+        self.sessions = (
+            getattr(controller, "sessions", None)
+            or getattr(controller.settings_manager, "sessions", None)
+            or controller.settings_manager
+        )
 
     def _calculate_duration_ms(self, started_at: Optional[float]) -> int:
         if not started_at:

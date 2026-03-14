@@ -2,7 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, Dict, Any, List
+from typing import Optional, Callable, Dict, Any, List, Tuple
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,74 @@ class BaseIMClient(ABC):
         """
         # Default implementation - subclasses should override
         return False
+
+    @staticmethod
+    def extract_command_action(text: str) -> str:
+        """Extract command action name from slash command text.
+
+        Examples:
+            "/settings" -> "settings"
+            "/set_cwd /tmp" -> "set_cwd"
+            "hello" -> ""
+        """
+        if not text or not text.startswith("/"):
+            return ""
+        parts = text.split(maxsplit=1)
+        return parts[0][1:] if parts and len(parts[0]) > 1 else ""
+
+    @staticmethod
+    def parse_text_command(text: str) -> Optional[Tuple[str, str]]:
+        """Parse slash-style command text.
+
+        Returns:
+            (command, args) when ``text`` starts with ``/`` and contains a
+            non-empty command; otherwise ``None``.
+        """
+        if not text or not text.startswith("/"):
+            return None
+        parts = text.split(maxsplit=1)
+        command = parts[0][1:] if parts and len(parts[0]) > 1 else ""
+        if not command:
+            return None
+        args = parts[1] if len(parts) > 1 else ""
+        return command, args
+
+    async def dispatch_text_command(self, context: MessageContext, text: str) -> bool:
+        """Dispatch slash-style text command if registered.
+
+        Returns ``True`` if a matching command handler ran.
+        """
+        parsed = self.parse_text_command(text)
+        if not parsed:
+            return False
+        command, args = parsed
+        handler = self.on_command_callbacks.get(command)
+        if not handler:
+            return False
+        await handler(context, args)
+        return True
+
+    def check_authorization(
+        self,
+        *,
+        user_id: str,
+        channel_id: str,
+        is_dm: bool,
+        text: str = "",
+        action: str = "",
+        settings_manager: Any = None,
+    ):
+        """Run centralized auth with shared action extraction logic."""
+        from core.auth import check_auth
+
+        resolved_action = action or self.extract_command_action(text)
+        return check_auth(
+            user_id=user_id,
+            channel_id=channel_id,
+            is_dm=is_dm,
+            action=resolved_action,
+            settings_manager=settings_manager,
+        )
 
     @abstractmethod
     async def send_message(

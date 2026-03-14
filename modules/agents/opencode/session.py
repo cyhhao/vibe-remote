@@ -84,9 +84,7 @@ class OpenCodeSessionManager:
             try:
                 messages = await server.list_messages(session_id, directory)
             except Exception as err:
-                logger.debug(
-                    f"Failed to poll OpenCode session {session_id} for idle: {err}"
-                )
+                logger.debug(f"Failed to poll OpenCode session {session_id} for idle: {err}")
                 await asyncio.sleep(1.0)
                 continue
 
@@ -115,12 +113,12 @@ class OpenCodeSessionManager:
         if not os.path.exists(working_path):
             os.makedirs(working_path, exist_ok=True)
 
-    async def get_or_create_session_id(
-        self, request: AgentRequest, server: OpenCodeServerManager
-    ) -> Optional[str]:
+    async def get_or_create_session_id(self, request: AgentRequest, server: OpenCodeServerManager) -> Optional[str]:
         """Get a cached OpenCode session id, or create a new session."""
 
-        session_id = self._settings_manager.get_agent_session_id(
+        sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
+
+        session_id = sessions.get_agent_session_id(
             request.settings_key,
             request.base_session_id,
             agent_name=self._agent_name,
@@ -134,15 +132,13 @@ class OpenCodeSessionManager:
                 )
                 session_id = session_data.get("id")
                 if session_id:
-                    self._settings_manager.set_agent_session_mapping(
+                    sessions.set_agent_session_mapping(
                         request.settings_key,
                         self._agent_name,
                         request.base_session_id,
                         session_id,
                     )
-                    logger.info(
-                        f"Created OpenCode session {session_id} for {request.base_session_id}"
-                    )
+                    logger.info(f"Created OpenCode session {session_id} for {request.base_session_id}")
             except Exception as e:
                 logger.error(f"Failed to create OpenCode session: {e}", exc_info=True)
                 return None
@@ -159,15 +155,13 @@ class OpenCodeSessionManager:
             )
             new_session_id = session_data.get("id")
             if new_session_id:
-                self._settings_manager.set_agent_session_mapping(
+                sessions.set_agent_session_mapping(
                     request.settings_key,
                     self._agent_name,
                     request.base_session_id,
                     new_session_id,
                 )
-                logger.info(
-                    f"Recreated OpenCode session {new_session_id} for {request.base_session_id}"
-                )
+                logger.info(f"Recreated OpenCode session {new_session_id} for {request.base_session_id}")
                 return new_session_id
         except Exception as e:
             logger.error(f"Failed to recreate session: {e}", exc_info=True)
