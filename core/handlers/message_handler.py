@@ -391,6 +391,27 @@ class MessageHandler(BaseHandler):
                 )
                 await self.controller.agent_service.handle_message("claude", request)
 
+            elif callback_data.startswith("quick_reply:"):
+                # Quick-reply button: treat the button text as a new user message
+                reply_text = callback_data[len("quick_reply:") :]
+                if reply_text:
+                    # Remove buttons from the original message
+                    if context.message_id:
+                        try:
+                            await self.im_client.remove_inline_keyboard(context, context.message_id)
+                        except Exception as err:
+                            logger.debug(f"Failed to remove quick-reply buttons: {err}")
+
+                    # Dispatch as a normal user message
+                    context_for_reply = MessageContext(
+                        user_id=context.user_id,
+                        channel_id=context.channel_id,
+                        thread_id=context.thread_id,
+                        message_id=None,
+                        platform_specific=context.platform_specific,
+                    )
+                    await self.handle_user_message(context_for_reply, reply_text)
+
             else:
                 logger.warning(f"Unknown callback data: {callback_data}")
                 await self.im_client.send_message(

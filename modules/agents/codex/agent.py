@@ -260,6 +260,11 @@ class CodexAgent(BaseAgent):
             "sandbox": "danger-full-access",
         }
 
+        if getattr(self.controller.config, "reply_enhancements", True):
+            from core.reply_enhancer import REPLY_ENHANCEMENTS_PROMPT
+
+            params["developerInstructions"] = REPLY_ENHANCEMENTS_PROMPT
+
         resp = await transport.send_request("thread/start", params)
         # thread/start returns Thread directly OR may nest under "thread"
         thread_id = resp.get("id", "")

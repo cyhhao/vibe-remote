@@ -225,6 +225,13 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             # Prepare message with file attachment info if present
             prompt_text = self._prepare_message_with_files(request)
 
+            # Inject reply-enhancement instructions via the system field (appended by OpenCode)
+            reply_system: Optional[str] = None
+            if getattr(self.controller.config, "reply_enhancements", True):
+                from core.reply_enhancer import REPLY_ENHANCEMENTS_PROMPT
+
+                reply_system = REPLY_ENHANCEMENTS_PROMPT
+
             await server.prompt_async(
                 session_id=session_id,
                 directory=request.working_path,
@@ -232,6 +239,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 agent=agent_to_use,
                 model=model_dict,
                 reasoning_effort=reasoning_effort,
+                system=reply_system,
             )
 
             logger.info(

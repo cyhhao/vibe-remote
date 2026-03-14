@@ -361,6 +361,8 @@
     "showDurationHint": "Display task elapsed time in result messages",
     "includeUserInfo": "Include User Info",
     "includeUserInfoHint": "Prepend [username<user_id>] to messages sent to agents",
+    "replyEnhancements": "Reply Enhancements",
+    "replyEnhancementsHint": "Enable file attachments and quick-reply buttons in agent responses",
     "allowedChannels": "Allowed Channels",
     "consoleServer": "Console Server",
     "host": "Host",
