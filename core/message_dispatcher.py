@@ -348,11 +348,13 @@ class ConsolidatedMessageDispatcher:
             logger.debug("IM client does not support upload_file_from_path; skipping file uploads")
             return
 
-        # Determine allowed roots for file uploads (cwd + /tmp)
-        allowed_roots: list[Path] = [Path("/tmp")]
-        cwd = getattr(self.controller.config, "runtime", None)
-        if cwd and hasattr(cwd, "default_cwd"):
-            allowed_roots.append(Path(cwd.default_cwd).resolve())
+        # Determine allowed roots for file uploads (active cwd + /tmp)
+        allowed_roots: list[Path] = [Path("/tmp").resolve()]
+        try:
+            active_cwd = self.controller.get_cwd(context)
+            allowed_roots.append(Path(active_cwd).resolve())
+        except Exception:
+            pass
 
         for fl in files:
             if not os.path.isfile(fl.path):
