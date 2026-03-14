@@ -13,6 +13,9 @@ build/
 .venv/
 venv/
 .env
+.env.*
+.env.e2e
+.env.e2e.example
 
 # IDE
 .idea/

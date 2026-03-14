@@ -569,6 +569,11 @@ def setup_first_bind_code():
 import os as _os
 
 if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
+    logger.warning(
+        "E2E_TEST_MODE is ENABLED. /e2e/* endpoints are registered. "
+        "These endpoints allow unauthenticated config mutation. "
+        "Do NOT enable in production."
+    )
 
     @app.route("/e2e/simulate-interaction", methods=["POST"])
     def e2e_simulate_interaction():
@@ -589,9 +594,6 @@ if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
             action (str):       "settings_submit" | "routing_submit" | "cwd_submit"
             modal_values (dict): the values to submit
         """
-        from vibe import api as vibe_api
-        from config.v2_settings import SettingsStore
-
         payload = request.json or {}
         action = payload.get("action", "")
         modal_values = payload.get("modal_values", {})
@@ -601,9 +603,69 @@ if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
 
         try:
             if action == "settings_submit":
-                # Write settings via the existing settings API
-                result = vibe_api.save_settings(modal_values)
-                return jsonify({"ok": True, "action": action, "result": result})
+                # Merge settings into existing store (not wholesale replace)
+                from config.v2_settings import SettingsStore, ChannelSettings, normalize_show_message_types
+                from vibe.api import _parse_routing
+
+                settings_key = modal_values.get("settings_key") or modal_values.get("channel_id")
+                if not settings_key:
+                    return jsonify({"ok": False, "error": "settings_key or channel_id required in modal_values"}), 400
+
+                store = SettingsStore.get_instance()
+                store.maybe_reload()
+                ch = store.settings.channels.get(settings_key)
+                if not ch:
+                    ch = ChannelSettings(enabled=True)
+                    store.settings.channels[settings_key] = ch
+
+                if "show_message_types" in modal_values:
+                    ch.show_message_types = normalize_show_message_types(modal_values["show_message_types"])
+                if "custom_cwd" in modal_values:
+                    ch.custom_cwd = modal_values["custom_cwd"]
+                if "require_mention" in modal_values:
+                    ch.require_mention = modal_values["require_mention"]
+                if "routing" in modal_values:
+                    ch.routing = _parse_routing(modal_values["routing"])
+
+                store.save()
+                return jsonify({"ok": True, "action": action})
+
+            elif action == "routing_submit":
+                # Write routing config for a specific channel/user
+                channel_id = modal_values.get("channel_id") or modal_values.get("settings_key")
+                if not channel_id:
+                    return jsonify({"ok": False, "error": "channel_id required in modal_values"}), 400
+
+                store = SettingsStore.get_instance()
+                store.maybe_reload()
+                ch = store.settings.channels.get(channel_id)
+                if ch:
+                    from config.v2_settings import RoutingSettings
+
+                    ch.routing = RoutingSettings(
+                        agent_backend=modal_values.get("backend", "opencode"),
+                        opencode_agent=modal_values.get("opencode_agent"),
+                        opencode_model=modal_values.get("opencode_model"),
+                        opencode_reasoning_effort=modal_values.get("opencode_reasoning_effort"),
+                        claude_agent=modal_values.get("claude_agent"),
+                        claude_model=modal_values.get("claude_model"),
+                        codex_model=modal_values.get("codex_model"),
+                        codex_reasoning_effort=modal_values.get("codex_reasoning_effort"),
+                    )
+                    store.save()
+                    return jsonify({"ok": True, "action": action})
+                else:
+                    return jsonify({"ok": False, "error": f"channel {channel_id} not found in settings"}), 404
+
+            elif action == "cwd_submit":
+                # Merge CWD into existing config (load → modify → save)
+                from vibe import api as vibe_api
+
+                current = vibe_api.config_to_payload(vibe_api.load_config())
+                current.setdefault("runtime", {})
+                current["runtime"]["default_cwd"] = modal_values.get("cwd", "/tmp")
+                result = vibe_api.save_config(current)
+                return jsonify({"ok": True, "action": action})
 
             elif action == "routing_submit":
                 # Write routing config for a specific channel/user

@@ -115,3 +115,94 @@ def vibe_container():
 def api_url(vibe_container):
     """Convenience: returns the base URL string."""
     return vibe_container
+
+
+# =============================================================================
+# Platform Integration Driver Fixtures
+# Auto-skip when platform tokens are not configured.
+# =============================================================================
+
+
+def _env(key: str) -> str:
+    """Get env var or empty string."""
+    return os.environ.get(key, "")
+
+
+def _has_slack_config() -> bool:
+    return bool(_env("E2E_SLACK_BOT_B_TOKEN") and _env("E2E_SLACK_CHANNEL") and _env("E2E_SLACK_BOT_A_ID"))
+
+
+def _has_discord_config() -> bool:
+    return bool(_env("E2E_DISCORD_BOT_B_TOKEN") and _env("E2E_DISCORD_CHANNEL") and _env("E2E_DISCORD_BOT_A_ID"))
+
+
+def _has_feishu_config() -> bool:
+    return bool(
+        _env("E2E_FEISHU_BOT_B_APP_ID")
+        and _env("E2E_FEISHU_BOT_B_APP_SECRET")
+        and _env("E2E_FEISHU_CHAT_ID")
+        and _env("E2E_FEISHU_BOT_A_ID")
+    )
+
+
+def _platform_enabled(platform: str) -> bool:
+    """Check if a specific platform is selected for integration testing.
+
+    If E2E_PLATFORM is not set, all configured platforms are enabled.
+    If set (e.g. "slack"), only that platform runs.
+    """
+    selected = _env("E2E_PLATFORM")
+    return not selected or selected.lower() == platform.lower()
+
+
+@pytest.fixture(scope="session")
+def slack_driver():
+    """Session-scoped Slack driver. Skips if not configured."""
+    if not _has_slack_config():
+        pytest.skip("Slack E2E not configured (need E2E_SLACK_BOT_B_TOKEN, E2E_SLACK_CHANNEL, E2E_SLACK_BOT_A_ID)")
+    if not _platform_enabled("slack"):
+        pytest.skip(f"Slack skipped: E2E_PLATFORM={_env('E2E_PLATFORM')}")
+
+    import asyncio
+    from tests.e2e.drivers.slack_driver import SlackDriver
+
+    driver = SlackDriver()
+    asyncio.get_event_loop().run_until_complete(driver.setup())
+    yield driver
+    asyncio.get_event_loop().run_until_complete(driver.teardown())
+
+
+@pytest.fixture(scope="session")
+def discord_driver():
+    """Session-scoped Discord driver. Skips if not configured."""
+    if not _has_discord_config():
+        pytest.skip(
+            "Discord E2E not configured (need E2E_DISCORD_BOT_B_TOKEN, E2E_DISCORD_CHANNEL, E2E_DISCORD_BOT_A_ID)"
+        )
+    if not _platform_enabled("discord"):
+        pytest.skip(f"Discord skipped: E2E_PLATFORM={_env('E2E_PLATFORM')}")
+
+    import asyncio
+    from tests.e2e.drivers.discord_driver import DiscordDriver
+
+    driver = DiscordDriver()
+    asyncio.get_event_loop().run_until_complete(driver.setup())
+    yield driver
+    asyncio.get_event_loop().run_until_complete(driver.teardown())
+
+
+@pytest.fixture(scope="session")
+def feishu_driver():
+    """Session-scoped Feishu driver. Skips if not configured."""
+    if not _has_feishu_config():
+        pytest.skip("Feishu E2E not configured (need E2E_FEISHU_BOT_B_*, E2E_FEISHU_CHAT_ID, E2E_FEISHU_BOT_A_ID)")
+    if not _platform_enabled("feishu"):
+        pytest.skip(f"Feishu skipped: E2E_PLATFORM={_env('E2E_PLATFORM')}")
+
+    import asyncio
+    from tests.e2e.drivers.feishu_driver import FeishuDriver
+
+    driver = FeishuDriver()
+    asyncio.get_event_loop().run_until_complete(driver.setup())
+    yield driver
+    asyncio.get_event_loop().run_until_complete(driver.teardown())

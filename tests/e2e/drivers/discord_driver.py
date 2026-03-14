@@ -57,13 +57,13 @@ class DiscordDriver(PlatformDriver):
 
     async def send_message(self, text: str, thread_id: Optional[str] = None) -> str:
         assert self._session is not None, "Driver not set up"
-        payload: dict = {"content": text}
-        if thread_id:
-            # Discord uses message_reference for threads
-            payload["message_reference"] = {"message_id": thread_id}
+        # Discord threads are separate channels. If thread_id is provided,
+        # post to the thread channel directly instead of using message_reference.
+        target_channel = thread_id if thread_id else self.channel_id
+        payload = {"content": text}
 
         async with self._session.post(
-            f"{DISCORD_API}/channels/{self.channel_id}/messages",
+            f"{DISCORD_API}/channels/{target_channel}/messages",
             headers=self._headers(),
             json=payload,
         ) as resp:
