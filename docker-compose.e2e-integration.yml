@@ -1,0 +1,35 @@
+# Full E2E integration test compose.
+# Runs vibe-remote in full mode (service + UI) with platform connections.
+#
+# Usage:
+#   cp .env.e2e.example .env.e2e
+#   # Fill in tokens...
+#   docker compose -f docker-compose.e2e-integration.yml up -d
+#   pytest tests/e2e/ -v -k integration
+
+services:
+  vibe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: integration
+    ports:
+      - "${VIBE_E2E_PORT:-15123}:5123"
+    env_file:
+      - .env.e2e
+    environment:
+      - VIBE_REMOTE_HOME=/data/vibe_remote
+      - VIBE_UI_PORT=5123
+      - E2E_TEST_MODE=true
+    volumes:
+      - vibe-e2e-data:/data/vibe_remote
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5123/health', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    command: ["full"]
+
+volumes:
+  vibe-e2e-data:
