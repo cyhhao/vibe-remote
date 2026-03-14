@@ -148,7 +148,7 @@ class ConsolidatedMessageDispatcher:
             reply_enhancements_on = getattr(self.controller.config, "reply_enhancements", True)
             if reply_enhancements_on:
                 enhanced = process_reply(text)
-                display_text = enhanced.text or text
+                display_text = enhanced.text if enhanced.text.strip() else text
             else:
                 enhanced = None
                 display_text = text
@@ -342,19 +342,35 @@ class ConsolidatedMessageDispatcher:
     ) -> None:
         """Upload local files referenced by ``file://`` links."""
         import os
+        from pathlib import Path
 
         if not hasattr(im_client, "upload_file_from_path"):
             logger.debug("IM client does not support upload_file_from_path; skipping file uploads")
             return
 
+        # Determine allowed roots for file uploads (cwd + /tmp)
+        allowed_roots: list[Path] = [Path("/tmp")]
+        cwd = getattr(self.controller.config, "runtime", None)
+        if cwd and hasattr(cwd, "default_cwd"):
+            allowed_roots.append(Path(cwd.default_cwd).resolve())
+
         for fl in files:
             if not os.path.isfile(fl.path):
                 logger.warning("File not found, skipping upload: %s", fl.path)
                 continue
+            # Security: resolve symlinks and ensure within allowed roots
+            try:
+                resolved = Path(fl.path).resolve(strict=True)
+            except (OSError, ValueError):
+                logger.warning("Cannot resolve file path, skipping: %s", fl.path)
+                continue
+            if not any(resolved == root or resolved.is_relative_to(root) for root in allowed_roots):
+                logger.warning("File outside allowed roots, skipping: %s", fl.path)
+                continue
             try:
                 await im_client.upload_file_from_path(
                     context,
-                    file_path=fl.path,
+                    file_path=str(resolved),
                     title=fl.label or os.path.basename(fl.path),
                 )
             except Exception as err:

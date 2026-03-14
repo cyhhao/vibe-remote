@@ -128,13 +128,16 @@ def _extract_buttons(text: str) -> Tuple[List[QuickReplyButton], str]:
 
     block = m.group(1)
     buttons: List[QuickReplyButton] = []
-    for (label,) in _BUTTON_TOKEN_RE.findall(block):
+    for label in _BUTTON_TOKEN_RE.findall(block):
         label = label.strip()
         if label:
             buttons.append(QuickReplyButton(text=label))
 
     if not buttons:
         return [], text
+
+    # Enforce a reasonable upper bound on button count
+    buttons = buttons[:5]
 
     cleaned = text[: m.start()]
     return buttons, cleaned
