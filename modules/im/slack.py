@@ -767,6 +767,13 @@ class SlackBot(BaseIMClient):
             payload_message = payload.get("message") if isinstance(payload, dict) else None
 
             blocks = []
+            if isinstance(payload_message, dict):
+                payload_blocks = payload_message.get("blocks")
+                if isinstance(payload_blocks, list):
+                    for block in payload_blocks:
+                        if isinstance(block, dict) and block.get("type") != "actions":
+                            blocks.append(block)
+
             fallback_text = text
             if fallback_text is not None and parse_mode == "markdown":
                 fallback_text = self._convert_markdown_to_slack_mrkdwn(fallback_text)
@@ -776,7 +783,7 @@ class SlackBot(BaseIMClient):
                 if isinstance(payload_text, str):
                     fallback_text = payload_text
 
-            if fallback_text:
+            if not blocks and fallback_text:
                 blocks = [
                     {
                         "type": "section",
@@ -786,12 +793,6 @@ class SlackBot(BaseIMClient):
                         },
                     }
                 ]
-            elif isinstance(payload_message, dict):
-                payload_blocks = payload_message.get("blocks")
-                if isinstance(payload_blocks, list):
-                    for block in payload_blocks:
-                        if isinstance(block, dict) and block.get("type") != "actions":
-                            blocks.append(block)
 
             kwargs = {"channel": context.channel_id, "ts": message_id, "blocks": blocks}
             if fallback_text is not None:
