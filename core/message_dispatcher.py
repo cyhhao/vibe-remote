@@ -190,6 +190,15 @@ class ConsolidatedMessageDispatcher:
             if enhanced and enhanced.files:
                 await self._upload_file_links(im_client, target_context, enhanced.files)
 
+            # Final result closes the current turn: clear consolidated
+            # assistant/tool/system message state so the next user turn starts
+            # a fresh log message instead of appending to the previous one.
+            consolidated_key = self._get_consolidated_message_key(context)
+            lock = self._get_consolidated_message_lock(consolidated_key)
+            async with lock:
+                self._consolidated_message_ids.pop(consolidated_key, None)
+                self._consolidated_message_buffers.pop(consolidated_key, None)
+
             return
 
         if canonical_type not in {"system", "assistant", "toolcall"}:
@@ -369,11 +378,41 @@ class ConsolidatedMessageDispatcher:
             if not any(resolved == root or resolved.is_relative_to(root) for root in allowed_roots):
                 logger.warning("File outside allowed roots, skipping: %s", fl.path)
                 continue
+
+            # Use link label as title, but preserve file extension so users can
+            # download/open files correctly on all platforms.
+            upload_title = (fl.label or "").strip() or os.path.basename(fl.path)
+            src_ext = resolved.suffix
+            if src_ext and not Path(upload_title).suffix:
+                upload_title = f"{upload_title}{src_ext}"
+
             try:
-                await im_client.upload_file_from_path(
-                    context,
-                    file_path=str(resolved),
-                    title=fl.label or os.path.basename(fl.path),
-                )
+                if getattr(fl, "is_image", False):
+                    try:
+                        await im_client.upload_image_from_path(
+                            context,
+                            file_path=str(resolved),
+                            title=upload_title,
+                        )
+                    except Exception as image_err:
+                        logger.warning(
+                            "Image upload failed for %s, fallback to file upload: %r",
+                            fl.path,
+                            image_err,
+                        )
+                        await im_client.upload_file_from_path(
+                            context,
+                            file_path=str(resolved),
+                            title=upload_title,
+                        )
+                else:
+                    await im_client.upload_file_from_path(
+                        context,
+                        file_path=str(resolved),
+                        title=upload_title,
+                    )
+            except NotImplementedError:
+                logger.debug("IM client does not implement file uploads; skipping")
+                return
             except Exception as err:
-                logger.warning("Failed to upload file %s: %s", fl.path, err)
+                logger.warning("Failed to upload file %s: %r", fl.path, err)

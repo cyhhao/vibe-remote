@@ -133,7 +133,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
 
         <button
           onClick={() => navigate('/dashboard')}
-          className="mt-8 px-8 py-3 bg-primary hover:bg-primary/90 text-white rounded-lg font-bold transition-colors shadow-sm"
+          className="mt-8 px-8 py-3 bg-accent hover:bg-accent/90 text-white rounded-lg font-bold transition-colors shadow-sm"
         >
           {t('summary.goToDashboard')}
         </button>
@@ -213,7 +213,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
           <h3 className="text-sm font-medium text-text mb-3">{t('summary.usageTips')}</h3>
           <div className="space-y-3">
             <div className="flex items-start gap-3">
-              <div className="w-8 h-8 bg-primary/10 text-primary rounded-lg flex items-center justify-center flex-shrink-0">
+              <div className="w-8 h-8 bg-accent/10 text-accent rounded-lg flex items-center justify-center flex-shrink-0">
                 <Terminal size={16} />
               </div>
               <div>

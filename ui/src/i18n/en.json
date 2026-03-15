@@ -122,7 +122,11 @@
     "step4Description": "Copy the bot token and validate access.",
     "step4Item1": "In the Bot tab, click \"Reset Token\" or \"View Token\"",
     "step4Item2": "Copy the token and paste it here",
-    "step4Item3": "Validate the token and choose a guild"
+    "step4Item3": "Validate the token and choose a guild",
+    "dmTroubleshootTitle": "DM Troubleshooting",
+    "dmTroubleshoot1": "Make sure your account and the bot are in at least one common server.",
+    "dmTroubleshoot2": "In server Privacy Settings, enable \"Allow direct messages from server members\".",
+    "dmTroubleshoot3": "Ensure you didn't block the bot account."
   },
   "larkConfig": {
     "title": "Configure Lark",
@@ -162,11 +166,12 @@
     "step3Item6": "im:resource — Upload/download files and images",
     "step3Item7": "im:chat — Access chat/group information",
     "step3Item8": "im:message.reactions — Read/write emoji reactions",
-    "step3Item9": "contact:user.base:readonly — Read user basic info",
+    "step3Item9": "contact:contact.base:readonly — Read user basic info",
     "step3Item10": "im:message:update — Edit/update sent messages and cards",
     "step3Item11": "im:message:recall — Recall (delete) bot messages",
     "step3Item12": "cardkit:card:write — Create and manage card templates",
     "step3Item13": "cardkit:card:read — Read card templates",
+    "step3Item14": "contact:user.base:readonly — Read user basic info (legacy scope)",
     "step3BatchImport": "Quick setup: Copy JSON and use \"Batch Import/Export Permissions\"",
     "step3CopyJson": "Copy JSON",
     "step3Copied": "Copied!",
@@ -439,6 +444,8 @@
     "boundAt": "Bound",
     "removeUser": "Remove",
     "removeConfirm": "Remove this user? This cannot be undone.",
+    "lastAdminDemoteWarning": "You are removing the last admin role. Continuing will put the bot into an 'unrestricted admin' state, where any bound user can access admin menus. Continue?",
+    "lastAdminRemoveWarning": "You are removing the last admin user. Continuing will put the bot into an 'unrestricted admin' state, where any bound user can access admin menus. Continue?",
     "cannotRemoveLastAdmin": "Cannot remove the last admin",
     "adminToggled": "Admin status updated",
     "userRemoved": "User removed"
@@ -462,6 +469,13 @@
     "expirationDate": "Expiration date",
     "created": "Bind code created",
     "deleted": "Bind code deleted",
-    "noCodes": "No bind codes yet. Create one to get started."
+    "noCodes": "No bind codes yet. Create one to get started.",
+    "usageTitle": "How to use a bind code",
+    "usageHint": "Share an active code with the user, then ask them to DM the bot with `/bind <code>`.",
+    "viewUnavailable": "Unavailable ({{count}})",
+    "unavailableTitle": "Unavailable Bind Codes",
+    "noAvailableCodes": "No active bind codes. Create a new code to start binding users.",
+    "noUnavailableCodes": "No unavailable bind codes.",
+    "close": "Close"
   }
 }

@@ -62,6 +62,7 @@ def check_auth(
     user_id: str,
     channel_id: str,
     is_dm: bool,
+    platform: str | None = None,
     action: str = "",
     settings_manager: object | None = None,
     store: "SettingsStore | None" = None,
@@ -100,18 +101,36 @@ def check_auth(
     if is_dm:
         if action in BIND_EXEMPT_COMMANDS:
             return AuthResult(allowed=True, is_dm=True)
-        if not store.is_bound_user(user_id):
+        try:
+            is_bound = store.is_bound_user(user_id, platform=platform)
+        except TypeError:
+            is_bound = store.is_bound_user(user_id)
+        if not is_bound:
             return AuthResult(allowed=False, denial="unbound_dm", is_dm=True)
         # DM users skip channel authorization
     else:
         # 2. Channel authorization
-        ch = store.settings.channels.get(channel_id)
+        if hasattr(store, "find_channel"):
+            try:
+                ch = store.find_channel(channel_id, platform=platform)
+            except TypeError:
+                ch = store.find_channel(channel_id)
+        else:
+            ch = getattr(getattr(store, "settings", None), "channels", {}).get(channel_id)
         if not ch or not ch.enabled:
             return AuthResult(allowed=False, denial="unauthorized_channel", is_dm=False)
 
     # 3. Admin check for protected actions
     if _is_admin_protected(action):
-        if store.has_any_admin() and not store.is_admin(user_id):
+        try:
+            has_admin = store.has_any_admin(platform=platform)
+        except TypeError:
+            has_admin = store.has_any_admin()
+        try:
+            is_admin = store.is_admin(user_id, platform=platform)
+        except TypeError:
+            is_admin = store.is_admin(user_id)
+        if has_admin and not is_admin:
             return AuthResult(allowed=False, denial="not_admin", is_dm=is_dm)
 
     return AuthResult(allowed=True, is_dm=is_dm)

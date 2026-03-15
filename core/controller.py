@@ -90,7 +90,7 @@ class Controller:
 
         # Initialize managers
         self.session_manager = SessionManager()
-        self.settings_manager = SettingsManager()
+        self.settings_manager = SettingsManager(platform=self.config.platform)
         self.sessions = self.settings_manager.sessions
 
         # Migrate legacy per-channel language into global config

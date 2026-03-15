@@ -227,7 +227,8 @@
     }
   },
   "message": {
-    "ack": "{agent} received, processing..."
+    "ack": "{agent} received, processing...",
+    "quickReplyNote": "Reply: {text}"
   },
   "backend": {
     "claude": "ClaudeCode",

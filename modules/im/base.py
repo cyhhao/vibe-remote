@@ -192,9 +192,36 @@ class BaseIMClient(ABC):
             user_id=user_id,
             channel_id=channel_id,
             is_dm=is_dm,
+            platform=getattr(settings_manager, "platform", None),
             action=resolved_action,
             settings_manager=settings_manager,
         )
+
+    def build_auth_denial_text(self, denial: str, channel_id: Optional[str] = None) -> Optional[str]:
+        """Build a localized denial message from centralized auth result.
+
+        Keeps denial copy in one place so IM implementations only handle
+        delivery mechanics (how to send), not message wording/branching.
+        """
+
+        def _translate(key: str, **kwargs) -> str:
+            translator = getattr(self, "_t", None)
+            if callable(translator):
+                try:
+                    return translator(key, channel_id, **kwargs)
+                except TypeError:
+                    return translator(key, **kwargs)
+            from vibe.i18n import t as i18n_t
+
+            return i18n_t(key, "en", **kwargs)
+
+        if denial == "unbound_dm":
+            return _translate("bind.dmNotBound")
+        if denial == "unauthorized_channel":
+            return f"❌ {_translate('error.channelNotEnabled')}"
+        if denial == "not_admin":
+            return _translate("permission.adminOnly")
+        return None
 
     @abstractmethod
     async def send_message(
@@ -258,6 +285,19 @@ class BaseIMClient(ABC):
         """
         raise NotImplementedError
 
+    async def upload_image_from_path(
+        self,
+        context: MessageContext,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> str:
+        """Upload a local image to the conversation (optional per platform).
+
+        Default behavior falls back to ``upload_file_from_path`` so platforms
+        without native image upload support still deliver the attachment.
+        """
+        return await self.upload_file_from_path(context, file_path, title=title)
+
     @abstractmethod
     async def edit_message(
         self,
@@ -298,6 +338,16 @@ class BaseIMClient(ABC):
             keyboard=None,
             parse_mode=parse_mode,
         )
+
+    async def dismiss_form_message(self, context: MessageContext) -> None:
+        """Dismiss a form card message after successful submission.
+
+        Platforms that render forms as persistent chat messages (Feishu,
+        Discord) should override this to delete or replace the card so
+        it doesn't remain interactive.  Platforms whose forms are
+        ephemeral modals (Slack) can keep the default no-op.
+        """
+        pass
 
     @abstractmethod
     async def answer_callback(self, callback_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:

@@ -110,6 +110,39 @@ For complex features or bug fixes that may take extended time and block the main
 
 ## 2) Project-Specific (Vibe Remote)
 
+### Architecture & Layering
+
+Vibe Remote is a **multi-platform, multi-backend** system. Every feature and bug fix must be evaluated from this perspective.
+
+```
+┌─────────────────────────────────────┐
+│  core/controller.py                 │  Orchestration — platform/backend agnostic
+│  core/handlers/                     │  Business logic — platform/backend agnostic
+│  core/message_dispatcher.py         │  Message routing — platform/backend agnostic
+├─────────────────────────────────────┤
+│  modules/im/base.py                 │  IM abstraction (BaseIMClient)
+│  modules/agents/base.py             │  Agent abstraction (BaseAgentBackend)
+│  modules/im/formatters/base_formatter.py │  Formatter abstraction
+├─────────────────────────────────────┤
+│  modules/im/slack.py, feishu.py, discord.py   │  IM implementations
+│  modules/agents/claude_agent.py, codex/, opencode/ │  Agent implementations
+│  modules/im/formatters/slack_formatter.py, ...     │  Formatter implementations
+└─────────────────────────────────────┘
+```
+
+**Key rule: fix at the highest appropriate layer.**
+
+- A bug triggered on Feishu is often a common issue. Check: does the same logic path exist for Slack/Discord? If yes, fix in the handler/base layer, not the platform layer.
+- A feature for one agent backend likely applies to all. Check: should the behavior be in `base.py` or `controller.py` rather than `claude_agent.py`?
+- User-facing text must go through `vibe/i18n/` — never hardcode strings in handler or platform code.
+
+**Decision checklist before writing code:**
+
+1. **Scope**: Does this affect one platform/backend, or all? → If all, fix in the common layer.
+2. **Abstraction**: Can the base class provide a default? → Add to base, override only where platforms genuinely differ.
+3. **Callers**: Who calls this code? → If it's called from common code (handlers/controller), the fix belongs in common code.
+4. **Future platforms**: If we add a new IM platform tomorrow, would it inherit correct behavior automatically? → If not, the abstraction is wrong.
+
 ### Structure
 
 - Entry point: `main.py` wires `config.V2Config` into `core/controller.py`.

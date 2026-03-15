@@ -44,6 +44,8 @@ class AppCompatConfig:
     ack_mode: str
     language: str
     show_duration: bool = True
+    include_user_info: bool = True
+    reply_enhancements: bool = True
     default_backend: str = "opencode"
 
 
@@ -82,5 +84,7 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         ack_mode=v2.ack_mode,
         language=v2.language,
         show_duration=v2.show_duration,
+        include_user_info=v2.include_user_info,
+        reply_enhancements=v2.reply_enhancements,
         default_backend=v2.agents.default_backend,
     )

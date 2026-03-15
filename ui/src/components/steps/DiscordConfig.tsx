@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Shield, RefreshCw, Check, Server, KeyRound, Plus, ExternalLink, Settings, ChevronDown, ChevronUp, Copy } from 'lucide-react';
+import { Shield, RefreshCw, Check, Server, KeyRound, Plus, ExternalLink, Settings, ChevronDown, ChevronUp, Copy, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
@@ -228,6 +228,18 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                   <ExternalLink size={16} />
                   {t('discordConfig.openInviteUrl')}
                 </button>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
+                  <AlertTriangle size={14} className="text-amber-700" />
+                  {t('discordConfig.dmTroubleshootTitle')}
+                </div>
+                <ol className="list-decimal list-inside space-y-1 text-xs text-amber-900 pl-1">
+                  <li>{t('discordConfig.dmTroubleshoot1')}</li>
+                  <li>{t('discordConfig.dmTroubleshoot2')}</li>
+                  <li>{t('discordConfig.dmTroubleshoot3')}</li>
+                </ol>
               </div>
             </div>
           )}

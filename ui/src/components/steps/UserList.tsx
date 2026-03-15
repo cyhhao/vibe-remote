@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { User, Shield, ShieldOff, Copy, Check, Plus, Trash2, FolderOpen, HelpCircle } from 'lucide-react';
+import { User, Shield, ShieldOff, Copy, Check, Plus, Trash2, FolderOpen, HelpCircle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
@@ -65,6 +65,7 @@ const BindCodeSection: React.FC = () => {
   const [newExpiry, setNewExpiry] = useState('');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showUnavailableModal, setShowUnavailableModal] = useState(false);
 
   const loadCodes = async () => {
     try {
@@ -130,102 +131,161 @@ const BindCodeSection: React.FC = () => {
     inactive: 'bg-neutral-100 text-muted border-border',
   };
 
+  const activeCodes = codes.filter((bc) => getCodeStatus(bc) === 'active');
+  const unavailableCodes = codes.filter((bc) => getCodeStatus(bc) !== 'active');
+
+  const renderCodeRow = (bc: BindCodeItem) => {
+    const status = getCodeStatus(bc);
+    return (
+      <div key={bc.code} className="flex items-center justify-between py-2.5">
+        <div className="flex items-center gap-3 flex-wrap">
+          <code className="font-mono text-sm bg-bg px-2 py-0.5 rounded border border-border">{bc.code}</code>
+          <span className={clsx('text-xs px-2 py-0.5 rounded-full border', statusColors[status])}>
+            {t(`bindCode.${status}`)}
+          </span>
+          <span className="text-xs text-muted">
+            {bc.type === 'one_time' ? t('bindCode.oneTime') : t('bindCode.expiring')}
+          </span>
+          {bc.used_by.length > 0 && (
+            <span className="text-xs text-muted">{t('bindCode.usedBy', { count: bc.used_by.length })}</span>
+          )}
+          {bc.type === 'expiring' && bc.expires_at && (
+            <span className="text-xs text-muted">
+              {t('bindCode.expiresAt', { date: new Date(bc.expires_at).toLocaleDateString() })}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => handleCopy(bc.code)}
+            className="p-1.5 text-muted hover:text-text transition-colors"
+            title={t('bindCode.copy')}
+          >
+            {copiedCode === bc.code ? <Check size={14} className="text-success" /> : <Copy size={14} />}
+          </button>
+          {bc.is_active && (
+            <button
+              onClick={() => handleDelete(bc.code)}
+              className="p-1.5 text-muted hover:text-danger transition-colors"
+              title={t('bindCode.delete')}
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="mb-6 bg-panel border border-border rounded-xl p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-semibold font-display">{t('bindCode.title')}</h3>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent/90 text-white rounded text-sm font-medium transition-colors"
-        >
-          <Plus size={14} /> {t('bindCode.newCode')}
-        </button>
+    <>
+      <div className="mb-6 bg-panel border border-border rounded-xl p-4 shadow-sm">
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <h3 className="text-lg font-semibold font-display">{t('bindCode.title')}</h3>
+          <div className="flex items-center gap-2">
+            {unavailableCodes.length > 0 && (
+              <button
+                onClick={() => setShowUnavailableModal(true)}
+                className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-text rounded text-sm font-medium transition-colors"
+              >
+                {t('bindCode.viewUnavailable', { count: unavailableCodes.length })}
+              </button>
+            )}
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent/90 text-white rounded text-sm font-medium transition-colors"
+            >
+              <Plus size={14} /> {t('bindCode.newCode')}
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+          <div className="flex items-center gap-2 font-medium text-blue-800">
+            <HelpCircle size={14} /> {t('bindCode.usageTitle')}
+          </div>
+          <p className="mt-1 text-blue-900">{t('bindCode.usageHint')}</p>
+        </div>
+
+        {showForm && (
+          <div className="mb-4 p-3 bg-bg border border-border rounded-lg space-y-3">
+            <div className="flex items-center gap-4">
+              <label className="text-sm text-muted">{t('bindCode.codeType')}</label>
+              <label className="flex items-center gap-1.5 text-sm">
+                <input type="radio" checked={newType === 'one_time'} onChange={() => setNewType('one_time')} className="text-accent" />
+                {t('bindCode.oneTime')}
+              </label>
+              <label className="flex items-center gap-1.5 text-sm">
+                <input type="radio" checked={newType === 'expiring'} onChange={() => setNewType('expiring')} className="text-accent" />
+                {t('bindCode.expiring')}
+              </label>
+            </div>
+            {newType === 'expiring' && (
+              <div className="flex items-center gap-3">
+                <label className="text-sm text-muted">{t('bindCode.expirationDate')}</label>
+                <input
+                  type="date"
+                  value={newExpiry}
+                  onChange={(e) => setNewExpiry(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="bg-bg border border-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent text-text"
+                />
+              </div>
+            )}
+            <button
+              onClick={handleCreate}
+              disabled={loading || (newType === 'expiring' && !newExpiry)}
+              className="px-4 py-1.5 bg-accent hover:bg-accent/90 text-white rounded text-sm font-medium disabled:opacity-50 transition-colors"
+            >
+              {t('bindCode.generate')}
+            </button>
+          </div>
+        )}
+
+        {codes.length === 0 ? (
+          <p className="text-sm text-muted">{t('bindCode.noCodes')}</p>
+        ) : activeCodes.length === 0 ? (
+          <p className="text-sm text-muted">{t('bindCode.noAvailableCodes')}</p>
+        ) : (
+          <div className="divide-y divide-border">
+            {activeCodes.map(renderCodeRow)}
+          </div>
+        )}
       </div>
 
-      {showForm && (
-        <div className="mb-4 p-3 bg-bg border border-border rounded-lg space-y-3">
-          <div className="flex items-center gap-4">
-            <label className="text-sm text-muted">{t('bindCode.codeType')}</label>
-            <label className="flex items-center gap-1.5 text-sm">
-              <input type="radio" checked={newType === 'one_time'} onChange={() => setNewType('one_time')} className="text-accent" />
-              {t('bindCode.oneTime')}
-            </label>
-            <label className="flex items-center gap-1.5 text-sm">
-              <input type="radio" checked={newType === 'expiring'} onChange={() => setNewType('expiring')} className="text-accent" />
-              {t('bindCode.expiring')}
-            </label>
-          </div>
-          {newType === 'expiring' && (
-            <div className="flex items-center gap-3">
-              <label className="text-sm text-muted">{t('bindCode.expirationDate')}</label>
-              <input
-                type="date"
-                value={newExpiry}
-                onChange={(e) => setNewExpiry(e.target.value)}
-                min={new Date().toISOString().split('T')[0]}
-                className="bg-bg border border-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent text-text"
-              />
-            </div>
-          )}
-          <button
-            onClick={handleCreate}
-            disabled={loading || (newType === 'expiring' && !newExpiry)}
-            className="px-4 py-1.5 bg-accent hover:bg-accent/90 text-white rounded text-sm font-medium disabled:opacity-50 transition-colors"
+      {showUnavailableModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('bindCode.unavailableTitle')}
+          onClick={() => setShowUnavailableModal(false)}
+        >
+          <div
+            className="bg-panel border border-border rounded-xl shadow-xl w-full max-w-2xl max-h-[75vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
           >
-            {t('bindCode.generate')}
-          </button>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <h4 className="text-base font-semibold text-text">{t('bindCode.unavailableTitle')}</h4>
+              <button
+                onClick={() => setShowUnavailableModal(false)}
+                className="text-muted hover:text-text transition-colors"
+                title={t('bindCode.close')}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="px-4 py-2 overflow-y-auto">
+              {unavailableCodes.length === 0 ? (
+                <p className="text-sm text-muted py-4">{t('bindCode.noUnavailableCodes')}</p>
+              ) : (
+                <div className="divide-y divide-border">{unavailableCodes.map(renderCodeRow)}</div>
+              )}
+            </div>
+          </div>
         </div>
       )}
-
-      {codes.length === 0 ? (
-        <p className="text-sm text-muted">{t('bindCode.noCodes')}</p>
-      ) : (
-        <div className="divide-y divide-border">
-          {codes.map((bc) => {
-            const status = getCodeStatus(bc);
-            return (
-              <div key={bc.code} className="flex items-center justify-between py-2.5">
-                <div className="flex items-center gap-3">
-                  <code className="font-mono text-sm bg-bg px-2 py-0.5 rounded border border-border">{bc.code}</code>
-                  <span className={clsx('text-xs px-2 py-0.5 rounded-full border', statusColors[status])}>
-                    {t(`bindCode.${status}`)}
-                  </span>
-                  <span className="text-xs text-muted">
-                    {bc.type === 'one_time' ? t('bindCode.oneTime') : t('bindCode.expiring')}
-                  </span>
-                  {bc.used_by.length > 0 && (
-                    <span className="text-xs text-muted">{t('bindCode.usedBy', { count: bc.used_by.length })}</span>
-                  )}
-                  {bc.type === 'expiring' && bc.expires_at && (
-                    <span className="text-xs text-muted">
-                      {t('bindCode.expiresAt', { date: new Date(bc.expires_at).toLocaleDateString() })}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleCopy(bc.code)}
-                    className="p-1.5 text-muted hover:text-text transition-colors"
-                    title={t('bindCode.copy')}
-                  >
-                    {copiedCode === bc.code ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-                  </button>
-                  {bc.is_active && (
-                    <button
-                      onClick={() => handleDelete(bc.code)}
-                      className="p-1.5 text-muted hover:text-danger transition-colors"
-                      title={t('bindCode.delete')}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+    </>
   );
 };
 
@@ -317,6 +377,11 @@ export const UserList: React.FC = () => {
   };
 
   const handleToggleAdmin = async (userId: string, isAdmin: boolean) => {
+    const current = users[userId];
+    const currentAdminCount = Object.values(users).filter((u) => u.is_admin).length;
+    if (current?.is_admin && !isAdmin && currentAdminCount <= 1) {
+      if (!confirm(t('userList.lastAdminDemoteWarning'))) return;
+    }
     try {
       const result = await api.toggleAdmin(userId, isAdmin);
       if (result.ok) {
@@ -331,7 +396,10 @@ export const UserList: React.FC = () => {
   };
 
   const handleRemoveUser = async (userId: string) => {
-    if (!confirm(t('userList.removeConfirm'))) return;
+    const current = users[userId];
+    const currentAdminCount = Object.values(users).filter((u) => u.is_admin).length;
+    const warningKey = current?.is_admin && currentAdminCount <= 1 ? 'userList.lastAdminRemoveWarning' : 'userList.removeConfirm';
+    if (!confirm(t(warningKey))) return;
     try {
       const result = await api.removeUser(userId);
       if (result.ok) {

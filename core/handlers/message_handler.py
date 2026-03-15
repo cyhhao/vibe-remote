@@ -266,10 +266,10 @@ class MessageHandler(BaseHandler):
         """Prepend user identity as [username<user_id>] to the message."""
         try:
             user_info = await self.im_client.get_user_info(context.user_id)
-            raw_name = user_info.get("display_name") or user_info.get("name") or "unknown"
+            raw_name = user_info.get("display_name") or user_info.get("name") or context.user_id
         except Exception as e:
             logger.debug(f"Failed to fetch user info for {context.user_id}: {e}")
-            raw_name = "unknown"
+            raw_name = context.user_id
         name = self._sanitize_identity(raw_name)
         uid = self._sanitize_identity(context.user_id)
         return f"[{name}<{uid}>] {message}"
@@ -395,14 +395,59 @@ class MessageHandler(BaseHandler):
                 # Quick-reply button: treat the button text as a new user message
                 reply_text = callback_data[len("quick_reply:") :]
                 if reply_text:
-                    # Remove buttons from the original message
-                    if context.message_id:
-                        try:
-                            await self.im_client.remove_inline_keyboard(context, context.message_id)
-                        except Exception as err:
-                            logger.debug(f"Failed to remove quick-reply buttons: {err}")
+                    # Remove buttons from the original message card.
+                    remove_target_message_id = context.message_id
+                    platform_payload_raw = context.platform_specific or {}
+                    platform_payload = platform_payload_raw if isinstance(platform_payload_raw, dict) else {}
+                    can_remove_via_interaction = bool(platform_payload.get("interaction"))
+                    if not remove_target_message_id:
+                        event_payload = platform_payload.get("event")
+                        event_payload = event_payload if isinstance(event_payload, dict) else {}
+                        event_context = event_payload.get("context")
+                        event_context = event_context if isinstance(event_context, dict) else {}
+                        event_open_message_id = (
+                            event_payload.get("open_message_id") if isinstance(event_payload, dict) else ""
+                        )
+                        remove_target_message_id = (
+                            platform_payload.get("message_id")
+                            or platform_payload.get("open_message_id")
+                            or event_context.get("open_message_id")
+                            or event_open_message_id
+                            or ""
+                        )
+                    try:
+                        if remove_target_message_id or can_remove_via_interaction:
+                            await self.im_client.remove_inline_keyboard(context, remove_target_message_id or "")
+                        else:
+                            logger.debug("Skip quick-reply keyboard removal: message id unavailable")
+                    except Exception as err:
+                        logger.debug(f"Failed to remove quick-reply buttons: {err}")
 
-                    # Dispatch as a normal user message
+                    # Echo the selected quick reply as a bot message.
+                    quick_reply_echo_id = None
+                    try:
+                        quick_reply_echo = self._t("message.quickReplyNote", text=reply_text)
+                        quick_reply_echo_id = await self.im_client.send_message(
+                            self._get_target_context(context),
+                            quick_reply_echo,
+                        )
+                    except Exception as err:
+                        logger.debug(f"Failed to send quick-reply echo message: {err}")
+
+                    # Add ack reaction on the echo message before dispatching.
+                    if quick_reply_echo_id:
+                        try:
+                            await self.im_client.add_reaction(
+                                self._get_target_context(context),
+                                quick_reply_echo_id,
+                                ":eyes:",
+                            )
+                        except Exception as err:
+                            logger.debug(f"Failed to add quick-reply ack reaction: {err}")
+
+                    # Dispatch as a normal user message (message_id=None to
+                    # bypass dedup — this is a synthetic message, not a real
+                    # platform message that could be replayed).
                     context_for_reply = MessageContext(
                         user_id=context.user_id,
                         channel_id=context.channel_id,

@@ -62,7 +62,7 @@
     "saasMode": "SaaS 模式",
     "saasDescription": "OAuth 安装 + 云端中继 + 本地执行（即将推出）",
     "selfHostMode": "自托管模式",
-    "selfHostDescription": "使用您自己的 Slack 应用 + Socket Mode 令牌"
+    "selfHostDescription": "使用您自己的聊天应用 + Socket Mode 令牌"
   },
   "platform": {
     "title": "选择平台",
@@ -122,7 +122,11 @@
     "step4Description": "复制机器人令牌并验证访问。",
     "step4Item1": "在「Bot」中点击「Reset Token」或「View Token」",
     "step4Item2": "复制令牌并粘贴到此处",
-    "step4Item3": "验证令牌并选择服务器"
+    "step4Item3": "验证令牌并选择服务器",
+    "dmTroubleshootTitle": "私信失败排查",
+    "dmTroubleshoot1": "确认你的账号和机器人至少在同一个服务器中。",
+    "dmTroubleshoot2": "在服务器隐私设置中开启「允许来自服务器成员的私信」。",
+    "dmTroubleshoot3": "确认你没有屏蔽该机器人账号。"
   },
   "larkConfig": {
     "title": "配置飞书",
@@ -162,11 +166,12 @@
     "step3Item6": "im:resource — 上传/下载文件和图片",
     "step3Item7": "im:chat — 访问群聊信息",
     "step3Item8": "im:message.reactions — 读写表情回复",
-    "step3Item9": "contact:user.base:readonly — 读取用户基本信息",
+    "step3Item9": "contact:contact.base:readonly — 读取用户基本信息",
     "step3Item10": "im:message:update — 编辑/更新已发送的消息和卡片",
     "step3Item11": "im:message:recall — 撤回机器人消息",
     "step3Item12": "cardkit:card:write — 创建和管理卡片模板",
     "step3Item13": "cardkit:card:read — 读取卡片模板",
+    "step3Item14": "contact:user.base:readonly — 读取用户基本信息（旧权限）",
     "step3BatchImport": "快捷配置：复制 JSON 后使用「批量导入/导出权限」",
     "step3CopyJson": "复制 JSON",
     "step3Copied": "已复制！",
@@ -439,6 +444,8 @@
     "boundAt": "绑定于",
     "removeUser": "移除",
     "removeConfirm": "确定要移除此用户吗？此操作不可撤销。",
+    "lastAdminDemoteWarning": "你正在取消最后一个管理员身份。继续后将进入“无管理员约束”状态，任何已绑定用户都可操作管理员菜单。是否继续？",
+    "lastAdminRemoveWarning": "你正在移除最后一个管理员。继续后将进入“无管理员约束”状态，任何已绑定用户都可操作管理员菜单。是否继续？",
     "cannotRemoveLastAdmin": "无法移除最后一个管理员",
     "adminToggled": "管理员状态已更新",
     "userRemoved": "用户已移除"
@@ -462,6 +469,13 @@
     "expirationDate": "到期日期",
     "created": "绑定码已创建",
     "deleted": "绑定码已删除",
-    "noCodes": "暂无绑定码，创建一个开始使用。"
+    "noCodes": "暂无绑定码，创建一个开始使用。",
+    "usageTitle": "绑定码如何使用",
+    "usageHint": "把可用绑定码发给用户，并让用户私信机器人发送 `/bind <code>`。用户必须先完成绑定才可和bot私聊。仅管理员用户才可操作bot菜单进行设置。",
+    "viewUnavailable": "不可用（{{count}}）",
+    "unavailableTitle": "不可用的绑定码",
+    "noAvailableCodes": "暂无可用绑定码，请先创建新的绑定码。",
+    "noUnavailableCodes": "暂无不可用绑定码。",
+    "close": "关闭"
   }
 }

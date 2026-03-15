@@ -26,6 +26,39 @@ class SettingsHandler(BaseHandler):
             "toolcall": self._t("messageType.toolcall"),
         }
 
+    def _format_settings_update_message(
+        self,
+        show_message_types: list,
+        require_mention: Optional[bool],
+        language: Optional[str],
+        language_saved: bool,
+    ) -> str:
+        display_names = self._message_type_display_names()
+        selected_names = [display_names.get(msg_type, msg_type) for msg_type in show_message_types]
+        selected_text = ", ".join(selected_names) if selected_names else "-"
+
+        if require_mention is None:
+            slack_cfg = getattr(self.config, "slack", None)
+            default_require = bool(getattr(slack_cfg, "require_mention", False))
+            default_state = self._t("common.on") if default_require else self._t("common.off")
+            mention_text = f"{self._t('common.default')} {default_state}"
+        else:
+            mention_text = self._t("common.on") if require_mention else self._t("common.off")
+
+        language_text = self._t(f"language.{language}") if language else self._t("language.systemDefault")
+        if language and language_text == f"language.{language}":
+            language_text = language
+
+        lines = [
+            f"✅ {self._t('success.settingsUpdated')}",
+            f"{self._t('modal.settings.showMessageTypes')} **{selected_text}**",
+            f"{self._t('modal.settings.requireMention')} **{mention_text}**",
+            f"{self._t('modal.settings.language')} **{language_text}**",
+        ]
+        if not language_saved:
+            lines.append(f"⚠️ {self._t('error.languageUpdateFailed')}")
+        return "\n".join(lines)
+
     def _get_agent_display_name(self, context: MessageContext) -> str:
         """Return a friendly agent name for the current context."""
         agent_name = self.controller.resolve_agent_for_context(context)
@@ -503,12 +536,13 @@ class SettingsHandler(BaseHandler):
             )
 
             if notify_user:
-                await self.im_client.send_message(context, f"✅ {self._t('success.settingsUpdated')}")
-                if not language_saved:
-                    await self.im_client.send_message(
-                        context,
-                        f"⚠️ {self._t('error.languageUpdateFailed')}",
-                    )
+                message = self._format_settings_update_message(
+                    show_message_types=show_message_types,
+                    require_mention=require_mention,
+                    language=language,
+                    language_saved=language_saved,
+                )
+                await self.im_client.send_message(context, message, parse_mode="markdown")
 
         except Exception as e:
             logger.error(f"Error updating settings: {e}")
