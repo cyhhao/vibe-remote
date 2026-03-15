@@ -760,10 +760,21 @@ class SlackBot(BaseIMClient):
         """Remove interactive buttons from a Slack message."""
         self._ensure_clients()
         try:
+            if not message_id:
+                return False
+
+            payload = (context.platform_specific or {}).get("payload") if context.platform_specific else None
+            payload_message = payload.get("message") if isinstance(payload, dict) else None
+
             blocks = []
             fallback_text = text
             if fallback_text is not None and parse_mode == "markdown":
                 fallback_text = self._convert_markdown_to_slack_mrkdwn(fallback_text)
+
+            if fallback_text is None and isinstance(payload_message, dict):
+                payload_text = payload_message.get("text")
+                if isinstance(payload_text, str):
+                    fallback_text = payload_text
 
             if fallback_text:
                 blocks = [
@@ -775,6 +786,12 @@ class SlackBot(BaseIMClient):
                         },
                     }
                 ]
+            elif isinstance(payload_message, dict):
+                payload_blocks = payload_message.get("blocks")
+                if isinstance(payload_blocks, list):
+                    for block in payload_blocks:
+                        if isinstance(block, dict) and block.get("type") != "actions":
+                            blocks.append(block)
 
             kwargs = {"channel": context.channel_id, "ts": message_id, "blocks": blocks}
             if fallback_text is not None:
