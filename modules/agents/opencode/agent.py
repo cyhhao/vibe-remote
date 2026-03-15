@@ -112,8 +112,11 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                     pending,
                     server,  # type: ignore[arg-type]
                 )
-                # Clean up reaction for answer submission
-                await self._remove_ack_reaction(request)
+                # Do NOT remove ack reaction here.
+                # The OpenCode run is still in progress after answer submission,
+                # so early cleanup makes users think the task has finished.
+                # Prefer stale reactions over premature removal; terminal cleanup
+                # happens on result/error/cancel paths.
                 return
             else:
                 task = asyncio.create_task(self._process_message(request))
