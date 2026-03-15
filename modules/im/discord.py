@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from typing import Dict, Any, Optional, Callable, List
+from urllib.parse import urlsplit
 
 import aiohttp
 import discord
@@ -114,7 +115,7 @@ class DiscordBot(BaseIMClient):
                     from aiohttp_socks import ProxyConnector
 
                     self.client.http.connector = ProxyConnector.from_url(socks_url, rdns=True)
-                    logger.info("Discord using SOCKS proxy: %s", socks_url)
+                    logger.info("Discord using SOCKS proxy: %s", self._redact_proxy_url(socks_url))
                 except ImportError:
                     logger.warning("SOCKS proxy detected but aiohttp_socks not installed")
 
@@ -125,6 +126,22 @@ class DiscordBot(BaseIMClient):
             asyncio.run(_run())
         except KeyboardInterrupt:
             return
+
+    @staticmethod
+    def _redact_proxy_url(proxy_url: str) -> str:
+        """Return a proxy URL safe for logs (credentials stripped)."""
+        try:
+            parts = urlsplit(proxy_url)
+            if parts.scheme and parts.hostname:
+                host = parts.hostname
+                if ":" in host and not host.startswith("["):
+                    host = f"[{host}]"
+                if parts.port:
+                    return f"{parts.scheme}://{host}:{parts.port}"
+                return f"{parts.scheme}://{host}"
+        except Exception:
+            pass
+        return "<configured>"
 
     async def shutdown(self) -> None:
         await self.client.close()

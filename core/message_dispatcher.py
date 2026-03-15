@@ -25,9 +25,6 @@ class ConsolidatedMessageDispatcher:
         self._consolidated_message_buffers: dict[str, str] = {}
         self._consolidated_message_locks: dict[str, asyncio.Lock] = {}
         self._thread_current_message_id: dict[str, str] = {}
-        # Cache the body text of quick-reply card messages so the callback
-        # handler can retrieve the original text when updating the card.
-        self._quick_reply_text_cache: dict[str, str] = {}
 
     def _get_settings_key(self, context: MessageContext) -> str:
         return self.controller._get_settings_key(context)
@@ -339,18 +336,12 @@ class ConsolidatedMessageDispatcher:
             row.append(InlineButton(text=btn.text, callback_data=callback))
 
         keyboard = InlineKeyboard(buttons=[row])
-        msg_id = await im_client.send_message_with_buttons(
+        await im_client.send_message_with_buttons(
             context,
             text,
             keyboard,
             parse_mode=parse_mode,
         )
-        if msg_id:
-            self._quick_reply_text_cache[msg_id] = text
-
-    def pop_quick_reply_text(self, message_id: str) -> str | None:
-        """Pop and return the cached text for a quick-reply card message."""
-        return self._quick_reply_text_cache.pop(message_id, None)
 
     async def _upload_file_links(
         self,

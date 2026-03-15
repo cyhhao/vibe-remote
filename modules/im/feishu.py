@@ -616,6 +616,92 @@ class FeishuBot(BaseIMClient):
             logger.error("Error editing Feishu message %s: %s", message_id, exc)
             return False
 
+    async def _fetch_message_card_content(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch and parse card content JSON for an existing message."""
+        try:
+            token = await self._get_tenant_token()
+            if not token:
+                return None
+
+            url = f"{self.config.api_base_url}/open-apis/im/v1/messages/{message_id}"
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
+                    if resp.status != 200:
+                        logger.warning("Feishu get message failed: id=%s status=%s", message_id, resp.status)
+                        return None
+                    result = await resp.json()
+
+            if result.get("code") != 0:
+                logger.warning(
+                    "Feishu get message failed: id=%s code=%s msg=%s",
+                    message_id,
+                    result.get("code"),
+                    result.get("msg"),
+                )
+                return None
+
+            data = result.get("data", {})
+            message = data.get("message") or data.get("item") or data
+            content_raw = message.get("body", {}).get("content") or message.get("content")
+            if not content_raw:
+                return None
+            if isinstance(content_raw, dict):
+                return content_raw
+            if isinstance(content_raw, str):
+                return json.loads(content_raw)
+            return None
+        except Exception as exc:
+            logger.debug("Failed to fetch Feishu message content for %s: %s", message_id, exc)
+            return None
+
+    @staticmethod
+    def _extract_text_from_card_content(card_content: Dict[str, Any]) -> Optional[str]:
+        """Extract human-visible text from card content for button removal."""
+        collected_texts: list[str] = []
+
+        def _collect(node: Any) -> None:
+            if isinstance(node, list):
+                for item in node:
+                    _collect(item)
+                return
+
+            if not isinstance(node, dict):
+                return
+
+            tag = node.get("tag")
+            if tag == "button":
+                return
+
+            if tag == "markdown":
+                markdown_content = node.get("content")
+                if isinstance(markdown_content, str) and markdown_content.strip():
+                    collected_texts.append(markdown_content)
+
+            text_obj = node.get("text")
+            if isinstance(text_obj, dict):
+                content = text_obj.get("content")
+                if isinstance(content, str) and content.strip():
+                    collected_texts.append(content)
+            elif isinstance(text_obj, str) and text_obj.strip():
+                collected_texts.append(text_obj)
+
+            for key in ("body", "elements", "columns"):
+                if key in node:
+                    _collect(node.get(key))
+
+            for key, value in node.items():
+                if key in {"tag", "text", "body", "elements", "columns"}:
+                    continue
+                _collect(value)
+
+        _collect(card_content)
+
+        if not collected_texts:
+            return None
+
+        return "\n\n".join(collected_texts)
+
     async def remove_inline_keyboard(
         self,
         context: MessageContext,
@@ -625,11 +711,21 @@ class FeishuBot(BaseIMClient):
     ) -> bool:
         """Remove interactive buttons from a Feishu message.
 
-        Feishu cards must be rebuilt entirely, so *text* should contain
-        the desired card body.  When *text* is ``None`` the card is
-        re-sent with an empty body (callers should pass text explicitly).
+        Feishu cards must be rebuilt entirely. When *text* is not provided,
+        this method first fetches the current message content and extracts
+        card text before updating the card without buttons.
         """
-        display_text = text if text is not None else ""
+        display_text = text
+        if display_text is None:
+            card_content = await self._fetch_message_card_content(message_id)
+            if card_content is None:
+                logger.debug("Skip Feishu keyboard removal: unable to fetch card content for %s", message_id)
+                return False
+            display_text = self._extract_text_from_card_content(card_content)
+            if display_text is None:
+                logger.debug("Skip Feishu keyboard removal: unable to extract card text for %s", message_id)
+                return False
+
         return await self.edit_message(context, message_id, text=display_text, keyboard=None, parse_mode=parse_mode)
 
     # ------------------------------------------------------------------
