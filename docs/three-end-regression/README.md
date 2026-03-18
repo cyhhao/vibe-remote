@@ -53,6 +53,12 @@ Common commands:
 ./scripts/run_three_regression.sh --down
 ```
 
+If you run the script over SSH on macOS and `docker` is not in the non-interactive `PATH`, the script now auto-detects common Docker CLI locations such as `/usr/local/bin/docker` and `/opt/homebrew/bin/docker`. You can also override it explicitly:
+
+```bash
+DOCKER_BIN=/usr/local/bin/docker ./scripts/run_three_regression.sh
+```
+
 Reset modes:
 
 - `--reset-config`: re-seed `config/`, `state/`, and `runtime/` from `.env.three-regression`, while preserving `workdir/`, `attachments/`, and `logs/`

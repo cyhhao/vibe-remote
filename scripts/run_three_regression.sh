@@ -9,10 +9,36 @@ PROJECT_NAME="vibe-three-regression"
 ENV_FILE="$REPO_ROOT/.env.three-regression"
 OUTPUT_ROOT="$REPO_ROOT/_tmp/three-regression"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+DOCKER_BIN="${DOCKER_BIN:-}"
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
     PYTHON_BIN="python"
 fi
+
+resolve_docker_bin() {
+    if [ -n "$DOCKER_BIN" ] && [ -x "$DOCKER_BIN" ]; then
+        return 0
+    fi
+
+    if command -v docker >/dev/null 2>&1; then
+        DOCKER_BIN="$(command -v docker)"
+        return 0
+    fi
+
+    for candidate in /usr/local/bin/docker /opt/homebrew/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker; do
+        if [ -x "$candidate" ]; then
+            DOCKER_BIN="$candidate"
+            export PATH="$(dirname "$candidate"):$PATH"
+            return 0
+        fi
+    done
+
+    echo "Docker CLI not found in PATH or common install locations." >&2
+    echo "Set DOCKER_BIN=/absolute/path/to/docker if Docker is installed elsewhere." >&2
+    exit 1
+}
+
+resolve_docker_bin
 
 MODE="up"
 BUILD_FLAG="--build"
@@ -147,17 +173,17 @@ wait_for_service() {
     done
 
     echo "Service $service did not become ready on port $port" >&2
-    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs "$service" || true
+    "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs "$service" || true
     return 1
 }
 
 case "$MODE" in
     down)
-        docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans
+        "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans
         exit 0
         ;;
     status)
-        docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" ps
+        "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" ps
         if [ "$ENV_LOADED" = true ]; then
             print_summary
         fi
@@ -165,16 +191,16 @@ case "$MODE" in
         ;;
     logs)
         if [ -n "$LOGS_SERVICE" ]; then
-            docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs -f "$LOGS_SERVICE"
+            "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs -f "$LOGS_SERVICE"
         else
-            docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs -f
+            "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs -f
         fi
         exit 0
         ;;
 esac
 
 echo "Stopping previous three-end regression containers..."
-docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans >/dev/null 2>&1 || true
+"$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans >/dev/null 2>&1 || true
 
 echo "Preparing generated config and state..."
 PREPARE_ARGS=(--output-root "$OUTPUT_ROOT")
@@ -183,9 +209,9 @@ PREPARE_ARGS+=(--reset-mode "$RESET_MODE")
 
 echo "Starting three-end regression containers..."
 if [ -n "$BUILD_FLAG" ]; then
-    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d --build --force-recreate --remove-orphans
+    "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d --build --force-recreate --remove-orphans
 else
-    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans
+    "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans
 fi
 
 echo "Waiting for services to become healthy..."
