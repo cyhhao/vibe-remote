@@ -96,6 +96,10 @@ def _service_default_cwd(service_name: str) -> str:
     return _env(f"{prefix}_DEFAULT_CWD", _env("THREE_REGRESSION_DEFAULT_CWD", "/data/vibe_remote/workdir"))
 
 
+def _ui_host() -> str:
+    return _env("THREE_REGRESSION_UI_HOST", "127.0.0.1")
+
+
 def _base_slack_payload() -> dict:
     return {
         "bot_token": "",
@@ -176,7 +180,7 @@ def _build_config_payload(service_name: str) -> dict:
         },
         "gateway": None,
         "ui": {
-            "setup_host": "127.0.0.1",
+            "setup_host": _ui_host(),
             "setup_port": 5123,
             "open_browser": False,
         },

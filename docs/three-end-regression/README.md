@@ -21,6 +21,7 @@ It complements the existing automated `E2E` flow instead of replacing it:
 
 - shared LLM credentials: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
 - optional API base URLs: `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`
+- optional UI host override: `THREE_REGRESSION_UI_HOST` (useful when exposing the three UIs on a LAN host)
 - platform-specific bot credentials for Slack, Discord, and Feishu
 - the target regression channel for each platform, if you want channel routing preseeded at startup
 - the backend that each platform should pin to by default
@@ -68,6 +69,8 @@ Slack   -> http://127.0.0.1:15131
 Discord -> http://127.0.0.1:15132
 Feishu  -> http://127.0.0.1:15133
 ```
+
+If you set `THREE_REGRESSION_UI_HOST=192.168.2.3`, the printed URLs and generated UI config will use that host instead.
 
 On first startup, or when you run with `--reset-config` / `--reset-all`, the runner seeds these files for every service:
 

@@ -113,6 +113,7 @@ print_summary() {
     local slack_channel="${THREE_REGRESSION_SLACK_CHANNEL:-}"
     local discord_channel="${THREE_REGRESSION_DISCORD_CHANNEL:-}"
     local feishu_channel="${THREE_REGRESSION_FEISHU_CHAT_ID:-}"
+    local ui_host="${THREE_REGRESSION_UI_HOST:-127.0.0.1}"
 
     if [ -z "$slack_channel" ]; then
         slack_channel="(configure later in UI)"
@@ -126,9 +127,9 @@ print_summary() {
 
     cat <<EOF
 Three-end regression environment is ready:
-- Slack:  http://127.0.0.1:${THREE_REGRESSION_SLACK_PORT:-15131}  channel=${slack_channel}  backend=${THREE_REGRESSION_SLACK_BACKEND}
-- Discord: http://127.0.0.1:${THREE_REGRESSION_DISCORD_PORT:-15132}  channel=${discord_channel}  backend=${THREE_REGRESSION_DISCORD_BACKEND}
-- Feishu: http://127.0.0.1:${THREE_REGRESSION_FEISHU_PORT:-15133}  channel=${feishu_channel}  backend=${THREE_REGRESSION_FEISHU_BACKEND}
+- Slack:  http://${ui_host}:${THREE_REGRESSION_SLACK_PORT:-15131}  channel=${slack_channel}  backend=${THREE_REGRESSION_SLACK_BACKEND}
+- Discord: http://${ui_host}:${THREE_REGRESSION_DISCORD_PORT:-15132}  channel=${discord_channel}  backend=${THREE_REGRESSION_DISCORD_BACKEND}
+- Feishu: http://${ui_host}:${THREE_REGRESSION_FEISHU_PORT:-15133}  channel=${feishu_channel}  backend=${THREE_REGRESSION_FEISHU_BACKEND}
 EOF
 }
 

@@ -23,6 +23,7 @@ def _set_required_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "OPENAI_API_KEY": "sk-openai-test",
         "OPENAI_BASE_URL": "https://openai.example",
         "OPENAI_API_BASE": "https://openai.example/v1",
+        "THREE_REGRESSION_UI_HOST": "192.168.2.3",
         "THREE_REGRESSION_DEFAULT_CWD": "/data/vibe_remote/workdir",
         "THREE_REGRESSION_LOG_LEVEL": "DEBUG",
         "THREE_REGRESSION_LANGUAGE": "en",
@@ -67,6 +68,7 @@ def test_prepare_generates_three_isolated_states(tmp_path: Path, monkeypatch: py
 
     assert slack_config["platform"] == "slack"
     assert slack_config["agents"]["default_backend"] == "opencode"
+    assert slack_config["ui"]["setup_host"] == "192.168.2.3"
     assert discord_config["platform"] == "discord"
     assert discord_config["agents"]["default_backend"] == "codex"
     assert discord_config["discord"]["guild_allowlist"] == ["754776951587340359"]
