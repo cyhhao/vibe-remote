@@ -36,6 +36,7 @@ SERVICE_DEFS = {
 }
 
 SUPPORTED_BACKENDS = {"opencode", "claude", "codex"}
+RESET_MODES = {"none", "config", "all"}
 
 
 def _env(key: str, default: str = "") -> str:
@@ -236,9 +237,19 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _ensure_service_dir(service_dir: Path, reset_state: bool = False) -> None:
-    if reset_state and service_dir.exists():
+def _ensure_service_dir(service_dir: Path, reset_mode: str = "none") -> None:
+    if reset_mode not in RESET_MODES:
+        allowed = ", ".join(sorted(RESET_MODES))
+        raise SystemExit(f"reset_mode must be one of: {allowed}")
+
+    if reset_mode == "all" and service_dir.exists():
         shutil.rmtree(service_dir)
+    elif reset_mode == "config" and service_dir.exists():
+        for subdir in ("config", "state", "runtime"):
+            target = service_dir / subdir
+            if target.exists():
+                shutil.rmtree(target)
+
     for subdir in ("config", "state", "logs", "runtime", "attachments", "workdir"):
         (service_dir / subdir).mkdir(parents=True, exist_ok=True)
 
@@ -359,7 +370,7 @@ def _write_shared_agent_configs(output_root: Path) -> None:
     _write_json(shared_root / ".config" / "opencode" / "opencode.json", _build_opencode_payload())
 
 
-def prepare(output_root: Path, reset_state: bool = False) -> None:
+def prepare(output_root: Path, reset_mode: str = "none") -> None:
     _require_envs(("ANTHROPIC_API_KEY", "OPENAI_API_KEY"))
     _write_shared_agent_configs(output_root)
 
@@ -367,17 +378,17 @@ def prepare(output_root: Path, reset_state: bool = False) -> None:
     for service_name, service in SERVICE_DEFS.items():
         _require_envs(service["required_envs"])
         service_dir = output_root / service_name
-        _ensure_service_dir(service_dir, reset_state=reset_state)
+        _ensure_service_dir(service_dir, reset_mode=reset_mode)
 
         config_path = service_dir / "config" / "config.json"
         settings_path = service_dir / "state" / "settings.json"
         sessions_path = service_dir / "state" / "sessions.json"
 
-        if reset_state or not config_path.exists():
+        if reset_mode in {"config", "all"} or not config_path.exists():
             _write_json(config_path, _build_config_payload(service_name))
-        if reset_state or not settings_path.exists():
+        if reset_mode in {"config", "all"} or not settings_path.exists():
             _write_json(settings_path, _build_settings_payload(service_name))
-        if reset_state or not sessions_path.exists():
+        if reset_mode in {"config", "all"} or not sessions_path.exists():
             _write_json(sessions_path, {})
 
         summary.append(
@@ -386,7 +397,7 @@ def prepare(output_root: Path, reset_state: bool = False) -> None:
                 platform=service["platform"],
                 channel=_summary_channel(service),
                 backend=_env(f"{_service_prefix(service_name)}_BACKEND"),
-                state="reset" if reset_state else "preserved",
+                state=reset_mode if reset_mode != "none" else "preserved",
             )
         )
 
@@ -402,14 +413,15 @@ def main() -> int:
         help="Directory that will hold generated per-service state",
     )
     parser.add_argument(
-        "--reset-state",
-        action="store_true",
-        help="Reset service config/state directories before generating files",
+        "--reset-mode",
+        choices=sorted(RESET_MODES),
+        default="none",
+        help="Reset scope before generating files: none, config, or all",
     )
     args = parser.parse_args()
 
     try:
-        prepare(Path(args.output_root).resolve(), reset_state=args.reset_state)
+        prepare(Path(args.output_root).resolve(), reset_mode=args.reset_mode)
     except SystemExit as exc:
         print(str(exc), file=sys.stderr)
         return 1

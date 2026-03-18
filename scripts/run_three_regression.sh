@@ -17,14 +17,15 @@ fi
 MODE="up"
 BUILD_FLAG="--build"
 LOGS_SERVICE=""
-RESET_STATE=false
+RESET_MODE="none"
 
 usage() {
     cat <<'EOF'
 Usage:
   ./scripts/run_three_regression.sh
   ./scripts/run_three_regression.sh --no-build
-  ./scripts/run_three_regression.sh --reset-state
+  ./scripts/run_three_regression.sh --reset-config
+  ./scripts/run_three_regression.sh --reset-all
   ./scripts/run_three_regression.sh --down
   ./scripts/run_three_regression.sh --status
   ./scripts/run_three_regression.sh --logs [slack|discord|feishu]
@@ -64,8 +65,16 @@ while [ $# -gt 0 ]; do
             BUILD_FLAG=""
             shift
             ;;
+        --reset-config)
+            RESET_MODE="config"
+            shift
+            ;;
+        --reset-all)
+            RESET_MODE="all"
+            shift
+            ;;
         --reset-state)
-            RESET_STATE=true
+            RESET_MODE="all"
             shift
             ;;
         -h|--help)
@@ -168,9 +177,7 @@ docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans >/dev
 
 echo "Preparing generated config and state..."
 PREPARE_ARGS=(--output-root "$OUTPUT_ROOT")
-if [ "$RESET_STATE" = true ]; then
-    PREPARE_ARGS+=(--reset-state)
-fi
+PREPARE_ARGS+=(--reset-mode "$RESET_MODE")
 "$PYTHON_BIN" "$REPO_ROOT/scripts/prepare_three_regression.py" "${PREPARE_ARGS[@]}"
 
 echo "Starting three-end regression containers..."

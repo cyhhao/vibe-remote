@@ -114,7 +114,7 @@ def test_prepare_allows_missing_channel_ids(tmp_path: Path, monkeypatch: pytest.
     monkeypatch.delenv("THREE_REGRESSION_DISCORD_CHANNEL", raising=False)
     monkeypatch.delenv("THREE_REGRESSION_FEISHU_CHAT_ID", raising=False)
 
-    module.prepare(tmp_path, reset_state=True)
+    module.prepare(tmp_path, reset_mode="config")
 
     slack_settings = json.loads((tmp_path / "slack" / "state" / "settings.json").read_text(encoding="utf-8"))
     discord_settings = json.loads((tmp_path / "discord" / "state" / "settings.json").read_text(encoding="utf-8"))
@@ -132,3 +132,34 @@ def test_prepare_requires_supported_backend(monkeypatch: pytest.MonkeyPatch, tmp
 
     with pytest.raises(SystemExit, match="THREE_REGRESSION_SLACK_BACKEND"):
         module.prepare(tmp_path)
+
+
+def test_prepare_reset_config_preserves_workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    workdir = tmp_path / "discord" / "workdir"
+    workdir.mkdir(parents=True)
+    (workdir / "keep.txt").write_text("keep-me", encoding="utf-8")
+    config_dir = tmp_path / "discord" / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text('{"stale": true}', encoding="utf-8")
+
+    module.prepare(tmp_path, reset_mode="config")
+
+    assert (workdir / "keep.txt").read_text(encoding="utf-8") == "keep-me"
+    refreshed = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
+    assert refreshed["agents"]["default_backend"] == "codex"
+
+
+def test_prepare_reset_all_clears_workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    workdir = tmp_path / "discord" / "workdir"
+    workdir.mkdir(parents=True)
+    (workdir / "drop.txt").write_text("remove-me", encoding="utf-8")
+
+    module.prepare(tmp_path, reset_mode="all")
+
+    assert not (workdir / "drop.txt").exists()

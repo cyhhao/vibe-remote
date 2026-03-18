@@ -34,7 +34,7 @@ Channel IDs are optional. If you leave them empty, the containers still start an
 
 ## Usage
 
-The default command rebuilds the image, resets generated state, and recreates all three containers:
+The default command rebuilds the image, preserves your current regression state, and recreates all three containers:
 
 ```bash
 ./scripts/run_three_regression.sh
@@ -44,14 +44,20 @@ Common commands:
 
 ```bash
 ./scripts/run_three_regression.sh --no-build
-./scripts/run_three_regression.sh --reset-state
+./scripts/run_three_regression.sh --reset-config
+./scripts/run_three_regression.sh --reset-all
 ./scripts/run_three_regression.sh --status
 ./scripts/run_three_regression.sh --logs
 ./scripts/run_three_regression.sh --logs slack
 ./scripts/run_three_regression.sh --down
 ```
 
-Use `--reset-state` only when you want to wipe the generated container state and re-seed it from `.env.three-regression`.
+Reset modes:
+
+- `--reset-config`: re-seed `config/`, `state/`, and `runtime/` from `.env.three-regression`, while preserving `workdir/`, `attachments/`, and `logs/`
+- `--reset-all`: wipe the full per-service state directory, including `workdir/`, then re-seed from `.env.three-regression`
+
+`--reset-state` remains available as a backward-compatible alias for `--reset-all`.
 
 ## What You Get
 
@@ -63,13 +69,19 @@ Discord -> http://127.0.0.1:15132
 Feishu  -> http://127.0.0.1:15133
 ```
 
-On first startup, or when you run with `--reset-state`, the runner seeds these files for every service:
+On first startup, or when you run with `--reset-config` / `--reset-all`, the runner seeds these files for every service:
 
 - `config/config.json`
 - `state/settings.json`
 - `state/sessions.json`
 
 The generated state lives under `_tmp/three-regression/`, which keeps each regression environment isolated while preserving your later modifications by default.
+
+Persistence rules:
+
+- `./scripts/run_three_regression.sh` preserves UI changes, sessions, and files under `workdir/`
+- `--reset-config` preserves `workdir/` files but resets service config/state
+- `--reset-all` clears everything under each service directory
 
 ## Configuration Rules
 
