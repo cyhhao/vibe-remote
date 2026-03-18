@@ -25,7 +25,11 @@ class SessionHandler(BaseHandler):
     def get_base_session_id(self, context: MessageContext) -> str:
         """Get base session ID based on platform and context (without path)"""
         platform = getattr(self.config, "platform", "slack")
-        base_id = context.thread_id or context.message_id or context.channel_id
+        is_dm = bool((context.platform_specific or {}).get("is_dm", False))
+        if is_dm:
+            base_id = context.channel_id or context.user_id
+        else:
+            base_id = context.thread_id or context.message_id or context.channel_id
         return f"{platform}_{base_id}"
 
     def get_working_path(self, context: MessageContext) -> str:

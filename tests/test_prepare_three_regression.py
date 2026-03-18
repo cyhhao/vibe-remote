@@ -81,6 +81,8 @@ def test_prepare_generates_three_isolated_states(tmp_path: Path, monkeypatch: py
     )
     codex_config = (tmp_path / "shared-home" / ".codex" / "config.toml").read_text(encoding="utf-8")
     assert 'model = "gpt-5.4"' in codex_config
+    assert "responses_websockets_v2 = false" in codex_config
+    assert "suppress_unstable_features_warning = true" in codex_config
     opencode_config = json.loads(
         (tmp_path / "shared-home" / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")
     )

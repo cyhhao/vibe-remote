@@ -349,7 +349,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     show_message_types: [],
     custom_cwd: '',
     routing: {
-      agent_backend: 'opencode',
+      agent_backend: null,
       opencode_agent: null,
       opencode_model: null,
       opencode_reasoning_effort: null,
@@ -457,6 +457,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         {sortedChannels.map((channel) => {
           const rawConfig = configs[channel.id] || {};
           const def = defaultConfig();
+          const defaultBackend = config.agents?.default_backend || 'opencode';
           const channelConfig = {
             ...def,
             ...rawConfig,
@@ -470,6 +471,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             // Preserve require_mention from rawConfig (can be null, true, or false)
             require_mention: rawConfig.require_mention !== undefined ? rawConfig.require_mention : def.require_mention,
           };
+          const effectiveBackend = channelConfig.routing.agent_backend || defaultBackend;
 
           const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
           const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
@@ -534,7 +536,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-muted uppercase">{t('channelList.backend')}</label>
                       <select
-                        value={channelConfig.routing.agent_backend || 'opencode'}
+                        value={effectiveBackend}
                         onChange={(e) =>
                           updateConfig(channel.id, {
                             routing: { ...channelConfig.routing, agent_backend: e.target.value },
@@ -607,7 +609,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   </div>
 
                   {/* OpenCode Settings */}
-                  {(!channelConfig.routing.agent_backend || channelConfig.routing.agent_backend === 'opencode') && (
+                  {effectiveBackend === 'opencode' && (
                     <div className="space-y-3">
                       <div className="text-xs font-medium text-muted uppercase">{t('channelList.opencodeSettings')}</div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
@@ -702,7 +704,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   )}
 
                   {/* Claude Settings */}
-                  {channelConfig.routing.agent_backend === 'claude' && (
+                  {effectiveBackend === 'claude' && (
                     <div className="space-y-3">
                       <div className="text-xs font-medium text-muted uppercase">{t('channelList.claudeSettings')}</div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-bg/50 p-3 rounded border border-border">
@@ -746,7 +748,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   )}
 
                   {/* Codex Settings */}
-                  {channelConfig.routing.agent_backend === 'codex' && (
+                  {effectiveBackend === 'codex' && (
                     <div className="space-y-3">
                       <div className="text-xs font-medium text-muted uppercase">{t('channelList.codexSettings')}</div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-bg/50 p-3 rounded border border-border">

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from config import paths
-from config.v2_config import V2Config
+from config.v2_config import CONFIG_LOCK, V2Config
 from config.v2_settings import (
     SettingsStore,
     ChannelSettings,
@@ -65,10 +65,31 @@ def load_config() -> V2Config:
     return V2Config.load()
 
 
+def _deep_merge_dicts(base: dict, patch: dict) -> dict:
+    merged = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def save_config(payload: dict) -> V2Config:
-    config = V2Config.from_payload(payload)
-    config.save()
-    return config
+    if not isinstance(payload, dict):
+        raise ValueError("Config payload must be an object")
+
+    with CONFIG_LOCK:
+        base_payload: dict = {}
+        try:
+            base_payload = config_to_payload(load_config())
+        except FileNotFoundError:
+            base_payload = {}
+
+        merged_payload = _deep_merge_dicts(base_payload, payload) if base_payload else payload
+        config = V2Config.from_payload(merged_payload)
+        config.save()
+        return config
 
 
 def config_to_payload(config: V2Config) -> dict:

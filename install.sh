@@ -16,6 +16,7 @@ NC='\033[0m' # No Color
 # Configuration
 REPO="cyhhao/vibe-remote"
 PACKAGE_NAME="vibe-remote"
+VIBE_BIN_PATH=""
 
 print_banner() {
     echo -e "${BLUE}"
@@ -133,9 +134,10 @@ verify_installation() {
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
     
     if command_exists vibe; then
+        VIBE_BIN_PATH="$(command -v vibe)"
         success "vibe command is available"
         echo ""
-        vibe --help 2>/dev/null || true
+        "$VIBE_BIN_PATH" --help 2>/dev/null || true
         return 0
     fi
     
@@ -147,6 +149,7 @@ verify_installation() {
     
     for loc in "${vibe_locations[@]}"; do
         if [ -f "$loc" ]; then
+            VIBE_BIN_PATH="$loc"
             warn "vibe installed at $loc but not in PATH"
             echo ""
             echo -e "${YELLOW}Add this to your shell config (.bashrc, .zshrc, etc.):${NC}"
@@ -161,13 +164,17 @@ verify_installation() {
 
 # Print next steps
 print_next_steps() {
+    local vibe_dir
+    vibe_dir="$(dirname "${VIBE_BIN_PATH:-$HOME/.local/bin/vibe}")"
+
     echo ""
     echo -e "${GREEN}Installation complete!${NC}"
     echo ""
     echo -e "${BLUE}Next steps:${NC}"
-    echo "  1. Run 'vibe' to start the setup wizard"
-    echo "  2. Configure your Slack app tokens in the web UI"
-    echo "  3. Enable channels and start chatting with AI agents"
+    echo "  1. Run 'source ${vibe_dir}/env' (or restart your shell)"
+    echo "  2. Run 'vibe' to start the setup wizard"
+    echo "  3. Configure your Slack app tokens in the web UI"
+    echo "  4. Enable channels and start chatting with AI agents"
     echo ""
     echo -e "${BLUE}Quick commands:${NC}"
     echo "  vibe          - Start Vibe Remote (service + web UI)"
@@ -179,6 +186,9 @@ print_next_steps() {
     echo "  uv tool uninstall vibe-remote    # if installed with uv"
     echo "  pip uninstall vibe-remote        # if installed with pip"
     echo "  rm -rf ~/.vibe_remote            # remove config and data"
+    echo ""
+    echo -e "${BLUE}If 'vibe' is still not found:${NC}"
+    echo "  ${VIBE_BIN_PATH:-$HOME/.local/bin/vibe}"
     echo ""
     echo -e "${BLUE}Documentation:${NC}"
     echo "  https://github.com/${REPO}#readme"

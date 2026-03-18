@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import time
 from typing import Dict, Any, Optional, Callable, List
 from urllib.parse import urlsplit
 
@@ -47,6 +48,9 @@ class DiscordBot(BaseIMClient):
         self._controller = None
         self._on_ready: Optional[Callable] = None
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
+        self._recent_interaction_ids: Dict[str, float] = {}
+        self._recent_callback_keys: Dict[str, float] = {}
+        self._callback_dedupe_ttl_seconds = 3.0
 
         self.client.on_ready = self._on_ready_event
         self.client.on_message = self._on_message_event
@@ -87,6 +91,56 @@ class DiscordBot(BaseIMClient):
     def _t(self, key: str, channel_id: Optional[str] = None, **kwargs) -> str:
         lang = self._get_lang(channel_id)
         return i18n_t(key, lang, **kwargs)
+
+    def _prune_recent_interactions(self) -> None:
+        cutoff = time.monotonic() - self._callback_dedupe_ttl_seconds
+        self._recent_interaction_ids = {key: ts for key, ts in self._recent_interaction_ids.items() if ts >= cutoff}
+        self._recent_callback_keys = {key: ts for key, ts in self._recent_callback_keys.items() if ts >= cutoff}
+
+    def _mark_interaction_seen(self, interaction: discord.Interaction, callback_data: str) -> bool:
+        self._prune_recent_interactions()
+
+        now = time.monotonic()
+        interaction_id = str(interaction.id)
+        if interaction_id in self._recent_interaction_ids:
+            return False
+
+        message_id = str(interaction.message.id) if interaction.message else ""
+        callback_key = f"{interaction.user.id}:{message_id}:{callback_data}"
+        last_seen = self._recent_callback_keys.get(callback_key)
+        self._recent_interaction_ids[interaction_id] = now
+        self._recent_callback_keys[callback_key] = now
+        return last_seen is None or (now - last_seen) > self._callback_dedupe_ttl_seconds
+
+    def _build_interaction_context(self, interaction: discord.Interaction) -> MessageContext | None:
+        channel_id, thread_id = self._extract_context_ids(interaction.channel)
+        guild_id = str(interaction.guild_id) if interaction.guild_id else None
+        if guild_id and not self._is_allowed_guild(guild_id):
+            return None
+
+        is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+        return MessageContext(
+            user_id=str(interaction.user.id),
+            channel_id=channel_id,
+            thread_id=thread_id,
+            message_id=str(interaction.message.id) if interaction.message else None,
+            platform_specific={"interaction": interaction, "is_dm": is_dm},
+        )
+
+    async def _dispatch_callback_query(self, context: MessageContext, data: str) -> None:
+        if self.on_callback_query_callback:
+            await self.on_callback_query_callback(context, data)
+
+    def _spawn_callback_query_task(self, context: MessageContext, data: str) -> None:
+        task = asyncio.create_task(self._dispatch_callback_query(context, data))
+
+        def _log_task_result(done_task: asyncio.Task) -> None:
+            try:
+                done_task.result()
+            except Exception:
+                logger.exception("Discord callback task failed: %s", data)
+
+        task.add_done_callback(_log_task_result)
 
     def get_default_parse_mode(self) -> str:
         return "markdown"
@@ -1614,32 +1668,31 @@ class _PersistentStartView(discord.ui.View):
                     await interaction.response.defer(ephemeral=True)
                 except Exception:
                     pass
-            channel_id, thread_id = self.outer._extract_context_ids(interaction.channel)
-            guild_id = str(interaction.guild_id) if interaction.guild_id else None
-            if guild_id and not self.outer._is_allowed_guild(guild_id):
+
+            if not self.outer._mark_interaction_seen(interaction, data):
+                logger.info("Ignoring duplicate Discord interaction: %s", data)
                 return
-            is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+
+            context = self.outer._build_interaction_context(interaction)
+            if context is None:
+                return
             auth_result = self.outer.check_authorization(
-                user_id=str(interaction.user.id),
-                channel_id=channel_id,
-                is_dm=is_dm,
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                is_dm=bool((context.platform_specific or {}).get("is_dm", False)),
                 action=data,
                 settings_manager=self.outer.settings_manager,
             )
             if not auth_result.allowed:
                 await self.outer._send_auth_denial(
-                    channel_id, str(interaction.user.id), auth_result, interaction=interaction
+                    context.channel_id, context.user_id, auth_result, interaction=interaction
                 )
                 return
-            context = MessageContext(
-                user_id=str(interaction.user.id),
-                channel_id=channel_id,
-                thread_id=thread_id,
-                message_id=str(interaction.message.id) if interaction.message else None,
-                platform_specific={"interaction": interaction, "is_dm": is_dm},
-            )
-            if self.outer.on_callback_query_callback:
-                await self.outer.on_callback_query_callback(context, data)
+
+            if needs_modal:
+                await self.outer._dispatch_callback_query(context, data)
+            else:
+                self.outer._spawn_callback_query_task(context, data)
 
         return on_click
 
@@ -1693,32 +1746,31 @@ class _DiscordButtonView(discord.ui.View):
                             await interaction.response.defer(ephemeral=True)
                         except Exception:
                             pass
-                    channel_id, thread_id = self.outer._extract_context_ids(interaction.channel)
-                    guild_id = str(interaction.guild_id) if interaction.guild_id else None
-                    if guild_id and not self.outer._is_allowed_guild(guild_id):
+
+                    if not self.outer._mark_interaction_seen(interaction, data):
+                        logger.info("Ignoring duplicate Discord interaction: %s", data)
                         return
-                    is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+
+                    context = self.outer._build_interaction_context(interaction)
+                    if context is None:
+                        return
                     auth_result = self.outer.check_authorization(
-                        user_id=str(interaction.user.id),
-                        channel_id=channel_id,
-                        is_dm=is_dm,
+                        user_id=context.user_id,
+                        channel_id=context.channel_id,
+                        is_dm=bool((context.platform_specific or {}).get("is_dm", False)),
                         action=data,
                         settings_manager=self.outer.settings_manager,
                     )
                     if not auth_result.allowed:
                         await self.outer._send_auth_denial(
-                            channel_id, str(interaction.user.id), auth_result, interaction=interaction
+                            context.channel_id, context.user_id, auth_result, interaction=interaction
                         )
                         return
-                    context = MessageContext(
-                        user_id=str(interaction.user.id),
-                        channel_id=channel_id,
-                        thread_id=thread_id,
-                        message_id=str(interaction.message.id) if interaction.message else None,
-                        platform_specific={"interaction": interaction, "is_dm": is_dm},
-                    )
-                    if self.outer.on_callback_query_callback:
-                        await self.outer.on_callback_query_callback(context, data)
+
+                    if needs_modal:
+                        await self.outer._dispatch_callback_query(context, data)
+                    else:
+                        self.outer._spawn_callback_query_task(context, data)
 
                 item.callback = on_click
                 self.add_item(item)

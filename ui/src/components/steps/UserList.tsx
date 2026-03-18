@@ -420,7 +420,7 @@ export const UserList: React.FC = () => {
     enabled: true,
     show_message_types: [],
     custom_cwd: '',
-    routing: { agent_backend: 'opencode' },
+    routing: { agent_backend: null },
   });
 
   const getReasoningOptions = (cwd: string, modelKey: string) => {
@@ -450,6 +450,7 @@ export const UserList: React.FC = () => {
         ) : (
           userEntries.map(([userId, userConfig]) => {
             const effectiveCwd = userConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
+            const effectiveBackend = userConfig.routing?.agent_backend || config.agents?.default_backend || 'opencode';
             const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
             const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
             return (
@@ -527,7 +528,7 @@ export const UserList: React.FC = () => {
                       <div className="space-y-1">
                         <label className="text-xs font-medium text-muted uppercase">{t('channelList.backend')}</label>
                         <select
-                          value={userConfig.routing.agent_backend || 'opencode'}
+                          value={effectiveBackend}
                           onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, agent_backend: e.target.value } })}
                           className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
                         >
@@ -573,7 +574,7 @@ export const UserList: React.FC = () => {
                     </div>
 
                     {/* OpenCode Settings */}
-                    {(!userConfig.routing.agent_backend || userConfig.routing.agent_backend === 'opencode') && (
+                    {effectiveBackend === 'opencode' && (
                       <div className="space-y-3">
                         <div className="text-xs font-medium text-muted uppercase">{t('channelList.opencodeSettings')}</div>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
@@ -633,7 +634,7 @@ export const UserList: React.FC = () => {
                     )}
 
                     {/* Claude Settings */}
-                    {userConfig.routing.agent_backend === 'claude' && (
+                    {effectiveBackend === 'claude' && (
                       <div className="space-y-3">
                         <div className="text-xs font-medium text-muted uppercase">{t('channelList.claudeSettings')}</div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-bg/50 p-3 rounded border border-border">
@@ -664,7 +665,7 @@ export const UserList: React.FC = () => {
                     )}
 
                     {/* Codex Settings */}
-                    {userConfig.routing.agent_backend === 'codex' && (
+                    {effectiveBackend === 'codex' && (
                       <div className="space-y-3">
                         <div className="text-xs font-medium text-muted uppercase">{t('channelList.codexSettings')}</div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-bg/50 p-3 rounded border border-border">

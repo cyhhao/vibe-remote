@@ -267,7 +267,10 @@ def _build_codex_config_toml() -> str:
         _parse_bool(_optional("THREE_REGRESSION_CODEX_DISABLE_RESPONSE_STORAGE"), default=True)
     ).lower()
     responses_websockets_v2 = str(
-        _parse_bool(_optional("THREE_REGRESSION_CODEX_RESPONSES_WEBSOCKETS_V2"), default=True)
+        _parse_bool(_optional("THREE_REGRESSION_CODEX_RESPONSES_WEBSOCKETS_V2"), default=False)
+    ).lower()
+    suppress_unstable_warning = str(
+        _parse_bool(_optional("THREE_REGRESSION_CODEX_SUPPRESS_UNSTABLE_WARNING"), default=True)
     ).lower()
     return (
         f'model_provider = "{model_provider}"\n'
@@ -275,6 +278,7 @@ def _build_codex_config_toml() -> str:
         f'review_model = "{review_model}"\n'
         f'model_reasoning_effort = "{reasoning_effort}"\n'
         f"disable_response_storage = {disable_storage}\n"
+        f"suppress_unstable_features_warning = {suppress_unstable_warning}\n"
         'network_access = "enabled"\n'
         "windows_wsl_setup_acknowledged = true\n"
         f"model_context_window = {_env('THREE_REGRESSION_CODEX_CONTEXT_WINDOW', '1000000')}\n"

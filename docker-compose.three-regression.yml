@@ -14,12 +14,6 @@ x-vibe-regression: &vibe-regression
     ANTHROPIC_AUTH_TOKEN: ${THREE_REGRESSION_CLAUDE_AUTH_TOKEN:-}
     CLAUDE_CODE_ATTRIBUTION_HEADER: ${THREE_REGRESSION_CLAUDE_ATTRIBUTION_HEADER:-0}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-    OPENAI_API_BASE: ${OPENAI_API_BASE:-}
-  volumes:
-    - ./_tmp/three-regression/shared-home/.claude:/root/.claude:ro
-    - ./_tmp/three-regression/shared-home/.codex:/root/.codex:ro
-    - ./_tmp/three-regression/shared-home/.config/opencode:/root/.config/opencode:ro
   healthcheck:
     test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5123/health', timeout=3)"]
     interval: 3s
@@ -34,6 +28,10 @@ services:
       - "${THREE_REGRESSION_SLACK_PORT:-15131}:5123"
     volumes:
       - ./_tmp/three-regression/slack:/data/vibe_remote
+      - ./_tmp/three-regression/shared-home/.claude/settings.json:/root/.claude/settings.json:ro
+      - ./_tmp/three-regression/shared-home/.codex/config.toml:/root/.codex/config.toml:ro
+      - ./_tmp/three-regression/shared-home/.codex/auth.json:/root/.codex/auth.json:ro
+      - ./_tmp/three-regression/shared-home/.config/opencode/opencode.json:/root/.config/opencode/opencode.json:ro
 
   discord:
     <<: *vibe-regression
@@ -41,6 +39,10 @@ services:
       - "${THREE_REGRESSION_DISCORD_PORT:-15132}:5123"
     volumes:
       - ./_tmp/three-regression/discord:/data/vibe_remote
+      - ./_tmp/three-regression/shared-home/.claude/settings.json:/root/.claude/settings.json:ro
+      - ./_tmp/three-regression/shared-home/.codex/config.toml:/root/.codex/config.toml:ro
+      - ./_tmp/three-regression/shared-home/.codex/auth.json:/root/.codex/auth.json:ro
+      - ./_tmp/three-regression/shared-home/.config/opencode/opencode.json:/root/.config/opencode/opencode.json:ro
 
   feishu:
     <<: *vibe-regression
@@ -48,3 +50,7 @@ services:
       - "${THREE_REGRESSION_FEISHU_PORT:-15133}:5123"
     volumes:
       - ./_tmp/three-regression/feishu:/data/vibe_remote
+      - ./_tmp/three-regression/shared-home/.claude/settings.json:/root/.claude/settings.json:ro
+      - ./_tmp/three-regression/shared-home/.codex/config.toml:/root/.codex/config.toml:ro
+      - ./_tmp/three-regression/shared-home/.codex/auth.json:/root/.codex/auth.json:ro
+      - ./_tmp/three-regression/shared-home/.config/opencode/opencode.json:/root/.config/opencode/opencode.json:ro
