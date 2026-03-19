@@ -63,6 +63,7 @@ export type InstallResult = {
   ok: boolean;
   message: string;
   output: string | null;
+  path?: string | null;
 };
 
 const ApiContext = createContext<ApiContextType | undefined>(undefined);

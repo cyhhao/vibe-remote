@@ -29,6 +29,84 @@ _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
 
+def _is_executable_file(path: Path) -> bool:
+    return path.exists() and path.is_file() and os.access(path, os.X_OK)
+
+
+def _nvm_binary_candidates(binary: str) -> list[Path]:
+    versions_dir = Path.home() / ".nvm" / "versions" / "node"
+    if not versions_dir.exists():
+        return []
+
+    def _version_sort_key(path: Path) -> tuple:
+        parts = str(path.name).lstrip("v").split(".")
+        key: list[int | str] = []
+        for part in parts:
+            key.append(int(part) if part.isdigit() else part)
+        return tuple(key)
+
+    candidates: list[Path] = []
+    for version_dir in sorted(versions_dir.glob("*"), key=_version_sort_key, reverse=True):
+        candidate = version_dir / "bin" / binary
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+def _candidate_cli_paths(binary: str) -> list[Path]:
+    if not binary:
+        return []
+
+    expanded = Path(os.path.expanduser(binary))
+    has_path_separator = os.sep in binary or (os.altsep is not None and os.altsep in binary)
+    if expanded.is_absolute() or has_path_separator:
+        return [expanded]
+
+    home = Path.home()
+    candidates: list[Path] = []
+    if binary == "claude":
+        candidates.append(home / ".claude" / "local" / "claude")
+    elif binary == "opencode":
+        candidates.extend(
+            [
+                home / ".opencode" / "bin" / "opencode",
+                home / ".local" / "bin" / "opencode",
+            ]
+        )
+
+    common_candidates = [
+        home / ".local" / "bin" / binary,
+        home / ".bun" / "bin" / binary,
+        Path("/opt/homebrew/bin") / binary,
+        Path("/usr/local/bin") / binary,
+    ]
+    for candidate in common_candidates + _nvm_binary_candidates(binary):
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    return candidates
+
+
+def resolve_cli_path(binary: str) -> str | None:
+    for candidate in _candidate_cli_paths(binary):
+        if _is_executable_file(candidate):
+            return str(candidate)
+
+    path = shutil.which(os.path.expanduser(binary)) if binary else None
+    return path or None
+
+
+def _command_env_for(binary_path: str | None) -> dict[str, str]:
+    env = {**os.environ, "PATH": os.environ.get("PATH", "")}
+    if not binary_path:
+        return env
+
+    binary_dir = str(Path(binary_path).expanduser().resolve().parent)
+    path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry and entry != binary_dir]
+    env["PATH"] = os.pathsep.join([binary_dir, *path_entries])
+    return env
+
+
 def browse_directory(path: str, show_hidden: bool = False) -> dict:
     """List sub-directories of *path* for the directory browser UI.
 
@@ -164,11 +242,7 @@ def init_sessions() -> None:
 
 
 def detect_cli(binary: str) -> dict:
-    if binary == "claude":
-        preferred = Path.home() / ".claude" / "local" / "claude"
-        if preferred.exists() and os.access(preferred, os.X_OK):
-            return {"found": True, "path": str(preferred)}
-    path = shutil.which(binary)
+    path = resolve_cli_path(binary)
     if not path:
         return {"found": False, "path": None}
     return {"found": True, "path": path}
@@ -904,7 +978,7 @@ def install_agent(name: str) -> dict:
 
     def _check_binary(binary: str) -> str | None:
         """Check if a binary exists in PATH. Returns error message if not found."""
-        if shutil.which(binary) is None:
+        if resolve_cli_path(binary) is None:
             return f"{binary} is required but not found. Please install it first."
         return None
 
@@ -946,12 +1020,12 @@ def install_agent(name: str) -> dict:
             cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://claude.ai/install.sh | bash"]
     elif name == "codex":
         # Codex: prefer npm, fallback to brew on macOS
-        npm_path = shutil.which("npm")
+        npm_path = resolve_cli_path("npm")
         if npm_path:
             cmd = [npm_path, "install", "-g", "@openai/codex"]
         elif system == "darwin":
             # macOS: try brew cask
-            brew_path = shutil.which("brew")
+            brew_path = resolve_cli_path("brew")
             if brew_path:
                 cmd = [brew_path, "install", "--cask", "codex"]
             else:
@@ -971,20 +1045,23 @@ def install_agent(name: str) -> dict:
 
     try:
         logger.info("Installing agent %s with command: %s", name, cmd)
+        command_env = _command_env_for(cmd[0] if cmd and os.path.isabs(cmd[0]) else None)
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=300,  # 5 minute timeout for installation
-            env={**os.environ, "PATH": os.environ.get("PATH", "")},
+            env=command_env,
         )
         output = result.stdout + ("\n" + result.stderr if result.stderr else "")
         output = _truncate_output(output.strip())
         if result.returncode == 0:
             logger.info("Agent %s installed successfully", name)
+            installed_path = resolve_cli_path(name)
             return {
                 "ok": True,
                 "message": f"{name} installed successfully",
+                "path": installed_path,
                 "output": output,
             }
         else:
