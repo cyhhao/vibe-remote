@@ -35,7 +35,7 @@ export const AppShell: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex bg-bg text-text font-sans">
+    <div className="min-h-screen min-h-[100dvh] flex bg-bg text-text font-sans">
       {/* Sidebar */}
       <aside className="w-64 border-r border-border bg-panel hidden md:flex flex-col">
         <div className="p-6 border-b border-border">
@@ -69,12 +69,12 @@ export const AppShell: React.FC = () => {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto p-4 md:p-8">
+      <main className="flex-1 overflow-auto p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:p-8">
         <Outlet />
       </main>
 
        {/* Mobile Nav */}
-       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-panel border-t border-border flex justify-around p-3 z-50 pb-safe">
+       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-panel border-t border-border flex justify-around p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] z-50">
           <NavLink to="/dashboard" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><LayoutDashboard /></NavLink>
           <NavLink to="/channels" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><MessageSquare /></NavLink>
           <NavLink to="/users" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><Users /></NavLink>

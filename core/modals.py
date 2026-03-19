@@ -46,5 +46,6 @@ class RoutingModalSelection:
     selected_opencode_reasoning: Optional[str] = None
     selected_claude_agent: Optional[str] = None
     selected_claude_model: Optional[str] = None
+    selected_claude_reasoning: Optional[str] = None
     selected_codex_model: Optional[str] = None
     selected_codex_reasoning: Optional[str] = None

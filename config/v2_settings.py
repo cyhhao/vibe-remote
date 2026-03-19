@@ -84,7 +84,7 @@ class RoutingSettings:
     # Claude Code settings
     claude_agent: Optional[str] = None
     claude_model: Optional[str] = None
-    # Note: Claude Code has no CLI parameter for reasoning effort (Extended Thinking)
+    claude_reasoning_effort: Optional[str] = None
     # Codex settings
     codex_model: Optional[str] = None
     codex_reasoning_effort: Optional[str] = None
@@ -143,6 +143,7 @@ def _parse_routing(payload: dict) -> RoutingSettings:
         opencode_reasoning_effort=payload.get("opencode_reasoning_effort"),
         claude_agent=payload.get("claude_agent"),
         claude_model=payload.get("claude_model"),
+        claude_reasoning_effort=payload.get("claude_reasoning_effort"),
         codex_model=payload.get("codex_model"),
         codex_reasoning_effort=payload.get("codex_reasoning_effort"),
     )
@@ -157,6 +158,7 @@ def _routing_to_dict(routing: RoutingSettings) -> dict:
         "opencode_reasoning_effort": routing.opencode_reasoning_effort,
         "claude_agent": routing.claude_agent,
         "claude_model": routing.claude_model,
+        "claude_reasoning_effort": routing.claude_reasoning_effort,
         "codex_model": routing.codex_model,
         "codex_reasoning_effort": routing.codex_reasoning_effort,
     }

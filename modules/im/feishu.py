@@ -15,6 +15,8 @@ from .formatters import FeishuFormatter
 from config.v2_config import LarkConfig
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
+    build_claude_reasoning_options,
+    build_codex_reasoning_options,
     build_opencode_model_option_items,
     build_reasoning_effort_options,
     resolve_opencode_allowed_providers,
@@ -145,6 +147,9 @@ class FeishuBot(BaseIMClient):
         return "markdown"
 
     def should_use_thread_for_reply(self) -> bool:
+        return True
+
+    def should_use_thread_for_dm_session(self) -> bool:
         return True
 
     def _get_sdk_domain(self) -> str:
@@ -1671,6 +1676,7 @@ class FeishuBot(BaseIMClient):
         opencode_reasoning = _val("opencode_reasoning")
         claude_agent = _val("claude_agent")
         claude_model = _val("claude_model")
+        claude_reasoning = _val("claude_reasoning")
         codex_model = _val("codex_model")
         codex_reasoning = _val("codex_reasoning")
 
@@ -1684,6 +1690,7 @@ class FeishuBot(BaseIMClient):
                 opencode_reasoning,
                 claude_agent,
                 claude_model,
+                claude_reasoning,
                 codex_model,
                 codex_reasoning,
                 is_dm=context.platform_specific.get("is_dm", False),
@@ -2231,6 +2238,7 @@ class FeishuBot(BaseIMClient):
 
         # ---- Claude section ----
         elif selected_backend == "claude":
+            cl_current_model = getattr(current_routing, "claude_model", None) if current_routing else None
             # Claude agent selector
             if claude_agents:
                 cl_agent_options = [{"text": {"tag": "plain_text", "content": "(Default)"}, "value": "__default__"}]
@@ -2255,7 +2263,6 @@ class FeishuBot(BaseIMClient):
                 for m in claude_models:
                     mid = m if isinstance(m, str) else m.get("id", str(m))
                     cl_model_options.append({"text": {"tag": "plain_text", "content": mid}, "value": mid})
-                cl_current_model = getattr(current_routing, "claude_model", None) if current_routing else None
                 form_elements.append({"tag": "markdown", "content": t("modal.routing.model")})
                 form_elements.append(
                     {
@@ -2266,6 +2273,22 @@ class FeishuBot(BaseIMClient):
                         "initial_option": cl_current_model if cl_current_model else "__default__",
                     }
                 )
+
+            cl_current_re = getattr(current_routing, "claude_reasoning_effort", None) if current_routing else None
+            cl_re_defs = build_claude_reasoning_options(cl_current_model)
+            cl_re_options = []
+            for item in cl_re_defs:
+                cl_re_options.append({"text": {"tag": "plain_text", "content": item["label"]}, "value": item["value"]})
+            form_elements.append({"tag": "markdown", "content": t("modal.routing.reasoningEffort")})
+            form_elements.append(
+                {
+                    "tag": "select_static",
+                    "name": "claude_reasoning",
+                    "placeholder": {"tag": "plain_text", "content": t("modal.routing.selectReasoningEffort")},
+                    "options": cl_re_options,
+                    "initial_option": cl_current_re if cl_current_re else "__default__",
+                }
+            )
 
         # ---- Codex section ----
         elif selected_backend == "codex":
@@ -2286,9 +2309,6 @@ class FeishuBot(BaseIMClient):
                         "initial_option": cx_current_model if cx_current_model else "__default__",
                     }
                 )
-
-            # Codex reasoning effort — reuse shared builder for consistency
-            from modules.agents.opencode.utils import build_codex_reasoning_options
 
             codex_re_defs = build_codex_reasoning_options()
             cx_re_options = []

@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useStatus } from '../../context/StatusContext';
 import { useNavigate } from 'react-router-dom';
+import { useToast } from '../../context/ToastContext';
+import { copyTextToClipboard } from '../../lib/utils';
 
 interface SummaryProps {
   data: any;
@@ -17,6 +19,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { control } = useStatus();
+  const { showToast } = useToast();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bindCode, setBindCode] = useState<string | null>(null);
@@ -32,13 +35,14 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
 
   const copyBindCode = async () => {
     if (!bindCode) return;
-    try {
-      await navigator.clipboard.writeText(`/bind ${bindCode}`);
-      setCodeCopied(true);
-      setTimeout(() => setCodeCopied(false), 2000);
-    } catch {
-      // Fallback: select text
+    const copied = await copyTextToClipboard(`/bind ${bindCode}`);
+    if (!copied) {
+      showToast(t('common.copyFailed'), 'error');
+      return;
     }
+
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
   };
 
   const saveAll = async () => {
@@ -379,6 +383,7 @@ const buildSettingsPayload = (data: any) => {
             opencode_reasoning_effort: cfg.routing?.opencode_reasoning_effort || null,
             claude_agent: cfg.routing?.claude_agent || null,
             claude_model: cfg.routing?.claude_model || null,
+            claude_reasoning_effort: cfg.routing?.claude_reasoning_effort || null,
             codex_model: cfg.routing?.codex_model || null,
             codex_reasoning_effort: cfg.routing?.codex_reasoning_effort || null,
           },

@@ -15,6 +15,7 @@ from config.v2_config import DiscordConfig
 from .formatters import DiscordFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
+    build_claude_reasoning_options,
     build_opencode_model_option_items,
     build_codex_reasoning_options,
     build_reasoning_effort_options,
@@ -147,6 +148,9 @@ class DiscordBot(BaseIMClient):
 
     def should_use_thread_for_reply(self) -> bool:
         return True
+
+    def should_use_thread_for_dm_session(self) -> bool:
+        return False
 
     def format_markdown(self, text: str) -> str:
         return text
@@ -552,6 +556,26 @@ class DiscordBot(BaseIMClient):
         except Exception as err:
             logger.debug("Failed to send channel auth denial: %s", err)
 
+    async def _dismiss_interaction_message(self, interaction: discord.Interaction, fallback_text: str) -> None:
+        """Delete the source interaction message, with edit fallback when delete is unavailable."""
+        if interaction.message is not None:
+            try:
+                await interaction.message.delete()
+                return
+            except Exception as err:
+                logger.debug("Failed to delete Discord interaction message directly: %s", err)
+
+        try:
+            await interaction.delete_original_response()
+            return
+        except Exception as err:
+            logger.debug("Failed to delete Discord original interaction response: %s", err)
+
+        try:
+            await interaction.edit_original_response(content=fallback_text, embed=None, view=None)
+        except Exception as err:
+            logger.warning("Failed to dismiss Discord interaction message after successful submit: %s", err)
+
     async def _maybe_create_thread(self, message: discord.Message) -> Optional[discord.Thread]:
         if isinstance(message.channel, discord.Thread):
             return message.channel
@@ -901,11 +925,7 @@ class DiscordBot(BaseIMClient):
                         notify_user=True,
                         is_dm=save_interaction.guild is None,
                     )
-                await save_interaction.edit_original_response(
-                    content=f"✅ {self._t('common.submitted')}",
-                    embed=None,
-                    view=None,
-                )
+                await self._dismiss_interaction_message(save_interaction, f"✅ {self._t('common.submitted')}")
             except Exception as err:
                 await save_interaction.edit_original_response(
                     content=f"❌ {self._t('error.settingsUpdateFailed', error=str(err))}",
@@ -1103,6 +1123,9 @@ class DiscordBot(BaseIMClient):
                 )
                 self.claude_agent = getattr(current_routing, "claude_agent", None) if current_routing else None
                 self.claude_model = getattr(current_routing, "claude_model", None) if current_routing else None
+                self.claude_reasoning = (
+                    getattr(current_routing, "claude_reasoning_effort", None) if current_routing else None
+                )
                 self.codex_model = getattr(current_routing, "codex_model", None) if current_routing else None
                 self.codex_reasoning = (
                     getattr(current_routing, "codex_reasoning_effort", None) if current_routing else None
@@ -1342,10 +1365,57 @@ class DiscordBot(BaseIMClient):
                     async def claude_model_callback(select_interaction: discord.Interaction):
                         if model_select.values:
                             self.claude_model = model_select.values[0]
-                        await select_interaction.response.defer()
+                            self.claude_reasoning = None
+                        self._render()
+                        updated_embed = discord.Embed(
+                            title=self._content(),
+                            description=self.outer._t("discord.routingSubtitle"),
+                        )
+                        await select_interaction.response.edit_message(embed=updated_embed, view=self)
 
                     model_select.callback = claude_model_callback
                     self.add_item(model_select)
+
+                    claude_reasoning_entries = build_claude_reasoning_options(
+                        self.claude_model if self.claude_model not in (None, "__default__") else None
+                    )
+                    selected_cl_reasoning = (
+                        self.claude_reasoning if self.claude_reasoning not in (None, "__default__") else "__default__"
+                    )
+                    available_cl_reasoning = {entry.get("value") for entry in claude_reasoning_entries}
+                    if selected_cl_reasoning not in available_cl_reasoning:
+                        selected_cl_reasoning = "__default__"
+                    reasoning_options = []
+                    for entry in claude_reasoning_entries:
+                        value = entry.get("value")
+                        if not value:
+                            continue
+                        if value == "__default__":
+                            label = self.outer._t("common.default")
+                        else:
+                            translated = self.outer._t(f"reasoning.{value}")
+                            label = translated if translated != f"reasoning.{value}" else entry.get("label", value)
+                        reasoning_options.append(
+                            discord.SelectOption(
+                                label=_prefixed_label("discord.labels.reasoningEffort", label),
+                                value=value,
+                                default=value == selected_cl_reasoning,
+                            )
+                        )
+                    reasoning_select = discord.ui.Select(
+                        placeholder=self.outer._t("modal.routing.selectReasoningEffort"),
+                        options=reasoning_options,
+                        min_values=1,
+                        max_values=1,
+                    )
+
+                    async def claude_reasoning_callback(select_interaction: discord.Interaction):
+                        if reasoning_select.values:
+                            self.claude_reasoning = reasoning_select.values[0]
+                        await select_interaction.response.defer()
+
+                    reasoning_select.callback = claude_reasoning_callback
+                    self.add_item(reasoning_select)
 
                 if self.selected_backend == "codex":
                     model_options = [
@@ -1462,15 +1532,15 @@ class DiscordBot(BaseIMClient):
                             _normalize(self.oc_reasoning),
                             _normalize(self.claude_agent),
                             _normalize(self.claude_model),
+                            _normalize(self.claude_reasoning),
                             _normalize(self.codex_model),
                             _normalize(self.codex_reasoning),
                             notify_user=True,
                             is_dm=interaction.guild is None,
                         )
-                    await interaction.edit_original_response(
-                        content=f"✅ {self.outer._t('common.submitted')}",
-                        embed=None,
-                        view=None,
+                    await self.outer._dismiss_interaction_message(
+                        interaction,
+                        f"✅ {self.outer._t('common.submitted')}",
                     )
                 except Exception as err:
                     await interaction.edit_original_response(

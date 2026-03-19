@@ -133,13 +133,24 @@ def get_settings() -> dict:
 def save_settings(payload: dict) -> dict:
     store = SettingsStore.get_instance()
     platform = _current_platform()
+
+    def _normalize_routing_payload(routing_payload: dict) -> dict:
+        from modules.agents.opencode.utils import normalize_claude_reasoning_effort
+
+        routing_data = dict(routing_payload or {})
+        routing_data["claude_reasoning_effort"] = normalize_claude_reasoning_effort(
+            routing_data.get("claude_model"),
+            routing_data.get("claude_reasoning_effort"),
+        )
+        return routing_data
+
     channels = {}
     for channel_id, channel_payload in (payload.get("channels") or {}).items():
         channels[channel_id] = ChannelSettings(
             enabled=channel_payload.get("enabled", True),
             show_message_types=normalize_show_message_types(channel_payload.get("show_message_types")),
             custom_cwd=channel_payload.get("custom_cwd"),
-            routing=_parse_routing(channel_payload.get("routing") or {}),
+            routing=_parse_routing(_normalize_routing_payload(channel_payload.get("routing") or {})),
             require_mention=channel_payload.get("require_mention"),
         )
     store.set_channels_for_platform(platform, channels)
@@ -863,8 +874,13 @@ def claude_models() -> dict:
     except Exception as exc:
         logger.warning("Failed to read Claude settings.json: %s", exc, exc_info=True)
 
+    from modules.agents.opencode.utils import build_claude_reasoning_options
+
     uniq = sorted({x for x in options if x})
-    return {"ok": True, "models": uniq}
+    reasoning_options = {"": build_claude_reasoning_options(None)}
+    for model in uniq:
+        reasoning_options[model] = build_claude_reasoning_options(model)
+    return {"ok": True, "models": uniq, "reasoning_options": reasoning_options}
 
 
 def install_agent(name: str) -> dict:
@@ -1146,6 +1162,16 @@ def save_users(payload: dict) -> dict:
     store = SettingsStore.get_instance()
     platform = _current_platform()
 
+    def _normalize_routing_payload(routing_payload: dict) -> dict:
+        from modules.agents.opencode.utils import normalize_claude_reasoning_effort
+
+        routing_data = dict(routing_payload or {})
+        routing_data["claude_reasoning_effort"] = normalize_claude_reasoning_effort(
+            routing_data.get("claude_model"),
+            routing_data.get("claude_reasoning_effort"),
+        )
+        return routing_data
+
     users = {}
     for user_id, up in (payload.get("users") or {}).items():
         if not isinstance(up, dict):
@@ -1159,7 +1185,7 @@ def save_users(payload: dict) -> dict:
             enabled=up.get("enabled", True),
             show_message_types=normalize_show_message_types(up.get("show_message_types")),
             custom_cwd=up.get("custom_cwd"),
-            routing=_parse_routing(up.get("routing") or {}),
+            routing=_parse_routing(_normalize_routing_payload(up.get("routing") or {})),
             dm_chat_id=existing.dm_chat_id if existing else "",
         )
 

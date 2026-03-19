@@ -128,6 +128,14 @@ class BaseIMClient(ABC):
         # Default implementation - subclasses should override
         return False
 
+    def should_use_thread_for_dm_session(self) -> bool:
+        """Check if DM conversations should use thread-based session IDs.
+
+        Platforms differ here: some DMs support thread/topic replies, while
+        others only have a flat DM timeline.
+        """
+        return False
+
     @staticmethod
     def extract_command_action(text: str) -> str:
         """Extract command action name from slash command text.

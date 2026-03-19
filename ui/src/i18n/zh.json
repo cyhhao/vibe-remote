@@ -35,7 +35,8 @@
     "editSetup": "编辑设置",
     "manageChannels": "管理频道",
     "viewLogs": "查看日志",
-    "saveAndRestart": "保存并重启"
+    "saveAndRestart": "保存并重启",
+    "copyFailed": "复制失败，请手动复制"
   },
   "nav": {
     "dashboard": "仪表盘",
@@ -298,6 +299,7 @@
     "reasoningLow": "低",
     "reasoningMedium": "中",
     "reasoningHigh": "高",
+    "reasoningMax": "最大",
     "reasoningXHigh": "超高",
     "searchModel": "搜索模型...",
     "settingsSaved": "设置已保存",

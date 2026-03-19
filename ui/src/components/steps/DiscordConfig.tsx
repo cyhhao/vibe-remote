@@ -3,6 +3,8 @@ import { Shield, RefreshCw, Check, Server, KeyRound, Plus, ExternalLink, Setting
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
+import { useToast } from '../../context/ToastContext';
+import { copyTextToClipboard } from '../../lib/utils';
 
 interface DiscordConfigProps {
   data: any;
@@ -13,6 +15,7 @@ interface DiscordConfigProps {
 export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
+  const { showToast } = useToast();
   const [botToken, setBotToken] = useState(data.discord?.bot_token || '');
   const [checking, setChecking] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
@@ -81,13 +84,15 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
 
   const copyInviteUrl = async () => {
     if (!inviteUrl) return;
-    try {
-      await navigator.clipboard.writeText(inviteUrl);
+    const copiedToClipboard = await copyTextToClipboard(inviteUrl);
+    if (copiedToClipboard) {
       setInviteCopied(true);
       setTimeout(() => setInviteCopied(false), 2000);
-    } catch {
-      setInviteCopied(false);
+      return;
     }
+
+    setInviteCopied(false);
+    showToast(t('common.copyFailed'), 'error');
   };
 
   const StepHeader: React.FC<{ step: number; title: string; icon: React.ReactNode; completed?: boolean }> = ({

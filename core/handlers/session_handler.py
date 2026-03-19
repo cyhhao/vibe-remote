@@ -1,7 +1,7 @@
 """Session management handlers for Claude SDK sessions"""
 
-import os
 import logging
+import os
 from typing import Optional, Dict, Any, Tuple
 from modules.im import MessageContext
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
@@ -27,7 +27,15 @@ class SessionHandler(BaseHandler):
         platform = getattr(self.config, "platform", "slack")
         is_dm = bool((context.platform_specific or {}).get("is_dm", False))
         if is_dm:
-            base_id = context.channel_id or context.user_id
+            use_dm_threads = False
+            im_client = getattr(self.controller, "im_client", None)
+            if im_client and hasattr(im_client, "should_use_thread_for_dm_session"):
+                use_dm_threads = bool(im_client.should_use_thread_for_dm_session())
+
+            if use_dm_threads:
+                base_id = context.thread_id or context.message_id or context.channel_id or context.user_id
+            else:
+                base_id = context.channel_id or context.user_id
         else:
             base_id = context.thread_id or context.message_id or context.channel_id
         return f"{platform}_{base_id}"
@@ -35,6 +43,16 @@ class SessionHandler(BaseHandler):
     def get_working_path(self, context: MessageContext) -> str:
         """Get working directory - delegate to controller's get_cwd"""
         return self.controller.get_cwd(context)
+
+    def _running_as_root(self) -> bool:
+        geteuid = getattr(os, "geteuid", None)
+        return bool(geteuid and geteuid() == 0)
+
+    def _should_force_claude_sandbox(self) -> bool:
+        if os.environ.get("IS_SANDBOX"):
+            return False
+        permission_mode = getattr(getattr(self.config, "claude", None), "permission_mode", None)
+        return permission_mode == "bypassPermissions" and self._running_as_root()
 
     def _load_agent_file(self, agent_name: str, working_path: str) -> Optional[Dict[str, Any]]:
         """Load an agent file and return its parsed content.
@@ -97,7 +115,7 @@ class SessionHandler(BaseHandler):
         effective_agent = subagent_name or (routing.claude_agent if routing else None)
         # Store explicit model override (not including default yet)
         explicit_model = subagent_model or (routing.claude_model if routing else None)
-        # Note: Claude Code has no CLI parameter for reasoning_effort, so we don't use it
+        explicit_effort = subagent_reasoning_effort or (routing.claude_reasoning_effort if routing else None)
 
         if composite_key in self.claude_sessions and not effective_agent:
             logger.info(f"Using existing Claude SDK client for {base_session_id} at {working_path}")
@@ -157,6 +175,9 @@ class SessionHandler(BaseHandler):
 
         # Determine final model: explicit override > agent frontmatter > global default
         effective_model = explicit_model or agent_model or self.config.claude.default_model
+        from modules.agents.opencode.utils import normalize_claude_reasoning_effort
+
+        effective_effort = normalize_claude_reasoning_effort(effective_model, explicit_effort)
 
         # Determine final system prompt: agent prompt takes precedence over config.
         # When reply_enhancements is enabled and no explicit prompt is set,
@@ -189,6 +210,9 @@ class SessionHandler(BaseHandler):
         for key in os.environ:
             if key.startswith("ANTHROPIC_") or key.startswith("CLAUDE_"):
                 claude_env[key] = os.environ[key]
+        if self._should_force_claude_sandbox():
+            claude_env["IS_SANDBOX"] = "1"
+            logger.info("Detected Claude bypassPermissions running as root; forcing IS_SANDBOX=1 for Claude subprocess")
 
         option_kwargs: Dict[str, Any] = {
             "permission_mode": self.config.claude.permission_mode,
@@ -202,6 +226,8 @@ class SessionHandler(BaseHandler):
             "disallowed_tools": ["AskUserQuestion"],
             "env": claude_env,  # Pass Anthropic/Claude env vars
         }
+        if effective_effort:
+            option_kwargs["effort"] = effective_effort
         # Only set allowed_tools if agent file specifies tools.
         # Omitting the field keeps SDK default tool behavior.
         if agent_allowed_tools:
@@ -218,6 +244,8 @@ class SessionHandler(BaseHandler):
             logger.info(f"  Subagent: {effective_agent}")
         if effective_model:
             logger.info(f"  Model: {effective_model}")
+        if effective_effort:
+            logger.info(f"  Effort: {effective_effort}")
 
         # Log if we're resuming a session
         if stored_claude_session_id:
@@ -283,15 +311,17 @@ class SessionHandler(BaseHandler):
 
             settings_key = self._get_settings_key(context)
             current_routing = self.settings_manager.get_channel_routing(settings_key)
-            opencode_agent = current_routing.opencode_agent if current_routing else None
-            opencode_model = current_routing.opencode_model if current_routing else None
-            opencode_reasoning_effort = current_routing.opencode_reasoning_effort if current_routing else None
 
             routing = ChannelRouting(
                 agent_backend=agent,
-                opencode_agent=opencode_agent,
-                opencode_model=opencode_model,
-                opencode_reasoning_effort=opencode_reasoning_effort,
+                opencode_agent=current_routing.opencode_agent if current_routing else None,
+                opencode_model=current_routing.opencode_model if current_routing else None,
+                opencode_reasoning_effort=current_routing.opencode_reasoning_effort if current_routing else None,
+                claude_agent=current_routing.claude_agent if current_routing else None,
+                claude_model=current_routing.claude_model if current_routing else None,
+                claude_reasoning_effort=current_routing.claude_reasoning_effort if current_routing else None,
+                codex_model=current_routing.codex_model if current_routing else None,
+                codex_reasoning_effort=current_routing.codex_reasoning_effort if current_routing else None,
             )
             self.settings_manager.set_channel_routing(settings_key, routing)
 
@@ -307,8 +337,14 @@ class SessionHandler(BaseHandler):
             confirmation_ts = await self.im_client.send_message(context, confirmation, parse_mode="markdown")
 
             mapped_thread = target_thread or confirmation_ts
-            platform = getattr(self.config, "platform", "slack")
-            base_session_id = f"{platform}_{mapped_thread}"
+            mapping_context = MessageContext(
+                user_id=user_id,
+                channel_id=context.channel_id,
+                thread_id=mapped_thread,
+                message_id=confirmation_ts,
+                platform_specific={"is_dm": is_dm},
+            )
+            base_session_id = self.get_base_session_id(mapping_context)
 
             self.sessions.set_agent_session_mapping(settings_key, agent, base_session_id, session_id)
             self.sessions.mark_thread_active(user_id, context.channel_id, mapped_thread)

@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { Activity, RefreshCw, CheckCircle, AlertTriangle, XCircle, Copy, FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
+import { useToast } from '../../context/ToastContext';
 import { Link } from 'react-router-dom';
 import clsx from 'clsx';
+import { copyTextToClipboard } from '../../lib/utils';
 
 interface DoctorPanelProps {
   isPage?: boolean;
@@ -12,6 +14,7 @@ interface DoctorPanelProps {
 export const DoctorPanel: React.FC<DoctorPanelProps> = ({ isPage }) => {
   const { t } = useTranslation();
   const api = useApi();
+  const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<any>(null);
 
@@ -28,6 +31,15 @@ export const DoctorPanel: React.FC<DoctorPanelProps> = ({ isPage }) => {
   useEffect(() => {
     runDoctor();
   }, []);
+
+  const copyReport = async () => {
+    if (!results) return;
+
+    const copied = await copyTextToClipboard(JSON.stringify(results, null, 2));
+    if (!copied) {
+      showToast(t('common.copyFailed'), 'error');
+    }
+  };
 
   const StatusIcon = ({ status }: { status: string }) => {
     switch (status) {
@@ -54,7 +66,7 @@ export const DoctorPanel: React.FC<DoctorPanelProps> = ({ isPage }) => {
                  </Link>
                  {results && (
                      <button
-                         onClick={() => navigator.clipboard.writeText(JSON.stringify(results, null, 2))}
+                         onClick={() => void copyReport()}
                          className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm text-muted hover:bg-neutral-50 hover:text-text transition-colors"
                      >
                          <Copy size={16} /> {t('doctor.copyReport')}

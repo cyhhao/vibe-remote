@@ -1,7 +1,7 @@
 """Agent helper utilities (reasoning options, model lists, etc.).
 
 Keep this module free of agent state. It should only contain pure helpers.
-Shared by OpenCode and Codex backends for reasoning-effort option building.
+Shared by OpenCode, Claude, and Codex integrations for reasoning-effort option building.
 """
 
 from __future__ import annotations
@@ -322,6 +322,8 @@ def build_reasoning_effort_options(
 # Defined here so that every IM module shares a single source of truth.
 
 _CODEX_REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"]
+_CLAUDE_REASONING_EFFORTS = ["low", "medium", "high"]
+_CLAUDE_MAX_MODEL_MARKERS = ["claude-opus-4-6"]
 
 
 def build_codex_reasoning_options() -> List[Dict[str, str]]:
@@ -340,3 +342,35 @@ def build_codex_reasoning_options() -> List[Dict[str, str]]:
             }
         )
     return options
+
+
+def build_claude_reasoning_options(target_model: Optional[str]) -> List[Dict[str, str]]:
+    """Return the canonical Claude reasoning-effort option list for a model.
+
+    Claude currently supports `low` / `medium` / `high` broadly, while `max`
+    is only valid for Opus 4.6.
+    """
+
+    normalized_model = (target_model or "").strip().lower()
+    efforts = list(_CLAUDE_REASONING_EFFORTS)
+    if normalized_model and any(marker in normalized_model for marker in _CLAUDE_MAX_MODEL_MARKERS):
+        efforts.append("max")
+
+    options: List[Dict[str, str]] = [{"value": "__default__", "label": "(Default)"}]
+    for effort in efforts:
+        options.append(
+            {
+                "value": effort,
+                "label": _REASONING_VARIANT_LABELS.get(effort, effort.capitalize()),
+            }
+        )
+    return options
+
+
+def normalize_claude_reasoning_effort(target_model: Optional[str], effort: Optional[str]) -> Optional[str]:
+    """Return a Claude effort only when it is valid for the target model."""
+
+    if not effort:
+        return None
+    allowed = {item["value"] for item in build_claude_reasoning_options(target_model)}
+    return effort if effort in allowed else None

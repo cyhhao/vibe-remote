@@ -3,6 +3,8 @@ import { Lock, Shield, RefreshCw, Copy, ExternalLink, Check, ChevronDown, Chevro
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
+import { useToast } from '../../context/ToastContext';
+import { copyTextToClipboard } from '../../lib/utils';
 
 interface SlackConfigProps {
   data: any;
@@ -13,6 +15,7 @@ interface SlackConfigProps {
 export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
+  const { showToast } = useToast();
   const [botToken, setBotToken] = useState(data.slack?.bot_token || data.slackBotToken || '');
   const [appToken, setAppToken] = useState(data.slack?.app_token || data.slackAppToken || '');
   const [mode] = useState<'self_host' | 'saas'>(data.mode || 'saas');
@@ -68,13 +71,14 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
 
   const copyManifest = async () => {
     if (!manifest) return;
-    try {
-      await navigator.clipboard.writeText(manifest);
+    const copiedToClipboard = await copyTextToClipboard(manifest);
+    if (copiedToClipboard) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
+      return;
     }
+
+    showToast(t('common.copyFailed'), 'error');
   };
 
   const openSlackCreateApp = () => {

@@ -16,9 +16,14 @@ class _Config:
 
 
 class _Controller:
-    def __init__(self) -> None:
+    def __init__(self, *, platform: str = "discord", dm_threads: bool = False) -> None:
         self.config = _Config()
-        self.im_client = type("IM", (), {"formatter": None})()
+        self.config.platform = platform
+        self.im_client = type(
+            "IM",
+            (),
+            {"formatter": None, "should_use_thread_for_dm_session": lambda self: dm_threads},
+        )()
         self.settings_manager = type("Settings", (), {"sessions": None})()
         self.session_manager = object()
         self.claude_sessions = {}
@@ -33,15 +38,42 @@ class _Controller:
 
 
 def test_dm_session_base_id_uses_stable_channel_id() -> None:
-    handler = SessionHandler(_Controller())
+    handler = SessionHandler(_Controller(platform="discord", dm_threads=False))
     context = MessageContext(
         user_id="u-1",
         channel_id="dm-123",
+        thread_id="thread-999",
         message_id="msg-999",
         platform_specific={"is_dm": True},
     )
 
     assert handler.get_base_session_id(context) == "discord_dm-123"
+
+
+def test_dm_session_base_id_uses_thread_when_platform_supports_dm_threads() -> None:
+    handler = SessionHandler(_Controller(platform="lark", dm_threads=True))
+    context = MessageContext(
+        user_id="u-1",
+        channel_id="dm-123",
+        thread_id="thread-999",
+        message_id="msg-999",
+        platform_specific={"is_dm": True},
+    )
+
+    assert handler.get_base_session_id(context) == "lark_thread-999"
+
+
+def test_slack_dm_session_base_id_uses_thread_when_supported() -> None:
+    handler = SessionHandler(_Controller(platform="slack", dm_threads=True))
+    context = MessageContext(
+        user_id="u-1",
+        channel_id="D123",
+        thread_id="171717.999",
+        message_id="171717.111",
+        platform_specific={"is_dm": True},
+    )
+
+    assert handler.get_base_session_id(context) == "slack_171717.999"
 
 
 def test_channel_session_base_id_keeps_thread_or_message_behavior() -> None:
