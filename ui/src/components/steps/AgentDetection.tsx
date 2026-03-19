@@ -45,11 +45,11 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
     detectAll();
   }, []);
 
-  const detect = async (name: string) => {
+  const detect = async (name: string, binary?: string) => {
     setChecking(true);
     try {
       let result;
-      result = await api.detectCli(name);
+      result = await api.detectCli(binary || name);
       
       setAgents((prev) => ({
         ...prev,
@@ -65,7 +65,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   };
 
   const detectAll = async () => {
-    await Promise.all(Object.keys(agents).map((name) => detect(name)));
+    await Promise.all(Object.entries(agents).map(([name, agent]) => detect(name, agent.cli_path)));
   };
 
   const toggle = (name: string, enabled: boolean) => {
@@ -102,13 +102,23 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
 
     try {
       const result = await api.installAgent(name);
+      const installedPath = typeof result.path === 'string' && result.path ? result.path : null;
       setInstallResults((prev) => ({
         ...prev,
         [name]: { ok: result.ok, message: result.message, output: result.output },
       }));
       if (result.ok) {
+        if (installedPath) {
+          setAgents((prev) => ({
+            ...prev,
+            [name]: {
+              ...prev[name],
+              cli_path: installedPath,
+            },
+          }));
+        }
         // Re-detect after successful installation
-        await detect(name);
+        await detect(name, installedPath || agents[name]?.cli_path || name);
       }
     } catch (e) {
       setInstallResults((prev) => ({
@@ -207,11 +217,11 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                         placeholder={t('agentDetection.cliPathPlaceholder', { name })}
                         className="flex-1 bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent font-mono text-text"
                     />
-                    <button
-                        onClick={() => detect(name)}
+                     <button
+                        onClick={() => detect(name, agent.cli_path)}
                         disabled={checking}
                         className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 rounded text-sm text-muted hover:text-text font-medium transition-colors border border-border"
-                    >
+                     >
                         {checking ? <RefreshCw size={14} className="animate-spin" /> : t('common.detect')}
                     </button>
                   </div>
