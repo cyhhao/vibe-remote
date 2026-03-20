@@ -1,224 +1,228 @@
-# Agent Guidelines
+# Agent Guidelines for Vibe Remote
 
-This file defines how coding agents should work in this repository.
+This document is the operating manual for coding agents working in this repository.
 
-## 1) General (Reusable)
+## 1. Project Overview
 
-### Language
+Vibe Remote is a middleware layer that connects AI agent backends to IM platforms such as Slack, Discord, and Feishu/Lark.
 
-- Default to English for all comments, docs, user-facing copy, and logs.
-- Use non-English text only when required for i18n/localization.
+Current product shape:
 
-### Workflow (Branches + PRs)
+- V2 config-driven service with a Web UI setup wizard and settings pages
+- multi-platform message transport with shared core orchestration
+- multi-backend agent routing across OpenCode, Claude Code, and Codex
+- Docker-based three-end regression environment for real cross-platform verification
 
-- Always branch from the latest `master` when starting a new feature or bug fix.
-- Implement work on a new branch, validate changes, then open a PR to `master` for review.
-- Keep commits small and focused; avoid mixing unrelated changes.
+Default mindset:
 
-### Planning (When Work Is Non-trivial)
+- treat the system as **multi-platform, multi-backend** first
+- prefer root-cause fixes over narrow patches
+- preserve user-visible behavior unless the task explicitly changes product behavior
+- make the next agent/platform inherit correct behavior automatically
 
-- If the task is complex or ambiguous, propose a short plan and confirm it with the user before large changes.
-- Before starting complex work, capture background, goal, solution, and todo items in a Markdown plan under `docs/plans/`.
-- Implementations must follow the plan and its todo items; update the plan document when tasks or scope change.
-- If requirements are unclear during planning, ask the user early and proceed only after confirmation.
-- If a plan-related subagent exists, prefer calling it to draft/refine the plan.
+## 2. Design Philosophy and Architecture
 
-### Code Review
+### Core Rule: Fix at the Highest Appropriate Layer
 
-- If a review-related subagent exists, call it when the code is ready for review.
-- Address review findings as appropriate until no must-fix issues remain.
+- If a bug appears on one platform, check whether the same logic exists for the others before patching a platform adapter.
+- If a behavior should be shared by multiple backends, prefer the shared core or backend abstraction over a single backend implementation.
+- Keep transport/platform details out of core business logic whenever possible.
+
+Decision checklist before writing code:
+
+1. **Scope**: is this platform-specific/backend-specific, or common?
+2. **Abstraction**: can the shared base or core layer own this behavior?
+3. **Call path**: is the code called from controller/handlers/common flow?
+4. **Future-proofing**: would a new platform/backend inherit the correct behavior automatically?
+
+### Codebase Map
+
+- `main.py` - entry point wiring `config.V2Config` into `core/controller.py`
+- `core/controller.py` - orchestration and dependency wiring
+- `core/handlers/` - platform/backend-agnostic business workflows
+- `core/message_dispatcher.py` - outbound message routing and reply enhancement flow
+- `core/reply_enhancer.py` - file-link and quick-reply prompt injection helpers
+- `modules/im/` - IM platform adapters (`slack.py`, `discord.py`, `feishu.py`) plus shared base classes
+- `modules/agents/` - agent backend adapters (`opencode/`, `codex/`, Claude-related modules) plus shared abstractions
+- `modules/im/formatters/` - platform-specific formatting built on shared formatter concepts
+- `config/` - V2 config, settings, sessions, paths, and compatibility conversion
+- `ui/` - React + Vite + TypeScript Web UI
+- `scripts/` - operational helpers, including three-end regression workflows
+- `tests/` - pytest-style unit/integration/regression coverage
+
+### Runtime Data and Important Paths
+
+- logs: `~/.vibe_remote/logs/vibe_remote.log`
+- persisted state: `~/.vibe_remote/state/`
+- default agent working directory: `_tmp/`
+- generated three-end regression data: `_tmp/three-regression/`
+
+## 3. Runtime Environments
+
+### Local `vibe` Service
+
+Common commands:
+
+- install: `uv tool install vibe`
+- run: `vibe`
+- inspect: `vibe status`
+- stop: `vibe stop`
+
+Use local `vibe` for:
+
+- local packaging checks
+- local CLI behavior checks
+- editable-install UI preview when explicitly needed
+
+Hard rule:
+
+- **Never restart the local `vibe` service for routine verification.**
+- The local `vibe` process may be the coding agent runtime itself; restarting it can interrupt the session.
+- Unless the user explicitly asks otherwise, use the Docker three-end regression environment for user-facing verification.
+
+### Three-End Regression (Docker)
+
+When the user says `三端回归测试`, treat it as:
+
+- update the latest code into the existing Docker-based regression environment
+- let the user verify behavior on Slack, Discord, and Feishu/Lark
+- preserve previously accumulated regression config/state unless the user explicitly asks for a reset
+
+Standard path:
+
+- default command: `./scripts/run_three_regression.sh`
+
+Rules:
+
+- do **not** use `--reset-config` or `--reset-all` unless the user explicitly requests reset behavior
+- do **not** use `--no-build` when code changes must take effect; it is only for restarting with the existing image
+- after running the script, verify the three services are healthy before handing back to the user
+- prefer Docker regression over local `vibe` whenever validating cross-platform behavior, setup wizard behavior, or user-facing IM flows
+
+## 4. Configuration and Routing Model
+
+Persistent configuration is centered on `config/v2_config.py` and the Web UI.
+
+High-level V2 config areas:
+
+- platform config: Slack / Discord / Feishu credentials and switches
+- runtime config: default cwd, log level, and related runtime behavior
+- agent config: default backend plus per-backend enablement and CLI paths
+- UI config: setup host/port and Web UI behavior
+
+Agent routing model:
+
+- global default: `agents.default_backend`
+- backend availability and CLI path: `agents.<backend>.enabled` and `agents.<backend>.cli_path`
+- per-channel overrides: configured via the Web UI Agent Settings / channel settings
+
+Source-of-truth rule:
+
+- when changing persistent product behavior, align with V2 config and current Web UI flows rather than legacy assumptions
+
+## 5. Development Workflow
+
+### Branching and Scope
+
+- when starting a new feature or bug fix yourself, branch from the latest `master`
+- if the user already put you on an existing branch/worktree, continue there unless asked to move
+- keep commits small and focused; avoid mixing unrelated changes
+
+### Planning for Non-Trivial Work
+
+- if the task is complex or ambiguous, create a short plan before large changes
+- capture background, goal, solution, and todo items in `docs/plans/`
+- implementations should follow the plan and update it when scope changes materially
+- if requirements are unclear, ask early before committing to a large direction
+
+### Documentation Expectations
+
+- update user documentation alongside user-visible features or changed workflows
+- store project-specific plans, investigations, and summaries under `docs/`
+- do not put ad-hoc project documentation in the repo root
+
+### Worktrees
+
+- use git worktree for long-running, parallel, or workspace-blocking efforts
+- if detailed worktree workflow is needed, load the dedicated worktree skill
 
 ### Review Loop for PRs
 
-After creating a PR, follow this iterative review process:
+After creating a PR:
 
-1. **Request review**: Call the reviewer subagent with the PR URL and a summary of changes.
+1. request review with the reviewer subagent if available
+2. fix critical issues and meaningful improvements
+3. push updates to the PR branch
+4. re-run review until there are no blocking issues or the user approves the remaining trade-offs
 
-2. **Evaluate feedback**: The reviewer will categorize issues as:
-   - **Critical**: Security vulnerabilities, data loss risks, breaking bugs → Must fix
-   - **Improvements**: Better error handling, edge cases, performance → Should fix
-   - **Nits**: Style, naming, minor optimizations → Discretionary
+### Pre-Push Requirements
 
-3. **Fix and push**: Address critical and improvement issues, commit with descriptive message, push to the PR branch.
+- run the smallest relevant validation first, then broader checks as needed
+- before `git push`, run `ruff check` on changed Python files at minimum
+- fix lint errors before pushing; CI runs `pre-commit run --all-files` with Ruff
 
-4. **Re-request review**: Call the reviewer again to verify fixes.
+## 6. Coding Standards
 
-5. **Iterate**: Repeat steps 2-4 until:
-   - No critical issues remain
-   - No new significant improvements are suggested
-   - Only nits or acknowledged trade-offs remain
+### Language and i18n
 
-**When to stop iterating:**
-- Reviewer confirms "no blocking issues" or "can merge"
-- Remaining suggestions are minor optimizations that don't affect correctness or security
-- User explicitly approves the current state
+- default to English for comments, docs, logs, and user-facing copy
+- use non-English text only when required for localization/i18n
+- backend user-facing strings must go through `vibe/i18n/`
+- frontend user-facing strings must go through `ui/src/i18n/en.json` and `ui/src/i18n/zh.json`
+- never hardcode user-visible display text in handlers, platform adapters, or React components
 
-**Example workflow:**
-```
-1st review → Critical: RCE via unvalidated input, Improvement: missing error handling
-   ↓ fix both issues
-2nd review → Improvement: output too large for UI, add pipefail
-   ↓ fix both issues  
-3rd review → Nit: error message wording → acceptable, merge
-```
+### Python and Module Conventions
 
-### Documentation Updates
-
-- When adding user-visible features, update the user documentation with usage guidance alongside the code changes.
-- For complex features, bug investigations, or refactorings that require detailed documentation (e.g., plans, testing guides, summaries), create a dedicated subfolder under `docs/` with a descriptive name (e.g., `docs/opencode-poll-loop-refactor/`). Place all related documentation files in that subfolder.
-- Do NOT place project-specific documentation in the root directory. Keep the root clean.
-
-### Quality Bar
-
-- Prefer root-cause fixes over defensive patches.
-- Run the smallest relevant checks first (unit tests, targeted scripts), then broader checks when needed.
-- Add tests when there is an existing test pattern; do not introduce a brand-new testing framework unless requested.
-
-### Git Hygiene & Security
-
-- Commit messages: use `type(scope): summary`.
-- Never commit secrets (tokens, credentials files).
-- Avoid destructive git operations unless explicitly requested (e.g., `reset --hard`, force-push).
-
-### Pre-push Lint Check
-
-Before every `git push`, run the lint check to avoid CI failures:
-
-```bash
-# Install ruff if not available
-pip install ruff
-
-# Run lint check on changed Python files
-ruff check <changed-files>
-
-# Or run on all Python files
-ruff check .
-```
-
-Fix any errors before pushing. The CI runs `pre-commit run --all-files` with ruff, so local lint must pass first.
-
-### Worktree Development Flow
-
-For complex features or bug fixes that may take extended time and block the main workspace, use git worktree:
-
-**When to use worktree:**
-- Task is complex and may span multiple sessions
-- Need to keep main workspace clean for quick fixes
-- Working on multiple independent features in parallel
-
-**How to use:** Load the worktree skill for detailed setup, workflow, and cleanup instructions.
-
-## 2) Project-Specific (Vibe Remote)
-
-### Architecture & Layering
-
-Vibe Remote is a **multi-platform, multi-backend** system. Every feature and bug fix must be evaluated from this perspective.
-
-```
-┌─────────────────────────────────────┐
-│  core/controller.py                 │  Orchestration — platform/backend agnostic
-│  core/handlers/                     │  Business logic — platform/backend agnostic
-│  core/message_dispatcher.py         │  Message routing — platform/backend agnostic
-├─────────────────────────────────────┤
-│  modules/im/base.py                 │  IM abstraction (BaseIMClient)
-│  modules/agents/base.py             │  Agent abstraction (BaseAgentBackend)
-│  modules/im/formatters/base_formatter.py │  Formatter abstraction
-├─────────────────────────────────────┤
-│  modules/im/slack.py, feishu.py, discord.py   │  IM implementations
-│  modules/agents/claude_agent.py, codex/, opencode/ │  Agent implementations
-│  modules/im/formatters/slack_formatter.py, ...     │  Formatter implementations
-└─────────────────────────────────────┘
-```
-
-**Key rule: fix at the highest appropriate layer.**
-
-- A bug triggered on Feishu is often a common issue. Check: does the same logic path exist for Slack/Discord? If yes, fix in the handler/base layer, not the platform layer.
-- A feature for one agent backend likely applies to all. Check: should the behavior be in `base.py` or `controller.py` rather than `claude_agent.py`?
-- User-facing text must go through `vibe/i18n/` — never hardcode strings in handler or platform code.
-
-**Decision checklist before writing code:**
-
-1. **Scope**: Does this affect one platform/backend, or all? → If all, fix in the common layer.
-2. **Abstraction**: Can the base class provide a default? → Add to base, override only where platforms genuinely differ.
-3. **Callers**: Who calls this code? → If it's called from common code (handlers/controller), the fix belongs in common code.
-4. **Future platforms**: If we add a new IM platform tomorrow, would it inherit correct behavior automatically? → If not, the abstraction is wrong.
-
-### Structure
-
-- Entry point: `main.py` wires `config.V2Config` into `core/controller.py`.
-- Core orchestration and handlers: `core/` (notably `core/handlers/`).
-- Agent backends: `modules/agents/` (shared base, OpenCode/Claude/Codex backends, registry).
-- IM transports: `modules/im/` (Slack-first; platform abstraction retained).
-- Config:
-  - Defaults and validation: `config/` (see `config/v2_config.py`).
-  - Agent routing: configured via Slack Agent Settings.
-- Runtime data:
-- Logs: `~/.vibe_remote/logs/vibe_remote.log`.
-- Persisted state: `~/.vibe_remote/state/`.
-- Default remote working dir: `_tmp/`.
-
-
-### Common Commands
-
-- Setup:
-  - `uv tool install vibe`
-- Run:
-  - `vibe`
-  - `vibe status` / `vibe stop`
-  - Restart: run `vibe`
-
-### Three-End Regression
-
-- When the user says `三端回归测试`, treat it as: update the latest code into the existing three-end regression environment so the user can test on Slack, Discord, and Feishu.
-- Default command: `./scripts/run_three_regression.sh`
-- Do **not** use `--reset-config` or `--reset-all` unless the user explicitly asks for a reset.
-- `./scripts/run_three_regression.sh` is the standard update path for regression testing: it rebuilds/recreates containers while preserving persisted regression data under `_tmp/three-regression/`, including config, state, and workdir changes made during earlier testing.
-- Do not use `--no-build` when the goal is to make new code changes take effect; `--no-build` is only for restarting with the existing image.
-- After running the script, verify the three services are healthy before handing back to the user.
+- follow PEP 8 and 4-space indentation
+- use `snake_case` for functions and `PascalCase` for classes/dataclasses
+- add type hints for public functions where practical
+- keep modules cohesive
+- add new business logic under `core/handlers/` when it is platform-agnostic
+- add new IM integrations under `modules/im/` and new agent backends under `modules/agents/`
+- no repo-wide formatter is enforced; keep diffs focused if you use Black/Ruff
 
 ### Frontend (UI)
 
-- Location: `ui/` (React + Vite + TypeScript)
-- Build: `npm run build` (from `ui/` directory)
-- i18n: `ui/src/i18n/en.json` and `zh.json`
-- Output: `ui/dist/` (served by `vibe/ui_server.py`)
+- source lives in `ui/`
+- build command: `npm run build` from `ui/`
+- built assets land in `ui/dist/` and are served by `vibe/ui_server.py`
 
-**Development workflow:**
-1. Make changes to `ui/src/`
-2. Run `npm run build` in `ui/` directory
-3. For local preview, install in editable mode: `uv tool install --force --editable .`
-4. Restart `vibe` to load new assets
+Important packaging caveat:
 
-**Important:** The installed `vibe` command uses bundled UI assets from the package, not `ui/dist/`. To test local UI changes, either:
-- Use editable install (`uv tool install --force --editable .`)
-- Or reinstall the package after building
+- the installed `vibe` command uses packaged UI assets, not raw `ui/dist/` from the repo by default
+- for local preview of UI changes, use editable install (`uv tool install --force --editable .`) or reinstall the package after building
+- do not restart local `vibe` just to verify UI changes unless the user explicitly requests a local-service workflow and the session impact is understood
 
-### Release Notes
+## 7. Testing and Validation
 
-- Tags follow the latest version number +1 (e.g., `v1.0.1` -> `v1.0.2`) and should be pushed; releases are published automatically by workflow.
+- prefer the smallest relevant checks first: focused pytest, targeted scripts, or narrow manual validation
+- add tests when an existing test pattern already exists
+- do not introduce a brand-new test framework unless requested
 
-### Coding Conventions
+Testing guidance:
 
-- Follow PEP 8, 4-space indentation.
-- Naming: `snake_case` for functions, `PascalCase` for classes/dataclasses.
-- Use type hints for public functions.
-- Keep modules cohesive; add new handlers under `core/handlers/`, new IM transports under `modules/im/`.
-- No repo-wide formatter is enforced; use Black/Ruff if you want, keep diffs focused.
+- use pytest-style tests (`test_<feature>.py`) colocated or under `tests/`
+- for IM integrations, stub/mock platform clients and validate outbound payload/schema behavior
+- for UI changes, run `npm run build` in `ui/`
+- for cross-platform or user-facing verification, use the Docker three-end regression workflow
+- until CI fully covers a flow, do a manual sanity check for the affected workflow when practical
 
-### Testing
+## 8. Git, Security, and Operational Safety
 
-- No committed automated suite yet.
-- Prefer fast `pytest`-style tests (`test_<feature>.py`) colocated or under `tests/`.
-- For IM integrations, stub Slack clients and validate outbound payload schemas.
-- Do a manual E2E sanity check (start bot, send `/start`) until CI exists.
+### Git Hygiene
 
-### Agent Routing
+- commit messages must use `type(scope): summary`
+- never commit secrets such as tokens or credentials files
+- avoid destructive git operations unless the user explicitly requests them
 
-- OpenCode enablement: `OPENCODE_ENABLED=true` (default: false) and `OPENCODE_CLI_PATH` points to the CLI.
-- Codex enablement: `CODEX_ENABLED=true` (default: true) and `CODEX_CLI_PATH` points to the CLI.
-- Routing is configured per channel via Slack **Agent Settings**.
+### Operational Safety
 
-### Safety Notes
+- keep `AGENT_DEFAULT_CWD` scoped to `_tmp/` or another sanitized directory
+- logs may contain sensitive context; scrub before sharing them back
+- be careful with persisted state under `~/.vibe_remote/` and `_tmp/three-regression/`
+- do not reset or wipe regression data unless the user explicitly asks for it
 
-- Keep `AGENT_DEFAULT_CWD` scoped to `_tmp/` (or another sanitized directory).
-- Logs can contain sensitive context; scrub before sharing.
+## 9. Release Notes
+
+- tags follow the latest version number +1 (for example `v1.0.1` -> `v1.0.2`)
+- releases are published automatically by workflow after tagging/push
