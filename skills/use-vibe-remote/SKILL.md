@@ -47,18 +47,6 @@ Important paths:
 - `~/.vibe_remote/runtime/doctor.json`: latest doctor result
 - `~/.vibe_remote/attachments/`: attachment staging area
 
-Repository source-of-truth files for maintainers:
-
-- `config/paths.py`
-- `config/v2_config.py`
-- `config/v2_settings.py`
-- `config/v2_sessions.py`
-- `core/controller.py`
-- `core/handlers/session_handler.py`
-- `modules/agents/opencode/agent.py`
-- `modules/agents/codex/agent.py`
-- `modules/agents/subagent_router.py`
-
 ## Edit Workflow
 
 When changing Vibe Remote config, use this order:
@@ -287,12 +275,12 @@ Current Vibe Remote routing support is:
 | Claude | yes | yes | yes | not currently applied by Vibe Remote runtime |
 | Codex | yes | no | yes | yes |
 
-Implementation notes:
+Behavior notes:
 
 - OpenCode subagents are selected through `routing.opencode_agent` or through prefix routing such as `reviewer: ...`.
 - Claude subagents are selected through `routing.claude_agent` or prefix routing.
 - Codex subagents are not currently supported in Vibe Remote routing.
-- Current Claude runtime code accepts `subagent_reasoning_effort` in the request object but does not apply it to the backend execution path. Do not promise channel-level Claude reasoning control unless the repo implementation changes.
+- Current Vibe Remote behavior does not apply channel-level Claude reasoning control. Do not promise that setting as an available per-scope feature.
 
 ## Subagent and Prefix Routing
 
@@ -539,7 +527,7 @@ Relevant docs:
 
 - subagents: `https://docs.anthropic.com/en/docs/claude-code/sub-agents`
 
-Remember: current Vibe Remote runtime supports Claude backend selection, model, and subagent routing, but not channel-level Claude reasoning control in the active code path.
+Remember: current Vibe Remote behavior supports Claude backend selection, model, and subagent routing, but not channel-level Claude reasoning control.
 
 ### Codex
 
@@ -569,10 +557,24 @@ Always follow these constraints:
 
 - never delete unrelated platform scopes from `settings.json`
 - never blank out tokens or secrets as part of an unrelated config task
-- never claim a backend feature exists if the current repo does not apply it
+- never claim a backend feature exists if current Vibe Remote behavior does not actually support it
 - never manually rewrite `sessions.json` for routine routing changes
 - never expose bind codes unless the user explicitly asks
 - always say when a requested change actually belongs in OpenCode, Claude Code, or Codex config instead of Vibe Remote
+
+## Escalation
+
+If the user still cannot solve a problem after normal config fixes, `vibe doctor`, restart, and log inspection, point them to the Vibe Remote repository:
+
+- repo: `https://github.com/cyhhao/vibe-remote`
+
+Use that link when:
+
+- the behavior looks like a real bug rather than a local misconfiguration
+- the user is asking for a feature Vibe Remote does not support yet
+- backend integration behavior appears inconsistent with the documented configuration surface
+
+If the user wants to contribute back, suggest opening an issue or a pull request in that repository.
 
 ## Response Pattern
 
