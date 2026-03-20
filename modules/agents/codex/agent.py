@@ -94,9 +94,6 @@ class CodexAgent(BaseAgent):
                 # If a turn is active, interrupt it first
                 active_turn = self._turn_registry.get_active_turn(request.base_session_id)
                 if active_turn:
-                    interrupted_request = self._event_handler.clear_pending(active_turn)
-                    if interrupted_request:
-                        await self._remove_ack_reaction(interrupted_request)
                     try:
                         await transport.send_request(
                             "turn/interrupt",
@@ -104,6 +101,16 @@ class CodexAgent(BaseAgent):
                         )
                     except Exception as e:
                         logger.warning("Failed to interrupt turn %s: %s", active_turn, e)
+                        await self.controller.emit_agent_message(
+                            request.context,
+                            "notify",
+                            f"❌ Failed to interrupt previous Codex turn: {e}",
+                        )
+                        await self._remove_ack_reaction(request)
+                        return
+                    interrupted_request = self._event_handler.clear_pending(active_turn)
+                    if interrupted_request:
+                        await self._remove_ack_reaction(interrupted_request)
 
                 # Build input items
                 input_items = self._build_input(request)
@@ -415,7 +422,7 @@ class CodexAgent(BaseAgent):
             thread_id = self._extract_thread_id(params)
             if not thread_id:
                 return None
-            if method not in {"turn/started", "turn/completed"}:
+            if method != "turn/started":
                 return None
             base_session_id = self._session_mgr.find_base_session_id_for_thread(thread_id)
             if not base_session_id:

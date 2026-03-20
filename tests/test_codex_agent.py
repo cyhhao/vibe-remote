@@ -229,5 +229,69 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1][0], "clear")
 
 
+class _HandleMessageTurnRegistry:
+    def __init__(self, active_turn: str | None):
+        self.active_turn = active_turn
+        self.remembered_requests = []
+
+    def remember_request(self, request):
+        self.remembered_requests.append(request)
+
+    def get_active_turn(self, base_session_id: str):
+        return self.active_turn
+
+
+class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_handle_message_does_not_hide_turn_before_interrupt_succeeds(self):
+        agent = object.__new__(CodexAgent)
+        request = SimpleNamespace(
+            base_session_id="session-1",
+            working_path="/tmp",
+            context=object(),
+            settings_key="settings-1",
+            ack_message_id=None,
+        )
+
+        transport = SimpleNamespace(
+            send_request=AsyncMock(side_effect=RuntimeError("interrupt failed")),
+        )
+        agent._session_locks = {}
+        agent._turn_registry = _HandleMessageTurnRegistry(active_turn="turn-1")
+        agent._event_handler = SimpleNamespace(clear_pending=Mock(return_value=SimpleNamespace()))
+        agent._remove_ack_reaction = AsyncMock()
+        agent.controller = SimpleNamespace(emit_agent_message=AsyncMock())
+        agent._get_or_create_transport = AsyncMock(return_value=transport)
+        agent._session_mgr = SimpleNamespace(
+            set_settings_key=lambda base_session_id, settings_key: None,
+            get_thread_id=lambda base_session_id: "thread-1",
+        )
+
+        await agent.handle_message(request)
+
+        agent._event_handler.clear_pending.assert_not_called()
+        agent._remove_ack_reaction.assert_awaited_once_with(request)
+        agent.controller.emit_agent_message.assert_awaited_once_with(
+            request.context,
+            "notify",
+            "❌ Failed to interrupt previous Codex turn: interrupt failed",
+        )
+
+    def test_find_request_does_not_bootstrap_turn_completed_for_pending_turn(self):
+        agent = object.__new__(CodexAgent)
+        agent._session_mgr = _StubSessionManager()
+        agent._turn_registry = _StubTurnRegistry()
+
+        request = SimpleNamespace(base_session_id="session-1", context="current")
+        agent._session_mgr._threads["session-1"] = "thread-1"
+        agent._turn_registry._latest_requests["session-1"] = request
+        agent._turn_registry._pending_requests["session-1"] = request
+
+        resolved = agent._find_request_for_notification(
+            "turn/completed", {"threadId": "thread-1", "turn": {"id": "turn-1"}}
+        )
+
+        self.assertIsNone(resolved)
+
+
 if __name__ == "__main__":
     unittest.main()
