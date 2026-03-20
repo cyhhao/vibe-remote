@@ -116,6 +116,51 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         )
         agent._remove_ack_reaction.assert_awaited_once_with(request)
 
+    async def test_stale_failed_turn_is_emitted_for_original_request(self):
+        agent = _StubAgent(active_turn="turn-2")
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._remember_turn_request("turn-1", request)
+
+        await handler._on_error(
+            {
+                "error": {"message": "old turn failed"},
+                "willRetry": False,
+                "turnId": "turn-1",
+            },
+            request,
+        )
+
+        agent.controller.emit_agent_message.assert_not_awaited()
+
+        await handler._on_turn_completed(
+            {
+                "turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "error": {"message": "fallback message"},
+                }
+            },
+            request,
+        )
+
+        agent.controller.emit_agent_message.assert_awaited_once_with(
+            request.context,
+            "notify",
+            "❌ Codex turn failed: old turn failed",
+        )
+        agent._remove_ack_reaction.assert_awaited_once_with(request)
+
+    def test_clear_pending_forgets_turn_request_mapping(self):
+        agent = _StubAgent(active_turn="turn-1")
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._remember_turn_request("turn-1", request)
+
+        handler.clear_pending("turn-1")
+
+        assert "turn-1" not in agent._turn_requests
+
 
 if __name__ == "__main__":
     unittest.main()

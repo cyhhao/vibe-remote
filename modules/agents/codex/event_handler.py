@@ -108,10 +108,12 @@ class CodexEventHandler:
             # Turn failed — emit error, discard pending text
             self._pending_assistant.pop(turn_id, None)
             error_entry = self._terminal_errors.pop(turn_id, None)
+            original_request = self._agent._turn_requests.get(turn_id)
             self._agent._forget_turn_request(turn_id)
             error_msg = error_entry[0] if error_entry else None
             already_notified = error_entry[1] if error_entry else False
-            if is_current:
+            should_notify = is_current or original_request is request
+            if should_notify:
                 if not error_msg:
                     error_obj = turn_obj.get("error", {}) if isinstance(turn_obj, dict) else {}
                     error_msg = self._extract_error_message(error_obj)
@@ -304,6 +306,7 @@ class CodexEventHandler:
         """Discard buffered text for a turn (e.g. on interruption)."""
         self._pending_assistant.pop(turn_id, None)
         self._terminal_errors.pop(turn_id, None)
+        self._agent._forget_turn_request(turn_id)
 
     # ------------------------------------------------------------------
     # Dispatch table
