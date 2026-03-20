@@ -33,6 +33,9 @@ setattr(_session_module, "CodexSessionManager", object)
 _transport_module = types.ModuleType("modules.agents.codex.transport")
 setattr(_transport_module, "CodexTransport", object)
 
+_turn_state_module = types.ModuleType("modules.agents.codex.turn_state")
+setattr(_turn_state_module, "CodexTurnRegistry", object)
+
 _STUBBED_MODULES = {
     "modules": _modules_pkg,
     "modules.agents": _agents_pkg,
@@ -41,6 +44,7 @@ _STUBBED_MODULES = {
     "modules.agents.codex.event_handler": _event_handler_module,
     "modules.agents.codex.session": _session_module,
     "modules.agents.codex.transport": _transport_module,
+    "modules.agents.codex.turn_state": _turn_state_module,
 }
 _saved_modules = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
 
@@ -64,40 +68,83 @@ class _StubSessionManager:
     def __init__(self):
         self._threads = {}
 
-    def get_thread_id(self, base_session_id: str):
-        return self._threads.get(base_session_id)
+    def find_base_session_id_for_thread(self, thread_id: str):
+        for base_session_id, stored_thread_id in self._threads.items():
+            if stored_thread_id == thread_id:
+                return base_session_id
+        return None
+
+
+class _StubTurnRegistry:
+    def __init__(self):
+        self._turn_requests = {}
+        self._latest_requests = {}
+
+    def get_request_for_turn(self, turn_id: str):
+        return self._turn_requests.get(turn_id)
+
+    def get_latest_request(self, base_session_id: str):
+        return self._latest_requests.get(base_session_id)
 
 
 class CodexAgentNotificationRoutingTests(unittest.TestCase):
     def test_find_request_prefers_turn_mapping_over_replaced_active_request(self):
         agent = object.__new__(CodexAgent)
         agent._session_mgr = _StubSessionManager()
-        agent._active_requests = {}
-        agent._turn_requests = {}
+        agent._turn_registry = _StubTurnRegistry()
 
         old_request = SimpleNamespace(base_session_id="session-1", context="old")
         new_request = SimpleNamespace(base_session_id="session-1", context="new")
         agent._session_mgr._threads["session-1"] = "thread-1"
-        agent._active_requests["session-1"] = new_request
-        agent._turn_requests["turn-1"] = old_request
+        agent._turn_registry._latest_requests["session-1"] = new_request
+        agent._turn_registry._turn_requests["turn-1"] = old_request
 
-        request = agent._find_request_for_notification({"threadId": "thread-1", "turnId": "turn-1"})
+        request = agent._find_request_for_notification("item/completed", {"threadId": "thread-1", "turnId": "turn-1"})
 
         self.assertIs(request, old_request)
 
     def test_find_request_falls_back_to_thread_mapping_without_turn_id(self):
         agent = object.__new__(CodexAgent)
         agent._session_mgr = _StubSessionManager()
-        agent._active_requests = {}
-        agent._turn_requests = {}
+        agent._turn_registry = _StubTurnRegistry()
 
         request = SimpleNamespace(base_session_id="session-1", context="current")
         agent._session_mgr._threads["session-1"] = "thread-1"
-        agent._active_requests["session-1"] = request
+        agent._turn_registry._latest_requests["session-1"] = request
 
-        resolved = agent._find_request_for_notification({"threadId": "thread-1"})
+        resolved = agent._find_request_for_notification("thread/started", {"threadId": "thread-1"})
 
         self.assertIs(resolved, request)
+
+    def test_find_request_does_not_fall_back_to_thread_when_turn_is_unknown(self):
+        agent = object.__new__(CodexAgent)
+        agent._session_mgr = _StubSessionManager()
+        agent._turn_registry = _StubTurnRegistry()
+
+        request = SimpleNamespace(base_session_id="session-1", context="current")
+        agent._session_mgr._threads["session-1"] = "thread-1"
+        agent._turn_registry._latest_requests["session-1"] = request
+
+        resolved = agent._find_request_for_notification(
+            "item/completed", {"threadId": "thread-1", "turnId": "turn-old"}
+        )
+
+        self.assertIsNone(resolved)
+
+    def test_find_request_does_not_bootstrap_turn_started_without_turn_mapping(self):
+        agent = object.__new__(CodexAgent)
+        agent._session_mgr = _StubSessionManager()
+        agent._turn_registry = _StubTurnRegistry()
+
+        request = SimpleNamespace(base_session_id="session-1", context="current")
+        agent._session_mgr._threads["session-1"] = "thread-1"
+        agent._turn_registry._latest_requests["session-1"] = request
+
+        resolved = agent._find_request_for_notification(
+            "turn/started", {"threadId": "thread-1", "turn": {"id": "turn-1"}}
+        )
+
+        self.assertIsNone(resolved)
 
 
 if __name__ == "__main__":
