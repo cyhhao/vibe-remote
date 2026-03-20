@@ -134,7 +134,8 @@ vibe
 
 1. 邀请 bot 到频道：`/invite @Vibe Remote`
 2. 输入 `@Vibe Remote /start` 打开控制面板
-3. 开始写代码！
+3. 如果要在私聊中使用 bot，请把 Web UI 里的绑定码发给机器人：`bind <绑定码>`（也兼容 `/bind <绑定码>`）
+4. 开始写代码！
 
 **技巧：**
 - 每个 Slack 线程 = 独立会话

@@ -891,15 +891,22 @@ class SlackBot(BaseIMClient):
                     return
 
             channel_id = event.get("channel")
+            is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
 
-            # Check if this message contains a bot mention
-            # If it does, skip processing as it will be handled by app_mention event
+            # Check if this message contains a bot mention.
+            # In channels, app_mention will handle it. In DMs, Slack does not
+            # emit app_mention, so we strip the mention and continue.
             text = (event.get("text") or "").strip()
             import re
 
+            had_dm_mention_only = False
             if re.search(r"<@[\w]+>", text):
-                logger.info(f"Skipping message event with bot mention: '{text}'")
-                return
+                if is_dm:
+                    text = re.sub(r"<@[\w]+>", "", text).strip()
+                    had_dm_mention_only = not text
+                else:
+                    logger.info(f"Skipping message event with bot mention: '{text}'")
+                    return
 
             # Extract file attachments (slack_files already checked above)
             file_attachments = self._extract_file_attachments(slack_files) if slack_files else None
@@ -914,7 +921,7 @@ class SlackBot(BaseIMClient):
             if not user_id:
                 logger.debug("Ignoring Slack message without user id")
                 return
-            if not text and not file_attachments and not has_shared_content:
+            if not text and not file_attachments and not has_shared_content and not had_dm_mention_only:
                 logger.debug("Ignoring Slack message with empty text and no files")
                 return
 
@@ -951,7 +958,6 @@ class SlackBot(BaseIMClient):
                         logger.debug(f"No settings_manager, ignoring thread message: '{text}'")
                         return
 
-            is_dm = channel_id.startswith("D")
             auth = self.check_authorization(
                 user_id=user_id,
                 channel_id=channel_id,
@@ -986,14 +992,22 @@ class SlackBot(BaseIMClient):
                 platform_specific={
                     "team_id": payload.get("team_id"),
                     "event": event,
-                    "is_dm": channel_id.startswith("D"),
+                    "is_dm": is_dm,
                 },
                 files=file_attachments,
             )
 
             # Handle slash commands in regular messages (before appending shared content)
             # Use only the user's original text for command detection
-            if await self.dispatch_text_command(context, text):
+            if await self.dispatch_text_command(
+                context,
+                text,
+                allow_plain_bind=self.should_allow_plain_bind(
+                    user_id=user_id,
+                    is_dm=is_dm,
+                    settings_manager=self.settings_manager,
+                ),
+            ):
                 return
 
             # Append shared content to user text (after command parsing)

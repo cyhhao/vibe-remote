@@ -669,8 +669,14 @@ class DiscordBot(BaseIMClient):
             bot_id = str(self.client.user.id)
             content = content.replace(f"<@{bot_id}>", "").replace(f"<@!{bot_id}>", "").strip()
 
+        allow_plain_bind = self.should_allow_plain_bind(
+            user_id=str(message.author.id),
+            is_dm=is_dm,
+            settings_manager=self.settings_manager,
+        )
+
         # Handle slash-like commands in plain messages
-        if self.parse_text_command(content):
+        if self.parse_text_command(content, allow_plain_bind=allow_plain_bind):
             command_context = MessageContext(
                 user_id=str(message.author.id),
                 channel_id=channel_id,
@@ -679,7 +685,7 @@ class DiscordBot(BaseIMClient):
                 platform_specific={"message": message, "is_dm": is_dm},
                 files=files,
             )
-            if await self.dispatch_text_command(command_context, content):
+            if await self.dispatch_text_command(command_context, content, allow_plain_bind=allow_plain_bind):
                 return
 
         if not content and not files:

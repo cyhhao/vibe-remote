@@ -35,7 +35,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
 
   const copyBindCode = async () => {
     if (!bindCode) return;
-    const copied = await copyTextToClipboard(`/bind ${bindCode}`);
+    const copied = await copyTextToClipboard(`bind ${bindCode}`);
     if (!copied) {
       showToast(t('common.copyFailed'), 'error');
       return;
@@ -121,7 +121,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             </div>
           </div>
           <div className="flex items-center gap-2 bg-bg border border-border rounded-md p-3">
-            <code className="flex-1 text-sm font-mono text-text select-all">/bind {bindCode}</code>
+            <code className="flex-1 text-sm font-mono text-text select-all">bind {bindCode}</code>
             <button
               onClick={copyBindCode}
               className="p-2 text-muted hover:text-text transition-colors rounded-md hover:bg-panel"

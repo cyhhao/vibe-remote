@@ -70,7 +70,7 @@ def check_auth(
     """Run the centralized authorization pipeline.
 
     Order of checks:
-        1. DM bind gate  — DM users must be bound (except ``/bind``)
+        1. DM bind gate  — DM users must be bound (except ``bind`` / ``/bind``)
         2. Channel auth   — channel messages must come from enabled channels
         3. Admin check    — protected actions require admin
 

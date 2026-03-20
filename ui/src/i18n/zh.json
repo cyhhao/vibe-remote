@@ -338,7 +338,7 @@
     "goToDashboard": "前往控制台",
     "bindCodeTitle": "您的首个绑定码",
     "bindCodeDesc": "在私聊中向机器人发送以下命令，成为第一个管理员：",
-    "bindCodeCommand": "/bind",
+    "bindCodeCommand": "bind",
     "bindCodeCopied": "已复制！"
   },
   "dashboard": {
@@ -473,7 +473,7 @@
     "deleted": "绑定码已删除",
     "noCodes": "暂无绑定码，创建一个开始使用。",
     "usageTitle": "绑定码如何使用",
-    "usageHint": "把可用绑定码发给用户，并让用户私信机器人发送 `/bind <code>`。用户必须先完成绑定才可和bot私聊。仅管理员用户才可操作bot菜单进行设置。",
+    "usageHint": "把可用绑定码发给用户，并让用户私信机器人发送 `bind <code>`。`/bind <code>` 也仍然可用。用户必须先完成绑定才可和bot私聊。仅管理员用户才可操作bot菜单进行设置。",
     "viewUnavailable": "不可用（{{count}}）",
     "unavailableTitle": "不可用的绑定码",
     "noAvailableCodes": "暂无可用绑定码，请先创建新的绑定码。",
