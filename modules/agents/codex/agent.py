@@ -139,13 +139,13 @@ class CodexAgent(BaseAgent):
                     turn_id = self._turn_registry.get_bootstrapped_turn_id(request.base_session_id, request) or ""
                 if not turn_id:
                     raise RuntimeError("Codex turn/start returned no turn id")
-                if turn_id:
-                    self._turn_registry.register_turn(turn_id, request)
+                turn_state = self._turn_registry.finalize_turn_start_response(turn_id, request)
                 logger.info(
-                    "Codex turn started: thread=%s turn=%s session=%s",
+                    "Codex turn started: thread=%s turn=%s session=%s state=%s",
                     thread_id,
                     turn_id,
                     request.composite_session_id,
+                    "registered" if turn_state else "already-finished",
                 )
 
             except Exception as e:
@@ -171,13 +171,13 @@ class CodexAgent(BaseAgent):
             return False
 
         try:
-            interrupted_request = self._event_handler.clear_pending(turn_id)
-            if interrupted_request:
-                await self._remove_ack_reaction(interrupted_request)
             await transport.send_request(
                 "turn/interrupt",
                 {"threadId": thread_id, "turnId": turn_id},
             )
+            interrupted_request = self._event_handler.clear_pending(turn_id)
+            if interrupted_request:
+                await self._remove_ack_reaction(interrupted_request)
             await self.controller.emit_agent_message(
                 request.context,
                 "notify",

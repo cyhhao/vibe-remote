@@ -4,6 +4,7 @@ import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -80,6 +81,7 @@ class _StubTurnRegistry:
         self._turn_requests = {}
         self._latest_requests = {}
         self._pending_requests = {}
+        self._active_turns = {}
 
     def get_request_for_turn(self, turn_id: str):
         return self._turn_requests.get(turn_id)
@@ -91,6 +93,13 @@ class _StubTurnRegistry:
         request = self._pending_requests.get(base_session_id)
         if not request:
             return None
+        self._turn_requests[turn_id] = request
+        return SimpleNamespace(request=request)
+
+    def get_active_turn(self, base_session_id: str):
+        return self._active_turns.get(base_session_id)
+
+    def finalize_turn_start_response(self, turn_id: str, request):
         self._turn_requests[turn_id] = request
         return SimpleNamespace(request=request)
 
@@ -168,6 +177,56 @@ class CodexAgentNotificationRoutingTests(unittest.TestCase):
         resolved = agent._find_request_for_notification("item/completed", {"threadId": "thread-1", "turnId": "turn-1"})
 
         self.assertIsNone(resolved)
+
+
+class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_handle_stop_does_not_hide_turn_before_interrupt_succeeds(self):
+        agent = object.__new__(CodexAgent)
+        agent._session_mgr = SimpleNamespace(get_thread_id=lambda base_session_id: "thread-1")
+        agent._turn_registry = _StubTurnRegistry()
+        agent._turn_registry._active_turns["session-1"] = "turn-1"
+        transport = SimpleNamespace(is_alive=True, send_request=AsyncMock(side_effect=RuntimeError("boom")))
+        agent._transports = {"/tmp": transport}
+        agent._event_handler = SimpleNamespace(clear_pending=Mock(return_value=SimpleNamespace()))
+        agent._remove_ack_reaction = AsyncMock()
+        agent.controller = SimpleNamespace(emit_agent_message=AsyncMock())
+
+        request = SimpleNamespace(base_session_id="session-1", working_path="/tmp", context=object())
+
+        result = await agent.handle_stop(request)
+
+        self.assertFalse(result)
+        agent._event_handler.clear_pending.assert_not_called()
+        agent._remove_ack_reaction.assert_not_awaited()
+
+    async def test_handle_stop_hides_turn_after_interrupt_succeeds(self):
+        agent = object.__new__(CodexAgent)
+        agent._session_mgr = SimpleNamespace(get_thread_id=lambda base_session_id: "thread-1")
+        agent._turn_registry = _StubTurnRegistry()
+        agent._turn_registry._active_turns["session-1"] = "turn-1"
+
+        events = []
+
+        async def send_request(method, payload):
+            events.append(("send", method, payload))
+            return {}
+
+        def clear_pending(turn_id):
+            events.append(("clear", turn_id))
+            return SimpleNamespace()
+
+        agent._transports = {"/tmp": SimpleNamespace(is_alive=True, send_request=send_request)}
+        agent._event_handler = SimpleNamespace(clear_pending=clear_pending)
+        agent._remove_ack_reaction = AsyncMock(side_effect=lambda request: events.append(("ack", None)))
+        agent.controller = SimpleNamespace(emit_agent_message=AsyncMock())
+
+        request = SimpleNamespace(base_session_id="session-1", working_path="/tmp", context=object())
+
+        result = await agent.handle_stop(request)
+
+        self.assertTrue(result)
+        self.assertEqual(events[0][0], "send")
+        self.assertEqual(events[1][0], "clear")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ class CodexPendingTurnStart:
     request: AgentRequest
     thread_id: str
     turn_id: Optional[str] = None
+    completed: bool = False
 
 
 class CodexTurnRegistry:
@@ -66,6 +67,17 @@ class CodexTurnRegistry:
         if pending and pending.request is request:
             self._pending_turn_starts.pop(request.base_session_id, None)
         return state
+
+    def finalize_turn_start_response(self, turn_id: str, request: AgentRequest) -> CodexTurnState | None:
+        pending = self._pending_turn_starts.get(request.base_session_id)
+        if pending and pending.request is request:
+            if pending.turn_id and pending.turn_id != turn_id:
+                self._pending_turn_starts.pop(request.base_session_id, None)
+                return self.register_turn(turn_id, request)
+            if pending.completed and pending.turn_id == turn_id:
+                self._pending_turn_starts.pop(request.base_session_id, None)
+                return None
+        return self.register_turn(turn_id, request)
 
     def bootstrap_turn(self, turn_id: str, base_session_id: str, thread_id: str) -> CodexTurnState | None:
         pending = self._pending_turn_starts.get(base_session_id)
@@ -114,6 +126,10 @@ class CodexTurnRegistry:
         state = self._turns.pop(turn_id, None)
         if state and self._active_turns.get(state.request.base_session_id) == turn_id:
             self._active_turns.pop(state.request.base_session_id, None)
+        if state:
+            pending = self._pending_turn_starts.get(state.request.base_session_id)
+            if pending and pending.request is state.request and pending.turn_id == turn_id:
+                pending.completed = True
         return state
 
     def hide_turn(self, turn_id: str) -> Optional[CodexTurnState]:
