@@ -40,13 +40,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install test dependencies
+      - name: Install build and test dependencies
         run: |
-          pip install -e . pytest
+          pip install -e . build pytest
+
+      - name: Build package artifact
+        run: python -m build
 
       - name: Run install and upgrade regressions
         run: |
           docker info
+          export VIBE_INSTALL_TEST_WHEEL="$(ls dist/*.whl)"
           pytest \
             tests/test_upgrade_flow.py \
             tests/test_install_script.py \
