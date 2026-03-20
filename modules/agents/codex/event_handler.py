@@ -23,8 +23,8 @@ class CodexEventHandler:
         self._agent = agent
         # turnId → (accumulated_text, parse_mode)
         self._pending_assistant: dict[str, Tuple[str, Optional[str]]] = {}
-        # turnId → terminal error message captured from `error` notifications
-        self._terminal_errors: dict[str, str] = {}
+        # turnId → (terminal error message, already_notified)
+        self._terminal_errors: dict[str, Tuple[str, bool]] = {}
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -105,16 +105,19 @@ class CodexEventHandler:
         if status == "failed":
             # Turn failed — emit error, discard pending text
             self._pending_assistant.pop(turn_id, None)
-            error_msg = self._terminal_errors.pop(turn_id, None)
+            error_entry = self._terminal_errors.pop(turn_id, None)
+            error_msg = error_entry[0] if error_entry else None
+            already_notified = error_entry[1] if error_entry else False
             if is_current:
                 if not error_msg:
                     error_obj = turn_obj.get("error", {}) if isinstance(turn_obj, dict) else {}
                     error_msg = self._extract_error_message(error_obj)
-                await self._agent.controller.emit_agent_message(
-                    request.context,
-                    "notify",
-                    f"❌ Codex turn failed: {error_msg}",
-                )
+                if not already_notified:
+                    await self._agent.controller.emit_agent_message(
+                        request.context,
+                        "notify",
+                        f"❌ Codex turn failed: {error_msg}",
+                    )
                 await self._agent._remove_ack_reaction(request)
             return
 
@@ -244,7 +247,17 @@ class CodexEventHandler:
             return
 
         if turn_id:
-            self._terminal_errors[turn_id] = message
+            existing = self._terminal_errors.get(turn_id)
+            already_notified = existing[1] if existing else False
+            current_turn = self._agent._session_mgr.get_active_turn(request.base_session_id)
+            if current_turn == turn_id and not already_notified:
+                await self._agent.controller.emit_agent_message(
+                    request.context,
+                    "notify",
+                    f"❌ Codex turn failed: {message}",
+                )
+                already_notified = True
+            self._terminal_errors[turn_id] = (message, already_notified)
             return
 
         await self._agent.controller.emit_agent_message(

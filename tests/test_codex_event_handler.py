@@ -1,6 +1,6 @@
+import importlib.util
 import sys
 import unittest
-import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -52,7 +52,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         agent.controller.emit_agent_message.assert_not_awaited()
 
-    async def test_terminal_turn_error_is_emitted_once_on_completion(self):
+    async def test_terminal_turn_error_is_emitted_immediately_and_not_duplicated_on_completion(self):
         agent = _StubAgent(active_turn="turn-1")
         handler = CodexEventHandler(agent)
         request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
@@ -66,7 +66,30 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
             request,
         )
 
-        agent.controller.emit_agent_message.assert_not_awaited()
+        agent.controller.emit_agent_message.assert_awaited_once_with(
+            request.context,
+            "notify",
+            "❌ Codex turn failed: unexpected status 401 Unauthorized:",
+        )
+
+        await handler._on_turn_completed(
+            {
+                "turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "error": {"message": "fallback message"},
+                }
+            },
+            request,
+        )
+
+        assert agent.controller.emit_agent_message.await_count == 1
+        agent._remove_ack_reaction.assert_awaited_once_with(request)
+
+    async def test_turn_failure_falls_back_to_completion_error_when_no_error_notification_arrives(self):
+        agent = _StubAgent(active_turn="turn-1")
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
 
         await handler._on_turn_completed(
             {
@@ -82,7 +105,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         agent.controller.emit_agent_message.assert_awaited_once_with(
             request.context,
             "notify",
-            "❌ Codex turn failed: unexpected status 401 Unauthorized:",
+            "❌ Codex turn failed: fallback message",
         )
         agent._remove_ack_reaction.assert_awaited_once_with(request)
 
