@@ -79,7 +79,9 @@ cp ~/.vibe_remote/config/config.json ~/.vibe_remote/config/config.json.bak.$(dat
 6. Validate the file, for example:
 
 ```bash
-python3 -c "import json,sys; json.load(open(sys.argv[1]))" ~/.vibe_remote/state/settings.json
+VIBE_HOME="${VIBE_REMOTE_HOME:-$HOME/.vibe_remote}"
+TARGET_FILE="$VIBE_HOME/state/settings.json"  # or the exact file you just edited
+python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$TARGET_FILE"
 ```
 
 7. If the config change affects behavior, recommend:
@@ -219,12 +221,14 @@ User scope entry:
 
 Meaning of important fields:
 
-- `enabled`: whether the channel or bound DM user can use the bot
+- `enabled`: for channel scopes, this is the enforceable on/off gate; for DM user scopes, do not treat it as the access-control source of truth
 - `show_message_types`: which intermediate messages are visible; allowed values are `system`, `assistant`, `toolcall`
 - `custom_cwd`: scope-level working directory override
 - `routing`: backend choice and backend-specific overrides
 - `require_mention`: channel-level override for mention gating; `null` means use platform global default
 - `bind_codes`: DM authorization codes
+
+Important DM caveat: current DM authorization checks whether the user is bound, not whether `scopes.user.<platform>.<user_id>.enabled` is `true`. If the user wants to revoke DM access, do not rely on flipping `enabled` to `false`; use the supported unbind/remove-user path instead.
 
 If a user asks for "vault messages", "internal messages", or "tool execution messages", map that request to `show_message_types`. Current Vibe Remote does not expose a separate `vault` field.
 
@@ -381,7 +385,9 @@ If you must adjust an existing DM user scope:
 
 - read the existing user entry first
 - preserve `display_name`, `is_admin`, `bound_at`, and `dm_chat_id`
-- only change requested keys such as `enabled`, `custom_cwd`, `show_message_types`, or `routing`
+- only change requested keys such as `custom_cwd`, `show_message_types`, or `routing`
+
+If the user wants to revoke an existing DM binding, treat that as a bind-state change rather than a normal settings toggle. In the current implementation, removing the user entry is the reliable way to revoke bound DM access.
 
 Avoid creating fake bind or admin state unless the user explicitly asks for manual recovery.
 
