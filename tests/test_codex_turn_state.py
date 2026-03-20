@@ -56,3 +56,18 @@ def test_finalize_turn_start_response_prefers_response_turn_id_over_stale_pendin
     assert registry.get_turn("turn-old") is None
     assert registry.get_turn("turn-new") is state
     assert registry.get_active_turn("session-1") == "turn-new"
+
+
+def test_finalize_turn_start_response_removes_old_bootstrapped_active_turn():
+    registry = CodexTurnRegistry()
+    request = SimpleNamespace(base_session_id="session-1")
+
+    registry.begin_turn_start(request, "thread-1")
+    registry.bootstrap_turn("turn-old", "session-1", "thread-1")
+
+    state = registry.finalize_turn_start_response("turn-new", request)
+
+    assert state is not None
+    assert registry.get_turn("turn-old") is None
+    assert registry.get_request_for_turn("turn-old") is None
+    assert registry.get_active_turn("session-1") == "turn-new"

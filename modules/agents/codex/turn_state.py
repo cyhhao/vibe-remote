@@ -72,6 +72,7 @@ class CodexTurnRegistry:
         pending = self._pending_turn_starts.get(request.base_session_id)
         if pending and pending.request is request:
             if pending.turn_id and pending.turn_id != turn_id:
+                self.pop_turn(pending.turn_id)
                 self._pending_turn_starts.pop(request.base_session_id, None)
                 return self.register_turn(turn_id, request)
             if pending.completed and pending.turn_id == turn_id:
