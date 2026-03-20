@@ -94,14 +94,14 @@ class CodexAgent(BaseAgent):
                 # If a turn is active, interrupt it first
                 active_turn = self._turn_registry.get_active_turn(request.base_session_id)
                 if active_turn:
+                    interrupted_request = self._event_handler.clear_pending(active_turn)
+                    if interrupted_request:
+                        await self._remove_ack_reaction(interrupted_request)
                     try:
                         await transport.send_request(
                             "turn/interrupt",
                             {"threadId": thread_id, "turnId": active_turn},
                         )
-                        interrupted_request = self._event_handler.clear_pending(active_turn)
-                        if interrupted_request:
-                            await self._remove_ack_reaction(interrupted_request)
                     except Exception as e:
                         logger.warning("Failed to interrupt turn %s: %s", active_turn, e)
 
@@ -127,6 +127,7 @@ class CodexAgent(BaseAgent):
                 if effective_effort:
                     turn_params["effort"] = effective_effort
 
+                self._turn_registry.begin_turn_start(request, thread_id)
                 resp = await transport.send_request("turn/start", turn_params)
                 # turn/start returns Turn directly OR may nest under "turn"
                 turn_id = resp.get("id", "")
@@ -134,6 +135,8 @@ class CodexAgent(BaseAgent):
                     turn_obj = resp.get("turn")
                     if isinstance(turn_obj, dict):
                         turn_id = turn_obj.get("id", "")
+                if not turn_id:
+                    turn_id = self._turn_registry.get_bootstrapped_turn_id(request.base_session_id, request) or ""
                 if not turn_id:
                     raise RuntimeError("Codex turn/start returned no turn id")
                 if turn_id:
@@ -146,6 +149,7 @@ class CodexAgent(BaseAgent):
                 )
 
             except Exception as e:
+                self._turn_registry.clear_pending_turn_start(request.base_session_id, request)
                 logger.error("Error in Codex handle_message: %s", e, exc_info=True)
                 await self.controller.emit_agent_message(
                     request.context,
@@ -167,13 +171,13 @@ class CodexAgent(BaseAgent):
             return False
 
         try:
+            interrupted_request = self._event_handler.clear_pending(turn_id)
+            if interrupted_request:
+                await self._remove_ack_reaction(interrupted_request)
             await transport.send_request(
                 "turn/interrupt",
                 {"threadId": thread_id, "turnId": turn_id},
             )
-            interrupted_request = self._event_handler.clear_pending(turn_id)
-            if interrupted_request:
-                await self._remove_ack_reaction(interrupted_request)
             await self.controller.emit_agent_message(
                 request.context,
                 "notify",
@@ -362,10 +366,12 @@ class CodexAgent(BaseAgent):
         request = self._find_request_for_notification(method, params)
         if not request:
             thread_id = self._extract_thread_id(params)
+            turn_id = self._extract_turn_id(params)
             logger.debug(
-                "No active request for Codex notification %s (thread=%s)",
+                "No active request for Codex notification %s (thread=%s turn=%s)",
                 method,
                 thread_id,
+                turn_id,
             )
             return
 
@@ -402,7 +408,29 @@ class CodexAgent(BaseAgent):
     def _find_request_for_notification(self, method: str, params: Dict[str, Any]) -> Optional[AgentRequest]:
         turn_id = self._extract_turn_id(params)
         if turn_id:
-            return self._turn_registry.get_request_for_turn(turn_id)
+            request = self._turn_registry.get_request_for_turn(turn_id)
+            if request:
+                return request
+
+            thread_id = self._extract_thread_id(params)
+            if not thread_id:
+                return None
+            if method not in {"turn/started", "turn/completed"}:
+                return None
+            base_session_id = self._session_mgr.find_base_session_id_for_thread(thread_id)
+            if not base_session_id:
+                return None
+
+            bootstrap_state = self._turn_registry.bootstrap_turn(turn_id, base_session_id, thread_id)
+            if bootstrap_state:
+                logger.info(
+                    "Bootstrapped Codex turn %s for notification %s on session %s",
+                    turn_id,
+                    method,
+                    base_session_id,
+                )
+                return bootstrap_state.request
+            return None
 
         thread_id = self._extract_thread_id(params)
         if thread_id:

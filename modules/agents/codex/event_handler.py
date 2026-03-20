@@ -70,8 +70,6 @@ class CodexEventHandler:
     async def _on_turn_started(self, params: dict[str, Any], request: AgentRequest) -> None:
         turn_obj = params.get("turn", {})
         turn_id = turn_obj.get("id", "") if isinstance(turn_obj, dict) else ""
-        if turn_id:
-            self._agent._turn_registry.register_turn(turn_id, request)
         logger.info(
             "Codex turn started: thread=%s turn=%s",
             params.get("threadId"),
@@ -303,8 +301,8 @@ class CodexEventHandler:
     # ------------------------------------------------------------------
 
     def clear_pending(self, turn_id: str) -> AgentRequest | None:
-        """Discard a turn locally once it has been interrupted/replaced."""
-        turn_state = self._agent._turn_registry.pop_turn(turn_id)
+        """Hide a turn from user-facing output after interruption/replacement."""
+        turn_state = self._agent._turn_registry.hide_turn(turn_id)
         return turn_state.request if turn_state else None
 
     # ------------------------------------------------------------------

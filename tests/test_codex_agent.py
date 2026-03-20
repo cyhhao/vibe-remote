@@ -79,12 +79,20 @@ class _StubTurnRegistry:
     def __init__(self):
         self._turn_requests = {}
         self._latest_requests = {}
+        self._pending_requests = {}
 
     def get_request_for_turn(self, turn_id: str):
         return self._turn_requests.get(turn_id)
 
     def get_latest_request(self, base_session_id: str):
         return self._latest_requests.get(base_session_id)
+
+    def bootstrap_turn(self, turn_id: str, base_session_id: str, thread_id: str):
+        request = self._pending_requests.get(base_session_id)
+        if not request:
+            return None
+        self._turn_requests[turn_id] = request
+        return SimpleNamespace(request=request)
 
 
 class CodexAgentNotificationRoutingTests(unittest.TestCase):
@@ -131,7 +139,7 @@ class CodexAgentNotificationRoutingTests(unittest.TestCase):
 
         self.assertIsNone(resolved)
 
-    def test_find_request_does_not_bootstrap_turn_started_without_turn_mapping(self):
+    def test_find_request_bootstraps_pending_turn_start(self):
         agent = object.__new__(CodexAgent)
         agent._session_mgr = _StubSessionManager()
         agent._turn_registry = _StubTurnRegistry()
@@ -139,10 +147,25 @@ class CodexAgentNotificationRoutingTests(unittest.TestCase):
         request = SimpleNamespace(base_session_id="session-1", context="current")
         agent._session_mgr._threads["session-1"] = "thread-1"
         agent._turn_registry._latest_requests["session-1"] = request
+        agent._turn_registry._pending_requests["session-1"] = request
 
         resolved = agent._find_request_for_notification(
             "turn/started", {"threadId": "thread-1", "turn": {"id": "turn-1"}}
         )
+
+        self.assertIs(resolved, request)
+
+    def test_find_request_does_not_bootstrap_items_for_pending_turn(self):
+        agent = object.__new__(CodexAgent)
+        agent._session_mgr = _StubSessionManager()
+        agent._turn_registry = _StubTurnRegistry()
+
+        request = SimpleNamespace(base_session_id="session-1", context="current")
+        agent._session_mgr._threads["session-1"] = "thread-1"
+        agent._turn_registry._latest_requests["session-1"] = request
+        agent._turn_registry._pending_requests["session-1"] = request
+
+        resolved = agent._find_request_for_notification("item/completed", {"threadId": "thread-1", "turnId": "turn-1"})
 
         self.assertIsNone(resolved)
 

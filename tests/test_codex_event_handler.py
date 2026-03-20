@@ -22,6 +22,7 @@ class _TurnState:
         self.pending_assistant = None
         self.terminal_error = None
         self.terminal_error_notified = False
+        self.visible_to_user = True
 
 
 class _StubTurnRegistry:
@@ -48,6 +49,18 @@ class _StubTurnRegistry:
             self._active_turns.pop(state.request.base_session_id, None)
         return state
 
+    def hide_turn(self, turn_id: str):
+        state = self._turns.get(turn_id)
+        if not state:
+            return None
+        state.visible_to_user = False
+        state.pending_assistant = None
+        state.terminal_error = None
+        state.terminal_error_notified = False
+        if self._active_turns.get(state.request.base_session_id) == turn_id:
+            self._active_turns.pop(state.request.base_session_id, None)
+        return state
+
     def should_emit_progress(self, turn_id: str) -> bool:
         return self.should_emit_result(turn_id)
 
@@ -58,7 +71,7 @@ class _StubTurnRegistry:
         state = self._turns.get(turn_id)
         if not state:
             return False
-        return self._active_turns.get(state.request.base_session_id) == turn_id
+        return state.visible_to_user and self._active_turns.get(state.request.base_session_id) == turn_id
 
 
 class _StubAgent:
@@ -162,7 +175,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         agent.controller.emit_agent_message.assert_not_awaited()
 
-    def test_clear_pending_drops_turn_state_and_returns_request(self):
+    def test_clear_pending_hides_turn_and_returns_request(self):
         agent = _StubAgent()
         handler = CodexEventHandler(agent)
         request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
@@ -171,7 +184,27 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         cleared_request = handler.clear_pending("turn-1")
 
         assert cleared_request is request
-        assert agent._turn_registry.get_turn("turn-1") is None
+        turn_state = agent._turn_registry.get_turn("turn-1")
+        assert turn_state is not None
+        assert turn_state.visible_to_user is False
+
+    async def test_hidden_turn_error_is_logged_without_emitting(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+        handler.clear_pending("turn-1")
+
+        await handler._on_error(
+            {
+                "error": {"message": "interrupted turn failed"},
+                "willRetry": False,
+                "turnId": "turn-1",
+            },
+            request,
+        )
+
+        agent.controller.emit_agent_message.assert_not_awaited()
 
     async def test_inactive_turn_item_is_ignored(self):
         agent = _StubAgent()
