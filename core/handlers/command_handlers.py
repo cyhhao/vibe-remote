@@ -91,7 +91,7 @@ class CommandHandlers(BaseHandler):
             return
 
         # For Slack/Discord, create interactive buttons
-        user_name = user_info.get("real_name") or user_info.get("name") or "User"
+        user_name = self._resolve_user_display_name(user_info, "User")
 
         # Create interactive buttons for commands
         buttons = [
@@ -457,9 +457,7 @@ class CommandHandlers(BaseHandler):
                 logger.warning(f"Failed to get user info during bind: {e}")
                 user_info = {"id": context.user_id}
 
-            display_name = (
-                user_info.get("display_name") or user_info.get("real_name") or user_info.get("name") or context.user_id
-            )
+            display_name = self._resolve_user_display_name(user_info, context.user_id)
 
             # Atomic bind: validate code + create user + consume code in one operation
             success, is_admin = self.settings_manager.bind_user_with_code(

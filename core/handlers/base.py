@@ -29,3 +29,14 @@ class BaseHandler:
 
     def _t(self, key: str, **kwargs) -> str:
         return i18n_t(key, self._get_lang(), **kwargs)
+
+    @staticmethod
+    def _resolve_user_display_name(user_info: dict, fallback: str) -> str:
+        return (
+            user_info.get("display_name")
+            or user_info.get("display_name_normalized")
+            or user_info.get("real_name")
+            or user_info.get("real_name_normalized")
+            or user_info.get("name")
+            or fallback
+        )

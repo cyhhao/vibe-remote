@@ -1749,12 +1749,15 @@ class SlackBot(BaseIMClient):
         try:
             response = await self.web_client.users_info(user=user_id)
             user = response["user"]
+            profile = user.get("profile", {})
             info = {
                 "id": user["id"],
                 "name": user.get("name"),
-                "real_name": user.get("real_name"),
-                "display_name": user.get("profile", {}).get("display_name"),
-                "email": user.get("profile", {}).get("email"),
+                "real_name": profile.get("real_name_normalized") or user.get("real_name"),
+                "real_name_normalized": profile.get("real_name_normalized"),
+                "display_name": profile.get("display_name_normalized") or profile.get("display_name"),
+                "display_name_normalized": profile.get("display_name_normalized"),
+                "email": profile.get("email"),
                 "is_bot": user.get("is_bot", False),
             }
         except SlackApiError as e:

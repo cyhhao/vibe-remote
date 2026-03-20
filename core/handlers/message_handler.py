@@ -266,9 +266,7 @@ class MessageHandler(BaseHandler):
         """Prepend user identity as [username<user_id>] to the message."""
         try:
             user_info = await self.im_client.get_user_info(context.user_id)
-            raw_name = (
-                user_info.get("display_name") or user_info.get("real_name") or user_info.get("name") or context.user_id
-            )
+            raw_name = self._resolve_user_display_name(user_info, context.user_id)
         except Exception as e:
             logger.debug(f"Failed to fetch user info for {context.user_id}: {e}")
             raw_name = context.user_id

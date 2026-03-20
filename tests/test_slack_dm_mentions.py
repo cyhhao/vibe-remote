@@ -97,6 +97,33 @@ from modules.im.slack import SlackBot
 
 
 class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_user_info_prefers_normalized_profile_names(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+
+        class _WebClient:
+            async def users_info(self, user):
+                return {
+                    "user": {
+                        "id": user,
+                        "name": "cyh",
+                        "real_name": "Alex Raw",
+                        "profile": {
+                            "display_name": "Alex Raw Display",
+                            "display_name_normalized": "Alex",
+                            "real_name_normalized": "Alex",
+                            "email": "alex@example.com",
+                        },
+                    }
+                }
+
+        slack.web_client = _WebClient()
+
+        user_info = await slack.get_user_info("U0E0FM3QT")
+
+        self.assertEqual(user_info["display_name"], "Alex")
+        self.assertEqual(user_info["real_name"], "Alex")
+        self.assertEqual(user_info["name"], "cyh")
+
     async def test_dm_mention_only_falls_through_as_empty_message(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         received = {}
