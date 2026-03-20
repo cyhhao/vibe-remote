@@ -338,7 +338,7 @@
     "goToDashboard": "Go to Dashboard",
     "bindCodeTitle": "Your First Bind Code",
     "bindCodeDesc": "Send this command to the bot in a DM to become the first admin:",
-    "bindCodeCommand": "/bind",
+    "bindCodeCommand": "bind",
     "bindCodeCopied": "Copied!"
   },
   "dashboard": {
@@ -473,7 +473,7 @@
     "deleted": "Bind code deleted",
     "noCodes": "No bind codes yet. Create one to get started.",
     "usageTitle": "How to use a bind code",
-    "usageHint": "Share an active code with the user, then ask them to DM the bot with `/bind <code>`.",
+    "usageHint": "Share an active code with the user, then ask them to DM the bot with `bind <code>`. `/bind <code>` still works too.",
     "viewUnavailable": "Unavailable ({{count}})",
     "unavailableTitle": "Unavailable Bind Codes",
     "noAvailableCodes": "No active bind codes. Create a new code to start binding users.",

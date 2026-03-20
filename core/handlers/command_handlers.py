@@ -425,7 +425,7 @@ class CommandHandlers(BaseHandler):
             await self.im_client.send_message(channel_context, f"❌ {self._t('error.resumeFailed')}")
 
     async def handle_bind(self, context: MessageContext, args: str = ""):
-        """Handle /bind command - bind a user to this Vibe Remote instance via bind code.
+        """Handle bind command - bind a user to this Vibe Remote instance via bind code.
 
         Only allowed in DM context. In channels, instructs the user to DM the bot.
         """

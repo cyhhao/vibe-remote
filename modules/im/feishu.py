@@ -1430,7 +1430,15 @@ class FeishuBot(BaseIMClient):
             )
 
             # Handle commands (messages starting with /)
-            if await self.dispatch_text_command(context, text):
+            if await self.dispatch_text_command(
+                context,
+                text,
+                allow_plain_bind=self.should_allow_plain_bind(
+                    user_id=user_id,
+                    is_dm=is_p2p,
+                    settings_manager=self.settings_manager,
+                ),
+            ):
                 return
 
             # Append shared content
