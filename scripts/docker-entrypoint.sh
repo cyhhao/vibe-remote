@@ -28,6 +28,33 @@ run_ui_server('0.0.0.0', ${VIBE_UI_PORT:-5123})
     echo "$ui_pid"
 }
 
+write_runtime_status() {
+    local state="$1"
+    local detail="$2"
+    local service_pid="${3:-None}"
+    local ui_pid="${4:-None}"
+
+    python -c "
+from vibe import runtime
+runtime.write_status('${state}', '${detail}', ${service_pid}, ${ui_pid})
+"
+}
+
+exit_if_service_stopped() {
+    local service_pid="$1"
+    local ui_pid="$2"
+
+    if kill -0 "$service_pid" 2>/dev/null; then
+        return 0
+    fi
+
+    local service_exit_code=0
+    wait "$service_pid" 2>/dev/null || service_exit_code=$?
+    echo "Service exited unexpectedly (code: ${service_exit_code}), stopping container..." >&2
+    write_runtime_status "stopped" "service exited unexpectedly" "$service_pid" "$ui_pid"
+    exit "$service_exit_code"
+}
+
 # Ensure runtime directories exist and seed default config if missing
 python -c "
 from config.paths import ensure_data_dirs, get_config_path
@@ -62,10 +89,7 @@ run_ui_server('0.0.0.0', ${VIBE_UI_PORT:-5123})
 
         UI_PID="$(start_ui_process "$RUNTIME_DIR")"
 
-        python -c "
-from vibe import runtime
-runtime.write_status('running', 'started', ${SERVICE_PID}, ${UI_PID})
-"
+        write_runtime_status "running" "started" "$SERVICE_PID" "$UI_PID"
 
         while true; do
             CURRENT_UI_PID=""
@@ -73,20 +97,17 @@ runtime.write_status('running', 'started', ${SERVICE_PID}, ${UI_PID})
                 CURRENT_UI_PID="$(cat "$RUNTIME_DIR/vibe-ui.pid")"
             fi
 
+            exit_if_service_stopped "$SERVICE_PID" "${CURRENT_UI_PID:-$UI_PID}"
+
             if [ -z "$CURRENT_UI_PID" ]; then
                 UI_PID="$(start_ui_process "$RUNTIME_DIR")"
-                python -c "
-from vibe import runtime
-runtime.write_status('running', 'ui restarted', ${SERVICE_PID}, ${UI_PID})
-"
+                write_runtime_status "running" "ui restarted" "$SERVICE_PID" "$UI_PID"
             elif ! kill -0 "$CURRENT_UI_PID" 2>/dev/null; then
+                UI_EXIT_CODE=0
                 wait "$CURRENT_UI_PID" 2>/dev/null || UI_EXIT_CODE=$?
                 echo "UI server exited unexpectedly (code: ${UI_EXIT_CODE:-unknown}), restarting..."
                 UI_PID="$(start_ui_process "$RUNTIME_DIR")"
-                python -c "
-from vibe import runtime
-runtime.write_status('running', 'ui restarted after crash', ${SERVICE_PID}, ${UI_PID})
-"
+                write_runtime_status "running" "ui restarted after crash" "$SERVICE_PID" "$UI_PID"
             fi
 
             sleep 1

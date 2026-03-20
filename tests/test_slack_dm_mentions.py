@@ -1,6 +1,8 @@
+import importlib.util
 import unittest
 import sys
 import types
+from pathlib import Path
 
 from config.v2_config import SlackConfig
 
@@ -35,6 +37,9 @@ def _install_slack_stubs() -> None:
         def __init__(self, *args, **kwargs):
             pass
 
+        async def auth_test(self):
+            return {"user_id": "U_BOT"}
+
     class _SocketModeClient:
         def __init__(self, *args, **kwargs):
             pass
@@ -66,26 +71,24 @@ def _install_slack_stubs() -> None:
         sys.modules["slack_sdk.errors"] = errors_mod
 
     if "modules.agents.opencode.utils" not in sys.modules:
+        repo_root = Path(__file__).resolve().parents[1]
         agents_mod = types.ModuleType("modules.agents")
+        agents_mod.__path__ = [str(repo_root / "modules" / "agents")]
         opencode_mod = types.ModuleType("modules.agents.opencode")
-        utils_mod = types.ModuleType("modules.agents.opencode.utils")
-
-        def _empty_list(*args, **kwargs):
-            return []
-
-        def _none(*args, **kwargs):
-            return None
-
-        utils_mod.build_claude_reasoning_options = _empty_list
-        utils_mod.build_opencode_model_option_items = _empty_list
-        utils_mod.build_codex_reasoning_options = _empty_list
-        utils_mod.build_reasoning_effort_options = _empty_list
-        utils_mod.resolve_opencode_allowed_providers = _none
-        utils_mod.resolve_opencode_provider_preferences = _none
+        opencode_mod.__path__ = [str(repo_root / "modules" / "agents" / "opencode")]
 
         sys.modules["modules.agents"] = agents_mod
         sys.modules["modules.agents.opencode"] = opencode_mod
-        sys.modules["modules.agents.opencode.utils"] = utils_mod
+
+        spec = importlib.util.spec_from_file_location(
+            "modules.agents.opencode.utils",
+            repo_root / "modules" / "agents" / "opencode" / "utils.py",
+        )
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["modules.agents.opencode.utils"] = module
+        spec.loader.exec_module(module)
 
 
 _install_slack_stubs()
@@ -108,6 +111,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         payload = {
             "event_id": "evt-dm-mention-only",
             "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
             "event": {
                 "type": "message",
                 "channel": "D123",
@@ -140,6 +144,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         payload = {
             "event_id": "evt-dm-mention-text",
             "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
             "event": {
                 "type": "message",
                 "channel": "D123",
@@ -165,6 +170,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         payload = {
             "event_id": "evt-channel-mention",
             "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
             "event": {
                 "type": "message",
                 "channel": "C123",
@@ -177,6 +183,110 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         await slack._handle_event(payload)
 
         self.assertFalse(received["called"])
+
+    async def test_dm_preserves_non_bot_mentions(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {}
+
+        async def _on_message(_context, text):
+            received["text"] = text
+
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-dm-mention-preserve-other",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "D123",
+                "user": "U123",
+                "text": "<@U_BOT> summarize what <@U_OTHER> said",
+                "ts": "1710000000.000400",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"text": "summarize what <@U_OTHER> said"})
+
+    async def test_channel_message_with_other_mentions_is_not_skipped(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {}
+
+        async def _on_message(_context, text):
+            received["text"] = text
+
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-channel-other-mention",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C123",
+                "user": "U123",
+                "text": "please ask <@U_OTHER> to check",
+                "ts": "1710000000.000500",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"text": "please ask <@U_OTHER> to check"})
+
+    async def test_channel_message_with_bot_mention_mid_text_is_skipped(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {"called": False}
+
+        async def _on_message(_context, _text):
+            received["called"] = True
+
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-channel-bot-mention-middle",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C123",
+                "user": "U123",
+                "text": "hello <@U_BOT> please help",
+                "ts": "1710000000.000550",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertFalse(received["called"])
+
+    async def test_app_mention_preserves_non_bot_mentions(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {}
+
+        async def _on_message(_context, text):
+            received["text"] = text
+
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-app-mention-preserve-other",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "app_mention",
+                "channel": "C123",
+                "user": "U123",
+                "text": "<@U_BOT> summarize what <@U_OTHER> said",
+                "ts": "1710000000.000600",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"text": "summarize what <@U_OTHER> said"})
 
 
 if __name__ == "__main__":
