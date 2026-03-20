@@ -23,6 +23,8 @@ class CodexEventHandler:
         self._agent = agent
         # turnId → (accumulated_text, parse_mode)
         self._pending_assistant: dict[str, Tuple[str, Optional[str]]] = {}
+        # turnId → terminal error message captured from `error` notifications
+        self._terminal_errors: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -95,6 +97,7 @@ class CodexEventHandler:
         if status == "interrupted":
             # Turn was interrupted — discard pending text, no result message
             self._pending_assistant.pop(turn_id, None)
+            self._terminal_errors.pop(turn_id, None)
             if is_current:
                 await self._agent._remove_ack_reaction(request)
             return
@@ -102,11 +105,11 @@ class CodexEventHandler:
         if status == "failed":
             # Turn failed — emit error, discard pending text
             self._pending_assistant.pop(turn_id, None)
+            error_msg = self._terminal_errors.pop(turn_id, None)
             if is_current:
-                error_obj = turn_obj.get("error", {}) if isinstance(turn_obj, dict) else {}
-                error_msg = (
-                    error_obj.get("message", "Unknown error") if isinstance(error_obj, dict) else "Unknown error"
-                )
+                if not error_msg:
+                    error_obj = turn_obj.get("error", {}) if isinstance(turn_obj, dict) else {}
+                    error_msg = self._extract_error_message(error_obj)
                 await self._agent.controller.emit_agent_message(
                     request.context,
                     "notify",
@@ -118,10 +121,12 @@ class CodexEventHandler:
         # Stale turn completion — discard pending text, no side effects
         if not is_current:
             self._pending_assistant.pop(turn_id, None)
+            self._terminal_errors.pop(turn_id, None)
             logger.debug("Ignoring stale turn/completed for turn %s (current: %s)", turn_id, current_turn)
             return
 
         pending = self._pending_assistant.pop(turn_id, None)
+        self._terminal_errors.pop(turn_id, None)
         if pending:
             pending_text, pending_parse_mode = pending
             await self._agent.emit_result_message(
@@ -230,14 +235,28 @@ class CodexEventHandler:
 
     async def _on_error(self, params: dict[str, Any], request: AgentRequest) -> None:
         error = params.get("error", {})
-        message = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
-        will_retry = params.get("willRetry", False)
-        suffix = " (will retry)" if will_retry else ""
+        message = self._extract_error_message(error)
+        will_retry = params.get("willRetry") is True
+        turn_id = params.get("turnId", "")
+
+        if will_retry:
+            logger.info("Suppressing transient Codex error for turn %s: %s", turn_id or "<unknown>", message)
+            return
+
+        if turn_id:
+            self._terminal_errors[turn_id] = message
+            return
+
         await self._agent.controller.emit_agent_message(
             request.context,
             "notify",
-            f"❌ Codex error: {message}{suffix}",
+            f"❌ Codex error: {message}",
         )
+
+    def _extract_error_message(self, error: Any) -> str:
+        if isinstance(error, dict):
+            return error.get("message", "Unknown error")
+        return str(error)
 
     async def _on_agent_message_delta(self, params: dict[str, Any], request: AgentRequest) -> None:
         # Streaming delta — currently we accumulate at item/completed level,
@@ -266,6 +285,7 @@ class CodexEventHandler:
     def clear_pending(self, turn_id: str) -> None:
         """Discard buffered text for a turn (e.g. on interruption)."""
         self._pending_assistant.pop(turn_id, None)
+        self._terminal_errors.pop(turn_id, None)
 
     # ------------------------------------------------------------------
     # Dispatch table
