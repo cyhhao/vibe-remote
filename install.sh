@@ -86,6 +86,13 @@ ensure_writable_dir() {
     [ -d "$dir" ] && [ -w "$dir" ]
 }
 
+is_absolute_dir() {
+    case "$1" in
+        /*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 choose_tool_bin_dir() {
     local preferred_dirs=(
         "$HOME/.local/bin"
@@ -105,7 +112,7 @@ choose_tool_bin_dir() {
     local old_ifs="$IFS"
     IFS=":"
     for dir in $ORIGINAL_PATH; do
-        if [ -n "$dir" ] && ensure_writable_dir "$dir"; then
+        if [ -n "$dir" ] && is_absolute_dir "$dir" && ensure_writable_dir "$dir"; then
             IFS="$old_ifs"
             echo "$dir"
             return 0
@@ -202,10 +209,10 @@ verify_installation() {
     info "Verifying installation..."
     
     # Refresh PATH
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
     if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
         export PATH="$VIBE_TOOL_BIN_DIR:$PATH"
     fi
-    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
     
     if command_exists vibe; then
         VIBE_BIN_PATH="$(command -v vibe)"

@@ -16,15 +16,9 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
-def test_install_script_keeps_vibe_available_on_current_path(tmp_path):
-    home_dir = tmp_path / "home"
-    home_dir.mkdir()
-    path_dir = tmp_path / "path-bin"
-    path_dir.mkdir()
-    uv_log = tmp_path / "uv-tool-bin-dir.txt"
-
+def _write_fake_uv(path: Path, uv_log: Path) -> None:
     _write_executable(
-        path_dir / "uv",
+        path,
         f"""\
         #!/usr/bin/env bash
         set -euo pipefail
@@ -52,6 +46,16 @@ def test_install_script_keeps_vibe_available_on_current_path(tmp_path):
         """,
     )
 
+
+def test_install_script_keeps_vibe_available_on_current_path(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    _write_fake_uv(path_dir / "uv", uv_log)
+
     env = os.environ.copy()
     env["HOME"] = str(home_dir)
     env["PATH"] = os.pathsep.join([str(path_dir), "/usr/bin", "/bin"])
@@ -68,3 +72,69 @@ def test_install_script_keeps_vibe_available_on_current_path(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "vibe-remote 9.9.9" in result.stdout
     assert uv_log.read_text(encoding="utf-8")
+
+
+def test_install_script_prefers_new_bin_over_stale_local_bin(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    local_bin = home_dir / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    _write_fake_uv(path_dir / "uv", uv_log)
+    _write_executable(
+        local_bin / "vibe",
+        """\
+        #!/usr/bin/env bash
+        echo "vibe-remote 0.1.0"
+        """,
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(path_dir), "/usr/bin", "/bin"])
+
+    result = subprocess.run(
+        ["bash", "-lc", f'bash "{INSTALL_SCRIPT}" && vibe version'],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "vibe-remote 9.9.9" in result.stdout
+    assert "vibe-remote 0.1.0" not in result.stdout
+
+
+def test_install_script_skips_relative_path_entries_for_tool_bin(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    relative_bin = tmp_path / "bin"
+    relative_bin.mkdir()
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    _write_fake_uv(path_dir / "uv", uv_log)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join(["bin", str(path_dir), "/usr/bin", "/bin"])
+
+    result = subprocess.run(
+        ["bash", "-lc", f'bash "{INSTALL_SCRIPT}" && vibe version'],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    selected_dir = Path(uv_log.read_text(encoding="utf-8"))
+    assert selected_dir.is_absolute()
+    assert not (relative_bin / "vibe").exists()
