@@ -17,6 +17,8 @@ NC='\033[0m' # No Color
 REPO="cyhhao/vibe-remote"
 PACKAGE_NAME="vibe-remote"
 VIBE_BIN_PATH=""
+VIBE_TOOL_BIN_DIR=""
+ORIGINAL_PATH="$PATH"
 
 print_banner() {
     echo -e "${BLUE}"
@@ -60,9 +62,71 @@ detect_os() {
     echo "$OS"
 }
 
+path_contains_dir() {
+    local path_value="$1"
+    local target_dir="$2"
+
+    case ":$path_value:" in
+        *":$target_dir:"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+ensure_writable_dir() {
+    local dir="$1"
+
+    if [ -z "$dir" ]; then
+        return 1
+    fi
+
+    if [ ! -d "$dir" ]; then
+        mkdir -p "$dir" 2>/dev/null || return 1
+    fi
+
+    [ -d "$dir" ] && [ -w "$dir" ]
+}
+
+choose_tool_bin_dir() {
+    local preferred_dirs=(
+        "$HOME/.local/bin"
+        "$HOME/bin"
+        "/usr/local/bin"
+        "/opt/homebrew/bin"
+    )
+    local dir
+
+    for dir in "${preferred_dirs[@]}"; do
+        if path_contains_dir "$ORIGINAL_PATH" "$dir" && ensure_writable_dir "$dir"; then
+            echo "$dir"
+            return 0
+        fi
+    done
+
+    local old_ifs="$IFS"
+    IFS=":"
+    for dir in $ORIGINAL_PATH; do
+        if [ -n "$dir" ] && ensure_writable_dir "$dir"; then
+            IFS="$old_ifs"
+            echo "$dir"
+            return 0
+        fi
+    done
+    IFS="$old_ifs"
+
+    return 1
+}
+
 # Check if command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+uv_tool_install() {
+    if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
+        UV_TOOL_BIN_DIR="$VIBE_TOOL_BIN_DIR" uv tool install "$@"
+    else
+        uv tool install "$@"
+    fi
 }
 
 # Install uv if not present
@@ -110,16 +174,23 @@ install_uv() {
 # Install vibe-remote using uv (uv auto-downloads Python if needed)
 install_vibe() {
     info "Installing vibe-remote (Python will be downloaded automatically if needed)..."
+
+    VIBE_TOOL_BIN_DIR="$(choose_tool_bin_dir || true)"
+    if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
+        info "Installing vibe command into $VIBE_TOOL_BIN_DIR"
+    else
+        warn "Could not find a writable directory in PATH; you may need a new shell before 'vibe' is available"
+    fi
     
     # uv tool install will auto-download Python if not available
     # --force: reinstall even if already installed
     # --refresh: refresh package cache to get latest version
     # Try in order: PyPI -> China mirror (tsinghua) -> GitHub
-    if uv tool install "$PACKAGE_NAME" --force --refresh 2>/dev/null; then
+    if uv_tool_install "$PACKAGE_NAME" --force --refresh 2>/dev/null; then
         success "vibe-remote installed successfully (from PyPI)"
-    elif uv tool install "$PACKAGE_NAME" --force --refresh --index-url https://pypi.tuna.tsinghua.edu.cn/simple 2>/dev/null; then
+    elif uv_tool_install "$PACKAGE_NAME" --force --refresh --index-url https://pypi.tuna.tsinghua.edu.cn/simple 2>/dev/null; then
         success "vibe-remote installed successfully (from Tsinghua mirror)"
-    elif uv tool install "git+https://github.com/${REPO}.git" --force 2>/dev/null; then
+    elif uv_tool_install "git+https://github.com/${REPO}.git" --force 2>/dev/null; then
         success "vibe-remote installed successfully (from GitHub)"
     else
         error "Failed to install vibe-remote from all sources"
@@ -131,6 +202,9 @@ verify_installation() {
     info "Verifying installation..."
     
     # Refresh PATH
+    if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
+        export PATH="$VIBE_TOOL_BIN_DIR:$PATH"
+    fi
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
     
     if command_exists vibe; then
@@ -171,10 +245,16 @@ print_next_steps() {
     echo -e "${GREEN}Installation complete!${NC}"
     echo ""
     echo -e "${BLUE}Next steps:${NC}"
-    echo "  1. Run 'source ${vibe_dir}/env' (or restart your shell)"
-    echo "  2. Run 'vibe' to start the setup wizard"
-    echo "  3. Configure your Slack app tokens in the web UI"
-    echo "  4. Enable channels and start chatting with AI agents"
+    if command_exists vibe; then
+        echo "  1. Run 'vibe' to start the setup wizard"
+        echo "  2. Configure your Slack app tokens in the web UI"
+        echo "  3. Enable channels and start chatting with AI agents"
+    else
+        echo "  1. Run 'source ${vibe_dir}/env' (or restart your shell)"
+        echo "  2. Run 'vibe' to start the setup wizard"
+        echo "  3. Configure your Slack app tokens in the web UI"
+        echo "  4. Enable channels and start chatting with AI agents"
+    fi
     echo ""
     echo -e "${BLUE}Quick commands:${NC}"
     echo "  vibe          - Start Vibe Remote (service + web UI)"
