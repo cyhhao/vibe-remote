@@ -30,9 +30,16 @@ class _StubAgent:
     def __init__(self, active_turn: str):
         self._session_mgr = _StubSessionManager(active_turn)
         self._active_requests = {}
+        self._turn_requests = {}
         self.controller = SimpleNamespace(emit_agent_message=AsyncMock())
         self.emit_result_message = AsyncMock()
         self._remove_ack_reaction = AsyncMock()
+
+    def _remember_turn_request(self, turn_id: str, request) -> None:
+        self._turn_requests[turn_id] = request
+
+    def _forget_turn_request(self, turn_id: str) -> None:
+        self._turn_requests.pop(turn_id, None)
 
 
 class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):

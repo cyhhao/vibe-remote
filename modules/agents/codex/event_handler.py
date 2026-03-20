@@ -76,6 +76,7 @@ class CodexEventHandler:
         turn_id = turn_obj.get("id", "") if isinstance(turn_obj, dict) else ""
         if turn_id:
             self._agent._session_mgr.set_active_turn(request.base_session_id, turn_id)
+            self._agent._remember_turn_request(turn_id, request)
         logger.info(
             "Codex turn started: thread=%s turn=%s",
             params.get("threadId"),
@@ -98,6 +99,7 @@ class CodexEventHandler:
             # Turn was interrupted — discard pending text, no result message
             self._pending_assistant.pop(turn_id, None)
             self._terminal_errors.pop(turn_id, None)
+            self._agent._forget_turn_request(turn_id)
             if is_current:
                 await self._agent._remove_ack_reaction(request)
             return
@@ -106,6 +108,7 @@ class CodexEventHandler:
             # Turn failed — emit error, discard pending text
             self._pending_assistant.pop(turn_id, None)
             error_entry = self._terminal_errors.pop(turn_id, None)
+            self._agent._forget_turn_request(turn_id)
             error_msg = error_entry[0] if error_entry else None
             already_notified = error_entry[1] if error_entry else False
             if is_current:
@@ -125,11 +128,13 @@ class CodexEventHandler:
         if not is_current:
             self._pending_assistant.pop(turn_id, None)
             self._terminal_errors.pop(turn_id, None)
+            self._agent._forget_turn_request(turn_id)
             logger.debug("Ignoring stale turn/completed for turn %s (current: %s)", turn_id, current_turn)
             return
 
         pending = self._pending_assistant.pop(turn_id, None)
         self._terminal_errors.pop(turn_id, None)
+        self._agent._forget_turn_request(turn_id)
         if pending:
             pending_text, pending_parse_mode = pending
             await self._agent.emit_result_message(
