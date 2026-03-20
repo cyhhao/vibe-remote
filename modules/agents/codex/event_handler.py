@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from modules.agents.base import AgentRequest
@@ -21,10 +21,6 @@ class CodexEventHandler:
 
     def __init__(self, agent: Any) -> None:
         self._agent = agent
-        # turnId → (accumulated_text, parse_mode)
-        self._pending_assistant: dict[str, Tuple[str, Optional[str]]] = {}
-        # turnId → terminal error message captured from `error` notifications
-        self._terminal_errors: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -74,8 +70,6 @@ class CodexEventHandler:
     async def _on_turn_started(self, params: dict[str, Any], request: AgentRequest) -> None:
         turn_obj = params.get("turn", {})
         turn_id = turn_obj.get("id", "") if isinstance(turn_obj, dict) else ""
-        if turn_id:
-            self._agent._session_mgr.set_active_turn(request.base_session_id, turn_id)
         logger.info(
             "Codex turn started: thread=%s turn=%s",
             params.get("threadId"),
@@ -86,65 +80,71 @@ class CodexEventHandler:
         turn_obj = params.get("turn", {})
         turn_id = turn_obj.get("id", "") if isinstance(turn_obj, dict) else ""
         status = turn_obj.get("status", "") if isinstance(turn_obj, dict) else ""
-        # Only clean up active request if this turn is still the active one
-        # (avoids race where a new request already replaced it)
-        current_turn = self._agent._session_mgr.get_active_turn(request.base_session_id)
-        is_current = current_turn == turn_id
-        if is_current:
-            self._agent._session_mgr.clear_active_turn(request.base_session_id)
-            self._agent._active_requests.pop(request.base_session_id, None)
+        turn_state = self._agent._turn_registry.get_turn(turn_id)
+        tracked_request = turn_state.request if turn_state else request
+        should_emit_result = self._agent._turn_registry.should_emit_result(turn_id)
+        should_emit_terminal_error = self._agent._turn_registry.should_emit_terminal_error(turn_id)
 
         if status == "interrupted":
-            # Turn was interrupted — discard pending text, no result message
-            self._pending_assistant.pop(turn_id, None)
-            self._terminal_errors.pop(turn_id, None)
-            if is_current:
-                await self._agent._remove_ack_reaction(request)
+            if not turn_state:
+                logger.debug("Ignoring interrupted completion for unknown turn %s", turn_id)
+                return
+            self._agent._turn_registry.pop_turn(turn_id)
+            await self._agent._remove_ack_reaction(tracked_request)
             return
 
         if status == "failed":
-            # Turn failed — emit error, discard pending text
-            self._pending_assistant.pop(turn_id, None)
-            error_msg = self._terminal_errors.pop(turn_id, None)
-            if is_current:
-                if not error_msg:
-                    error_obj = turn_obj.get("error", {}) if isinstance(turn_obj, dict) else {}
-                    error_msg = self._extract_error_message(error_obj)
+            if not turn_state:
+                logger.info("Ignoring failed completion for unknown turn %s", turn_id)
+                return
+            error_msg = turn_state.terminal_error if turn_state else None
+            already_notified = turn_state.terminal_error_notified if turn_state else False
+            if not error_msg:
+                error_obj = turn_obj.get("error", {}) if isinstance(turn_obj, dict) else {}
+                error_msg = self._extract_error_message(error_obj)
+
+            if should_emit_terminal_error and not already_notified:
                 await self._agent.controller.emit_agent_message(
-                    request.context,
+                    tracked_request.context,
                     "notify",
                     f"❌ Codex turn failed: {error_msg}",
                 )
-                await self._agent._remove_ack_reaction(request)
+            else:
+                logger.info("Suppressing inactive Codex turn failure for %s: %s", turn_id, error_msg)
+
+            self._agent._turn_registry.pop_turn(turn_id)
+            await self._agent._remove_ack_reaction(tracked_request)
             return
 
-        # Stale turn completion — discard pending text, no side effects
-        if not is_current:
-            self._pending_assistant.pop(turn_id, None)
-            self._terminal_errors.pop(turn_id, None)
-            logger.debug("Ignoring stale turn/completed for turn %s (current: %s)", turn_id, current_turn)
+        if not should_emit_result:
+            if not turn_state:
+                logger.debug("Ignoring completion for unknown turn %s", turn_id)
+                return
+            self._agent._turn_registry.pop_turn(turn_id)
+            logger.debug("Ignoring inactive turn/completed for turn %s", turn_id)
+            await self._agent._remove_ack_reaction(tracked_request)
             return
 
-        pending = self._pending_assistant.pop(turn_id, None)
-        self._terminal_errors.pop(turn_id, None)
+        pending = turn_state.pending_assistant if turn_state else None
+        self._agent._turn_registry.pop_turn(turn_id)
         if pending:
             pending_text, pending_parse_mode = pending
             await self._agent.emit_result_message(
-                request.context,
+                tracked_request.context,
                 pending_text,
                 subtype="success",
-                started_at=request.started_at,
+                started_at=tracked_request.started_at,
                 parse_mode=pending_parse_mode or "markdown",
-                request=request,
+                request=tracked_request,
             )
         else:
             await self._agent.emit_result_message(
-                request.context,
+                tracked_request.context,
                 None,
                 subtype="success",
-                started_at=request.started_at,
+                started_at=tracked_request.started_at,
                 parse_mode="markdown",
-                request=request,
+                request=tracked_request,
             )
 
     async def _on_item_completed(self, params: dict[str, Any], request: AgentRequest) -> None:
@@ -152,17 +152,17 @@ class CodexEventHandler:
         item_type = item.get("type")
         turn_id = params.get("turnId", "")
 
-        # Ignore items from stale turns to avoid leaking output into a new turn
-        current_turn = self._agent._session_mgr.get_active_turn(request.base_session_id)
-        if current_turn and turn_id and current_turn != turn_id:
-            logger.debug("Ignoring stale item/%s for turn %s (current: %s)", item_type, turn_id, current_turn)
+        if turn_id and not self._agent._turn_registry.should_emit_progress(turn_id):
+            logger.debug("Ignoring stale/interrupted item/%s for turn %s", item_type, turn_id)
             return
+
+        turn_state = self._agent._turn_registry.get_turn(turn_id) if turn_id else None
 
         if item_type == "agentMessage":
             text = item.get("text", "")
             if text:
                 # Emit previous pending message as assistant, buffer this one
-                prev = self._pending_assistant.get(turn_id)
+                prev = turn_state.pending_assistant if turn_state else None
                 if prev:
                     prev_text, prev_pm = prev
                     await self._agent.controller.emit_agent_message(
@@ -171,7 +171,8 @@ class CodexEventHandler:
                         prev_text,
                         parse_mode=prev_pm or "markdown",
                     )
-                self._pending_assistant[turn_id] = (text, "markdown")
+                if turn_state:
+                    turn_state.pending_assistant = (text, "markdown")
 
         elif item_type == "commandExecution":
             command = item.get("command", "")
@@ -244,7 +245,24 @@ class CodexEventHandler:
             return
 
         if turn_id:
-            self._terminal_errors[turn_id] = message
+            turn_state = self._agent._turn_registry.get_turn(turn_id)
+            if not turn_state:
+                logger.info("Ignoring Codex error for unknown turn %s: %s", turn_id, message)
+                return
+
+            turn_state.terminal_error = message
+            if (
+                self._agent._turn_registry.should_emit_terminal_error(turn_id)
+                and not turn_state.terminal_error_notified
+            ):
+                await self._agent.controller.emit_agent_message(
+                    request.context,
+                    "notify",
+                    f"❌ Codex turn failed: {message}",
+                )
+                turn_state.terminal_error_notified = True
+            else:
+                logger.info("Logging inactive Codex turn error for %s: %s", turn_id, message)
             return
 
         await self._agent.controller.emit_agent_message(
@@ -282,10 +300,10 @@ class CodexEventHandler:
     # Cleanup
     # ------------------------------------------------------------------
 
-    def clear_pending(self, turn_id: str) -> None:
-        """Discard buffered text for a turn (e.g. on interruption)."""
-        self._pending_assistant.pop(turn_id, None)
-        self._terminal_errors.pop(turn_id, None)
+    def clear_pending(self, turn_id: str) -> AgentRequest | None:
+        """Hide a turn from user-facing output after interruption/replacement."""
+        turn_state = self._agent._turn_registry.hide_turn(turn_id)
+        return turn_state.request if turn_state else None
 
     # ------------------------------------------------------------------
     # Dispatch table
