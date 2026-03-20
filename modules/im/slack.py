@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import re
 import time
 import aiohttp
 from typing import Dict, Any, Optional, Callable, List
@@ -62,6 +63,7 @@ class SlackBot(BaseIMClient):
         self._controller = None
         self._recent_event_ids: Dict[str, float] = {}
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
+        self._bot_user_id: Optional[str] = None
         self._stop_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._on_ready: Optional[Callable] = None
@@ -123,6 +125,63 @@ class SlackBot(BaseIMClient):
 
         if self.socket_client is None and self.config.app_token:
             self.socket_client = SocketModeClient(app_token=self.config.app_token, web_client=self.web_client)
+
+    def _extract_bot_user_id_from_payload(self, payload: Dict[str, Any]) -> Optional[str]:
+        authorizations = payload.get("authorizations") or []
+        for authorization in authorizations:
+            if isinstance(authorization, dict):
+                user_id = authorization.get("user_id")
+                if isinstance(user_id, str) and user_id:
+                    return user_id
+
+        authed_users = payload.get("authed_users") or []
+        for user_id in authed_users:
+            if isinstance(user_id, str) and user_id:
+                return user_id
+
+        return None
+
+    async def _get_bot_user_id(self, payload: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        payload_user_id = self._extract_bot_user_id_from_payload(payload or {})
+        if payload_user_id:
+            self._bot_user_id = payload_user_id
+            return payload_user_id
+
+        if self._bot_user_id:
+            return self._bot_user_id
+
+        self._ensure_clients()
+        auth_test = getattr(self.web_client, "auth_test", None)
+        if not callable(auth_test):
+            return None
+
+        try:
+            response = await auth_test()
+        except Exception as exc:
+            logger.debug("Failed to resolve Slack bot user id: %s", exc)
+            return None
+
+        user_id = response.get("user_id") if isinstance(response, dict) else None
+        if isinstance(user_id, str) and user_id:
+            self._bot_user_id = user_id
+            return user_id
+        return None
+
+    @staticmethod
+    def _has_specific_mention(text: str, user_id: Optional[str]) -> bool:
+        if not user_id:
+            return False
+        return bool(re.search(rf"<@{re.escape(user_id)}>", text))
+
+    @staticmethod
+    def _strip_specific_mention(text: str, user_id: Optional[str], *, anywhere: bool = False) -> str:
+        if not user_id:
+            return text
+        if anywhere:
+            pattern = rf"<@{re.escape(user_id)}>\s*"
+        else:
+            pattern = rf"^\s*<@{re.escape(user_id)}>\s*"
+        return re.sub(pattern, "", text, count=1).strip()
 
     def _convert_markdown_to_slack_mrkdwn(self, text: str) -> str:
         """Convert standard markdown to Slack mrkdwn format using third-party library
@@ -897,12 +956,14 @@ class SlackBot(BaseIMClient):
             # In channels, app_mention will handle it. In DMs, Slack does not
             # emit app_mention, so we strip the mention and continue.
             text = (event.get("text") or "").strip()
-            import re
 
             had_dm_mention_only = False
-            if re.search(r"<@[\w]+>", text):
+            bot_user_id = await self._get_bot_user_id(payload)
+            has_bot_mention = self._has_specific_mention(text, bot_user_id)
+            cleaned_text = self._strip_specific_mention(text, bot_user_id)
+            if has_bot_mention:
                 if is_dm:
-                    text = re.sub(r"<@[\w]+>", "", text).strip()
+                    text = cleaned_text
                     had_dm_mention_only = not text
                 else:
                     logger.info(f"Skipping message event with bot mention: '{text}'")
@@ -1027,10 +1088,11 @@ class SlackBot(BaseIMClient):
             user_id_mention = event.get("user")
 
             # Remove the mention from the text first so we can parse commands for auth
-            text = event.get("text", "")
-            import re
-
-            text = re.sub(r"<@[\w]+>", "", text).strip()
+            text = self._strip_specific_mention(
+                event.get("text", ""),
+                await self._get_bot_user_id(payload),
+                anywhere=True,
+            )
 
             # Parse command action for proper admin-protected auth check
             parsed_command = self.parse_text_command(text)
@@ -1687,12 +1749,15 @@ class SlackBot(BaseIMClient):
         try:
             response = await self.web_client.users_info(user=user_id)
             user = response["user"]
+            profile = user.get("profile", {})
             info = {
                 "id": user["id"],
                 "name": user.get("name"),
-                "real_name": user.get("real_name"),
-                "display_name": user.get("profile", {}).get("display_name"),
-                "email": user.get("profile", {}).get("email"),
+                "real_name": profile.get("real_name_normalized") or user.get("real_name"),
+                "real_name_normalized": profile.get("real_name_normalized"),
+                "display_name": profile.get("display_name_normalized") or profile.get("display_name"),
+                "display_name_normalized": profile.get("display_name_normalized"),
+                "email": profile.get("email"),
                 "is_bot": user.get("is_bot", False),
             }
         except SlackApiError as e:

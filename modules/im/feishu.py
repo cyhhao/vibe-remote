@@ -1499,13 +1499,22 @@ class FeishuBot(BaseIMClient):
             # --- Dedup: prevent re-delivery of the same card action ---
             # Include a hash of form values so that intentional re-submissions
             # with different selections are not mistakenly deduplicated.
-            form_hash = ""
+            interaction_hash = ""
             if form_value:
                 try:
-                    form_hash = str(hash(json.dumps(form_value, sort_keys=True)))
+                    interaction_hash = str(hash(json.dumps(form_value, sort_keys=True)))
                 except Exception:
-                    form_hash = str(id(form_value))
-            dedup_key = f"card:{message_id}:{button_name or callback_data}:{user_id}:{form_hash}"
+                    interaction_hash = str(id(form_value))
+            elif action.get("tag") in {"select_static", "multi_select_static"}:
+                select_state = {
+                    "option": action.get("option"),
+                    "options": action.get("options"),
+                }
+                try:
+                    interaction_hash = str(hash(json.dumps(select_state, sort_keys=True)))
+                except Exception:
+                    interaction_hash = str(id(select_state))
+            dedup_key = f"card:{message_id}:{button_name or callback_data}:{user_id}:{interaction_hash}"
             if self._is_duplicate_event(dedup_key):
                 return
 
@@ -1568,6 +1577,10 @@ class FeishuBot(BaseIMClient):
                 # Dismiss the form card after any successful submission
                 await self.dismiss_form_message(context)
                 return
+
+            if action.get("tag") in {"select_static", "multi_select_static"}:
+                if await self._handle_routing_select_change(context, action):
+                    return
 
             # --- Regular button callbacks ---
             if not callback_data:
@@ -1657,6 +1670,115 @@ class FeishuBot(BaseIMClient):
             _user_id=context.user_id,
             **cached,
         )
+
+    @staticmethod
+    def _normalize_routing_field_value(value: Any) -> Optional[str]:
+        if value in (None, "", "__default__"):
+            return None
+        return str(value)
+
+    @staticmethod
+    def _routing_draft_from_current(current_routing: Any) -> Dict[str, Optional[str]]:
+        fields = (
+            "opencode_agent",
+            "opencode_model",
+            "opencode_reasoning_effort",
+            "claude_agent",
+            "claude_model",
+            "claude_reasoning_effort",
+            "codex_model",
+            "codex_reasoning_effort",
+        )
+        draft: Dict[str, Optional[str]] = {}
+        for field_name in fields:
+            draft[field_name] = getattr(current_routing, field_name, None) if current_routing else None
+        return draft
+
+    @staticmethod
+    def _extract_select_action_value(action: Dict[str, Any]) -> Optional[str]:
+        option = action.get("option")
+        if isinstance(option, dict):
+            value = option.get("value")
+            if isinstance(value, str):
+                return value
+        elif isinstance(option, str):
+            return option
+
+        options = action.get("options")
+        if isinstance(options, list) and options:
+            first = options[0]
+            if isinstance(first, dict):
+                value = first.get("value")
+                if isinstance(value, str):
+                    return value
+            elif isinstance(first, str):
+                return first
+
+        return None
+
+    async def _patch_card_message(self, message_id: str, card: Dict[str, Any]) -> None:
+        if not message_id:
+            return
+
+        from lark_oapi.api.im.v1 import PatchMessageRequest, PatchMessageRequestBody
+
+        request = (
+            PatchMessageRequest.builder()
+            .message_id(message_id)
+            .request_body(PatchMessageRequestBody.builder().content(json.dumps(card, ensure_ascii=False)).build())
+            .build()
+        )
+        response = await self._lark_client.im.v1.message.apatch(request)
+        if not response.success():
+            raise RuntimeError(f"Feishu patch card failed: {response.msg}")
+
+    async def _handle_routing_select_change(self, context: MessageContext, action: Dict[str, Any]) -> bool:
+        field_name = action.get("name", "")
+        if not field_name:
+            return False
+
+        routing_field_map = {
+            "opencode_agent": "opencode_agent",
+            "opencode_model": "opencode_model",
+            "opencode_reasoning": "opencode_reasoning_effort",
+            "claude_agent": "claude_agent",
+            "claude_model": "claude_model",
+            "claude_reasoning": "claude_reasoning_effort",
+            "codex_model": "codex_model",
+            "codex_reasoning": "codex_reasoning_effort",
+        }
+        routing_field = routing_field_map.get(field_name)
+        if not routing_field:
+            return False
+
+        cache_key = f"{context.channel_id}:{context.user_id}"
+        cache = self._routing_cache.get(cache_key)
+        if not cache:
+            return False
+
+        draft_routing = dict(
+            cache.get("draft_routing") or self._routing_draft_from_current(cache.get("current_routing"))
+        )
+        selected_value = self._normalize_routing_field_value(self._extract_select_action_value(action))
+        draft_routing[routing_field] = selected_value
+
+        if routing_field == "claude_model":
+            draft_routing["claude_reasoning_effort"] = None
+
+        cache["draft_routing"] = draft_routing
+        self._routing_cache[cache_key] = cache
+
+        if routing_field != "claude_model" or cache.get("_selected_backend") != "claude":
+            return True
+
+        card = self._build_routing_backend_options_card(
+            channel_id=context.channel_id,
+            selected_backend="claude",
+            _user_id=context.user_id,
+            **cache,
+        )
+        await self._patch_card_message(context.message_id, card)
+        return True
 
     async def _handle_routing_form_submit(self, context: MessageContext, form_value: Dict[str, Any]):
         """Handle step 2 routing form submission (backend-specific options)."""
@@ -2062,6 +2184,7 @@ class FeishuBot(BaseIMClient):
         cache_key = f"{channel_id or ''}:{cache_user_id}"
         self._routing_cache[cache_key] = {
             "current_routing": kwargs.get("current_routing"),
+            "draft_routing": self._routing_draft_from_current(kwargs.get("current_routing")),
             "registered_backends": registered_backends,
             "opencode_agents": kwargs.get("opencode_agents", []),
             "opencode_models": kwargs.get("opencode_models", {}),
@@ -2138,16 +2261,17 @@ class FeishuBot(BaseIMClient):
         except Exception as exc:
             logger.error("Failed to send routing backend card: %s", exc)
 
-    async def _send_routing_backend_options_card(
+    def _build_routing_backend_options_card(
         self,
         channel_id: str,
         selected_backend: str,
         **kwargs,
-    ):
-        """Step 2: send a card with options specific to the selected backend."""
+    ) -> Dict[str, Any]:
+        """Build the step-2 routing card for a selected backend."""
         t = lambda key, **kw: self._t(key, channel_id, **kw)
 
         current_routing = kwargs.get("current_routing")
+        draft_routing = kwargs.get("draft_routing") or {}
         opencode_agents = kwargs.get("opencode_agents", [])
         opencode_models = kwargs.get("opencode_models", {})
         opencode_default_config = kwargs.get("opencode_default_config", {})
@@ -2155,11 +2279,17 @@ class FeishuBot(BaseIMClient):
         claude_models = kwargs.get("claude_models", [])
         codex_models = kwargs.get("codex_models", [])
 
+        def _routing_value(field_name: str) -> Optional[str]:
+            if field_name in draft_routing:
+                return draft_routing[field_name]
+            return getattr(current_routing, field_name, None) if current_routing else None
+
         # Store selected backend for the final submit handler
         user_id = kwargs.get("_user_id", "unknown")
         cache_key = f"{channel_id}:{user_id}"
         cache = self._routing_cache.get(cache_key, {})
         cache["_selected_backend"] = selected_backend
+        cache.setdefault("draft_routing", self._routing_draft_from_current(current_routing))
         self._routing_cache[cache_key] = cache
 
         form_elements: list = [
@@ -2175,7 +2305,7 @@ class FeishuBot(BaseIMClient):
                 for agent_info in opencode_agents:
                     name = agent_info if isinstance(agent_info, str) else agent_info.get("name", str(agent_info))
                     oc_agent_options.append({"text": {"tag": "plain_text", "content": name}, "value": name})
-                oc_current_agent = getattr(current_routing, "opencode_agent", None) if current_routing else None
+                oc_current_agent = _routing_value("opencode_agent")
                 form_elements.append({"tag": "markdown", "content": t("modal.routing.opencodeAgent")})
                 form_elements.append(
                     {
@@ -2188,7 +2318,7 @@ class FeishuBot(BaseIMClient):
                 )
 
             # OpenCode model selector (using shared utility)
-            oc_current_model = getattr(current_routing, "opencode_model", None) if current_routing else None
+            oc_current_model = _routing_value("opencode_model")
             preferred_providers = resolve_opencode_provider_preferences(
                 opencode_default_config,
                 oc_current_model,
@@ -2231,7 +2361,7 @@ class FeishuBot(BaseIMClient):
                 if not label or not value:
                     continue
                 re_options.append({"text": {"tag": "plain_text", "content": label}, "value": value})
-            oc_current_re = getattr(current_routing, "opencode_reasoning_effort", None) if current_routing else None
+            oc_current_re = _routing_value("opencode_reasoning_effort")
             if re_options:
                 form_elements.append({"tag": "markdown", "content": t("modal.routing.reasoningEffort")})
                 form_elements.append(
@@ -2246,14 +2376,14 @@ class FeishuBot(BaseIMClient):
 
         # ---- Claude section ----
         elif selected_backend == "claude":
-            cl_current_model = getattr(current_routing, "claude_model", None) if current_routing else None
+            cl_current_model = _routing_value("claude_model")
             # Claude agent selector
             if claude_agents:
                 cl_agent_options = [{"text": {"tag": "plain_text", "content": "(Default)"}, "value": "__default__"}]
                 for agent_info in claude_agents:
                     name = agent_info if isinstance(agent_info, str) else agent_info.get("name", str(agent_info))
                     cl_agent_options.append({"text": {"tag": "plain_text", "content": name}, "value": name})
-                cl_current_agent = getattr(current_routing, "claude_agent", None) if current_routing else None
+                cl_current_agent = _routing_value("claude_agent")
                 form_elements.append({"tag": "markdown", "content": t("modal.routing.claudeAgent")})
                 form_elements.append(
                     {
@@ -2282,7 +2412,7 @@ class FeishuBot(BaseIMClient):
                     }
                 )
 
-            cl_current_re = getattr(current_routing, "claude_reasoning_effort", None) if current_routing else None
+            cl_current_re = _routing_value("claude_reasoning_effort")
             cl_re_defs = build_claude_reasoning_options(cl_current_model)
             cl_re_options = []
             for item in cl_re_defs:
@@ -2306,7 +2436,7 @@ class FeishuBot(BaseIMClient):
                 for m in codex_models:
                     mid = m if isinstance(m, str) else m.get("id", str(m))
                     cx_model_options.append({"text": {"tag": "plain_text", "content": mid}, "value": mid})
-                cx_current_model = getattr(current_routing, "codex_model", None) if current_routing else None
+                cx_current_model = _routing_value("codex_model")
                 form_elements.append({"tag": "markdown", "content": t("modal.routing.model")})
                 form_elements.append(
                     {
@@ -2322,7 +2452,7 @@ class FeishuBot(BaseIMClient):
             cx_re_options = []
             for item in codex_re_defs:
                 cx_re_options.append({"text": {"tag": "plain_text", "content": item["label"]}, "value": item["value"]})
-            cx_current_re = getattr(current_routing, "codex_reasoning_effort", None) if current_routing else None
+            cx_current_re = _routing_value("codex_reasoning_effort")
             form_elements.append({"tag": "markdown", "content": t("modal.routing.codexReasoningEffort")})
             form_elements.append(
                 {
@@ -2345,7 +2475,7 @@ class FeishuBot(BaseIMClient):
             }
         )
 
-        card = {
+        return {
             "schema": "2.0",
             "header": {
                 "title": {"tag": "plain_text", "content": f"{t('modal.routing.title')} — {selected_backend}"},
@@ -2362,6 +2492,15 @@ class FeishuBot(BaseIMClient):
                 ],
             },
         }
+
+    async def _send_routing_backend_options_card(
+        self,
+        channel_id: str,
+        selected_backend: str,
+        **kwargs,
+    ):
+        """Step 2: send a card with options specific to the selected backend."""
+        card = self._build_routing_backend_options_card(channel_id, selected_backend, **kwargs)
 
         ctx = MessageContext(user_id="system", channel_id=channel_id or "")
         try:

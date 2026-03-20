@@ -1,0 +1,111 @@
+import importlib.util
+import sys
+import types
+import unittest
+from pathlib import Path
+
+from modules.im import MessageContext
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+
+def _load_command_handlers_class():
+    agents_module = types.ModuleType("modules.agents")
+    agents_module.AgentRequest = type("AgentRequest", (), {})
+    agents_module.get_agent_display_name = lambda agent_name, fallback=None: agent_name or fallback or "Unknown"
+    sys.modules["modules.agents"] = agents_module
+
+    core_pkg = types.ModuleType("core")
+    core_pkg.__path__ = [str(ROOT / "core")]
+    sys.modules["core"] = core_pkg
+
+    handlers_pkg = types.ModuleType("core.handlers")
+    handlers_pkg.__path__ = [str(ROOT / "core" / "handlers")]
+    sys.modules["core.handlers"] = handlers_pkg
+
+    for module_name, relative_path in (
+        ("core.handlers.base", ROOT / "core" / "handlers" / "base.py"),
+        ("core.handlers.command_handlers", ROOT / "core" / "handlers" / "command_handlers.py"),
+    ):
+        spec = importlib.util.spec_from_file_location(module_name, relative_path)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+
+    return sys.modules["core.handlers.command_handlers"].CommandHandlers
+
+
+CommandHandlers = _load_command_handlers_class()
+
+
+class _StubIMClient:
+    def __init__(self, user_info):
+        self.user_info = user_info
+        self.sent_messages = []
+        self.formatter = None
+
+    async def get_user_info(self, user_id):
+        return self.user_info
+
+    async def send_message(self, context, text, parse_mode=None):
+        self.sent_messages.append((context.channel_id, text))
+        return "T1"
+
+
+class _StubSettingsManager:
+    def __init__(self):
+        self.bind_calls = []
+
+    def is_bound_user(self, user_id):
+        return False
+
+    def bind_user_with_code(self, user_id, display_name, code, dm_chat_id=""):
+        self.bind_calls.append((user_id, display_name, code, dm_chat_id))
+        return True, False
+
+
+class _StubController:
+    def __init__(self, user_info):
+        self.config = type("Config", (), {"platform": "slack", "language": "zh"})()
+        self.im_client = _StubIMClient(user_info)
+        self.settings_manager = _StubSettingsManager()
+        self.sessions = self.settings_manager
+        self.session_manager = object()
+        self.receiver_tasks = {}
+
+    def _get_settings_key(self, context: MessageContext) -> str:
+        return context.user_id if context.channel_id.startswith("D") else context.channel_id
+
+
+class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bind_success_prefers_real_name_when_display_name_blank(self):
+        controller = _StubController(
+            {
+                "display_name": "",
+                "display_name_normalized": "",
+                "real_name": "Alex",
+                "real_name_normalized": "Alex",
+                "name": "cyh",
+            }
+        )
+        handler = CommandHandlers(controller)
+        context = MessageContext(user_id="U0E0FM3QT", channel_id="D123")
+
+        await handler.handle_bind(context, "bind-code")
+
+        self.assertEqual(
+            controller.settings_manager.bind_calls,
+            [("U0E0FM3QT", "Alex", "bind-code", "D123")],
+        )
+        self.assertEqual(
+            controller.im_client.sent_messages,
+            [("D123", "✅ 绑定成功！欢迎，Alex。你现在可以通过私信使用 Vibe Remote。")],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
