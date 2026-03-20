@@ -357,26 +357,15 @@ class ConsolidatedMessageDispatcher:
             logger.debug("IM client does not support upload_file_from_path; skipping file uploads")
             return
 
-        # Determine allowed roots for file uploads (active cwd + /tmp)
-        allowed_roots: list[Path] = [Path("/tmp").resolve()]
-        try:
-            active_cwd = self.controller.get_cwd(context)
-            allowed_roots.append(Path(active_cwd).resolve())
-        except Exception:
-            pass
-
         for fl in files:
             if not os.path.isfile(fl.path):
                 logger.warning("File not found, skipping upload: %s", fl.path)
                 continue
-            # Security: resolve symlinks and ensure within allowed roots
+
             try:
                 resolved = Path(fl.path).resolve(strict=True)
             except (OSError, ValueError):
                 logger.warning("Cannot resolve file path, skipping: %s", fl.path)
-                continue
-            if not any(resolved == root or resolved.is_relative_to(root) for root in allowed_roots):
-                logger.warning("File outside allowed roots, skipping: %s", fl.path)
                 continue
 
             # Use link label as title, but preserve file extension so users can

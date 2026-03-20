@@ -6,6 +6,7 @@ import { useToast } from '../../context/ToastContext';
 import { Combobox } from '../ui/combobox';
 import { DirectoryBrowser } from '../ui/directory-browser';
 import clsx from 'clsx';
+import { copyTextToClipboard } from '../../lib/utils';
 
 /** Input that only commits value on blur */
 function BlurInput({
@@ -39,6 +40,7 @@ interface UserConfig {
     opencode_reasoning_effort?: string | null;
     claude_agent?: string | null;
     claude_model?: string | null;
+    claude_reasoning_effort?: string | null;
     codex_model?: string | null;
     codex_reasoning_effort?: string | null;
   };
@@ -108,8 +110,13 @@ const BindCodeSection: React.FC = () => {
     }
   };
 
-  const handleCopy = (code: string) => {
-    navigator.clipboard.writeText(code);
+  const handleCopy = async (code: string) => {
+    const copied = await copyTextToClipboard(code);
+    if (!copied) {
+      showToast(t('common.copyFailed'), 'error');
+      return;
+    }
+
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 2000);
   };
@@ -301,6 +308,7 @@ export const UserList: React.FC = () => {
   const [opencodeOptionsByCwd, setOpencodeOptionsByCwd] = useState<Record<string, any>>({});
   const [claudeAgentsByCwd, setClaudeAgentsByCwd] = useState<Record<string, any[]>>({});
   const [claudeModels, setClaudeModels] = useState<string[]>([]);
+  const [claudeReasoningOptions, setClaudeReasoningOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [codexModels, setCodexModels] = useState<string[]>([]);
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
 
@@ -333,7 +341,14 @@ export const UserList: React.FC = () => {
   };
 
   useEffect(() => {
-    if (config.agents?.claude?.enabled) api.claudeModels().then(r => r.ok && setClaudeModels(r.models || []));
+    if (config.agents?.claude?.enabled) {
+      api.claudeModels().then((r) => {
+        if (r.ok) {
+          setClaudeModels(r.models || []);
+          setClaudeReasoningOptions(r.reasoning_options || {});
+        }
+      });
+    }
   }, [config.agents?.claude?.enabled]);
 
   useEffect(() => {
@@ -420,12 +435,45 @@ export const UserList: React.FC = () => {
     enabled: true,
     show_message_types: [],
     custom_cwd: '',
-    routing: { agent_backend: 'opencode' },
+    routing: {
+      agent_backend: null,
+      claude_reasoning_effort: null,
+    },
   });
 
   const getReasoningOptions = (cwd: string, modelKey: string) => {
     const lookup = opencodeOptionsByCwd[cwd]?.reasoning_options || {};
     return (lookup as Record<string, { value: string; label: string }[]>)[modelKey] || [];
+  };
+
+  const getClaudeReasoningOptions = (model: string) => {
+    const modelKey = model || '';
+    const cached = claudeReasoningOptions[modelKey];
+    if (cached?.length) return cached;
+
+    const fallback = claudeReasoningOptions[''] || [];
+    if (modelKey.toLowerCase().includes('claude-opus-4-6')) {
+      return fallback.some((option) => option.value === 'max')
+        ? fallback
+        : [...fallback, { value: 'max', label: 'Max' }];
+    }
+
+    return fallback;
+  };
+
+  const getReasoningLabel = (value: string, fallback: string) => {
+    switch (value) {
+      case 'low':
+        return t('channelList.reasoningLow');
+      case 'medium':
+        return t('channelList.reasoningMedium');
+      case 'high':
+        return t('channelList.reasoningHigh');
+      case 'max':
+        return t('channelList.reasoningMax');
+      default:
+        return fallback;
+    }
   };
 
   const userEntries = Object.entries(users).sort(
@@ -450,6 +498,7 @@ export const UserList: React.FC = () => {
         ) : (
           userEntries.map(([userId, userConfig]) => {
             const effectiveCwd = userConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
+            const effectiveBackend = userConfig.routing?.agent_backend || config.agents?.default_backend || 'opencode';
             const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
             const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
             return (
@@ -527,7 +576,7 @@ export const UserList: React.FC = () => {
                       <div className="space-y-1">
                         <label className="text-xs font-medium text-muted uppercase">{t('channelList.backend')}</label>
                         <select
-                          value={userConfig.routing.agent_backend || 'opencode'}
+                          value={effectiveBackend}
                           onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, agent_backend: e.target.value } })}
                           className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
                         >
@@ -573,7 +622,7 @@ export const UserList: React.FC = () => {
                     </div>
 
                     {/* OpenCode Settings */}
-                    {(!userConfig.routing.agent_backend || userConfig.routing.agent_backend === 'opencode') && (
+                    {effectiveBackend === 'opencode' && (
                       <div className="space-y-3">
                         <div className="text-xs font-medium text-muted uppercase">{t('channelList.opencodeSettings')}</div>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
@@ -633,10 +682,10 @@ export const UserList: React.FC = () => {
                     )}
 
                     {/* Claude Settings */}
-                    {userConfig.routing.agent_backend === 'claude' && (
+                    {effectiveBackend === 'claude' && (
                       <div className="space-y-3">
                         <div className="text-xs font-medium text-muted uppercase">{t('channelList.claudeSettings')}</div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-bg/50 p-3 rounded border border-border">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
                           <div className="space-y-1">
                             <label className="text-xs text-muted">{t('channelList.agent')}</label>
                             <select
@@ -653,18 +702,35 @@ export const UserList: React.FC = () => {
                             <Combobox
                               options={[{ value: '', label: t('common.default') }, ...claudeModels.map(m => ({ value: m, label: m }))]}
                               value={userConfig.routing.claude_model || ''}
-                              onValueChange={(v) => updateUser(userId, { routing: { ...userConfig.routing, claude_model: v || null } })}
+                              onValueChange={(v) => updateUser(userId, { routing: { ...userConfig.routing, claude_model: v || null, claude_reasoning_effort: null } })}
                               placeholder={t('channelList.claudeModelPlaceholder')}
                               searchPlaceholder={t('channelList.searchModel')}
                               allowCustomValue={true}
                             />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
+                            <select
+                              value={userConfig.routing.claude_reasoning_effort || ''}
+                              onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, claude_reasoning_effort: e.target.value || null } })}
+                              className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
+                            >
+                              <option value="">{t('common.default')}</option>
+                              {getClaudeReasoningOptions(userConfig.routing.claude_model || '')
+                                .filter((option) => option.value !== '__default__')
+                                .map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {getReasoningLabel(option.value, option.label)}
+                                  </option>
+                                ))}
+                            </select>
                           </div>
                         </div>
                       </div>
                     )}
 
                     {/* Codex Settings */}
-                    {userConfig.routing.agent_backend === 'codex' && (
+                    {effectiveBackend === 'codex' && (
                       <div className="space-y-3">
                         <div className="text-xs font-medium text-muted uppercase">{t('channelList.codexSettings')}</div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-bg/50 p-3 rounded border border-border">

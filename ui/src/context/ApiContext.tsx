@@ -30,7 +30,7 @@ export type ApiContextType = {
   opencodeOptions: (cwd: string) => Promise<any>;
   opencodeSetupPermission: () => Promise<{ ok: boolean; message: string; config_path: string }>;
   claudeAgents: (cwd?: string) => Promise<{ ok: boolean; agents?: { id: string; name: string; path: string; source?: string }[]; error?: string }>;
-  claudeModels: () => Promise<{ ok: boolean; models?: string[]; error?: string }>;
+  claudeModels: () => Promise<{ ok: boolean; models?: string[]; reasoning_options?: Record<string, { value: string; label: string }[]>; error?: string }>;
   codexModels: () => Promise<{ ok: boolean; models?: string[]; error?: string }>;
   getLogs: (lines?: number) => Promise<{ logs: LogEntry[]; total: number }>;
   getVersion: () => Promise<VersionInfo>;
@@ -63,6 +63,7 @@ export type InstallResult = {
   ok: boolean;
   message: string;
   output: string | null;
+  path?: string | null;
 };
 
 const ApiContext = createContext<ApiContextType | undefined>(undefined);

@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import time
 from typing import Dict, Any, Optional, Callable, List
 from urllib.parse import urlsplit
 
@@ -14,6 +15,7 @@ from config.v2_config import DiscordConfig
 from .formatters import DiscordFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
+    build_claude_reasoning_options,
     build_opencode_model_option_items,
     build_codex_reasoning_options,
     build_reasoning_effort_options,
@@ -47,6 +49,9 @@ class DiscordBot(BaseIMClient):
         self._controller = None
         self._on_ready: Optional[Callable] = None
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
+        self._recent_interaction_ids: Dict[str, float] = {}
+        self._recent_callback_keys: Dict[str, float] = {}
+        self._callback_dedupe_ttl_seconds = 3.0
 
         self.client.on_ready = self._on_ready_event
         self.client.on_message = self._on_message_event
@@ -88,11 +93,64 @@ class DiscordBot(BaseIMClient):
         lang = self._get_lang(channel_id)
         return i18n_t(key, lang, **kwargs)
 
+    def _prune_recent_interactions(self) -> None:
+        cutoff = time.monotonic() - self._callback_dedupe_ttl_seconds
+        self._recent_interaction_ids = {key: ts for key, ts in self._recent_interaction_ids.items() if ts >= cutoff}
+        self._recent_callback_keys = {key: ts for key, ts in self._recent_callback_keys.items() if ts >= cutoff}
+
+    def _mark_interaction_seen(self, interaction: discord.Interaction, callback_data: str) -> bool:
+        self._prune_recent_interactions()
+
+        now = time.monotonic()
+        interaction_id = str(interaction.id)
+        if interaction_id in self._recent_interaction_ids:
+            return False
+
+        message_id = str(interaction.message.id) if interaction.message else ""
+        callback_key = f"{interaction.user.id}:{message_id}:{callback_data}"
+        last_seen = self._recent_callback_keys.get(callback_key)
+        self._recent_interaction_ids[interaction_id] = now
+        self._recent_callback_keys[callback_key] = now
+        return last_seen is None or (now - last_seen) > self._callback_dedupe_ttl_seconds
+
+    def _build_interaction_context(self, interaction: discord.Interaction) -> MessageContext | None:
+        channel_id, thread_id = self._extract_context_ids(interaction.channel)
+        guild_id = str(interaction.guild_id) if interaction.guild_id else None
+        if guild_id and not self._is_allowed_guild(guild_id):
+            return None
+
+        is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+        return MessageContext(
+            user_id=str(interaction.user.id),
+            channel_id=channel_id,
+            thread_id=thread_id,
+            message_id=str(interaction.message.id) if interaction.message else None,
+            platform_specific={"interaction": interaction, "is_dm": is_dm},
+        )
+
+    async def _dispatch_callback_query(self, context: MessageContext, data: str) -> None:
+        if self.on_callback_query_callback:
+            await self.on_callback_query_callback(context, data)
+
+    def _spawn_callback_query_task(self, context: MessageContext, data: str) -> None:
+        task = asyncio.create_task(self._dispatch_callback_query(context, data))
+
+        def _log_task_result(done_task: asyncio.Task) -> None:
+            try:
+                done_task.result()
+            except Exception:
+                logger.exception("Discord callback task failed: %s", data)
+
+        task.add_done_callback(_log_task_result)
+
     def get_default_parse_mode(self) -> str:
         return "markdown"
 
     def should_use_thread_for_reply(self) -> bool:
         return True
+
+    def should_use_thread_for_dm_session(self) -> bool:
+        return False
 
     def format_markdown(self, text: str) -> str:
         return text
@@ -498,6 +556,26 @@ class DiscordBot(BaseIMClient):
         except Exception as err:
             logger.debug("Failed to send channel auth denial: %s", err)
 
+    async def _dismiss_interaction_message(self, interaction: discord.Interaction, fallback_text: str) -> None:
+        """Delete the source interaction message, with edit fallback when delete is unavailable."""
+        if interaction.message is not None:
+            try:
+                await interaction.message.delete()
+                return
+            except Exception as err:
+                logger.debug("Failed to delete Discord interaction message directly: %s", err)
+
+        try:
+            await interaction.delete_original_response()
+            return
+        except Exception as err:
+            logger.debug("Failed to delete Discord original interaction response: %s", err)
+
+        try:
+            await interaction.edit_original_response(content=fallback_text, embed=None, view=None)
+        except Exception as err:
+            logger.warning("Failed to dismiss Discord interaction message after successful submit: %s", err)
+
     async def _maybe_create_thread(self, message: discord.Message) -> Optional[discord.Thread]:
         if isinstance(message.channel, discord.Thread):
             return message.channel
@@ -591,8 +669,14 @@ class DiscordBot(BaseIMClient):
             bot_id = str(self.client.user.id)
             content = content.replace(f"<@{bot_id}>", "").replace(f"<@!{bot_id}>", "").strip()
 
+        allow_plain_bind = self.should_allow_plain_bind(
+            user_id=str(message.author.id),
+            is_dm=is_dm,
+            settings_manager=self.settings_manager,
+        )
+
         # Handle slash-like commands in plain messages
-        if self.parse_text_command(content):
+        if self.parse_text_command(content, allow_plain_bind=allow_plain_bind):
             command_context = MessageContext(
                 user_id=str(message.author.id),
                 channel_id=channel_id,
@@ -601,7 +685,7 @@ class DiscordBot(BaseIMClient):
                 platform_specific={"message": message, "is_dm": is_dm},
                 files=files,
             )
-            if await self.dispatch_text_command(command_context, content):
+            if await self.dispatch_text_command(command_context, content, allow_plain_bind=allow_plain_bind):
                 return
 
         if not content and not files:
@@ -847,11 +931,7 @@ class DiscordBot(BaseIMClient):
                         notify_user=True,
                         is_dm=save_interaction.guild is None,
                     )
-                await save_interaction.edit_original_response(
-                    content=f"✅ {self._t('common.submitted')}",
-                    embed=None,
-                    view=None,
-                )
+                await self._dismiss_interaction_message(save_interaction, f"✅ {self._t('common.submitted')}")
             except Exception as err:
                 await save_interaction.edit_original_response(
                     content=f"❌ {self._t('error.settingsUpdateFailed', error=str(err))}",
@@ -1049,6 +1129,9 @@ class DiscordBot(BaseIMClient):
                 )
                 self.claude_agent = getattr(current_routing, "claude_agent", None) if current_routing else None
                 self.claude_model = getattr(current_routing, "claude_model", None) if current_routing else None
+                self.claude_reasoning = (
+                    getattr(current_routing, "claude_reasoning_effort", None) if current_routing else None
+                )
                 self.codex_model = getattr(current_routing, "codex_model", None) if current_routing else None
                 self.codex_reasoning = (
                     getattr(current_routing, "codex_reasoning_effort", None) if current_routing else None
@@ -1288,10 +1371,57 @@ class DiscordBot(BaseIMClient):
                     async def claude_model_callback(select_interaction: discord.Interaction):
                         if model_select.values:
                             self.claude_model = model_select.values[0]
-                        await select_interaction.response.defer()
+                            self.claude_reasoning = None
+                        self._render()
+                        updated_embed = discord.Embed(
+                            title=self._content(),
+                            description=self.outer._t("discord.routingSubtitle"),
+                        )
+                        await select_interaction.response.edit_message(embed=updated_embed, view=self)
 
                     model_select.callback = claude_model_callback
                     self.add_item(model_select)
+
+                    claude_reasoning_entries = build_claude_reasoning_options(
+                        self.claude_model if self.claude_model not in (None, "__default__") else None
+                    )
+                    selected_cl_reasoning = (
+                        self.claude_reasoning if self.claude_reasoning not in (None, "__default__") else "__default__"
+                    )
+                    available_cl_reasoning = {entry.get("value") for entry in claude_reasoning_entries}
+                    if selected_cl_reasoning not in available_cl_reasoning:
+                        selected_cl_reasoning = "__default__"
+                    reasoning_options = []
+                    for entry in claude_reasoning_entries:
+                        value = entry.get("value")
+                        if not value:
+                            continue
+                        if value == "__default__":
+                            label = self.outer._t("common.default")
+                        else:
+                            translated = self.outer._t(f"reasoning.{value}")
+                            label = translated if translated != f"reasoning.{value}" else entry.get("label", value)
+                        reasoning_options.append(
+                            discord.SelectOption(
+                                label=_prefixed_label("discord.labels.reasoningEffort", label),
+                                value=value,
+                                default=value == selected_cl_reasoning,
+                            )
+                        )
+                    reasoning_select = discord.ui.Select(
+                        placeholder=self.outer._t("modal.routing.selectReasoningEffort"),
+                        options=reasoning_options,
+                        min_values=1,
+                        max_values=1,
+                    )
+
+                    async def claude_reasoning_callback(select_interaction: discord.Interaction):
+                        if reasoning_select.values:
+                            self.claude_reasoning = reasoning_select.values[0]
+                        await select_interaction.response.defer()
+
+                    reasoning_select.callback = claude_reasoning_callback
+                    self.add_item(reasoning_select)
 
                 if self.selected_backend == "codex":
                     model_options = [
@@ -1408,15 +1538,15 @@ class DiscordBot(BaseIMClient):
                             _normalize(self.oc_reasoning),
                             _normalize(self.claude_agent),
                             _normalize(self.claude_model),
+                            _normalize(self.claude_reasoning),
                             _normalize(self.codex_model),
                             _normalize(self.codex_reasoning),
                             notify_user=True,
                             is_dm=interaction.guild is None,
                         )
-                    await interaction.edit_original_response(
-                        content=f"✅ {self.outer._t('common.submitted')}",
-                        embed=None,
-                        view=None,
+                    await self.outer._dismiss_interaction_message(
+                        interaction,
+                        f"✅ {self.outer._t('common.submitted')}",
                     )
                 except Exception as err:
                     await interaction.edit_original_response(
@@ -1614,32 +1744,31 @@ class _PersistentStartView(discord.ui.View):
                     await interaction.response.defer(ephemeral=True)
                 except Exception:
                     pass
-            channel_id, thread_id = self.outer._extract_context_ids(interaction.channel)
-            guild_id = str(interaction.guild_id) if interaction.guild_id else None
-            if guild_id and not self.outer._is_allowed_guild(guild_id):
+
+            if not self.outer._mark_interaction_seen(interaction, data):
+                logger.info("Ignoring duplicate Discord interaction: %s", data)
                 return
-            is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+
+            context = self.outer._build_interaction_context(interaction)
+            if context is None:
+                return
             auth_result = self.outer.check_authorization(
-                user_id=str(interaction.user.id),
-                channel_id=channel_id,
-                is_dm=is_dm,
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                is_dm=bool((context.platform_specific or {}).get("is_dm", False)),
                 action=data,
                 settings_manager=self.outer.settings_manager,
             )
             if not auth_result.allowed:
                 await self.outer._send_auth_denial(
-                    channel_id, str(interaction.user.id), auth_result, interaction=interaction
+                    context.channel_id, context.user_id, auth_result, interaction=interaction
                 )
                 return
-            context = MessageContext(
-                user_id=str(interaction.user.id),
-                channel_id=channel_id,
-                thread_id=thread_id,
-                message_id=str(interaction.message.id) if interaction.message else None,
-                platform_specific={"interaction": interaction, "is_dm": is_dm},
-            )
-            if self.outer.on_callback_query_callback:
-                await self.outer.on_callback_query_callback(context, data)
+
+            if needs_modal:
+                await self.outer._dispatch_callback_query(context, data)
+            else:
+                self.outer._spawn_callback_query_task(context, data)
 
         return on_click
 
@@ -1693,32 +1822,31 @@ class _DiscordButtonView(discord.ui.View):
                             await interaction.response.defer(ephemeral=True)
                         except Exception:
                             pass
-                    channel_id, thread_id = self.outer._extract_context_ids(interaction.channel)
-                    guild_id = str(interaction.guild_id) if interaction.guild_id else None
-                    if guild_id and not self.outer._is_allowed_guild(guild_id):
+
+                    if not self.outer._mark_interaction_seen(interaction, data):
+                        logger.info("Ignoring duplicate Discord interaction: %s", data)
                         return
-                    is_dm = interaction.guild is None or isinstance(interaction.channel, discord.DMChannel)
+
+                    context = self.outer._build_interaction_context(interaction)
+                    if context is None:
+                        return
                     auth_result = self.outer.check_authorization(
-                        user_id=str(interaction.user.id),
-                        channel_id=channel_id,
-                        is_dm=is_dm,
+                        user_id=context.user_id,
+                        channel_id=context.channel_id,
+                        is_dm=bool((context.platform_specific or {}).get("is_dm", False)),
                         action=data,
                         settings_manager=self.outer.settings_manager,
                     )
                     if not auth_result.allowed:
                         await self.outer._send_auth_denial(
-                            channel_id, str(interaction.user.id), auth_result, interaction=interaction
+                            context.channel_id, context.user_id, auth_result, interaction=interaction
                         )
                         return
-                    context = MessageContext(
-                        user_id=str(interaction.user.id),
-                        channel_id=channel_id,
-                        thread_id=thread_id,
-                        message_id=str(interaction.message.id) if interaction.message else None,
-                        platform_specific={"interaction": interaction, "is_dm": is_dm},
-                    )
-                    if self.outer.on_callback_query_callback:
-                        await self.outer.on_callback_query_callback(context, data)
+
+                    if needs_modal:
+                        await self.outer._dispatch_callback_query(context, data)
+                    else:
+                        self.outer._spawn_callback_query_task(context, data)
 
                 item.callback = on_click
                 self.add_item(item)

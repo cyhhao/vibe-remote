@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from config import paths
-from config.v2_config import V2Config
+from config.v2_config import CONFIG_LOCK, V2Config
 from config.v2_settings import (
     SettingsStore,
     ChannelSettings,
@@ -27,6 +27,84 @@ logger = logging.getLogger(__name__)
 # Cache per cwd: { cwd: { "data": ..., "updated_at": ... } }
 _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
+
+
+def _is_executable_file(path: Path) -> bool:
+    return path.exists() and path.is_file() and os.access(path, os.X_OK)
+
+
+def _nvm_binary_candidates(binary: str) -> list[Path]:
+    versions_dir = Path.home() / ".nvm" / "versions" / "node"
+    if not versions_dir.exists():
+        return []
+
+    def _version_sort_key(path: Path) -> tuple:
+        parts = str(path.name).lstrip("v").split(".")
+        key: list[int | str] = []
+        for part in parts:
+            key.append(int(part) if part.isdigit() else part)
+        return tuple(key)
+
+    candidates: list[Path] = []
+    for version_dir in sorted(versions_dir.glob("*"), key=_version_sort_key, reverse=True):
+        candidate = version_dir / "bin" / binary
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+def _candidate_cli_paths(binary: str) -> list[Path]:
+    if not binary:
+        return []
+
+    expanded = Path(os.path.expanduser(binary))
+    has_path_separator = os.sep in binary or (os.altsep is not None and os.altsep in binary)
+    if expanded.is_absolute() or has_path_separator:
+        return [expanded]
+
+    home = Path.home()
+    candidates: list[Path] = []
+    if binary == "claude":
+        candidates.append(home / ".claude" / "local" / "claude")
+    elif binary == "opencode":
+        candidates.extend(
+            [
+                home / ".opencode" / "bin" / "opencode",
+                home / ".local" / "bin" / "opencode",
+            ]
+        )
+
+    common_candidates = [
+        home / ".local" / "bin" / binary,
+        home / ".bun" / "bin" / binary,
+        Path("/opt/homebrew/bin") / binary,
+        Path("/usr/local/bin") / binary,
+    ]
+    for candidate in common_candidates + _nvm_binary_candidates(binary):
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    return candidates
+
+
+def resolve_cli_path(binary: str) -> str | None:
+    for candidate in _candidate_cli_paths(binary):
+        if _is_executable_file(candidate):
+            return str(candidate)
+
+    path = shutil.which(os.path.expanduser(binary)) if binary else None
+    return path or None
+
+
+def _command_env_for(binary_path: str | None) -> dict[str, str]:
+    env = {**os.environ, "PATH": os.environ.get("PATH", "")}
+    if not binary_path:
+        return env
+
+    binary_dir = str(Path(binary_path).expanduser().resolve().parent)
+    path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry and entry != binary_dir]
+    env["PATH"] = os.pathsep.join([binary_dir, *path_entries])
+    return env
 
 
 def browse_directory(path: str, show_hidden: bool = False) -> dict:
@@ -65,10 +143,31 @@ def load_config() -> V2Config:
     return V2Config.load()
 
 
+def _deep_merge_dicts(base: dict, patch: dict) -> dict:
+    merged = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def save_config(payload: dict) -> V2Config:
-    config = V2Config.from_payload(payload)
-    config.save()
-    return config
+    if not isinstance(payload, dict):
+        raise ValueError("Config payload must be an object")
+
+    with CONFIG_LOCK:
+        base_payload: dict = {}
+        try:
+            base_payload = config_to_payload(load_config())
+        except FileNotFoundError:
+            base_payload = {}
+
+        merged_payload = _deep_merge_dicts(base_payload, payload) if base_payload else payload
+        config = V2Config.from_payload(merged_payload)
+        config.save()
+        return config
 
 
 def config_to_payload(config: V2Config) -> dict:
@@ -112,13 +211,24 @@ def get_settings() -> dict:
 def save_settings(payload: dict) -> dict:
     store = SettingsStore.get_instance()
     platform = _current_platform()
+
+    def _normalize_routing_payload(routing_payload: dict) -> dict:
+        from modules.agents.opencode.utils import normalize_claude_reasoning_effort
+
+        routing_data = dict(routing_payload or {})
+        routing_data["claude_reasoning_effort"] = normalize_claude_reasoning_effort(
+            routing_data.get("claude_model"),
+            routing_data.get("claude_reasoning_effort"),
+        )
+        return routing_data
+
     channels = {}
     for channel_id, channel_payload in (payload.get("channels") or {}).items():
         channels[channel_id] = ChannelSettings(
             enabled=channel_payload.get("enabled", True),
             show_message_types=normalize_show_message_types(channel_payload.get("show_message_types")),
             custom_cwd=channel_payload.get("custom_cwd"),
-            routing=_parse_routing(channel_payload.get("routing") or {}),
+            routing=_parse_routing(_normalize_routing_payload(channel_payload.get("routing") or {})),
             require_mention=channel_payload.get("require_mention"),
         )
     store.set_channels_for_platform(platform, channels)
@@ -132,11 +242,7 @@ def init_sessions() -> None:
 
 
 def detect_cli(binary: str) -> dict:
-    if binary == "claude":
-        preferred = Path.home() / ".claude" / "local" / "claude"
-        if preferred.exists() and os.access(preferred, os.X_OK):
-            return {"found": True, "path": str(preferred)}
-    path = shutil.which(binary)
+    path = resolve_cli_path(binary)
     if not path:
         return {"found": False, "path": None}
     return {"found": True, "path": path}
@@ -842,8 +948,13 @@ def claude_models() -> dict:
     except Exception as exc:
         logger.warning("Failed to read Claude settings.json: %s", exc, exc_info=True)
 
+    from modules.agents.opencode.utils import build_claude_reasoning_options
+
     uniq = sorted({x for x in options if x})
-    return {"ok": True, "models": uniq}
+    reasoning_options = {"": build_claude_reasoning_options(None)}
+    for model in uniq:
+        reasoning_options[model] = build_claude_reasoning_options(model)
+    return {"ok": True, "models": uniq, "reasoning_options": reasoning_options}
 
 
 def install_agent(name: str) -> dict:
@@ -867,7 +978,7 @@ def install_agent(name: str) -> dict:
 
     def _check_binary(binary: str) -> str | None:
         """Check if a binary exists in PATH. Returns error message if not found."""
-        if shutil.which(binary) is None:
+        if resolve_cli_path(binary) is None:
             return f"{binary} is required but not found. Please install it first."
         return None
 
@@ -909,12 +1020,12 @@ def install_agent(name: str) -> dict:
             cmd = ["bash", "-c", "set -euo pipefail; curl -fsSL https://claude.ai/install.sh | bash"]
     elif name == "codex":
         # Codex: prefer npm, fallback to brew on macOS
-        npm_path = shutil.which("npm")
+        npm_path = resolve_cli_path("npm")
         if npm_path:
             cmd = [npm_path, "install", "-g", "@openai/codex"]
         elif system == "darwin":
             # macOS: try brew cask
-            brew_path = shutil.which("brew")
+            brew_path = resolve_cli_path("brew")
             if brew_path:
                 cmd = [brew_path, "install", "--cask", "codex"]
             else:
@@ -934,20 +1045,23 @@ def install_agent(name: str) -> dict:
 
     try:
         logger.info("Installing agent %s with command: %s", name, cmd)
+        command_env = _command_env_for(cmd[0] if cmd and os.path.isabs(cmd[0]) else None)
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=300,  # 5 minute timeout for installation
-            env={**os.environ, "PATH": os.environ.get("PATH", "")},
+            env=command_env,
         )
         output = result.stdout + ("\n" + result.stderr if result.stderr else "")
         output = _truncate_output(output.strip())
         if result.returncode == 0:
             logger.info("Agent %s installed successfully", name)
+            installed_path = resolve_cli_path(name)
             return {
                 "ok": True,
                 "message": f"{name} installed successfully",
+                "path": installed_path,
                 "output": output,
             }
         else:
@@ -1125,6 +1239,16 @@ def save_users(payload: dict) -> dict:
     store = SettingsStore.get_instance()
     platform = _current_platform()
 
+    def _normalize_routing_payload(routing_payload: dict) -> dict:
+        from modules.agents.opencode.utils import normalize_claude_reasoning_effort
+
+        routing_data = dict(routing_payload or {})
+        routing_data["claude_reasoning_effort"] = normalize_claude_reasoning_effort(
+            routing_data.get("claude_model"),
+            routing_data.get("claude_reasoning_effort"),
+        )
+        return routing_data
+
     users = {}
     for user_id, up in (payload.get("users") or {}).items():
         if not isinstance(up, dict):
@@ -1138,7 +1262,7 @@ def save_users(payload: dict) -> dict:
             enabled=up.get("enabled", True),
             show_message_types=normalize_show_message_types(up.get("show_message_types")),
             custom_cwd=up.get("custom_cwd"),
-            routing=_parse_routing(up.get("routing") or {}),
+            routing=_parse_routing(_normalize_routing_payload(up.get("routing") or {})),
             dm_chat_id=existing.dm_chat_id if existing else "",
         )
 

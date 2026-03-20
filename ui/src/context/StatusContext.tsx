@@ -26,27 +26,18 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [status, setStatus] = useState<RuntimeStatus>({});
   const [health, setHealth] = useState(false);
 
-  const checkHealth = async () => {
-    try {
-      const res = await fetch('/health');
-      if (res.ok) {
-        setHealth(true);
-      } else {
-        setHealth(false);
-      }
-    } catch (e) {
-      setHealth(false);
-    }
-  };
-
   const refreshStatus = async () => {
     try {
       const res = await fetch('/status');
       if (res.ok) {
         const data = await res.json();
         setStatus(data);
+        setHealth(true);
+      } else {
+        setHealth(false);
       }
     } catch (e) {
+      setHealth(false);
       console.error('Failed to fetch status', e);
     }
   };
@@ -69,13 +60,28 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   useEffect(() => {
-    checkHealth();
-    refreshStatus();
-    const interval = setInterval(() => {
-      checkHealth();
-      refreshStatus();
-    }, 2000);
-    return () => clearInterval(interval);
+    void refreshStatus();
+
+    const poll = () => {
+      void refreshStatus();
+    };
+
+    const interval = window.setInterval(poll, 5000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        poll();
+      }
+    };
+    const handleFocus = () => poll();
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   return (

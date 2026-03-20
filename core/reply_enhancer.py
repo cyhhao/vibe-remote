@@ -153,28 +153,28 @@ def _extract_buttons(text: str) -> Tuple[List[QuickReplyButton], str]:
 REPLY_ENHANCEMENTS_PROMPT = """\
 # Vibe Remote
 
-Vibe Remote 是一个将 AI Agent 接入 Slack 等 IM 平台的中间层，\
-用户正使用 IM 软件通过 Vibe Remote 的转发与你进行交互。
+Vibe Remote is a middleware layer that connects AI agents to IM platforms such as Slack. \
+The user is interacting with you through an IM app via Vibe Remote forwarding.
 
-你有两个可选的回复增强能力：
+You have two optional reply-enhancement capabilities:
 
-## 1. 发送文件
-用 Markdown 链接 + `file://` 协议即可将本地文件发送给用户：
-示例：[文件1](file:///tmp/result.pdf)
-Vibe Remote 会自动将文件作为附件发送。
+## 1. Send files
+You can send a local file to the user by using a Markdown link with the `file://` protocol:
+Example: [File 1](file:///tmp/result.pdf)
+Vibe Remote will automatically send the file as an attachment.
 
-### 图片语法
-如果你希望按“图片附件”发送（而不是普通文件），请使用 Markdown 图片语法：
-示例：![页面截图](file:///tmp/screenshot.jpg)
+### Image syntax
+If you want it sent as an image attachment rather than a regular file, use Markdown image syntax:
+Example: ![Page screenshot](file:///tmp/screenshot.jpg)
 
-## 2. 快捷回复按钮
-在消息最末尾，用 `---` 分隔线后跟 `[按钮文字]` 提供可点击的快捷回复，示例：
+## 2. Quick-reply buttons
+At the very end of the message, add a `---` separator followed by `[button text]` to provide clickable quick replies. Example:
 ---
-[👌 继续吧] | [✅ 提交PR] | [👀 先review一下]
-规则：
-- 根据对话上下文和用户习惯推测用户可能的回复意图，仅在确实对用户有帮助时添加
-- 不要添加与用户下一步意图无关的废话，如：知道了、收到、谢谢
-- 必须放在消息最末尾，`---` 分隔线之后
-- 每个按钮用 `[文字]` 包裹，用 `|` 分隔，可用 emoji 开头优化表达
-- 最多 2-4 个按钮，每个不超过 20 字符
+[👌 Continue] | [✅ Submit PR] | [👀 Review first]
+Rules:
+- Infer likely next replies from the conversation context and the user's habits; only add them when they are genuinely helpful
+- Do not add filler unrelated to the user's likely next intent, such as: got it, received, thanks
+- They must appear at the very end of the message, after the `---` separator
+- Wrap each button in `[text]` and separate them with `|`; you may start with emoji to improve clarity
+- Use at most 2-4 buttons, each no longer than 20 characters
 """

@@ -34,6 +34,7 @@ def _routing_from_dict(payload: Optional[dict]) -> RoutingSettings:
         opencode_reasoning_effort=data.get("opencode_reasoning_effort"),
         claude_agent=data.get("claude_agent"),
         claude_model=data.get("claude_model"),
+        claude_reasoning_effort=data.get("claude_reasoning_effort"),
         codex_model=data.get("codex_model"),
         codex_reasoning_effort=data.get("codex_reasoning_effort"),
     )

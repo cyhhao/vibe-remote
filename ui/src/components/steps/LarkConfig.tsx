@@ -3,6 +3,8 @@ import { Shield, RefreshCw, Check, MessageSquare, KeyRound, Plus, ExternalLink, 
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
+import { useToast } from '../../context/ToastContext';
+import { copyTextToClipboard } from '../../lib/utils';
 
 const LARK_PERMISSIONS_JSON = `{
   "scopes": {
@@ -36,6 +38,7 @@ interface LarkConfigProps {
 export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
+  const { showToast } = useToast();
   const [domain, setDomain] = useState<'feishu' | 'lark'>(data.lark?.domain || 'feishu');
   const [appId, setAppId] = useState(data.lark?.app_id || '');
   const [appSecret, setAppSecret] = useState(data.lark?.app_secret || '');
@@ -121,13 +124,14 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
   };
 
   const copyPermissionsJson = async () => {
-    try {
-      await navigator.clipboard.writeText(LARK_PERMISSIONS_JSON);
+    const copiedToClipboard = await copyTextToClipboard(LARK_PERMISSIONS_JSON);
+    if (copiedToClipboard) {
       setCopiedJson(true);
       setTimeout(() => setCopiedJson(false), 2000);
-    } catch {
-      // fallback
+      return;
     }
+
+    showToast(t('common.copyFailed'), 'error');
   };
 
   const LinkButton: React.FC<{ url: string; label: string }> = ({ url, label }) => (

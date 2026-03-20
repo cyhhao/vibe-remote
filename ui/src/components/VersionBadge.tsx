@@ -48,15 +48,7 @@ export const VersionBadge: React.FC = () => {
   const handleAutoUpdateToggle = async (enabled: boolean) => {
     setSavingAutoUpdate(true);
     try {
-      const config = await api.getConfig();
-      const updatedConfig = {
-        ...config,
-        update: {
-          ...config.update,
-          auto_update: enabled,
-        },
-      };
-      await api.saveConfig(updatedConfig);
+      await api.saveConfig({ update: { auto_update: enabled } });
       setAutoUpdate(enabled);
     } catch (e) {
       console.error('Failed to save auto-update setting:', e);

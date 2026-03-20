@@ -68,7 +68,7 @@ class _StubController(Controller):
         self.session_handler = SessionHandler(self)
 
     def _get_settings_key(self, context: MessageContext) -> str:
-        return context.channel_id
+        return context.user_id if (context.platform_specific or {}).get("is_dm") else context.channel_id
 
 
 class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -110,6 +110,44 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         # No thread provided -> new confirmation message anchor used
         self.assertEqual(settings.set_calls, [("DXYZ", "codex", "slack_T1", "sess_dm")])
         self.assertEqual(settings.mark_calls, [("U999", "DXYZ", "T1")])
+
+    async def test_handle_resume_session_submission_discord_dm_uses_channel_session_key(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="discord"))
+        ctrl.im_client.should_use_thread_for_dm_session = lambda: False
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U999",
+            channel_id="DMCHAN",
+            thread_id=None,
+            agent="codex",
+            session_id="sess_dm",
+            is_dm=True,
+        )
+
+        self.assertEqual(settings.set_calls, [("U999", "codex", "discord_DMCHAN", "sess_dm")])
+        self.assertEqual(settings.mark_calls, [("U999", "DMCHAN", "T1")])
+
+    async def test_handle_resume_session_submission_lark_dm_uses_thread_session_key(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="lark"))
+        ctrl.im_client.should_use_thread_for_dm_session = lambda: True
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U888",
+            channel_id="DMCHAT",
+            thread_id="root_123",
+            agent="claude",
+            session_id="sess_lark_dm",
+            is_dm=True,
+        )
+
+        self.assertEqual(settings.set_calls, [("U888", "claude", "lark_root_123", "sess_lark_dm")])
+        self.assertEqual(settings.mark_calls, [("U888", "DMCHAT", "root_123")])
 
     async def test_command_handlers_handle_resume_opens_modal(self):
         settings = _StubSettingsManager()

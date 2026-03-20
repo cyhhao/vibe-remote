@@ -62,7 +62,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install agent CLIs (failures are non-fatal: not all may be needed)
 RUN npm install -g @anthropic-ai/claude-code 2>/dev/null || echo "WARN: claude-code install failed (optional)"
 RUN npm install -g @openai/codex 2>/dev/null || echo "WARN: codex install failed (optional)"
-# OpenCode: try npm, fall back to noting it's unavailable
-RUN npm install -g opencode 2>/dev/null || echo "WARN: opencode install failed (optional)"
+# OpenCode: use the official installer and expose the binary on PATH
+RUN bash -lc 'set -euo pipefail; curl -fsSL https://opencode.ai/install | bash && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode && opencode --version'
 
 ENTRYPOINT ["/docker-entrypoint.sh"]

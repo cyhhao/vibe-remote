@@ -607,6 +607,7 @@ class SettingsHandler(BaseHandler):
                     selected_opencode_reasoning=selection.selected_opencode_reasoning,
                     selected_claude_agent=selection.selected_claude_agent,
                     selected_claude_model=selection.selected_claude_model,
+                    selected_claude_reasoning=selection.selected_claude_reasoning,
                     selected_codex_model=selection.selected_codex_model,
                     selected_codex_reasoning=selection.selected_codex_reasoning,
                 )
@@ -623,6 +624,7 @@ class SettingsHandler(BaseHandler):
         opencode_reasoning_effort: Optional[str] = None,
         claude_agent: Optional[str] = None,
         claude_model: Optional[str] = None,
+        claude_reasoning_effort: Optional[str] = None,
         codex_model: Optional[str] = None,
         codex_reasoning_effort: Optional[str] = None,
         notify_user: bool = True,
@@ -630,10 +632,15 @@ class SettingsHandler(BaseHandler):
     ):
         """Handle routing update submission (from modal)."""
         from config.v2_settings import RoutingSettings
+        from modules.agents.opencode.utils import normalize_claude_reasoning_effort
 
         try:
             settings_key = user_id if is_dm else (channel_id or user_id)
             existing_routing = self.settings_manager.get_channel_routing(settings_key)
+            normalized_claude_reasoning_effort = normalize_claude_reasoning_effort(
+                claude_model,
+                claude_reasoning_effort,
+            )
 
             routing = RoutingSettings(
                 agent_backend=backend,
@@ -652,6 +659,9 @@ class SettingsHandler(BaseHandler):
                 claude_model=claude_model
                 if backend == "claude"
                 else (existing_routing.claude_model if existing_routing else None),
+                claude_reasoning_effort=normalized_claude_reasoning_effort
+                if backend == "claude"
+                else (existing_routing.claude_reasoning_effort if existing_routing else None),
                 codex_model=codex_model
                 if backend == "codex"
                 else (existing_routing.codex_model if existing_routing else None),
@@ -675,6 +685,10 @@ class SettingsHandler(BaseHandler):
                     parts.append(f"{self._t('routing.label.agent')}: **{claude_agent}**")
                 if claude_model:
                     parts.append(f"{self._t('routing.label.model')}: **{claude_model}**")
+                if normalized_claude_reasoning_effort:
+                    parts.append(
+                        f"{self._t('routing.label.reasoningEffort')}: **{normalized_claude_reasoning_effort}**"
+                    )
             elif backend == "codex":
                 if codex_model:
                     parts.append(f"{self._t('routing.label.model')}: **{codex_model}**")
@@ -698,6 +712,7 @@ class SettingsHandler(BaseHandler):
                 f"Routing updated for {settings_key}: backend={backend}, "
                 f"opencode_agent={opencode_agent}, opencode_model={opencode_model}, "
                 f"claude_agent={claude_agent}, claude_model={claude_model}, "
+                f"claude_reasoning_effort={normalized_claude_reasoning_effort}, "
                 f"codex_model={codex_model}"
             )
 

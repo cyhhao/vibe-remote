@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Languages } from 'lucide-react';
 import { useApi } from '../context/ApiContext';
@@ -6,14 +6,12 @@ import { useApi } from '../context/ApiContext';
 export const LanguageSwitcher: React.FC = () => {
   const { i18n, t } = useTranslation();
   const { getConfig, saveConfig } = useApi();
-  const [config, setConfig] = useState<any>(null);
 
   // Load config and sync language on mount
   useEffect(() => {
     const loadConfig = async () => {
       try {
         const cfg = await getConfig();
-        setConfig(cfg);
         // Sync i18n with config language
         if (cfg.language && cfg.language !== i18n.language) {
           i18n.changeLanguage(cfg.language);
@@ -39,10 +37,7 @@ export const LanguageSwitcher: React.FC = () => {
 
     // Save to config
     try {
-      const baseConfig = config ?? await getConfig();
-      const updatedConfig = { ...baseConfig, language: newLang };
-      await saveConfig(updatedConfig);
-      setConfig(updatedConfig);
+      await saveConfig({ language: newLang });
     } catch {
       // Ignore save errors - language change already applied locally
     }

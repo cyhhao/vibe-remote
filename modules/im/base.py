@@ -2,7 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, Dict, Any, List, Tuple
+from typing import Optional, Callable, Dict, Any, List, Tuple, cast
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -128,43 +128,81 @@ class BaseIMClient(ABC):
         # Default implementation - subclasses should override
         return False
 
+    def should_use_thread_for_dm_session(self) -> bool:
+        """Check if DM conversations should use thread-based session IDs.
+
+        Platforms differ here: some DMs support thread/topic replies, while
+        others only have a flat DM timeline.
+        """
+        return False
+
     @staticmethod
-    def extract_command_action(text: str) -> str:
+    def extract_command_action(text: str, allow_plain_bind: bool = False) -> str:
         """Extract command action name from slash command text.
 
         Examples:
             "/settings" -> "settings"
             "/set_cwd /tmp" -> "set_cwd"
+            "bind abc123" -> "bind" (when ``allow_plain_bind`` is True)
             "hello" -> ""
         """
-        if not text or not text.startswith("/"):
-            return ""
-        parts = text.split(maxsplit=1)
-        return parts[0][1:] if parts and len(parts[0]) > 1 else ""
+        parsed = BaseIMClient.parse_text_command(text, allow_plain_bind=allow_plain_bind)
+        return parsed[0] if parsed else ""
 
     @staticmethod
-    def parse_text_command(text: str) -> Optional[Tuple[str, str]]:
+    def parse_text_command(text: str, allow_plain_bind: bool = False) -> Optional[Tuple[str, str]]:
         """Parse slash-style command text.
 
         Returns:
             (command, args) when ``text`` starts with ``/`` and contains a
             non-empty command; otherwise ``None``.
         """
-        if not text or not text.startswith("/"):
+        if not text:
             return None
-        parts = text.split(maxsplit=1)
-        command = parts[0][1:] if parts and len(parts[0]) > 1 else ""
-        if not command:
+        stripped = text.strip()
+        if not stripped:
             return None
-        args = parts[1] if len(parts) > 1 else ""
-        return command, args
 
-    async def dispatch_text_command(self, context: MessageContext, text: str) -> bool:
+        parts = stripped.split(maxsplit=1)
+        head = parts[0]
+        args = parts[1] if len(parts) > 1 else ""
+
+        if head.startswith("/"):
+            command = head[1:]
+            if not command:
+                return None
+            return command, args
+
+        if allow_plain_bind and head == "bind":
+            return "bind", args
+
+        return None
+
+    def should_allow_plain_bind(self, *, user_id: str, is_dm: bool, settings_manager: Any = None) -> bool:
+        """Allow bare ``bind <code>`` only for unbound DM users.
+
+        This keeps normal conversations unchanged for already-bound users while
+        working around platforms like Slack that reserve leading ``/`` in DMs.
+        """
+        if not is_dm:
+            return False
+
+        manager = settings_manager or getattr(self, "settings_manager", None)
+        if manager is None:
+            return True
+
+        try:
+            return not manager.is_bound_user(user_id)
+        except Exception:
+            logger.debug("Falling back to disabled plain bind alias", exc_info=True)
+            return False
+
+    async def dispatch_text_command(self, context: MessageContext, text: str, allow_plain_bind: bool = False) -> bool:
         """Dispatch slash-style text command if registered.
 
         Returns ``True`` if a matching command handler ran.
         """
-        parsed = self.parse_text_command(text)
+        parsed = self.parse_text_command(text, allow_plain_bind=allow_plain_bind)
         if not parsed:
             return False
         command, args = parsed
@@ -187,7 +225,12 @@ class BaseIMClient(ABC):
         """Run centralized auth with shared action extraction logic."""
         from core.auth import check_auth
 
-        resolved_action = action or self.extract_command_action(text)
+        allow_plain_bind = self.should_allow_plain_bind(
+            user_id=user_id,
+            is_dm=is_dm,
+            settings_manager=settings_manager,
+        )
+        resolved_action = action or self.extract_command_action(text, allow_plain_bind=allow_plain_bind)
         return check_auth(
             user_id=user_id,
             channel_id=channel_id,
@@ -207,10 +250,11 @@ class BaseIMClient(ABC):
         def _translate(key: str, **kwargs) -> str:
             translator = getattr(self, "_t", None)
             if callable(translator):
+                typed_translator = cast(Callable[..., str], translator)
                 try:
-                    return translator(key, channel_id, **kwargs)
+                    return typed_translator(key, channel_id, **kwargs)
                 except TypeError:
-                    return translator(key, **kwargs)
+                    return typed_translator(key, **kwargs)
             from vibe.i18n import t as i18n_t
 
             return i18n_t(key, "en", **kwargs)

@@ -18,6 +18,7 @@ from .formatters import SlackFormatter
 from .slack_modal import parse_routing_modal_selection
 from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.opencode.utils import (
+    build_claude_reasoning_options,
     build_opencode_model_option_items,
     build_codex_reasoning_options,
     build_reasoning_effort_options,
@@ -109,6 +110,10 @@ class SlackBot(BaseIMClient):
 
     def should_use_thread_for_reply(self) -> bool:
         """Slack uses threads for replies"""
+        return True
+
+    def should_use_thread_for_dm_session(self) -> bool:
+        """Slack DMs also support thread-based replies."""
         return True
 
     def _ensure_clients(self):
@@ -886,15 +891,22 @@ class SlackBot(BaseIMClient):
                     return
 
             channel_id = event.get("channel")
+            is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
 
-            # Check if this message contains a bot mention
-            # If it does, skip processing as it will be handled by app_mention event
+            # Check if this message contains a bot mention.
+            # In channels, app_mention will handle it. In DMs, Slack does not
+            # emit app_mention, so we strip the mention and continue.
             text = (event.get("text") or "").strip()
             import re
 
+            had_dm_mention_only = False
             if re.search(r"<@[\w]+>", text):
-                logger.info(f"Skipping message event with bot mention: '{text}'")
-                return
+                if is_dm:
+                    text = re.sub(r"<@[\w]+>", "", text).strip()
+                    had_dm_mention_only = not text
+                else:
+                    logger.info(f"Skipping message event with bot mention: '{text}'")
+                    return
 
             # Extract file attachments (slack_files already checked above)
             file_attachments = self._extract_file_attachments(slack_files) if slack_files else None
@@ -909,7 +921,7 @@ class SlackBot(BaseIMClient):
             if not user_id:
                 logger.debug("Ignoring Slack message without user id")
                 return
-            if not text and not file_attachments and not has_shared_content:
+            if not text and not file_attachments and not has_shared_content and not had_dm_mention_only:
                 logger.debug("Ignoring Slack message with empty text and no files")
                 return
 
@@ -946,7 +958,6 @@ class SlackBot(BaseIMClient):
                         logger.debug(f"No settings_manager, ignoring thread message: '{text}'")
                         return
 
-            is_dm = channel_id.startswith("D")
             auth = self.check_authorization(
                 user_id=user_id,
                 channel_id=channel_id,
@@ -981,14 +992,22 @@ class SlackBot(BaseIMClient):
                 platform_specific={
                     "team_id": payload.get("team_id"),
                     "event": event,
-                    "is_dm": channel_id.startswith("D"),
+                    "is_dm": is_dm,
                 },
                 files=file_attachments,
             )
 
             # Handle slash commands in regular messages (before appending shared content)
             # Use only the user's original text for command detection
-            if await self.dispatch_text_command(context, text):
+            if await self.dispatch_text_command(
+                context,
+                text,
+                allow_plain_bind=self.should_allow_plain_bind(
+                    user_id=user_id,
+                    is_dm=is_dm,
+                    settings_manager=self.settings_manager,
+                ),
+            ):
                 return
 
             # Append shared content to user text (after command parsing)
@@ -1518,6 +1537,12 @@ class SlackBot(BaseIMClient):
             if claude_model == "__default__":
                 claude_model = None
 
+            # Extract Claude reasoning effort (optional)
+            claude_reasoning_data = values.get("claude_reasoning_block", {}).get("claude_reasoning_select", {})
+            claude_reasoning = claude_reasoning_data.get("selected_option", {}).get("value")
+            if claude_reasoning == "__default__":
+                claude_reasoning = None
+
             # Extract Codex model (optional)
             codex_model_data = values.get("codex_model_block", {}).get("codex_model_select", {})
             codex_model = codex_model_data.get("selected_option", {}).get("value")
@@ -1550,6 +1575,7 @@ class SlackBot(BaseIMClient):
                     oc_reasoning,
                     claude_agent,
                     claude_model,
+                    claude_reasoning,
                     codex_model,
                     codex_reasoning,
                     is_dm=isinstance(channel_id, str) and channel_id.startswith("D"),
@@ -2296,6 +2322,7 @@ class SlackBot(BaseIMClient):
         selected_opencode_reasoning: object = _UNSET,
         selected_claude_agent: object = _UNSET,
         selected_claude_model: object = _UNSET,
+        selected_claude_reasoning: object = _UNSET,
         selected_codex_model: object = _UNSET,
         selected_codex_reasoning: object = _UNSET,
     ) -> dict:
@@ -2553,6 +2580,11 @@ class SlackBot(BaseIMClient):
             else:
                 current_cl_model = selected_claude_model
 
+            if selected_claude_reasoning is _UNSET:
+                current_cl_reasoning = current_routing.claude_reasoning_effort if current_routing else None
+            else:
+                current_cl_reasoning = selected_claude_reasoning
+
             # Build agent options
             cl_agent_options = [
                 {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
@@ -2626,6 +2658,44 @@ class SlackBot(BaseIMClient):
                 "initial_option": initial_cl_model,
             }
 
+            cl_reasoning_entries = build_claude_reasoning_options(current_cl_model)
+            selected_cl_reasoning = (
+                current_cl_reasoning if current_cl_reasoning not in (None, "__default__") else "__default__"
+            )
+            available_cl_reasoning = {entry.get("value") for entry in cl_reasoning_entries}
+            if selected_cl_reasoning not in available_cl_reasoning:
+                selected_cl_reasoning = "__default__"
+
+            cl_reasoning_options = []
+            for entry in cl_reasoning_entries:
+                value = entry.get("value")
+                if not value:
+                    continue
+                if value == "__default__":
+                    label = self._t("common.default")
+                else:
+                    translated = self._t(f"reasoning.{value}")
+                    label = translated if translated != f"reasoning.{value}" else entry.get("label", value)
+                cl_reasoning_options.append(
+                    {
+                        "text": {"type": "plain_text", "text": label},
+                        "value": value,
+                    }
+                )
+
+            initial_cl_reasoning = next(
+                (opt for opt in cl_reasoning_options if opt["value"] == selected_cl_reasoning),
+                cl_reasoning_options[0],
+            )
+
+            cl_reasoning_select = {
+                "type": "static_select",
+                "action_id": "claude_reasoning_select",
+                "placeholder": {"type": "plain_text", "text": self._t("modal.routing.selectReasoningEffort")},
+                "options": cl_reasoning_options,
+                "initial_option": initial_cl_reasoning,
+            }
+
             # Add Claude section
             blocks.extend(
                 [
@@ -2648,8 +2718,16 @@ class SlackBot(BaseIMClient):
                         "type": "input",
                         "block_id": "claude_model_block",
                         "optional": True,
+                        "dispatch_action": True,
                         "element": cl_model_select,
                         "label": {"type": "plain_text", "text": self._t("modal.routing.model")},
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "claude_reasoning_block",
+                        "optional": True,
+                        "element": cl_reasoning_select,
+                        "label": {"type": "plain_text", "text": self._t("modal.routing.reasoningEffort")},
                     },
                 ]
             )
@@ -3114,6 +3192,7 @@ class SlackBot(BaseIMClient):
         selected_opencode_reasoning: Optional[str] = None,
         selected_claude_agent: Optional[str] = None,
         selected_claude_model: Optional[str] = None,
+        selected_claude_reasoning: Optional[str] = None,
         selected_codex_model: Optional[str] = None,
         selected_codex_reasoning: Optional[str] = None,
     ) -> None:
@@ -3137,6 +3216,7 @@ class SlackBot(BaseIMClient):
             selected_opencode_reasoning=selected_opencode_reasoning,
             selected_claude_agent=selected_claude_agent,
             selected_claude_model=selected_claude_model,
+            selected_claude_reasoning=selected_claude_reasoning,
             selected_codex_model=selected_codex_model,
             selected_codex_reasoning=selected_codex_reasoning,
         )

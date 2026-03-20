@@ -20,7 +20,7 @@ from config.v2_config import (
     SlackConfig,
     V2Config,
 )
-from vibe import __version__, runtime
+from vibe import __version__, api, runtime
 
 logger = logging.getLogger(__name__)
 
@@ -288,9 +288,7 @@ def _doctor():
         # OpenCode
         if config.agents.opencode.enabled:
             cli_path = config.agents.opencode.cli_path
-            import shutil
-
-            found_path = shutil.which(cli_path) if cli_path else None
+            found_path = api.detect_cli(cli_path).get("path") if cli_path else None
             if found_path:
                 agent_items.append(
                     {
@@ -320,14 +318,7 @@ def _doctor():
         # Claude
         if config.agents.claude.enabled:
             cli_path = config.agents.claude.cli_path
-            import shutil
-
-            # Check preferred location first
-            preferred = Path.home() / ".claude" / "local" / "claude"
-            if preferred.exists() and os.access(preferred, os.X_OK):
-                found_path = str(preferred)
-            else:
-                found_path = shutil.which(cli_path) if cli_path else None
+            found_path = api.detect_cli(cli_path).get("path") if cli_path else None
 
             if found_path:
                 agent_items.append(
@@ -358,9 +349,7 @@ def _doctor():
         # Codex
         if config.agents.codex.enabled:
             cli_path = config.agents.codex.cli_path
-            import shutil
-
-            found_path = shutil.which(cli_path) if cli_path else None
+            found_path = api.detect_cli(cli_path).get("path") if cli_path else None
             if found_path:
                 agent_items.append(
                     {

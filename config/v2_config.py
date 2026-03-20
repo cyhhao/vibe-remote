@@ -1,5 +1,8 @@
 import json
 import logging
+import os
+import tempfile
+import threading
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import List, Optional, Union
@@ -9,6 +12,8 @@ from modules.im.base import BaseIMConfig
 from vibe.i18n import normalize_language
 
 logger = logging.getLogger(__name__)
+
+CONFIG_LOCK = threading.RLock()
 
 
 def _filter_dataclass_fields(dc_class, payload: dict) -> dict:
@@ -155,9 +160,10 @@ class V2Config:
     def load(cls, config_path: Optional[Path] = None) -> "V2Config":
         paths.ensure_data_dirs()
         path = config_path or paths.get_config_path()
-        if not path.exists():
-            raise FileNotFoundError(f"Config not found: {path}")
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        with CONFIG_LOCK:
+            if not path.exists():
+                raise FileNotFoundError(f"Config not found: {path}")
+            payload = json.loads(path.read_text(encoding="utf-8"))
         return cls.from_payload(payload)
 
     @classmethod
@@ -321,4 +327,12 @@ class V2Config:
             "reply_enhancements": self.reply_enhancements,
             "language": self.language,
         }
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        content = json.dumps(payload, indent=2)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with CONFIG_LOCK:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as tmp:
+                tmp.write(content)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+                temp_name = tmp.name
+            os.replace(temp_name, path)

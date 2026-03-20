@@ -23,6 +23,7 @@ def test_parse_routing_modal_selection_normalizes_default_values():
         "state": {
             "values": {
                 "claude_model_block": {"claude_model_select": {"selected_option": {"value": "__default__"}}},
+                "claude_reasoning_block": {"claude_reasoning_select": {"selected_option": {"value": "__default__"}}},
                 "codex_reasoning_block": {"codex_reasoning_select_1": {"selected_option": {"value": "__default__"}}},
             }
         }
@@ -32,4 +33,5 @@ def test_parse_routing_modal_selection_normalizes_default_values():
 
     assert selection.selected_backend == "claude"
     assert selection.selected_claude_model is None
+    assert selection.selected_claude_reasoning is None
     assert selection.selected_codex_reasoning is None

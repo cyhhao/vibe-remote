@@ -167,6 +167,15 @@ Vibe Remote is a **multi-platform, multi-backend** system. Every feature and bug
   - `vibe status` / `vibe stop`
   - Restart: run `vibe`
 
+### Three-End Regression
+
+- When the user says `三端回归测试`, treat it as: update the latest code into the existing three-end regression environment so the user can test on Slack, Discord, and Feishu.
+- Default command: `./scripts/run_three_regression.sh`
+- Do **not** use `--reset-config` or `--reset-all` unless the user explicitly asks for a reset.
+- `./scripts/run_three_regression.sh` is the standard update path for regression testing: it rebuilds/recreates containers while preserving persisted regression data under `_tmp/three-regression/`, including config, state, and workdir changes made during earlier testing.
+- Do not use `--no-build` when the goal is to make new code changes take effect; `--no-build` is only for restarting with the existing image.
+- After running the script, verify the three services are healthy before handing back to the user.
+
 ### Frontend (UI)
 
 - Location: `ui/` (React + Vite + TypeScript)

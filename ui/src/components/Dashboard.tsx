@@ -28,10 +28,16 @@ export const Dashboard: React.FC = () => {
     // Auto-save Message Handling config (no restart needed)
     const autoSaveMessageConfig = async (newConfig: any) => {
         try {
+            const patch = {
+                ack_mode: newConfig.ack_mode,
+                show_duration: newConfig.show_duration,
+                include_user_info: newConfig.include_user_info,
+                reply_enhancements: newConfig.reply_enhancements,
+            };
             await fetch('/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newConfig),
+                body: JSON.stringify(patch),
             });
             setSettingsMessage(t('common.saved'));
         } catch {
@@ -49,7 +55,6 @@ export const Dashboard: React.FC = () => {
                 setup_port: config.ui?.setup_port || 5123,
             };
             const configPayload = {
-                ...config,
                 ui: { ...(config.ui || {}), ...uiPayload },
             };
             // Save config first
@@ -85,8 +90,7 @@ export const Dashboard: React.FC = () => {
                 log_level: config.runtime?.log_level || 'INFO',
             };
             const configPayload = {
-                ...config,
-                runtime: { ...(config.runtime || {}), ...runtimePayload },
+                runtime: runtimePayload,
             };
             await fetch('/config', {
                 method: 'POST',
@@ -244,7 +248,7 @@ export const Dashboard: React.FC = () => {
                         </div>
                         <div className="flex justify-between items-center">
                             <span className="text-muted">{t('dashboard.defaultBackend')}</span>
-                            <span className="font-mono text-xs text-text">{config.agents?.default_backend || 'opencode'}</span>
+                            <span className="font-mono text-xs text-text">{config.agents?.default_backend || '-'}</span>
                         </div>
                     {showWorkspaceGateway && (
                         <div className="flex justify-between items-center">

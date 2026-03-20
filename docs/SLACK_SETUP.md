@@ -134,7 +134,8 @@ From here you can:
 
 1. Invite bot to channel: `/invite @Vibe Remote`
 2. Type `@Vibe Remote /start` to open control panel
-3. Start coding!
+3. To use the bot in DM, send `bind <code>` with a bind code from the web UI (`/bind <code>` is also supported)
+4. Start coding!
 
 **Tips:**
 - Each Slack thread = isolated session
