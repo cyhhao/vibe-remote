@@ -7,10 +7,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from config.v2_config import LarkConfig
+from core.auth import AuthResult
 from modules.im.base import MessageContext
 
 
 def _install_opencode_utils_module() -> None:
+    if "aiohttp" not in sys.modules:
+        sys.modules["aiohttp"] = types.ModuleType("aiohttp")
+
     if "modules.agents.opencode.utils" in sys.modules:
         return
 
@@ -86,7 +90,9 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
         bot._patch_card_message.assert_awaited_once()
-        _, card = bot._patch_card_message.await_args.args
+        first_call = bot._patch_card_message.await_args
+        assert first_call is not None
+        _, card = first_call.args
 
         reasoning_select = self._find_select(card, "claude_reasoning")
         reasoning_values = [option["value"] for option in reasoning_select["options"]]
@@ -99,6 +105,65 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
         draft = bot._routing_cache["chat:user"]["draft_routing"]
         self.assertEqual(draft["claude_model"], "claude-opus-4-6")
         self.assertIsNone(draft["claude_reasoning_effort"])
+
+    async def test_select_changes_with_different_options_are_not_deduped(self):
+        bot = self._make_bot()
+        bot._patch_card_message = AsyncMock()
+        bot.check_authorization = lambda **kwargs: AuthResult(allowed=True)
+
+        current_routing = SimpleNamespace(
+            claude_agent="helper",
+            claude_model="claude-sonnet-4-5",
+            claude_reasoning_effort="high",
+            opencode_agent=None,
+            opencode_model=None,
+            opencode_reasoning_effort=None,
+            codex_model=None,
+            codex_reasoning_effort=None,
+        )
+        bot._routing_cache["chat:user"] = {
+            "current_routing": current_routing,
+            "draft_routing": bot._routing_draft_from_current(current_routing),
+            "_selected_backend": "claude",
+            "claude_agents": ["helper", "reviewer"],
+            "claude_models": ["claude-sonnet-4-5", "claude-sonnet-4-6", "claude-opus-4-6"],
+            "opencode_agents": [],
+            "opencode_models": {},
+            "opencode_default_config": {},
+            "codex_models": [],
+        }
+
+        first_event = {
+            "operator": {"open_id": "user"},
+            "context": {"open_message_id": "om_123", "open_chat_id": "chat"},
+            "action": {
+                "tag": "select_static",
+                "name": "claude_model",
+                "option": {"value": "claude-sonnet-4-6"},
+            },
+        }
+        second_event = {
+            "operator": {"open_id": "user"},
+            "context": {"open_message_id": "om_123", "open_chat_id": "chat"},
+            "action": {
+                "tag": "select_static",
+                "name": "claude_model",
+                "option": {"value": "claude-opus-4-6"},
+            },
+        }
+
+        await bot._async_handle_card_action(first_event)
+        await bot._async_handle_card_action(second_event)
+
+        self.assertEqual(bot._patch_card_message.await_count, 2)
+        draft = bot._routing_cache["chat:user"]["draft_routing"]
+        self.assertEqual(draft["claude_model"], "claude-opus-4-6")
+        latest_call = bot._patch_card_message.await_args
+        assert latest_call is not None
+        _, latest_card = latest_call.args
+        reasoning_select = self._find_select(latest_card, "claude_reasoning")
+        reasoning_values = [option["value"] for option in reasoning_select["options"]]
+        self.assertIn("max", reasoning_values)
 
 
 if __name__ == "__main__":

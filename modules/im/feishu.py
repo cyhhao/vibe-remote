@@ -1499,13 +1499,22 @@ class FeishuBot(BaseIMClient):
             # --- Dedup: prevent re-delivery of the same card action ---
             # Include a hash of form values so that intentional re-submissions
             # with different selections are not mistakenly deduplicated.
-            form_hash = ""
+            interaction_hash = ""
             if form_value:
                 try:
-                    form_hash = str(hash(json.dumps(form_value, sort_keys=True)))
+                    interaction_hash = str(hash(json.dumps(form_value, sort_keys=True)))
                 except Exception:
-                    form_hash = str(id(form_value))
-            dedup_key = f"card:{message_id}:{button_name or callback_data}:{user_id}:{form_hash}"
+                    interaction_hash = str(id(form_value))
+            elif action.get("tag") in {"select_static", "multi_select_static"}:
+                select_state = {
+                    "option": action.get("option"),
+                    "options": action.get("options"),
+                }
+                try:
+                    interaction_hash = str(hash(json.dumps(select_state, sort_keys=True)))
+                except Exception:
+                    interaction_hash = str(id(select_state))
+            dedup_key = f"card:{message_id}:{button_name or callback_data}:{user_id}:{interaction_hash}"
             if self._is_duplicate_event(dedup_key):
                 return
 

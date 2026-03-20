@@ -40,16 +40,78 @@ runtime.write_status('${state}', '${detail}', ${service_pid}, ${ui_pid})
 "
 }
 
-exit_if_service_stopped() {
-    local service_pid="$1"
-    local ui_pid="$2"
+read_runtime_service_pid() {
+    local runtime_dir="$1"
+    local pid_file="$runtime_dir/vibe.pid"
 
-    if kill -0 "$service_pid" 2>/dev/null; then
+    if [ ! -f "$pid_file" ]; then
+        return 1
+    fi
+
+    local runtime_pid
+    runtime_pid="$(tr -d '[:space:]' < "$pid_file")"
+    if [[ ! "$runtime_pid" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+
+    echo "$runtime_pid"
+}
+
+wait_for_replacement_service_pid() {
+    local runtime_dir="$1"
+    local previous_pid="$2"
+    local attempts=50
+
+    while [ "$attempts" -gt 0 ]; do
+        local runtime_pid=""
+        runtime_pid="$(read_runtime_service_pid "$runtime_dir" 2>/dev/null || true)"
+        if [ -n "$runtime_pid" ] && [ "$runtime_pid" != "$previous_pid" ] && kill -0 "$runtime_pid" 2>/dev/null; then
+            echo "$runtime_pid"
+            return 0
+        fi
+        sleep 0.1
+        attempts=$((attempts - 1))
+    done
+
+    return 1
+}
+
+ensure_service_pid() {
+    local runtime_dir="$1"
+    local service_pid="$2"
+    local ui_pid="$3"
+
+    local current_runtime_pid=""
+    current_runtime_pid="$(read_runtime_service_pid "$runtime_dir" 2>/dev/null || true)"
+    if [ -n "$current_runtime_pid" ] && [ "$current_runtime_pid" != "$service_pid" ] && kill -0 "$current_runtime_pid" 2>/dev/null; then
+        echo "$current_runtime_pid"
         return 0
     fi
 
-    local service_exit_code=0
-    wait "$service_pid" 2>/dev/null || service_exit_code=$?
+    if kill -0 "$service_pid" 2>/dev/null; then
+        echo "$service_pid"
+        return 0
+    fi
+
+    local replacement_pid=""
+    replacement_pid="$(wait_for_replacement_service_pid "$runtime_dir" "$service_pid" 2>/dev/null || true)"
+    if [ -n "$replacement_pid" ]; then
+        echo "Detected replacement service PID ${replacement_pid}, continuing supervisor loop." >&2
+        write_runtime_status "running" "service restarted in container" "$replacement_pid" "$ui_pid"
+        echo "$replacement_pid"
+        return 0
+    fi
+
+    local service_exit_code=1
+    local wait_status=0
+    if wait "$service_pid" 2>/dev/null; then
+        wait_status=0
+    else
+        wait_status=$?
+    fi
+    if [ "$wait_status" -ne 127 ]; then
+        service_exit_code="$wait_status"
+    fi
     echo "Service exited unexpectedly (code: ${service_exit_code}), stopping container..." >&2
     write_runtime_status "stopped" "service exited unexpectedly" "$service_pid" "$ui_pid"
     exit "$service_exit_code"
@@ -97,7 +159,7 @@ run_ui_server('0.0.0.0', ${VIBE_UI_PORT:-5123})
                 CURRENT_UI_PID="$(cat "$RUNTIME_DIR/vibe-ui.pid")"
             fi
 
-            exit_if_service_stopped "$SERVICE_PID" "${CURRENT_UI_PID:-$UI_PID}"
+            SERVICE_PID="$(ensure_service_pid "$RUNTIME_DIR" "$SERVICE_PID" "${CURRENT_UI_PID:-$UI_PID}")"
 
             if [ -z "$CURRENT_UI_PID" ]; then
                 UI_PID="$(start_ui_process "$RUNTIME_DIR")"
