@@ -57,6 +57,32 @@ def test_detect_cli_finds_npm_in_nvm(monkeypatch, tmp_path):
     assert result["path"] == str(npm_path)
 
 
+def test_detect_cli_finds_codex_in_npm_global_prefix(monkeypatch, tmp_path):
+    npm_path = tmp_path / "tools" / "npm"
+    npm_path.parent.mkdir(parents=True, exist_ok=True)
+    npm_path.write_text("#!/bin/sh\n")
+    npm_path.chmod(0o755)
+
+    codex_path = tmp_path / ".npm-global" / "bin" / "codex"
+    codex_path.parent.mkdir(parents=True, exist_ok=True)
+    codex_path.write_text("#!/bin/sh\n")
+    codex_path.chmod(0o755)
+
+    class CompletedProcess:
+        returncode = 0
+        stdout = f"{tmp_path / '.npm-global'}\n"
+        stderr = ""
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(api.shutil, "which", lambda binary: str(npm_path) if binary == "npm" else None)
+    monkeypatch.setattr(api.subprocess, "run", lambda *args, **kwargs: CompletedProcess())
+
+    result = api.detect_cli("codex")
+
+    assert result["found"] is True
+    assert result["path"] == str(codex_path)
+
+
 def test_install_agent_returns_resolved_path(monkeypatch):
     class CompletedProcess:
         returncode = 0
@@ -106,3 +132,43 @@ def test_install_codex_uses_resolved_npm(monkeypatch):
     assert calls[0][0] == ["/Users/test/.nvm/versions/node/v22.18.0/bin/npm", "install", "-g", "@openai/codex"]
     assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == "/Users/test/.nvm/versions/node/v22.18.0/bin"
     assert result["path"] == "/Users/test/.nvm/versions/node/v22.18.0/bin/codex"
+
+
+def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
+    npm_path = tmp_path / "node" / "bin" / "npm"
+    npm_path.parent.mkdir(parents=True, exist_ok=True)
+    npm_path.write_text("#!/bin/sh\n")
+    npm_path.chmod(0o755)
+
+    prefix_path = tmp_path / ".npm-global"
+    codex_path = prefix_path / "bin" / "codex"
+    codex_path.parent.mkdir(parents=True, exist_ok=True)
+    codex_path.write_text("#!/bin/sh\n")
+    codex_path.chmod(0o755)
+
+    calls = []
+
+    class CompletedProcess:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("env", {})))
+        if cmd == [str(npm_path), "install", "-g", "@openai/codex"]:
+            return CompletedProcess(stdout="installed")
+        if cmd == [str(npm_path), "config", "get", "prefix"]:
+            return CompletedProcess(stdout=f"{prefix_path}\n")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(api.shutil, "which", lambda binary: str(npm_path) if binary == "npm" else None)
+    monkeypatch.setattr(api.subprocess, "run", fake_run)
+
+    result = api.install_agent("codex")
+
+    assert result["ok"] is True
+    assert result["path"] == str(codex_path)
+    assert calls[0][0] == [str(npm_path), "install", "-g", "@openai/codex"]
+    assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == str(npm_path.parent)

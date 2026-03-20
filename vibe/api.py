@@ -53,6 +53,63 @@ def _nvm_binary_candidates(binary: str) -> list[Path]:
     return candidates
 
 
+def _npm_global_binary_candidates(binary: str) -> list[Path]:
+    if not binary or binary == "npm":
+        return []
+
+    npm_paths: list[Path] = []
+    for candidate in _candidate_cli_paths("npm"):
+        if _is_executable_file(candidate) and candidate not in npm_paths:
+            npm_paths.append(candidate)
+
+    which_npm = shutil.which("npm")
+    if which_npm:
+        npm_candidate = Path(which_npm)
+        if npm_candidate not in npm_paths:
+            npm_paths.append(npm_candidate)
+
+    candidates: list[Path] = []
+    for npm_path in npm_paths:
+        try:
+            result = subprocess.run(
+                [str(npm_path), "config", "get", "prefix"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env=_command_env_for(str(npm_path)),
+            )
+        except Exception:
+            continue
+
+        if result.returncode != 0:
+            continue
+
+        prefix = (result.stdout or "").strip().splitlines()
+        if not prefix:
+            continue
+
+        prefix_path = Path(os.path.expanduser(prefix[-1]))
+        derived_candidates = [
+            prefix_path / "bin" / binary,
+            prefix_path / binary,
+            prefix_path / "node_modules" / ".bin" / binary,
+        ]
+        if os.name == "nt":
+            derived_candidates.extend(
+                [
+                    prefix_path / f"{binary}.cmd",
+                    prefix_path / f"{binary}.exe",
+                    prefix_path / "node_modules" / ".bin" / f"{binary}.cmd",
+                ]
+            )
+
+        for candidate in derived_candidates:
+            if candidate not in candidates:
+                candidates.append(candidate)
+
+    return candidates
+
+
 def _candidate_cli_paths(binary: str) -> list[Path]:
     if not binary:
         return []
@@ -80,7 +137,7 @@ def _candidate_cli_paths(binary: str) -> list[Path]:
         Path("/opt/homebrew/bin") / binary,
         Path("/usr/local/bin") / binary,
     ]
-    for candidate in common_candidates + _nvm_binary_candidates(binary):
+    for candidate in common_candidates + _nvm_binary_candidates(binary) + _npm_global_binary_candidates(binary):
         if candidate not in candidates:
             candidates.append(candidate)
 
@@ -1056,8 +1113,11 @@ def install_agent(name: str) -> dict:
         output = result.stdout + ("\n" + result.stderr if result.stderr else "")
         output = _truncate_output(output.strip())
         if result.returncode == 0:
-            logger.info("Agent %s installed successfully", name)
             installed_path = resolve_cli_path(name)
+            if installed_path:
+                logger.info("Agent %s installed successfully at %s", name, installed_path)
+            else:
+                logger.warning("Agent %s install command succeeded but CLI path was not detected", name)
             return {
                 "ok": True,
                 "message": f"{name} installed successfully",
