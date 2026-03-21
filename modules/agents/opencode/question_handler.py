@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from modules.agents.base import AgentRequest
 
+from ..question_ui import build_answer_receipt_text
 from .server import OpenCodeServerManager
 from .types import PendingQuestionPayload
 
@@ -176,22 +177,15 @@ class OpenCodeQuestionHandler:
             "Timed out waiting for your answer (30 minutes). Please re-run your request.",
         )
 
-    def _build_question_selection_note(self, answers_payload: List[List[str]]) -> str:
-        if not answers_payload:
-            return ""
+    async def _send_answer_receipt(self, request: AgentRequest, answers_payload: List[List[str]]) -> None:
+        receipt_text = build_answer_receipt_text(self._controller, answers_payload)
+        if not receipt_text:
+            return
 
-        if len(answers_payload) == 1:
-            joined = ", ".join([value for value in answers_payload[0] if value])
-            return f"已选择：{joined}" if joined else ""
-
-        lines = []
-        for idx, answers in enumerate(answers_payload, start=1):
-            joined = ", ".join([value for value in answers if value])
-            if joined:
-                lines.append(f"Q{idx}: {joined}")
-        if not lines:
-            return ""
-        return "已选择：\n" + "\n".join(lines)
+        try:
+            await self._im_client.send_message(request.context, receipt_text)
+        except Exception as err:
+            logger.debug(f"Failed to send answer receipt: {err}")
 
     async def open_question_modal(self, request: AgentRequest, pending: PendingQuestionPayload) -> None:
         trigger_id = None
@@ -360,29 +354,16 @@ class OpenCodeQuestionHandler:
             answers_payload = [[answer_text] for _ in range(question_count_int)]
 
         if question_message_id and hasattr(self._im_client, "remove_inline_keyboard"):
-            note = self._build_question_selection_note(answers_payload)
             fallback_text = pending.get("prompt_text") if isinstance(pending, dict) else None
-            if note:
-                try:
-                    updated_text = f"{fallback_text}\n\n{note}" if fallback_text else note
-                    await self._im_client.remove_inline_keyboard(
-                        request.context,
-                        question_message_id,
-                        text=updated_text,
-                        parse_mode="markdown",
-                    )
-                except Exception as err:
-                    logger.debug(f"Failed to update question message: {err}")
-            else:
-                try:
-                    await self._im_client.remove_inline_keyboard(
-                        request.context,
-                        question_message_id,
-                        text=fallback_text,
-                        parse_mode="markdown",
-                    )
-                except Exception as err:
-                    logger.debug(f"Failed to remove question buttons: {err}")
+            try:
+                await self._im_client.remove_inline_keyboard(
+                    request.context,
+                    question_message_id,
+                    text=fallback_text,
+                    parse_mode="markdown",
+                )
+            except Exception as err:
+                logger.debug(f"Failed to remove question buttons: {err}")
 
         try:
             ok = await server.reply_question(question_id, directory, answers_payload)
@@ -406,6 +387,8 @@ class OpenCodeQuestionHandler:
                 "OpenCode did not accept the answer. Please retry.",
             )
             return
+
+        await self._send_answer_receipt(request, answers_payload)
 
         # Add 👀 reaction to question message to indicate answer received
         # Track it for cleanup when the request completes

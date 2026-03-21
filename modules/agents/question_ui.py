@@ -17,8 +17,43 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from modules.agents.base import AgentRequest
+from vibe.i18n import t as i18n_t
 
 logger = logging.getLogger(__name__)
+
+
+def _translate(controller, key: str, **kwargs: Any) -> str:
+    translator = getattr(controller, "_t", None)
+    if callable(translator):
+        return str(translator(key, **kwargs))
+
+    config = getattr(controller, "config", None)
+    lang = getattr(config, "language", "en")
+    return str(i18n_t(key, lang, **kwargs))
+
+
+def build_answer_summary(answers_payload: List[List[str]]) -> str:
+    if not answers_payload:
+        return ""
+
+    if len(answers_payload) == 1:
+        return ", ".join([value for value in answers_payload[0] if value])
+
+    lines = []
+    for idx, answers in enumerate(answers_payload, start=1):
+        joined = ", ".join([value for value in answers if value])
+        if joined:
+            lines.append(f"Q{idx}: {joined}")
+    return "\n".join(lines)
+
+
+def build_answer_receipt_text(controller, answers_payload: List[List[str]]) -> str:
+    summary = build_answer_summary(answers_payload)
+    if not summary:
+        return ""
+
+    receipt_value = f"\n{summary}" if "\n" in summary else summary
+    return _translate(controller, "message.quickReplyNote", text=receipt_value)
 
 
 @dataclass
@@ -427,55 +462,41 @@ class QuestionUIHandler:
     # Answer processing helpers
     # -------------------------------------------------------------------------
 
-    def build_selection_note(self, answers_payload: List[List[str]]) -> str:
-        """Build a note showing what the user selected."""
-        if not answers_payload:
-            return ""
-
-        if len(answers_payload) == 1:
-            joined = ", ".join([value for value in answers_payload[0] if value])
-            return f"已选择：{joined}" if joined else ""
-
-        lines = []
-        for idx, answers in enumerate(answers_payload, start=1):
-            joined = ", ".join([value for value in answers if value])
-            if joined:
-                lines.append(f"Q{idx}: {joined}")
-        if not lines:
-            return ""
-        return "已选择：\n" + "\n".join(lines)
-
     async def update_prompt_after_answer(
         self,
         request: AgentRequest,
         pending: PendingQuestion,
-        answers_payload: List[List[str]],
     ) -> None:
-        """Update the prompt message after answer is submitted."""
+        """Remove question controls without writing the answer into the prompt."""
         question_message_id = pending.prompt_message_id
         if not question_message_id or not hasattr(self._im_client, "remove_inline_keyboard"):
             return
 
-        note = self.build_selection_note(answers_payload)
         fallback_text = pending.prompt_text
         try:
-            if note:
-                updated_text = f"{fallback_text}\n\n{note}" if fallback_text else note
-                await self._im_client.remove_inline_keyboard(
-                    request.context,
-                    question_message_id,
-                    text=updated_text,
-                    parse_mode="markdown",
-                )
-            else:
-                await self._im_client.remove_inline_keyboard(
-                    request.context,
-                    question_message_id,
-                    text=fallback_text,
-                    parse_mode="markdown",
-                )
+            await self._im_client.remove_inline_keyboard(
+                request.context,
+                question_message_id,
+                text=fallback_text,
+                parse_mode="markdown",
+            )
         except Exception as err:
             logger.debug(f"Failed to update question message: {err}")
+
+    async def send_answer_receipt(
+        self,
+        request: AgentRequest,
+        answers_payload: List[List[str]],
+    ) -> None:
+        """Send a visible follow-up message showing what the user selected."""
+        receipt_text = build_answer_receipt_text(self._controller, answers_payload)
+        if not receipt_text:
+            return
+
+        try:
+            await self._im_client.send_message(request.context, receipt_text)
+        except Exception as err:
+            logger.debug(f"Failed to send answer receipt: {err}")
 
     async def add_answer_reaction(
         self,

@@ -12,7 +12,14 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.errors import SlackApiError
 from markdown_to_mrkdwn import SlackMarkdownConverter
 
-from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
+from .base import (
+    BaseIMClient,
+    FileDownloadResult,
+    MessageContext,
+    InlineKeyboard,
+    InlineButton,
+    FileAttachment,
+)
 from config.v2_config import SlackConfig
 from core.auth import AuthResult
 from .formatters import SlackFormatter
@@ -334,14 +341,14 @@ class SlackBot(BaseIMClient):
     async def download_file(
         self,
         file_info: Dict[str, Any],
-        max_bytes: int = 20 * 1024 * 1024,  # 20MB default limit
+        max_bytes: Optional[int] = None,
         timeout_seconds: int = 30,
     ) -> Optional[bytes]:
         """Download a Slack file using the private URL.
 
         Args:
             file_info: Slack file object containing url_private_download and other metadata
-            max_bytes: Maximum file size to download (default 20MB)
+            max_bytes: Maximum file size to download
             timeout_seconds: Request timeout in seconds (default 30s)
 
         Returns:
@@ -354,7 +361,7 @@ class SlackBot(BaseIMClient):
 
         # Check file size before download if available
         file_size = file_info.get("size")
-        if file_size and file_size > max_bytes:
+        if max_bytes is not None and file_size and file_size > max_bytes:
             logger.warning(f"File too large ({file_size} bytes > {max_bytes}), skipping: {file_info.get('name')}")
             return None
 
@@ -369,7 +376,7 @@ class SlackBot(BaseIMClient):
 
                     # Check content-length header
                     content_length = response.headers.get("Content-Length")
-                    if content_length and int(content_length) > max_bytes:
+                    if max_bytes is not None and content_length and int(content_length) > max_bytes:
                         logger.warning(f"File too large ({content_length} bytes), skipping: {file_info.get('name')}")
                         return None
 
@@ -378,7 +385,7 @@ class SlackBot(BaseIMClient):
                     total_size = 0
                     async for chunk in response.content.iter_chunked(64 * 1024):
                         total_size += len(chunk)
-                        if total_size > max_bytes:
+                        if max_bytes is not None and total_size > max_bytes:
                             logger.warning(f"File exceeds max size during download, aborting: {file_info.get('name')}")
                             return None
                         chunks.append(chunk)
@@ -391,6 +398,58 @@ class SlackBot(BaseIMClient):
         except Exception as e:
             logger.error(f"Error downloading Slack file: {e}")
             return None
+
+    async def download_file_to_path(
+        self,
+        file_info: Dict[str, Any],
+        target_path: str,
+        max_bytes: Optional[int] = None,
+        timeout_seconds: int = 30,
+    ) -> FileDownloadResult:
+        url = file_info.get("url_private_download") or file_info.get("url_private")
+        if not url:
+            logger.warning(f"No download URL for file: {file_info.get('name')}")
+            return FileDownloadResult(False, "No download URL available")
+
+        file_size = file_info.get("size")
+        if max_bytes is not None and file_size and file_size > max_bytes:
+            logger.warning(f"File too large ({file_size} bytes > {max_bytes}), skipping: {file_info.get('name')}")
+            return FileDownloadResult(False, f"File exceeds the allowed size limit ({max_bytes} bytes)")
+
+        try:
+            headers = {"Authorization": f"Bearer {self.config.bot_token}"}
+            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers=headers) as response:
+                    if response.status != 200:
+                        logger.error(f"Failed to download file: HTTP {response.status}")
+                        return FileDownloadResult(False, f"Download failed with HTTP {response.status}")
+
+                    content_length = response.headers.get("Content-Length")
+                    if max_bytes is not None and content_length and int(content_length) > max_bytes:
+                        logger.warning(f"File too large ({content_length} bytes), skipping: {file_info.get('name')}")
+                        return FileDownloadResult(False, f"File exceeds the allowed size limit ({max_bytes} bytes)")
+
+                    total_size = 0
+                    with open(target_path, "wb") as file_obj:
+                        async for chunk in response.content.iter_chunked(64 * 1024):
+                            total_size += len(chunk)
+                            if max_bytes is not None and total_size > max_bytes:
+                                logger.warning(
+                                    f"File exceeds max size during download, aborting: {file_info.get('name')}"
+                                )
+                                return FileDownloadResult(
+                                    False, f"File exceeds the allowed size limit ({max_bytes} bytes)"
+                                )
+                            file_obj.write(chunk)
+                    return FileDownloadResult(True)
+
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout downloading file: {file_info.get('name')}")
+            return FileDownloadResult(False, f"Download timed out after {timeout_seconds} seconds")
+        except Exception as e:
+            logger.error(f"Error downloading Slack file: {e}")
+            return FileDownloadResult(False, f"Download error: {e}")
 
     def _extract_file_attachments(self, files: List[Dict[str, Any]]) -> List[FileAttachment]:
         """Convert Slack file objects to FileAttachment list.
