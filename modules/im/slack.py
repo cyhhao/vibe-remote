@@ -14,6 +14,7 @@ from markdown_to_mrkdwn import SlackMarkdownConverter
 
 from .base import (
     BaseIMClient,
+    FileDownloadResult,
     MessageContext,
     InlineKeyboard,
     InlineButton,
@@ -404,16 +405,16 @@ class SlackBot(BaseIMClient):
         target_path: str,
         max_bytes: Optional[int] = None,
         timeout_seconds: int = 30,
-    ) -> bool:
+    ) -> FileDownloadResult:
         url = file_info.get("url_private_download") or file_info.get("url_private")
         if not url:
             logger.warning(f"No download URL for file: {file_info.get('name')}")
-            return False
+            return FileDownloadResult(False, "No download URL available")
 
         file_size = file_info.get("size")
         if max_bytes is not None and file_size and file_size > max_bytes:
             logger.warning(f"File too large ({file_size} bytes > {max_bytes}), skipping: {file_info.get('name')}")
-            return False
+            return FileDownloadResult(False, f"File exceeds the allowed size limit ({max_bytes} bytes)")
 
         try:
             headers = {"Authorization": f"Bearer {self.config.bot_token}"}
@@ -422,12 +423,12 @@ class SlackBot(BaseIMClient):
                 async with session.get(url, headers=headers) as response:
                     if response.status != 200:
                         logger.error(f"Failed to download file: HTTP {response.status}")
-                        return False
+                        return FileDownloadResult(False, f"Download failed with HTTP {response.status}")
 
                     content_length = response.headers.get("Content-Length")
                     if max_bytes is not None and content_length and int(content_length) > max_bytes:
                         logger.warning(f"File too large ({content_length} bytes), skipping: {file_info.get('name')}")
-                        return False
+                        return FileDownloadResult(False, f"File exceeds the allowed size limit ({max_bytes} bytes)")
 
                     total_size = 0
                     with open(target_path, "wb") as file_obj:
@@ -437,16 +438,18 @@ class SlackBot(BaseIMClient):
                                 logger.warning(
                                     f"File exceeds max size during download, aborting: {file_info.get('name')}"
                                 )
-                                return False
+                                return FileDownloadResult(
+                                    False, f"File exceeds the allowed size limit ({max_bytes} bytes)"
+                                )
                             file_obj.write(chunk)
-                    return True
+                    return FileDownloadResult(True)
 
         except asyncio.TimeoutError:
             logger.error(f"Timeout downloading file: {file_info.get('name')}")
-            return False
+            return FileDownloadResult(False, f"Download timed out after {timeout_seconds} seconds")
         except Exception as e:
             logger.error(f"Error downloading Slack file: {e}")
-            return False
+            return FileDownloadResult(False, f"Download error: {e}")
 
     def _extract_file_attachments(self, files: List[Dict[str, Any]]) -> List[FileAttachment]:
         """Convert Slack file objects to FileAttachment list.

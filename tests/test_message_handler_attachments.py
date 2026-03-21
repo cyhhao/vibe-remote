@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from modules.im import MessageContext
-from modules.im.base import FileAttachment
+from modules.im.base import FileAttachment, FileDownloadResult
 
 
 def _load_message_handler_class():
@@ -49,9 +49,11 @@ MessageHandler = _load_message_handler_class()
 
 
 class _StubIMClient:
-    def __init__(self, download_result=None, stream_result=False):
+    def __init__(self, download_result=None, stream_result=False, stream_error=None, leave_partial=False):
         self.download_result = download_result
         self.stream_result = stream_result
+        self.stream_error = stream_error or "Download failed"
+        self.leave_partial = leave_partial
         self.download_calls = []
         self.stream_calls = []
         self.sent_messages = []
@@ -71,9 +73,11 @@ class _StubIMClient:
     async def download_file_to_path(self, file_info, target_path, max_bytes=None, timeout_seconds=30):
         self.stream_calls.append((file_info, target_path, max_bytes, timeout_seconds))
         if not self.stream_result:
-            return False
+            if self.leave_partial:
+                Path(target_path).write_bytes(b"partial")
+            return FileDownloadResult(False, self.stream_error)
         Path(target_path).write_bytes(self.download_result or b"")
-        return True
+        return FileDownloadResult(True)
 
 
 class _StubIMClientNoStream:
@@ -119,11 +123,12 @@ class MessageHandlerAttachmentTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch("config.paths.get_attachments_dir", return_value=Path(tmpdir)):
-                processed = await handler._process_file_attachments(context, "/tmp/work")
+                processed, errors = await handler._process_file_attachments(context, "/tmp/work")
 
         self.assertIsNotNone(processed)
         assert processed is not None
         self.assertEqual(len(processed), 1)
+        self.assertEqual(errors, [])
         self.assertEqual(im_client.sent_messages, [])
         self.assertEqual(im_client.download_calls, [])
         self.assertEqual(len(im_client.stream_calls), 1)
@@ -143,16 +148,54 @@ class MessageHandlerAttachmentTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch("config.paths.get_attachments_dir", return_value=Path(tmpdir)):
-                processed = await handler._process_file_attachments(context, "/tmp/work")
+                processed, errors = await handler._process_file_attachments(context, "/tmp/work")
 
         self.assertIsNotNone(processed)
         assert processed is not None
         self.assertEqual(len(processed), 1)
+        self.assertEqual(errors, [])
         self.assertEqual(im_client.sent_messages, [])
         self.assertEqual(len(im_client.download_calls), 1)
         self.assertEqual(im_client.stream_calls, [])
         self.assertEqual(processed[0].size, len(b"%PDF-1.7\n"))
         self.assertTrue(processed[0].local_path)
+
+    async def test_process_file_attachments_reports_download_errors_and_cleans_partial_files(self):
+        im_client = _StubIMClient(stream_result=False, stream_error="Download failed with HTTP 403", leave_partial=True)
+        handler = MessageHandler(_StubController(im_client))
+        attachment = FileAttachment(
+            name="blocked.pdf",
+            mimetype="application/pdf",
+            url="https://example.test/blocked.pdf",
+            size=1024,
+        )
+        context = MessageContext(user_id="U1", channel_id="C1", files=[attachment])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            attachments_dir = Path(tmpdir) / "C1"
+            with patch("config.paths.get_attachments_dir", return_value=Path(tmpdir)):
+                processed, errors = await handler._process_file_attachments(context, "/tmp/work")
+
+            residual_files = list(attachments_dir.glob("*")) if attachments_dir.exists() else []
+
+        self.assertIsNone(processed)
+        self.assertEqual(
+            errors,
+            ["Attachment 'blocked.pdf' could not be downloaded: Download failed with HTTP 403"],
+        )
+        self.assertEqual(residual_files, [])
+
+    def test_append_attachment_errors_uses_error_text_without_file_paths(self):
+        handler = MessageHandler(_StubController(_StubIMClient()))
+
+        message = handler._append_attachment_errors(
+            "please review the upload",
+            ["Attachment 'blocked.pdf' could not be downloaded: Download failed with HTTP 403"],
+        )
+
+        self.assertIn("[Attachment Download Errors]", message)
+        self.assertIn("Download failed with HTTP 403", message)
+        self.assertNotIn("/.vibe_remote/attachments/", message)
 
 
 if __name__ == "__main__":

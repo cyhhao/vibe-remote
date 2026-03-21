@@ -1,7 +1,7 @@
 """Message routing and Agent communication handlers"""
 
 import logging
-from typing import Optional, List
+from typing import List, Optional, Tuple
 
 from modules.agents import AgentRequest
 from modules.im import MessageContext
@@ -197,14 +197,17 @@ class MessageHandler(BaseHandler):
 
             # Process file attachments if present
             processed_files = None
+            attachment_errors: List[str] = []
             if context.files:
-                processed_files = await self._process_file_attachments(context, working_path)
+                processed_files, attachment_errors = await self._process_file_attachments(context, working_path)
                 if processed_files:
                     logger.info(f"Processed {len(processed_files)} file attachments for message")
 
             # Prepend user identity when include_user_info is enabled
             if self.config.include_user_info:
                 message = await self._prepend_user_info(context, message)
+
+            message = self._append_attachment_errors(message, attachment_errors)
 
             request = AgentRequest(
                 context=context,
@@ -537,7 +540,9 @@ class MessageHandler(BaseHandler):
         agent_label = label.capitalize() if label else ""
         return f"📨 {self._t('message.ack', agent=agent_label)}"
 
-    async def _process_file_attachments(self, context: MessageContext, working_path: str) -> Optional[list]:
+    async def _process_file_attachments(
+        self, context: MessageContext, working_path: str
+    ) -> Tuple[Optional[List[FileAttachment]], List[str]]:
         """Download and process file attachments from the message.
 
         All files (including images) are saved to ~/.vibe_remote/attachments/{channel_id}/
@@ -549,15 +554,15 @@ class MessageHandler(BaseHandler):
             working_path: Working directory path (not used for storage, kept for API compat)
 
         Returns:
-            List of processed FileAttachment objects with local_path set
+            Tuple of processed attachments and download error messages
         """
         import os
         import time
         from config.paths import get_attachments_dir
-        from modules.im.base import FileAttachment
+        from modules.im.base import FileAttachment, FileDownloadResult
 
         if not context.files:
-            return None
+            return None, []
 
         # Create channel-specific attachments directory
         # Path: ~/.vibe_remote/attachments/{channel_id}/
@@ -565,6 +570,7 @@ class MessageHandler(BaseHandler):
         attachments_dir.mkdir(parents=True, exist_ok=True)
 
         processed = []
+        errors: List[str] = []
         for attachment in context.files:
             if not isinstance(attachment, FileAttachment):
                 continue
@@ -583,16 +589,27 @@ class MessageHandler(BaseHandler):
                     safe_name = self._sanitize_filename(attachment.name)
                     filename = f"{timestamp}_{safe_name}"
                     local_path = attachments_dir / filename
+                    temp_path = attachments_dir / f"{filename}.part"
                     content = None
                     detected_sample = None
                     content_size = None
 
                     if hasattr(self.im_client, "download_file_to_path"):
-                        downloaded = await self.im_client.download_file_to_path(file_info, str(local_path))
-                        if downloaded:
+                        self._cleanup_partial_attachment(temp_path)
+                        result = await self.im_client.download_file_to_path(file_info, str(temp_path))
+                        if not isinstance(result, FileDownloadResult):
+                            result = FileDownloadResult(bool(result), None if result else "Download failed")
+
+                        if result.success:
+                            os.replace(temp_path, local_path)
                             content_size = local_path.stat().st_size
                             with open(local_path, "rb") as file_obj:
                                 detected_sample = file_obj.read(16)
+                        else:
+                            self._cleanup_partial_attachment(temp_path)
+                            error_text = result.error or "Download failed"
+                            logger.warning("Failed to download file %s: %s", attachment.name, error_text)
+                            errors.append(f"Attachment '{attachment.name}' could not be downloaded: {error_text}")
                     else:
                         content = await self.im_client.download_file(file_info)
                         if content:
@@ -600,6 +617,11 @@ class MessageHandler(BaseHandler):
                                 f.write(content)
                             content_size = len(content)
                             detected_sample = content[:16]
+                        else:
+                            logger.warning("Failed to download file %s: download returned no content", attachment.name)
+                            errors.append(
+                                f"Attachment '{attachment.name}' could not be downloaded: Download returned no content"
+                            )
 
                     if content is not None or content_size is not None:
                         # Detect actual MIME type from magic bytes for images
@@ -626,12 +648,34 @@ class MessageHandler(BaseHandler):
                         logger.warning(f"Failed to download file: {attachment.name}")
                 else:
                     logger.warning(f"Cannot download file: {attachment.name} (no URL or download method)")
+                    errors.append(f"Attachment '{attachment.name}' could not be downloaded: No URL or download method")
 
             except Exception as e:
+                self._cleanup_partial_attachment(locals().get("temp_path"))
                 logger.error(f"Error processing file attachment {attachment.name}: {e}")
+                errors.append(f"Attachment '{attachment.name}' could not be downloaded: {e}")
                 continue
 
-        return processed if processed else None
+        return (processed if processed else None), errors
+
+    @staticmethod
+    def _cleanup_partial_attachment(path) -> None:
+        if not path:
+            return
+        try:
+            path.unlink(missing_ok=True)
+        except Exception as err:
+            logger.debug("Failed to remove partial attachment %s: %s", path, err)
+
+    @staticmethod
+    def _append_attachment_errors(message: str, errors: List[str]) -> str:
+        if not errors:
+            return message
+
+        error_block = "\n".join(["[Attachment Download Errors]", *[f"- {error}" for error in errors]])
+        if not message or not message.strip():
+            return error_block
+        return f"{message}\n\n{error_block}"
 
     def _detect_image_mime(self, data: bytes) -> Optional[tuple]:
         """Detect image MIME type from magic bytes.

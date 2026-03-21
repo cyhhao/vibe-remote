@@ -12,6 +12,7 @@ import discord
 
 from .base import (
     BaseIMClient,
+    FileDownloadResult,
     MessageContext,
     InlineKeyboard,
     InlineButton,
@@ -483,31 +484,33 @@ class DiscordBot(BaseIMClient):
         target_path: str,
         max_bytes: Optional[int] = None,
         timeout_seconds: int = 30,
-    ) -> bool:
+    ) -> FileDownloadResult:
         url = file_info.get("url") or file_info.get("url_private_download") or file_info.get("url_private")
         if not url:
-            return False
+            return FileDownloadResult(False, "No download URL available")
         try:
             timeout = aiohttp.ClientTimeout(total=timeout_seconds)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url) as response:
                     if response.status != 200:
-                        return False
+                        return FileDownloadResult(False, f"Download failed with HTTP {response.status}")
                     content_length = response.headers.get("Content-Length")
                     if max_bytes is not None and content_length and int(content_length) > max_bytes:
-                        return False
+                        return FileDownloadResult(False, f"File exceeds the allowed size limit ({max_bytes} bytes)")
 
                     total_size = 0
                     with open(target_path, "wb") as file_obj:
                         async for chunk in response.content.iter_chunked(64 * 1024):
                             total_size += len(chunk)
                             if max_bytes is not None and total_size > max_bytes:
-                                return False
+                                return FileDownloadResult(
+                                    False, f"File exceeds the allowed size limit ({max_bytes} bytes)"
+                                )
                             file_obj.write(chunk)
-                    return True
+                    return FileDownloadResult(True)
         except Exception as err:
             logger.debug("Failed to download Discord file to path: %s", err)
-            return False
+            return FileDownloadResult(False, f"Download error: {err}")
 
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
         cached = self._user_info_cache.get(user_id)

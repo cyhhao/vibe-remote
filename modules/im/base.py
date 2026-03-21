@@ -23,6 +23,14 @@ class FileAttachment:
 
 
 @dataclass
+class FileDownloadResult:
+    """Result for downloading a remote attachment to a local path."""
+
+    success: bool
+    error: Optional[str] = None
+
+
+@dataclass
 class MessageContext:
     """Platform-agnostic message context"""
 
@@ -358,7 +366,7 @@ class BaseIMClient(ABC):
         target_path: str,
         max_bytes: Optional[int] = None,
         timeout_seconds: int = 30,
-    ) -> bool:
+    ) -> FileDownloadResult:
         """Download a remote file directly to a local path.
 
         Platforms can override this to stream large files directly to disk.
@@ -368,12 +376,15 @@ class BaseIMClient(ABC):
         """
         content = await self.download_file(file_info, max_bytes=max_bytes, timeout_seconds=timeout_seconds)
         if content is None:
-            return False
+            return FileDownloadResult(False, "Download returned no content")
 
         path = Path(target_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
-        return True
+        try:
+            path.write_bytes(content)
+        except Exception as err:
+            return FileDownloadResult(False, f"Failed to write downloaded file: {err}")
+        return FileDownloadResult(True)
 
     @abstractmethod
     async def edit_message(

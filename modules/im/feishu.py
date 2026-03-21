@@ -12,6 +12,7 @@ import aiohttp
 
 from .base import (
     BaseIMClient,
+    FileDownloadResult,
     FileAttachment,
     InlineButton,
     InlineKeyboard,
@@ -1134,14 +1135,14 @@ class FeishuBot(BaseIMClient):
         target_path: str,
         max_bytes: Optional[int] = None,
         timeout_seconds: int = 30,
-    ) -> bool:
+    ) -> FileDownloadResult:
         message_id = file_info.get("message_id")
         file_key = file_info.get("file_key")
         if not message_id or not file_key:
             url = file_info.get("url")
             if not url:
                 logger.warning("No download info for Feishu file: %s", file_info.get("name"))
-                return False
+                return FileDownloadResult(False, "No download URL available")
             try:
                 token = await self._get_tenant_token()
                 headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -1149,45 +1150,49 @@ class FeishuBot(BaseIMClient):
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.get(url, headers=headers) as resp:
                         if resp.status != 200:
-                            return False
+                            return FileDownloadResult(False, f"Download failed with HTTP {resp.status}")
                         total = 0
                         with open(target_path, "wb") as file_obj:
                             async for chunk in resp.content.iter_chunked(64 * 1024):
                                 total += len(chunk)
                                 if max_bytes is not None and total > max_bytes:
-                                    return False
+                                    return FileDownloadResult(
+                                        False, f"File exceeds the allowed size limit ({max_bytes} bytes)"
+                                    )
                                 file_obj.write(chunk)
-                        return True
+                        return FileDownloadResult(True)
             except Exception as exc:
                 logger.error("Error downloading Feishu file: %s", exc)
-                return False
+                return FileDownloadResult(False, f"Download error: {exc}")
 
         try:
             token = await self._get_tenant_token()
             if not token:
-                return False
+                return FileDownloadResult(False, "Failed to acquire tenant token")
             url = f"{self.config.api_base_url}/open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file"
             timeout = aiohttp.ClientTimeout(total=timeout_seconds)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
                     if resp.status != 200:
                         logger.error("Failed to download Feishu file: HTTP %s", resp.status)
-                        return False
+                        return FileDownloadResult(False, f"Download failed with HTTP {resp.status}")
                     total = 0
                     with open(target_path, "wb") as file_obj:
                         async for chunk in resp.content.iter_chunked(64 * 1024):
                             total += len(chunk)
                             if max_bytes is not None and total > max_bytes:
                                 logger.warning("Feishu file exceeds max size, aborting")
-                                return False
+                                return FileDownloadResult(
+                                    False, f"File exceeds the allowed size limit ({max_bytes} bytes)"
+                                )
                             file_obj.write(chunk)
-                    return True
+                    return FileDownloadResult(True)
         except asyncio.TimeoutError:
             logger.error("Timeout downloading Feishu file")
-            return False
+            return FileDownloadResult(False, f"Download timed out after {timeout_seconds} seconds")
         except Exception as exc:
             logger.error("Error downloading Feishu file: %s", exc)
-            return False
+            return FileDownloadResult(False, f"Download error: {exc}")
 
     def _extract_file_attachments(
         self, message_id: str, msg_content: Dict[str, Any], msg_type: str
