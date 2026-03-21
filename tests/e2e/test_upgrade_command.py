@@ -73,11 +73,12 @@ def test_upgrade_command_uses_built_release_artifact():
                 f"VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe check-update",
                 "VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "
                 f"VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe upgrade",
-                "vibe version",
-                "VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json vibe check-update",
-                "vibe",
+                'TOOL_PY="$(uv tool dir)/vibe-remote/bin/python"',
+                '"$TOOL_PY" -c "from vibe.cli import main; main()" version',
+                'VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "$TOOL_PY" -c "from vibe.cli import main; main()" check-update',
+                '"$TOOL_PY" -c "from vibe.cli import main; main()"',
                 "sleep 2",
-                "vibe status",
+                '"$TOOL_PY" -c "from vibe.cli import main; main()" status',
             ]
         )
 

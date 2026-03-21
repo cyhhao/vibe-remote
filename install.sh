@@ -93,13 +93,31 @@ is_absolute_dir() {
     esac
 }
 
+is_transient_bin_dir() {
+    local dir="$1"
+
+    case "$dir" in
+        */.venv/bin|*/venv/bin|*/env/bin) return 0 ;;
+    esac
+
+    if [ -n "${VIRTUAL_ENV:-}" ] && [ "$dir" = "${VIRTUAL_ENV%/}/bin" ]; then
+        return 0
+    fi
+
+    if [ -n "${CONDA_PREFIX:-}" ] && [ "$dir" = "${CONDA_PREFIX%/}/bin" ]; then
+        return 0
+    fi
+
+    return 1
+}
+
 choose_tool_bin_dir() {
     local dir
 
     local old_ifs="$IFS"
     IFS=":"
     for dir in $ORIGINAL_PATH; do
-        if [ -n "$dir" ] && is_absolute_dir "$dir" && ensure_writable_dir "$dir"; then
+        if [ -n "$dir" ] && is_absolute_dir "$dir" && ! is_transient_bin_dir "$dir" && ensure_writable_dir "$dir"; then
             IFS="$old_ifs"
             echo "$dir"
             return 0

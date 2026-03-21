@@ -20,7 +20,7 @@ from config.v2_config import (
     V2Config,
 )
 from vibe import __version__, api, runtime
-from vibe.upgrade import build_upgrade_plan, get_latest_version_info
+from vibe.upgrade import build_upgrade_plan, cache_running_vibe_path, get_latest_version_info
 
 logger = logging.getLogger(__name__)
 
@@ -648,7 +648,8 @@ def cmd_upgrade():
 
     print("\nUpgrading...")
 
-    plan = build_upgrade_plan()
+    current_vibe_path = cache_running_vibe_path()
+    plan = build_upgrade_plan(vibe_path=current_vibe_path)
     print(f"Using {plan.method}: {' '.join(plan.command)}")
 
     try:
@@ -690,6 +691,7 @@ def build_parser():
 
 
 def main():
+    cache_running_vibe_path()
     parser = build_parser()
     args = parser.parse_args()
 

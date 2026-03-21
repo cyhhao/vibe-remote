@@ -8,7 +8,13 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vibe import api, cli
-from vibe.upgrade import UpgradePlan, build_upgrade_plan, get_latest_version_info
+from vibe.upgrade import (
+    UpgradePlan,
+    build_upgrade_plan,
+    get_latest_version_info,
+    get_restart_command,
+    get_running_vibe_path,
+)
 
 
 def test_build_upgrade_plan_uses_uv_and_preserves_tool_bin_dir():
@@ -55,6 +61,7 @@ def test_build_upgrade_plan_uses_env_package_spec(monkeypatch):
         "install",
         "/tmp/vibe_remote-9999.0.0-py3-none-any.whl",
         "--upgrade",
+        "--force",
     ]
 
 
@@ -68,6 +75,24 @@ def test_get_latest_version_info_uses_override_metadata_url(monkeypatch, tmp_pat
     assert info == {"current": "2.2.0", "latest": "9999.0.0", "has_update": True, "error": None}
 
 
+def test_get_running_vibe_path_prefers_cached_launcher(monkeypatch):
+    monkeypatch.setenv("VIBE_CURRENT_EXECUTABLE", "/custom/bin/vibe")
+    monkeypatch.setattr("vibe.upgrade.shutil.which", lambda *args, **kwargs: "/other/bin/vibe")
+
+    resolved = get_running_vibe_path(argv0="vibe")
+
+    assert resolved == "/custom/bin/vibe"
+
+
+def test_get_restart_command_falls_back_to_python_module(monkeypatch):
+    monkeypatch.delenv("VIBE_CURRENT_EXECUTABLE", raising=False)
+    monkeypatch.setattr("vibe.upgrade.shutil.which", lambda *args, **kwargs: None)
+
+    command = get_restart_command(python_executable="/usr/bin/python3", argv0="python")
+
+    assert command == ["/usr/bin/python3", "-c", "from vibe.cli import main; main()"]
+
+
 def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     plan = UpgradePlan(
         command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],
@@ -76,7 +101,9 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     )
     calls: dict[str, Any] = {}
 
-    monkeypatch.setattr(api, "build_upgrade_plan", lambda: plan)
+    monkeypatch.setattr(api, "build_upgrade_plan", lambda **kwargs: plan)
+    monkeypatch.setattr(api, "get_running_vibe_path", lambda: "/custom/bin/vibe")
+    monkeypatch.setattr(api, "get_restart_shell_command", lambda **kwargs: "/custom/bin/vibe")
 
     def fake_run(cmd, **kwargs):
         calls["run_cmd"] = cmd
@@ -94,8 +121,6 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
 
     monkeypatch.setattr(api.subprocess, "run", fake_run)
     monkeypatch.setattr(api.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(api.shutil, "which", lambda name: "/custom/bin/vibe" if name == "vibe" else None)
-
     result = api.do_upgrade(auto_restart=True)
 
     assert result["ok"] is True
@@ -121,7 +146,8 @@ def test_cmd_upgrade_uses_upgrade_plan_env(monkeypatch):
     calls: dict[str, Any] = {}
 
     monkeypatch.setattr(cli, "get_latest_version", lambda: {"error": None, "has_update": True, "latest": "2.2.0"})
-    monkeypatch.setattr(cli, "build_upgrade_plan", lambda: plan)
+    monkeypatch.setattr(cli, "cache_running_vibe_path", lambda: "/custom/bin/vibe")
+    monkeypatch.setattr(cli, "build_upgrade_plan", lambda **kwargs: plan)
 
     def fake_run(cmd, **kwargs):
         calls["cmd"] = cmd

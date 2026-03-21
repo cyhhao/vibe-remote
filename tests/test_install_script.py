@@ -165,6 +165,29 @@ def test_install_script_skips_relative_path_entries_for_tool_bin(tmp_path):
     assert not (relative_bin / "vibe").exists()
 
 
+def test_install_script_skips_virtualenv_bin_dirs(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    stable_bin = tmp_path / "stable-bin"
+    stable_bin.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    _write_fake_uv(stable_bin / "uv", uv_log)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(venv_bin), str(stable_bin), "/usr/bin", "/bin"])
+    env["VIRTUAL_ENV"] = str(tmp_path / ".venv")
+
+    install_result = _install(env, cwd=tmp_path)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert uv_log.read_text(encoding="utf-8") == str(stable_bin)
+    assert not (venv_bin / "vibe").exists()
+
+
 def test_install_script_requires_path_export_when_install_dir_not_on_original_path(tmp_path):
     home_dir = tmp_path / "home"
     home_dir.mkdir()

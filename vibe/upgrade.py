@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import sys
 import urllib.request
@@ -11,6 +12,7 @@ from pathlib import Path
 
 PACKAGE_NAME = "vibe-remote"
 DEFAULT_UPDATE_METADATA_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
+CURRENT_VIBE_EXECUTABLE_ENV = "VIBE_CURRENT_EXECUTABLE"
 
 
 @dataclass(frozen=True)
@@ -18,6 +20,81 @@ class UpgradePlan:
     command: list[str]
     env: dict[str, str] | None
     method: str
+
+
+def resolve_command_path(command: str | None, search_path: str | None = None) -> str | None:
+    if not command:
+        return None
+
+    expanded = Path(command).expanduser()
+    if expanded.is_absolute():
+        return str(expanded.resolve())
+
+    if any(sep in command for sep in (os.sep, "/")):
+        return str((Path.cwd() / expanded).resolve())
+
+    resolved = shutil.which(command, path=search_path)
+    if not resolved:
+        return None
+    return str(Path(resolved).expanduser().resolve())
+
+
+def get_running_vibe_path(
+    *,
+    vibe_path: str | None = None,
+    argv0: str | None = None,
+    search_path: str | None = None,
+) -> str | None:
+    resolved = resolve_command_path(vibe_path, search_path=search_path)
+    if resolved:
+        return resolved
+
+    env_path = resolve_command_path(os.environ.get(CURRENT_VIBE_EXECUTABLE_ENV), search_path=search_path)
+    if env_path:
+        return env_path
+
+    argv_path = resolve_command_path(argv0 or sys.argv[0], search_path=search_path)
+    if argv_path and Path(argv_path).name.startswith("vibe"):
+        return argv_path
+
+    return resolve_command_path("vibe", search_path=search_path)
+
+
+def cache_running_vibe_path(vibe_path: str | None = None) -> str | None:
+    resolved = get_running_vibe_path(vibe_path=vibe_path)
+    if resolved:
+        os.environ[CURRENT_VIBE_EXECUTABLE_ENV] = resolved
+    return resolved
+
+
+def get_restart_command(
+    *,
+    vibe_path: str | None = None,
+    python_executable: str | None = None,
+    argv0: str | None = None,
+    search_path: str | None = None,
+) -> list[str]:
+    resolved = get_running_vibe_path(vibe_path=vibe_path, argv0=argv0, search_path=search_path)
+    if resolved:
+        return [resolved]
+    return [python_executable or sys.executable, "-c", "from vibe.cli import main; main()"]
+
+
+def get_restart_shell_command(
+    *,
+    vibe_path: str | None = None,
+    python_executable: str | None = None,
+    argv0: str | None = None,
+    search_path: str | None = None,
+) -> str:
+    return shlex.join(
+        get_restart_command(
+            vibe_path=vibe_path,
+            python_executable=python_executable,
+            argv0=argv0,
+            search_path=search_path,
+        )
+    )
 
 
 def get_update_metadata_url() -> str:
@@ -59,7 +136,7 @@ def is_uv_tool_install(python_executable: str | None = None) -> bool:
 
 
 def get_current_vibe_bin_dir(vibe_path: str | None = None) -> str | None:
-    current_vibe = vibe_path if vibe_path is not None else shutil.which("vibe")
+    current_vibe = get_running_vibe_path(vibe_path=vibe_path)
     if not current_vibe:
         return None
     return str(Path(current_vibe).expanduser().parent)
@@ -81,8 +158,11 @@ def build_upgrade_plan(
         vibe_bin_dir = get_current_vibe_bin_dir(vibe_path)
         if vibe_bin_dir:
             env["UV_TOOL_BIN_DIR"] = vibe_bin_dir
+        command = [uv_binary, "tool", "install", package_spec, "--upgrade"]
+        if package_spec != PACKAGE_NAME:
+            command.append("--force")
         return UpgradePlan(
-            command=[uv_binary, "tool", "install", package_spec, "--upgrade"],
+            command=command,
             env=env,
             method="uv",
         )
