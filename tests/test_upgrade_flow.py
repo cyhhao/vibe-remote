@@ -84,6 +84,18 @@ def test_get_running_vibe_path_prefers_cached_launcher(monkeypatch):
     assert resolved == "/custom/bin/vibe"
 
 
+def test_get_running_vibe_path_preserves_launcher_symlink(monkeypatch):
+    monkeypatch.delenv("VIBE_CURRENT_EXECUTABLE", raising=False)
+    monkeypatch.setattr(
+        "vibe.upgrade.shutil.which",
+        lambda *args, **kwargs: "/home/test/.local/bin/vibe",
+    )
+
+    resolved = get_running_vibe_path(argv0="vibe")
+
+    assert resolved == "/home/test/.local/bin/vibe"
+
+
 def test_get_restart_command_falls_back_to_python_module(monkeypatch):
     monkeypatch.delenv("VIBE_CURRENT_EXECUTABLE", raising=False)
     monkeypatch.setattr("vibe.upgrade.shutil.which", lambda *args, **kwargs: None)

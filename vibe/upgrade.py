@@ -28,15 +28,15 @@ def resolve_command_path(command: str | None, search_path: str | None = None) ->
 
     expanded = Path(command).expanduser()
     if expanded.is_absolute():
-        return str(expanded.resolve())
+        return os.path.abspath(str(expanded))
 
     if any(sep in command for sep in (os.sep, "/")):
-        return str((Path.cwd() / expanded).resolve())
+        return os.path.abspath(str(Path.cwd() / expanded))
 
     resolved = shutil.which(command, path=search_path)
     if not resolved:
         return None
-    return str(Path(resolved).expanduser().resolve())
+    return os.path.abspath(os.path.expanduser(resolved))
 
 
 def get_running_vibe_path(

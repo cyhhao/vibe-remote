@@ -73,12 +73,13 @@ def test_upgrade_command_uses_built_release_artifact():
                 f"VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe check-update",
                 "VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "
                 f"VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe upgrade",
-                'TOOL_PY="$(uv tool dir)/vibe-remote/bin/python"',
-                '"$TOOL_PY" -c "from vibe.cli import main; main()" version',
-                'VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "$TOOL_PY" -c "from vibe.cli import main; main()" check-update',
-                '"$TOOL_PY" -c "from vibe.cli import main; main()"',
+                "hash -r",
+                'printf "launcher=%s\n" "$(command -v vibe)"',
+                "vibe version",
+                "VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json vibe check-update",
+                "vibe",
                 "sleep 2",
-                '"$TOOL_PY" -c "from vibe.cli import main; main()" status',
+                "vibe status",
             ]
         )
 
@@ -112,6 +113,7 @@ def test_upgrade_command_uses_built_release_artifact():
     assert f"vibe-remote {INITIAL_RELEASE_VERSION}" in result.stdout
     assert "New version available: 9999.0.0" in result.stdout
     assert "Upgrade successful!" in result.stdout
+    assert "launcher=/usr/local/bin/vibe" in result.stdout
     assert f"vibe-remote {TEST_RELEASE_VERSION}" in result.stdout
     assert "You are using the latest version." in result.stdout
     assert '"running": true' in result.stdout
