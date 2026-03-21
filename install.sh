@@ -93,6 +93,13 @@ is_absolute_dir() {
     esac
 }
 
+is_sbin_dir() {
+    case "$1" in
+        */sbin) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 is_transient_bin_dir() {
     local dir="$1"
 
@@ -127,11 +134,18 @@ is_transient_bin_dir() {
 
 choose_tool_bin_dir() {
     local dir
+    local fallback_sbin_dir=""
 
     local old_ifs="$IFS"
     IFS=":"
     for dir in $ORIGINAL_PATH; do
         if [ -n "$dir" ] && is_absolute_dir "$dir" && ! is_transient_bin_dir "$dir" && ensure_writable_dir "$dir"; then
+            if is_sbin_dir "$dir"; then
+                if [ -z "$fallback_sbin_dir" ]; then
+                    fallback_sbin_dir="$dir"
+                fi
+                continue
+            fi
             IFS="$old_ifs"
             echo "$dir"
             return 0
@@ -152,6 +166,11 @@ choose_tool_bin_dir() {
             return 0
         fi
     done
+
+    if [ -n "$fallback_sbin_dir" ]; then
+        echo "$fallback_sbin_dir"
+        return 0
+    fi
 
     return 1
 }
