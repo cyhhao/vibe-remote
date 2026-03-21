@@ -66,8 +66,10 @@ def test_upgrade_command_uses_built_release_artifact():
             [
                 "apt-get update >/dev/null",
                 "apt-get install -y --no-install-recommends curl ca-certificates bash procps >/dev/null",
-                "curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL=/usr/local/bin sh",
+                "curl -LsSf https://astral.sh/uv/install.sh | sh",
+                'export PATH="$HOME/.local/bin:$PATH"',
                 f"UV_TOOL_BIN_DIR=/usr/local/bin uv tool install /fixtures/{initial_wheel_path.name} --force",
+                'export PATH="/usr/local/bin:/usr/bin:/bin"',
                 "vibe version",
                 "VIBE_UPDATE_METADATA_URL=file:///fixtures/metadata.json "
                 f"VIBE_UPGRADE_PACKAGE_SPEC=/fixtures/{wheel_path.name} vibe check-update",

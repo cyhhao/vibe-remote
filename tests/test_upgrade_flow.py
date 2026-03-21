@@ -50,6 +50,8 @@ def test_build_upgrade_plan_uses_pip_for_non_uv_install():
 
 def test_build_upgrade_plan_uses_env_package_spec(monkeypatch):
     monkeypatch.setenv("VIBE_UPGRADE_PACKAGE_SPEC", "/tmp/vibe_remote-9999.0.0-py3-none-any.whl")
+    monkeypatch.setattr("vibe.upgrade.os.path.exists", lambda path: True)
+    monkeypatch.setattr("vibe.upgrade.os.access", lambda path, mode: True)
 
     plan = build_upgrade_plan(
         python_executable="/tmp/.local/share/uv/tools/vibe-remote/bin/python",
@@ -66,6 +68,30 @@ def test_build_upgrade_plan_uses_env_package_spec(monkeypatch):
         "--upgrade",
         "--force",
     ]
+
+
+def test_build_upgrade_plan_finds_uv_outside_current_path(monkeypatch):
+    monkeypatch.setattr(
+        "vibe.upgrade.shutil.which",
+        lambda command, path=None: None if command == "uv" else "/custom/bin/vibe",
+    )
+    monkeypatch.setattr(
+        "vibe.upgrade.os.path.exists",
+        lambda path: path in {"/home/test/.local/bin/uv", "/custom/bin/vibe"},
+    )
+    monkeypatch.setattr(
+        "vibe.upgrade.os.access",
+        lambda path, mode: path in {"/home/test/.local/bin/uv", "/custom/bin/vibe"},
+    )
+
+    plan = build_upgrade_plan(
+        python_executable="/tmp/.local/share/uv/tools/vibe-remote/bin/python",
+        vibe_path="/custom/bin/vibe",
+        base_env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/home/test"},
+    )
+
+    assert plan.method == "uv"
+    assert plan.command == ["/home/test/.local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"]
 
 
 def test_get_latest_version_info_uses_override_metadata_url(monkeypatch, tmp_path):

@@ -6,6 +6,7 @@ import shlex
 import shutil
 import sys
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from pathlib import Path
 PACKAGE_NAME = "vibe-remote"
 DEFAULT_UPDATE_METADATA_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
 CURRENT_VIBE_EXECUTABLE_ENV = "VIBE_CURRENT_EXECUTABLE"
+UV_FALLBACK_BIN_DIRS = (".local/bin", ".cargo/bin")
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,34 @@ def is_usable_command_path(path: str | None) -> bool:
     return os.path.exists(path) and os.access(path, os.X_OK)
 
 
+def get_known_uv_paths(base_env: Mapping[str, str] | None = None) -> list[str]:
+    env = base_env or os.environ
+    home = env.get("HOME")
+    if home is not None:
+        return [os.path.join(home, bin_dir, "uv") for bin_dir in UV_FALLBACK_BIN_DIRS]
+    return [os.path.expanduser(f"~/{bin_dir}/uv") for bin_dir in UV_FALLBACK_BIN_DIRS]
+
+
+def find_uv_binary(uv_path: str | None = None, base_env: Mapping[str, str] | None = None) -> str | None:
+    env = base_env or os.environ
+    search_path = env.get("PATH")
+
+    resolved = resolve_command_path(uv_path, search_path=search_path)
+    if is_usable_command_path(resolved):
+        return resolved
+
+    resolved = resolve_command_path("uv", search_path=search_path)
+    if is_usable_command_path(resolved):
+        return resolved
+
+    for candidate in get_known_uv_paths(base_env=env):
+        resolved = resolve_command_path(candidate, search_path=search_path)
+        if is_usable_command_path(resolved):
+            return resolved
+
+    return None
+
+
 def get_running_vibe_path(
     *,
     vibe_path: str | None = None,
@@ -60,8 +90,10 @@ def get_running_vibe_path(
         return env_path
 
     argv_path = resolve_command_path(argv0 or sys.argv[0], search_path=search_path)
-    if is_usable_command_path(argv_path) and Path(argv_path).name.startswith("vibe"):
-        return argv_path
+    if is_usable_command_path(argv_path):
+        argv_path_str = argv_path
+        if Path(argv_path_str).name.startswith("vibe"):
+            return argv_path_str
 
     fallback_path = resolve_command_path("vibe", search_path=search_path)
     if is_usable_command_path(fallback_path):
@@ -159,7 +191,7 @@ def build_upgrade_plan(
     base_env: dict[str, str] | None = None,
 ) -> UpgradePlan:
     executable = python_executable or sys.executable
-    uv_binary = uv_path if uv_path is not None else shutil.which("uv")
+    uv_binary = find_uv_binary(uv_path=uv_path, base_env=base_env)
     package_spec = get_upgrade_package_spec()
 
     if is_uv_tool_install(executable) and uv_binary:
