@@ -10,7 +10,13 @@ from urllib.parse import urlsplit
 import aiohttp
 import discord
 
-from .base import BaseIMClient, MessageContext, InlineKeyboard, InlineButton, FileAttachment
+from .base import (
+    BaseIMClient,
+    MessageContext,
+    InlineKeyboard,
+    InlineButton,
+    FileAttachment,
+)
 from config.v2_config import DiscordConfig
 from .formatters import DiscordFormatter
 from vibe.i18n import get_supported_languages, t as i18n_t
@@ -444,7 +450,7 @@ class DiscordBot(BaseIMClient):
     async def download_file(
         self,
         file_info: Dict[str, Any],
-        max_bytes: int = 20 * 1024 * 1024,
+        max_bytes: Optional[int] = None,
         timeout_seconds: int = 30,
     ) -> Optional[bytes]:
         url = file_info.get("url") or file_info.get("url_private_download") or file_info.get("url_private")
@@ -457,19 +463,51 @@ class DiscordBot(BaseIMClient):
                     if response.status != 200:
                         return None
                     content_length = response.headers.get("Content-Length")
-                    if content_length and int(content_length) > max_bytes:
+                    if max_bytes is not None and content_length and int(content_length) > max_bytes:
                         return None
                     chunks = []
                     total_size = 0
                     async for chunk in response.content.iter_chunked(64 * 1024):
                         total_size += len(chunk)
-                        if total_size > max_bytes:
+                        if max_bytes is not None and total_size > max_bytes:
                             return None
                         chunks.append(chunk)
                     return b"".join(chunks)
         except Exception as err:
             logger.debug("Failed to download Discord file: %s", err)
             return None
+
+    async def download_file_to_path(
+        self,
+        file_info: Dict[str, Any],
+        target_path: str,
+        max_bytes: Optional[int] = None,
+        timeout_seconds: int = 30,
+    ) -> bool:
+        url = file_info.get("url") or file_info.get("url_private_download") or file_info.get("url_private")
+        if not url:
+            return False
+        try:
+            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        return False
+                    content_length = response.headers.get("Content-Length")
+                    if max_bytes is not None and content_length and int(content_length) > max_bytes:
+                        return False
+
+                    total_size = 0
+                    with open(target_path, "wb") as file_obj:
+                        async for chunk in response.content.iter_chunked(64 * 1024):
+                            total_size += len(chunk)
+                            if max_bytes is not None and total_size > max_bytes:
+                                return False
+                            file_obj.write(chunk)
+                    return True
+        except Exception as err:
+            logger.debug("Failed to download Discord file to path: %s", err)
+            return False
 
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
         cached = self._user_info_cache.get(user_id)

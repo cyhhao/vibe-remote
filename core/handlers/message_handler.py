@@ -579,11 +579,32 @@ class MessageHandler(BaseHandler):
                         "name": attachment.name,
                         "size": attachment.size,
                     }
-                    content = await self.im_client.download_file(file_info)
-                    if content:
+                    timestamp = int(time.time())
+                    safe_name = self._sanitize_filename(attachment.name)
+                    filename = f"{timestamp}_{safe_name}"
+                    local_path = attachments_dir / filename
+                    content = None
+                    detected_sample = None
+                    content_size = None
+
+                    if hasattr(self.im_client, "download_file_to_path"):
+                        downloaded = await self.im_client.download_file_to_path(file_info, str(local_path))
+                        if downloaded:
+                            content_size = local_path.stat().st_size
+                            with open(local_path, "rb") as file_obj:
+                                detected_sample = file_obj.read(16)
+                    else:
+                        content = await self.im_client.download_file(file_info)
+                        if content:
+                            with open(local_path, "wb") as f:
+                                f.write(content)
+                            content_size = len(content)
+                            detected_sample = content[:16]
+
+                    if content is not None or content_size is not None:
                         # Detect actual MIME type from magic bytes for images
                         # (some platforms don't provide accurate MIME, e.g. Feishu)
-                        detected = self._detect_image_mime(content)
+                        detected = self._detect_image_mime(detected_sample or b"")
                         if detected:
                             attachment.mimetype = detected[0]
                             # Fix filename extension to match actual type
@@ -591,23 +612,14 @@ class MessageHandler(BaseHandler):
                             base = os.path.splitext(attachment.name)[0]
                             attachment.name = f"{base}{ext}"
 
-                        # Generate filename: {timestamp}_{original_name}
-                        timestamp = int(time.time())
-                        safe_name = self._sanitize_filename(attachment.name)
-                        filename = f"{timestamp}_{safe_name}"
-                        local_path = attachments_dir / filename
-
-                        with open(local_path, "wb") as f:
-                            f.write(content)
-
                         attachment.local_path = str(local_path)
-                        attachment.size = len(content)
+                        attachment.size = content_size
 
                         # Determine file type for logging
                         is_image = (attachment.mimetype or "").startswith("image/")
                         file_type = "image" if is_image else "file"
 
-                        logger.info(f"Saved {file_type} '{attachment.name}' ({len(content)} bytes) to '{local_path}'")
+                        logger.info(f"Saved {file_type} '{attachment.name}' ({content_size} bytes) to '{local_path}'")
 
                         processed.append(attachment)
                     else:

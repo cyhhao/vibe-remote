@@ -1,6 +1,7 @@
 """Base classes and data structures for IM platform abstraction"""
 
 import logging
+from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Optional, Callable, Dict, Any, List, Tuple, cast
 from dataclasses import dataclass
@@ -341,6 +342,38 @@ class BaseIMClient(ABC):
         without native image upload support still deliver the attachment.
         """
         return await self.upload_file_from_path(context, file_path, title=title)
+
+    async def download_file(
+        self,
+        file_info: Dict[str, Any],
+        max_bytes: Optional[int] = None,
+        timeout_seconds: int = 30,
+    ) -> Optional[bytes]:
+        """Download a remote file into memory (optional per platform)."""
+        raise NotImplementedError
+
+    async def download_file_to_path(
+        self,
+        file_info: Dict[str, Any],
+        target_path: str,
+        max_bytes: Optional[int] = None,
+        timeout_seconds: int = 30,
+    ) -> bool:
+        """Download a remote file directly to a local path.
+
+        Platforms can override this to stream large files directly to disk.
+        The default implementation falls back to ``download_file`` and writes
+        the bytes afterward, which is less memory-efficient but preserves
+        compatibility.
+        """
+        content = await self.download_file(file_info, max_bytes=max_bytes, timeout_seconds=timeout_seconds)
+        if content is None:
+            return False
+
+        path = Path(target_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return True
 
     @abstractmethod
     async def edit_message(
