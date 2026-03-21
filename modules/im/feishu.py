@@ -10,7 +10,13 @@ from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 
-from .base import BaseIMClient, FileAttachment, InlineButton, InlineKeyboard, MessageContext
+from .base import (
+    BaseIMClient,
+    FileAttachment,
+    InlineButton,
+    InlineKeyboard,
+    MessageContext,
+)
 from .formatters import FeishuFormatter
 from config.v2_config import LarkConfig
 from vibe.i18n import get_supported_languages, t as i18n_t
@@ -1063,7 +1069,7 @@ class FeishuBot(BaseIMClient):
     async def download_file(
         self,
         file_info: Dict[str, Any],
-        max_bytes: int = 20 * 1024 * 1024,
+        max_bytes: Optional[int] = None,
         timeout_seconds: int = 30,
     ) -> Optional[bytes]:
         """Download a file from Feishu."""
@@ -1087,7 +1093,7 @@ class FeishuBot(BaseIMClient):
                         total = 0
                         async for chunk in resp.content.iter_chunked(64 * 1024):
                             total += len(chunk)
-                            if total > max_bytes:
+                            if max_bytes is not None and total > max_bytes:
                                 return None
                             chunks.append(chunk)
                         return b"".join(chunks)
@@ -1110,7 +1116,7 @@ class FeishuBot(BaseIMClient):
                     total = 0
                     async for chunk in resp.content.iter_chunked(64 * 1024):
                         total += len(chunk)
-                        if total > max_bytes:
+                        if max_bytes is not None and total > max_bytes:
                             logger.warning("Feishu file exceeds max size, aborting")
                             return None
                         chunks.append(chunk)
@@ -1121,6 +1127,67 @@ class FeishuBot(BaseIMClient):
         except Exception as exc:
             logger.error("Error downloading Feishu file: %s", exc)
             return None
+
+    async def download_file_to_path(
+        self,
+        file_info: Dict[str, Any],
+        target_path: str,
+        max_bytes: Optional[int] = None,
+        timeout_seconds: int = 30,
+    ) -> bool:
+        message_id = file_info.get("message_id")
+        file_key = file_info.get("file_key")
+        if not message_id or not file_key:
+            url = file_info.get("url")
+            if not url:
+                logger.warning("No download info for Feishu file: %s", file_info.get("name"))
+                return False
+            try:
+                token = await self._get_tenant_token()
+                headers = {"Authorization": f"Bearer {token}"} if token else {}
+                timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(url, headers=headers) as resp:
+                        if resp.status != 200:
+                            return False
+                        total = 0
+                        with open(target_path, "wb") as file_obj:
+                            async for chunk in resp.content.iter_chunked(64 * 1024):
+                                total += len(chunk)
+                                if max_bytes is not None and total > max_bytes:
+                                    return False
+                                file_obj.write(chunk)
+                        return True
+            except Exception as exc:
+                logger.error("Error downloading Feishu file: %s", exc)
+                return False
+
+        try:
+            token = await self._get_tenant_token()
+            if not token:
+                return False
+            url = f"{self.config.api_base_url}/open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file"
+            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
+                    if resp.status != 200:
+                        logger.error("Failed to download Feishu file: HTTP %s", resp.status)
+                        return False
+                    total = 0
+                    with open(target_path, "wb") as file_obj:
+                        async for chunk in resp.content.iter_chunked(64 * 1024):
+                            total += len(chunk)
+                            if max_bytes is not None and total > max_bytes:
+                                logger.warning("Feishu file exceeds max size, aborting")
+                                return False
+                            file_obj.write(chunk)
+                    return True
+        except asyncio.TimeoutError:
+            logger.error("Timeout downloading Feishu file")
+            return False
+        except Exception as exc:
+            logger.error("Error downloading Feishu file: %s", exc)
+            return False
 
     def _extract_file_attachments(
         self, message_id: str, msg_content: Dict[str, Any], msg_type: str
