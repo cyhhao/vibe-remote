@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import time
+import urllib.request
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -20,6 +21,7 @@ from config.v2_settings import (
     _routing_to_dict,
 )
 from config.v2_sessions import SessionsStore
+from vibe.upgrade import build_upgrade_plan, get_latest_version_info, get_restart_shell_command, get_running_vibe_path
 
 
 logger = logging.getLogger(__name__)
@@ -627,32 +629,9 @@ def get_version_info() -> dict:
             "error": str | None
         }
     """
-    import urllib.request
     from vibe import __version__
 
-    current = __version__
-    result = {"current": current, "latest": None, "has_update": False, "error": None}
-
-    try:
-        url = "https://pypi.org/pypi/vibe-remote/json"
-        req = urllib.request.Request(url, headers={"User-Agent": "vibe-remote"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            latest = data.get("info", {}).get("version", "")
-            result["latest"] = latest
-
-            # Simple version comparison (works for semver)
-            if latest and latest != current:
-                try:
-                    current_parts = [int(x) for x in current.split(".")[:3] if x.isdigit()]
-                    latest_parts = [int(x) for x in latest.split(".")[:3] if x.isdigit()]
-                    result["has_update"] = latest_parts > current_parts
-                except (ValueError, AttributeError):
-                    result["has_update"] = latest != current
-    except Exception as e:
-        result["error"] = str(e)
-
-    return result
+    return get_latest_version_info(__version__)
 
 
 def do_upgrade(auto_restart: bool = True) -> dict:
@@ -664,41 +643,29 @@ def do_upgrade(auto_restart: bool = True) -> dict:
     Returns:
         {"ok": bool, "message": str, "output": str | None, "restarting": bool}
     """
-    import sys
-
-    # Determine upgrade method based on how vibe was installed
-    # Check if running from uv tool environment
-    exe_path = sys.executable
-    is_uv_tool = ".local/share/uv/tools/" in exe_path or "/uv/tools/" in exe_path
-
-    uv_path = shutil.which("uv")
-
-    if is_uv_tool and uv_path:
-        # Installed via uv tool, upgrade with uv
-        cmd = [uv_path, "tool", "install", "vibe-remote", "--upgrade"]
-    else:
-        # Installed via pip or other method, use current Python's pip
-        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "vibe-remote"]
+    current_vibe_path = get_running_vibe_path()
+    plan = build_upgrade_plan(vibe_path=current_vibe_path)
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(
+            plan.command,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=plan.env,
+        )
         if result.returncode == 0:
             restarting = False
             if auto_restart:
-                # Schedule restart in background after response is sent
-                # Use 'vibe' command which will restart both service and UI
-                vibe_path = shutil.which("vibe")
-                if vibe_path:
-                    # Start restart process detached, with delay to allow response to be sent
-                    restart_cmd = f"sleep 2 && {vibe_path}"
-                    subprocess.Popen(
-                        restart_cmd,
-                        shell=True,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=True,
-                    )
-                    restarting = True
+                restart_cmd = f"sleep 2 && {get_restart_shell_command(vibe_path=current_vibe_path)}"
+                subprocess.Popen(
+                    restart_cmd,
+                    shell=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                restarting = True
 
             return {
                 "ok": True,

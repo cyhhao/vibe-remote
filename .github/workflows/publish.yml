@@ -41,11 +41,22 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build tools
-        run: pip install build
+      - name: Install build and test dependencies
+        run: pip install -e . build pytest
 
       - name: Build package
         run: python -m build
+
+      - name: Run release install and upgrade regressions
+        run: |
+          docker info
+          export VIBE_INSTALL_TEST_WHEEL="$(ls dist/*.whl)"
+          pytest \
+            tests/test_upgrade_flow.py \
+            tests/test_install_script.py \
+            tests/e2e/test_install_command.py \
+            tests/e2e/test_upgrade_command.py \
+            -v
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

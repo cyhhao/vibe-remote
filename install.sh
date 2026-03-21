@@ -17,6 +17,8 @@ NC='\033[0m' # No Color
 REPO="cyhhao/vibe-remote"
 PACKAGE_NAME="vibe-remote"
 VIBE_BIN_PATH=""
+VIBE_TOOL_BIN_DIR=""
+ORIGINAL_PATH="$PATH"
 
 print_banner() {
     echo -e "${BLUE}"
@@ -60,9 +62,157 @@ detect_os() {
     echo "$OS"
 }
 
+path_contains_dir() {
+    local path_value="$1"
+    local target_dir="$2"
+
+    case ":$path_value:" in
+        *":$target_dir:"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+ensure_writable_dir() {
+    local dir="$1"
+
+    if [ -z "$dir" ]; then
+        return 1
+    fi
+
+    if [ ! -d "$dir" ]; then
+        mkdir -p "$dir" 2>/dev/null || return 1
+    fi
+
+    [ -d "$dir" ] && [ -w "$dir" ]
+}
+
+is_absolute_dir() {
+    case "$1" in
+        /*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+is_sbin_dir() {
+    case "$1" in
+        */sbin) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+is_transient_bin_dir() {
+    local dir="$1"
+
+    case "$dir" in
+        */.venv/bin|*/venv/bin|*/env/bin|*/.pyenv/shims|*/.pyenv/versions/*/bin|*/.local/share/mise/installs/*/bin|*/.mise/installs/*/bin)
+            return 0
+            ;;
+    esac
+
+    if [ -n "${VIRTUAL_ENV:-}" ] && [ "$dir" = "${VIRTUAL_ENV%/}/bin" ]; then
+        return 0
+    fi
+
+    if [ -n "${CONDA_PREFIX:-}" ] && [ "$dir" = "${CONDA_PREFIX%/}/bin" ]; then
+        return 0
+    fi
+
+    if [ -n "${PYENV_ROOT:-}" ]; then
+        case "$dir" in
+            "${PYENV_ROOT%/}"/shims) return 0 ;;
+            "${PYENV_ROOT%/}"/versions/*/bin) return 0 ;;
+        esac
+    fi
+
+    if [ -n "${MISE_DATA_DIR:-}" ]; then
+        case "$dir" in
+            "${MISE_DATA_DIR%/}"/installs/*/bin) return 0 ;;
+        esac
+    fi
+
+    return 1
+}
+
+choose_tool_bin_dir() {
+    local dir
+    local fallback_sbin_dir=""
+
+    local old_ifs="$IFS"
+    IFS=":"
+    for dir in $ORIGINAL_PATH; do
+        if [ -n "$dir" ] && is_absolute_dir "$dir" && ! is_transient_bin_dir "$dir" && ensure_writable_dir "$dir"; then
+            if is_sbin_dir "$dir"; then
+                if [ -z "$fallback_sbin_dir" ]; then
+                    fallback_sbin_dir="$dir"
+                fi
+                continue
+            fi
+            IFS="$old_ifs"
+            echo "$dir"
+            return 0
+        fi
+    done
+    IFS="$old_ifs"
+
+    local preferred_dirs=(
+        "$HOME/.local/bin"
+        "$HOME/bin"
+        "/usr/local/bin"
+        "/opt/homebrew/bin"
+    )
+
+    for dir in "${preferred_dirs[@]}"; do
+        if is_absolute_dir "$dir" && ensure_writable_dir "$dir"; then
+            echo "$dir"
+            return 0
+        fi
+    done
+
+    if [ -n "$fallback_sbin_dir" ]; then
+        echo "$fallback_sbin_dir"
+        return 0
+    fi
+
+    return 1
+}
+
 # Check if command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+uv_tool_install() {
+    if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
+        UV_TOOL_BIN_DIR="$VIBE_TOOL_BIN_DIR" uv tool install "$@"
+    else
+        uv tool install "$@"
+    fi
+}
+
+install_package_candidate() {
+    local package_spec="$1"
+    shift
+
+    if [ "$package_spec" = "$PACKAGE_NAME" ]; then
+        uv_tool_install "$package_spec" --force --refresh "$@" 2>/dev/null
+    else
+        uv_tool_install "$package_spec" --force "$@" 2>/dev/null
+    fi
+}
+
+resolve_vibe_on_original_path() {
+    PATH="$ORIGINAL_PATH" command -v vibe 2>/dev/null || true
+}
+
+is_vibe_immediately_available() {
+    local resolved_vibe
+
+    if [ -z "$VIBE_BIN_PATH" ]; then
+        return 1
+    fi
+
+    resolved_vibe="$(resolve_vibe_on_original_path)"
+    [ -n "$resolved_vibe" ] && [ "$resolved_vibe" = "$VIBE_BIN_PATH" ]
 }
 
 # Install uv if not present
@@ -110,16 +260,33 @@ install_uv() {
 # Install vibe-remote using uv (uv auto-downloads Python if needed)
 install_vibe() {
     info "Installing vibe-remote (Python will be downloaded automatically if needed)..."
+    local install_package_spec="${VIBE_INSTALL_PACKAGE_SPEC:-}"
+
+    VIBE_TOOL_BIN_DIR="$(choose_tool_bin_dir || true)"
+    if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
+        info "Installing vibe command into $VIBE_TOOL_BIN_DIR"
+    else
+        warn "Could not find a writable directory in PATH; you may need a new shell before 'vibe' is available"
+    fi
+
+    if [ -n "$install_package_spec" ]; then
+        if install_package_candidate "$install_package_spec"; then
+            success "vibe-remote installed successfully (from custom package spec)"
+            return 0
+        fi
+
+        error "Failed to install vibe-remote from custom package spec: $install_package_spec"
+    fi
     
     # uv tool install will auto-download Python if not available
     # --force: reinstall even if already installed
     # --refresh: refresh package cache to get latest version
     # Try in order: PyPI -> China mirror (tsinghua) -> GitHub
-    if uv tool install "$PACKAGE_NAME" --force --refresh 2>/dev/null; then
+    if install_package_candidate "$PACKAGE_NAME"; then
         success "vibe-remote installed successfully (from PyPI)"
-    elif uv tool install "$PACKAGE_NAME" --force --refresh --index-url https://pypi.tuna.tsinghua.edu.cn/simple 2>/dev/null; then
+    elif install_package_candidate "$PACKAGE_NAME" --index-url https://pypi.tuna.tsinghua.edu.cn/simple; then
         success "vibe-remote installed successfully (from Tsinghua mirror)"
-    elif uv tool install "git+https://github.com/${REPO}.git" --force 2>/dev/null; then
+    elif install_package_candidate "git+https://github.com/${REPO}.git"; then
         success "vibe-remote installed successfully (from GitHub)"
     else
         error "Failed to install vibe-remote from all sources"
@@ -132,6 +299,9 @@ verify_installation() {
     
     # Refresh PATH
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+    if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
+        export PATH="$VIBE_TOOL_BIN_DIR:$PATH"
+    fi
     
     if command_exists vibe; then
         VIBE_BIN_PATH="$(command -v vibe)"
@@ -171,10 +341,16 @@ print_next_steps() {
     echo -e "${GREEN}Installation complete!${NC}"
     echo ""
     echo -e "${BLUE}Next steps:${NC}"
-    echo "  1. Run 'source ${vibe_dir}/env' (or restart your shell)"
-    echo "  2. Run 'vibe' to start the setup wizard"
-    echo "  3. Configure your Slack app tokens in the web UI"
-    echo "  4. Enable channels and start chatting with AI agents"
+    if is_vibe_immediately_available; then
+        echo "  1. Run 'vibe' to start the setup wizard"
+        echo "  2. Configure your Slack app tokens in the web UI"
+        echo "  3. Enable channels and start chatting with AI agents"
+    else
+        echo "  1. Run 'export PATH=\"${vibe_dir}:\$PATH\"' in your shell"
+        echo "  2. Run 'vibe' to start the setup wizard"
+        echo "  3. Configure your Slack app tokens in the web UI"
+        echo "  4. Enable channels and start chatting with AI agents"
+    fi
     echo ""
     echo -e "${BLUE}Quick commands:${NC}"
     echo "  vibe          - Start Vibe Remote (service + web UI)"

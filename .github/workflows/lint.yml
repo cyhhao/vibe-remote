@@ -18,3 +18,42 @@ jobs:
         run: |
           pip install pre-commit
           pre-commit run --all-files
+
+  install-upgrade-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build UI assets
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build and test dependencies
+        run: |
+          pip install -e . build pytest
+
+      - name: Build package artifact
+        run: python -m build
+
+      - name: Run install and upgrade regressions
+        run: |
+          docker info
+          export VIBE_INSTALL_TEST_WHEEL="$(ls dist/*.whl)"
+          pytest \
+            tests/test_upgrade_flow.py \
+            tests/test_install_script.py \
+            tests/e2e/test_install_command.py \
+            tests/e2e/test_upgrade_command.py \
+            -v
