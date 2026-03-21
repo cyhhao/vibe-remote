@@ -97,7 +97,9 @@ is_transient_bin_dir() {
     local dir="$1"
 
     case "$dir" in
-        */.venv/bin|*/venv/bin|*/env/bin) return 0 ;;
+        */.venv/bin|*/venv/bin|*/env/bin|*/.pyenv/versions/*/bin|*/.local/share/mise/installs/*/bin|*/.mise/installs/*/bin)
+            return 0
+            ;;
     esac
 
     if [ -n "${VIRTUAL_ENV:-}" ] && [ "$dir" = "${VIRTUAL_ENV%/}/bin" ]; then
@@ -106,6 +108,18 @@ is_transient_bin_dir() {
 
     if [ -n "${CONDA_PREFIX:-}" ] && [ "$dir" = "${CONDA_PREFIX%/}/bin" ]; then
         return 0
+    fi
+
+    if [ -n "${PYENV_ROOT:-}" ]; then
+        case "$dir" in
+            "${PYENV_ROOT%/}"/versions/*/bin) return 0 ;;
+        esac
+    fi
+
+    if [ -n "${MISE_DATA_DIR:-}" ]; then
+        case "$dir" in
+            "${MISE_DATA_DIR%/}"/installs/*/bin) return 0 ;;
+        esac
     fi
 
     return 1

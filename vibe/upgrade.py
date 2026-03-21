@@ -39,6 +39,12 @@ def resolve_command_path(command: str | None, search_path: str | None = None) ->
     return os.path.abspath(os.path.expanduser(resolved))
 
 
+def is_usable_command_path(path: str | None) -> bool:
+    if not path:
+        return False
+    return os.path.exists(path) and os.access(path, os.X_OK)
+
+
 def get_running_vibe_path(
     *,
     vibe_path: str | None = None,
@@ -46,18 +52,21 @@ def get_running_vibe_path(
     search_path: str | None = None,
 ) -> str | None:
     resolved = resolve_command_path(vibe_path, search_path=search_path)
-    if resolved:
+    if is_usable_command_path(resolved):
         return resolved
 
     env_path = resolve_command_path(os.environ.get(CURRENT_VIBE_EXECUTABLE_ENV), search_path=search_path)
-    if env_path:
+    if is_usable_command_path(env_path):
         return env_path
 
     argv_path = resolve_command_path(argv0 or sys.argv[0], search_path=search_path)
-    if argv_path and Path(argv_path).name.startswith("vibe"):
+    if is_usable_command_path(argv_path) and Path(argv_path).name.startswith("vibe"):
         return argv_path
 
-    return resolve_command_path("vibe", search_path=search_path)
+    fallback_path = resolve_command_path("vibe", search_path=search_path)
+    if is_usable_command_path(fallback_path):
+        return fallback_path
+    return None
 
 
 def cache_running_vibe_path(vibe_path: str | None = None) -> str | None:

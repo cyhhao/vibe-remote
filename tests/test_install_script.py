@@ -188,6 +188,33 @@ def test_install_script_skips_virtualenv_bin_dirs(tmp_path):
     assert not (venv_bin / "vibe").exists()
 
 
+def test_install_script_skips_pyenv_and_mise_bin_dirs(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    pyenv_bin = tmp_path / ".pyenv" / "versions" / "3.12.0" / "bin"
+    pyenv_bin.mkdir(parents=True)
+    mise_bin = tmp_path / ".local" / "share" / "mise" / "installs" / "python" / "3.12.1" / "bin"
+    mise_bin.mkdir(parents=True)
+    stable_bin = tmp_path / "stable-bin"
+    stable_bin.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    _write_fake_uv(stable_bin / "uv", uv_log)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(pyenv_bin), str(mise_bin), str(stable_bin), "/usr/bin", "/bin"])
+    env["PYENV_ROOT"] = str(tmp_path / ".pyenv")
+    env["MISE_DATA_DIR"] = str(tmp_path / ".local" / "share" / "mise")
+
+    install_result = _install(env, cwd=tmp_path)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert uv_log.read_text(encoding="utf-8") == str(stable_bin)
+    assert not (pyenv_bin / "vibe").exists()
+    assert not (mise_bin / "vibe").exists()
+
+
 def test_install_script_requires_path_export_when_install_dir_not_on_original_path(tmp_path):
     home_dir = tmp_path / "home"
     home_dir.mkdir()

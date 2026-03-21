@@ -17,7 +17,10 @@ from vibe.upgrade import (
 )
 
 
-def test_build_upgrade_plan_uses_uv_and_preserves_tool_bin_dir():
+def test_build_upgrade_plan_uses_uv_and_preserves_tool_bin_dir(monkeypatch):
+    monkeypatch.setattr("vibe.upgrade.os.path.exists", lambda path: True)
+    monkeypatch.setattr("vibe.upgrade.os.access", lambda path, mode: True)
+
     plan = build_upgrade_plan(
         python_executable="/tmp/.local/share/uv/tools/vibe-remote/bin/python",
         uv_path="/usr/local/bin/uv",
@@ -77,6 +80,8 @@ def test_get_latest_version_info_uses_override_metadata_url(monkeypatch, tmp_pat
 
 def test_get_running_vibe_path_prefers_cached_launcher(monkeypatch):
     monkeypatch.setenv("VIBE_CURRENT_EXECUTABLE", "/custom/bin/vibe")
+    monkeypatch.setattr("vibe.upgrade.os.path.exists", lambda path: True)
+    monkeypatch.setattr("vibe.upgrade.os.access", lambda path, mode: True)
     monkeypatch.setattr("vibe.upgrade.shutil.which", lambda *args, **kwargs: "/other/bin/vibe")
 
     resolved = get_running_vibe_path(argv0="vibe")
@@ -86,6 +91,8 @@ def test_get_running_vibe_path_prefers_cached_launcher(monkeypatch):
 
 def test_get_running_vibe_path_preserves_launcher_symlink(monkeypatch):
     monkeypatch.delenv("VIBE_CURRENT_EXECUTABLE", raising=False)
+    monkeypatch.setattr("vibe.upgrade.os.path.exists", lambda path: True)
+    monkeypatch.setattr("vibe.upgrade.os.access", lambda path, mode: True)
     monkeypatch.setattr(
         "vibe.upgrade.shutil.which",
         lambda *args, **kwargs: "/home/test/.local/bin/vibe",
@@ -94,6 +101,17 @@ def test_get_running_vibe_path_preserves_launcher_symlink(monkeypatch):
     resolved = get_running_vibe_path(argv0="vibe")
 
     assert resolved == "/home/test/.local/bin/vibe"
+
+
+def test_get_running_vibe_path_skips_stale_cached_launcher(monkeypatch):
+    monkeypatch.setenv("VIBE_CURRENT_EXECUTABLE", "/stale/bin/vibe")
+    monkeypatch.setattr("vibe.upgrade.os.path.exists", lambda path: path != "/stale/bin/vibe")
+    monkeypatch.setattr("vibe.upgrade.os.access", lambda path, mode: path != "/stale/bin/vibe")
+    monkeypatch.setattr("vibe.upgrade.shutil.which", lambda *args, **kwargs: "/fresh/bin/vibe")
+
+    resolved = get_running_vibe_path(argv0="vibe")
+
+    assert resolved == "/fresh/bin/vibe"
 
 
 def test_get_restart_command_falls_back_to_python_module(monkeypatch):
