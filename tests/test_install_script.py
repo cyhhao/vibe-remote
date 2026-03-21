@@ -215,6 +215,30 @@ def test_install_script_skips_pyenv_and_mise_bin_dirs(tmp_path):
     assert not (mise_bin / "vibe").exists()
 
 
+def test_install_script_skips_pyenv_shims_dir(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    pyenv_root = tmp_path / ".pyenv"
+    shims_dir = pyenv_root / "shims"
+    shims_dir.mkdir(parents=True)
+    stable_bin = tmp_path / "stable-bin"
+    stable_bin.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    _write_fake_uv(stable_bin / "uv", uv_log)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(shims_dir), str(stable_bin), "/usr/bin", "/bin"])
+    env["PYENV_ROOT"] = str(pyenv_root)
+
+    install_result = _install(env, cwd=tmp_path)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert uv_log.read_text(encoding="utf-8") == str(stable_bin)
+    assert not (shims_dir / "vibe").exists()
+
+
 def test_install_script_prefers_bin_over_sbin(tmp_path):
     home_dir = tmp_path / "home"
     home_dir.mkdir()

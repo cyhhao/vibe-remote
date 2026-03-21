@@ -9,6 +9,7 @@ import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 
 PACKAGE_NAME = "vibe-remote"
@@ -45,6 +46,24 @@ def is_usable_command_path(path: str | None) -> bool:
     if not path:
         return False
     return os.path.exists(path) and os.access(path, os.X_OK)
+
+
+def get_launcher_bin_dir(command_path: str) -> str:
+    current = os.path.abspath(os.path.expanduser(command_path))
+
+    while os.path.islink(current):
+        target = os.readlink(current)
+        if not os.path.isabs(target):
+            target = os.path.abspath(os.path.join(os.path.dirname(current), target))
+        else:
+            target = os.path.abspath(os.path.expanduser(target))
+
+        if not os.path.islink(target):
+            return str(Path(current).parent)
+
+        current = target
+
+    return str(Path(current).parent)
 
 
 def get_known_uv_paths(base_env: Mapping[str, str] | None = None) -> list[str]:
@@ -91,7 +110,7 @@ def get_running_vibe_path(
 
     argv_path = resolve_command_path(argv0 or sys.argv[0], search_path=search_path)
     if is_usable_command_path(argv_path):
-        argv_path_str = argv_path
+        argv_path_str = cast(str, argv_path)
         if Path(argv_path_str).name.startswith("vibe"):
             return argv_path_str
 
@@ -180,7 +199,8 @@ def get_current_vibe_bin_dir(vibe_path: str | None = None) -> str | None:
     current_vibe = get_running_vibe_path(vibe_path=vibe_path)
     if not current_vibe:
         return None
-    return str(Path(current_vibe).expanduser().parent)
+
+    return get_launcher_bin_dir(current_vibe)
 
 
 def build_upgrade_plan(

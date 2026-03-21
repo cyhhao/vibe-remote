@@ -11,6 +11,7 @@ from vibe import api, cli
 from vibe.upgrade import (
     UpgradePlan,
     build_upgrade_plan,
+    get_current_vibe_bin_dir,
     get_latest_version_info,
     get_restart_command,
     get_running_vibe_path,
@@ -92,6 +93,26 @@ def test_build_upgrade_plan_finds_uv_outside_current_path(monkeypatch):
 
     assert plan.method == "uv"
     assert plan.command == ["/home/test/.local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"]
+
+
+def test_get_current_vibe_bin_dir_resolves_launcher_target(monkeypatch):
+    monkeypatch.setattr("vibe.upgrade.os.path.exists", lambda path: True)
+    monkeypatch.setattr("vibe.upgrade.os.access", lambda path, mode: True)
+    monkeypatch.setattr(
+        "vibe.upgrade.os.path.islink",
+        lambda path: path in {"/usr/local/bin/vibe", "/home/test/.local/bin/vibe"},
+    )
+    monkeypatch.setattr(
+        "vibe.upgrade.os.readlink",
+        lambda path: {
+            "/usr/local/bin/vibe": "/home/test/.local/bin/vibe",
+            "/home/test/.local/bin/vibe": "/home/test/.local/share/uv/tools/vibe-remote/bin/vibe",
+        }[path],
+    )
+
+    bin_dir = get_current_vibe_bin_dir(vibe_path="/usr/local/bin/vibe")
+
+    assert bin_dir == "/home/test/.local/bin"
 
 
 def test_get_latest_version_info_uses_override_metadata_url(monkeypatch, tmp_path):

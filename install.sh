@@ -104,7 +104,7 @@ is_transient_bin_dir() {
     local dir="$1"
 
     case "$dir" in
-        */.venv/bin|*/venv/bin|*/env/bin|*/.pyenv/versions/*/bin|*/.local/share/mise/installs/*/bin|*/.mise/installs/*/bin)
+        */.venv/bin|*/venv/bin|*/env/bin|*/.pyenv/shims|*/.pyenv/versions/*/bin|*/.local/share/mise/installs/*/bin|*/.mise/installs/*/bin)
             return 0
             ;;
     esac
@@ -119,6 +119,7 @@ is_transient_bin_dir() {
 
     if [ -n "${PYENV_ROOT:-}" ]; then
         case "$dir" in
+            "${PYENV_ROOT%/}"/shims) return 0 ;;
             "${PYENV_ROOT%/}"/versions/*/bin) return 0 ;;
         esac
     fi
