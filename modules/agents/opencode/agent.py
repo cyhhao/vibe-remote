@@ -133,7 +133,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             await task
         except asyncio.CancelledError:
             logger.debug(f"OpenCode task cancelled for {request.base_session_id}")
-            await self._question_handler.clear(request.base_session_id)
+            await self._question_handler.clear(request.base_session_id, request.context)
         finally:
             if self._active_requests.get(request.base_session_id) is task:
                 self._active_requests.pop(request.base_session_id, None)
@@ -262,6 +262,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 baseline_message_ids=list(baseline_message_ids),
                 ack_reaction_message_id=request.ack_reaction_message_id,
                 ack_reaction_emoji=request.ack_reaction_emoji,
+                user_id=request.context.user_id or "",
             )
 
             final_text, should_emit = await self._poll_loop.run_prompt_poll(
@@ -298,12 +299,12 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 )
 
             # Clean up answer reaction after result is sent
-            await self._question_handler.clear(request.base_session_id)
+            await self._question_handler.clear(request.base_session_id, request.context)
             self.sessions.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
             logger.info(f"OpenCode request cancelled for {request.base_session_id}")
-            await self._question_handler.clear(request.base_session_id)
+            await self._question_handler.clear(request.base_session_id, request.context)
             await self._remove_ack_reaction(request)
             if session_id:
                 self.sessions.remove_active_poll(session_id)
@@ -320,7 +321,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 logger.warning(f"Failed to abort OpenCode session after error: {abort_err}")
 
             # Clean up answer reaction on error
-            await self._question_handler.clear(request.base_session_id)
+            await self._question_handler.clear(request.base_session_id, request.context)
             await self._remove_ack_reaction(request)
             if session_id:
                 self.sessions.remove_active_poll(session_id)

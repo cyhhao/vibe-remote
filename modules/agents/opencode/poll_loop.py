@@ -342,6 +342,7 @@ class OpenCodePollLoop:
             poll_iter = 0
             while True:
                 poll_iter += 1
+                restart_poll = False
                 try:
                     messages = await server.list_messages(
                         session_id=session_id,
@@ -384,16 +385,51 @@ class OpenCodePollLoop:
 
                         if tool_name == "question" and tool_state.get("status") != "completed":
                             logger.info(
-                                "Detected question in restored poll for %s, exiting poll loop",
+                                "Detected pending question in restored poll for %s, restoring question UI",
                                 session_id,
                             )
+
+                            # Build a synthetic AgentRequest from poll_info so the
+                            # question handler can render the UI and wait for an answer
+                            # exactly like the normal poll loop does.
+                            from modules.agents.base import AgentRequest
+
+                            restored_request = AgentRequest(
+                                context=MessageContext(
+                                    user_id=poll_info.user_id or "",
+                                    channel_id=poll_info.channel_id,
+                                    thread_id=poll_info.thread_id,
+                                ),
+                                message="",
+                                settings_key=poll_info.settings_key,
+                                working_path=poll_info.working_path,
+                                base_session_id=poll_info.base_session_id,
+                                composite_session_id=poll_info.base_session_id,
+                            )
+
+                            answered = await self._question_handler.handle_question_toolcall(
+                                request=restored_request,
+                                server=server,
+                                opencode_session_id=session_id,
+                                message_id=message_id,
+                                tool_part=part,
+                                tool_input=tool_input,
+                                call_key=call_key,
+                                seen_tool_calls=seen_tool_calls,
+                            )
+                            if answered:
+                                restart_poll = True
+                                # Persist seen_tool_calls immediately so a second
+                                # restart won't re-show the same question.
+                                seen_tool_calls.add(call_key)
+                                poll_info.seen_tool_calls = list(seen_tool_calls)
+                                self._agent.sessions.update_active_poll_state(
+                                    session_id, seen_tool_calls=poll_info.seen_tool_calls
+                                )
+                                break
+                            # Answer failed or cancelled — exit gracefully
                             self._agent.sessions.remove_active_poll(session_id)
                             await _remove_ack_reaction()
-                            await self._agent.controller.emit_agent_message(
-                                context,
-                                "notify",
-                                "OpenCode is waiting for input. Please check the session.",
-                            )
                             return
 
                         seen_tool_calls.add(call_key)
@@ -423,6 +459,13 @@ class OpenCodePollLoop:
                                     tool_summary = f"`{tool_name}`: `{_relative_path(path)}`"
 
                             await self._agent.controller.emit_agent_message(context, "tool_call", tool_summary)
+
+                    if restart_poll:
+                        break
+
+                if restart_poll:
+                    logger.info("Restarting restored poll loop for %s after question answer", session_id)
+                    continue
 
                 if messages:
                     last_message = messages[-1]
@@ -487,13 +530,13 @@ class OpenCodePollLoop:
             # Clean up ack reaction after result is sent
             await _remove_ack_reaction()
             # Clean up answer reaction after result is sent
-            await self._question_handler.clear(poll_info.base_session_id)
+            await self._question_handler.clear(poll_info.base_session_id, context)
             self._agent.sessions.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
             logger.info(f"Restored OpenCode poll cancelled for {poll_info.base_session_id}")
             await _remove_ack_reaction()
-            await self._question_handler.clear(poll_info.base_session_id)
+            await self._question_handler.clear(poll_info.base_session_id, context)
             self._agent.sessions.remove_active_poll(session_id)
             raise
         except Exception as e:
