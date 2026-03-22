@@ -3,6 +3,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -75,6 +76,7 @@ def get_working_dir() -> Path:
 
 ROOT_DIR = get_project_root()  # For backward compatibility
 MAIN_PATH = get_service_main_path()
+_SERVICE_LOCK = threading.Lock()
 
 
 def ensure_dirs():
@@ -197,13 +199,24 @@ def render_status():
 
 
 def start_service():
-    main_path = get_service_main_path()
-    return spawn_background(
-        [sys.executable, str(main_path)],
-        paths.get_runtime_pid_path(),
-        "service_stdout.log",
-        "service_stderr.log",
-    )
+    with _SERVICE_LOCK:
+        pid_path = paths.get_runtime_pid_path()
+        if pid_path.exists():
+            try:
+                existing_pid = int(pid_path.read_text(encoding="utf-8").strip())
+            except Exception:
+                existing_pid = 0
+            if existing_pid and pid_alive(existing_pid):
+                return existing_pid
+            pid_path.unlink(missing_ok=True)
+
+        main_path = get_service_main_path()
+        return spawn_background(
+            [sys.executable, str(main_path)],
+            pid_path,
+            "service_stdout.log",
+            "service_stderr.log",
+        )
 
 
 def start_ui(host, port):
@@ -217,7 +230,8 @@ def start_ui(host, port):
 
 
 def stop_service():
-    return stop_process(paths.get_runtime_pid_path())
+    with _SERVICE_LOCK:
+        return stop_process(paths.get_runtime_pid_path())
 
 
 def stop_ui():
