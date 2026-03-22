@@ -146,7 +146,10 @@ class ConsolidatedMessageDispatcher:
 
         if canonical_type == "notify":
             target_context = self._get_target_context(context)
-            await im_client.send_message(target_context, text, parse_mode=parse_mode)
+            try:
+                await im_client.send_message(target_context, text, parse_mode=parse_mode)
+            except Exception as err:
+                logger.error("Failed to send notify message: %s", err)
             return
 
         if canonical_type == "result":
@@ -163,18 +166,31 @@ class ConsolidatedMessageDispatcher:
 
             if len(display_text) <= self._get_result_max_chars():
                 if enhanced and enhanced.buttons and self._supports_quick_replies():
-                    await self._send_with_quick_replies(
-                        im_client,
-                        target_context,
-                        display_text,
-                        enhanced.buttons,
-                        parse_mode,
-                    )
+                    try:
+                        await self._send_with_quick_replies(
+                            im_client,
+                            target_context,
+                            display_text,
+                            enhanced.buttons,
+                            parse_mode,
+                        )
+                    except Exception as err:
+                        logger.warning("Failed to send result with quick replies, falling back: %s", err)
+                        try:
+                            await im_client.send_message(target_context, display_text, parse_mode=parse_mode)
+                        except Exception as fallback_err:
+                            logger.error("Failed to send fallback result message: %s", fallback_err)
                 else:
-                    await im_client.send_message(target_context, display_text, parse_mode=parse_mode)
+                    try:
+                        await im_client.send_message(target_context, display_text, parse_mode=parse_mode)
+                    except Exception as err:
+                        logger.error("Failed to send result message: %s", err)
             else:
                 summary = self._build_result_summary(display_text, self._get_result_max_chars())
-                await im_client.send_message(target_context, summary, parse_mode=parse_mode)
+                try:
+                    await im_client.send_message(target_context, summary, parse_mode=parse_mode)
+                except Exception as err:
+                    logger.error("Failed to send result summary: %s", err)
 
                 if self.controller.config.platform in {"slack", "discord", "lark"} and hasattr(
                     im_client, "upload_markdown"
