@@ -199,18 +199,14 @@ class ClaudeQuestionHandler:
             return False
 
         # Update UI to show selection
-        await self._ui_handler.update_prompt_after_answer(
-            request, pending, answers_payload
-        )
+        await self._ui_handler.update_prompt_after_answer(request, pending)
 
         # Build answer text for Claude
         answer_text = self._build_answer_text(answers_payload, pending)
 
         # Submit tool result to Claude
         try:
-            await self._submit_tool_result(
-                client, composite_session_id, tool_use_id, answer_text
-            )
+            await self._submit_tool_result(client, composite_session_id, tool_use_id, answer_text)
         except Exception as err:
             logger.error(f"Failed to submit answer to Claude: {err}", exc_info=True)
             await self._controller.emit_agent_message(
@@ -219,6 +215,8 @@ class ClaudeQuestionHandler:
                 f"Failed to submit answer to Claude: {err}. Please retry.",
             )
             return False
+
+        await self._ui_handler.send_answer_receipt(request, answers_payload)
 
         # Add reaction to indicate answer received
         await self._ui_handler.add_answer_reaction(request, pending)
@@ -286,9 +284,7 @@ class ClaudeQuestionHandler:
 
         return questions
 
-    def _parse_answer(
-        self, message: str, pending: PendingQuestion
-    ) -> Optional[List[List[str]]]:
+    def _parse_answer(self, message: str, pending: PendingQuestion) -> Optional[List[List[str]]]:
         """Parse answer from callback data or user message.
 
         Returns answers_payload in format [[answer1], [answer2], ...]
@@ -333,9 +329,7 @@ class ClaudeQuestionHandler:
 
         return None
 
-    def _build_answer_text(
-        self, answers_payload: List[List[str]], pending: PendingQuestion
-    ) -> str:
+    def _build_answer_text(self, answers_payload: List[List[str]], pending: PendingQuestion) -> str:
         """Build answer text to send back to Claude.
 
         Format: "User has answered your questions: Q1=answer1, Q2=answer2"
@@ -393,9 +387,7 @@ class ClaudeQuestionHandler:
         else:
             raise RuntimeError("Claude SDK client transport not available")
 
-    async def _on_timeout(
-        self, request: AgentRequest, pending: PendingQuestion
-    ) -> None:
+    async def _on_timeout(self, request: AgentRequest, pending: PendingQuestion) -> None:
         """Handle timeout when user doesn't answer."""
         # Clean up our state
         self._pending_tool_use_ids.pop(request.base_session_id, None)
