@@ -312,15 +312,24 @@ export const UserList: React.FC = () => {
   const [claudeReasoningOptions, setClaudeReasoningOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [codexModels, setCodexModels] = useState<string[]>([]);
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
+  const [selectedPlatform, setSelectedPlatform] = useState<string>('slack');
 
   useEffect(() => {
-    api.getConfig().then(setConfig);
-    loadUsers();
+    api.getConfig().then((loadedConfig) => {
+      setConfig(loadedConfig);
+      const enabled = getEnabledPlatforms(loadedConfig);
+      setSelectedPlatform(enabled[0] || 'slack');
+    });
   }, []);
 
-  const loadUsers = async () => {
+  useEffect(() => {
+    if (!selectedPlatform) return;
+    loadUsers(selectedPlatform);
+  }, [selectedPlatform]);
+
+  const loadUsers = async (platform: string) => {
     try {
-      const result = await api.getUsers();
+      const result = await api.getUsers(platform);
       if (result.ok) setUsers(result.users || {});
     } catch (e) {
       console.error('Failed to load users:', e);
@@ -372,7 +381,7 @@ export const UserList: React.FC = () => {
   const persistUsers = async (next: Record<string, UserConfig>) => {
     setLoading(true);
     try {
-      await api.saveUsers({ users: next });
+      await api.saveUsers({ users: next }, selectedPlatform);
       showToast(t('userList.settingsSaved'));
     } catch {
       showToast(t('userList.settingsSaveFailed'), 'error');
@@ -399,10 +408,10 @@ export const UserList: React.FC = () => {
       if (!confirm(t('userList.lastAdminDemoteWarning'))) return;
     }
     try {
-      const result = await api.toggleAdmin(userId, isAdmin);
+      const result = await api.toggleAdmin(userId, isAdmin, selectedPlatform);
       if (result.ok) {
         showToast(t('userList.adminToggled'));
-        loadUsers();
+        loadUsers(selectedPlatform);
       } else {
         showToast(result.error || t('userList.cannotRemoveLastAdmin'), 'error');
       }
@@ -417,10 +426,10 @@ export const UserList: React.FC = () => {
     const warningKey = current?.is_admin && currentAdminCount <= 1 ? 'userList.lastAdminRemoveWarning' : 'userList.removeConfirm';
     if (!confirm(t(warningKey))) return;
     try {
-      const result = await api.removeUser(userId);
+      const result = await api.removeUser(userId, selectedPlatform);
       if (result.ok) {
         showToast(t('userList.userRemoved'));
-        loadUsers();
+        loadUsers(selectedPlatform);
       } else {
         showToast(result.error || '', 'error');
       }
@@ -492,7 +501,22 @@ export const UserList: React.FC = () => {
         </div>
       </div>
 
-      {enabledPlatforms.every((platform) => platform === 'wechat') ? (
+      <div className="mb-4 flex flex-wrap gap-2">
+        {enabledPlatforms.map((platform) => (
+          <button
+            key={platform}
+            onClick={() => setSelectedPlatform(platform)}
+            className={clsx(
+              'px-3 py-1.5 rounded-full text-sm border transition-colors',
+              selectedPlatform === platform ? 'bg-accent text-white border-accent' : 'bg-panel text-text border-border hover:border-accent/60'
+            )}
+          >
+            {t(`platform.${platform}.title`)}
+          </button>
+        ))}
+      </div>
+
+      {selectedPlatform === 'wechat' ? (
         <div className="mb-6 bg-panel border border-border rounded-xl p-4 shadow-sm">
           <p className="text-sm text-muted">{t('wechat.userBound')}</p>
         </div>

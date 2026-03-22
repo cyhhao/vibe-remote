@@ -569,7 +569,7 @@ def browse_directory():
 def users_get():
     from vibe import api
 
-    return jsonify(api.get_users())
+    return jsonify(api.get_users(request.args.get("platform") or None))
 
 
 @app.route("/api/users", methods=["POST"])
@@ -585,14 +585,14 @@ def users_toggle_admin(user_id):
     from vibe import api
 
     payload = request.json or {}
-    return jsonify(api.toggle_admin(user_id, payload.get("is_admin", False)))
+    return jsonify(api.toggle_admin(user_id, payload.get("is_admin", False), payload.get("platform") or None))
 
 
 @app.route("/api/users/<user_id>", methods=["DELETE"])
 def users_delete(user_id):
     from vibe import api
 
-    result = api.remove_user(user_id)
+    result = api.remove_user(user_id, request.args.get("platform") or None)
     if not result.get("ok"):
         return jsonify(result), 400
     return jsonify(result)
