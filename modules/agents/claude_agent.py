@@ -136,8 +136,20 @@ class ClaudeAgent(BaseAgent):
                 logger.warning(f"Error closing Claude session {session_key}: {e}")
             finally:
                 self.claude_sessions.pop(session_key, None)
-                # Pending reactions are cleaned up by the receiver's
-                # CancelledError / Exception handlers when it terminates.
+                receiver_task = self.receiver_tasks.pop(session_key, None)
+                if receiver_task is not None:
+                    receiver_task.cancel()
+                    try:
+                        await receiver_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as task_err:
+                        logger.warning(f"Error stopping Claude receiver {session_key}: {task_err}")
+
+                self._last_assistant_text.pop(session_key, None)
+                self._pending_assistant_message.pop(session_key, None)
+                self._pending_reactions.pop(session_key, None)
+                self._pending_requests.pop(session_key, None)
 
         # Legacy session manager cleanup (best-effort)
         await self.session_manager.clear_session(settings_key)

@@ -64,6 +64,11 @@ def _is_session_expired_code(code: Any) -> bool:
     return str(code) == str(_SESSION_EXPIRED_ERRCODE)
 
 
+def _get_updates_error_code(resp: Optional[Dict[str, Any]]) -> Any:
+    code = _get_wechat_error_code(resp)
+    return code if code not in (None, 0) else None
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -1072,6 +1077,9 @@ class WeChatBot(BaseIMClient):
 
     async def _poll_loop(self) -> None:
         """Main message receiving loop via HTTP long-poll."""
+        if self._stop_event is None:
+            return
+
         consecutive_failures = 0
 
         while not self._stop_event.is_set():
@@ -1084,14 +1092,14 @@ class WeChatBot(BaseIMClient):
                     proxy=self.config.proxy_url,
                 )
 
-                ret = resp.get("ret", 0)
-                if ret != 0:
-                    errcode = resp.get("errcode", ret)
+                errcode = _get_updates_error_code(resp)
+                if errcode is not None:
+                    ret = resp.get("ret", 0)
                     logger.warning(
                         "getUpdates error: ret=%s errcode=%s msg=%s",
                         ret,
                         errcode,
-                        resp.get("msg", ""),
+                        resp.get("errmsg") or resp.get("msg", ""),
                     )
 
                     # Handle session expired
@@ -1099,7 +1107,10 @@ class WeChatBot(BaseIMClient):
                         self._mark_session_expired(errcode)
 
                     consecutive_failures += 1
-                    if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    if _is_session_expired_code(errcode):
+                        await asyncio.sleep(_LONG_RETRY_SECONDS)
+                        consecutive_failures = 0
+                    elif consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
                         logger.warning(
                             "Multiple consecutive poll failures (%d); backing off to %ds",
                             consecutive_failures,

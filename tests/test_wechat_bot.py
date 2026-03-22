@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.auth import AuthResult
 from modules.im import MessageContext
-from modules.im.wechat import WeChatBot, WeChatConfig
+from modules.im.wechat import WeChatBot, WeChatConfig, _get_updates_error_code
 
 
 class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
@@ -45,6 +45,10 @@ class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(WeChatBot._normalize_poll_timeout("70000"), 60000)
         self.assertEqual(WeChatBot._normalize_poll_timeout("1000"), 5000)
         self.assertEqual(WeChatBot._normalize_poll_timeout("abc"), 35000)
+
+    def test_get_updates_error_code_prefers_errcode(self):
+        self.assertEqual(_get_updates_error_code({"errcode": -14, "errmsg": "session timeout"}), -14)
+        self.assertIsNone(_get_updates_error_code({"ret": 0}))
 
     async def test_get_user_info_uses_short_fixed_display_name(self):
         bot = self._make_bot()
