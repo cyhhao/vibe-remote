@@ -24,9 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 class OpenCodeQuestionHandler:
-    # Timeout for waiting on user to answer a question (30 minutes)
-    QUESTION_WAIT_TIMEOUT_SECONDS = 30 * 60
-
     def __init__(self, controller, im_client, settings_manager, get_server=None):
         self._controller = controller
         self._im_client = im_client
@@ -35,7 +32,6 @@ class OpenCodeQuestionHandler:
 
         self._pending_questions: Dict[str, PendingQuestionPayload] = {}
         self._question_answer_events: Dict[str, asyncio.Event] = {}
-        self._timed_out_questions: set[str] = set()
         # Track reactions added after question answer for cleanup
         # Maps base_session_id -> (context, message_id, emoji)
         self._answer_reactions: Dict[str, tuple] = {}
@@ -49,11 +45,31 @@ class OpenCodeQuestionHandler:
     def pop_pending(self, base_session_id: str) -> Optional[PendingQuestionPayload]:
         return self._pending_questions.pop(base_session_id, None)
 
-    async def clear(self, base_session_id: str) -> None:
-        """Clear all state for a session, including removing any answer reaction."""
-        self._pending_questions.pop(base_session_id, None)
+    async def clear(self, base_session_id: str, context=None) -> None:
+        """Clear all state for a session, including removing question UI and answer reaction.
+
+        Args:
+            base_session_id: The session identifier
+            context: Optional MessageContext for removing the inline keyboard.
+                     When provided, stale question buttons will be cleaned up.
+        """
+        pending = self._pending_questions.pop(base_session_id, None)
         self._question_answer_events.pop(base_session_id, None)
-        self._timed_out_questions.discard(base_session_id)
+
+        # Remove the inline keyboard / buttons so stale buttons can't be clicked
+        if pending and context:
+            msg_id = pending.get("prompt_message_id")
+            if msg_id and hasattr(self._im_client, "remove_inline_keyboard"):
+                try:
+                    await self._im_client.remove_inline_keyboard(
+                        context,
+                        msg_id,
+                        text=pending.get("prompt_text") or "",
+                        parse_mode="markdown",
+                    )
+                except Exception as err:
+                    logger.debug(f"Failed to remove question UI for {base_session_id}: {err}")
+
         await self._remove_answer_reaction(base_session_id)
 
     async def _remove_answer_reaction(self, base_session_id: str) -> None:
@@ -70,11 +86,7 @@ class OpenCodeQuestionHandler:
         """Get or create an event for question answer coordination.
 
         Clears the event if it already exists (important for nested questions).
-        Also clears any stale timeout marker from previous runs.
         """
-
-        # Clear stale timeout marker - this is a new question, not a late answer
-        self._timed_out_questions.discard(base_session_id)
 
         evt = self._question_answer_events.get(base_session_id)
         if evt is None:
@@ -99,83 +111,24 @@ class OpenCodeQuestionHandler:
     ) -> bool:
         """Wait for user to answer the question.
 
+        Waits indefinitely — the user can answer whenever they come back.
+        The asyncio task is suspended (no CPU cost) until the event fires.
+
         Returns:
-            True if answer was submitted successfully, False if timed out
+            True if answer was submitted successfully, False if cancelled
         """
 
         evt = self._get_or_create_question_event(request.base_session_id)
 
         try:
-            await asyncio.wait_for(evt.wait(), timeout=self.QUESTION_WAIT_TIMEOUT_SECONDS)
-
-            # If a previous timed-out run left residue, clear it.
-            if request.base_session_id in self._timed_out_questions:
-                self._timed_out_questions.discard(request.base_session_id)
-                logger.warning(
-                    "Answer received after timeout for %s, ignoring",
-                    request.base_session_id,
-                )
-                return False
-
+            await evt.wait()
             logger.info("Answer received for %s, resuming poll loop", request.base_session_id)
             return True
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Timeout waiting for answer for %s after %d seconds",
-                request.base_session_id,
-                self.QUESTION_WAIT_TIMEOUT_SECONDS,
-            )
-            self._timed_out_questions.add(request.base_session_id)
-            try:
-                await self._handle_question_timeout(request, session_id, pending_payload)
-            except Exception as e:
-                logger.error(f"Error in timeout handler: {e}", exc_info=True)
-            return False
+        except asyncio.CancelledError:
+            logger.info("Question wait cancelled for %s", request.base_session_id)
+            raise
         finally:
             self._clear_question_event(request.base_session_id, evt)
-
-    async def _handle_question_timeout(
-        self,
-        request: AgentRequest,
-        session_id: str,
-        pending: PendingQuestionPayload,
-    ) -> None:
-        """Handle timeout when user doesn't answer a question within timeout period."""
-
-        msg_id = pending.get("prompt_message_id")
-        if msg_id and hasattr(self._im_client, "remove_inline_keyboard"):
-            try:
-                await self._im_client.remove_inline_keyboard(
-                    request.context,
-                    msg_id,
-                    text=(pending.get("prompt_text") or "") + "\n\n_(Timed out waiting for answer)_",
-                    parse_mode="markdown",
-                )
-            except Exception:
-                pass
-
-        # Clear in-memory state
-        self._pending_questions.pop(request.base_session_id, None)
-
-        # Stop restoring this on restart (since we're abandoning the run)
-        sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
-        sessions.remove_active_poll(session_id)
-
-        # Abort the OpenCode session so rerun starts fresh
-        directory = pending.get("directory")
-        if self._get_server and session_id and directory:
-            try:
-                server = await self._get_server()
-                await server.abort_session(session_id, directory)
-                logger.info("Aborted OpenCode session %s after question timeout", session_id)
-            except Exception as e:
-                logger.warning(f"Failed to abort session on timeout: {e}")
-
-        await self._controller.emit_agent_message(
-            request.context,
-            "notify",
-            "Timed out waiting for your answer (30 minutes). Please re-run your request.",
-        )
 
     async def _send_answer_receipt(self, request: AgentRequest, answers_payload: List[List[str]]) -> None:
         receipt_text = build_answer_receipt_text(self._controller, answers_payload)
@@ -533,14 +486,32 @@ class OpenCodeQuestionHandler:
                     break
 
             if matched_item is None and session_items:
-                matched_item = session_items[0]
-                logger.warning(
-                    "Question match for session %s: no callID/messageID match, "
-                    "falling back to first item in same session (id=%s, callID=%s)",
-                    opencode_session_id,
-                    matched_item.get("id"),
-                    (matched_item.get("tool") or {}).get("callID"),
-                )
+                # Only fallback to the first item if we cannot verify staleness.
+                # If both the current tool call and the listed item carry
+                # callIDs and they differ, the listed item is stale (e.g. a
+                # leftover from a pre-timeout question) — skip it.
+                our_call_id = tool_part.get("callID")
+                first_item = session_items[0]
+                first_call_id = (first_item.get("tool") or {}).get("callID")
+
+                if our_call_id and first_call_id and our_call_id != first_call_id:
+                    logger.warning(
+                        "Question match for session %s: callID mismatch, "
+                        "skipping stale fallback (expected=%s, found=%s, question_id=%s)",
+                        opencode_session_id,
+                        our_call_id,
+                        first_call_id,
+                        first_item.get("id"),
+                    )
+                else:
+                    matched_item = first_item
+                    logger.warning(
+                        "Question match for session %s: no callID/messageID match, "
+                        "falling back to first item in same session (id=%s, callID=%s)",
+                        opencode_session_id,
+                        matched_item.get("id"),
+                        (matched_item.get("tool") or {}).get("callID"),
+                    )
 
             # Cross-session fallback by callID — only if exactly one item
             # matches the callID across all sessions (callID is unique per

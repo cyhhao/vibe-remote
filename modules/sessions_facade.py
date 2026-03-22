@@ -171,6 +171,7 @@ class SessionsFacade:
         baseline_message_ids: List[str],
         ack_reaction_message_id: Optional[str] = None,
         ack_reaction_emoji: Optional[str] = None,
+        user_id: str = "",
     ) -> None:
         poll_info = ActivePollInfo(
             opencode_session_id=opencode_session_id,
@@ -185,6 +186,7 @@ class SessionsFacade:
             started_at=time.time(),
             ack_reaction_message_id=ack_reaction_message_id,
             ack_reaction_emoji=ack_reaction_emoji,
+            user_id=user_id,
         )
         self.sessions_store.add_active_poll(poll_info)
         logger.debug("Added active poll: session=%s, thread=%s", opencode_session_id, thread_id)

@@ -26,6 +26,8 @@ class ActivePollInfo:
     # Ack reaction info for cleanup on restore
     ack_reaction_message_id: Optional[str] = None
     ack_reaction_emoji: Optional[str] = None
+    # User identity for restoring question UI context
+    user_id: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -41,6 +43,7 @@ class ActivePollInfo:
             "started_at": self.started_at,
             "ack_reaction_message_id": self.ack_reaction_message_id,
             "ack_reaction_emoji": self.ack_reaction_emoji,
+            "user_id": self.user_id,
         }
 
     @classmethod
@@ -58,6 +61,7 @@ class ActivePollInfo:
             started_at=data.get("started_at", 0.0),
             ack_reaction_message_id=data.get("ack_reaction_message_id"),
             ack_reaction_emoji=data.get("ack_reaction_emoji"),
+            user_id=data.get("user_id", ""),
         )
 
 

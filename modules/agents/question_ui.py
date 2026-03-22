@@ -109,13 +109,9 @@ class QuestionUIHandler:
     This class handles:
     - Rendering question prompts with buttons or modal triggers
     - Waiting for user answers via asyncio.Event
-    - Timeout handling and cleanup
 
     Agent-specific logic should remain in agent handlers.
     """
-
-    # Timeout for waiting on user to answer a question (30 minutes)
-    QUESTION_WAIT_TIMEOUT_SECONDS = 30 * 60
 
     def __init__(
         self,
@@ -139,7 +135,6 @@ class QuestionUIHandler:
 
         self._pending_questions: Dict[str, PendingQuestion] = {}
         self._question_answer_events: Dict[str, asyncio.Event] = {}
-        self._timed_out_questions: set[str] = set()
         # Track reactions added after question answer for cleanup
         # Maps base_session_id -> (context, message_id, emoji)
         self._answer_reactions: Dict[str, tuple] = {}
@@ -161,7 +156,6 @@ class QuestionUIHandler:
         """Clear all state for a session, including removing any answer reaction."""
         self._pending_questions.pop(base_session_id, None)
         self._question_answer_events.pop(base_session_id, None)
-        self._timed_out_questions.discard(base_session_id)
         await self._remove_answer_reaction(base_session_id)
 
     async def _remove_answer_reaction(self, base_session_id: str) -> None:
@@ -182,11 +176,7 @@ class QuestionUIHandler:
         """Get or create an event for question answer coordination.
 
         Clears the event if it already exists (important for nested questions).
-        Also clears any stale timeout marker from previous runs.
         """
-        # Clear stale timeout marker - this is a new question, not a late answer
-        self._timed_out_questions.discard(base_session_id)
-
         evt = self._question_answer_events.get(base_session_id)
         if evt is None:
             evt = asyncio.Event()
@@ -217,76 +207,28 @@ class QuestionUIHandler:
     ) -> bool:
         """Wait for user to answer the question.
 
+        Waits indefinitely — the user can answer whenever they come back.
+        The asyncio task is suspended (no CPU cost) until the event fires.
+
         Args:
             request: The agent request
             pending: Pending question state
-            on_timeout: Optional callback when timeout occurs
+            on_timeout: Unused, kept for API compatibility
 
         Returns:
-            True if answer was received, False if timed out
+            True if answer was received, False if cancelled
         """
         evt = self._get_or_create_question_event(request.base_session_id)
 
         try:
-            await asyncio.wait_for(evt.wait(), timeout=self.QUESTION_WAIT_TIMEOUT_SECONDS)
-
-            # If a previous timed-out run left residue, clear it.
-            if request.base_session_id in self._timed_out_questions:
-                self._timed_out_questions.discard(request.base_session_id)
-                logger.warning(
-                    "Answer received after timeout for %s, ignoring",
-                    request.base_session_id,
-                )
-                return False
-
+            await evt.wait()
             logger.info("Answer received for %s, resuming", request.base_session_id)
             return True
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Timeout waiting for answer for %s after %d seconds",
-                request.base_session_id,
-                self.QUESTION_WAIT_TIMEOUT_SECONDS,
-            )
-            self._timed_out_questions.add(request.base_session_id)
-            try:
-                await self._handle_timeout(request, pending, on_timeout)
-            except Exception as e:
-                logger.error(f"Error in timeout handler: {e}", exc_info=True)
-            return False
+        except asyncio.CancelledError:
+            logger.info("Question wait cancelled for %s", request.base_session_id)
+            raise
         finally:
             self._clear_question_event(request.base_session_id, evt)
-
-    async def _handle_timeout(
-        self,
-        request: AgentRequest,
-        pending: PendingQuestion,
-        on_timeout: Optional[Callable[[AgentRequest, PendingQuestion], Coroutine]] = None,
-    ) -> None:
-        """Handle timeout when user doesn't answer a question within timeout period."""
-        msg_id = pending.prompt_message_id
-        if msg_id and hasattr(self._im_client, "remove_inline_keyboard"):
-            try:
-                await self._im_client.remove_inline_keyboard(
-                    request.context,
-                    msg_id,
-                    text=(pending.prompt_text or "") + "\n\n_(Timed out waiting for answer)_",
-                    parse_mode="markdown",
-                )
-            except Exception:
-                pass
-
-        # Clear in-memory state
-        self._pending_questions.pop(request.base_session_id, None)
-
-        # Call agent-specific timeout handler
-        if on_timeout:
-            await on_timeout(request, pending)
-
-        await self._controller.emit_agent_message(
-            request.context,
-            "notify",
-            "Timed out waiting for your answer (30 minutes). Please re-run your request.",
-        )
 
     # -------------------------------------------------------------------------
     # UI Rendering
