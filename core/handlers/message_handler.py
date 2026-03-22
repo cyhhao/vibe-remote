@@ -30,27 +30,36 @@ class MessageHandler(BaseHandler):
     def _get_target_context(self, context: MessageContext) -> MessageContext:
         """Get target context for sending messages"""
         # For Slack, use thread for replies if enabled
-        if self.im_client.should_use_thread_for_reply() and context.thread_id:
+        if self._get_im_client(context).should_use_thread_for_reply() and context.thread_id:
             return MessageContext(
                 user_id=context.user_id,
                 channel_id=context.channel_id,
+                platform=context.platform,
                 thread_id=context.thread_id,
                 message_id=context.message_id,
                 platform_specific=context.platform_specific,
             )
         return context
 
-    def _should_use_typing_ack(self) -> bool:
-        platform = getattr(self.config, "platform", "")
+    def _get_context_platform(self, context: MessageContext) -> str:
+        return (
+            context.platform
+            or (context.platform_specific or {}).get("platform")
+            or getattr(self.config, "platform", "")
+        )
+
+    def _should_use_typing_ack(self, context: MessageContext) -> bool:
+        platform = self._get_context_platform(context)
         if platform == "wechat":
             return True
         return getattr(self.config, "ack_mode", "reaction") == "typing"
 
     async def _typing_keepalive_loop(self, context: MessageContext) -> None:
+        im_client = self._get_im_client(context)
         try:
             while True:
                 await asyncio.sleep(5)
-                ok = await self.im_client.send_typing_indicator(context)
+                ok = await im_client.send_typing_indicator(context)
                 if not ok:
                     logger.debug("Typing keepalive not applied for %s", context.user_id)
         except asyncio.CancelledError:
@@ -59,15 +68,16 @@ class MessageHandler(BaseHandler):
     async def _start_processing_indicator(
         self, context: MessageContext
     ) -> Tuple[Optional[str], Optional[str], bool, Optional[asyncio.Task]]:
-        if self._should_use_typing_ack():
+        im_client = self._get_im_client(context)
+        if self._should_use_typing_ack(context):
             try:
-                ok = await self.im_client.send_typing_indicator(context)
+                ok = await im_client.send_typing_indicator(context)
                 if ok:
                     return None, None, True, asyncio.create_task(self._typing_keepalive_loop(context))
                 logger.info("Typing indicator not applied (platform returned False)")
             except Exception as ack_err:
                 logger.debug(f"Failed to send typing ack: {ack_err}")
-            if getattr(self.config, "platform", "") == "wechat":
+            if self._get_context_platform(context) == "wechat":
                 return None, None, False, None
 
         ack_reaction_message_id = None
@@ -76,7 +86,7 @@ class MessageHandler(BaseHandler):
             if context.message_id:
                 ack_reaction_message_id = context.message_id
                 ack_reaction_emoji = ":eyes:"
-                ok = await self.im_client.add_reaction(context, ack_reaction_message_id, ack_reaction_emoji)
+                ok = await im_client.add_reaction(context, ack_reaction_message_id, ack_reaction_emoji)
                 if not ok:
                     logger.info("Ack reaction not applied (platform returned False)")
         except Exception as ack_err:
@@ -206,12 +216,12 @@ class MessageHandler(BaseHandler):
 
             ack_message_id = None
             ack_mode = getattr(self.config, "ack_mode", "reaction")
-            effective_ack_mode = "typing" if getattr(self.config, "platform", "") == "wechat" else ack_mode
+            effective_ack_mode = "typing" if self._get_context_platform(context) == "wechat" else ack_mode
             if effective_ack_mode == "message":
                 ack_context = self._get_target_context(context)
                 ack_text = self._get_ack_text(agent_name)
                 try:
-                    ack_message_id = await self.im_client.send_message(ack_context, ack_text)
+                    ack_message_id = await self._get_im_client(ack_context).send_message(ack_context, ack_text)
                 except Exception as ack_err:
                     logger.debug(f"Failed to send ack message: {ack_err}")
             else:
@@ -225,7 +235,7 @@ class MessageHandler(BaseHandler):
             if subagent_name and context.message_id:
                 try:
                     reaction = ":robot_face:"
-                    await self.im_client.add_reaction(
+                    await self._get_im_client(context).add_reaction(
                         context,
                         context.message_id,
                         reaction,
@@ -294,7 +304,9 @@ class MessageHandler(BaseHandler):
                         ack_reaction_message_id  # type: ignore[possibly-undefined]
                         and ack_reaction_emoji  # type: ignore[possibly-undefined]
                     ):
-                        await self.im_client.remove_reaction(context, ack_reaction_message_id, ack_reaction_emoji)
+                        await self._get_im_client(context).remove_reaction(
+                            context, ack_reaction_message_id, ack_reaction_emoji
+                        )
                     if typing_indicator_task:  # type: ignore[possibly-undefined]
                         typing_indicator_task.cancel()
                         try:
@@ -302,10 +314,10 @@ class MessageHandler(BaseHandler):
                         except asyncio.CancelledError:
                             pass
                     if typing_indicator_active:  # type: ignore[possibly-undefined]
-                        await self.im_client.clear_typing_indicator(context)
+                        await self._get_im_client(context).clear_typing_indicator(context)
             except Exception as cleanup_err:
                 logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
-            await self.im_client.send_message(
+            await self._get_im_client(context).send_message(
                 context,
                 self.formatter.format_error(self._t("error.processMessageFailed", error=str(e))),
             )

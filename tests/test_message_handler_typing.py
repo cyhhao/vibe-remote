@@ -192,6 +192,25 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.ack_reaction_emoji, ":eyes:")
         self.assertEqual(controller.im_client.reactions, [("C1", "m1", ":eyes:")])
 
+    async def test_wechat_context_forces_typing_even_when_primary_platform_is_slack(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="wx-user",
+            channel_id="wx-chat",
+            message_id="m1",
+            platform="wechat",
+            platform_specific={"platform": "wechat"},
+        )
+
+        await handler.handle_user_message(context, "hello")
+
+        _, request = controller.agent_service.requests[0]
+        self.assertTrue(request.typing_indicator_active)
+        self.assertEqual(controller.im_client.reactions, [])
+        self.assertGreaterEqual(len(controller.im_client.typing_calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
