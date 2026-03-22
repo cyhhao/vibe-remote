@@ -24,7 +24,9 @@ const AuthGuard = ({ children }: { children: any }) => {
                 ? !!config?.discord?.bot_token
                 : platform === 'lark'
                   ? !!(config?.lark?.app_id && config?.lark?.app_secret)
-                  : !!config?.slack?.bot_token;
+                  : platform === 'wechat'
+                    ? !!config?.wechat?.bot_token
+                    : !!config?.slack?.bot_token;
             if (!config || !config.mode || !hasToken) {
                 setNeedsSetup(true);
             }

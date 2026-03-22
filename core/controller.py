@@ -81,6 +81,10 @@ class Controller:
             from modules.im.formatters.feishu_formatter import FeishuFormatter
 
             formatter = FeishuFormatter()
+        elif self.config.platform == "wechat":
+            from modules.im.formatters.wechat_formatter import WeChatFormatter
+
+            formatter = WeChatFormatter()
         else:
             formatter = SlackFormatter()
 
@@ -122,6 +126,13 @@ class Controller:
                 self.im_client.set_settings_manager(self.settings_manager)
                 self.im_client.set_controller(self)
                 logger.info("Injected settings_manager and controller into FeishuBot")
+        elif self.config.platform == "wechat":
+            from modules.im.wechat import WeChatBot
+
+            if isinstance(self.im_client, WeChatBot):
+                self.im_client.set_settings_manager(self.settings_manager)
+                self.im_client.set_controller(self)
+                logger.info("Injected settings_manager and controller into WeChatBot")
 
     def _get_lang(self) -> str:
         self._refresh_config_from_disk()
@@ -162,6 +173,8 @@ class Controller:
                         im_cfg.require_mention = v2_config.slack.require_mention
                     elif platform == "discord" and v2_config.discord:
                         im_cfg.require_mention = v2_config.discord.require_mention
+                    elif platform == "wechat" and v2_config.wechat:
+                        im_cfg.require_mention = v2_config.wechat.require_mention
 
                 self._config_mtime = mtime
         except Exception as err:

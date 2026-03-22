@@ -54,7 +54,7 @@ Usage:
   ./scripts/run_three_regression.sh --reset-all
   ./scripts/run_three_regression.sh --down
   ./scripts/run_three_regression.sh --status
-  ./scripts/run_three_regression.sh --logs [slack|discord|feishu]
+  ./scripts/run_three_regression.sh --logs [slack|discord|feishu|wechat]
   ./scripts/run_three_regression.sh --env-file /path/to/.env.three-regression
 EOF
 }
@@ -139,6 +139,7 @@ print_summary() {
     local slack_channel="${THREE_REGRESSION_SLACK_CHANNEL:-}"
     local discord_channel="${THREE_REGRESSION_DISCORD_CHANNEL:-}"
     local feishu_channel="${THREE_REGRESSION_FEISHU_CHAT_ID:-}"
+    local wechat_channel="${THREE_REGRESSION_WECHAT_CHANNEL:-}"
     local ui_host="${THREE_REGRESSION_UI_HOST:-127.0.0.1}"
 
     if [ -z "$slack_channel" ]; then
@@ -150,12 +151,16 @@ print_summary() {
     if [ -z "$feishu_channel" ]; then
         feishu_channel="(configure later in UI)"
     fi
+    if [ -z "$wechat_channel" ]; then
+        wechat_channel="(QR login required in UI)"
+    fi
 
     cat <<EOF
-Three-end regression environment is ready:
-- Slack:  http://${ui_host}:${THREE_REGRESSION_SLACK_PORT:-15131}  channel=${slack_channel}  backend=${THREE_REGRESSION_SLACK_BACKEND}
+Four-platform regression environment is ready:
+- Slack:   http://${ui_host}:${THREE_REGRESSION_SLACK_PORT:-15131}  channel=${slack_channel}  backend=${THREE_REGRESSION_SLACK_BACKEND}
 - Discord: http://${ui_host}:${THREE_REGRESSION_DISCORD_PORT:-15132}  channel=${discord_channel}  backend=${THREE_REGRESSION_DISCORD_BACKEND}
-- Feishu: http://${ui_host}:${THREE_REGRESSION_FEISHU_PORT:-15133}  channel=${feishu_channel}  backend=${THREE_REGRESSION_FEISHU_BACKEND}
+- Feishu:  http://${ui_host}:${THREE_REGRESSION_FEISHU_PORT:-15133}  channel=${feishu_channel}  backend=${THREE_REGRESSION_FEISHU_BACKEND}
+- WeChat:  http://${ui_host}:${THREE_REGRESSION_WECHAT_PORT:-15134}  channel=${wechat_channel}  backend=${THREE_REGRESSION_WECHAT_BACKEND:-opencode}
 EOF
 }
 
@@ -218,5 +223,6 @@ echo "Waiting for services to become healthy..."
 wait_for_service slack "${THREE_REGRESSION_SLACK_PORT:-15131}"
 wait_for_service discord "${THREE_REGRESSION_DISCORD_PORT:-15132}"
 wait_for_service feishu "${THREE_REGRESSION_FEISHU_PORT:-15133}"
+wait_for_service wechat "${THREE_REGRESSION_WECHAT_PORT:-15134}"
 
 print_summary

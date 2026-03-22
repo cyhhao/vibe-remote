@@ -33,6 +33,11 @@ SERVICE_DEFS = {
             "THREE_REGRESSION_FEISHU_APP_SECRET",
         ),
     },
+    "wechat": {
+        "platform": "wechat",
+        "channel_env": "THREE_REGRESSION_WECHAT_CHANNEL",
+        "required_envs": (),  # bot_token obtained via QR login, not env
+    },
 }
 
 SUPPORTED_BACKENDS = {"opencode", "claude", "codex"}
@@ -122,6 +127,7 @@ def _build_config_payload(service_name: str) -> dict:
     slack_payload = _base_slack_payload()
     discord_payload = None
     lark_payload = None
+    wechat_payload = None
 
     if service_name == "slack":
         slack_payload = {
@@ -145,6 +151,13 @@ def _build_config_payload(service_name: str) -> dict:
             "require_mention": require_mention,
             "domain": _env("THREE_REGRESSION_FEISHU_DOMAIN", "feishu"),
         }
+    elif service_name == "wechat":
+        wechat_payload = {
+            "bot_token": _env("THREE_REGRESSION_WECHAT_BOT_TOKEN"),
+            "base_url": _env("THREE_REGRESSION_WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com"),
+            "cdn_base_url": _env("THREE_REGRESSION_WECHAT_CDN_BASE_URL", "https://novac2c.cdn.weixin.qq.com/c2c"),
+            "require_mention": require_mention,
+        }
 
     return {
         "platform": service["platform"],
@@ -153,6 +166,7 @@ def _build_config_payload(service_name: str) -> dict:
         "slack": slack_payload,
         "discord": discord_payload,
         "lark": lark_payload,
+        "wechat": wechat_payload,
         "runtime": {
             "default_cwd": _service_default_cwd(service_name),
             "log_level": _env("THREE_REGRESSION_LOG_LEVEL", "INFO"),

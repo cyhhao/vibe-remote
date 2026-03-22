@@ -50,6 +50,13 @@ class IMFactory:
                 raise ValueError("Lark configuration not found")
             logger.info("Creating Lark/Feishu client")
             return FeishuBot(config.lark)
+        if platform == "wechat":
+            from .wechat import WeChatBot
+
+            if not config.wechat:
+                raise ValueError("WeChat configuration not found")
+            logger.info("Creating WeChat client")
+            return WeChatBot(config.wechat)
         raise ValueError(f"Unsupported platform: {platform}")
 
     @staticmethod
@@ -59,7 +66,7 @@ class IMFactory:
         Returns:
             List of supported platform names
         """
-        return ["slack", "discord", "lark"]
+        return ["slack", "discord", "lark", "wechat"]
 
     @staticmethod
     def validate_platform_config(config) -> None:
@@ -86,5 +93,10 @@ class IMFactory:
             if config.lark is None:
                 raise ValueError("Missing configuration for platform: lark")
             config.lark.validate()
+            return
+        if platform == "wechat":
+            if config.wechat is None:
+                raise ValueError("Missing configuration for platform: wechat")
+            config.wechat.validate()
             return
         raise ValueError(f"Unsupported platform: {platform}")

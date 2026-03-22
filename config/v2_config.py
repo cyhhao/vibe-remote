@@ -74,6 +74,19 @@ class LarkConfig(BaseIMConfig):
 
 
 @dataclass
+class WeChatConfig(BaseIMConfig):
+    bot_token: str = ""
+    base_url: str = "https://ilinkai.weixin.qq.com"
+    cdn_base_url: str = "https://novac2c.cdn.weixin.qq.com/c2c"
+    proxy_url: Optional[str] = None
+    require_mention: bool = False  # unused for WeChat DM-only, kept for interface compat
+
+    def validate(self) -> None:
+        # bot_token can be empty during setup wizard (filled after QR login)
+        pass
+
+
+@dataclass
 class GatewayConfig:
     relay_url: Optional[str] = None
     workspace_token: Optional[str] = None
@@ -147,6 +160,7 @@ class V2Config:
     platform: str = "slack"
     discord: Optional[DiscordConfig] = None
     lark: Optional[LarkConfig] = None
+    wechat: Optional[WeChatConfig] = None
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
@@ -176,8 +190,8 @@ class V2Config:
             raise ValueError("Config 'mode' must be 'self_host' or 'saas'")
 
         platform = payload.get("platform") or "slack"
-        if platform not in {"slack", "discord", "lark"}:
-            raise ValueError("Config 'platform' must be 'slack', 'discord', or 'lark'")
+        if platform not in {"slack", "discord", "lark", "wechat"}:
+            raise ValueError("Config 'platform' must be 'slack', 'discord', 'lark', or 'wechat'")
 
         slack_payload = payload.get("slack") or {}
         if not isinstance(slack_payload, dict):
@@ -209,6 +223,16 @@ class V2Config:
             lark.validate()
         if platform == "lark" and lark is None:
             raise ValueError("Config 'lark' must be provided when platform is lark")
+
+        wechat_payload = payload.get("wechat")
+        if wechat_payload is not None and not isinstance(wechat_payload, dict):
+            raise ValueError("Config 'wechat' must be an object")
+        wechat = None
+        if wechat_payload is not None:
+            wechat = WeChatConfig(**_filter_dataclass_fields(WeChatConfig, wechat_payload))
+            wechat.validate()
+        if platform == "wechat" and wechat is None:
+            raise ValueError("Config 'wechat' must be provided when platform is wechat")
 
         gateway_payload = payload.get("gateway")
         if gateway_payload is not None and not isinstance(gateway_payload, dict):
@@ -286,6 +310,7 @@ class V2Config:
             slack=slack,
             discord=discord,
             lark=lark,
+            wechat=wechat,
             runtime=runtime,
             agents=agents,
             gateway=gateway,
@@ -308,6 +333,7 @@ class V2Config:
             "slack": self.slack.__dict__,
             "discord": self.discord.__dict__ if self.discord else None,
             "lark": self.lark.__dict__ if self.lark else None,
+            "wechat": self.wechat.__dict__ if self.wechat else None,
             "runtime": {
                 "default_cwd": self.runtime.default_cwd,
                 "log_level": self.runtime.log_level,
