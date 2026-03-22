@@ -348,7 +348,14 @@ class SessionHandler(BaseHandler):
             )
             base_session_id = self.get_base_session_id(mapping_context)
 
-            self.sessions.set_agent_session_mapping(settings_key, agent, base_session_id, session_id)
+            # OpenCode session mappings use composite keys that include
+            # working_path so that cwd changes create new sessions.
+            mapping_key = base_session_id
+            if agent == "opencode":
+                working_path = self.get_working_path(mapping_context)
+                mapping_key = f"{base_session_id}:{working_path}"
+
+            self.sessions.set_agent_session_mapping(settings_key, agent, mapping_key, session_id)
             self.sessions.mark_thread_active(user_id, context.channel_id, mapped_thread)
         except Exception as e:
             logger.error(f"Error resuming session: {e}", exc_info=True)
