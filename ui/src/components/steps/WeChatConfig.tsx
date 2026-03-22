@@ -253,6 +253,11 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
                 <Wifi size={16} />
                 {t('wechatConfig.connectionEstablished')}
               </div>
+
+              <div className="w-full rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-left">
+                <div className="text-sm font-semibold text-text">{t('wechatConfig.nextStepTitle')}</div>
+                <p className="mt-1 text-sm text-muted">{t('wechatConfig.nextStepDesc')}</p>
+              </div>
             </div>
           </div>
         )}

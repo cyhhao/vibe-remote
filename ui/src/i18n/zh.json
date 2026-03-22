@@ -221,6 +221,8 @@
     "connected": "微信连接成功！",
     "connectedTitle": "已连接",
     "connectionEstablished": "微信连接已建立",
+    "nextStepTitle": "下一步",
+    "nextStepDesc": "你现在可以在微信里发送 `/start` 来打开菜单。",
     "qrExpired": "二维码已过期，请重试。",
     "pollError": "检查状态时发生错误。",
     "errorTitle": "连接失败",

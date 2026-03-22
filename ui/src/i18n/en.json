@@ -221,6 +221,8 @@
     "connected": "WeChat connected successfully!",
     "connectedTitle": "Connected",
     "connectionEstablished": "WeChat connection established",
+    "nextStepTitle": "Next Step",
+    "nextStepDesc": "You can now send `/start` in WeChat to open the menu.",
     "qrExpired": "QR code expired. Please try again.",
     "pollError": "An error occurred while checking status.",
     "errorTitle": "Connection Failed",
