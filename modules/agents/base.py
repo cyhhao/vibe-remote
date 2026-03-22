@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -35,6 +36,8 @@ class AgentRequest:
     # Reaction ack: emoji added to user's message, to be removed when result is sent
     ack_reaction_message_id: Optional[str] = None
     ack_reaction_emoji: Optional[str] = None
+    typing_indicator_active: bool = False
+    typing_indicator_task: Optional[Any] = None
     # File attachments (downloaded or with URLs for download)
     files: Optional[List[FileAttachment]] = None
 
@@ -72,13 +75,33 @@ class BaseAgent(ABC):
         return max(0, int(elapsed * 1000))
 
     async def _remove_ack_reaction(self, request: AgentRequest) -> None:
-        """Remove the acknowledgement reaction from user's message.
+        """Remove the acknowledgement reaction / typing indicator.
 
         Called after sending result message or on terminal error to clean up
         the 👀 reaction.  This is the **single** implementation — subclasses
         should NOT override it.  The guard (check-then-clear) is idempotent so
         calling it more than once is harmless.
         """
+        typing_task = request.typing_indicator_task
+        if typing_task is not None:
+            typing_task.cancel()
+            try:
+                await typing_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.debug("Failed to stop typing keepalive task", exc_info=True)
+            finally:
+                request.typing_indicator_task = None
+
+        if request.typing_indicator_active:
+            try:
+                await self.im_client.clear_typing_indicator(request.context)
+            except Exception as err:
+                logger.debug(f"Failed to clear typing indicator: {err}")
+            finally:
+                request.typing_indicator_active = False
+
         if request.ack_reaction_message_id and request.ack_reaction_emoji:
             try:
                 await self.im_client.remove_reaction(

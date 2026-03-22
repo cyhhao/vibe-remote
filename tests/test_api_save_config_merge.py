@@ -95,3 +95,11 @@ def test_save_config_merges_partial_payload(monkeypatch, tmp_path):
     assert updated.discord is not None
     assert updated.discord.bot_token == "discord-token-1234567890"
     assert updated.runtime.default_cwd == "/tmp/workdir"
+
+
+def test_save_config_accepts_typing_ack_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    updated = api.save_config({**_full_config_payload(), "ack_mode": "typing"})
+
+    assert updated.ack_mode == "typing"

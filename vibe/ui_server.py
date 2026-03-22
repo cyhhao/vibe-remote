@@ -339,6 +339,80 @@ def lark_temp_ws_stop():
     return jsonify(api.lark_temp_ws_stop())
 
 
+# WeChat auth singleton
+_wechat_auth_manager = None
+
+
+def _get_wechat_auth():
+    global _wechat_auth_manager
+    if _wechat_auth_manager is None:
+        from modules.im.wechat_auth import WeChatAuthManager
+
+        _wechat_auth_manager = WeChatAuthManager()
+    return _wechat_auth_manager
+
+
+@app.route("/wechat/qr_login/start", methods=["POST"])
+def wechat_qr_login_start():
+    """Start WeChat QR code login flow."""
+    auth = _get_wechat_auth()
+    payload = request.json or {}
+    base_url = payload.get("base_url", "https://ilinkai.weixin.qq.com")
+
+    result = _run_async(auth.start_login(base_url=base_url), timeout=15.0)
+    if result.get("ok") is False:
+        return jsonify(result), 500
+    return jsonify(result)
+
+
+@app.route("/wechat/qr_login/poll", methods=["POST"])
+def wechat_qr_login_poll():
+    """Poll WeChat QR code login status."""
+    payload = request.json or {}
+    session_key = payload.get("session_key", "")
+    if not session_key:
+        return jsonify({"error": "session_key required"}), 400
+
+    auth = _get_wechat_auth()
+    result = _run_async(auth.poll_status(session_key), timeout=15.0)
+    if result.get("ok") is False:
+        return jsonify(result), 500
+
+    # If confirmed, auto-bind the WeChat user
+    if result.get("status") == "confirmed" and result.get("bot_token"):
+        user_id = result.get("user_id", "wechat_user")
+
+        # Auto-bind user
+        try:
+            from vibe import api as vibe_api
+
+            vibe_api.auto_bind_wechat_user(user_id)
+        except Exception as e:
+            logger.warning("Failed to auto-bind WeChat user: %s", e)
+
+        # Schedule service restart so the new token takes effect
+        def _restart_after_login():
+            import time
+
+            time.sleep(2)  # let the response go out first
+            try:
+                from vibe import runtime
+
+                runtime.stop_service()
+                time.sleep(1)
+                runtime.ensure_config()
+                service_pid = runtime.start_service()
+                st = runtime.read_status()
+                runtime.write_status("running", "restarted", service_pid, st.get("ui_pid"))
+                logger.info("Service restarted after WeChat QR login")
+            except Exception as exc:
+                logger.warning("Failed to restart service after QR login: %s", exc)
+
+        threading.Thread(target=_restart_after_login, daemon=True).start()
+
+    return jsonify(result)
+
+
 @app.route("/doctor", methods=["POST"])
 def doctor_post():
     from vibe.cli import _doctor

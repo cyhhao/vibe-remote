@@ -58,7 +58,7 @@ class EnhancedReply:
 # Matches markdown links with file:// URLs, including image links:
 #   [label](file:///path)
 #   ![alt](file:///path)
-_FILE_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\((file://[^)]+)\)")
+_FILE_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\((file://(?:[^()]+|\([^)]*\))+)\)")
 
 # Matches the quick-reply button block at the end of the text.
 # A horizontal rule (``---``) on its own line, followed by one or more
@@ -150,13 +150,13 @@ def _extract_buttons(text: str) -> Tuple[List[QuickReplyButton], str]:
 # System prompt for injection into agent backends
 # ---------------------------------------------------------------------------
 
-REPLY_ENHANCEMENTS_PROMPT = """\
+_FILES_PROMPT = """\
 # Vibe Remote
 
 Vibe Remote is a middleware layer that connects AI agents to IM platforms such as Slack. \
 The user is interacting with you through an IM app via Vibe Remote forwarding.
 
-You have two optional reply-enhancement capabilities:
+You have optional reply-enhancement capabilities:
 
 ## 1. Send files
 You can send a local file to the user by using a Markdown link with the `file://` protocol:
@@ -166,6 +166,9 @@ Vibe Remote will automatically send the file as an attachment.
 ### Image syntax
 If you want it sent as an image attachment rather than a regular file, use Markdown image syntax:
 Example: ![Page screenshot](file:///tmp/screenshot.jpg)
+"""
+
+_QUICK_REPLIES_PROMPT = """\
 
 ## 2. Quick-reply buttons
 At the very end of the message, add a `---` separator followed by `[button text]` to provide clickable quick replies. Example:
@@ -178,3 +181,15 @@ Rules:
 - Wrap each button in `[text]` and separate them with `|`; you may start with emoji to improve clarity
 - Use at most 2-4 buttons, each no longer than 20 characters
 """
+
+
+def build_reply_enhancements_prompt(*, include_quick_replies: bool = True) -> str:
+    """Build the reply-enhancement prompt for the current platform/backend."""
+
+    prompt = _FILES_PROMPT
+    if include_quick_replies:
+        prompt += _QUICK_REPLIES_PROMPT
+    return prompt
+
+
+REPLY_ENHANCEMENTS_PROMPT = build_reply_enhancements_prompt()

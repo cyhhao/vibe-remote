@@ -1,4 +1,4 @@
-"""Command handlers for bot commands like /start, /clear, /cwd, etc."""
+"""Command handlers for bot commands like /start, /new, /cwd, etc."""
 
 import os
 import logging
@@ -32,6 +32,38 @@ class CommandHandlers(BaseHandler):
         # For other platforms, keep original context
         return context
 
+    def _build_non_interactive_start_message(
+        self,
+        *,
+        platform_name: str,
+        agent_display_name: str,
+        user_name: str,
+        show_channel: bool,
+        channel_name: str,
+    ) -> str:
+        lines = [
+            f"{self._t('command.start.welcome')}",
+            "",
+            self._t("command.start.greeting", name=user_name),
+            self._t("command.start.platform", platform=platform_name),
+            self._t("command.start.agent", agent=agent_display_name),
+        ]
+        if show_channel:
+            lines.append(self._t("command.start.channel", channel=channel_name))
+
+        lines.extend(
+            [
+                "",
+                self._t("command.start.commandsTitle"),
+                self._t("command.start.commandStart"),
+                self._t("command.start.commandCwd"),
+                self._t("command.start.commandSetCwd"),
+                self._t("command.start.commandStop", agent=agent_display_name),
+                self._t("command.start.commandNew"),
+            ]
+        )
+        return "\n".join(line for line in lines if line)
+
     async def handle_start(self, context: MessageContext, args: str = ""):
         """Handle /start command with interactive buttons"""
         platform_name = self.config.platform.capitalize()
@@ -60,32 +92,15 @@ class CommandHandlers(BaseHandler):
 
         # For non-interactive platforms, use traditional text message
         if self.config.platform not in {"slack", "discord", "lark"}:
-            formatter = self.im_client.formatter
-
-            # Build welcome message using formatter to handle escaping properly
-            lines = [
-                formatter.format_bold(self._t("command.start.welcome")),
-                "",
-                f"Platform: {formatter.format_text(platform_name)}",
-                f"Agent: {formatter.format_text(agent_display_name)}",
-                f"User ID: {formatter.format_code_inline(context.user_id)}",
-                f"Channel/Chat ID: {formatter.format_code_inline(context.channel_id)}",
-                "",
-                formatter.format_bold("Commands:"),
-                formatter.format_text("@Vibe Remote /start - Show this message"),
-                formatter.format_text("@Vibe Remote /clear - Reset session and start fresh"),
-                formatter.format_text("@Vibe Remote /cwd - Show current working directory"),
-                formatter.format_text("@Vibe Remote /set_cwd <path> - Set working directory"),
-                formatter.format_text("@Vibe Remote /settings - Personalization settings"),
-                formatter.format_text(f"@Vibe Remote /stop - Interrupt {agent_display_name} execution"),
-                "",
-                formatter.format_bold("How it works:"),
-                formatter.format_text(f"• Send any message and it's immediately sent to {agent_display_name}"),
-                formatter.format_text("• Each chat maintains its own conversation context"),
-                formatter.format_text("• Use /clear to reset the conversation"),
-            ]
-
-            message_text = formatter.format_message(*lines)
+            user_name = self._resolve_user_display_name(user_info, self._t("command.start.userFallback"))
+            show_channel = self.config.platform != "wechat"
+            message_text = self._build_non_interactive_start_message(
+                platform_name=platform_name,
+                agent_display_name=agent_display_name,
+                user_name=user_name,
+                show_channel=show_channel,
+                channel_name=channel_info.get("name", "Unknown"),
+            )
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(channel_context, message_text)
             return
@@ -102,7 +117,7 @@ class CommandHandlers(BaseHandler):
             ],
             # Row 2: Session and Settings
             [
-                InlineButton(text=f"🔄 {self._t('button.clearSession')}", callback_data="cmd_clear"),
+                InlineButton(text=f"🆕 {self._t('button.newSession')}", callback_data="cmd_new"),
                 InlineButton(text=f"⚙️ {self._t('button.settings')}", callback_data="cmd_settings"),
             ],
             # Row 3: Resume + Agent/Model switching
@@ -130,33 +145,29 @@ class CommandHandlers(BaseHandler):
         channel_context = self._get_channel_context(context)
         await self.im_client.send_message_with_buttons(channel_context, welcome_text, keyboard)
 
-    async def handle_clear(self, context: MessageContext, args: str = ""):
-        """Handle clear command - clears all sessions across configured agents"""
+    async def handle_new(self, context: MessageContext, args: str = ""):
+        """Handle /new command - reset active session state for a fresh start."""
         try:
-            # Get the correct settings key (channel_id for Slack, not user_id)
             settings_key = self._get_settings_key(context)
-
-            cleared = await self.controller.agent_service.clear_sessions(settings_key)
-            if not cleared:
-                full_response = f"📋 {self._t('command.clear.noSessions')}"
-            else:
-                details = "\n".join(
-                    f"• {self._t('command.clear.sessionItem', agent=agent, count=count)}"
-                    for agent, count in cleared.items()
-                )
-                full_response = f"✅ {self._t('command.clear.cleared', details=details)}"
+            await self.controller.agent_service.clear_sessions(settings_key)
+            full_response = f"🆕 {self._t('command.new.started')}"
 
             channel_context = self._get_channel_context(context)
             await self.im_client.send_message(channel_context, full_response)
-            logger.info(f"Sent clear response to user {context.user_id}")
+            logger.info("Started fresh session for user %s", context.user_id)
 
         except Exception as e:
-            logger.error(f"Error clearing session: {e}", exc_info=True)
+            logger.error(f"Error starting new session: {e}", exc_info=True)
             try:
                 channel_context = self._get_channel_context(context)
                 await self.im_client.send_message(channel_context, f"❌ {self._t('error.clearSession', error=str(e))}")
             except Exception as send_error:
                 logger.error(f"Failed to send error message: {send_error}", exc_info=True)
+
+    async def handle_clear(self, context: MessageContext, args: str = ""):
+        """Backward-compatible alias for older interactive callbacks."""
+
+        await self.handle_new(context, args)
 
     async def handle_cwd(self, context: MessageContext, args: str = ""):
         """Handle cwd command - show current working directory"""

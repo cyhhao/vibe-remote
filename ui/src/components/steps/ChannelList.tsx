@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Hash, CheckSquare, Square, RefreshCw, HelpCircle, Globe, FolderOpen } from 'lucide-react';
+import { Hash, CheckSquare, Square, RefreshCw, HelpCircle, Globe, FolderOpen, MessageSquare, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { Combobox } from '../ui/combobox';
 import { DirectoryBrowser } from '../ui/directory-browser';
+import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 
 /** Input that only commits value on blur */
@@ -411,6 +412,60 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       Number(isChannelEnabled(b.id)) - Number(isChannelEnabled(a.id))
     );
   }, [channels, configs]);
+
+  const navigate = useNavigate();
+
+  // WeChat: no channels, redirect to user settings
+  if (platform === 'wechat') {
+    // In wizard mode, skip channel step entirely
+    if (!isPage) {
+      return (
+        <div className="flex flex-col h-full items-center justify-center">
+          <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center border border-accent/20 mb-6">
+            <MessageSquare size={32} />
+          </div>
+          <h2 className="text-2xl font-display font-bold text-text mb-2">{t('channelList.title')}</h2>
+          <p className="text-muted mb-8">{t('wechat.noChannels')}</p>
+          <div className="mt-auto flex justify-between w-full">
+            <button onClick={onBack} className="px-6 py-2 text-muted hover:text-text font-medium">
+              {t('common.back')}
+            </button>
+            <button
+              onClick={() => onNext && onNext({})}
+              className="px-6 py-2 bg-accent hover:bg-accent/90 text-white rounded-lg font-medium shadow-sm"
+            >
+              {t('common.continue')}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // In page mode, show notice and link to user settings
+    return (
+      <div className="max-w-5xl mx-auto flex flex-col h-full">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h2 className="text-3xl font-display font-bold">{t('channelList.title')}</h2>
+            <p className="text-muted">{t('wechat.noChannels')}</p>
+          </div>
+        </div>
+        <div className="bg-panel border border-border rounded-xl p-8 text-center shadow-sm">
+          <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center border border-accent/20 mx-auto mb-4">
+            <MessageSquare size={32} />
+          </div>
+          <p className="text-muted mb-6">{t('wechat.noChannels')}</p>
+          <button
+            onClick={() => navigate('/users')}
+            className="inline-flex items-center gap-2 px-6 py-3 bg-accent hover:bg-accent/90 text-white rounded-lg font-medium transition-colors shadow-sm"
+          >
+            <Users size={18} />
+            {t('wechat.manageUserSettings')}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

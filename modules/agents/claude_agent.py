@@ -37,6 +37,7 @@ class ClaudeAgent(BaseAgent):
         # Store reaction info per session as a queue (FIFO) for cleanup after result
         # Each entry is (reaction_message_id, emoji)
         self._pending_reactions: dict[str, list[tuple[str, str]]] = {}
+        self._pending_requests: dict[str, list[AgentRequest]] = {}
 
         # Question handler for AskUserQuestion support (disabled)
         # NOTE: Uncomment when SDK adds AskUserQuestion support
@@ -72,6 +73,7 @@ class ClaudeAgent(BaseAgent):
                 self._pending_reactions[request.composite_session_id].append(
                     (request.ack_reaction_message_id, request.ack_reaction_emoji)
                 )
+            self._pending_requests.setdefault(request.composite_session_id, []).append(request)
 
             # Prepare message with file attachment info if present
             message = self._prepare_message_with_files(request)
@@ -92,6 +94,8 @@ class ClaudeAgent(BaseAgent):
             logger.error(f"Error processing Claude message: {e}", exc_info=True)
             # Clean up the specific reaction for this request (not FIFO)
             await self._remove_specific_pending_reaction(request.composite_session_id, context, request)
+            self._remove_pending_request(request.composite_session_id, request)
+            await self._remove_ack_reaction(request)
             await self.session_handler.handle_session_error(request.composite_session_id, context, e)
         finally:
             await self._delete_ack(context, request)
@@ -132,8 +136,20 @@ class ClaudeAgent(BaseAgent):
                 logger.warning(f"Error closing Claude session {session_key}: {e}")
             finally:
                 self.claude_sessions.pop(session_key, None)
-                # Pending reactions are cleaned up by the receiver's
-                # CancelledError / Exception handlers when it terminates.
+                receiver_task = self.receiver_tasks.pop(session_key, None)
+                if receiver_task is not None:
+                    receiver_task.cancel()
+                    try:
+                        await receiver_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as task_err:
+                        logger.warning(f"Error stopping Claude receiver {session_key}: {task_err}")
+
+                self._last_assistant_text.pop(session_key, None)
+                self._pending_assistant_message.pop(session_key, None)
+                self._pending_reactions.pop(session_key, None)
+                self._pending_requests.pop(session_key, None)
 
         # Legacy session manager cleanup (best-effort)
         await self.session_manager.clear_session(settings_key)
@@ -155,7 +171,7 @@ class ClaudeAgent(BaseAgent):
                 await self.controller.emit_agent_message(
                     request.context,
                     "notify",
-                    "⚠️ This Claude session cannot be interrupted; consider /clear.",
+                    "⚠️ This Claude session cannot be interrupted; consider /new.",
                 )
                 return False
         except Exception as err:
@@ -163,7 +179,7 @@ class ClaudeAgent(BaseAgent):
             await self.controller.emit_agent_message(
                 request.context,
                 "notify",
-                "⚠️ Failed to interrupt Claude session. Please try /clear.",
+                "⚠️ Failed to interrupt Claude session. Please try /new.",
             )
             return False
 
@@ -307,16 +323,18 @@ class ClaudeAgent(BaseAgent):
                         # contains the same text as the last AssistantMessage,
                         # so sending both would duplicate the content.
 
+                        pending_request = self._pop_pending_request(composite_key)
+
                         await self.emit_result_message(
                             context,
                             result_text,
                             subtype=getattr(message, "subtype", "") or "",
                             duration_ms=getattr(message, "duration_ms", 0),
                             parse_mode="markdown",
+                            request=pending_request,
                         )
 
-                        # Remove ack reaction after result is sent
-                        await self._remove_pending_reaction(composite_key, context)
+                        self._discard_pending_reaction(composite_key)
 
                         self._last_assistant_text.pop(composite_key, None)
                         session = await self.session_manager.get_or_create_session(context.user_id, context.channel_id)
@@ -383,6 +401,34 @@ class ClaudeAgent(BaseAgent):
             except Exception as err:
                 logger.debug(f"Failed to remove reaction ack: {err}")
 
+    def _discard_pending_reaction(self, composite_key: str) -> None:
+        reactions = self._pending_reactions.get(composite_key)
+        if not reactions:
+            return
+        reactions.pop(0)
+        if not reactions:
+            self._pending_reactions.pop(composite_key, None)
+
+    def _pop_pending_request(self, composite_key: str) -> Optional[AgentRequest]:
+        requests = self._pending_requests.get(composite_key)
+        if not requests:
+            return None
+        request = requests.pop(0)
+        if not requests:
+            self._pending_requests.pop(composite_key, None)
+        return request
+
+    def _remove_pending_request(self, composite_key: str, request: AgentRequest) -> None:
+        requests = self._pending_requests.get(composite_key)
+        if not requests:
+            return
+        for index, pending_request in enumerate(requests):
+            if pending_request is request:
+                requests.pop(index)
+                break
+        if not requests:
+            self._pending_requests.pop(composite_key, None)
+
     async def _remove_specific_pending_reaction(
         self, composite_key: str, context: MessageContext, request: AgentRequest
     ) -> None:
@@ -412,12 +458,16 @@ class ClaudeAgent(BaseAgent):
     async def _clear_pending_reactions(self, composite_key: str, context: MessageContext) -> None:
         """Clear all pending reactions for a session (for error cleanup)."""
         reactions = self._pending_reactions.pop(composite_key, None)
+        requests = self._pending_requests.pop(composite_key, None)
         if reactions:
             for message_id, emoji in reactions:
                 try:
                     await self.im_client.remove_reaction(context, message_id, emoji)
                 except Exception as err:
                     logger.debug(f"Failed to remove reaction ack: {err}")
+        if requests:
+            for request in requests:
+                await self._remove_ack_reaction(request)
 
     def get_relative_path(self, abs_path: str, context: Optional[MessageContext] = None) -> str:
         """Convert absolute path to relative path from working directory."""

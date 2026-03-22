@@ -13,8 +13,10 @@ sys.path.insert(0, str(ROOT))
 
 def _load_command_handlers_class():
     agents_module = types.ModuleType("modules.agents")
-    agents_module.AgentRequest = type("AgentRequest", (), {})
-    agents_module.get_agent_display_name = lambda agent_name, fallback=None: agent_name or fallback or "Unknown"
+    setattr(agents_module, "AgentRequest", type("AgentRequest", (), {}))
+    setattr(
+        agents_module, "get_agent_display_name", lambda agent_name, fallback=None: agent_name or fallback or "Unknown"
+    )
     sys.modules["modules.agents"] = agents_module
 
     core_pkg = types.ModuleType("core")
@@ -76,9 +78,13 @@ class _StubController:
         self.sessions = self.settings_manager
         self.session_manager = object()
         self.receiver_tasks = {}
+        self.agent_service = type("AgentService", (), {"default_agent": "codex"})()
 
     def _get_settings_key(self, context: MessageContext) -> str:
         return context.user_id if context.channel_id.startswith("D") else context.channel_id
+
+    def resolve_agent_for_context(self, context: MessageContext) -> str:
+        return "codex"
 
 
 class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
@@ -105,6 +111,42 @@ class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
             controller.im_client.sent_messages,
             [("D123", "✅ 绑定成功！欢迎，Alex。你现在可以通过私信使用 Vibe Remote。")],
         )
+
+    async def test_wechat_start_message_uses_localized_compact_commands(self):
+        controller = _StubController({"display_name": "小王"})
+        setattr(controller.config, "platform", "wechat")
+        handler = CommandHandlers(controller)
+        context = MessageContext(user_id="wx-user", channel_id="wx-chat")
+
+        await handler.handle_start(context)
+
+        self.assertEqual(len(controller.im_client.sent_messages), 1)
+        _, message = controller.im_client.sent_messages[0]
+        self.assertIn("欢迎使用 Vibe Remote！", message)
+        self.assertIn("你好 小王！", message)
+        self.assertIn("/start - 显示欢迎消息", message)
+        self.assertIn("/setcwd <路径> - 设置工作目录", message)
+        self.assertIn("/new - 开启一个全新的会话", message)
+        self.assertNotIn("User ID", message)
+        self.assertNotIn("How it works", message)
+        self.assertNotIn("频道：", message)
+
+    async def test_new_command_sends_fresh_session_confirmation(self):
+        controller = _StubController({"display_name": "小王"})
+        controller.agent_service.clear_sessions = _clear_sessions  # type: ignore[attr-defined]
+        handler = CommandHandlers(controller)
+        context = MessageContext(user_id="wx-user", channel_id="wx-chat")
+
+        await handler.handle_new(context)
+
+        self.assertEqual(
+            controller.im_client.sent_messages,
+            [("wx-chat", "🆕 已开启新的会话。你下一条消息会从全新对话开始。")],
+        )
+
+
+async def _clear_sessions(_settings_key):
+    return {}
 
 
 if __name__ == "__main__":

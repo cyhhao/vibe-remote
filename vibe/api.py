@@ -240,6 +240,7 @@ def config_to_payload(config: V2Config) -> dict:
         },
         "discord": config.discord.__dict__ if config.discord else None,
         "lark": config.lark.__dict__ if config.lark else None,
+        "wechat": config.wechat.__dict__ if config.wechat else None,
         "runtime": {
             "default_cwd": config.runtime.default_cwd,
             "log_level": config.runtime.log_level,
@@ -1381,6 +1382,42 @@ def get_first_bind_code() -> dict:
     # Otherwise create a new one-time code
     bc = store.create_bind_code("one_time")
     return {"ok": True, "code": bc.code, "is_new": True}
+
+
+def auto_bind_wechat_user(user_id: str) -> dict:
+    """Auto-create a UserSettings entry for the WeChat user on QR login.
+
+    WeChat is 1:1 DM only — no channels, no bind codes needed.
+    The QR scan itself is the authentication, so we auto-bind the user
+    as admin with default settings.
+    """
+    from config.v2_settings import _now_iso
+
+    store = SettingsStore.get_instance()
+    platform = "wechat"
+
+    # Skip if already bound
+    if store.is_bound_user(user_id, platform=platform):
+        logger.info("WeChat user %s already bound, skipping auto-bind", user_id)
+        return {"ok": True, "already_bound": True}
+
+    config = load_config()
+    user = UserSettings(
+        display_name=user_id,
+        is_admin=True,
+        bound_at=_now_iso(),
+        enabled=True,
+        custom_cwd=config.runtime.default_cwd or None,
+        routing=RoutingSettings(agent_backend=config.agents.default_backend or None),
+    )
+
+    current_users = store.get_users_for_platform(platform)
+    current_users[user_id] = user
+    store.set_users_for_platform(platform, current_users)
+    store.save()
+
+    logger.info("Auto-bound WeChat user %s as admin", user_id)
+    return {"ok": True, "already_bound": False}
 
 
 # ---------------------------------------------------------------------------

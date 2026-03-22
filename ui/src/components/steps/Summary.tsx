@@ -28,6 +28,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const [requireMention, setRequireMention] = useState(
     platform === 'discord' ? (data.discord?.require_mention || false)
     : platform === 'lark' ? (data.lark?.require_mention || false)
+    : platform === 'wechat' ? (data.wechat?.require_mention || false)
     : (data.slack?.require_mention || false)
   );
   const [autoUpdate, setAutoUpdate] = useState(data.update?.auto_update ?? true);
@@ -63,6 +64,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
           ...data.lark,
           require_mention: platform === 'lark' ? requireMention : data.lark?.require_mention,
         },
+        wechat: {
+          ...data.wechat,
+          require_mention: platform === 'wechat' ? requireMention : data.wechat?.require_mention,
+        },
         update: {
           ...data.update,
           auto_update: autoUpdate,
@@ -74,6 +79,16 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
       
       // Start service
       await control('start');
+
+      // WeChat: skip bind code, auto-bind happens on QR login
+      if (platform === 'wechat') {
+        setSaving(false);
+        showToast(t('wechat.setupComplete'));
+        setTimeout(() => {
+          navigate('/dashboard');
+        }, 1000);
+        return;
+      }
 
       // Fetch first bind code (auto-generated on first access)
       try {
@@ -164,6 +179,14 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
           <>
             <Section title={t('summary.discordBotToken')} value={mask(data.discord?.bot_token || '')} />
             <Section title={t('summary.discordGuild')} value={(data.discord?.guild_allowlist || [])[0] || t('summary.notSet')} />
+          </>
+        ) : platform === 'lark' ? (
+          <>
+            <Section title={t('summary.larkAppId')} value={mask(data.lark?.app_id || '')} />
+          </>
+        ) : platform === 'wechat' ? (
+          <>
+            <Section title={t('summary.wechatBotToken')} value={mask(data.wechat?.bot_token || '')} />
           </>
         ) : (
           <>
@@ -314,6 +337,12 @@ const buildConfigPayload = (data: any) => {
       domain: data.lark?.domain || 'feishu',
       require_mention: data.lark?.require_mention || false,
     },
+    wechat: {
+      ...data.wechat,
+      bot_token: data.wechat?.bot_token || '',
+      base_url: data.wechat?.base_url || '',
+      require_mention: data.wechat?.require_mention || false,
+    },
     runtime: {
       // Preserve existing runtime config
       ...data.runtime,
@@ -360,6 +389,7 @@ const buildConfigPayload = (data: any) => {
     } : undefined,
     // Preserve ack_mode
     ack_mode: data.ack_mode,
+    show_duration: data.show_duration,
     // Preserve language
     language: data.language,
   };

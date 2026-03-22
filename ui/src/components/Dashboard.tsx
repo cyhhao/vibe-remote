@@ -352,6 +352,7 @@ export const Dashboard: React.FC = () => {
                             className="w-36 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono"
                         >
                             <option value="reaction">{t('dashboard.ackReaction')}</option>
+                            <option value="typing">{t('dashboard.ackTyping')}</option>
                             <option value="message">{t('dashboard.ackMessage')}</option>
                         </select>
                     </div>

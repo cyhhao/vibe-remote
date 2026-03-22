@@ -490,7 +490,13 @@ export const UserList: React.FC = () => {
         </div>
       </div>
 
-      <BindCodeSection />
+      {config.platform === 'wechat' ? (
+        <div className="mb-6 bg-panel border border-border rounded-xl p-4 shadow-sm">
+          <p className="text-sm text-muted">{t('wechat.userBound')}</p>
+        </div>
+      ) : (
+        <BindCodeSection />
+      )}
 
       <div className="flex-1 overflow-y-auto border border-border rounded-xl divide-y divide-border bg-panel shadow-sm">
         {userEntries.length === 0 ? (

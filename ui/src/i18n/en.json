@@ -79,6 +79,10 @@
     "lark": {
       "title": "Lark",
       "desc": "Connect to Feishu/Lark workspace for team collaboration"
+    },
+    "wechat": {
+      "title": "WeChat",
+      "desc": "Connect to WeChat personal messaging via iLink bot"
     }
   },
   "discordConfig": {
@@ -201,6 +205,28 @@
     "step5Tip": "After publishing, all configurations (permissions, events, bot capability) will take effect.",
     "step5OpenLink": "Open Version Management"
   },
+  "wechatConfig": {
+    "title": "WeChat Setup",
+    "subtitle": "Scan the QR code with your WeChat to connect.",
+    "stepStart": "Start",
+    "stepScan": "Scan",
+    "stepDone": "Done",
+    "startDescription": "Click the button below to generate a WeChat login QR code. You will scan it with your phone to connect.",
+    "startLogin": "Generate QR Code",
+    "starting": "Generating...",
+    "startFailed": "Failed to start login flow",
+    "waitingForScan": "Waiting for you to scan the QR code...",
+    "confirmOnPhone": "Scanned! Please confirm on your phone.",
+    "scanHint": "Open WeChat on your phone and scan this QR code to log in.",
+    "connected": "WeChat connected successfully!",
+    "connectedTitle": "Connected",
+    "connectionEstablished": "WeChat connection established",
+    "qrExpired": "QR code expired. Please try again.",
+    "pollError": "An error occurred while checking status.",
+    "errorTitle": "Connection Failed",
+    "retry": "Try Again",
+    "refreshQr": "Refresh QR Code"
+  },
   "slackConfig": {
     "title": "Slack Configuration",
     "saasDescription": "Authorize the official Slack app and wait for workspace binding.",
@@ -273,6 +299,7 @@
     "inviteBotHint": "Invite the bot to your channel first:\n1. Open the channel, click ⚙️ Settings → Integrations → Add apps\n2. Or type /invite @YourBotName in the channel",
     "discordInviteBotHint": "Add the bot to your guild and grant access to the channel.",
     "larkInviteBotHint": "Add the bot to a group chat: Open the group → Settings → Bots → Add Bot.",
+    "wechatInviteBotHint": "Send a message to your WeChat bot account to start a conversation.",
     "guild": "Guild",
     "guildPlaceholder": "Select a guild",
     "discordText": "Text",
@@ -318,6 +345,8 @@
     "slackBotToken": "Slack Bot Token",
     "slackAppToken": "Slack App Token",
     "discordBotToken": "Discord Bot Token",
+    "larkAppId": "Lark App ID",
+    "wechatBotToken": "WeChat Bot Token",
     "discordGuild": "Discord Guild",
     "notSet": "Not set",
     "enabledAgents": "Enabled Agents",
@@ -361,6 +390,7 @@
     "ackMode": "Ack Mode",
     "ackModeHint": "How bot acknowledges received messages",
     "ackReaction": "👀 Reaction",
+    "ackTyping": "Typing",
     "ackMessage": "Message",
     "errorRetryLimit": "Error Retry Limit",
     "errorRetryLimitHint": "Auto-retry with 'continue' when LLM stream errors occur (0 = no retry)",
@@ -434,6 +464,12 @@
     "empty": "No subdirectories",
     "showHidden": "Show hidden directories",
     "hideHidden": "Hide hidden directories"
+  },
+  "wechat": {
+    "userBound": "Your WeChat account is automatically configured as the bot owner.",
+    "noChannels": "WeChat uses direct messaging — no channel configuration needed.",
+    "setupComplete": "WeChat bot connected! Your account has been automatically configured.",
+    "manageUserSettings": "Manage User Settings"
   },
   "userList": {
     "title": "Users",

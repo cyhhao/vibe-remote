@@ -79,6 +79,10 @@
     "lark": {
       "title": "飞书",
       "desc": "连接飞书工作区，实现团队协作"
+    },
+    "wechat": {
+      "title": "微信",
+      "desc": "通过微信扫码连接微信Bot"
     }
   },
   "discordConfig": {
@@ -201,6 +205,28 @@
     "step5Tip": "发布后，所有配置（权限、事件、机器人能力）才会正式生效。",
     "step5OpenLink": "打开版本管理"
   },
+  "wechatConfig": {
+    "title": "微信设置",
+    "subtitle": "使用微信扫描二维码以连接。",
+    "stepStart": "开始",
+    "stepScan": "扫码",
+    "stepDone": "完成",
+    "startDescription": "点击下方按钮生成微信登录二维码，然后用手机扫码完成连接。",
+    "startLogin": "生成二维码",
+    "starting": "正在生成...",
+    "startFailed": "启动登录流程失败",
+    "waitingForScan": "等待扫描二维码...",
+    "confirmOnPhone": "已扫描！请在手机上确认。",
+    "scanHint": "打开手机微信，扫描此二维码登录。",
+    "connected": "微信连接成功！",
+    "connectedTitle": "已连接",
+    "connectionEstablished": "微信连接已建立",
+    "qrExpired": "二维码已过期，请重试。",
+    "pollError": "检查状态时发生错误。",
+    "errorTitle": "连接失败",
+    "retry": "重试",
+    "refreshQr": "刷新二维码"
+  },
   "slackConfig": {
     "title": "Slack 配置",
     "saasDescription": "授权官方 Slack 应用并等待工作区绑定",
@@ -273,6 +299,7 @@
     "inviteBotHint": "请先将 Bot 邀请到频道：\n1. 打开频道，点击 ⚙️ 设置 → 集成 → 添加应用\n2. 或在频道中输入 /invite @你的Bot名称",
     "discordInviteBotHint": "请确保机器人已加入服务器并具备访问频道的权限。",
     "larkInviteBotHint": "将机器人添加到群聊：打开群 → 设置 → 群机器人 → 添加机器人。",
+    "wechatInviteBotHint": "向微信机器人账号发送消息即可开始对话。",
     "guild": "服务器",
     "guildPlaceholder": "选择服务器",
     "discordText": "文本",
@@ -318,6 +345,8 @@
     "slackBotToken": "Slack Bot 令牌",
     "slackAppToken": "Slack App 令牌",
     "discordBotToken": "Discord 机器人令牌",
+    "larkAppId": "飞书 App ID",
+    "wechatBotToken": "微信 Bot Token",
     "discordGuild": "Discord 服务器",
     "notSet": "未设置",
     "enabledAgents": "已启用的 Agent",
@@ -361,6 +390,7 @@
     "ackMode": "确认模式",
     "ackModeHint": "机器人如何确认收到的消息",
     "ackReaction": "👀 表情回应",
+    "ackTyping": "Typing 指示",
     "ackMessage": "消息回复",
     "errorRetryLimit": "错误重试次数",
     "errorRetryLimitHint": "当 LLM 流式响应出错时，自动发送 'continue' 重试（0 = 不重试）",
@@ -434,6 +464,12 @@
     "empty": "没有子目录",
     "showHidden": "显示隐藏目录",
     "hideHidden": "隐藏隐藏目录"
+  },
+  "wechat": {
+    "userBound": "您的微信账号已自动配置为机器人所有者。",
+    "noChannels": "微信使用私聊模式，无需配置频道。",
+    "setupComplete": "微信机器人已连接！您的账号已自动配置。",
+    "manageUserSettings": "管理用户设置"
   },
   "userList": {
     "title": "用户",

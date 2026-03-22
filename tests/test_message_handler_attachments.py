@@ -185,6 +185,30 @@ class MessageHandlerAttachmentTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(residual_files, [])
 
+    async def test_process_file_attachments_preserves_platform_metadata(self):
+        im_client = _StubIMClient(download_result=b"img", stream_result=True)
+        handler = MessageHandler(_StubController(im_client))
+        attachment = FileAttachment(
+            name="wechat_image.jpg",
+            mimetype="image/jpeg",
+            url="encrypted-param",
+            size=123,
+        )
+        attachment.__dict__["cdn_info"] = {"encrypt_query_param": "encrypted-param", "aes_key": "abc"}
+        attachment.__dict__["wechat_item"] = {"aeskey": "00112233445566778899aabbccddeeff"}
+        context = MessageContext(user_id="U1", channel_id="C1", files=[attachment])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("config.paths.get_attachments_dir", return_value=Path(tmpdir)):
+                processed, errors = await handler._process_file_attachments(context, "/tmp/work")
+
+        self.assertIsNotNone(processed)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(im_client.stream_calls), 1)
+        file_info = im_client.stream_calls[0][0]
+        self.assertEqual(file_info["cdn_info"]["encrypt_query_param"], "encrypted-param")
+        self.assertEqual(file_info["wechat_item"]["aeskey"], "00112233445566778899aabbccddeeff")
+
     def test_append_attachment_errors_uses_error_text_without_file_paths(self):
         handler = MessageHandler(_StubController(_StubIMClient()))
 

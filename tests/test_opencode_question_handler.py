@@ -83,8 +83,9 @@ class _StubConfig:
 
 
 class _StubController:
-    def __init__(self, lang="zh"):
+    def __init__(self, lang="zh", platform="slack"):
         self.config = _StubConfig(language=lang)
+        self.config.platform = platform
         self.emitted_messages = []
         self.cleared_consolidated_ids = []
 
@@ -102,10 +103,15 @@ class _StubServer:
     def __init__(self, ok=True):
         self.ok = ok
         self.reply_calls = []
+        self.abort_calls = []
 
     async def reply_question(self, question_id, directory, answers_payload):
         self.reply_calls.append((question_id, directory, answers_payload))
         return self.ok
+
+    async def abort_session(self, session_id, directory):
+        self.abort_calls.append((session_id, directory))
+        return True
 
 
 def _build_request(message: str) -> AgentRequest:
@@ -153,6 +159,34 @@ class OpenCodeQuestionHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(im_client.sent_messages[0][2], "回复：Beta")
         self.assertEqual(controller.cleared_consolidated_ids, [("C123", "T123", "TRIGGER1")])
         self.assertTrue(handler._question_answer_events[request.base_session_id].is_set())
+
+    async def test_handle_question_toolcall_is_blocked_on_wechat(self):
+        controller = _StubController(lang="zh", platform="wechat")
+        im_client = _StubIMClient()
+        handler = OpenCodeQuestionHandler(controller, im_client, object())
+        server = _StubServer(ok=True)
+        request = _build_request("ask")
+        seen_tool_calls = set()
+
+        answered = await handler.handle_question_toolcall(
+            request=request,
+            server=server,
+            opencode_session_id="oc-session",
+            message_id="msg-1",
+            tool_part={"callID": "call-1"},
+            tool_input={"questions": [{"question": "Need input?"}]},
+            call_key="call-1",
+            seen_tool_calls=seen_tool_calls,
+        )
+
+        self.assertFalse(answered)
+        self.assertEqual(server.abort_calls, [("oc-session", "/tmp/work")])
+        self.assertEqual(
+            controller.emitted_messages,
+            [("C123", "notify", "微信平台暂时不支持 OpenCode 的交互式提问。请直接再发一条消息继续。", None)],
+        )
+        self.assertEqual(im_client.sent_messages, [])
+        self.assertIn("call-1", seen_tool_calls)
 
 
 class QuestionUIHandlerTests(unittest.IsolatedAsyncioTestCase):

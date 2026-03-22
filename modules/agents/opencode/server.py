@@ -468,6 +468,7 @@ class OpenCodeServerManager:
         model: Optional[Dict[str, str]] = None,
         reasoning_effort: Optional[str] = None,
         system: Optional[str] = None,
+        tools: Optional[Dict[str, bool]] = None,
     ) -> None:
         """Start a prompt asynchronously without holding the HTTP request open."""
 
@@ -484,6 +485,8 @@ class OpenCodeServerManager:
             body["variant"] = reasoning_effort
         if system:
             body["system"] = system
+        if tools:
+            body["tools"] = tools
 
         async with session.post(
             f"{self.base_url}/session/{session_id}/prompt_async",

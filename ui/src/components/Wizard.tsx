@@ -8,6 +8,7 @@ import { AgentDetection } from './steps/AgentDetection';
 import { SlackConfig } from './steps/SlackConfig';
 import { DiscordConfig } from './steps/DiscordConfig';
 import { LarkConfig } from './steps/LarkConfig';
+import { WeChatConfig } from './steps/WeChatConfig';
 import { ChannelList } from './steps/ChannelList';
 import { Summary } from './steps/Summary';
 import { useApi } from '../context/ApiContext';
@@ -39,6 +40,13 @@ const buildConfigPayload = (data: any) => ({
     app_secret: data.lark?.app_secret || '',
     domain: data.lark?.domain || 'feishu',
     require_mention: data.lark?.require_mention || false,
+  },
+  wechat: {
+    ...data.wechat,
+    bot_token: data.wechat?.bot_token || '',
+    base_url: data.wechat?.base_url || 'https://ilinkai.weixin.qq.com',
+    cdn_base_url: data.wechat?.cdn_base_url || 'https://novac2c.cdn.weixin.qq.com/c2c',
+    require_mention: data.wechat?.require_mention || false,
   },
   runtime: {
     // Preserve existing runtime config
@@ -83,6 +91,7 @@ const buildConfigPayload = (data: any) => ({
   update: data.update,
   // Preserve ack_mode
   ack_mode: data.ack_mode,
+  show_duration: data.show_duration,
   // Preserve language
   language: data.language,
 });
@@ -105,8 +114,10 @@ export const Wizard: React.FC = () => {
         ? { id: 'discord', title: 'Discord', component: DiscordConfig }
         : platform === 'lark'
           ? { id: 'lark', title: 'Lark', component: LarkConfig }
-          : { id: 'slack', title: 'Slack', component: SlackConfig },
-      { id: 'channels', title: 'Channels', component: ChannelList },
+          : platform === 'wechat'
+            ? { id: 'wechat', title: 'WeChat', component: WeChatConfig }
+            : { id: 'slack', title: 'Slack', component: SlackConfig },
+      ...(platform === 'wechat' ? [] : [{ id: 'channels', title: 'Channels', component: ChannelList }]),
       { id: 'summary', title: 'Finish', component: Summary },
     ];
   }, [data.platform]);
@@ -145,6 +156,7 @@ export const Wizard: React.FC = () => {
     const nextData = {
       ...data,
       ...(platformChanged ? { channelConfigs: {} } : {}),
+      ...(stepData?.platform === 'wechat' ? { show_duration: false } : {}),
       ...stepData,
     };
     setData(nextData);
@@ -167,6 +179,7 @@ export const Wizard: React.FC = () => {
       mergedData.slack ||
       mergedData.discord ||
       mergedData.lark ||
+      mergedData.wechat ||
       mergedData.mode ||
       mergedData.platform ||
       mergedData.channelConfigs

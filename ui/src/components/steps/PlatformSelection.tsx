@@ -19,8 +19,8 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
         <p className="text-muted mt-1">{t('platform.subtitle')}</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1">
-        {['slack', 'discord', 'lark'].map((option) => (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 flex-1">
+        {['slack', 'discord', 'lark', 'wechat'].map((option) => (
           <button
             key={option}
             onClick={() => onNext({ platform: option })}
