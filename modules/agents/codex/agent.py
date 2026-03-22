@@ -73,8 +73,9 @@ class CodexAgent(BaseAgent):
             await self._remove_ack_reaction(request)
             return
 
-        # Track settings_key for scoped clear
+        # Track settings_key and cwd for scoped invalidation
         self._session_mgr.set_settings_key(request.base_session_id, request.settings_key)
+        self._session_mgr.set_cwd(request.base_session_id, request.working_path)
 
         await self._delete_ack(request)
 
@@ -112,50 +113,32 @@ class CodexAgent(BaseAgent):
                     if interrupted_request:
                         await self._remove_ack_reaction(interrupted_request)
 
-                # Build input items
-                input_items = self._build_input(request)
-
-                # Read configuration overrides using settings_key (user_id for DM, channel_id for channels)
-                channel_settings = self.settings_manager.get_channel_settings(request.settings_key)
-                routing = channel_settings.routing if channel_settings else None
-                effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
-                effective_effort = routing.codex_reasoning_effort if routing else None
-
-                # Start a new turn
-                turn_params: Dict[str, Any] = {
-                    "threadId": thread_id,
-                    "input": input_items,
-                    # Enforce non-interactive execution for Codex backend.
-                    "approvalPolicy": "never",
-                    "sandbox": "danger-full-access",
-                }
-                if effective_model:
-                    turn_params["model"] = effective_model
-                if effective_effort:
-                    turn_params["effort"] = effective_effort
-
-                self._turn_registry.begin_turn_start(request, thread_id)
-                resp = await transport.send_request("turn/start", turn_params)
-                # turn/start returns Turn directly OR may nest under "turn"
-                turn_id = resp.get("id", "")
-                if not turn_id:
-                    turn_obj = resp.get("turn")
-                    if isinstance(turn_obj, dict):
-                        turn_id = turn_obj.get("id", "")
-                if not turn_id:
-                    turn_id = self._turn_registry.get_bootstrapped_turn_id(request.base_session_id, request) or ""
-                if not turn_id:
-                    raise RuntimeError("Codex turn/start returned no turn id")
-                turn_state = self._turn_registry.finalize_turn_start_response(turn_id, request)
-                logger.info(
-                    "Codex turn started: thread=%s turn=%s session=%s state=%s",
-                    thread_id,
-                    turn_id,
-                    request.composite_session_id,
-                    "registered" if turn_state else "already-finished",
-                )
+                thread_id = await self._start_turn(transport, request, thread_id)
 
             except Exception as e:
+                # Safety net: if the thread is stale (e.g. Codex server-side
+                # expiry, or the proactive invalidation in _get_or_create_transport
+                # was bypassed by a race), invalidate and retry once.
+                if "thread not found" in str(e).lower():
+                    logger.warning(
+                        "Stale Codex thread for session %s, clearing and retrying: %s",
+                        request.base_session_id,
+                        e,
+                    )
+                    self._session_mgr.invalidate_thread(request.base_session_id)
+                    self._turn_registry.clear_session(request.base_session_id)
+                    self.sessions.clear_agent_session_mapping(
+                        request.settings_key,
+                        self.name,
+                        request.base_session_id,
+                    )
+                    try:
+                        thread_id = await self._start_or_resume_thread(transport, request)
+                        await self._start_turn(transport, request, thread_id)
+                        return  # retry succeeded
+                    except Exception as retry_err:
+                        e = retry_err  # fall through to normal error handling
+
                 self._turn_registry.clear_pending_turn_start(request.base_session_id, request)
                 logger.error("Error in Codex handle_message: %s", e, exc_info=True)
                 await self.controller.emit_agent_message(
@@ -200,12 +183,9 @@ class CodexAgent(BaseAgent):
         """Clear sessions scoped to a specific settings_key."""
         self.sessions.clear_agent_sessions(settings_key, self.name)
 
-        # Get base_session_ids to clear before removing them
-        to_clear = [
-            bid
-            for bid in self._session_mgr.all_base_sessions()
-            if self._session_mgr.get_settings_key(bid) == settings_key
-        ]
+        # Use settings_key index (not _threads) so sessions with
+        # invalidated threads are still cleaned up properly.
+        to_clear = self._session_mgr.get_sessions_by_settings_key(settings_key)
 
         count = self._session_mgr.clear_by_settings_key(settings_key)
 
@@ -239,6 +219,19 @@ class CodexAgent(BaseAgent):
             # Stop stale transport if any
             if existing:
                 await existing.stop()
+                # The new app-server process won't know about threads/turns
+                # from the old process.  Invalidate only sessions bound to
+                # this cwd so healthy sessions on other cwds are unaffected.
+                affected = self._session_mgr.sessions_for_cwd(cwd)
+                for bid in affected:
+                    self._session_mgr.invalidate_thread(bid)
+                    self._turn_registry.clear_session(bid)
+                if affected:
+                    logger.info(
+                        "Invalidated %d stale Codex session(s) after transport restart for cwd=%s",
+                        len(affected),
+                        cwd,
+                    )
 
             transport = CodexTransport(
                 binary=self.codex_config.binary,
@@ -329,6 +322,54 @@ class CodexAgent(BaseAgent):
                 logger.warning("Failed to resume Codex thread %s: %s, starting new", persisted, e)
 
         return await self._start_thread(transport, request)
+
+    async def _start_turn(
+        self,
+        transport: CodexTransport,
+        request: AgentRequest,
+        thread_id: str,
+    ) -> str:
+        """Build input, configure overrides, and send turn/start to Codex."""
+        input_items = self._build_input(request)
+
+        channel_settings = self.settings_manager.get_channel_settings(request.settings_key)
+        routing = channel_settings.routing if channel_settings else None
+        effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
+        effective_effort = routing.codex_reasoning_effort if routing else None
+
+        turn_params: Dict[str, Any] = {
+            "threadId": thread_id,
+            "input": input_items,
+            "approvalPolicy": "never",
+            "sandbox": "danger-full-access",
+        }
+        if effective_model:
+            turn_params["model"] = effective_model
+        if effective_effort:
+            turn_params["effort"] = effective_effort
+
+        self._turn_registry.begin_turn_start(request, thread_id)
+        resp = await transport.send_request("turn/start", turn_params)
+
+        turn_id = resp.get("id", "")
+        if not turn_id:
+            turn_obj = resp.get("turn")
+            if isinstance(turn_obj, dict):
+                turn_id = turn_obj.get("id", "")
+        if not turn_id:
+            turn_id = self._turn_registry.get_bootstrapped_turn_id(request.base_session_id, request) or ""
+        if not turn_id:
+            raise RuntimeError("Codex turn/start returned no turn id")
+
+        turn_state = self._turn_registry.finalize_turn_start_response(turn_id, request)
+        logger.info(
+            "Codex turn started: thread=%s turn=%s session=%s state=%s",
+            thread_id,
+            turn_id,
+            request.composite_session_id,
+            "registered" if turn_state else "already-finished",
+        )
+        return thread_id
 
     # ------------------------------------------------------------------
     # Input building

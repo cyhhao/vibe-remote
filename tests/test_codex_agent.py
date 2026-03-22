@@ -263,6 +263,7 @@ class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
         agent._get_or_create_transport = AsyncMock(return_value=transport)
         agent._session_mgr = SimpleNamespace(
             set_settings_key=lambda base_session_id, settings_key: None,
+            set_cwd=lambda base_session_id, cwd: None,
             get_thread_id=lambda base_session_id: "thread-1",
         )
 
