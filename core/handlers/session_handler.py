@@ -187,15 +187,17 @@ class SessionHandler(BaseHandler):
         reply_enhancements_on = getattr(self.config, "reply_enhancements", True)
 
         if reply_enhancements_on:
-            from core.reply_enhancer import REPLY_ENHANCEMENTS_PROMPT
+            from core.reply_enhancer import build_reply_enhancements_prompt
+
+            reply_prompt = build_reply_enhancements_prompt(include_quick_replies=self.config.platform != "wechat")
 
             if base_prompt:
-                final_system_prompt = f"{base_prompt}\n\n{REPLY_ENHANCEMENTS_PROMPT}"
+                final_system_prompt = f"{base_prompt}\n\n{reply_prompt}"
             else:
                 final_system_prompt = {
                     "type": "preset",
                     "preset": "claude_code",
-                    "append": REPLY_ENHANCEMENTS_PROMPT,
+                    "append": reply_prompt,
                 }
         else:
             final_system_prompt = base_prompt

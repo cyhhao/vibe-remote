@@ -378,10 +378,8 @@ def wechat_qr_login_poll():
     if result.get("ok") is False:
         return jsonify(result), 500
 
-    # If confirmed, auto-bind the WeChat user and send welcome message
+    # If confirmed, auto-bind the WeChat user
     if result.get("status") == "confirmed" and result.get("bot_token"):
-        bot_token = result["bot_token"]
-        base_url = result.get("base_url") or "https://ilinkai.weixin.qq.com"
         user_id = result.get("user_id", "wechat_user")
 
         # Auto-bind user
@@ -391,27 +389,6 @@ def wechat_qr_login_poll():
             vibe_api.auto_bind_wechat_user(user_id)
         except Exception as e:
             logger.warning("Failed to auto-bind WeChat user: %s", e)
-
-        # Send welcome message to verify the send path works
-        try:
-            from modules.im import wechat_api as _wc_api
-
-            welcome_text = (
-                "WeChat bot connected successfully!\nYou can now send messages to interact with the AI agent."
-            )
-            _run_async(
-                _wc_api.send_message(
-                    base_url,
-                    bot_token,
-                    user_id,
-                    "",  # context_token: empty for first message
-                    [{"type": 1, "text_item": {"text": welcome_text}}],
-                ),
-                timeout=10.0,
-            )
-            logger.info("Sent welcome message to WeChat user %s", user_id)
-        except Exception as e:
-            logger.warning("Failed to send welcome message: %s", e)
 
         # Schedule service restart so the new token takes effect
         def _restart_after_login():

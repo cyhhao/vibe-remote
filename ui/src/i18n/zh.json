@@ -82,7 +82,7 @@
     },
     "wechat": {
       "title": "微信",
-      "desc": "通过 iLink Bot 连接微信个人消息"
+      "desc": "通过微信扫码连接微信Bot"
     }
   },
   "discordConfig": {
@@ -390,6 +390,7 @@
     "ackMode": "确认模式",
     "ackModeHint": "机器人如何确认收到的消息",
     "ackReaction": "👀 表情回应",
+    "ackTyping": "Typing 指示",
     "ackMessage": "消息回复",
     "errorRetryLimit": "错误重试次数",
     "errorRetryLimitHint": "当 LLM 流式响应出错时，自动发送 'continue' 重试（0 = 不重试）",

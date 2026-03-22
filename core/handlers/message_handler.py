@@ -1,5 +1,6 @@
 """Message routing and Agent communication handlers"""
 
+import asyncio
 import logging
 from typing import List, Optional, Tuple
 
@@ -39,8 +40,55 @@ class MessageHandler(BaseHandler):
             )
         return context
 
+    def _should_use_typing_ack(self) -> bool:
+        platform = getattr(self.config, "platform", "")
+        if platform == "wechat":
+            return True
+        return getattr(self.config, "ack_mode", "reaction") == "typing"
+
+    async def _typing_keepalive_loop(self, context: MessageContext) -> None:
+        try:
+            while True:
+                await asyncio.sleep(5)
+                ok = await self.im_client.send_typing_indicator(context)
+                if not ok:
+                    logger.debug("Typing keepalive not applied for %s", context.user_id)
+        except asyncio.CancelledError:
+            raise
+
+    async def _start_processing_indicator(
+        self, context: MessageContext
+    ) -> Tuple[Optional[str], Optional[str], bool, Optional[asyncio.Task]]:
+        if self._should_use_typing_ack():
+            try:
+                ok = await self.im_client.send_typing_indicator(context)
+                if ok:
+                    return None, None, True, asyncio.create_task(self._typing_keepalive_loop(context))
+                logger.info("Typing indicator not applied (platform returned False)")
+            except Exception as ack_err:
+                logger.debug(f"Failed to send typing ack: {ack_err}")
+            if getattr(self.config, "platform", "") == "wechat":
+                return None, None, False, None
+
+        ack_reaction_message_id = None
+        ack_reaction_emoji = None
+        try:
+            if context.message_id:
+                ack_reaction_message_id = context.message_id
+                ack_reaction_emoji = ":eyes:"
+                ok = await self.im_client.add_reaction(context, ack_reaction_message_id, ack_reaction_emoji)
+                if not ok:
+                    logger.info("Ack reaction not applied (platform returned False)")
+        except Exception as ack_err:
+            logger.debug(f"Failed to add reaction ack: {ack_err}")
+        return ack_reaction_message_id, ack_reaction_emoji, False, None
+
     async def handle_user_message(self, context: MessageContext, message: str):
         """Process regular user messages and route to configured agent"""
+        ack_reaction_message_id = None
+        ack_reaction_emoji = None
+        typing_indicator_active = False
+        typing_indicator_task = None
         try:
             # Record user activity for auto-update idle detection
             if hasattr(self.controller, "update_checker"):
@@ -158,10 +206,8 @@ class MessageHandler(BaseHandler):
 
             ack_message_id = None
             ack_mode = getattr(self.config, "ack_mode", "reaction")
-            ack_reaction_message_id = None
-            ack_reaction_emoji = None
-
-            if ack_mode == "message":
+            effective_ack_mode = "typing" if getattr(self.config, "platform", "") == "wechat" else ack_mode
+            if effective_ack_mode == "message":
                 ack_context = self._get_target_context(context)
                 ack_text = self._get_ack_text(agent_name)
                 try:
@@ -169,16 +215,12 @@ class MessageHandler(BaseHandler):
                 except Exception as ack_err:
                     logger.debug(f"Failed to send ack message: {ack_err}")
             else:
-                # Default: add 👀 / :eyes: reaction to the user's message
-                try:
-                    if context.message_id:
-                        ack_reaction_message_id = context.message_id
-                        ack_reaction_emoji = ":eyes:"
-                        ok = await self.im_client.add_reaction(context, ack_reaction_message_id, ack_reaction_emoji)
-                        if not ok:
-                            logger.info("Ack reaction not applied (platform returned False)")
-                except Exception as ack_err:
-                    logger.debug(f"Failed to add reaction ack: {ack_err}")
+                (
+                    ack_reaction_message_id,
+                    ack_reaction_emoji,
+                    typing_indicator_active,
+                    typing_indicator_task,
+                ) = await self._start_processing_indicator(context)
 
             if subagent_name and context.message_id:
                 try:
@@ -224,6 +266,8 @@ class MessageHandler(BaseHandler):
                 # Reaction info — agent removes :eyes: on result/error
                 ack_reaction_message_id=ack_reaction_message_id,
                 ack_reaction_emoji=ack_reaction_emoji,
+                typing_indicator_active=typing_indicator_active,
+                typing_indicator_task=typing_indicator_task,
                 files=processed_files,
             )
             try:
@@ -251,6 +295,14 @@ class MessageHandler(BaseHandler):
                         and ack_reaction_emoji  # type: ignore[possibly-undefined]
                     ):
                         await self.im_client.remove_reaction(context, ack_reaction_message_id, ack_reaction_emoji)
+                    if typing_indicator_task:  # type: ignore[possibly-undefined]
+                        typing_indicator_task.cancel()
+                        try:
+                            await typing_indicator_task
+                        except asyncio.CancelledError:
+                            pass
+                    if typing_indicator_active:  # type: ignore[possibly-undefined]
+                        await self.im_client.clear_typing_indicator(context)
             except Exception as cleanup_err:
                 logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
             await self.im_client.send_message(
@@ -313,8 +365,8 @@ class MessageHandler(BaseHandler):
             elif callback_data == "cmd_change_cwd":
                 await command_handlers.handle_change_cwd_modal(context)
 
-            elif callback_data == "cmd_clear":
-                await command_handlers.handle_clear(context)
+            elif callback_data in {"cmd_new", "cmd_clear"}:
+                await command_handlers.handle_new(context)
 
             elif callback_data == "cmd_resume":
                 await command_handlers.handle_resume(context)
@@ -438,7 +490,7 @@ class MessageHandler(BaseHandler):
                         logger.debug(f"Failed to send quick-reply echo message: {err}")
 
                     # Add ack reaction on the echo message before dispatching.
-                    if quick_reply_echo_id:
+                    if quick_reply_echo_id and getattr(self.config, "ack_mode", "reaction") == "reaction":
                         try:
                             await self.im_client.add_reaction(
                                 self._get_target_context(context),
@@ -520,7 +572,27 @@ class MessageHandler(BaseHandler):
                 request.ack_message_id = None
 
     async def _remove_ack_reaction(self, context: MessageContext, request: AgentRequest):
-        """Remove acknowledgement reaction if it still exists."""
+        """Remove acknowledgement reaction / typing indicator if it still exists."""
+        typing_task = request.typing_indicator_task
+        if typing_task is not None:
+            typing_task.cancel()
+            try:
+                await typing_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as err:
+                logger.debug(f"Failed to stop typing keepalive task: {err}")
+            finally:
+                request.typing_indicator_task = None
+
+        if request.typing_indicator_active:
+            try:
+                await self.im_client.clear_typing_indicator(context)
+            except Exception as err:
+                logger.debug(f"Failed to clear typing ack: {err}")
+            finally:
+                request.typing_indicator_active = False
+
         if request.ack_reaction_message_id and request.ack_reaction_emoji:
             try:
                 await self.im_client.remove_reaction(
@@ -585,6 +657,11 @@ class MessageHandler(BaseHandler):
                         "name": attachment.name,
                         "size": attachment.size,
                     }
+                    attachment_data = getattr(attachment, "__dict__", {})
+                    for key, value in attachment_data.items():
+                        if key in {"name", "mimetype", "url", "content", "local_path", "size"}:
+                            continue
+                        file_info[key] = value
                     timestamp = int(time.time())
                     safe_name = self._sanitize_filename(attachment.name)
                     filename = f"{timestamp}_{safe_name}"

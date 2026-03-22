@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
 
 import aiohttp
+import base64
 
 from .base import (
     BaseIMClient,
@@ -28,14 +29,48 @@ from .base import (
 from config.paths import get_state_dir
 from vibe.i18n import t as i18n_t
 from modules.im import wechat_api as _wechat_api_mod
+from modules.im import wechat_cdn as _wechat_cdn_mod
+from modules.im.formatters.wechat_formatter import WeChatFormatter
 
 logger = logging.getLogger(__name__)
+
+
+def _raise_if_wechat_api_error(resp: Optional[Dict[str, Any]], action: str) -> None:
+    """Treat missing `ret` as success; raise only on explicit API errors."""
+
+    if resp is None:
+        raise RuntimeError(f"WeChat {action} failed: empty response")
+
+    ret = resp.get("ret")
+    errcode = resp.get("errcode")
+    if ret in (None, 0) and errcode in (None, 0):
+        return
+
+    code = errcode if errcode not in (None, 0) else ret
+    errmsg = resp.get("errmsg") or resp.get("msg", "")
+    raise RuntimeError(f"WeChat {action} failed: code={code} errmsg={errmsg}")
+
+
+def _get_wechat_error_code(resp: Optional[Dict[str, Any]]) -> Any:
+    if not resp:
+        return None
+    errcode = resp.get("errcode")
+    if errcode not in (None, 0):
+        return errcode
+    return resp.get("ret")
+
+
+def _is_session_expired_code(code: Any) -> bool:
+    return str(code) == str(_SESSION_EXPIRED_ERRCODE)
+
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 _POLL_TIMEOUT_MS = 35000
+_MIN_POLL_TIMEOUT_MS = 5000
+_MAX_POLL_TIMEOUT_MS = 60000
 _SHORT_RETRY_SECONDS = 2
 _LONG_RETRY_SECONDS = 30
 _MAX_CONSECUTIVE_FAILURES = 3
@@ -129,20 +164,40 @@ class _WeChatAPI:
         base_url: str,
         token: str,
         to_user_id: str,
-        context_token: str,
+        typing_ticket: str,
+        status: int = _wechat_api_mod.TYPING_START,
         proxy: Optional[str] = None,
     ) -> bool:
         """Send a typing indicator (best-effort)."""
         try:
-            await _wechat_api_mod.send_typing(
+            resp = await _wechat_api_mod.send_typing(
                 base_url,
                 token,
                 to_user_id,
-                context_token,
+                typing_ticket,
+                status=status,
             )
+            _raise_if_wechat_api_error(resp, "send_typing")
             return True
         except Exception:
             return False
+
+    async def get_config(
+        self,
+        base_url: str,
+        token: str,
+        ilink_user_id: str,
+        context_token: Optional[str] = None,
+        proxy: Optional[str] = None,
+    ) -> dict:
+        """Fetch per-user WeChat bot config."""
+
+        return await _wechat_api_mod.get_config(
+            base_url,
+            token,
+            ilink_user_id,
+            context_token=context_token,
+        )
 
 
 wechat_api = _WeChatAPI()
@@ -163,33 +218,21 @@ class _WeChatCDN:
         self,
         base_url: str,
         token: str,
+        cdn_base_url: str,
+        to_user_id: str,
         file_path: str,
+        media_type: int = _wechat_api_mod.UPLOAD_MEDIA_FILE,
         proxy: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Upload a file and return CDN metadata (file_id, aes_key, etc.)."""
-        url = f"{base_url}/uploadFile"
-        path = Path(file_path)
-        if not path.is_file():
-            logger.error("Upload file not found: %s", file_path)
-            return None
-
-        data = aiohttp.FormData()
-        data.add_field("token", token)
-        data.add_field(
-            "file",
-            open(file_path, "rb"),
-            filename=path.name,
-        )
-
         try:
-            async with aiohttp.ClientSession(timeout=self._timeout) as session:
-                async with session.post(url, data=data, proxy=proxy) as resp:
-                    resp.raise_for_status()
-                    result = await resp.json()
-                    if result.get("ret", -1) != 0:
-                        logger.error("CDN upload failed: %s", result)
-                        return None
-                    return result.get("data", result)
+            return await _wechat_cdn_mod.upload_file_to_cdn(
+                base_url=base_url,
+                token=token,
+                cdn_base_url=cdn_base_url,
+                to_user_id=to_user_id,
+                file_path=file_path,
+                media_type=media_type,
+            )
         except Exception as exc:
             logger.error("CDN upload error: %s", exc)
             return None
@@ -198,33 +241,19 @@ class _WeChatCDN:
         self,
         base_url: str,
         token: str,
+        cdn_base_url: str,
+        to_user_id: str,
         file_path: str,
         proxy: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Upload an image and return CDN metadata."""
-        url = f"{base_url}/uploadImage"
-        path = Path(file_path)
-        if not path.is_file():
-            logger.error("Upload image not found: %s", file_path)
-            return None
-
-        data = aiohttp.FormData()
-        data.add_field("token", token)
-        data.add_field(
-            "image",
-            open(file_path, "rb"),
-            filename=path.name,
-        )
-
         try:
-            async with aiohttp.ClientSession(timeout=self._timeout) as session:
-                async with session.post(url, data=data, proxy=proxy) as resp:
-                    resp.raise_for_status()
-                    result = await resp.json()
-                    if result.get("ret", -1) != 0:
-                        logger.error("CDN image upload failed: %s", result)
-                        return None
-                    return result.get("data", result)
+            return await _wechat_cdn_mod.upload_image_to_cdn(
+                base_url=base_url,
+                token=token,
+                cdn_base_url=cdn_base_url,
+                to_user_id=to_user_id,
+                file_path=file_path,
+            )
         except Exception as exc:
             logger.error("CDN image upload error: %s", exc)
             return None
@@ -233,36 +262,48 @@ class _WeChatCDN:
         self,
         base_url: str,
         token: str,
+        cdn_base_url: str,
         file_info: Dict[str, Any],
         target_path: str,
         proxy: Optional[str] = None,
     ) -> bool:
         """Download and decrypt a CDN file to a local path."""
-        url = f"{base_url}/downloadFile"
-        payload = {
-            "token": token,
-            "file_id": file_info.get("file_id", ""),
-            "aes_key": file_info.get("aes_key", ""),
-            "file_size": file_info.get("file_size", 0),
-        }
+        cdn_info = file_info.get("cdn_info") or {}
+        wechat_item = file_info.get("wechat_item") or {}
+        encrypted_query_param = cdn_info.get("encrypt_query_param") or file_info.get("url", "")
+        aes_key_b64 = cdn_info.get("aes_key", "")
+
+        if not aes_key_b64:
+            item_aes_hex = wechat_item.get("aeskey")
+            if item_aes_hex:
+                try:
+                    aes_key_b64 = base64.b64encode(bytes.fromhex(item_aes_hex)).decode("ascii")
+                except ValueError:
+                    logger.error("Invalid WeChat image aeskey hex for file %s", file_info.get("name", ""))
+                    return False
+
+        if not encrypted_query_param:
+            logger.error("Missing encrypt_query_param for WeChat attachment: %s", file_info)
+            return False
 
         dest = Path(target_path)
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            async with aiohttp.ClientSession(timeout=self._timeout) as session:
-                async with session.post(url, json=payload, proxy=proxy) as resp:
-                    resp.raise_for_status()
-                    content_type = resp.headers.get("Content-Type", "")
-                    if "application/json" in content_type:
-                        # Error response
-                        error_data = await resp.json()
-                        logger.error("CDN download error response: %s", error_data)
-                        return False
-                    with open(target_path, "wb") as f:
-                        async for chunk in resp.content.iter_chunked(8192):
-                            f.write(chunk)
-                    return True
+            if aes_key_b64:
+                content = await _wechat_cdn_mod.download_and_decrypt(
+                    cdn_base_url,
+                    encrypted_query_param,
+                    aes_key_b64,
+                )
+            else:
+                content = await _wechat_cdn_mod.download_plain(
+                    cdn_base_url,
+                    encrypted_query_param,
+                )
+
+            dest.write_bytes(content)
+            return True
         except Exception as exc:
             logger.error("CDN download error: %s", exc)
             return False
@@ -331,7 +372,7 @@ class WeChatBot(BaseIMClient):
     def __init__(self, config: WeChatConfig):
         super().__init__(config)
         self.config: WeChatConfig = config
-        self.formatter = None  # WeChat uses plain text; no markdown formatter
+        self.formatter = WeChatFormatter()
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop_event: Optional[asyncio.Event] = None
@@ -339,9 +380,12 @@ class WeChatBot(BaseIMClient):
 
         # Context tokens per user (needed for replies)
         self._context_tokens: Dict[str, str] = {}
+        self._typing_tickets: Dict[tuple[str, str], str] = {}
 
         # getUpdates cursor
         self._sync_buf: str = ""
+        self._poll_timeout_ms: int = _POLL_TIMEOUT_MS
+        self._session_expired_logged: bool = False
 
         # Auth manager
         self._auth_manager = WeChatAuthManager()
@@ -471,6 +515,7 @@ class WeChatBot(BaseIMClient):
 
         # Build TEXT item
         item_list = [{"type": 1, "text_item": {"text": self.format_markdown(text)}}]
+        resp: Optional[Dict[str, Any]] = None
 
         try:
             resp = await wechat_api.send_message(
@@ -481,14 +526,12 @@ class WeChatBot(BaseIMClient):
                 item_list,
                 proxy=self.config.proxy_url,
             )
-            if resp.get("ret", -1) != 0:
-                logger.error(
-                    "WeChat send_message failed: ret=%s msg=%s",
-                    resp.get("ret"),
-                    resp.get("msg", ""),
-                )
+            if _is_session_expired_code(_get_wechat_error_code(resp)):
+                self._mark_session_expired(_get_wechat_error_code(resp))
+            _raise_if_wechat_api_error(resp, "send_message")
         except Exception as exc:
             logger.error("WeChat send_message error: %s", exc)
+            raise
 
         # Generate a synthetic message ID (iLink may not return one)
         message_id = resp.get("message_id", "") if resp else ""
@@ -548,7 +591,9 @@ class WeChatBot(BaseIMClient):
         """Return basic user info. WeChat doesn't expose rich user profiles."""
         return {
             "id": user_id,
-            "name": user_id,
+            "name": "WeChat User",
+            "display_name": "WeChat User",
+            "real_name": "WeChat User",
             "platform": "wechat",
         }
 
@@ -564,6 +609,29 @@ class WeChatBot(BaseIMClient):
     # Typing indicator
     # ------------------------------------------------------------------
 
+    async def _get_typing_ticket(self, user_id: str, context_token: str) -> str:
+        cache_key = (user_id, context_token)
+        cached = self._typing_tickets.get(cache_key) or self._typing_tickets.get((user_id, ""))
+        if cached:
+            return cached
+
+        resp = await wechat_api.get_config(
+            self.config.base_url,
+            self.config.bot_token,
+            user_id,
+            context_token=context_token or None,
+            proxy=self.config.proxy_url,
+        )
+        _raise_if_wechat_api_error(resp, "get_config")
+
+        typing_ticket = str(resp.get("typing_ticket") or "").strip()
+        if not typing_ticket:
+            raise RuntimeError(f"WeChat get_config failed: missing typing_ticket for {user_id}")
+
+        self._typing_tickets[cache_key] = typing_ticket
+        self._typing_tickets[(user_id, "")] = typing_ticket
+        return typing_ticket
+
     async def send_typing_indicator(
         self,
         context: MessageContext,
@@ -573,17 +641,60 @@ class WeChatBot(BaseIMClient):
         context_token = self._get_context_token(context)
         if not context_token:
             return False
-        return await wechat_api.send_typing(
+        try:
+            typing_ticket = await self._get_typing_ticket(user_id, context_token)
+        except Exception as exc:
+            logger.debug("Failed to fetch WeChat typing ticket for %s: %s", user_id, exc)
+            return False
+
+        ok = await wechat_api.send_typing(
             self.config.base_url,
             self.config.bot_token,
             user_id,
-            context_token,
+            typing_ticket,
+            status=_wechat_api_mod.TYPING_START,
             proxy=self.config.proxy_url,
         )
+        if not ok:
+            self._typing_tickets.pop((user_id, context_token), None)
+            self._typing_tickets.pop((user_id, ""), None)
+        return ok
+
+    async def clear_typing_indicator(self, context: MessageContext) -> bool:
+        """Cancel the active typing indicator for the current WeChat DM."""
+
+        user_id = context.user_id
+        context_token = self._get_context_token(context)
+        if not context_token:
+            return False
+
+        try:
+            typing_ticket = await self._get_typing_ticket(user_id, context_token)
+        except Exception as exc:
+            logger.debug("Failed to fetch WeChat typing ticket for cancel %s: %s", user_id, exc)
+            return False
+
+        ok = await wechat_api.send_typing(
+            self.config.base_url,
+            self.config.bot_token,
+            user_id,
+            typing_ticket,
+            status=_wechat_api_mod.TYPING_CANCEL,
+            proxy=self.config.proxy_url,
+        )
+        if not ok:
+            self._typing_tickets.pop((user_id, context_token), None)
+            self._typing_tickets.pop((user_id, ""), None)
+        return ok
 
     # ------------------------------------------------------------------
     # File operations
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_video_file(file_path: str, title: Optional[str] = None) -> bool:
+        suffix = Path(title or file_path).suffix.lower()
+        return suffix in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
     async def upload_file_from_path(
         self,
@@ -592,9 +703,14 @@ class WeChatBot(BaseIMClient):
         title: Optional[str] = None,
     ) -> str:
         """Upload a file via CDN and send it as a file message."""
+        if self._is_video_file(file_path, title):
+            return await self.upload_video_from_path(context, file_path, title=title)
+
         cdn_meta = await wechat_cdn.upload_file_to_cdn(
             self.config.base_url,
             self.config.bot_token,
+            getattr(self.config, "cdn_base_url", self.config.base_url),
+            context.user_id,
             file_path,
             proxy=self.config.proxy_url,
         )
@@ -610,7 +726,11 @@ class WeChatBot(BaseIMClient):
             {
                 "type": 4,  # FILE
                 "file_item": {
-                    "media": cdn_meta,
+                    "media": {
+                        "encrypt_query_param": cdn_meta.get("encrypt_query_param", ""),
+                        "aes_key": cdn_meta.get("aes_key", ""),
+                        "encrypt_type": 1,
+                    },
                     "file_name": display_name,
                     "len": str(cdn_meta.get("file_size", 0)),
                 },
@@ -618,7 +738,7 @@ class WeChatBot(BaseIMClient):
         ]
 
         try:
-            await wechat_api.send_message(
+            resp = await wechat_api.send_message(
                 self.config.base_url,
                 self.config.bot_token,
                 user_id,
@@ -626,6 +746,9 @@ class WeChatBot(BaseIMClient):
                 item_list,
                 proxy=self.config.proxy_url,
             )
+            if _is_session_expired_code(_get_wechat_error_code(resp)):
+                self._mark_session_expired(_get_wechat_error_code(resp))
+            _raise_if_wechat_api_error(resp, "send file message")
         except Exception as exc:
             logger.error("WeChat send file message error: %s", exc)
             return ""
@@ -639,9 +762,14 @@ class WeChatBot(BaseIMClient):
         title: Optional[str] = None,
     ) -> str:
         """Upload an image via CDN and send it as an image message."""
+        if self._is_video_file(file_path, title):
+            return await self.upload_video_from_path(context, file_path, title=title)
+
         cdn_meta = await wechat_cdn.upload_image_to_cdn(
             self.config.base_url,
             self.config.bot_token,
+            getattr(self.config, "cdn_base_url", self.config.base_url),
+            context.user_id,
             file_path,
             proxy=self.config.proxy_url,
         )
@@ -656,13 +784,18 @@ class WeChatBot(BaseIMClient):
             {
                 "type": 2,  # IMAGE
                 "image_item": {
-                    "media": cdn_meta,
+                    "media": {
+                        "encrypt_query_param": cdn_meta.get("encrypt_query_param", ""),
+                        "aes_key": cdn_meta.get("aes_key", ""),
+                        "encrypt_type": 1,
+                    },
+                    "mid_size": cdn_meta.get("file_size_ciphertext", 0),
                 },
             }
         ]
 
         try:
-            await wechat_api.send_message(
+            resp = await wechat_api.send_message(
                 self.config.base_url,
                 self.config.bot_token,
                 user_id,
@@ -670,11 +803,71 @@ class WeChatBot(BaseIMClient):
                 item_list,
                 proxy=self.config.proxy_url,
             )
+            if _is_session_expired_code(_get_wechat_error_code(resp)):
+                self._mark_session_expired(_get_wechat_error_code(resp))
+            _raise_if_wechat_api_error(resp, "send image message")
         except Exception as exc:
             logger.error("WeChat send image message error: %s", exc)
             return ""
 
         return cdn_meta.get("file_id", f"wc-img-{uuid.uuid4().hex[:8]}")
+
+    async def upload_video_from_path(
+        self,
+        context: MessageContext,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> str:
+        """Upload a video via CDN and send it as a native video message."""
+
+        cdn_meta = await wechat_cdn.upload_file_to_cdn(
+            self.config.base_url,
+            self.config.bot_token,
+            getattr(self.config, "cdn_base_url", self.config.base_url),
+            context.user_id,
+            file_path,
+            media_type=_wechat_api_mod.UPLOAD_MEDIA_VIDEO,
+        )
+        if cdn_meta is None:
+            logger.error("Failed to upload video to CDN: %s", file_path)
+            return ""
+
+        user_id = context.user_id
+        context_token = self._get_context_token(context)
+        display_name = title or Path(file_path).name
+
+        item_list = [
+            {
+                "type": 5,  # VIDEO
+                "video_item": {
+                    "media": {
+                        "encrypt_query_param": cdn_meta.get("encrypt_query_param", ""),
+                        "aes_key": cdn_meta.get("aes_key", ""),
+                        "encrypt_type": 1,
+                    },
+                    "video_size": cdn_meta.get("file_size_ciphertext", 0),
+                },
+                "file_name": display_name,
+            }
+        ]
+
+        try:
+            resp = await wechat_api.send_message(
+                self.config.base_url,
+                self.config.bot_token,
+                user_id,
+                context_token,
+                item_list,
+                proxy=self.config.proxy_url,
+            )
+            if _is_session_expired_code(_get_wechat_error_code(resp)):
+                self._mark_session_expired(_get_wechat_error_code(resp))
+            _raise_if_wechat_api_error(resp, "send video message")
+        except Exception as exc:
+            logger.error("WeChat send video message error: %s", exc)
+            return ""
+
+        return cdn_meta.get("file_id", f"wc-video-{uuid.uuid4().hex[:8]}")
 
     async def download_file_to_path(
         self,
@@ -687,6 +880,7 @@ class WeChatBot(BaseIMClient):
         success = await wechat_cdn.download_and_decrypt(
             self.config.base_url,
             self.config.bot_token,
+            getattr(self.config, "cdn_base_url", self.config.base_url),
             file_info,
             target_path,
             proxy=self.config.proxy_url,
@@ -850,6 +1044,28 @@ class WeChatBot(BaseIMClient):
         # Persist sync buffer so we don't re-process old messages on restart
         self._save_sync_buf()
 
+    @staticmethod
+    def _normalize_poll_timeout(timeout_ms: Any) -> int:
+        try:
+            value = int(timeout_ms)
+        except (TypeError, ValueError):
+            return _POLL_TIMEOUT_MS
+        return max(_MIN_POLL_TIMEOUT_MS, min(_MAX_POLL_TIMEOUT_MS, value))
+
+    def _mark_session_expired(self, errcode: Any) -> None:
+        self._auth_manager.is_logged_in = False
+        self._typing_tickets.clear()
+        if not self._session_expired_logged:
+            logger.error(
+                "WeChat session expired (errcode %s); re-authentication required via the Web UI QR login",
+                errcode,
+            )
+            self._session_expired_logged = True
+
+    def _mark_session_active(self) -> None:
+        self._auth_manager.is_logged_in = True
+        self._session_expired_logged = False
+
     # ------------------------------------------------------------------
     # Long-poll loop
     # ------------------------------------------------------------------
@@ -864,7 +1080,7 @@ class WeChatBot(BaseIMClient):
                     self.config.base_url,
                     self.config.bot_token,
                     self._sync_buf,
-                    timeout_ms=_POLL_TIMEOUT_MS,
+                    timeout_ms=self._poll_timeout_ms,
                     proxy=self.config.proxy_url,
                 )
 
@@ -879,12 +1095,8 @@ class WeChatBot(BaseIMClient):
                     )
 
                     # Handle session expired
-                    if errcode == _SESSION_EXPIRED_ERRCODE:
-                        logger.error(
-                            "WeChat session expired (errcode %s); re-authentication required",
-                            errcode,
-                        )
-                        self._auth_manager.is_logged_in = False
+                    if _is_session_expired_code(errcode):
+                        self._mark_session_expired(errcode)
 
                     consecutive_failures += 1
                     if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
@@ -901,6 +1113,18 @@ class WeChatBot(BaseIMClient):
 
                 # Success path
                 consecutive_failures = 0
+                self._mark_session_active()
+
+                suggested_timeout_ms = resp.get("longpolling_timeout_ms")
+                if suggested_timeout_ms is not None:
+                    next_timeout_ms = self._normalize_poll_timeout(suggested_timeout_ms)
+                    if next_timeout_ms != self._poll_timeout_ms:
+                        logger.info(
+                            "WeChat long-poll timeout adjusted from %sms to %sms",
+                            self._poll_timeout_ms,
+                            next_timeout_ms,
+                        )
+                        self._poll_timeout_ms = next_timeout_ms
 
                 # Update sync cursor
                 new_buf = resp.get("get_updates_buf", "")
@@ -993,10 +1217,14 @@ class WeChatBot(BaseIMClient):
             text=text,
             settings_manager=self.settings_manager,
         )
-        if auth_result is not None and auth_result is not True:
-            # auth_result is a denial reason string
+        if not auth_result.allowed:
+            logger.info(
+                "Dropping unauthorized WeChat message from=%s denial=%s",
+                from_user,
+                auth_result.denial,
+            )
             denial_text = self.build_auth_denial_text(
-                auth_result,
+                auth_result.denial,
                 channel_id=from_user,
             )
             if denial_text:
@@ -1042,15 +1270,56 @@ class WeChatBot(BaseIMClient):
         The ``type`` field is an integer: 1=TEXT, 2=IMAGE, 3=VOICE, 4=FILE, 5=VIDEO.
         """
         text_parts: List[str] = []
+        quoted_title = ""
         for item in msg.get("item_list", []):
             item_type = item.get("type", 0)
-            # type 1 = TEXT
             if item_type == 1 or item_type in ("TEXT", "text"):
-                content = item.get("content", "")
+                text_item = item.get("text_item") or {}
+                content = text_item.get("text") or item.get("content", "")
                 if content:
-                    text_parts.append(content)
+                    text_parts.append(str(content))
+                ref_msg = item.get("ref_msg") or {}
+                quoted_title = quoted_title or str(ref_msg.get("title") or "").strip()
+                continue
+            if item_type == 3 or item_type in ("VOICE", "voice"):
+                voice_item = item.get("voice_item") or {}
+                content = voice_item.get("text", "")
+                if content:
+                    playtime_ms = voice_item.get("playtime")
+                    seconds = 0.0
+                    try:
+                        seconds = max(0.0, float(str(playtime_ms)) / 1000.0)
+                    except (TypeError, ValueError):
+                        seconds = 0.0
+                    prefix = f"[Voice {seconds:.1f}s] " if seconds > 0 else "[Voice] "
+                    text_parts.append(prefix + str(content))
 
-        return " ".join(text_parts).strip()
+        text = " ".join(text_parts).strip()
+        if quoted_title:
+            if text:
+                return f"{text}\n[Quoted message: {quoted_title}]"
+            return f"[Quoted message: {quoted_title}]"
+        return text
+
+    @staticmethod
+    def _extract_reference_media_item(msg: dict) -> Optional[dict]:
+        for item in msg.get("item_list", []):
+            if item.get("type", 0) not in (1, "TEXT", "text"):
+                continue
+            ref_msg = item.get("ref_msg") or {}
+            ref_item = ref_msg.get("message_item") or {}
+            ref_type = ref_item.get("type", 0)
+            if ref_type == 2 and (ref_item.get("image_item") or {}).get("media", {}).get("encrypt_query_param"):
+                return ref_item
+            if ref_type == 5 and (ref_item.get("video_item") or {}).get("media", {}).get("encrypt_query_param"):
+                return ref_item
+            if ref_type == 4 and (ref_item.get("file_item") or {}).get("media", {}).get("encrypt_query_param"):
+                return ref_item
+            if ref_type == 3:
+                voice_item = ref_item.get("voice_item") or {}
+                if (voice_item.get("media") or {}).get("encrypt_query_param") and not voice_item.get("text"):
+                    return ref_item
+        return None
 
     async def _process_media_items(
         self,
@@ -1061,34 +1330,59 @@ class WeChatBot(BaseIMClient):
         if context.files is None:
             context.files = []
 
+        processed_any = False
+
         for item in msg.get("item_list", []):
             item_type = item.get("type", 0)
-            # 2=IMAGE, 3=VOICE, 4=FILE, 5=VIDEO
-            type_name_map = {2: "IMAGE", 3: "VOICE", 4: "FILE", 5: "VIDEO"}
-            type_name = type_name_map.get(item_type)
-            if type_name is None:
+            item_data: Dict[str, Any] = {}
+            media: Dict[str, Any] = {}
+            file_name = ""
+            size: Optional[int] = None
+            mimetype = "application/octet-stream"
+
+            if item_type == 2:
+                item_data = item.get("image_item") or {}
+                media = item_data.get("media") or {}
+                file_name = item.get("file_name", "") or "wechat_image.jpg"
+                mimetype = "image/jpeg"
+            elif item_type == 3:
+                item_data = item.get("voice_item") or {}
+                media = item_data.get("media") or {}
+                file_name = item.get("file_name", "") or "wechat_voice.silk"
+                mimetype = "audio/silk"
+            elif item_type == 4:
+                item_data = item.get("file_item") or {}
+                media = item_data.get("media") or {}
+                file_name = item_data.get("file_name", "") or item.get("file_name", "")
+                try:
+                    size = int(item_data.get("len", 0)) or None
+                except (TypeError, ValueError):
+                    size = None
+                mimetype = "application/octet-stream"
+            elif item_type == 5:
+                item_data = item.get("video_item") or {}
+                media = item_data.get("media") or {}
+                file_name = item.get("file_name", "") or "wechat_video.mp4"
+                mimetype = "video/mp4"
+            else:
                 continue
 
-            cdn_info = item.get("cdn", {})
-            file_name = item.get("content", "") or item.get("file_name", "")
-
-            mime_map = {
-                "IMAGE": "image/jpeg",
-                "FILE": "application/octet-stream",
-                "VIDEO": "video/mp4",
-                "VOICE": "audio/amr",
-            }
-            mimetype = mime_map.get(type_name, "application/octet-stream")
-
             attachment = FileAttachment(
-                name=file_name or f"{type_name.lower()}_attachment",
+                name=file_name or f"wechat_{item_type}_attachment",
                 mimetype=mimetype,
-                url=cdn_info.get("url", ""),
-                size=cdn_info.get("file_size"),
+                url=media.get("encrypt_query_param", ""),
+                size=size,
             )
             # Store CDN info for later download
-            attachment.__dict__["cdn_info"] = cdn_info
+            attachment.__dict__["cdn_info"] = media
+            attachment.__dict__["wechat_item"] = item_data
             context.files.append(attachment)
+            processed_any = True
+
+        if not processed_any:
+            ref_item = self._extract_reference_media_item(msg)
+            if ref_item:
+                await self._process_media_items({"item_list": [ref_item]}, context)
 
     # ------------------------------------------------------------------
     # Deduplication

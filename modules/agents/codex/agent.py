@@ -271,9 +271,11 @@ class CodexAgent(BaseAgent):
         }
 
         if getattr(self.controller.config, "reply_enhancements", True):
-            from core.reply_enhancer import REPLY_ENHANCEMENTS_PROMPT
+            from core.reply_enhancer import build_reply_enhancements_prompt
 
-            params["developerInstructions"] = REPLY_ENHANCEMENTS_PROMPT
+            params["developerInstructions"] = build_reply_enhancements_prompt(
+                include_quick_replies=self.controller.config.platform != "wechat"
+            )
 
         resp = await transport.send_request("thread/start", params)
         # thread/start returns Thread directly OR may nest under "thread"

@@ -389,6 +389,7 @@ const buildConfigPayload = (data: any) => {
     } : undefined,
     // Preserve ack_mode
     ack_mode: data.ack_mode,
+    show_duration: data.show_duration,
     // Preserve language
     language: data.language,
   };

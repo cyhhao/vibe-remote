@@ -42,6 +42,7 @@
     "processActionFailed": "Error processing action: {error}",
     "agentNotConfigured": "Agent `{agent}` is not configured. Make sure the Codex CLI is installed and environment variables are set if this channel is routed to Codex.",
     "processMessageFailed": "Error: {error}",
+    "opencodeQuestionUnsupportedWechat": "OpenCode interactive questions are temporarily disabled on WeChat. Please send a follow-up message instead.",
     "sessionReset": "Session error detected. Session has been reset. Please try your message again.",
     "sessionConnectionLost": "Connection to Claude was lost. Please try your message again.",
     "sessionGeneric": "An error occurred: {error}"
@@ -165,12 +166,22 @@
     "start": {
       "welcome": "Welcome to Vibe Remote!",
       "greeting": "Hello {name}!",
+      "userFallback": "User",
       "platform": "Platform: {platform}",
       "agent": "Agent: {agent}",
       "channel": "Channel: {channel}",
+      "commandsTitle": "Available Commands:",
+      "commandStart": "/start - Show this welcome message",
+      "commandCwd": "/cwd - Show current working directory",
+      "commandSetCwd": "/setcwd <path> - Set working directory",
+      "commandStop": "/stop - Interrupt {agent} execution",
+      "commandNew": "/new - Start a fresh session",
       "quickActions": "Quick Actions:",
       "quickActionsDesc": "Use the buttons below to manage your {agent} sessions, or simply type any message to start chatting with {agent}!",
       "directMessage": "Direct Message"
+    },
+    "new": {
+      "started": "Started a fresh session. Your next message will begin a new conversation."
     },
     "clear": {
       "noSessions": "No active sessions to clear.\nSession state has been reset.",
@@ -182,9 +193,9 @@
       "exists": "Directory exists",
       "notExists": "Directory does not exist",
       "hint": "This is where Agent will execute commands",
-      "usage": "Usage: /set_cwd <path>",
-      "changeInstructions": "To change working directory, use:\n`/set_cwd <path>`\n\nExample:\n`/set_cwd ~/projects/myapp`",
-      "clickButton": "Click the 'Change Work Dir' button in the @Vibe Remote /start menu to change working directory."
+      "usage": "Usage: /setcwd <path>",
+      "changeInstructions": "To change working directory, use:\n`/setcwd <path>`\n\nExample:\n`/setcwd ~/projects/myapp`",
+      "clickButton": "Click the 'Change Work Dir' button in the /start menu to change working directory."
     },
     "resume": {
       "slackOnly": "Resume is currently available only on Slack. Continue in the same thread to auto-resume.",
@@ -198,6 +209,7 @@
   "button": {
     "currentDir": "Current Dir",
     "changeDir": "Change Work Dir",
+    "newSession": "New Session",
     "clearSession": "Clear All Session",
     "settings": "Settings",
     "resumeSession": "Resume Session",

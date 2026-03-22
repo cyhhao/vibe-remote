@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+from pathlib import Path
 from typing import Optional
 
 from modules.im import MessageContext
@@ -94,6 +95,13 @@ class ConsolidatedMessageDispatcher:
             return 1900
         return 30000
 
+    def _supports_quick_replies(self) -> bool:
+        return self.controller.config.platform != "wechat"
+
+    @staticmethod
+    def _is_video_path(path: str) -> bool:
+        return Path(path).suffix.lower() in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+
     @staticmethod
     def _build_result_summary(text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
@@ -154,7 +162,7 @@ class ConsolidatedMessageDispatcher:
                 display_text = text
 
             if len(display_text) <= self._get_result_max_chars():
-                if enhanced and enhanced.buttons:
+                if enhanced and enhanced.buttons and self._supports_quick_replies():
                     await self._send_with_quick_replies(
                         im_client,
                         target_context,
@@ -376,7 +384,13 @@ class ConsolidatedMessageDispatcher:
                 upload_title = f"{upload_title}{src_ext}"
 
             try:
-                if getattr(fl, "is_image", False):
+                if self._is_video_path(str(resolved)):
+                    await im_client.upload_video_from_path(
+                        context,
+                        file_path=str(resolved),
+                        title=upload_title,
+                    )
+                elif getattr(fl, "is_image", False):
                     try:
                         await im_client.upload_image_from_path(
                             context,

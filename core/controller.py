@@ -291,7 +291,7 @@ class Controller:
         # the centralized auth pipeline (core.auth.check_auth) in IM entry points.
         command_handlers = {
             "start": self.command_handler.handle_start,
-            "clear": self.command_handler.handle_clear,
+            "new": self.command_handler.handle_new,
             "cwd": self.command_handler.handle_cwd,
             "set_cwd": self.command_handler.handle_set_cwd,
             "settings": self.settings_handler.handle_settings,

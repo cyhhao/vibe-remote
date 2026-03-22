@@ -390,6 +390,7 @@
     "ackMode": "Ack Mode",
     "ackModeHint": "How bot acknowledges received messages",
     "ackReaction": "👀 Reaction",
+    "ackTyping": "Typing",
     "ackMessage": "Message",
     "errorRetryLimit": "Error Retry Limit",
     "errorRetryLimitHint": "Auto-retry with 'continue' when LLM stream errors occur (0 = no retry)",

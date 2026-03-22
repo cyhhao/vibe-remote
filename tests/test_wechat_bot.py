@@ -1,0 +1,319 @@
+import unittest
+from unittest.mock import AsyncMock
+from pathlib import Path
+import sys
+import tempfile
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core.auth import AuthResult
+from modules.im import MessageContext
+from modules.im.wechat import WeChatBot, WeChatConfig
+
+
+class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
+    def _make_bot(self) -> WeChatBot:
+        bot = WeChatBot(WeChatConfig(bot_token="token", base_url="https://ilinkai.weixin.qq.com"))
+        setattr(bot.config, "cdn_base_url", "https://novac2c.cdn.weixin.qq.com/c2c")
+        return bot
+
+    def test_extract_text_reads_text_item_and_voice_text(self):
+        msg = {
+            "item_list": [
+                {"type": 1, "text_item": {"text": "hello"}},
+                {"type": 3, "voice_item": {"text": "world", "playtime": 2300}},
+            ]
+        }
+
+        self.assertEqual(WeChatBot._extract_text(msg), "hello [Voice 2.3s] world")
+
+    def test_extract_text_appends_quoted_message_title(self):
+        msg = {
+            "item_list": [
+                {
+                    "type": 1,
+                    "text_item": {"text": "look at this"},
+                    "ref_msg": {"title": "quoted image summary"},
+                }
+            ]
+        }
+
+        self.assertEqual(WeChatBot._extract_text(msg), "look at this\n[Quoted message: quoted image summary]")
+
+    def test_normalize_poll_timeout_clamps_values(self):
+        self.assertEqual(WeChatBot._normalize_poll_timeout("70000"), 60000)
+        self.assertEqual(WeChatBot._normalize_poll_timeout("1000"), 5000)
+        self.assertEqual(WeChatBot._normalize_poll_timeout("abc"), 35000)
+
+    async def test_get_user_info_uses_short_fixed_display_name(self):
+        bot = self._make_bot()
+
+        result = await bot.get_user_info("o9cq80wPgvrwjnEYWkG_55au4v8Q@im.wechat")
+
+        self.assertEqual(result["display_name"], "WeChat User")
+        self.assertEqual(result["real_name"], "WeChat User")
+        self.assertEqual(result["name"], "WeChat User")
+
+    async def test_send_typing_indicator_fetches_typing_ticket(self):
+        bot = self._make_bot()
+        context = MessageContext(user_id="user-1", channel_id="user-1", platform_specific={"context_token": "ctx-1"})
+
+        with patch(
+            "modules.im.wechat.wechat_api.get_config",
+            new=AsyncMock(return_value={"ret": 0, "typing_ticket": "ticket-1"}),
+        ) as mock_cfg:
+            with patch("modules.im.wechat.wechat_api.send_typing", new=AsyncMock(return_value=True)) as mock_typing:
+                result = await bot.send_typing_indicator(context)
+
+        self.assertTrue(result)
+        mock_cfg.assert_awaited_once()
+        mock_typing.assert_awaited_once()
+
+    async def test_clear_typing_indicator_uses_cached_ticket(self):
+        bot = self._make_bot()
+        context = MessageContext(user_id="user-1", channel_id="user-1", platform_specific={"context_token": "ctx-1"})
+        bot._typing_tickets[("user-1", "ctx-1")] = "ticket-1"
+
+        with patch("modules.im.wechat.wechat_api.send_typing", new=AsyncMock(return_value=True)) as mock_typing:
+            result = await bot.clear_typing_indicator(context)
+
+        self.assertTrue(result)
+        args = mock_typing.await_args.args  # type: ignore[union-attr]
+        self.assertEqual(args[3], "ticket-1")
+
+    async def test_process_inbound_message_dispatches_allowed_message(self):
+        bot = self._make_bot()
+        bot.check_authorization = lambda **kwargs: AuthResult(allowed=True, is_dm=True)
+        bot.dispatch_text_command = AsyncMock(return_value=False)
+        bot._process_media_items = AsyncMock(return_value=None)
+        bot.on_message_callback = AsyncMock()
+
+        msg = {
+            "message_id": "mid-1",
+            "from_user_id": "user-1",
+            "context_token": "ctx-1",
+            "item_list": [{"type": 1, "text_item": {"text": "hi"}}],
+        }
+
+        await bot._process_inbound_message(msg)
+
+        bot.on_message_callback.assert_awaited_once()
+        args = bot.on_message_callback.await_args.args  # type: ignore[union-attr]
+        self.assertEqual(args[0].user_id, "user-1")
+        self.assertEqual(args[1], "hi")
+
+    async def test_process_media_items_falls_back_to_referenced_media(self):
+        bot = self._make_bot()
+        context = MessageContext(user_id="user-1", channel_id="user-1", files=[])
+        msg = {
+            "item_list": [
+                {
+                    "type": 1,
+                    "text_item": {"text": "please review"},
+                    "ref_msg": {
+                        "title": "screenshot",
+                        "message_item": {
+                            "type": 2,
+                            "image_item": {
+                                "media": {
+                                    "encrypt_query_param": "ref-param",
+                                    "aes_key": "ref-key",
+                                }
+                            },
+                        },
+                    },
+                }
+            ]
+        }
+
+        await bot._process_media_items(msg, context)
+
+        self.assertIsNotNone(context.files)
+        self.assertEqual(len(context.files or []), 1)
+        attachment = (context.files or [])[0]
+        self.assertEqual(attachment.url, "ref-param")
+
+    async def test_process_inbound_message_sends_denial_for_unauthorized_user(self):
+        bot = self._make_bot()
+        bot.check_authorization = lambda **kwargs: AuthResult(
+            allowed=False,
+            denial="unbound_dm",
+            is_dm=True,
+        )
+        bot.dispatch_text_command = AsyncMock(return_value=False)
+        bot._process_media_items = AsyncMock(return_value=None)
+        bot.send_message = AsyncMock(return_value="wc-1")
+        bot.on_message_callback = AsyncMock()
+
+        msg = {
+            "message_id": "mid-2",
+            "from_user_id": "user-2",
+            "context_token": "ctx-2",
+            "item_list": [{"type": 1, "text_item": {"text": "hi"}}],
+        }
+
+        await bot._process_inbound_message(msg)
+
+        bot.send_message.assert_awaited_once()
+        bot.on_message_callback.assert_not_called()
+
+    async def test_download_file_to_path_uses_encrypt_query_param_and_image_aeskey(self):
+        bot = self._make_bot()
+
+        file_info = {
+            "name": "wechat_image.jpg",
+            "url": "encrypted-param",
+            "cdn_info": {"encrypt_query_param": "encrypted-param"},
+            "wechat_item": {"aeskey": "00112233445566778899aabbccddeeff"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_path = str(Path(tmpdir) / "wechat-test-image.bin")
+            with patch(
+                "modules.im.wechat._wechat_cdn_mod.download_and_decrypt", new=AsyncMock(return_value=b"img")
+            ) as mock_dl:
+                result = await bot.download_file_to_path(file_info, target_path)
+
+        self.assertTrue(result.success)
+        mock_dl.assert_awaited_once()
+        args = mock_dl.await_args.args  # type: ignore[union-attr]
+        self.assertEqual(args[0], "https://novac2c.cdn.weixin.qq.com/c2c")
+        self.assertEqual(args[1], "encrypted-param")
+        self.assertTrue(isinstance(args[2], str) and len(args[2]) > 0)
+
+    async def test_download_file_to_path_uses_voice_media_aes_key(self):
+        bot = self._make_bot()
+
+        file_info = {
+            "name": "wechat_voice.silk",
+            "url": "voice-param",
+            "cdn_info": {"encrypt_query_param": "voice-param", "aes_key": "dm9pY2Uta2V5"},
+            "wechat_item": {},
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_path = str(Path(tmpdir) / "wechat-test-voice.bin")
+            with patch(
+                "modules.im.wechat._wechat_cdn_mod.download_and_decrypt", new=AsyncMock(return_value=b"voice")
+            ) as mock_dl:
+                result = await bot.download_file_to_path(file_info, target_path)
+
+        self.assertTrue(result.success)
+        mock_dl.assert_awaited_once_with(
+            "https://novac2c.cdn.weixin.qq.com/c2c",
+            "voice-param",
+            "dm9pY2Uta2V5",
+        )
+
+    async def test_upload_image_from_path_uses_cdn_workflow(self):
+        bot = self._make_bot()
+        context = MessageContext(user_id="user-1", channel_id="user-1", platform_specific={"context_token": "ctx-1"})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "photo.png"
+            image_path.write_bytes(b"png")
+            cdn_meta = {"encrypt_query_param": "p", "aes_key": "k", "file_size": 3, "file_size_ciphertext": 16}
+            with patch(
+                "modules.im.wechat.wechat_cdn.upload_image_to_cdn", new=AsyncMock(return_value=cdn_meta)
+            ) as mock_upload:
+                with patch("modules.im.wechat.wechat_api.send_message", new=AsyncMock(return_value={})) as mock_send:
+                    result = await bot.upload_image_from_path(context, str(image_path))
+
+        self.assertTrue(result.startswith("wc-img-"))
+        mock_upload.assert_awaited_once()
+        mock_send.assert_awaited_once()
+        sent_items = mock_send.await_args.args[4]  # type: ignore[union-attr]
+        self.assertEqual(sent_items[0]["image_item"]["media"]["encrypt_query_param"], "p")
+        self.assertEqual(sent_items[0]["image_item"]["media"]["aes_key"], "k")
+        self.assertEqual(sent_items[0]["image_item"]["media"]["encrypt_type"], 1)
+        self.assertEqual(sent_items[0]["image_item"]["mid_size"], 16)
+
+    async def test_send_message_accepts_empty_success_response(self):
+        bot = self._make_bot()
+        context = MessageContext(user_id="user-1", channel_id="user-1", platform_specific={"context_token": "ctx-1"})
+
+        with patch("modules.im.wechat.wechat_api.send_message", new=AsyncMock(return_value={})):
+            result = await bot.send_message(context, "hello")
+
+        self.assertTrue(result.startswith("wc-"))
+
+    async def test_send_message_marks_session_expired_on_explicit_error(self):
+        bot = self._make_bot()
+        context = MessageContext(user_id="user-1", channel_id="user-1", platform_specific={"context_token": "ctx-1"})
+        bot._auth_manager.is_logged_in = True
+
+        with patch(
+            "modules.im.wechat.wechat_api.send_message",
+            new=AsyncMock(return_value={"errcode": -14, "errmsg": "session timeout"}),
+        ):
+            with self.assertRaises(RuntimeError):
+                await bot.send_message(context, "hello")
+
+        self.assertFalse(bot._auth_manager.is_logged_in)
+
+    async def test_upload_file_from_path_uses_cdn_workflow(self):
+        bot = self._make_bot()
+        context = MessageContext(user_id="user-1", channel_id="user-1", platform_specific={"context_token": "ctx-1"})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = Path(tmpdir) / "report.pdf"
+            file_path.write_bytes(b"pdf")
+            cdn_meta = {"encrypt_query_param": "p", "aes_key": "k", "file_size": 3}
+            with patch(
+                "modules.im.wechat.wechat_cdn.upload_file_to_cdn", new=AsyncMock(return_value=cdn_meta)
+            ) as mock_upload:
+                with patch("modules.im.wechat.wechat_api.send_message", new=AsyncMock(return_value={})) as mock_send:
+                    result = await bot.upload_file_from_path(context, str(file_path), title="report.pdf")
+
+        self.assertTrue(result.startswith("wc-file-"))
+        mock_upload.assert_awaited_once()
+        mock_send.assert_awaited_once()
+        sent_items = mock_send.await_args.args[4]  # type: ignore[union-attr]
+        self.assertEqual(sent_items[0]["file_item"]["media"]["encrypt_query_param"], "p")
+        self.assertEqual(sent_items[0]["file_item"]["media"]["aes_key"], "k")
+        self.assertEqual(sent_items[0]["file_item"]["media"]["encrypt_type"], 1)
+        self.assertEqual(sent_items[0]["file_item"]["file_name"], "report.pdf")
+        self.assertEqual(sent_items[0]["file_item"]["len"], "3")
+
+    async def test_upload_file_from_path_routes_video_to_native_video_message(self):
+        bot = self._make_bot()
+        context = MessageContext(user_id="user-1", channel_id="user-1", platform_specific={"context_token": "ctx-1"})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = Path(tmpdir) / "clip.mp4"
+            file_path.write_bytes(b"mp4")
+            cdn_meta = {"encrypt_query_param": "p", "aes_key": "k", "file_size_ciphertext": 12}
+            with patch(
+                "modules.im.wechat.wechat_cdn.upload_file_to_cdn", new=AsyncMock(return_value=cdn_meta)
+            ) as mock_upload:
+                with patch("modules.im.wechat.wechat_api.send_message", new=AsyncMock(return_value={})) as mock_send:
+                    result = await bot.upload_file_from_path(context, str(file_path), title="clip.mp4")
+
+        self.assertTrue(result.startswith("wc-video-"))
+        sent_items = mock_send.await_args.args[4]  # type: ignore[union-attr]
+        self.assertEqual(sent_items[0]["type"], 5)
+        self.assertEqual(sent_items[0]["video_item"]["media"]["encrypt_query_param"], "p")
+        self.assertEqual(sent_items[0]["video_item"]["video_size"], 12)
+        self.assertEqual(mock_upload.await_args.kwargs["media_type"], 2)  # type: ignore[union-attr]
+
+    async def test_upload_image_from_path_returns_empty_on_send_error_response(self):
+        bot = self._make_bot()
+        context = MessageContext(user_id="user-1", channel_id="user-1", platform_specific={"context_token": "ctx-1"})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "photo.png"
+            image_path.write_bytes(b"png")
+            cdn_meta = {"encrypt_query_param": "p", "aes_key": "k", "file_size": 3, "file_size_ciphertext": 16}
+            with patch("modules.im.wechat.wechat_cdn.upload_image_to_cdn", new=AsyncMock(return_value=cdn_meta)):
+                with patch(
+                    "modules.im.wechat.wechat_api.send_message",
+                    new=AsyncMock(return_value={"ret": 500, "errmsg": "bad media"}),
+                ):
+                    result = await bot.upload_image_from_path(context, str(image_path))
+
+        self.assertEqual(result, "")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -293,6 +293,25 @@ async def download_and_decrypt(
     return decrypted
 
 
+async def download_plain(
+    cdn_base_url: str,
+    encrypted_query_param: str,
+) -> bytes:
+    """Download raw CDN bytes without decryption."""
+
+    url = _build_cdn_download_url(cdn_base_url, encrypted_query_param)
+    logger.debug("CDN plain download: GET %s", url[:80])
+
+    timeout = aiohttp.ClientTimeout(total=60)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url) as resp:
+            logger.debug("CDN plain download: status=%d", resp.status)
+            if not resp.ok:
+                body = await resp.text()
+                raise RuntimeError(f"CDN download {resp.status} {resp.reason}: {body[:200]}")
+            return await resp.read()
+
+
 # ---------------------------------------------------------------------------
 # High-level upload workflows
 # ---------------------------------------------------------------------------

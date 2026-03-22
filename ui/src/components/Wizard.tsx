@@ -91,6 +91,7 @@ const buildConfigPayload = (data: any) => ({
   update: data.update,
   // Preserve ack_mode
   ack_mode: data.ack_mode,
+  show_duration: data.show_duration,
   // Preserve language
   language: data.language,
 });
@@ -116,7 +117,7 @@ export const Wizard: React.FC = () => {
           : platform === 'wechat'
             ? { id: 'wechat', title: 'WeChat', component: WeChatConfig }
             : { id: 'slack', title: 'Slack', component: SlackConfig },
-      { id: 'channels', title: 'Channels', component: ChannelList },
+      ...(platform === 'wechat' ? [] : [{ id: 'channels', title: 'Channels', component: ChannelList }]),
       { id: 'summary', title: 'Finish', component: Summary },
     ];
   }, [data.platform]);
@@ -155,6 +156,7 @@ export const Wizard: React.FC = () => {
     const nextData = {
       ...data,
       ...(platformChanged ? { channelConfigs: {} } : {}),
+      ...(stepData?.platform === 'wechat' ? { show_duration: false } : {}),
       ...stepData,
     };
     setData(nextData);

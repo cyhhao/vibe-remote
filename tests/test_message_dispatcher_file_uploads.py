@@ -19,12 +19,16 @@ class _StubIMClient:
     def __init__(self):
         self.file_uploads = []
         self.image_uploads = []
+        self.video_uploads = []
 
     async def upload_file_from_path(self, context, file_path, title=None):
         self.file_uploads.append((context.channel_id, file_path, title))
 
     async def upload_image_from_path(self, context, file_path, title=None):
         self.image_uploads.append((context.channel_id, file_path, title))
+
+    async def upload_video_from_path(self, context, file_path, title=None):
+        self.video_uploads.append((context.channel_id, file_path, title))
 
 
 class MessageDispatcherFileUploadTests(unittest.IsolatedAsyncioTestCase):
@@ -65,6 +69,27 @@ class MessageDispatcherFileUploadTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(im_client.file_uploads, [])
         self.assertEqual(im_client.image_uploads, [("C1", resolved_path, "preview.png")])
+        self.assertEqual(im_client.video_uploads, [])
+
+    async def test_upload_video_link_uses_video_channel_even_for_image_syntax(self):
+        dispatcher = ConsolidatedMessageDispatcher(_StubController())
+        im_client = _StubIMClient()
+        context = MessageContext(user_id="U1", channel_id="C1")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_path = Path(tmpdir) / "clip.mp4"
+            video_path.write_bytes(b"mp4")
+            resolved_path = str(video_path.resolve())
+
+            await dispatcher._upload_file_links(
+                im_client,
+                context,
+                [FileLink(label="preview", path=str(video_path), is_image=True)],
+            )
+
+        self.assertEqual(im_client.file_uploads, [])
+        self.assertEqual(im_client.image_uploads, [])
+        self.assertEqual(im_client.video_uploads, [("C1", resolved_path, "preview.mp4")])
 
 
 if __name__ == "__main__":

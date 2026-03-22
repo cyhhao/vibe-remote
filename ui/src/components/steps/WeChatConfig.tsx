@@ -11,6 +11,8 @@ interface WeChatConfigProps {
   onBack: () => void;
 }
 
+const QR_POLL_INTERVAL_MS = 8000;
+
 export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
@@ -22,7 +24,8 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
   const [baseUrl, setBaseUrl] = useState<string>(data.wechat?.base_url || '');
   const [starting, setStarting] = useState(false);
 
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoStartedRef = useRef(false);
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
@@ -38,7 +41,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     };
   }, [stopPolling]);
 
-  const startLogin = async () => {
+  const startLogin = useCallback(async () => {
     setStarting(true);
     setLoginState('idle');
     setMessage('');
@@ -48,7 +51,11 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     stopPolling();
 
     try {
-      const result = await api.wechatStartLogin();
+      let result = await api.wechatStartLogin();
+      if (result?.error) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        result = await api.wechatStartLogin();
+      }
       if (result.error) {
         setLoginState('error');
         setMessage(result.error);
@@ -63,16 +70,41 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
         startPolling(result.session_key);
       }
     } catch (err: any) {
-      setLoginState('error');
-      setMessage(err?.message || t('wechatConfig.startFailed'));
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        const retryResult = await api.wechatStartLogin();
+        if (retryResult?.error) {
+          setLoginState('error');
+          setMessage(retryResult.error);
+          return;
+        }
+        setQrCodeUrl(retryResult.qrcode_url || '');
+        setMessage(retryResult.message || '');
+        setLoginState('qr_ready');
+        if (retryResult.session_key) {
+          startPolling(retryResult.session_key);
+        }
+      } catch (retryErr: any) {
+        setLoginState('error');
+        setMessage(retryErr?.message || err?.message || t('wechatConfig.startFailed'));
+      }
     } finally {
       setStarting(false);
     }
-  };
+  }, [api, stopPolling, t]);
+
+  useEffect(() => {
+    if (autoStartedRef.current) return;
+    if (starting) return;
+    if (loginState !== 'idle') return;
+
+    autoStartedRef.current = true;
+    void startLogin();
+  }, [loginState, startLogin, starting]);
 
   const startPolling = (key: string) => {
     stopPolling();
-    pollTimerRef.current = setInterval(async () => {
+    const pollOnce = async () => {
       try {
         const result = await api.wechatPollLogin(key);
         if (!result) return;
@@ -95,12 +127,20 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
           setLoginState('error');
           setMessage(result.message || t('wechatConfig.pollError'));
           stopPolling();
+          return;
         }
-        // status === 'wait' — keep polling
+        // status === 'wait' — schedule next poll after the server-side long poll window
+        pollTimerRef.current = setTimeout(() => {
+          void pollOnce();
+        }, QR_POLL_INTERVAL_MS);
       } catch {
-        // Ignore transient errors, keep polling
+        pollTimerRef.current = setTimeout(() => {
+          void pollOnce();
+        }, QR_POLL_INTERVAL_MS);
       }
-    }, 2000);
+    };
+
+    void pollOnce();
   };
 
   const isConnected = loginState === 'connected' && !!botToken;
@@ -152,17 +192,9 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
         {loginState === 'idle' && (
           <div className="bg-panel border border-border rounded-xl p-6 text-center space-y-4">
             <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto">
-              <Smartphone size={32} />
+              <Loader2 size={32} className="animate-spin" />
             </div>
-            <p className="text-sm text-muted">{t('wechatConfig.startDescription')}</p>
-            <button
-              onClick={startLogin}
-              disabled={starting}
-              className="px-6 py-3 bg-accent text-white rounded-lg flex items-center gap-2 mx-auto font-medium shadow-sm hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {starting ? <RefreshCw size={16} className="animate-spin" /> : <Smartphone size={16} />}
-              {starting ? t('wechatConfig.starting') : t('wechatConfig.startLogin')}
-            </button>
+            <p className="text-sm text-muted">{starting ? t('wechatConfig.starting') : t('wechatConfig.startDescription')}</p>
           </div>
         )}
 

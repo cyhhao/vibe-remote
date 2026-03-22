@@ -42,6 +42,7 @@
     "processActionFailed": "处理操作时出错：{error}",
     "agentNotConfigured": "Agent `{agent}` 未配置。若此频道路由到 Codex，请确保已安装 Codex CLI 并设置环境变量。",
     "processMessageFailed": "出错：{error}",
+    "opencodeQuestionUnsupportedWechat": "微信平台暂时不支持 OpenCode 的交互式提问。请直接再发一条消息继续。",
     "sessionReset": "检测到会话错误。会话已重置，请重试。",
     "sessionConnectionLost": "与 Claude 的连接已断开，请重试。",
     "sessionGeneric": "发生错误：{error}"
@@ -165,12 +166,22 @@
     "start": {
       "welcome": "欢迎使用 Vibe Remote！",
       "greeting": "你好 {name}！",
+      "userFallback": "用户",
       "platform": "平台：{platform}",
       "agent": "Agent：{agent}",
       "channel": "频道：{channel}",
+      "commandsTitle": "可用命令：",
+      "commandStart": "/start - 显示欢迎消息",
+      "commandCwd": "/cwd - 显示当前工作目录",
+      "commandSetCwd": "/setcwd <路径> - 设置工作目录",
+      "commandStop": "/stop - 中断 {agent} 当前执行",
+      "commandNew": "/new - 开启一个全新的会话",
       "quickActions": "快捷操作：",
       "quickActionsDesc": "使用下方按钮管理您的 {agent} 会话，或直接输入任何消息开始与 {agent} 聊天！",
       "directMessage": "私信"
+    },
+    "new": {
+      "started": "已开启新的会话。你下一条消息会从全新对话开始。"
     },
     "clear": {
       "noSessions": "没有要清除的活动会话。\n会话状态已重置。",
@@ -182,9 +193,9 @@
       "exists": "目录存在",
       "notExists": "目录不存在",
       "hint": "这是 Agent 执行命令的位置",
-      "usage": "用法：/set_cwd <路径>",
-      "changeInstructions": "要更改工作目录，请使用：\n`/set_cwd <路径>`\n\n示例：\n`/set_cwd ~/projects/myapp`",
-      "clickButton": "请点击 @Vibe Remote /start 菜单中的“更改工作目录”按钮来更改工作目录。"
+      "usage": "用法：/setcwd <路径>",
+      "changeInstructions": "要更改工作目录，请使用：\n`/setcwd <路径>`\n\n示例：\n`/setcwd ~/projects/myapp`",
+      "clickButton": "请点击 /start 菜单中的“更改工作目录”按钮来更改工作目录。"
     },
     "resume": {
       "slackOnly": "恢复功能目前仅在 Slack 上可用。在同一线程中继续可自动恢复。",
@@ -198,6 +209,7 @@
   "button": {
     "currentDir": "当前目录",
     "changeDir": "更改工作目录",
+    "newSession": "新会话",
     "clearSession": "清除所有会话",
     "settings": "设置",
     "resumeSession": "恢复会话",

@@ -151,7 +151,7 @@ class BaseIMClient(ABC):
 
         Examples:
             "/settings" -> "settings"
-            "/set_cwd /tmp" -> "set_cwd"
+            "/setcwd /tmp" -> "set_cwd"
             "bind abc123" -> "bind" (when ``allow_plain_bind`` is True)
             "hello" -> ""
         """
@@ -180,6 +180,8 @@ class BaseIMClient(ABC):
             command = head[1:]
             if not command:
                 return None
+            if command == "setcwd":
+                command = "set_cwd"
             return command, args
 
         if allow_plain_bind and head == "bind":
@@ -349,6 +351,20 @@ class BaseIMClient(ABC):
         Default behavior falls back to ``upload_file_from_path`` so platforms
         without native image upload support still deliver the attachment.
         """
+        return await self.upload_file_from_path(context, file_path, title=title)
+
+    async def upload_video_from_path(
+        self,
+        context: MessageContext,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> str:
+        """Upload a local video to the conversation.
+
+        Default behavior falls back to ``upload_file_from_path`` so platforms
+        without native video support still deliver the attachment.
+        """
+
         return await self.upload_file_from_path(context, file_path, title=title)
 
     async def download_file(
@@ -544,6 +560,16 @@ class BaseIMClient(ABC):
 
         Default implementation returns False (unsupported).
         """
+        return False
+
+    async def send_typing_indicator(self, context: MessageContext) -> bool:
+        """Start or refresh a typing indicator for the current conversation."""
+
+        return False
+
+    async def clear_typing_indicator(self, context: MessageContext) -> bool:
+        """Clear a previously started typing indicator for the conversation."""
+
         return False
 
     async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:

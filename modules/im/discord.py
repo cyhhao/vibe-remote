@@ -431,6 +431,33 @@ class DiscordBot(BaseIMClient):
         message = await target.send(file=file_obj)
         return str(message.id)
 
+    async def send_typing_indicator(self, context: MessageContext) -> bool:
+        target = None
+        if context.thread_id:
+            target = await self._fetch_channel(context.thread_id)
+            if not isinstance(target, discord.Thread):
+                target = None
+        if target is None:
+            target = await self._fetch_channel(context.channel_id)
+        if target is None:
+            return False
+
+        trigger = getattr(target, "trigger_typing", None)
+        if not callable(trigger):
+            return False
+
+        try:
+            await trigger()
+            return True
+        except Exception as err:
+            logger.debug("Failed to trigger Discord typing indicator: %s", err)
+            return False
+
+    async def clear_typing_indicator(self, context: MessageContext) -> bool:
+        """Discord typing indicators expire automatically without explicit cancel."""
+
+        return True
+
     async def upload_file_from_path(
         self,
         context: MessageContext,
@@ -1738,6 +1765,7 @@ class _PersistentStartView(discord.ui.View):
         {
             "cmd_cwd",
             "cmd_change_cwd",
+            "cmd_new",
             "cmd_clear",
             "cmd_settings",
             "cmd_resume",

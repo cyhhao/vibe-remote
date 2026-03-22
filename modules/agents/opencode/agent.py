@@ -231,9 +231,13 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             # Inject reply-enhancement instructions via the system field (appended by OpenCode)
             reply_system: Optional[str] = None
             if getattr(self.controller.config, "reply_enhancements", True):
-                from core.reply_enhancer import REPLY_ENHANCEMENTS_PROMPT
+                from core.reply_enhancer import build_reply_enhancements_prompt
 
-                reply_system = REPLY_ENHANCEMENTS_PROMPT
+                reply_system = build_reply_enhancements_prompt(
+                    include_quick_replies=self.controller.config.platform != "wechat"
+                )
+
+            request_tools = {"question": False} if self.controller.config.platform == "wechat" else None
 
             await server.prompt_async(
                 session_id=session_id,
@@ -243,6 +247,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 model=model_dict,
                 reasoning_effort=reasoning_effort,
                 system=reply_system,
+                tools=request_tools,
             )
 
             logger.info(

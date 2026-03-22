@@ -286,8 +286,8 @@ class V2Config:
         update = UpdateConfig(**_filter_dataclass_fields(UpdateConfig, update_payload))
 
         ack_mode = payload.get("ack_mode", "reaction")
-        if ack_mode not in {"reaction", "message"}:
-            raise ValueError("Config 'ack_mode' must be 'reaction' or 'message'")
+        if ack_mode not in {"reaction", "message", "typing"}:
+            raise ValueError("Config 'ack_mode' must be 'reaction', 'message', or 'typing'")
 
         show_duration = payload.get("show_duration", True)
         if not isinstance(show_duration, bool):

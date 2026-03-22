@@ -36,6 +36,15 @@ class OpenCodeQuestionHandler:
         # Maps base_session_id -> (context, message_id, emoji)
         self._answer_reactions: Dict[str, tuple] = {}
 
+    def _platform_supports_question_tool(self, request: AgentRequest) -> bool:
+        return getattr(self._controller.config, "platform", "") != "wechat"
+
+    def _question_tool_disabled_text(self) -> str:
+        translator = getattr(self._controller, "_t", None)
+        if callable(translator):
+            return translator("error.opencodeQuestionUnsupportedWechat")
+        return "OpenCode interactive questions are temporarily disabled on WeChat. Please send a follow-up message instead."
+
     def get_pending(self, base_session_id: str) -> Optional[PendingQuestionPayload]:
         return self._pending_questions.get(base_session_id)
 
@@ -394,6 +403,24 @@ class OpenCodeQuestionHandler:
             message_id,
             tool_part.get("callID"),
         )
+
+        if not self._platform_supports_question_tool(request):
+            logger.warning(
+                "Blocking OpenCode question toolcall on unsupported platform %s for session %s",
+                getattr(self._controller.config, "platform", ""),
+                opencode_session_id,
+            )
+            seen_tool_calls.add(call_key)
+            try:
+                await server.abort_session(opencode_session_id, request.working_path)
+            except Exception as err:
+                logger.warning("Failed to abort OpenCode session after blocked question toolcall: %s", err)
+            await self._controller.emit_agent_message(
+                request.context,
+                "notify",
+                self._question_tool_disabled_text(),
+            )
+            return False
 
         qlist = tool_input.get("questions") if isinstance(tool_input, dict) else None
         qlist = qlist if isinstance(qlist, list) else []
