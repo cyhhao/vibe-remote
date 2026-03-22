@@ -232,6 +232,10 @@ def save_config(payload: dict) -> V2Config:
 def config_to_payload(config: V2Config) -> dict:
     payload = {
         "platform": config.platform,
+        "platforms": {
+            "enabled": config.platforms.enabled,
+            "primary": config.platforms.primary,
+        },
         "mode": config.mode,
         "version": config.version,
         "slack": {
@@ -263,14 +267,14 @@ def config_to_payload(config: V2Config) -> dict:
     return payload
 
 
-def get_settings() -> dict:
+def get_settings(platform: Optional[str] = None) -> dict:
     store = SettingsStore.get_instance()
-    return _settings_to_payload(store, platform=_current_platform())
+    return _settings_to_payload(store, platform=platform or _current_platform())
 
 
 def save_settings(payload: dict) -> dict:
     store = SettingsStore.get_instance()
-    platform = _current_platform()
+    platform = payload.get("platform") or _current_platform()
 
     def _normalize_routing_payload(routing_payload: dict) -> dict:
         from modules.agents.opencode.utils import normalize_claude_reasoning_effort

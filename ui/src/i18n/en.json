@@ -67,7 +67,10 @@
   },
   "platform": {
     "title": "Choose a Platform",
-    "subtitle": "Select the chat platform to connect.",
+    "subtitle": "Select one or more chat platforms to connect.",
+    "primary": "Primary",
+    "primaryTitle": "Primary Platform",
+    "primaryDesc": "Used for compatibility ordering and default UI focus.",
     "slack": {
       "title": "Slack",
       "desc": "Connect a Slack workspace and enable channels."
@@ -358,8 +361,8 @@
     "autoUpdate": "Auto Update",
     "autoUpdateHint": "Automatically install updates when system is idle",
     "usageTips": "Quick Start Guide",
-    "tipStartCommand": "Use @Vibe Remote /start to begin",
-    "tipStartCommandDesc": "Type @Vibe Remote /start in any enabled channel to open the control panel.",
+    "tipStartCommand": "Use /start to begin",
+    "tipStartCommandDesc": "Type /start in any enabled conversation to open the control panel.",
     "tipAgentSwitch": "Switch agents instantly",
     "tipAgentSwitchDesc": "Prefix your message with AgentName: to route to a specific agent. E.g., \"Plan: Design the API\"",
     "tipThread": "Thread = Session",

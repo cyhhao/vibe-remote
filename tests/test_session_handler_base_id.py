@@ -36,6 +36,9 @@ class _Controller:
     def _get_settings_key(self, context: MessageContext) -> str:
         return context.user_id if (context.platform_specific or {}).get("is_dm") else context.channel_id
 
+    def get_im_client_for_context(self, context: MessageContext):
+        return self.im_client
+
 
 def test_dm_session_base_id_uses_stable_channel_id() -> None:
     handler = SessionHandler(_Controller(platform="discord", dm_threads=False))
@@ -61,6 +64,19 @@ def test_dm_session_base_id_uses_thread_when_platform_supports_dm_threads() -> N
     )
 
     assert handler.get_base_session_id(context) == "lark_thread-999"
+
+
+def test_base_session_id_prefers_context_platform_over_primary_config() -> None:
+    handler = SessionHandler(_Controller(platform="slack", dm_threads=False))
+    context = MessageContext(
+        user_id="u-1",
+        channel_id="wx-123",
+        platform="wechat",
+        message_id="msg-42",
+        platform_specific={"is_dm": False},
+    )
+
+    assert handler.get_base_session_id(context) == "wechat_msg-42"
 
 
 def test_slack_dm_session_base_id_uses_thread_when_supported() -> None:

@@ -36,6 +36,7 @@ class MessageContext:
 
     user_id: str
     channel_id: str
+    platform: Optional[str] = None
     thread_id: Optional[str] = None
     message_id: Optional[str] = None
     platform_specific: Optional[Dict[str, Any]] = None

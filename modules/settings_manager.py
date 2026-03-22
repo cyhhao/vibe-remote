@@ -5,7 +5,7 @@ from pathlib import Path
 
 from config import paths
 from config.v2_sessions import SessionsStore
-from config.v2_settings import SettingsStore, ChannelSettings, RoutingSettings
+from config.v2_settings import SettingsStore, ChannelSettings, RoutingSettings, SCOPED_KEY_SEP
 from config.v2_settings import UserSettings as BoundUserSettings
 from modules.sessions_facade import SessionsFacade
 
@@ -88,16 +88,23 @@ class SettingsManager:
         "tool": "toolcall",
     }
 
-    def __init__(self, settings_file: Optional[str] = None, platform: str = "slack"):
+    def __init__(
+        self,
+        settings_file: Optional[str] = None,
+        platform: str = "slack",
+        sessions_store: Optional[SessionsStore] = None,
+        sessions_facade: Optional[SessionsFacade] = None,
+    ):
         paths.ensure_data_dirs()
         self.settings_file = Path(settings_file) if settings_file else paths.get_settings_path()
         self.platform = platform
         self.channel_settings: Dict[str, UserSettings] = {}
         self.dm_user_settings: Dict[str, UserSettings] = {}
         self.store = SettingsStore.get_instance(self.settings_file)
-        self.sessions_store = SessionsStore()
-        self.sessions_store.load()
-        self.sessions = SessionsFacade(self.sessions_store)
+        self.sessions_store = sessions_store or SessionsStore()
+        if sessions_store is None:
+            self.sessions_store.load()
+        self.sessions = sessions_facade or SessionsFacade(self.sessions_store)
         self._last_seen_store_mtime: Optional[float] = None
         self._load_settings()
 
@@ -439,3 +446,126 @@ class SettingsManager:
         if channel_settings is not None:
             return channel_settings.require_mention
         return None
+
+
+class MultiSettingsManager:
+    """Route settings operations to per-platform managers using scoped keys."""
+
+    def __init__(self, platforms: list[str], settings_file: Optional[str] = None, primary_platform: str = "slack"):
+        self.platform = primary_platform
+        self.primary_platform = primary_platform
+        self.sessions_store = SessionsStore()
+        self.sessions_store.load()
+        self.sessions = SessionsFacade(self.sessions_store)
+        self.managers = {
+            platform: SettingsManager(
+                settings_file=settings_file,
+                platform=platform,
+                sessions_store=self.sessions_store,
+                sessions_facade=self.sessions,
+            )
+            for platform in platforms
+        }
+
+    def get_store(self) -> SettingsStore:
+        return self.managers[self.primary_platform].get_store()
+
+    def get_platform_manager(self, platform: str) -> SettingsManager:
+        return self.managers[platform]
+
+    def _resolve(self, settings_key: Union[int, str]) -> tuple[SettingsManager, str]:
+        key = str(settings_key)
+        if SCOPED_KEY_SEP in key:
+            platform, raw = key.split(SCOPED_KEY_SEP, 1)
+            if platform in self.managers:
+                return self.managers[platform], raw
+        return self.managers[self.primary_platform], key
+
+    def iter_bound_users(self, platform: Optional[str] = None):
+        if platform:
+            return self.managers[platform].iter_bound_users()
+        merged = []
+        for plat, manager in self.managers.items():
+            merged.extend(((f"{plat}{SCOPED_KEY_SEP}{uid}", user) for uid, user in manager.iter_bound_users()))
+        return merged
+
+    def is_bound_user(self, user_id: Union[int, str], platform: Optional[str] = None) -> bool:
+        if platform:
+            return self.managers[platform].is_bound_user(user_id)
+        manager, raw = self._resolve(user_id)
+        return manager.is_bound_user(raw)
+
+    def bind_user_with_code(
+        self,
+        user_id: Union[int, str],
+        display_name: str,
+        code: str,
+        dm_chat_id: str = "",
+        platform: Optional[str] = None,
+    ):
+        if platform:
+            return self.managers[platform].bind_user_with_code(user_id, display_name, code, dm_chat_id=dm_chat_id)
+        manager, raw = self._resolve(user_id)
+        return manager.bind_user_with_code(raw, display_name, code, dm_chat_id=dm_chat_id)
+
+    def get_user_settings(self, settings_key: Union[int, str]) -> UserSettings:
+        manager, raw = self._resolve(settings_key)
+        return manager.get_user_settings(raw)
+
+    def update_user_settings(self, settings_key: Union[int, str], settings: UserSettings):
+        manager, raw = self._resolve(settings_key)
+        return manager.update_user_settings(raw, settings)
+
+    def toggle_show_message_type(self, settings_key: Union[int, str], message_type: str) -> bool:
+        manager, raw = self._resolve(settings_key)
+        return manager.toggle_show_message_type(raw, message_type)
+
+    def set_custom_cwd(self, settings_key: Union[int, str], cwd: str):
+        manager, raw = self._resolve(settings_key)
+        return manager.set_custom_cwd(raw, cwd)
+
+    def get_custom_cwd(self, settings_key: Union[int, str]) -> Optional[str]:
+        manager, raw = self._resolve(settings_key)
+        return manager.get_custom_cwd(raw)
+
+    def get_channel_settings(self, settings_key: Union[int, str]) -> Optional[ChannelSettings]:
+        manager, raw = self._resolve(settings_key)
+        return manager.get_channel_settings(raw)
+
+    def is_message_type_hidden(self, settings_key: Union[int, str], message_type: str) -> bool:
+        manager, raw = self._resolve(settings_key)
+        return manager.is_message_type_hidden(raw, message_type)
+
+    def save_user_settings(self, settings_key: Union[int, str], settings: UserSettings):
+        manager, raw = self._resolve(settings_key)
+        return manager.save_user_settings(raw, settings)
+
+    def get_available_message_types(self) -> List[str]:
+        return self.managers[self.primary_platform].get_available_message_types()
+
+    def get_message_type_display_names(self) -> Dict[str, str]:
+        return self.managers[self.primary_platform].get_message_type_display_names()
+
+    def get_channel_routing(self, settings_key: Union[int, str]) -> Optional[ChannelRouting]:
+        manager, raw = self._resolve(settings_key)
+        return manager.get_channel_routing(raw)
+
+    def set_channel_routing(self, settings_key: Union[int, str], routing: ChannelRouting):
+        manager, raw = self._resolve(settings_key)
+        return manager.set_channel_routing(raw, routing)
+
+    def clear_channel_routing(self, settings_key: Union[int, str]):
+        manager, raw = self._resolve(settings_key)
+        return manager.clear_channel_routing(raw)
+
+    def get_require_mention(self, settings_key: Union[int, str], global_default: bool = False) -> bool:
+        manager, raw = self._resolve(settings_key)
+        return manager.get_require_mention(raw, global_default=global_default)
+
+    def set_require_mention(self, settings_key: Union[int, str], value: Optional[bool]):
+        manager, raw = self._resolve(settings_key)
+        return manager.set_require_mention(raw, value)
+
+    def get_require_mention_override(self, settings_key: Union[int, str]) -> Optional[bool]:
+        manager, raw = self._resolve(settings_key)
+        return manager.get_require_mention_override(raw)

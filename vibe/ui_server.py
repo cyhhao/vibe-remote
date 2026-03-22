@@ -118,7 +118,7 @@ def config_get():
 def settings_get():
     from vibe import api
 
-    return jsonify(api.get_settings())
+    return jsonify(api.get_settings(request.args.get("platform") or None))
 
 
 @app.route("/cli/detect")

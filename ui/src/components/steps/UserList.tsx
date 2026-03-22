@@ -3,6 +3,7 @@ import { User, Shield, ShieldOff, Copy, Check, Plus, Trash2, FolderOpen, HelpCir
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
+import { getEnabledPlatforms } from '../../lib/platforms';
 import { Combobox } from '../ui/combobox';
 import { DirectoryBrowser } from '../ui/directory-browser';
 import clsx from 'clsx';
@@ -479,6 +480,7 @@ export const UserList: React.FC = () => {
   const userEntries = Object.entries(users).sort(
     (a, b) => Number(b[1].is_admin) - Number(a[1].is_admin) || a[1].display_name.localeCompare(b[1].display_name)
   );
+  const enabledPlatforms = getEnabledPlatforms(config);
 
   return (
     <>
@@ -490,7 +492,7 @@ export const UserList: React.FC = () => {
         </div>
       </div>
 
-      {config.platform === 'wechat' ? (
+      {enabledPlatforms.every((platform) => platform === 'wechat') ? (
         <div className="mb-6 bg-panel border border-border rounded-xl p-4 shadow-sm">
           <p className="text-sm text-muted">{t('wechat.userBound')}</p>
         </div>

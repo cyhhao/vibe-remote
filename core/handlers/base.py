@@ -22,6 +22,21 @@ class BaseHandler:
     def _get_settings_key(self, context: MessageContext) -> str:
         return self.controller._get_settings_key(context)
 
+    def _get_im_client(self, context: MessageContext):
+        getter = getattr(self.controller, "get_im_client_for_context", None)
+        if callable(getter):
+            return getter(context)
+        return self.im_client
+
+    def _get_settings_manager(self, context: MessageContext):
+        getter = getattr(self.controller, "get_settings_manager_for_context", None)
+        if callable(getter):
+            return getter(context)
+        return self.settings_manager
+
+    def _get_formatter(self, context: MessageContext):
+        return getattr(self._get_im_client(context), "formatter", self.formatter)
+
     def _get_lang(self) -> str:
         if hasattr(self.controller, "_get_lang"):
             return self.controller._get_lang()

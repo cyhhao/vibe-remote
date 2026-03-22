@@ -4,8 +4,8 @@ import { useToast } from './ToastContext';
 export type ApiContextType = {
   getConfig: () => Promise<any>;
   saveConfig: (payload: any) => Promise<any>;
-  getSettings: () => Promise<any>;
-  saveSettings: (payload: any) => Promise<any>;
+  getSettings: (platform?: string) => Promise<any>;
+  saveSettings: (payload: any, platform?: string) => Promise<any>;
   getUsers: () => Promise<any>;
   saveUsers: (payload: any) => Promise<any>;
   toggleAdmin: (userId: string, isAdmin: boolean) => Promise<any>;
@@ -130,8 +130,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const value: ApiContextType = {
     getConfig: () => getJson('/config'),
     saveConfig: (payload) => postJson('/config', payload),
-    getSettings: () => getJson('/settings'),
-    saveSettings: (payload) => postJson('/settings', payload),
+    getSettings: (platform) => getJson(platform ? `/settings?platform=${encodeURIComponent(platform)}` : '/settings'),
+    saveSettings: (payload, platform) => postJson('/settings', platform ? { ...payload, platform } : payload),
     getUsers: () => getJson('/api/users'),
     saveUsers: (payload) => postJson('/api/users', payload),
     toggleAdmin: (userId, isAdmin) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, { is_admin: isAdmin }),

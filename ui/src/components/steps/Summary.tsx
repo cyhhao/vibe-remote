@@ -6,6 +6,7 @@ import { useStatus } from '../../context/StatusContext';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
+import { getEnabledPlatforms, getPrimaryPlatform } from '../../lib/platforms';
 
 interface SummaryProps {
   data: any;
@@ -24,12 +25,21 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const [error, setError] = useState<string | null>(null);
   const [bindCode, setBindCode] = useState<string | null>(null);
   const [codeCopied, setCodeCopied] = useState(false);
-  const platform = data.platform || 'slack';
-  const [requireMention, setRequireMention] = useState(
-    platform === 'discord' ? (data.discord?.require_mention || false)
-    : platform === 'lark' ? (data.lark?.require_mention || false)
-    : platform === 'wechat' ? (data.wechat?.require_mention || false)
-    : (data.slack?.require_mention || false)
+  const enabledPlatforms = getEnabledPlatforms(data);
+  const primaryPlatform = getPrimaryPlatform(data);
+  const [requireMentionByPlatform, setRequireMentionByPlatform] = useState<Record<string, boolean>>(
+    Object.fromEntries(
+      enabledPlatforms.map((platform) => [
+        platform,
+        platform === 'discord'
+          ? (data.discord?.require_mention || false)
+          : platform === 'lark'
+            ? (data.lark?.require_mention || false)
+            : platform === 'wechat'
+              ? (data.wechat?.require_mention || false)
+              : (data.slack?.require_mention || false),
+      ])
+    )
   );
   const [autoUpdate, setAutoUpdate] = useState(data.update?.auto_update ?? true);
   const navigate = useNavigate();
@@ -52,21 +62,26 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
     try {
       const updatedData = {
         ...data,
+        platform: primaryPlatform,
+        platforms: {
+          enabled: enabledPlatforms,
+          primary: primaryPlatform,
+        },
         slack: {
           ...data.slack,
-          require_mention: platform === 'slack' ? requireMention : data.slack?.require_mention,
+          require_mention: requireMentionByPlatform.slack ?? data.slack?.require_mention,
         },
         discord: {
           ...data.discord,
-          require_mention: platform === 'discord' ? requireMention : data.discord?.require_mention,
+          require_mention: requireMentionByPlatform.discord ?? data.discord?.require_mention,
         },
         lark: {
           ...data.lark,
-          require_mention: platform === 'lark' ? requireMention : data.lark?.require_mention,
+          require_mention: requireMentionByPlatform.lark ?? data.lark?.require_mention,
         },
         wechat: {
           ...data.wechat,
-          require_mention: platform === 'wechat' ? requireMention : data.wechat?.require_mention,
+          require_mention: requireMentionByPlatform.wechat ?? data.wechat?.require_mention,
         },
         update: {
           ...data.update,
@@ -75,13 +90,16 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
       };
       const configPayload = buildConfigPayload(updatedData);
       await api.saveConfig(configPayload);
-      await api.saveSettings(buildSettingsPayload(updatedData));
+      const settingsByPlatform = buildSettingsPayload(updatedData);
+      await Promise.all(
+        Object.entries(settingsByPlatform).map(([platform, payload]) => api.saveSettings(payload, platform))
+      );
       
       // Start service
       await control('start');
 
       // WeChat: skip bind code, auto-bind happens on QR login
-      if (platform === 'wechat') {
+      if (enabledPlatforms.every((platform) => platform === 'wechat')) {
         setSaving(false);
         showToast(t('wechat.setupComplete'));
         setTimeout(() => {
@@ -174,46 +192,53 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
 
       <div className="flex-1 space-y-4 overflow-y-auto mb-6">
         <Section title={t('summary.mode')} value={data.mode} />
-        <Section title={t('summary.platform')} value={platform} />
-        {platform === 'discord' ? (
-          <>
-            <Section title={t('summary.discordBotToken')} value={mask(data.discord?.bot_token || '')} />
-            <Section title={t('summary.discordGuild')} value={(data.discord?.guild_allowlist || [])[0] || t('summary.notSet')} />
-          </>
-        ) : platform === 'lark' ? (
-          <>
-            <Section title={t('summary.larkAppId')} value={mask(data.lark?.app_id || '')} />
-          </>
-        ) : platform === 'wechat' ? (
-          <>
-            <Section title={t('summary.wechatBotToken')} value={mask(data.wechat?.bot_token || '')} />
-          </>
-        ) : (
+        <Section title={t('summary.platform')} value={enabledPlatforms.join(', ')} />
+        {enabledPlatforms.includes('slack') && (
           <>
             <Section title={t('summary.slackBotToken')} value={mask(data.slack?.bot_token || '')} />
             <Section title={t('summary.slackAppToken')} value={mask(data.slack?.app_token || '')} />
           </>
         )}
+        {enabledPlatforms.includes('discord') && (
+          <>
+            <Section title={t('summary.discordBotToken')} value={mask(data.discord?.bot_token || '')} />
+            <Section title={t('summary.discordGuild')} value={(data.discord?.guild_allowlist || [])[0] || t('summary.notSet')} />
+          </>
+        )}
+        {enabledPlatforms.includes('lark') && (
+          <Section title={t('summary.larkAppId')} value={mask(data.lark?.app_id || '')} />
+        )}
+        {enabledPlatforms.includes('wechat') && (
+          <Section title={t('summary.wechatBotToken')} value={mask(data.wechat?.bot_token || '')} />
+        )}
         <Section title={t('summary.enabledAgents')} value={enabledAgents(data).join(', ')} />
-        <Section title={t('summary.channelsConfigured')} value={Object.keys(data.channelConfigs || {}).filter(k => data.channelConfigs[k]?.enabled).length} />
+        <Section title={t('summary.channelsConfigured')} value={countConfiguredChannels(data.channelConfigsByPlatform)} />
         
         {/* Require Mention Setting */}
-        <div className="bg-panel border border-border rounded-lg p-4 shadow-sm">
-          <div className="flex justify-between items-center">
-            <div>
-              <h3 className="text-sm font-medium text-text">{t('summary.requireMention')}</h3>
-              <p className="text-xs text-muted mt-1">{t('summary.requireMentionHint')}</p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={requireMention}
-                onChange={(e) => setRequireMention(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-border rounded-full peer peer-checked:bg-success peer-focus:ring-2 peer-focus:ring-success/20 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-            </label>
+        <div className="bg-panel border border-border rounded-lg p-4 shadow-sm space-y-4">
+          <div>
+            <h3 className="text-sm font-medium text-text">{t('summary.requireMention')}</h3>
+            <p className="text-xs text-muted mt-1">{t('summary.requireMentionHint')}</p>
           </div>
+          {enabledPlatforms.map((platform) => (
+            <div key={platform} className="flex justify-between items-center border-t border-border pt-3 first:border-t-0 first:pt-0">
+              <span className="text-sm text-text capitalize">{platform}</span>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={requireMentionByPlatform[platform] || false}
+                  onChange={(e) =>
+                    setRequireMentionByPlatform((current) => ({
+                      ...current,
+                      [platform]: e.target.checked,
+                    }))
+                  }
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-border rounded-full peer peer-checked:bg-success peer-focus:ring-2 peer-focus:ring-success/20 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+              </label>
+            </div>
+          ))}
         </div>
 
         {/* Auto Update Setting */}
@@ -309,10 +334,22 @@ const enabledAgents = (data: any) => {
   return Object.keys(agents).filter((name) => agents[name]?.enabled);
 };
 
+const countConfiguredChannels = (channelConfigsByPlatform: Record<string, Record<string, any>> = {}) =>
+  Object.values(channelConfigsByPlatform).reduce(
+    (count, channels) => count + Object.values(channels || {}).filter((config: any) => config?.enabled).length,
+    0,
+  );
+
 const buildConfigPayload = (data: any) => {
   const agents = data.agents || {};
+  const enabledPlatforms = getEnabledPlatforms(data);
+  const primaryPlatform = getPrimaryPlatform(data);
   return {
-    platform: data.platform || 'slack',
+    platform: primaryPlatform,
+    platforms: {
+      enabled: enabledPlatforms,
+      primary: primaryPlatform,
+    },
     mode: data.mode || 'self_host',
     version: 'v2',
     slack: {
@@ -396,29 +433,34 @@ const buildConfigPayload = (data: any) => {
 };
 
 const buildSettingsPayload = (data: any) => {
-  const channels = data.channelConfigs || {};
-  return {
-    channels: Object.fromEntries(
-      Object.entries(channels).map(([id, cfg]: any) => [
-        id,
-        {
-          enabled: cfg.enabled,
-          show_message_types: cfg.show_message_types || [],
-          custom_cwd: cfg.custom_cwd || null,
-          require_mention: cfg.require_mention ?? null,
-          routing: {
-            agent_backend: cfg.routing?.agent_backend || null,
-            opencode_agent: cfg.routing?.opencode_agent || null,
-            opencode_model: cfg.routing?.opencode_model || null,
-            opencode_reasoning_effort: cfg.routing?.opencode_reasoning_effort || null,
-            claude_agent: cfg.routing?.claude_agent || null,
-            claude_model: cfg.routing?.claude_model || null,
-            claude_reasoning_effort: cfg.routing?.claude_reasoning_effort || null,
-            codex_model: cfg.routing?.codex_model || null,
-            codex_reasoning_effort: cfg.routing?.codex_reasoning_effort || null,
-          },
-        },
-      ])
-    ),
-  };
+  const channelConfigsByPlatform = data.channelConfigsByPlatform || {};
+  return Object.fromEntries(
+    Object.entries(channelConfigsByPlatform).map(([platform, channels]: any) => [
+      platform,
+      {
+        channels: Object.fromEntries(
+          Object.entries(channels || {}).map(([id, cfg]: any) => [
+            id,
+            {
+              enabled: cfg.enabled,
+              show_message_types: cfg.show_message_types || [],
+              custom_cwd: cfg.custom_cwd || null,
+              require_mention: cfg.require_mention ?? null,
+              routing: {
+                agent_backend: cfg.routing?.agent_backend || null,
+                opencode_agent: cfg.routing?.opencode_agent || null,
+                opencode_model: cfg.routing?.opencode_model || null,
+                opencode_reasoning_effort: cfg.routing?.opencode_reasoning_effort || null,
+                claude_agent: cfg.routing?.claude_agent || null,
+                claude_model: cfg.routing?.claude_model || null,
+                claude_reasoning_effort: cfg.routing?.claude_reasoning_effort || null,
+                codex_model: cfg.routing?.codex_model || null,
+                codex_reasoning_effort: cfg.routing?.codex_reasoning_effort || null,
+              },
+            },
+          ])
+        ),
+      },
+    ])
+  );
 };

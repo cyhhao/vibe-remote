@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from config.v2_config import V2Config, SlackConfig, DiscordConfig, LarkConfig, WeChatConfig
@@ -39,6 +39,7 @@ class AppCompatConfig:
     log_level: str
     ack_mode: str
     language: str
+    platforms: dict = field(default_factory=lambda: {"enabled": ["slack"], "primary": "slack"})
     discord: Optional[DiscordConfig] = None
     lark: Optional[LarkConfig] = None
     wechat: Optional[WeChatConfig] = None
@@ -48,6 +49,12 @@ class AppCompatConfig:
     include_user_info: bool = True
     reply_enhancements: bool = True
     default_backend: str = "opencode"
+
+    def enabled_platforms(self) -> list[str]:
+        enabled = self.platforms.get("enabled") if isinstance(self.platforms, dict) else None
+        if isinstance(enabled, list) and enabled:
+            return [str(platform) for platform in enabled]
+        return [self.platform]
 
 
 def to_app_config(v2: V2Config) -> AppCompatConfig:
@@ -75,6 +82,10 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
     slack = SlackConfig(**v2.slack.__dict__)
     return AppCompatConfig(
         platform=v2.platform,
+        platforms={
+            "enabled": v2.platforms.enabled,
+            "primary": v2.platforms.primary,
+        },
         slack=slack,
         discord=v2.discord,
         lark=v2.lark,

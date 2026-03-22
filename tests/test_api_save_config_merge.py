@@ -103,3 +103,29 @@ def test_save_config_accepts_typing_ack_mode(monkeypatch, tmp_path):
     updated = api.save_config({**_full_config_payload(), "ack_mode": "typing"})
 
     assert updated.ack_mode == "typing"
+
+
+def test_save_config_preserves_platforms_metadata(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    updated = api.save_config(
+        {
+            **_full_config_payload(),
+            "platforms": {"enabled": ["slack", "discord", "wechat"], "primary": "discord"},
+        }
+    )
+
+    assert updated.platform == "discord"
+    assert updated.platforms.primary == "discord"
+    assert updated.platforms.enabled == ["slack", "discord", "wechat"]
+
+
+def test_save_config_migrates_legacy_single_platform(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    updated = api.save_config(_full_config_payload())
+    payload = api.config_to_payload(updated)
+
+    assert updated.platforms.primary == "discord"
+    assert updated.platforms.enabled == ["discord"]
+    assert payload["platforms"] == {"enabled": ["discord"], "primary": "discord"}

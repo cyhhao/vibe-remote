@@ -24,11 +24,19 @@ class SessionHandler(BaseHandler):
 
     def get_base_session_id(self, context: MessageContext) -> str:
         """Get base session ID based on platform and context (without path)"""
-        platform = getattr(self.config, "platform", "slack")
+        platform = (
+            context.platform
+            or (context.platform_specific or {}).get("platform")
+            or getattr(self.config, "platform", "slack")
+        )
         is_dm = bool((context.platform_specific or {}).get("is_dm", False))
         if is_dm:
             use_dm_threads = False
-            im_client = getattr(self.controller, "im_client", None)
+            im_client = getattr(
+                self.controller,
+                "get_im_client_for_context",
+                lambda _context: getattr(self.controller, "im_client", None),
+            )(context)
             if im_client and hasattr(im_client, "should_use_thread_for_dm_session"):
                 use_dm_threads = bool(im_client.should_use_thread_for_dm_session())
 
@@ -189,7 +197,9 @@ class SessionHandler(BaseHandler):
         if reply_enhancements_on:
             from core.reply_enhancer import build_reply_enhancements_prompt
 
-            reply_prompt = build_reply_enhancements_prompt(include_quick_replies=self.config.platform != "wechat")
+            platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
+
+            reply_prompt = build_reply_enhancements_prompt(include_quick_replies=platform != "wechat")
 
             if base_prompt:
                 final_system_prompt = f"{base_prompt}\n\n{reply_prompt}"
@@ -285,6 +295,7 @@ class SessionHandler(BaseHandler):
         session_id: Optional[str],
         host_message_ts: Optional[str] = None,
         is_dm: bool = False,
+        platform: Optional[str] = None,
     ) -> None:
         """Bind a provided session_id to the current thread for the chosen agent."""
         from modules.settings_manager import ChannelRouting
@@ -307,6 +318,7 @@ class SessionHandler(BaseHandler):
             context = MessageContext(
                 user_id=user_id,
                 channel_id=channel_id or user_id,
+                platform=platform or self.config.platform,
                 thread_id=target_thread or None,
                 platform_specific={"is_dm": is_dm},
             )
@@ -342,6 +354,7 @@ class SessionHandler(BaseHandler):
             mapping_context = MessageContext(
                 user_id=user_id,
                 channel_id=context.channel_id,
+                platform=context.platform,
                 thread_id=mapped_thread,
                 message_id=confirmation_ts,
                 platform_specific={"is_dm": is_dm},
@@ -355,6 +368,7 @@ class SessionHandler(BaseHandler):
             context = MessageContext(
                 user_id=user_id,
                 channel_id=channel_id or user_id,
+                platform=platform or self.config.platform,
                 thread_id=thread_id or None,
                 platform_specific={"is_dm": is_dm},
             )

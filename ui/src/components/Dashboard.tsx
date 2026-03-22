@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useStatus } from '../context/StatusContext';
 import { Play, Square, RotateCw, Activity, Terminal, CheckCircle, MessageSquare, Server, Settings, Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { getEnabledPlatforms, getPrimaryPlatform } from '../lib/platforms';
 
 export const Dashboard: React.FC = () => {
     const { t } = useTranslation();
@@ -29,10 +30,17 @@ export const Dashboard: React.FC = () => {
     const autoSaveMessageConfig = async (newConfig: any) => {
         try {
             const patch = {
+                platform: getPrimaryPlatform(newConfig),
+                platforms: newConfig.platforms,
                 ack_mode: newConfig.ack_mode,
                 show_duration: newConfig.show_duration,
                 include_user_info: newConfig.include_user_info,
                 reply_enhancements: newConfig.reply_enhancements,
+                slack: newConfig.slack,
+                discord: newConfig.discord,
+                lark: newConfig.lark,
+                wechat: newConfig.wechat,
+                agents: newConfig.agents,
             };
             await fetch('/config', {
                 method: 'POST',
@@ -142,7 +150,9 @@ export const Dashboard: React.FC = () => {
         return () => window.clearTimeout(timer);
     }, [diagnosticsMessage]);
 
-    const showWorkspaceGateway = config.mode !== 'self_host' && (config.platform || 'slack') === 'slack';
+    const enabledPlatforms = getEnabledPlatforms(config);
+    const primaryPlatform = getPrimaryPlatform(config);
+    const showWorkspaceGateway = config.mode !== 'self_host' && enabledPlatforms.includes('slack');
 
     return (
         <div className="max-w-5xl mx-auto space-y-8">
@@ -244,7 +254,7 @@ export const Dashboard: React.FC = () => {
                         </div>
                         <div className="flex justify-between items-center">
                             <span className="text-muted">{t('dashboard.platform')}</span>
-                            <span className="font-mono text-xs text-text capitalize">{config.platform || 'slack'}</span>
+                            <span className="font-mono text-xs text-text capitalize">{enabledPlatforms.join(', ') || primaryPlatform}</span>
                         </div>
                         <div className="flex justify-between items-center">
                             <span className="text-muted">{t('dashboard.defaultBackend')}</span>
@@ -270,8 +280,8 @@ export const Dashboard: React.FC = () => {
                     <h3 className="font-semibold flex items-center gap-2 text-text"><MessageSquare size={18} /> {t('dashboard.messageHandling')}</h3>
                 </div>
                 <div className="space-y-3 text-sm">
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted flex items-center gap-1">
+                    <div className="space-y-2">
+                        <div className="text-muted flex items-center gap-1">
                             {t('dashboard.requireMention')}
                             <span className="relative group">
                                 <Info size={12} className="text-muted/50 cursor-help" />
@@ -279,53 +289,67 @@ export const Dashboard: React.FC = () => {
                                     {t('dashboard.requireMentionHint')}
                                 </span>
                             </span>
-                        </span>
-                        <button
-                            onClick={() => {
-                                setSettingsMessage(null);
-                                const platform = config.platform || 'slack';
-                                const toggleValue = platform === 'discord'
-                                    ? !config.discord?.require_mention
-                                    : platform === 'lark'
-                                    ? !config.lark?.require_mention
-                                    : !config.slack?.require_mention;
-                                const newConfig = {
-                                    ...config,
-                                    discord: {
-                                        ...(config.discord || {}),
-                                        require_mention: platform === 'discord' ? toggleValue : config.discord?.require_mention,
-                                    },
-                                    slack: {
-                                        ...(config.slack || {}),
-                                        require_mention: platform === 'slack' ? toggleValue : config.slack?.require_mention,
-                                    },
-                                    lark: {
-                                        ...(config.lark || {}),
-                                        require_mention: platform === 'lark' ? toggleValue : config.lark?.require_mention,
-                                    },
-                                };
-                                setConfig(newConfig);
-                                autoSaveMessageConfig(newConfig);
-                            }}
-                            className={`px-2 py-1 rounded text-xs font-semibold border ${
-                                (config.platform === 'discord'
-                                    ? config.discord?.require_mention
-                                    : config.platform === 'lark'
-                                    ? config.lark?.require_mention
-                                    : config.slack?.require_mention)
-                                    ? 'bg-success/10 text-success border-success/20'
-                                    : 'bg-neutral-100 text-muted border-border'
-                            }`}
-                        >
-                            {(config.platform === 'discord'
-                                ? config.discord?.require_mention
-                                : config.platform === 'lark'
-                                ? config.lark?.require_mention
-                                : config.slack?.require_mention)
-                                ? t('channelList.mentionStatusOn')
-                                : t('channelList.mentionStatusOff')}
-                        </button>
-
+                        </div>
+                        {enabledPlatforms.map((platform) => (
+                            <div key={platform} className="flex justify-between items-center">
+                                <span className="text-text capitalize">{platform}</span>
+                                <button
+                                    onClick={() => {
+                                        setSettingsMessage(null);
+                                        const currentValue = platform === 'discord'
+                                            ? !!config.discord?.require_mention
+                                            : platform === 'lark'
+                                                ? !!config.lark?.require_mention
+                                                : platform === 'wechat'
+                                                    ? !!config.wechat?.require_mention
+                                                    : !!config.slack?.require_mention;
+                                        const toggleValue = !currentValue;
+                                        const newConfig = {
+                                            ...config,
+                                            discord: {
+                                                ...(config.discord || {}),
+                                                require_mention: platform === 'discord' ? toggleValue : config.discord?.require_mention,
+                                            },
+                                            slack: {
+                                                ...(config.slack || {}),
+                                                require_mention: platform === 'slack' ? toggleValue : config.slack?.require_mention,
+                                            },
+                                            lark: {
+                                                ...(config.lark || {}),
+                                                require_mention: platform === 'lark' ? toggleValue : config.lark?.require_mention,
+                                            },
+                                            wechat: {
+                                                ...(config.wechat || {}),
+                                                require_mention: platform === 'wechat' ? toggleValue : config.wechat?.require_mention,
+                                            },
+                                        };
+                                        setConfig(newConfig);
+                                        autoSaveMessageConfig(newConfig);
+                                    }}
+                                    className={`px-2 py-1 rounded text-xs font-semibold border ${
+                                        (platform === 'discord'
+                                            ? config.discord?.require_mention
+                                            : platform === 'lark'
+                                                ? config.lark?.require_mention
+                                                : platform === 'wechat'
+                                                    ? config.wechat?.require_mention
+                                                    : config.slack?.require_mention)
+                                            ? 'bg-success/10 text-success border-success/20'
+                                            : 'bg-neutral-100 text-muted border-border'
+                                    }`}
+                                >
+                                    {(platform === 'discord'
+                                        ? config.discord?.require_mention
+                                        : platform === 'lark'
+                                            ? config.lark?.require_mention
+                                            : platform === 'wechat'
+                                                ? config.wechat?.require_mention
+                                                : config.slack?.require_mention)
+                                        ? t('channelList.mentionStatusOn')
+                                        : t('channelList.mentionStatusOff')}
+                                </button>
+                            </div>
+                        ))}
                     </div>
                     <div className="flex justify-between items-center">
                         <span className="text-muted flex items-center gap-1">

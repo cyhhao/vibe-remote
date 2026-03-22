@@ -67,7 +67,10 @@
   },
   "platform": {
     "title": "选择平台",
-    "subtitle": "选择要连接的聊天平台。",
+    "subtitle": "选择一个或多个要连接的聊天平台。",
+    "primary": "主平台",
+    "primaryTitle": "主平台",
+    "primaryDesc": "仅用于兼容排序和默认界面展示焦点。",
     "slack": {
       "title": "Slack",
       "desc": "连接 Slack 工作区并启用频道。"
@@ -358,8 +361,8 @@
     "autoUpdate": "自动更新",
     "autoUpdateHint": "系统空闲时自动安装更新",
     "usageTips": "快速上手",
-    "tipStartCommand": "使用 @Vibe Remote /start 开始",
-    "tipStartCommandDesc": "在任意已启用的频道输入 @Vibe Remote /start 打开控制面板。",
+    "tipStartCommand": "使用 /start 开始",
+    "tipStartCommandDesc": "在任意已启用的会话中输入 /start 打开控制面板。",
     "tipAgentSwitch": "即时切换 Agent",
     "tipAgentSwitchDesc": "在消息前加 AgentName: 前缀即可路由到指定 Agent，如 \"Plan: 设计 API\"",
     "tipThread": "Thread = 会话",
