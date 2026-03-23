@@ -14,7 +14,7 @@ on:
         description: "OpenAI model (default: gpt-5.2)"
         required: false
         type: string
-        default: "gpt-5.2"
+        default: "gpt-5.4"
       max_commits:
         description: "Max commits to summarize"
         required: false
@@ -131,7 +131,7 @@ jobs:
         id: notes
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ github.event.inputs.model || 'gpt-5.2' }}
+          OPENAI_MODEL: ${{ github.event.inputs.model || 'gpt-5.4' }}
           TAG: ${{ steps.tag.outputs.tag }}
           RANGE: ${{ steps.commits.outputs.range }}
           COMMIT_COUNT: ${{ steps.commits.outputs.commit_count }}
@@ -150,18 +150,12 @@ jobs:
             exit 1
           fi
 
-          TAG="$TAG"
-          RANGE="$RANGE"
-          REPO="$REPO"
-
           if [[ "$RANGE" == *".."* ]]; then
             COMPARE_PATH="${RANGE/../...}"
             COMPARE_URL="https://github.com/${REPO}/compare/${COMPARE_PATH}"
           else
             COMPARE_URL="https://github.com/${REPO}/commits/${TAG}"
           fi
-
-          COMMITS=$(cat commits.txt 2>/dev/null || true)
 
           # Best-effort PR enrichment: fetch PR titles/labels if we can detect PR numbers.
           PRS_SUMMARY=""
@@ -179,43 +173,46 @@ jobs:
             fi
           fi
 
-          # If we have PR list, reduce commit noise to keep prompts smaller.
-          if [ -n "$PRS_SUMMARY" ] && [ -s commits.txt ]; then
-            COMMITS=$(head -n 80 commits.txt)
-          fi
+          # Always pass full commits as primary source; PRs supplement context.
+          COMMITS=$(cat commits.txt 2>/dev/null || true)
 
-          : > prompt.txt
-          {
-            printf '%s\n' "You are a strict release manager.";
-            printf '%s\n' "";
-            printf '%s\n' "Generate GitHub Release Notes (Markdown) for version ${TAG} based ONLY on the information below.";
-            printf '%s\n' "";
-            printf '%s\n' "Rules:";
-            printf '%s\n' "- Do NOT hallucinate. Use only the provided PRs/commits.";
-            printf '%s\n' "- Prefer PR list if available; otherwise fall back to commit list.";
-            printf '%s\n' "- Output MUST be bilingual in this exact order:";
-            printf '%s\n' "  1) English release notes";
-            printf '%s\n' "  2) A single Markdown horizontal rule line: ---";
-            printf '%s\n' "  3) Chinese release notes";
-            printf '%s\n' "- Both language sections must use the same structure:";
-            printf '%s\n' "  - 1-3 bullets in ## Highlights (omit if none)";
-            printf '%s\n' "  - ## Changes grouped by ### Added / ### Changed / ### Fixed / ### Security / ### Breaking (omit empty)";
-            printf '%s\n' "  - Final line in each section: Full Changelog: <URL>";
-            printf '%s\n' "- Keep bullets concise (one line each).";
-            printf '%s\n' "";
-            printf '%s\n' "Context:";
-            printf '%s\n' "- Repo: ${REPO}";
-            printf '%s\n' "- Range: ${RANGE}";
-            printf '%s\n' "- Compare: ${COMPARE_URL}";
-            if [ -n "$PRS_SUMMARY" ]; then
-              printf '%s\n' "";
-              printf '%s\n' "Pull Requests:";
-              printf '%s\n' "$PRS_SUMMARY";
-            fi
-            printf '%s\n' "";
-            printf '%s\n' "Commits (${COMMIT_COUNT}):";
-            printf '%s\n' "${COMMITS}";
-          } >> prompt.txt
+          cat > prompt.txt <<PROMPT
+          Generate GitHub Release Notes (Markdown) for version ${TAG}.
+
+          ## Source priority
+          - Commits are the PRIMARY source of truth — they show what actually shipped.
+          - PR titles/labels are SUPPLEMENTARY context for grouping and attribution.
+          - Do NOT skip commits just because a PR list exists.
+          - Do NOT hallucinate. Use only the provided data.
+
+          ## Highlights (most important)
+          Write a ## Highlights section (2-4 bullets) that answers: "Why should I upgrade?"
+          - Focus on USER-FACING impact: new capabilities, meaningful UX improvements, important fixes.
+          - Use action-oriented language: "You can now ...", "X is now Y% faster", "Fixed a bug where ...".
+          - Skip internal refactors, CI tweaks, and dependency bumps — those go in Changes.
+          - If a change is significant but technical, translate it into user benefit.
+          - Omit Highlights entirely only if the release is purely internal housekeeping.
+
+          ## Changes
+          Group remaining items under ### Added / ### Changed / ### Fixed / ### Security / ### Breaking.
+          - Omit empty groups.
+          - Each bullet: one line, start with a verb, reference PR number if available.
+          - Minor/internal items (deps, CI, refactor) can be collapsed into a single "Internal" bullet or omitted.
+
+          ## Format
+          - Output MUST be bilingual in this exact order:
+            1) English release notes
+            2) A single Markdown horizontal rule: ---
+            3) Chinese release notes (natural Chinese, not machine-translated)
+          - Final line in each language section: **Full Changelog**: ${COMPARE_URL}
+
+          Context: ${REPO} ${RANGE}
+          PROMPT
+
+          if [ -n "$PRS_SUMMARY" ]; then
+            printf '\nPull Requests:\n%s\n' "$PRS_SUMMARY" >> prompt.txt
+          fi
+          printf '\nCommits (%s):\n%s\n' "$COMMIT_COUNT" "$COMMITS" >> prompt.txt
 
           jq -n \
             --arg model "$OPENAI_MODEL" \
@@ -223,17 +220,29 @@ jobs:
             '{
               model: $model,
               messages: [
-                {role: "system", content: "You write concise, accurate release notes. You do not hallucinate."},
+                {role: "system", content: "You are a developer-relations writer who distills commit logs into release notes that developers actually want to read. Lead with impact, be specific, never invent changes."},
                 {role: "user", content: $prompt}
               ],
               temperature: 0.2
             }' > request.json
 
-          curl -sS https://api.openai.com/v1/chat/completions \
+          HTTP_CODE=$(curl -sS -w '%{http_code}' \
+            --connect-timeout 30 \
+            --max-time 300 \
+            --retry 2 \
+            --retry-delay 10 \
+            --retry-max-time 660 \
             -H "Authorization: Bearer ${OPENAI_API_KEY}" \
             -H "Content-Type: application/json" \
             -d @request.json \
-            -o response.json
+            -o response.json \
+            https://api.openai.com/v1/chat/completions)
+
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "OpenAI API returned HTTP $HTTP_CODE" >&2
+            cat response.json >&2 || true
+            exit 1
+          fi
 
           ERROR_MSG=$(jq -r '.error.message // empty' response.json)
           if [ -n "$ERROR_MSG" ]; then
@@ -251,7 +260,7 @@ jobs:
             exit 1
           fi
 
-          if ! grep -q "^Full Changelog:" release.md; then
+          if ! grep -qi "Full Changelog:" release.md || ! grep -qF "$COMPARE_URL" release.md; then
             printf "\n\nFull Changelog: %s\n" "$COMPARE_URL" >> release.md
           fi
 
@@ -263,3 +272,4 @@ jobs:
           body_path: release.md
           draft: false
           prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+          make_latest: ${{ github.event_name == 'push' }}
