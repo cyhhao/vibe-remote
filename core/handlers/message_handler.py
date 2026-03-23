@@ -149,7 +149,7 @@ class MessageHandler(BaseHandler):
 
             # Check for routing-based agent to maintain session key consistency
             # This ensures session IDs match between MessageHandler and SessionHandler
-            routing = self.controller.settings_manager.get_channel_routing(settings_key)
+            routing = self._get_settings_manager(context).get_channel_routing(settings_key)
             routing_agent = routing.claude_agent if routing else None
 
             matched_prefix = None

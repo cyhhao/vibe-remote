@@ -29,7 +29,7 @@ def test_sessions_store_namespaces(tmp_path, monkeypatch):
 
 
 def test_migrate_active_polls_backfills_platform_and_scoped_key(tmp_path, monkeypatch):
-    """Legacy active_polls lacking platform / scoped settings_key are migrated."""
+    """Legacy active_polls lacking platform are migrated; unscoped keys stay raw."""
     monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
     store = SessionsStore()
     # Simulate a legacy poll saved before the multi-platform PR
@@ -39,7 +39,7 @@ def test_migrate_active_polls_backfills_platform_and_scoped_key(tmp_path, monkey
             "base_session_id": "C123:msg1",
             "channel_id": "C123",
             "thread_id": "t1",
-            "settings_key": "C123",  # old unscoped key
+            "settings_key": "C123",  # already raw key
             "working_path": "/tmp/work",
             "platform": "",  # missing platform
             "user_id": "U1",
@@ -53,11 +53,11 @@ def test_migrate_active_polls_backfills_platform_and_scoped_key(tmp_path, monkey
 
     poll = reloaded.state.active_polls["oc-session-1"]
     assert poll["platform"] == "slack"
-    assert poll["settings_key"] == "slack::C123"
+    assert poll["settings_key"] == "C123"
 
 
-def test_migrate_active_polls_skips_already_scoped(tmp_path, monkeypatch):
-    """Already-scoped polls are not double-prefixed."""
+def test_migrate_active_polls_strips_scoped_key(tmp_path, monkeypatch):
+    """Scoped settings_key is stripped back to raw ID."""
     monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
     store = SessionsStore()
     store.state.active_polls = {
@@ -80,4 +80,4 @@ def test_migrate_active_polls_skips_already_scoped(tmp_path, monkeypatch):
 
     poll = reloaded.state.active_polls["oc-session-2"]
     assert poll["platform"] == "discord"
-    assert poll["settings_key"] == "discord::C456"
+    assert poll["settings_key"] == "C456"

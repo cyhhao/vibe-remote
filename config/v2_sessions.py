@@ -103,7 +103,7 @@ class SessionsStore:
         )
 
     def migrate_active_polls(self, default_platform: str) -> None:
-        """Migrate legacy active_polls that lack ``platform`` or use unscoped settings_key.
+        """Migrate legacy active_polls that lack ``platform`` or use scoped settings_key.
 
         Should be called once after load() when the runtime knows the primary
         platform.  For pre-multi-platform installs every active poll was
@@ -118,15 +118,14 @@ class SessionsStore:
             if not data.get("platform"):
                 data["platform"] = default_platform
                 migrated = True
-            # Migrate unscoped settings_key → platform::key
+            # Strip any scoped settings_key back to raw ID
             sk = data.get("settings_key", "")
-            if sk and "::" not in sk:
-                prefix = data.get("platform") or default_platform
-                data["settings_key"] = f"{prefix}::{sk}"
+            if sk and "::" in sk:
+                data["settings_key"] = sk.split("::", 1)[1]
                 migrated = True
         if migrated:
             self.save()
-            logger.info("Migrated legacy active_polls to platform-scoped format (default=%s)", default_platform)
+            logger.info("Migrated legacy active_polls (default_platform=%s)", default_platform)
 
     def _ensure_user_namespace(self, user_id: str) -> None:
         if user_id not in self.state.session_mappings:

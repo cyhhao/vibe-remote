@@ -409,9 +409,7 @@ class Controller:
         ``context.platform_specific`` (see Phase 2 of the refactoring).
         """
         is_dm = (context.platform_specific or {}).get("is_dm", False)
-        platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
-        raw_key = context.user_id if is_dm else context.channel_id
-        return f"{platform}::{raw_key}"
+        return context.user_id if is_dm else context.channel_id
 
     def get_im_client_for_context(self, context: Optional[MessageContext] = None) -> BaseIMClient:
         if context is None:

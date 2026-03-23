@@ -515,7 +515,7 @@ class CommandHandlers(BaseHandler):
 
             # Check if this is a DM context (settings_key == user_id means DM)
             settings_key = self._get_settings_key(context)
-            if settings_key.split("::", 1)[-1] != context.user_id:
+            if settings_key != context.user_id:
                 # Not a DM — instruct user to use DM
                 channel_context = self._get_channel_context(context)
                 await im_client.send_message(channel_context, self._t("bind.dmOnly"))

@@ -153,7 +153,7 @@ class ConsolidatedMessageDispatcher:
         if not text or not text.strip():
             return
 
-        settings_manager = self.controller.settings_manager
+        settings_manager = self.controller.get_settings_manager_for_context(context)
         im_client = self._get_im_client(context)
 
         canonical_type = settings_manager._canonicalize_message_type(message_type or "")
