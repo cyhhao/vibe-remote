@@ -4,15 +4,17 @@ import asyncio
 import json
 import os
 import logging
+import threading
 from typing import Optional, Dict, Any
 from config import paths
 from modules.im import BaseIMClient, MessageContext, IMFactory
+from modules.im.multi import MultiIMClient
 from modules.im.formatters import SlackFormatter, DiscordFormatter
 from modules.agent_router import AgentRouter
 from modules.agents import AgentService, ClaudeAgent, CodexAgent, OpenCodeAgent
 from modules.claude_client import ClaudeClient
 from modules.session_manager import SessionManager
-from modules.settings_manager import SettingsManager
+from modules.settings_manager import SettingsManager, MultiSettingsManager
 from core.handlers import (
     CommandHandlers,
     SessionHandler,
@@ -33,6 +35,11 @@ class Controller:
         """Initialize controller with configuration"""
         self.config = config
         self._config_mtime: Optional[float] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._im_thread: Optional[threading.Thread] = None
+        self._im_run_exception: Optional[BaseException] = None
+        self.enabled_platforms = list(getattr(config, "enabled_platforms", lambda: [config.platform])())
+        self.primary_platform = getattr(getattr(config, "platforms", None), "primary", config.platform)
 
         # Session tracking (must be initialized before handlers)
         self.claude_sessions: Dict[str, Any] = {}
@@ -71,30 +78,22 @@ class Controller:
 
     def _init_modules(self):
         """Initialize core modules"""
-        # Create IM client with platform-specific formatter
-        self.im_client: BaseIMClient = IMFactory.create_client(self.config)
+        self.im_clients: Dict[str, BaseIMClient] = IMFactory.create_clients(self.config)
+        for platform, client in self.im_clients.items():
+            client.formatter = self._create_formatter(platform)
 
-        # Create platform-specific formatter
-        if self.config.platform == "discord":
-            formatter = DiscordFormatter()
-        elif self.config.platform == "lark":
-            from modules.im.formatters.feishu_formatter import FeishuFormatter
-
-            formatter = FeishuFormatter()
-        elif self.config.platform == "wechat":
-            from modules.im.formatters.wechat_formatter import WeChatFormatter
-
-            formatter = WeChatFormatter()
-        else:
-            formatter = SlackFormatter()
-
-        # Inject formatter into clients
-        self.im_client.formatter = formatter
+        self.im_client = (
+            self.im_clients[self.primary_platform]
+            if len(self.im_clients) == 1
+            else MultiIMClient(self.im_clients, primary_platform=self.primary_platform)
+        )
+        formatter = self.im_clients[self.primary_platform].formatter
         self.claude_client = ClaudeClient(self.config.claude, formatter)
 
         # Initialize managers
         self.session_manager = SessionManager()
-        self.settings_manager = SettingsManager(platform=self.config.platform)
+        self.settings_manager = MultiSettingsManager(self.enabled_platforms, primary_platform=self.primary_platform)
+        self.platform_settings_managers = self.settings_manager.managers
         self.sessions = self.settings_manager.sessions
 
         # Migrate legacy per-channel language into global config
@@ -102,37 +101,37 @@ class Controller:
 
         # Agent routing - use configured default_backend
         default_backend = getattr(self.config, "default_backend", "opencode")
-        self.agent_router = AgentRouter.from_file(None, platform=self.config.platform, default_backend=default_backend)
+        self.agent_router = AgentRouter.from_file(None, platform=self.primary_platform, default_backend=default_backend)
+        for platform in self.enabled_platforms:
+            if platform not in self.agent_router.platform_routes:
+                self.agent_router.platform_routes[platform] = self.agent_router.platform_routes[self.primary_platform]
 
         # Inject settings_manager into IM client if supported
-        if self.config.platform == "slack":
-            from modules.im.slack import SlackBot
+        for platform, client in self.im_clients.items():
+            self._inject_runtime_dependencies(platform, client)
 
-            if isinstance(self.im_client, SlackBot):
-                self.im_client.set_settings_manager(self.settings_manager)
-                self.im_client.set_controller(self)
-                logger.info("Injected settings_manager and controller into SlackBot")
-        elif self.config.platform == "discord":
-            from modules.im.discord import DiscordBot
+    def _create_formatter(self, platform: str):
+        if platform == "discord":
+            return DiscordFormatter()
+        if platform == "lark":
+            from modules.im.formatters.feishu_formatter import FeishuFormatter
 
-            if isinstance(self.im_client, DiscordBot):
-                self.im_client.set_settings_manager(self.settings_manager)
-                self.im_client.set_controller(self)
-                logger.info("Injected settings_manager and controller into DiscordBot")
-        elif self.config.platform == "lark":
-            from modules.im.feishu import FeishuBot
+            return FeishuFormatter()
+        if platform == "wechat":
+            from modules.im.formatters.wechat_formatter import WeChatFormatter
 
-            if isinstance(self.im_client, FeishuBot):
-                self.im_client.set_settings_manager(self.settings_manager)
-                self.im_client.set_controller(self)
-                logger.info("Injected settings_manager and controller into FeishuBot")
-        elif self.config.platform == "wechat":
-            from modules.im.wechat import WeChatBot
+            return WeChatFormatter()
+        return SlackFormatter()
 
-            if isinstance(self.im_client, WeChatBot):
-                self.im_client.set_settings_manager(self.settings_manager)
-                self.im_client.set_controller(self)
-                logger.info("Injected settings_manager and controller into WeChatBot")
+    def _inject_runtime_dependencies(self, platform: str, client: BaseIMClient) -> None:
+        settings_manager = self.platform_settings_managers[platform]
+        setter = getattr(client, "set_settings_manager", None)
+        if callable(setter):
+            setter(settings_manager)
+        controller_setter = getattr(client, "set_controller", None)
+        if callable(controller_setter):
+            controller_setter(self)
+        logger.info("Injected settings_manager and controller into %s client", platform)
 
     def _get_lang(self) -> str:
         self._refresh_config_from_disk()
@@ -164,9 +163,10 @@ class Controller:
                 self.config.reply_enhancements = v2_config.reply_enhancements
 
                 # Sync global require_mention into the IM client's platform config
-                platform = getattr(self.config, "platform", "")
-                im_cfg = getattr(self.im_client, "config", None)
-                if im_cfg is not None and hasattr(im_cfg, "require_mention"):
+                for platform, client in self.im_clients.items():
+                    im_cfg = getattr(client, "config", None)
+                    if im_cfg is None or not hasattr(im_cfg, "require_mention"):
+                        continue
                     if platform == "lark" and v2_config.lark:
                         im_cfg.require_mention = v2_config.lark.require_mention
                     elif platform == "slack":
@@ -290,27 +290,59 @@ class Controller:
         # Admin protection for "set_cwd" and "settings" is now handled by
         # the centralized auth pipeline (core.auth.check_auth) in IM entry points.
         command_handlers = {
-            "start": self.command_handler.handle_start,
-            "new": self.command_handler.handle_new,
-            "cwd": self.command_handler.handle_cwd,
-            "set_cwd": self.command_handler.handle_set_cwd,
-            "settings": self.settings_handler.handle_settings,
-            "stop": self.command_handler.handle_stop,
-            "bind": self.command_handler.handle_bind,
+            "start": self._dispatch_to_controller_loop(self.command_handler.handle_start),
+            "new": self._dispatch_to_controller_loop(self.command_handler.handle_new),
+            "cwd": self._dispatch_to_controller_loop(self.command_handler.handle_cwd),
+            "set_cwd": self._dispatch_to_controller_loop(self.command_handler.handle_set_cwd),
+            "settings": self._dispatch_to_controller_loop(self.settings_handler.handle_settings),
+            "stop": self._dispatch_to_controller_loop(self.command_handler.handle_stop),
+            "bind": self._dispatch_to_controller_loop(self.command_handler.handle_bind),
         }
 
         # Register callbacks with the IM client
         self.im_client.register_callbacks(
-            on_message=self.message_handler.handle_user_message,
+            on_message=self._dispatch_to_controller_loop(self.message_handler.handle_user_message),
             on_command=command_handlers,
-            on_callback_query=self.message_handler.handle_callback_query,
-            on_settings_update=self.settings_handler.handle_settings_update,
-            on_change_cwd=self.command_handler.handle_change_cwd_submission,
-            on_routing_update=self.settings_handler.handle_routing_update,
-            on_routing_modal_update=self.settings_handler.handle_routing_modal_update,
-            on_resume_session=self.session_handler.handle_resume_session_submission,
-            on_ready=self._on_im_ready,
+            on_callback_query=self._dispatch_to_controller_loop(self.message_handler.handle_callback_query),
+            on_settings_update=self._dispatch_to_controller_loop(self.settings_handler.handle_settings_update),
+            on_change_cwd=self._dispatch_to_controller_loop(self.command_handler.handle_change_cwd_submission),
+            on_routing_update=self._dispatch_to_controller_loop(self.settings_handler.handle_routing_update),
+            on_routing_modal_update=self._dispatch_to_controller_loop(
+                self.settings_handler.handle_routing_modal_update
+            ),
+            on_resume_session=self._dispatch_to_controller_loop(self.session_handler.handle_resume_session_submission),
+            on_ready=self._dispatch_to_controller_loop(self._on_im_ready),
         )
+
+    def _dispatch_to_controller_loop(self, callback):
+        async def _wrapped(*args, **kwargs):
+            loop = self._loop
+            if loop is None:
+                return await callback(*args, **kwargs)
+
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+
+            if current_loop is loop:
+                return await callback(*args, **kwargs)
+
+            future = asyncio.run_coroutine_threadsafe(callback(*args, **kwargs), loop)
+            return await asyncio.wrap_future(future)
+
+        return _wrapped
+
+    def _run_im_runtime(self) -> None:
+        try:
+            self.im_client.run()
+        except BaseException as exc:  # noqa: BLE001
+            self._im_run_exception = exc
+            logger.error("IM runtime thread exited with error: %s", exc, exc_info=True)
+        finally:
+            loop = self._loop
+            if loop and loop.is_running():
+                loop.call_soon_threadsafe(loop.stop)
 
     async def _on_im_ready(self):
         """Called when IM client is connected and ready.
@@ -377,7 +409,24 @@ class Controller:
         ``context.platform_specific`` (see Phase 2 of the refactoring).
         """
         is_dm = (context.platform_specific or {}).get("is_dm", False)
-        return context.user_id if is_dm else context.channel_id
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
+        raw_key = context.user_id if is_dm else context.channel_id
+        return f"{platform}::{raw_key}"
+
+    def get_im_client_for_context(self, context: Optional[MessageContext] = None) -> BaseIMClient:
+        if context is None:
+            return self.im_clients[self.primary_platform]
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
+        return self.im_clients.get(platform, self.im_clients[self.primary_platform])
+
+    def _get_im_client_for_platform(self, platform: str) -> BaseIMClient:
+        return self.im_clients.get(platform, self.im_clients[self.primary_platform])
+
+    def get_settings_manager_for_context(self, context: Optional[MessageContext] = None) -> SettingsManager:
+        if context is None:
+            return self.platform_settings_managers[self.primary_platform]
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
+        return self.platform_settings_managers.get(platform, self.platform_settings_managers[self.primary_platform])
 
     def update_thread_message_id(self, context: MessageContext) -> None:
         """Update message tracking for consolidated log dispatch."""
@@ -412,7 +461,8 @@ class Controller:
                 )
 
         # Fall back to static routing
-        resolved = self.agent_router.resolve(self.config.platform, settings_key)
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
+        resolved = self.agent_router.resolve(platform, settings_key)
 
         return resolved
 
@@ -451,22 +501,29 @@ class Controller:
     # Main run method
     def run(self):
         """Run the controller"""
-        logger.info(f"Starting Claude Proxy Controller with {self.config.platform} platform...")
-
-        # 不再创建额外事件循环，避免与 IM 客户端的内部事件循环冲突
-        # 清理职责改为：
-        # - 进程退出时做一次同步的 best-effort 取消（不跨循环 await）
+        logger.info("Starting Claude Proxy Controller with platforms: %s", ", ".join(self.enabled_platforms))
 
         try:
-            # Run the IM client (blocking)
-            self.im_client.run()
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._im_thread = threading.Thread(target=self._run_im_runtime, name="im-runtime", daemon=True)
+            self._im_thread.start()
+            self._loop.run_forever()
+            if self._im_run_exception and not isinstance(self._im_run_exception, (KeyboardInterrupt, SystemExit)):
+                raise self._im_run_exception
         except KeyboardInterrupt:
             logger.info("Received keyboard interrupt, shutting down...")
         except Exception as e:
             logger.error(f"Error in main run loop: {e}", exc_info=True)
         finally:
-            # Best-effort 同步清理，避免跨事件循环 await
             self.cleanup_sync()
+            if self._loop is not None:
+                try:
+                    self._loop.stop()
+                except Exception:
+                    pass
+                self._loop.close()
+                self._loop = None
 
     async def periodic_cleanup(self):
         """[Deprecated] Periodic cleanup is disabled in favor of safe on-demand cleanup"""
@@ -514,14 +571,21 @@ class Controller:
                 import inspect
 
                 if inspect.iscoroutinefunction(shutdown_attr):
-                    try:
-                        asyncio.run(shutdown_attr())
-                    except RuntimeError:
-                        pass
+                    loop = self._loop
+                    if loop and loop.is_running():
+                        try:
+                            future = asyncio.run_coroutine_threadsafe(shutdown_attr(), loop)
+                            future.result(timeout=5)
+                        except Exception:
+                            pass
                 else:
                     shutdown_attr()
         except Exception as e:
             logger.warning("Failed to shutdown IM client: %s", e)
+
+        if self._im_thread and self._im_thread.is_alive():
+            self._im_thread.join(timeout=5)
+        self._im_thread = None
 
         # Stop OpenCode server if running
         try:

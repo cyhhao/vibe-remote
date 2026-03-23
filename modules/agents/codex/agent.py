@@ -262,12 +262,17 @@ class CodexAgent(BaseAgent):
             "approvalPolicy": "never",
             "sandbox": "danger-full-access",
         }
+        platform = (
+            request.context.platform
+            or (request.context.platform_specific or {}).get("platform")
+            or self.controller.config.platform
+        )
 
         if getattr(self.controller.config, "reply_enhancements", True):
             from core.reply_enhancer import build_reply_enhancements_prompt
 
             params["developerInstructions"] = build_reply_enhancements_prompt(
-                include_quick_replies=self.controller.config.platform != "wechat"
+                include_quick_replies=platform != "wechat"
             )
 
         resp = await transport.send_request("thread/start", params)

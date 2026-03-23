@@ -68,12 +68,13 @@ class SettingsHandler(BaseHandler):
     async def handle_settings(self, context: MessageContext, args: str = ""):
         """Handle settings command - show settings menu"""
         try:
+            platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
             # For Slack, use modal dialog
-            if self.config.platform == "slack":
+            if platform == "slack":
                 await self._handle_settings_slack(context)
-            elif self.config.platform == "discord":
+            elif platform == "discord":
                 await self._handle_settings_discord(context)
-            elif self.config.platform == "lark":
+            elif platform == "lark":
                 await self._handle_settings_lark(context)
             else:
                 # For other platforms, use inline keyboard
@@ -81,10 +82,13 @@ class SettingsHandler(BaseHandler):
 
         except Exception as e:
             logger.error(f"Error showing settings: {e}")
-            await self.im_client.send_message(context, f"❌ {self._t('error.showSettings', error=str(e))}")
+            await self._get_im_client(context).send_message(
+                context, f"❌ {self._t('error.showSettings', error=str(e))}"
+            )
 
     async def _handle_settings_traditional(self, context: MessageContext):
         """Handle settings for non-Slack platforms"""
+        im_client = self._get_im_client(context)
         # Get current settings
         settings_key = self._get_settings_key(context)
         user_settings = self.settings_manager.get_user_settings(settings_key)
@@ -119,7 +123,7 @@ class SettingsHandler(BaseHandler):
 
         # Send settings message with escaped dash
         agent_label = self._get_agent_display_name(context)
-        await self.im_client.send_message_with_buttons(
+        await im_client.send_message_with_buttons(
             context,
             f"⚙️ *{self._t('settings.visibilityTitle')}*\n\n{self._t('settings.visibilityDesc', agent=agent_label)}",
             keyboard,
@@ -127,10 +131,11 @@ class SettingsHandler(BaseHandler):
 
     async def _handle_settings_slack(self, context: MessageContext):
         """Handle settings for Slack using modal dialog"""
+        im_client = self._get_im_client(context)
         # For slash commands or direct triggers, we might have trigger_id
         trigger_id = context.platform_specific.get("trigger_id") if context.platform_specific else None
 
-        if trigger_id and hasattr(self.im_client, "open_settings_modal"):
+        if trigger_id and hasattr(im_client, "open_settings_modal"):
             # We have trigger_id, open modal directly
             settings_key = self._get_settings_key(context)
             user_settings = self.settings_manager.get_user_settings(settings_key)
@@ -145,32 +150,35 @@ class SettingsHandler(BaseHandler):
             current_language = self.config.language
 
             try:
-                await self.im_client.open_settings_modal(
-                    trigger_id,
-                    user_settings,
-                    message_types,
-                    display_names,
-                    context.channel_id,
-                    current_require_mention=current_require_mention,
-                    global_require_mention=global_require_mention,
-                    current_language=current_language,
+                await im_client.run_on_client_loop(
+                    im_client.open_settings_modal(
+                        trigger_id,
+                        user_settings,
+                        message_types,
+                        display_names,
+                        context.channel_id,
+                        current_require_mention=current_require_mention,
+                        global_require_mention=global_require_mention,
+                        current_language=current_language,
+                    )
                 )
             except Exception as e:
                 logger.error(f"Error opening settings modal: {e}")
-                await self.im_client.send_message(context, f"❌ {self._t('error.settingsFailed')}")
+                await im_client.send_message(context, f"❌ {self._t('error.settingsFailed')}")
         else:
             # No trigger_id, show button to open modal
             buttons = [[InlineButton(text=f"🛠️ {self._t('button.settings')}", callback_data="open_settings_modal")]]
 
             keyboard = InlineKeyboard(buttons=buttons)
 
-            await self.im_client.send_message_with_buttons(
+            await im_client.send_message_with_buttons(
                 context,
                 f"⚙️ *{self._t('settings.personalizationTitle')}*\n\n{self._t('settings.personalizationDesc', agent=self._get_agent_display_name(context))}",
                 keyboard,
             )
 
     async def _handle_settings_discord(self, context: MessageContext):
+        im_client = self._get_im_client(context)
         interaction = context.platform_specific.get("interaction") if context.platform_specific else None
         settings_key = self._get_settings_key(context)
         user_settings = self.settings_manager.get_user_settings(settings_key)
@@ -181,23 +189,26 @@ class SettingsHandler(BaseHandler):
         global_require_mention = self.config.discord.require_mention if self.config.discord else False
         current_language = self.config.language
 
-        if hasattr(self.im_client, "open_settings_modal"):
-            await self.im_client.open_settings_modal(
-                interaction,
-                user_settings,
-                message_types,
-                display_names,
-                context.channel_id,
-                current_require_mention=current_require_mention,
-                global_require_mention=global_require_mention,
-                current_language=current_language,
-                owner_user_id=context.user_id,
+        if hasattr(im_client, "open_settings_modal"):
+            await im_client.run_on_client_loop(
+                im_client.open_settings_modal(
+                    interaction,
+                    user_settings,
+                    message_types,
+                    display_names,
+                    context.channel_id,
+                    current_require_mention=current_require_mention,
+                    global_require_mention=global_require_mention,
+                    current_language=current_language,
+                    owner_user_id=context.user_id,
+                )
             )
             return
         await self._handle_settings_traditional(context)
 
     async def _handle_settings_lark(self, context: MessageContext):
         """Handle settings for Lark/Feishu using interactive form card."""
+        im_client = self._get_im_client(context)
         settings_key = self._get_settings_key(context)
         user_settings = self.settings_manager.get_user_settings(settings_key)
         message_types = self.settings_manager.get_available_message_types()
@@ -207,27 +218,30 @@ class SettingsHandler(BaseHandler):
         global_require_mention = self.config.lark.require_mention if self.config.lark else False
         current_language = self.config.language
 
-        if hasattr(self.im_client, "open_settings_modal"):
+        if hasattr(im_client, "open_settings_modal"):
             try:
-                await self.im_client.open_settings_modal(
-                    trigger_id=context,
-                    user_settings=user_settings,
-                    message_types=message_types,
-                    display_names=display_names,
-                    channel_id=context.channel_id,
-                    current_require_mention=current_require_mention,
-                    global_require_mention=global_require_mention,
-                    current_language=current_language,
+                await im_client.run_on_client_loop(
+                    im_client.open_settings_modal(
+                        trigger_id=context,
+                        user_settings=user_settings,
+                        message_types=message_types,
+                        display_names=display_names,
+                        channel_id=context.channel_id,
+                        current_require_mention=current_require_mention,
+                        global_require_mention=global_require_mention,
+                        current_language=current_language,
+                    )
                 )
             except Exception as e:
                 logger.error(f"Error opening settings card for Lark: {e}", exc_info=True)
-                await self.im_client.send_message(context, f"❌ {self._t('error.settingsFailed')}")
+                await im_client.send_message(context, f"❌ {self._t('error.settingsFailed')}")
         else:
             await self._handle_settings_traditional(context)
 
     async def handle_toggle_message_type(self, context: MessageContext, msg_type: str):
         """Handle toggle for message type visibility"""
         try:
+            im_client = self._get_im_client(context)
             # Toggle message type visibility
             settings_key = self._get_settings_key(context)
             is_shown = self.settings_manager.toggle_show_message_type(settings_key, msg_type)
@@ -261,29 +275,29 @@ class SettingsHandler(BaseHandler):
 
             # Update message
             if context.message_id:
-                await self.im_client.edit_message(context, context.message_id, keyboard=keyboard)
+                await im_client.edit_message(context, context.message_id, keyboard=keyboard)
 
             # Answer callback (for Telegram)
             display_name = display_names.get(msg_type, msg_type)
             action = self._t("settings.visibilityShown") if is_shown else self._t("settings.visibilityHidden")
 
             # Platform-specific callback answering
-            await self.im_client.send_message(
+            await im_client.send_message(
                 context,
                 self._t("settings.messageTypeStatus", name=display_name, action=action),
             )
 
         except Exception as e:
             logger.error(f"Error toggling message type {msg_type}: {e}")
-            await self.im_client.send_message(
+            await self._get_im_client(context).send_message(
                 context,
-                self.formatter.format_error(self._t("error.toggleSettingFailed", error=str(e))),
+                self._get_formatter(context).format_error(self._t("error.toggleSettingFailed", error=str(e))),
             )
 
     async def handle_info_message_types(self, context: MessageContext):
         """Show information about different message types"""
         try:
-            formatter = self.im_client.formatter
+            formatter = self._get_formatter(context)
 
             # Use the new format_info_message method for clean, platform-agnostic formatting
             info_text = formatter.format_info_message(
@@ -299,17 +313,17 @@ class SettingsHandler(BaseHandler):
             )
 
             # Send as new message
-            await self.im_client.send_message(context, info_text)
+            await self._get_im_client(context).send_message(context, info_text)
             logger.info(f"Sent info_msg_types message to user {context.user_id}")
 
         except Exception as e:
             logger.error(f"Error in info_msg_types handler: {e}", exc_info=True)
-            await self.im_client.send_message(context, f"❌ {self._t('error.messageTypesInfoFailed')}")
+            await self._get_im_client(context).send_message(context, f"❌ {self._t('error.messageTypesInfoFailed')}")
 
     async def handle_info_how_it_works(self, context: MessageContext):
         """Show information about how the bot works"""
         try:
-            formatter = self.im_client.formatter
+            formatter = self._get_formatter(context)
             agent_label = self._get_agent_display_name(context)
 
             # Use format_info_message for clean, platform-agnostic formatting
@@ -330,32 +344,35 @@ class SettingsHandler(BaseHandler):
             )
 
             # Send as new message
-            await self.im_client.send_message(context, info_text)
+            await self._get_im_client(context).send_message(context, info_text)
             logger.info(f"Sent how_it_works info to user {context.user_id}")
 
         except Exception as e:
             logger.error(f"Error in handle_info_how_it_works: {e}", exc_info=True)
-            await self.im_client.send_message(context, f"❌ {self._t('error.helpInfoFailed')}")
+            await self._get_im_client(context).send_message(context, f"❌ {self._t('error.helpInfoFailed')}")
 
     async def handle_routing(self, context: MessageContext):
         """Handle routing command - show agent/model selection"""
         try:
+            platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
             # Only Slack has modal support for now
-            if self.config.platform == "slack":
+            if platform == "slack":
                 await self._handle_routing_slack(context)
-            elif self.config.platform == "discord":
+            elif platform == "discord":
                 await self._handle_routing_discord(context)
-            elif self.config.platform == "lark":
+            elif platform == "lark":
                 await self._handle_routing_lark(context)
             else:
                 # For other platforms, show a simple message
-                await self.im_client.send_message(
+                await self._get_im_client(context).send_message(
                     context,
                     self._t("routing.slackOnly"),
                 )
         except Exception as e:
             logger.error(f"Error showing routing settings: {e}", exc_info=True)
-            await self.im_client.send_message(context, f"❌ {self._t('error.routingFailed', error=str(e))}")
+            await self._get_im_client(context).send_message(
+                context, f"❌ {self._t('error.routingFailed', error=str(e))}"
+            )
 
     async def _gather_routing_modal_data(self, context: MessageContext) -> RoutingModalData:
         """Collect backend/agent/model data for routing modal renderers."""
@@ -425,6 +442,7 @@ class SettingsHandler(BaseHandler):
 
     async def _handle_routing_slack(self, context: MessageContext):
         """Handle routing for Slack using modal dialog"""
+        im_client = self._get_im_client(context)
         trigger_id = context.platform_specific.get("trigger_id") if context.platform_specific else None
 
         if not trigger_id:
@@ -438,7 +456,7 @@ class SettingsHandler(BaseHandler):
                 ]
             ]
             keyboard = InlineKeyboard(buttons=buttons)
-            await self.im_client.send_message_with_buttons(
+            await im_client.send_message_with_buttons(
                 context,
                 f"🤖 *{self._t('routing.introTitle')}*\n\n{self._t('routing.introDesc')}",
                 keyboard,
@@ -449,28 +467,33 @@ class SettingsHandler(BaseHandler):
 
         # Open modal
         try:
-            await self.im_client.open_routing_modal(
-                trigger_id=trigger_id,
-                channel_id=context.channel_id,
-                **routing_data.as_kwargs(),
+            await im_client.run_on_client_loop(
+                im_client.open_routing_modal(
+                    trigger_id=trigger_id,
+                    channel_id=context.channel_id,
+                    **routing_data.as_kwargs(),
+                )
             )
         except Exception as e:
             logger.error(f"Error opening routing modal: {e}", exc_info=True)
-            await self.im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
+            await im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
 
     async def _handle_routing_discord(self, context: MessageContext):
+        im_client = self._get_im_client(context)
         interaction = context.platform_specific.get("interaction") if context.platform_specific else None
         routing_data = await self._gather_routing_modal_data(context)
 
         try:
-            await self.im_client.open_routing_modal(
-                trigger_id=interaction or context,
-                channel_id=context.channel_id,
-                **routing_data.as_kwargs(),
+            await im_client.run_on_client_loop(
+                im_client.open_routing_modal(
+                    trigger_id=interaction or context,
+                    channel_id=context.channel_id,
+                    **routing_data.as_kwargs(),
+                )
             )
         except Exception as e:
             logger.error(f"Error opening routing modal: {e}", exc_info=True)
-            await self.im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
+            await im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
 
     async def _handle_routing_lark(self, context: MessageContext):
         """Handle routing for Lark/Feishu using interactive form card.
@@ -478,17 +501,20 @@ class SettingsHandler(BaseHandler):
         Gathers the same backend/model/agent data as Slack/Discord so the
         Feishu card can display selectors for all available options.
         """
+        im_client = self._get_im_client(context)
         routing_data = await self._gather_routing_modal_data(context)
 
         try:
-            await self.im_client.open_routing_modal(
-                trigger_id=context,
-                channel_id=context.channel_id,
-                **routing_data.as_kwargs(),
+            await im_client.run_on_client_loop(
+                im_client.open_routing_modal(
+                    trigger_id=context,
+                    channel_id=context.channel_id,
+                    **routing_data.as_kwargs(),
+                )
             )
         except Exception as e:
             logger.error(f"Error opening routing card for Lark: {e}", exc_info=True)
-            await self.im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
+            await im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
 
     async def handle_settings_update(
         self,
@@ -499,10 +525,18 @@ class SettingsHandler(BaseHandler):
         language: Optional[str] = None,
         notify_user: bool = True,
         is_dm: bool = False,
+        platform: Optional[str] = None,
     ):
         """Handle settings update (typically from modal submissions)."""
         try:
-            settings_key = user_id if is_dm else (channel_id or user_id)
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id if channel_id else user_id,
+                platform=platform or self.config.platform,
+                platform_specific={"is_dm": is_dm, "platform": platform or self.config.platform},
+            )
+            settings_key = self._get_settings_key(context)
+            im_client = self._get_im_client(context)
 
             user_settings = self.settings_manager.get_user_settings(settings_key)
             user_settings.show_message_types = show_message_types
@@ -529,12 +563,6 @@ class SettingsHandler(BaseHandler):
                 f"require_mention = {require_mention}, language = {language}"
             )
 
-            context = MessageContext(
-                user_id=user_id,
-                channel_id=channel_id if channel_id else user_id,
-                platform_specific={},
-            )
-
             if notify_user:
                 message = self._format_settings_update_message(
                     show_message_types=show_message_types,
@@ -542,7 +570,7 @@ class SettingsHandler(BaseHandler):
                     language=language,
                     language_saved=language_saved,
                 )
-                await self.im_client.send_message(context, message, parse_mode="markdown")
+                await im_client.send_message(context, message, parse_mode="markdown")
 
         except Exception as e:
             logger.error(f"Error updating settings: {e}")
@@ -550,9 +578,10 @@ class SettingsHandler(BaseHandler):
                 context = MessageContext(
                     user_id=user_id,
                     channel_id=channel_id if channel_id else user_id,
-                    platform_specific={},
+                    platform=platform or self.config.platform,
+                    platform_specific={"is_dm": is_dm, "platform": platform or self.config.platform},
                 )
-                await self.im_client.send_message(
+                await self._get_im_client(context).send_message(
                     context,
                     f"❌ {self._t('error.settingsUpdateFailed', error=str(e))}",
                 )
@@ -567,6 +596,7 @@ class SettingsHandler(BaseHandler):
         view_hash: str,
         selection: RoutingModalSelection,
         is_dm: bool = False,
+        platform: Optional[str] = None,
     ) -> None:
         """Handle routing modal updates using normalized selection data."""
         try:
@@ -578,8 +608,10 @@ class SettingsHandler(BaseHandler):
             context = MessageContext(
                 user_id=user_id,
                 channel_id=resolved_channel_id,
-                platform_specific={"is_dm": is_dm},
+                platform=platform or self.config.platform,
+                platform_specific={"is_dm": is_dm, "platform": platform or self.config.platform},
             )
+            im_client = self._get_im_client(context)
 
             routing_data = await self._gather_routing_modal_data(context)
             current_routing = routing_data.current_routing
@@ -587,8 +619,8 @@ class SettingsHandler(BaseHandler):
             current_backend = routing_data.current_backend
             selected_backend = selection.selected_backend or current_backend
 
-            if hasattr(self.im_client, "update_routing_modal"):
-                await self.im_client.update_routing_modal(  # type: ignore[attr-defined]
+            if hasattr(im_client, "update_routing_modal"):
+                await im_client.update_routing_modal(  # type: ignore[attr-defined]
                     view_id=view_id,
                     view_hash=view_hash,
                     channel_id=resolved_channel_id,
@@ -629,13 +661,21 @@ class SettingsHandler(BaseHandler):
         codex_reasoning_effort: Optional[str] = None,
         notify_user: bool = True,
         is_dm: bool = False,
+        platform: Optional[str] = None,
     ):
         """Handle routing update submission (from modal)."""
         from config.v2_settings import RoutingSettings
         from modules.agents.opencode.utils import normalize_claude_reasoning_effort
 
         try:
-            settings_key = user_id if is_dm else (channel_id or user_id)
+            context = MessageContext(
+                user_id=user_id,
+                channel_id=channel_id if channel_id else user_id,
+                platform=platform or self.config.platform,
+                platform_specific={"is_dm": is_dm, "platform": platform or self.config.platform},
+            )
+            settings_key = self._get_settings_key(context)
+            im_client = self._get_im_client(context)
             existing_routing = self.settings_manager.get_channel_routing(settings_key)
             normalized_claude_reasoning_effort = normalize_claude_reasoning_effort(
                 claude_model,
@@ -695,14 +735,8 @@ class SettingsHandler(BaseHandler):
                 if codex_reasoning_effort:
                     parts.append(f"{self._t('routing.label.reasoningEffort')}: **{codex_reasoning_effort}**")
 
-            context = MessageContext(
-                user_id=user_id,
-                channel_id=channel_id if channel_id else user_id,
-                platform_specific={},
-            )
-
             if notify_user:
-                await self.im_client.send_message(
+                await im_client.send_message(
                     context,
                     f"✅ {self._t('success.routingUpdated')}\n" + "\n".join(parts),
                     parse_mode="markdown",
@@ -721,10 +755,11 @@ class SettingsHandler(BaseHandler):
             context = MessageContext(
                 user_id=user_id,
                 channel_id=channel_id if channel_id else user_id,
-                platform_specific={},
+                platform=platform or self.config.platform,
+                platform_specific={"is_dm": is_dm, "platform": platform or self.config.platform},
             )
             if notify_user:
-                await self.im_client.send_message(
+                await self._get_im_client(context).send_message(
                     context,
                     f"❌ {self._t('error.routingUpdateFailed', error=str(e))}",
                 )

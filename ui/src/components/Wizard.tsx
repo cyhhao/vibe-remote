@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { Welcome } from './steps/Welcome';
-import { ModeSelection } from './steps/ModeSelection';
+// import { ModeSelection } from './steps/ModeSelection'; // temporarily hidden — SaaS mode not yet available
 import { PlatformSelection } from './steps/PlatformSelection';
 import { AgentDetection } from './steps/AgentDetection';
 import { SlackConfig } from './steps/SlackConfig';
@@ -14,9 +14,18 @@ import { Summary } from './steps/Summary';
 import { useApi } from '../context/ApiContext';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import clsx from 'clsx';
+import { getEnabledPlatforms, getPrimaryPlatform, platformSupportsChannels } from '../lib/platforms';
 
-const buildConfigPayload = (data: any) => ({
-  platform: data.platform || 'slack',
+const buildConfigPayload = (data: any) => {
+  const enabledPlatforms = getEnabledPlatforms(data);
+  const primaryPlatform = getPrimaryPlatform(data);
+
+  return {
+  platform: primaryPlatform,
+  platforms: {
+    enabled: enabledPlatforms,
+    primary: primaryPlatform,
+  },
   mode: data.mode || 'self_host',
   version: 'v2',
   slack: {
@@ -94,7 +103,8 @@ const buildConfigPayload = (data: any) => ({
   show_duration: data.show_duration,
   // Preserve language
   language: data.language,
-});
+  };
+};
 
 export const Wizard: React.FC = () => {
   const { t } = useTranslation();
@@ -104,32 +114,53 @@ export const Wizard: React.FC = () => {
   const [loaded, setLoaded] = useState(false);
 
   const steps = React.useMemo(() => {
-    const platform = data.platform || 'slack';
+    const enabledPlatforms = getEnabledPlatforms(data);
+    const platformSteps = enabledPlatforms.map((platform) => {
+      const component = platform === 'discord'
+        ? DiscordConfig
+        : platform === 'lark'
+          ? LarkConfig
+          : platform === 'wechat'
+            ? WeChatConfig
+            : SlackConfig;
+      return {
+        id: `platform-${platform}`,
+        title: platform,
+        component,
+      };
+    });
+
+    // Channel steps: merge into a single step with platform tabs (instead of one step per platform)
+    const channelPlatforms = enabledPlatforms.filter(platformSupportsChannels);
+    const channelStep = channelPlatforms.length > 0
+      ? [{ id: 'channels', title: 'Channels', component: (props: any) => <ChannelList {...props} wizardPlatforms={channelPlatforms} /> }]
+      : [];
+
     return [
       { id: 'welcome', title: 'Welcome', component: Welcome },
-      { id: 'mode', title: 'Mode', component: ModeSelection },
+      // { id: 'mode', title: 'Mode', component: ModeSelection }, // temporarily hidden — SaaS mode not yet available
       { id: 'agents', title: 'Agents', component: AgentDetection },
       { id: 'platform', title: 'Platform', component: PlatformSelection },
-      platform === 'discord'
-        ? { id: 'discord', title: 'Discord', component: DiscordConfig }
-        : platform === 'lark'
-          ? { id: 'lark', title: 'Lark', component: LarkConfig }
-          : platform === 'wechat'
-            ? { id: 'wechat', title: 'WeChat', component: WeChatConfig }
-            : { id: 'slack', title: 'Slack', component: SlackConfig },
-      ...(platform === 'wechat' ? [] : [{ id: 'channels', title: 'Channels', component: ChannelList }]),
+      ...platformSteps,
+      ...channelStep,
       { id: 'summary', title: 'Finish', component: Summary },
     ];
-  }, [data.platform]);
+  }, [data]);
 
   useEffect(() => {
     const bootstrap = async () => {
       try {
         const config = await api.getConfig();
-        const settings = await api.getSettings();
+        const enabledPlatforms = getEnabledPlatforms(config);
+        const settingsEntries = await Promise.all(
+          enabledPlatforms.map(async (platform) => [platform, await api.getSettings(platform)] as const)
+        );
+        const channelConfigsByPlatform = Object.fromEntries(
+          settingsEntries.map(([platform, settings]) => [platform, settings.channels || {}])
+        );
           setData({
             ...config,
-            channelConfigs: settings.channels || {},
+            channelConfigsByPlatform,
             default_backend: config.agents?.default_backend,
             agents: {
               opencode: config.agents?.opencode,
@@ -148,15 +179,14 @@ export const Wizard: React.FC = () => {
   }, []);
 
   const next = async (stepData: any) => {
-    const platformChanged =
-      typeof stepData?.platform === 'string' &&
-      !!data?.platform &&
-      stepData.platform !== data.platform;
+    const previousPlatforms = getEnabledPlatforms(data);
+    const nextPlatforms = getEnabledPlatforms({ ...data, ...stepData });
+    const platformsChanged = previousPlatforms.join(',') !== nextPlatforms.join(',');
 
     const nextData = {
       ...data,
-      ...(platformChanged ? { channelConfigs: {} } : {}),
-      ...(stepData?.platform === 'wechat' ? { show_duration: false } : {}),
+      ...(platformsChanged ? { channelConfigsByPlatform: {} } : {}),
+      ...(nextPlatforms.includes('wechat') ? { show_duration: false } : {}),
       ...stepData,
     };
     setData(nextData);
@@ -181,14 +211,20 @@ export const Wizard: React.FC = () => {
       mergedData.lark ||
       mergedData.wechat ||
       mergedData.mode ||
+      mergedData.platforms ||
       mergedData.platform ||
-      mergedData.channelConfigs
+      mergedData.channelConfigsByPlatform
     ) {
       await api.saveConfig(buildConfigPayload(mergedData));
     }
-    // Only persist channel settings when this step actually updated them.
-    if (stepData && Object.prototype.hasOwnProperty.call(stepData, 'channelConfigs')) {
-      await api.saveSettings({ channels: stepData.channelConfigs || {} });
+    if (stepData?.channelConfigsByPlatform) {
+      const platforms = Object.keys(stepData.channelConfigsByPlatform);
+      for (const p of platforms) {
+        const channelConfigs = stepData.channelConfigsByPlatform[p];
+        if (channelConfigs && Object.keys(channelConfigs).length > 0) {
+          await api.saveSettings({ channels: channelConfigs }, p);
+        }
+      }
     }
   };
 

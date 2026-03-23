@@ -162,6 +162,22 @@ class DiscordBot(BaseIMClient):
     def format_markdown(self, text: str) -> str:
         return text
 
+    async def _run_on_client_loop(self, coro):
+        loop = getattr(self, "_loop", None)
+        if loop is None:
+            return await coro
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        if current_loop is loop:
+            return await coro
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return await asyncio.wrap_future(future)
+
+    async def run_on_client_loop(self, coro):
+        return await self._run_on_client_loop(coro)
+
     def register_handlers(self):
         return
 
@@ -170,6 +186,7 @@ class DiscordBot(BaseIMClient):
             raise ValueError("Discord bot token is required")
 
         async def _run():
+            self._loop = asyncio.get_running_loop()
             # Inject SOCKS proxy connector inside the event loop (required
             # by aiohttp).  Must happen before login() creates the session.
             from vibe.proxy import get_system_socks_proxy
@@ -192,6 +209,15 @@ class DiscordBot(BaseIMClient):
         except KeyboardInterrupt:
             return
 
+    def stop(self) -> None:
+        loop = getattr(self, "_loop", None)
+        if loop is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(lambda: loop.create_task(self.client.close()))
+        except Exception:
+            logger.exception("Failed to stop Discord client")
+
     @staticmethod
     def _redact_proxy_url(proxy_url: str) -> str:
         """Return a proxy URL safe for logs (credentials stripped)."""
@@ -209,7 +235,10 @@ class DiscordBot(BaseIMClient):
         return "<configured>"
 
     async def shutdown(self) -> None:
-        await self.client.close()
+        loop = getattr(self, "_loop", None)
+        current_loop = asyncio.get_running_loop()
+        if loop is None or loop is current_loop:
+            await self.client.close()
 
     # ---------------------------------------------------------------------
     # Message helpers
@@ -235,6 +264,31 @@ class DiscordBot(BaseIMClient):
             logger.debug("Failed to fetch channel %s: %s", channel_id, err)
             return None
 
+    def _get_context_channel(self, context: MessageContext):
+        payload = context.platform_specific or {}
+        interaction = payload.get("interaction") if isinstance(payload, dict) else None
+        if interaction is not None and getattr(interaction, "channel", None) is not None:
+            return interaction.channel
+        message = payload.get("message") if isinstance(payload, dict) else None
+        if message is not None and getattr(message, "channel", None) is not None:
+            return message.channel
+        return None
+
+    async def _resolve_target(self, context: MessageContext) -> Optional[discord.abc.Messageable]:
+        direct_channel = self._get_context_channel(context)
+        if isinstance(direct_channel, discord.Thread):
+            return direct_channel
+
+        if context.thread_id:
+            target = await self._fetch_channel(context.thread_id)
+            if isinstance(target, discord.Thread):
+                return target
+
+        if direct_channel is not None:
+            return direct_channel
+
+        return await self._fetch_channel(context.channel_id)
+
     def _extract_context_ids(self, channel: discord.abc.GuildChannel | discord.Thread) -> tuple[str, Optional[str]]:
         if isinstance(channel, discord.Thread):
             parent_id = str(channel.parent_id) if channel.parent_id else str(channel.id)
@@ -255,21 +309,25 @@ class DiscordBot(BaseIMClient):
 
     async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
         """Send a direct message to a Discord user."""
-        try:
-            uid = self._to_int_id(user_id)
-            if uid is None:
+
+        async def _impl() -> Optional[str]:
+            try:
+                uid = self._to_int_id(user_id)
+                if uid is None:
+                    return None
+                user = self.client.get_user(uid)
+                if user is None:
+                    user = await self.client.fetch_user(uid)
+                if user is None:
+                    return None
+                dm_channel = user.dm_channel or await user.create_dm()
+                message = await dm_channel.send(content=text)
+                return str(message.id)
+            except Exception as e:
+                logger.error("Failed to send DM to Discord user %s: %s", user_id, e)
                 return None
-            user = self.client.get_user(uid)
-            if user is None:
-                user = await self.client.fetch_user(uid)
-            if user is None:
-                return None
-            dm_channel = user.dm_channel or await user.create_dm()
-            message = await dm_channel.send(content=text)
-            return str(message.id)
-        except Exception as e:
-            logger.error("Failed to send DM to Discord user %s: %s", user_id, e)
-            return None
+
+        return await self._run_on_client_loop(_impl())
 
     async def send_message(
         self,
@@ -278,25 +336,22 @@ class DiscordBot(BaseIMClient):
         parse_mode: Optional[str] = None,
         reply_to: Optional[str] = None,
     ) -> str:
-        if not text:
-            raise ValueError("Discord send_message requires non-empty text")
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
-        if target is None:
-            raise RuntimeError("Discord channel not found")
-        message = await target.send(content=text)
-        if self.settings_manager and context.thread_id:
-            try:
-                if self.sessions:
-                    self.sessions.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
-            except Exception:
-                pass
-        return str(message.id)
+        async def _impl() -> str:
+            if not text:
+                raise ValueError("Discord send_message requires non-empty text")
+            target = await self._resolve_target(context)
+            if target is None:
+                raise RuntimeError("Discord channel not found")
+            message = await target.send(content=text)
+            if self.settings_manager and context.thread_id:
+                try:
+                    if self.sessions:
+                        self.sessions.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
+                except Exception:
+                    pass
+            return str(message.id)
+
+        return await self._run_on_client_loop(_impl())
 
     async def send_message_with_buttons(
         self,
@@ -305,29 +360,26 @@ class DiscordBot(BaseIMClient):
         keyboard: InlineKeyboard,
         parse_mode: Optional[str] = None,
     ) -> str:
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
-        if target is None:
-            raise RuntimeError("Discord channel not found")
+        async def _impl() -> str:
+            target = await self._resolve_target(context)
+            if target is None:
+                raise RuntimeError("Discord channel not found")
 
-        view = (
-            _PersistentStartView(self, keyboard)
-            if _PersistentStartView.is_all_static(keyboard)
-            else _DiscordButtonView(self, context, keyboard)
-        )
-        message = await target.send(content=text, view=view)
-        if self.settings_manager and context.thread_id:
-            try:
-                if self.sessions:
-                    self.sessions.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
-            except Exception:
-                pass
-        return str(message.id)
+            view = (
+                _PersistentStartView(self, keyboard)
+                if _PersistentStartView.is_all_static(keyboard)
+                else _DiscordButtonView(self, context, keyboard)
+            )
+            message = await target.send(content=text, view=view)
+            if self.settings_manager and context.thread_id:
+                try:
+                    if self.sessions:
+                        self.sessions.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
+                except Exception:
+                    pass
+            return str(message.id)
+
+        return await self._run_on_client_loop(_impl())
 
     async def edit_message(
         self,
@@ -337,29 +389,26 @@ class DiscordBot(BaseIMClient):
         keyboard: Optional[InlineKeyboard] = None,
         parse_mode: Optional[str] = None,
     ) -> bool:
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
-        if target is None:
-            return False
-        try:
-            msg = await target.fetch_message(int(message_id))
-            view = None
-            if keyboard:
-                view = (
-                    _PersistentStartView(self, keyboard)
-                    if _PersistentStartView.is_all_static(keyboard)
-                    else _DiscordButtonView(self, context, keyboard)
-                )
-            await msg.edit(content=text, view=view)
-            return True
-        except Exception as err:
-            logger.debug("Failed to edit Discord message: %s", err)
-            return False
+        async def _impl() -> bool:
+            target = await self._resolve_target(context)
+            if target is None:
+                return False
+            try:
+                msg = await target.fetch_message(int(message_id))
+                view = None
+                if keyboard:
+                    view = (
+                        _PersistentStartView(self, keyboard)
+                        if _PersistentStartView.is_all_static(keyboard)
+                        else _DiscordButtonView(self, context, keyboard)
+                    )
+                await msg.edit(content=text, view=view)
+                return True
+            except Exception as err:
+                logger.debug("Failed to edit Discord message: %s", err)
+                return False
+
+        return await self._run_on_client_loop(_impl())
 
     async def remove_inline_keyboard(
         self,
@@ -368,65 +417,62 @@ class DiscordBot(BaseIMClient):
         text: Optional[str] = None,
         parse_mode: Optional[str] = None,
     ) -> bool:
-        # When called from a button callback, use the interaction's message
-        # object to edit directly (the interaction response is already deferred).
-        interaction = (context.platform_specific or {}).get("interaction") if context.platform_specific else None
-        if interaction is not None and interaction.message is not None:
-            try:
-                kwargs: dict = {"view": None}
-                if text is not None:
-                    kwargs["content"] = text
-                await interaction.message.edit(**kwargs)
-                return True
-            except Exception as err:
-                logger.info("Failed to remove Discord keyboard via interaction.message: %s", err)
-                return False
-        return await self.edit_message(context, message_id, text=text, keyboard=None, parse_mode=parse_mode)
+        async def _impl() -> bool:
+            # When called from a button callback, use the interaction's message
+            # object to edit directly (the interaction response is already deferred).
+            interaction = (context.platform_specific or {}).get("interaction") if context.platform_specific else None
+            if interaction is not None and interaction.message is not None:
+                try:
+                    kwargs: dict = {"view": None}
+                    if text is not None:
+                        kwargs["content"] = text
+                    await interaction.message.edit(**kwargs)
+                    return True
+                except Exception as err:
+                    logger.info("Failed to remove Discord keyboard via interaction.message: %s", err)
+                    return False
+            return await self.edit_message(context, message_id, text=text, keyboard=None, parse_mode=parse_mode)
+
+        return await self._run_on_client_loop(_impl())
 
     async def answer_callback(self, callback_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
         return True
 
     async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
-        if target is None:
-            return False
-        try:
-            msg = await target.fetch_message(int(message_id))
-            normalized = emoji
-            if normalized in [":eyes:", "eyes", "eye", "👀"]:
-                normalized = "👀"
-            await msg.add_reaction(normalized)
-            return True
-        except Exception as err:
-            logger.debug("Failed to add Discord reaction: %s", err)
-            return False
+        async def _impl() -> bool:
+            target = await self._resolve_target(context)
+            if target is None:
+                return False
+            try:
+                msg = await target.fetch_message(int(message_id))
+                normalized = emoji
+                if normalized in [":eyes:", "eyes", "eye", "👀"]:
+                    normalized = "👀"
+                await msg.add_reaction(normalized)
+                return True
+            except Exception as err:
+                logger.debug("Failed to add Discord reaction: %s", err)
+                return False
+
+        return await self._run_on_client_loop(_impl())
 
     async def remove_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
-        if target is None:
-            return False
-        try:
-            msg = await target.fetch_message(int(message_id))
-            normalized = emoji
-            if normalized in [":eyes:", "eyes", "eye", "👀"]:
-                normalized = "👀"
-            await msg.remove_reaction(normalized, self.client.user)
-            return True
-        except Exception as err:
-            logger.debug("Failed to remove Discord reaction: %s", err)
-            return False
+        async def _impl() -> bool:
+            target = await self._resolve_target(context)
+            if target is None:
+                return False
+            try:
+                msg = await target.fetch_message(int(message_id))
+                normalized = emoji
+                if normalized in [":eyes:", "eyes", "eye", "👀"]:
+                    normalized = "👀"
+                await msg.remove_reaction(normalized, self.client.user)
+                return True
+            except Exception as err:
+                logger.debug("Failed to remove Discord reaction: %s", err)
+                return False
+
+        return await self._run_on_client_loop(_impl())
 
     async def upload_markdown(
         self,
@@ -435,41 +481,35 @@ class DiscordBot(BaseIMClient):
         content: str,
         filetype: str = "markdown",
     ) -> str:
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
-        if target is None:
-            raise RuntimeError("Discord channel not found")
-        data = (content or "").encode("utf-8")
-        file_obj = discord.File(io.BytesIO(data), filename=title)
-        message = await target.send(file=file_obj)
-        return str(message.id)
+        async def _impl() -> str:
+            target = await self._resolve_target(context)
+            if target is None:
+                raise RuntimeError("Discord channel not found")
+            data = (content or "").encode("utf-8")
+            file_obj = discord.File(io.BytesIO(data), filename=title)
+            message = await target.send(file=file_obj)
+            return str(message.id)
+
+        return await self._run_on_client_loop(_impl())
 
     async def send_typing_indicator(self, context: MessageContext) -> bool:
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
-        if target is None:
-            return False
+        async def _impl() -> bool:
+            target = await self._resolve_target(context)
+            if target is None:
+                return False
 
-        typing_method = getattr(target, "typing", None)
-        if not callable(typing_method):
-            return False
+            typing_method = getattr(target, "typing", None)
+            if not callable(typing_method):
+                return False
 
-        try:
-            await typing_method()
-            return True
-        except Exception as err:
-            logger.debug("Failed to trigger Discord typing indicator: %s", err)
-            return False
+            try:
+                await typing_method()
+                return True
+            except Exception as err:
+                logger.debug("Failed to trigger Discord typing indicator: %s", err)
+                return False
+
+        return await self._run_on_client_loop(_impl())
 
     async def clear_typing_indicator(self, context: MessageContext) -> bool:
         """Discord typing indicators expire automatically without explicit cancel."""
@@ -483,21 +523,19 @@ class DiscordBot(BaseIMClient):
         title: Optional[str] = None,
     ) -> str:
         """Upload a local file to the Discord conversation."""
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
-        if target is None:
-            raise RuntimeError("Discord channel not found")
 
-        # Keep original extension for proper Discord preview handling.
-        filename = os.path.basename(file_path)
-        file_obj = discord.File(file_path, filename=filename)
-        message = await target.send(file=file_obj)
-        return str(message.id)
+        async def _impl() -> str:
+            target = await self._resolve_target(context)
+            if target is None:
+                raise RuntimeError("Discord channel not found")
+
+            # Keep original extension for proper Discord preview handling.
+            filename = os.path.basename(file_path)
+            file_obj = discord.File(file_path, filename=filename)
+            message = await target.send(file=file_obj)
+            return str(message.id)
+
+        return await self._run_on_client_loop(_impl())
 
     async def download_file(
         self,
@@ -567,27 +605,34 @@ class DiscordBot(BaseIMClient):
         cached = self._user_info_cache.get(user_id)
         if cached is not None:
             return cached
-        uid = self._to_int_id(user_id)
-        if uid is None:
-            return {"id": user_id}
-        user = self.client.get_user(uid)
-        if user is None:
-            try:
-                user = await self.client.fetch_user(uid)
-            except Exception:
-                user = None
-        if user is None:
-            return {"id": user_id}
-        info = {"id": str(user.id), "name": user.name, "display_name": user.display_name}
-        self._user_info_cache[user_id] = info
-        return info
+
+        async def _impl() -> Dict[str, Any]:
+            uid = self._to_int_id(user_id)
+            if uid is None:
+                return {"id": user_id}
+            user = self.client.get_user(uid)
+            if user is None:
+                try:
+                    user = await self.client.fetch_user(uid)
+                except Exception:
+                    user = None
+            if user is None:
+                return {"id": user_id}
+            info = {"id": str(user.id), "name": user.name, "display_name": user.display_name}
+            self._user_info_cache[user_id] = info
+            return info
+
+        return await self._run_on_client_loop(_impl())
 
     async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
-        channel = await self._fetch_channel(channel_id)
-        if channel is None:
-            return {"id": channel_id, "name": channel_id}
-        name = getattr(channel, "name", None) or channel_id
-        return {"id": str(channel.id), "name": name}
+        async def _impl() -> Dict[str, Any]:
+            channel = await self._fetch_channel(channel_id)
+            if channel is None:
+                return {"id": channel_id, "name": channel_id}
+            name = getattr(channel, "name", None) or channel_id
+            return {"id": str(channel.id), "name": name}
+
+        return await self._run_on_client_loop(_impl())
 
     # ---------------------------------------------------------------------
     # Discord-specific interaction helpers

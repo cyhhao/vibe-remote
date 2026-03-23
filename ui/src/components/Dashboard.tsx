@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useStatus } from '../context/StatusContext';
 import { Play, Square, RotateCw, Activity, Terminal, CheckCircle, MessageSquare, Server, Settings, Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { getEnabledPlatforms, getPrimaryPlatform } from '../lib/platforms';
 
 export const Dashboard: React.FC = () => {
     const { t } = useTranslation();
@@ -29,10 +30,17 @@ export const Dashboard: React.FC = () => {
     const autoSaveMessageConfig = async (newConfig: any) => {
         try {
             const patch = {
+                platform: getPrimaryPlatform(newConfig),
+                platforms: newConfig.platforms,
                 ack_mode: newConfig.ack_mode,
                 show_duration: newConfig.show_duration,
                 include_user_info: newConfig.include_user_info,
                 reply_enhancements: newConfig.reply_enhancements,
+                slack: newConfig.slack,
+                discord: newConfig.discord,
+                lark: newConfig.lark,
+                wechat: newConfig.wechat,
+                agents: newConfig.agents,
             };
             await fetch('/config', {
                 method: 'POST',
@@ -142,7 +150,9 @@ export const Dashboard: React.FC = () => {
         return () => window.clearTimeout(timer);
     }, [diagnosticsMessage]);
 
-    const showWorkspaceGateway = config.mode !== 'self_host' && (config.platform || 'slack') === 'slack';
+    const enabledPlatforms = getEnabledPlatforms(config);
+    const primaryPlatform = getPrimaryPlatform(config);
+    const showWorkspaceGateway = config.mode !== 'self_host' && enabledPlatforms.includes('slack');
 
     return (
         <div className="max-w-5xl mx-auto space-y-8">
@@ -244,7 +254,7 @@ export const Dashboard: React.FC = () => {
                         </div>
                         <div className="flex justify-between items-center">
                             <span className="text-muted">{t('dashboard.platform')}</span>
-                            <span className="font-mono text-xs text-text capitalize">{config.platform || 'slack'}</span>
+                            <span className="font-mono text-xs text-text capitalize">{enabledPlatforms.join(', ') || primaryPlatform}</span>
                         </div>
                         <div className="flex justify-between items-center">
                             <span className="text-muted">{t('dashboard.defaultBackend')}</span>
@@ -272,63 +282,6 @@ export const Dashboard: React.FC = () => {
                 <div className="space-y-3 text-sm">
                     <div className="flex justify-between items-center">
                         <span className="text-muted flex items-center gap-1">
-                            {t('dashboard.requireMention')}
-                            <span className="relative group">
-                                <Info size={12} className="text-muted/50 cursor-help" />
-                                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                    {t('dashboard.requireMentionHint')}
-                                </span>
-                            </span>
-                        </span>
-                        <button
-                            onClick={() => {
-                                setSettingsMessage(null);
-                                const platform = config.platform || 'slack';
-                                const toggleValue = platform === 'discord'
-                                    ? !config.discord?.require_mention
-                                    : platform === 'lark'
-                                    ? !config.lark?.require_mention
-                                    : !config.slack?.require_mention;
-                                const newConfig = {
-                                    ...config,
-                                    discord: {
-                                        ...(config.discord || {}),
-                                        require_mention: platform === 'discord' ? toggleValue : config.discord?.require_mention,
-                                    },
-                                    slack: {
-                                        ...(config.slack || {}),
-                                        require_mention: platform === 'slack' ? toggleValue : config.slack?.require_mention,
-                                    },
-                                    lark: {
-                                        ...(config.lark || {}),
-                                        require_mention: platform === 'lark' ? toggleValue : config.lark?.require_mention,
-                                    },
-                                };
-                                setConfig(newConfig);
-                                autoSaveMessageConfig(newConfig);
-                            }}
-                            className={`px-2 py-1 rounded text-xs font-semibold border ${
-                                (config.platform === 'discord'
-                                    ? config.discord?.require_mention
-                                    : config.platform === 'lark'
-                                    ? config.lark?.require_mention
-                                    : config.slack?.require_mention)
-                                    ? 'bg-success/10 text-success border-success/20'
-                                    : 'bg-neutral-100 text-muted border-border'
-                            }`}
-                        >
-                            {(config.platform === 'discord'
-                                ? config.discord?.require_mention
-                                : config.platform === 'lark'
-                                ? config.lark?.require_mention
-                                : config.slack?.require_mention)
-                                ? t('channelList.mentionStatusOn')
-                                : t('channelList.mentionStatusOff')}
-                        </button>
-
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted flex items-center gap-1">
                             {t('dashboard.ackMode')}
                             <span className="relative group">
                                 <Info size={12} className="text-muted/50 cursor-help" />
@@ -338,9 +291,9 @@ export const Dashboard: React.FC = () => {
                             </span>
                         </span>
                         <select
-                            value={config.ack_mode || 'reaction'}
+                            value={config.ack_mode || 'typing'}
                             onChange={(e) => {
-                                const mode = e.target.value || 'reaction';
+                                const mode = e.target.value || 'typing';
                                 setSettingsMessage(null);
                                 const newConfig = {
                                     ...config,
@@ -351,8 +304,8 @@ export const Dashboard: React.FC = () => {
                             }}
                             className="w-36 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono"
                         >
-                            <option value="reaction">{t('dashboard.ackReaction')}</option>
                             <option value="typing">{t('dashboard.ackTyping')}</option>
+                            <option value="reaction">{t('dashboard.ackReaction')}</option>
                             <option value="message">{t('dashboard.ackMessage')}</option>
                         </select>
                     </div>

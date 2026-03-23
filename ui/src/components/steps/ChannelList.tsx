@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Hash, CheckSquare, Square, RefreshCw, HelpCircle, Globe, FolderOpen, MessageSquare, Users } from 'lucide-react';
+import { Hash, CheckSquare, Square, RefreshCw, HelpCircle, Globe, FolderOpen, MessageSquare, Users, AtSign } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
@@ -7,6 +7,7 @@ import { Combobox } from '../ui/combobox';
 import { DirectoryBrowser } from '../ui/directory-browser';
 import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
+import { getEnabledPlatforms, platformSupportsChannels } from '../../lib/platforms';
 
 /** Input that only commits value on blur */
 function BlurInput({
@@ -31,6 +32,9 @@ interface ChannelListProps {
   onNext?: (data: any) => void;
   onBack?: () => void;
   isPage?: boolean;
+  forcedPlatform?: string;
+  /** When set in wizard mode, show platform tabs to switch between platforms in a single step */
+  wizardPlatforms?: string[];
 }
 
 interface ChannelConfig {
@@ -51,7 +55,7 @@ interface ChannelConfig {
   require_mention?: boolean | null;  // null=use global default, true=require, false=don't require
 }
 
-export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onBack, isPage }) => {
+export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onBack, isPage, forcedPlatform, wizardPlatforms }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
@@ -59,8 +63,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [channels, setChannels] = useState<any[]>([]);
   const [browseAll, setBrowseAll] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
-  const [configs, setConfigs] = useState<Record<string, ChannelConfig>>(data.channelConfigs || {});
+  // Wizard multi-platform mode: show tabs instead of separate steps
+  const isWizardMultiPlatform = !isPage && Array.isArray(wizardPlatforms) && wizardPlatforms.length > 1;
+  const [wizardActivePlatform, setWizardActivePlatform] = useState(forcedPlatform || wizardPlatforms?.[0] || 'slack');
+  const [wizardConfigsMap, setWizardConfigsMap] = useState<Record<string, Record<string, ChannelConfig>>>({});
+  const scopedInitialPlatform = forcedPlatform || wizardPlatforms?.[0] || data.platform || 'slack';
+  const [configs, setConfigs] = useState<Record<string, ChannelConfig>>(
+    data.channelConfigsByPlatform?.[scopedInitialPlatform] || data.channelConfigs || {}
+  );
   const [config, setConfig] = useState<any>(data);
+  const [pagePlatform, setPagePlatform] = useState<string>(forcedPlatform || data.platform || 'slack');
   const [opencodeOptionsByCwd, setOpencodeOptionsByCwd] = useState<Record<string, any>>({});
   const [claudeAgentsByCwd, setClaudeAgentsByCwd] = useState<Record<string, { id: string; name: string; path: string; source?: string }[]>>({});
   const [claudeModels, setClaudeModels] = useState<string[]>([]);
@@ -76,16 +88,22 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     if (isPage) return;
     let cancelled = false;
 
+    const targetPlatform = isWizardMultiPlatform ? wizardActivePlatform : (forcedPlatform || data.platform);
     const loadWizardPlatformSettings = async () => {
+      // If we already have locally saved configs for this platform, use them
+      if (isWizardMultiPlatform && wizardConfigsMap[targetPlatform]) {
+        if (!cancelled) setConfigs(wizardConfigsMap[targetPlatform]);
+        return;
+      }
       try {
-        const settings = await api.getSettings();
+        const settings = await api.getSettings(targetPlatform);
         if (!cancelled) {
           setConfigs(settings.channels || {});
         }
       } catch {
         if (!cancelled) {
           // Fallback to wizard-local state if API fetch fails.
-          setConfigs(data.channelConfigs || {});
+          setConfigs(data.channelConfigsByPlatform?.[targetPlatform || 'slack'] || data.channelConfigs || {});
         }
       }
     };
@@ -94,7 +112,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     return () => {
       cancelled = true;
     };
-  }, [isPage, data.platform]);
+  }, [isPage, data.platform, data.channelConfigsByPlatform, forcedPlatform]);
 
   useEffect(() => {
     if (!isPage) {
@@ -107,14 +125,40 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     if (isPage) {
       api.getConfig().then(c => {
         setConfig(c);
-        api.getSettings().then(s => {
+        const defaultPlatform = forcedPlatform || getEnabledPlatforms(c).find(platformSupportsChannels) || c?.platform || 'slack';
+        setPagePlatform(defaultPlatform);
+        api.getSettings(defaultPlatform).then(s => {
           setConfigs(s.channels || {});
         });
       });
     }
-  }, [isPage]);
+  }, [forcedPlatform, isPage]);
 
-  const platform = config.platform || data.platform || 'slack';
+  const platform = isWizardMultiPlatform
+    ? wizardActivePlatform
+    : (forcedPlatform || pagePlatform || config.platform || data.platform || 'slack');
+  const channelPlatforms = getEnabledPlatforms(config).filter(platformSupportsChannels);
+
+  // Switch platforms in wizard multi-platform mode
+  const switchWizardPlatform = (newPlatform: string) => {
+    if (newPlatform === wizardActivePlatform) return;
+    // Save current platform's configs to map
+    setWizardConfigsMap(prev => ({ ...prev, [wizardActivePlatform]: configs }));
+    // Load new platform's configs from map, then from data, then empty
+    const saved = wizardConfigsMap[newPlatform];
+    setConfigs(saved || data.channelConfigsByPlatform?.[newPlatform] || {});
+    setWizardActivePlatform(newPlatform);
+    setChannels([]);
+    setBrowseAll(false);
+  };
+
+  useEffect(() => {
+    if (!isPage) return;
+    if (!platform) return;
+    api.getSettings(platform).then((settings) => {
+      setConfigs(settings.channels || {});
+    }).catch(() => {});
+  }, [api, isPage, platform]);
   const botToken = platform === 'discord'
     ? (config.discord?.bot_token || data.discord?.bot_token || '')
     : platform === 'lark'
@@ -325,7 +369,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
     setLoading(true);
     try {
-      await api.saveSettings({ channels: nextConfigs });
+      await api.saveSettings({ channels: nextConfigs }, platform);
       showToast(t('channelList.settingsSaved'));
     } catch {
       showToast(t('channelList.settingsSaveFailed'), 'error');
@@ -476,6 +520,60 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           <p className="text-muted">{t('channelList.subtitle')}</p>
         </div>
       </div>
+
+      {((isPage && channelPlatforms.length > 1) || isWizardMultiPlatform) && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          {(isWizardMultiPlatform ? wizardPlatforms! : channelPlatforms).map((candidate) => (
+            <button
+              key={candidate}
+              onClick={() => isWizardMultiPlatform ? switchWizardPlatform(candidate) : setPagePlatform(candidate)}
+              className={clsx(
+                'px-3 py-1.5 rounded-full text-sm border transition-colors',
+                platform === candidate ? 'bg-accent text-white border-accent' : 'bg-panel text-text border-border hover:border-accent/60'
+              )}
+            >
+              {t(`platform.${candidate}.title`)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Platform-level require @mention toggle (page mode only) */}
+      {isPage && (
+        <div className="mb-4 bg-panel border border-border p-3 rounded-lg flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm">
+            <AtSign size={14} className="text-accent" />
+            <span className="font-medium text-text">{t('dashboard.requireMention')}</span>
+            <span className="text-xs text-muted">{t('dashboard.requireMentionHint')}</span>
+          </div>
+          <button
+            onClick={async () => {
+              const key = platform as 'slack' | 'discord' | 'lark' | 'wechat';
+              const current = !!(config as any)[key]?.require_mention;
+              const updated = {
+                ...config,
+                [key]: { ...(config as any)[key], require_mention: !current },
+              };
+              setConfig(updated);
+              try {
+                await api.saveConfig(updated);
+                showToast(t('common.saved'), 'success');
+              } catch { /* ignore */ }
+            }}
+            className={clsx(
+              'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+              (config as any)[platform]?.require_mention ? 'bg-accent' : 'bg-neutral-300'
+            )}
+          >
+            <span
+              className={clsx(
+                'inline-block h-4 w-4 rounded-full bg-white transition-transform shadow-sm',
+                (config as any)[platform]?.require_mention ? 'translate-x-6' : 'translate-x-1'
+              )}
+            />
+          </button>
+        </div>
+      )}
 
       <div className="mb-4 bg-panel border border-border p-4 rounded-lg space-y-3">
         <div className="flex items-center justify-between">
@@ -929,10 +1027,27 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             {t('common.back')}
           </button>
           <button
-            onClick={() => onNext && onNext({
-              channelConfigs: configs,
-              ...(platform === 'discord' ? { discord: { ...config.discord, guild_allowlist: selectedGuild ? [selectedGuild] : [] } } : {}),
-            })}
+            onClick={() => {
+              if (isWizardMultiPlatform) {
+                // Merge configs from all visited platforms
+                const allConfigs = { ...wizardConfigsMap, [wizardActivePlatform]: configs };
+                onNext && onNext({
+                  channelConfigsByPlatform: {
+                    ...(data.channelConfigsByPlatform || {}),
+                    ...allConfigs,
+                  },
+                });
+              } else {
+                onNext && onNext({
+                  channelConfigsByPlatform: {
+                    ...(data.channelConfigsByPlatform || {}),
+                    [platform]: configs,
+                  },
+                  settingsPlatform: platform,
+                  ...(platform === 'discord' ? { discord: { ...config.discord, guild_allowlist: selectedGuild ? [selectedGuild] : [] } } : {}),
+                });
+              }
+            }}
             className="px-6 py-2 bg-accent hover:bg-accent/90 text-white rounded-lg font-medium shadow-sm"
           >
             {t('common.continue')}

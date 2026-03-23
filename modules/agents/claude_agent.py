@@ -215,7 +215,7 @@ class ClaudeAgent(BaseAgent):
                         continue
 
                     message_type = self._detect_message_type(message)
-                    formatter = self.im_client.formatter
+                    formatter = self._get_formatter(context)
 
                     if message_type == "assistant":
                         toolcalls = []
@@ -243,7 +243,7 @@ class ClaudeAgent(BaseAgent):
                                 if text:
                                     text_parts.append(text)
 
-                        assistant_text = self._extract_text_blocks(message)
+                        assistant_text = self._extract_text_blocks(message, context)
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
@@ -298,6 +298,7 @@ class ClaudeAgent(BaseAgent):
                         formatted_message = self.claude_client.format_message(
                             message,
                             get_relative_path=lambda path: self.get_relative_path(path, context),
+                            formatter=formatter,
                         )
                         if formatted_message and formatted_message.strip():
                             await self.controller.emit_agent_message(
@@ -512,14 +513,14 @@ class ClaudeAgent(BaseAgent):
                 return session_id
         return None
 
-    def _extract_text_blocks(self, message) -> str:
+    def _extract_text_blocks(self, message, context: MessageContext) -> str:
         """Extract text-only content blocks for result fallbacks."""
         parts = []
         for block in getattr(message, "content", []) or []:
             if isinstance(block, TextBlock):
                 text = block.text.strip() if block.text else ""
                 if text:
-                    parts.append(self.claude_client.formatter.escape_special_chars(text))
+                    parts.append(self._get_formatter(context).escape_special_chars(text))
         return "\n\n".join(parts).strip()
 
     def _detect_message_type(self, message) -> Optional[str]:

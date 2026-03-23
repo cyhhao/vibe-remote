@@ -4,12 +4,12 @@ import { useToast } from './ToastContext';
 export type ApiContextType = {
   getConfig: () => Promise<any>;
   saveConfig: (payload: any) => Promise<any>;
-  getSettings: () => Promise<any>;
-  saveSettings: (payload: any) => Promise<any>;
-  getUsers: () => Promise<any>;
-  saveUsers: (payload: any) => Promise<any>;
-  toggleAdmin: (userId: string, isAdmin: boolean) => Promise<any>;
-  removeUser: (userId: string) => Promise<any>;
+  getSettings: (platform?: string) => Promise<any>;
+  saveSettings: (payload: any, platform?: string) => Promise<any>;
+  getUsers: (platform?: string) => Promise<any>;
+  saveUsers: (payload: any, platform?: string) => Promise<any>;
+  toggleAdmin: (userId: string, isAdmin: boolean, platform?: string) => Promise<any>;
+  removeUser: (userId: string, platform?: string) => Promise<any>;
   getBindCodes: () => Promise<any>;
   createBindCode: (type: string, expiresAt?: string) => Promise<any>;
   deleteBindCode: (code: string) => Promise<any>;
@@ -130,12 +130,12 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const value: ApiContextType = {
     getConfig: () => getJson('/config'),
     saveConfig: (payload) => postJson('/config', payload),
-    getSettings: () => getJson('/settings'),
-    saveSettings: (payload) => postJson('/settings', payload),
-    getUsers: () => getJson('/api/users'),
-    saveUsers: (payload) => postJson('/api/users', payload),
-    toggleAdmin: (userId, isAdmin) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, { is_admin: isAdmin }),
-    removeUser: (userId) => fetch(`/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
+    getSettings: (platform) => getJson(platform ? `/settings?platform=${encodeURIComponent(platform)}` : '/settings'),
+    saveSettings: (payload, platform) => postJson('/settings', platform ? { ...payload, platform } : payload),
+    getUsers: (platform) => getJson(platform ? `/api/users?platform=${encodeURIComponent(platform)}` : '/api/users'),
+    saveUsers: (payload, platform) => postJson('/api/users', platform ? { ...payload, platform } : payload),
+    toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
+    removeUser: (userId, platform) => fetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
     getBindCodes: () => getJson('/api/bind-codes'),
     createBindCode: (type, expiresAt) => postJson('/api/bind-codes', { type, expires_at: expiresAt }),
     deleteBindCode: (code) => fetch(`/api/bind-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),

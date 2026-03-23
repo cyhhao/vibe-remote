@@ -42,7 +42,12 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
     }
   }, [botToken, expandedSteps]);
 
-  const isValid = useMemo(() => botToken.length > 0 && authResult?.ok, [botToken, authResult]);
+  const isValid = useMemo(() => {
+    if (!botToken) return false;
+    if (authResult?.ok) return true;
+    // Allow proceeding if token matches previously saved config (already validated before)
+    return Boolean(data.discord?.bot_token && botToken === data.discord?.bot_token);
+  }, [botToken, authResult, data.discord?.bot_token]);
 
   const runAuthTest = async () => {
     setChecking(true);

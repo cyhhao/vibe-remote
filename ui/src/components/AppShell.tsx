@@ -8,6 +8,7 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 import { VersionBadge } from './VersionBadge';
 import clsx from 'clsx';
 import logoImg from '../assets/logo.png';
+import { getEnabledPlatforms } from '../lib/platforms';
 
 const NavItem = ({ to, icon: Icon, children }: { to: string; icon: any; children: React.ReactNode }) => (
   <NavLink
@@ -29,14 +30,14 @@ export const AppShell: React.FC = () => {
   const { status } = useStatus();
   const api = useApi();
   const location = useLocation();
-  const [platform, setPlatform] = useState<string>('');
+  const [enabledPlatforms, setEnabledPlatforms] = useState<string[]>([]);
 
   useEffect(() => {
-    api.getConfig().then((c: any) => setPlatform(c?.platform || '')).catch(() => {});
+    api.getConfig().then((c: any) => setEnabledPlatforms(getEnabledPlatforms(c))).catch(() => {});
   }, []);
 
   const isRunning = status.state === 'running';
-  const isWechat = platform === 'wechat';
+  const hasChannelPlatforms = enabledPlatforms.some((platform) => platform !== 'wechat');
 
   if (location.pathname === '/setup') {
     return <Outlet />;
@@ -60,7 +61,7 @@ export const AppShell: React.FC = () => {
 
         <nav className="flex-1 p-4 space-y-1">
           <NavItem to="/dashboard" icon={LayoutDashboard}>{t('nav.dashboard')}</NavItem>
-          {!isWechat && <NavItem to="/channels" icon={MessageSquare}>{t('nav.channels')}</NavItem>}
+          {hasChannelPlatforms && <NavItem to="/channels" icon={MessageSquare}>{t('nav.channels')}</NavItem>}
           <NavItem to="/users" icon={Users}>{t('nav.users')}</NavItem>
           <NavItem to="/doctor" icon={Activity}>{t('nav.doctor')}</NavItem>
         </nav>
@@ -84,7 +85,7 @@ export const AppShell: React.FC = () => {
        {/* Mobile Nav */}
        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-panel border-t border-border flex justify-around p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] z-50">
           <NavLink to="/dashboard" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><LayoutDashboard /></NavLink>
-          {!isWechat && <NavLink to="/channels" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><MessageSquare /></NavLink>}
+          {hasChannelPlatforms && <NavLink to="/channels" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><MessageSquare /></NavLink>}
           <NavLink to="/users" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><Users /></NavLink>
           <NavLink to="/doctor" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><Activity /></NavLink>
        </nav>

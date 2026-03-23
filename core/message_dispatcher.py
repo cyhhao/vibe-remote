@@ -30,11 +30,18 @@ class ConsolidatedMessageDispatcher:
     def _get_settings_key(self, context: MessageContext) -> str:
         return self.controller._get_settings_key(context)
 
+    def _get_im_client(self, context: MessageContext):
+        getter = getattr(self.controller, "get_im_client_for_context", None)
+        if callable(getter):
+            return getter(context)
+        return self.controller.im_client
+
     def _get_target_context(self, context: MessageContext) -> MessageContext:
-        if self.controller.im_client.should_use_thread_for_reply() and context.thread_id:
+        if self._get_im_client(context).should_use_thread_for_reply() and context.thread_id:
             return MessageContext(
                 user_id=context.user_id,
                 channel_id=context.channel_id,
+                platform=context.platform,
                 thread_id=context.thread_id,
                 message_id=context.message_id,
                 platform_specific=context.platform_specific,
@@ -76,13 +83,17 @@ class ConsolidatedMessageDispatcher:
             self._consolidated_message_ids.pop(key, None)
             self._consolidated_message_buffers.pop(key, None)
 
-    def _get_consolidated_max_bytes(self) -> int:
-        if self.controller.config.platform == "discord":
+    def _get_consolidated_max_bytes(self, context: MessageContext) -> int:
+        if (
+            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        ) == "discord":
             return 2000
         return 4000
 
-    def _get_consolidated_split_threshold(self) -> int:
-        if self.controller.config.platform == "discord":
+    def _get_consolidated_split_threshold(self, context: MessageContext) -> int:
+        if (
+            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        ) == "discord":
             return 1800
         return 3600
 
@@ -90,13 +101,17 @@ class ConsolidatedMessageDispatcher:
     def _get_text_byte_length(text: str) -> int:
         return len(text.encode("utf-8"))
 
-    def _get_result_max_chars(self) -> int:
-        if self.controller.config.platform == "discord":
+    def _get_result_max_chars(self, context: MessageContext) -> int:
+        if (
+            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        ) == "discord":
             return 1900
         return 30000
 
-    def _supports_quick_replies(self) -> bool:
-        return self.controller.config.platform != "wechat"
+    def _supports_quick_replies(self, context: MessageContext) -> bool:
+        return (
+            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        ) != "wechat"
 
     @staticmethod
     def _is_video_path(path: str) -> bool:
@@ -139,7 +154,7 @@ class ConsolidatedMessageDispatcher:
             return
 
         settings_manager = self.controller.settings_manager
-        im_client = self.controller.im_client
+        im_client = self._get_im_client(context)
 
         canonical_type = settings_manager._canonicalize_message_type(message_type or "")
         settings_key = self._get_settings_key(context)
@@ -164,8 +179,8 @@ class ConsolidatedMessageDispatcher:
                 enhanced = None
                 display_text = text
 
-            if len(display_text) <= self._get_result_max_chars():
-                if enhanced and enhanced.buttons and self._supports_quick_replies():
+            if len(display_text) <= self._get_result_max_chars(context):
+                if enhanced and enhanced.buttons and self._supports_quick_replies(context):
                     try:
                         await self._send_with_quick_replies(
                             im_client,
@@ -186,15 +201,17 @@ class ConsolidatedMessageDispatcher:
                     except Exception as err:
                         logger.error("Failed to send result message: %s", err)
             else:
-                summary = self._build_result_summary(display_text, self._get_result_max_chars())
+                summary = self._build_result_summary(display_text, self._get_result_max_chars(context))
                 try:
                     await im_client.send_message(target_context, summary, parse_mode=parse_mode)
                 except Exception as err:
                     logger.error("Failed to send result summary: %s", err)
 
-                if self.controller.config.platform in {"slack", "discord", "lark"} and hasattr(
-                    im_client, "upload_markdown"
-                ):
+                if (
+                    context.platform
+                    or (context.platform_specific or {}).get("platform")
+                    or self.controller.config.platform
+                ) in {"slack", "discord", "lark"} and hasattr(im_client, "upload_markdown"):
                     try:
                         await im_client.upload_markdown(
                             target_context,
@@ -243,8 +260,8 @@ class ConsolidatedMessageDispatcher:
 
         async with lock:
             chunk = text.strip()
-            max_bytes = self._get_consolidated_max_bytes()
-            split_threshold = self._get_consolidated_split_threshold()
+            max_bytes = self._get_consolidated_max_bytes(context)
+            split_threshold = self._get_consolidated_split_threshold(context)
             existing = self._consolidated_message_buffers.get(consolidated_key, "")
             existing_message_id = self._consolidated_message_ids.get(consolidated_key)
 

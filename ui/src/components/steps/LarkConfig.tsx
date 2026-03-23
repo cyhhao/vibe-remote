@@ -74,7 +74,12 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
     };
   }, []);
 
-  const isValid = useMemo(() => appId.length > 0 && appSecret.length > 0 && authResult?.ok, [appId, appSecret, authResult]);
+  const isValid = useMemo(() => {
+    if (!appId || !appSecret) return false;
+    if (authResult?.ok) return true;
+    // Allow proceeding if credentials match previously saved config (already validated before)
+    return Boolean(data.lark?.app_id && data.lark?.app_secret && appId === data.lark?.app_id && appSecret === data.lark?.app_secret);
+  }, [appId, appSecret, authResult, data.lark?.app_id, data.lark?.app_secret]);
 
   const runAuthTest = async () => {
     setChecking(true);

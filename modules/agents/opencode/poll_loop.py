@@ -172,7 +172,7 @@ class OpenCodePollLoop:
                         # Timeout -> end request without final result message
                         return None, False
 
-                    toolcall = self._agent.im_client.formatter.format_toolcall(
+                    toolcall = self._agent._get_formatter(request.context).format_toolcall(
                         tool_name,
                         tool_input,
                         get_relative_path=_relative_path,
@@ -299,16 +299,18 @@ class OpenCodePollLoop:
 
         session_id = poll_info.opencode_session_id
         context = MessageContext(
-            user_id="",
+            user_id=poll_info.user_id or "",
             channel_id=poll_info.channel_id,
+            platform=poll_info.platform or None,
             thread_id=poll_info.thread_id,
+            platform_specific={"platform": poll_info.platform} if poll_info.platform else None,
         )
 
         async def _remove_ack_reaction() -> None:
             """Remove ack reaction from the original message."""
             if poll_info.ack_reaction_message_id and poll_info.ack_reaction_emoji:
                 try:
-                    await self._agent.im_client.remove_reaction(
+                    await self._agent.controller.get_im_client_for_context(context).remove_reaction(
                         context,
                         poll_info.ack_reaction_message_id,
                         poll_info.ack_reaction_emoji,
@@ -398,7 +400,9 @@ class OpenCodePollLoop:
                                 context=MessageContext(
                                     user_id=poll_info.user_id or "",
                                     channel_id=poll_info.channel_id,
+                                    platform=poll_info.platform or None,
                                     thread_id=poll_info.thread_id,
+                                    platform_specific={"platform": poll_info.platform} if poll_info.platform else None,
                                 ),
                                 message="",
                                 settings_key=poll_info.settings_key,

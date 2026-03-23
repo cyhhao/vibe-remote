@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class ClaudeClient:
-    def __init__(
-        self, config: ClaudeCompatConfig, formatter: Optional[BaseMarkdownFormatter] = None
-    ):
+    def __init__(self, config: ClaudeCompatConfig, formatter: Optional[BaseMarkdownFormatter] = None):
         self.config = config
         self.formatter = formatter or SlackFormatter()
         self.options = ClaudeAgentOptions(
@@ -31,28 +29,33 @@ class ClaudeClient:
         )  # type: ignore[arg-type]
 
     def format_message(
-        self, message, get_relative_path: Optional[Callable[[str], str]] = None
+        self,
+        message,
+        get_relative_path: Optional[Callable[[str], str]] = None,
+        formatter: Optional[BaseMarkdownFormatter] = None,
     ) -> str:
         """Format different types of messages according to specified rules"""
+        active_formatter = formatter or self.formatter
         try:
             if isinstance(message, SystemMessage):
-                return self._format_system_message(message)
+                return self._format_system_message(message, active_formatter)
             elif isinstance(message, AssistantMessage):
-                return self._format_assistant_message(message, get_relative_path)
+                return self._format_assistant_message(message, active_formatter, get_relative_path)
             elif isinstance(message, UserMessage):
-                return self._format_user_message(message, get_relative_path)
+                return self._format_user_message(message, active_formatter, get_relative_path)
             elif isinstance(message, ResultMessage):
-                return self._format_result_message(message)
+                return self._format_result_message(message, active_formatter)
             else:
-                return self.formatter.format_warning(
-                    f"Unknown message type: {type(message)}"
-                )
+                return active_formatter.format_warning(f"Unknown message type: {type(message)}")
         except Exception as e:
             logger.error(f"Error formatting message: {e}")
-            return self.formatter.format_error(f"Error formatting message: {str(e)}")
+            return active_formatter.format_error(f"Error formatting message: {str(e)}")
 
     def _process_content_blocks(
-        self, content_blocks, get_relative_path: Optional[Callable[[str], str]] = None
+        self,
+        content_blocks,
+        formatter: BaseMarkdownFormatter,
+        get_relative_path: Optional[Callable[[str], str]] = None,
     ) -> list:
         """Process content blocks (TextBlock, ToolUseBlock) and return formatted parts"""
         formatted_parts = []
@@ -63,10 +66,10 @@ class ClaudeClient:
                 # This avoids double escaping
                 formatted_parts.append(block.text)
             elif isinstance(block, ToolUseBlock):
-                tool_info = self._format_tool_use_block(block, get_relative_path)
+                tool_info = self._format_tool_use_block(block, formatter, get_relative_path)
                 formatted_parts.append(tool_info)
             elif isinstance(block, ToolResultBlock):
-                result_info = self._format_tool_result_block(block)
+                result_info = self._format_tool_result_block(block, formatter)
                 formatted_parts.append(result_info)
 
         return formatted_parts
@@ -99,50 +102,49 @@ class ClaudeClient:
     def _format_tool_use_block(
         self,
         block: ToolUseBlock,
+        formatter: BaseMarkdownFormatter,
         get_relative_path: Optional[Callable[[str], str]] = None,
     ) -> str:
         """Format ToolUseBlock using formatter"""
         # Prefer caller-provided get_relative_path (per-session cwd), fallback to self
         rel = get_relative_path if get_relative_path else self._get_relative_path
-        return self.formatter.format_tool_use(
-            block.name, block.input, get_relative_path=rel
-        )
+        return formatter.format_tool_use(block.name, block.input, get_relative_path=rel)
 
-    def _format_tool_result_block(self, block: ToolResultBlock) -> str:
+    def _format_tool_result_block(self, block: ToolResultBlock, formatter: BaseMarkdownFormatter) -> str:
         """Format ToolResultBlock using formatter"""
         is_error = bool(block.is_error) if block.is_error is not None else False
         content = block.content if isinstance(block.content, str) else None
-        return self.formatter.format_tool_result(is_error, content)
+        return formatter.format_tool_result(is_error, content)
 
-    def _format_system_message(self, message: SystemMessage) -> str:
+    def _format_system_message(self, message: SystemMessage, formatter: BaseMarkdownFormatter) -> str:
         """Format SystemMessage using formatter"""
         cwd = message.data.get("cwd", "Unknown")
         session_id = message.data.get("session_id", None)
-        return self.formatter.format_system_message(cwd, message.subtype, session_id)
+        return formatter.format_system_message(cwd, message.subtype, session_id)
 
     def _format_assistant_message(
         self,
         message: AssistantMessage,
+        formatter: BaseMarkdownFormatter,
         get_relative_path: Optional[Callable[[str], str]] = None,
     ) -> str:
         """Format AssistantMessage using formatter"""
-        content_parts = self._process_content_blocks(message.content, get_relative_path)
-        return self.formatter.format_assistant_message(content_parts)
+        content_parts = self._process_content_blocks(message.content, formatter, get_relative_path)
+        return formatter.format_assistant_message(content_parts)
 
     def _format_user_message(
         self,
         message: UserMessage,
+        formatter: BaseMarkdownFormatter,
         get_relative_path: Optional[Callable[[str], str]] = None,
     ) -> str:
         """Format UserMessage using formatter"""
-        content_parts = self._process_content_blocks(message.content, get_relative_path)
-        return self.formatter.format_user_message(content_parts)
+        content_parts = self._process_content_blocks(message.content, formatter, get_relative_path)
+        return formatter.format_user_message(content_parts)
 
-    def _format_result_message(self, message: ResultMessage) -> str:
+    def _format_result_message(self, message: ResultMessage, formatter: BaseMarkdownFormatter) -> str:
         """Format ResultMessage using formatter"""
-        return self.formatter.format_result_message(
-            message.subtype, message.duration_ms, message.result
-        )
+        return formatter.format_result_message(message.subtype, message.duration_ms, message.result)
 
     def _is_skip_message(self, message) -> bool:
         """Check if the message should be skipped"""

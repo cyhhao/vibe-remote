@@ -37,7 +37,10 @@ class OpenCodeQuestionHandler:
         self._answer_reactions: Dict[str, tuple] = {}
 
     def _platform_supports_question_tool(self, request: AgentRequest) -> bool:
-        return getattr(self._controller.config, "platform", "") != "wechat"
+        platform = request.context.platform or (request.context.platform_specific or {}).get("platform")
+        if not platform:
+            platform = getattr(self._controller.config, "platform", "")
+        return platform != "wechat"
 
     def _question_tool_disabled_text(self) -> str:
         translator = getattr(self._controller, "_t", None)
@@ -173,17 +176,21 @@ class OpenCodeQuestionHandler:
 
         try:
             if hasattr(self._im_client, "open_opencode_question_modal"):
-                await self._im_client.open_opencode_question_modal(
-                    trigger_id=interaction or trigger_id,
-                    context=request.context,
-                    pending=pending,
+                await self._im_client.run_on_client_loop(
+                    self._im_client.open_opencode_question_modal(
+                        trigger_id=interaction or trigger_id,
+                        context=request.context,
+                        pending=pending,
+                    )
                 )
             else:
-                await self._im_client.open_question_modal(
-                    trigger_id=interaction or trigger_id,
-                    context=request.context,
-                    pending=pending,
-                    callback_prefix="opencode_question",
+                await self._im_client.run_on_client_loop(
+                    self._im_client.open_question_modal(
+                        trigger_id=interaction or trigger_id,
+                        context=request.context,
+                        pending=pending,
+                        callback_prefix="opencode_question",
+                    )
                 )
         except Exception as err:
             logger.error(f"Failed to open OpenCode question modal: {err}", exc_info=True)

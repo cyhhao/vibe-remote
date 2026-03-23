@@ -174,7 +174,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         )
 
         if self._session_manager.mark_initialized(session_id):
-            system_text = self.im_client.formatter.format_system_message(request.working_path, "init", session_id)
+            system_text = self._get_formatter(request.context).format_system_message(
+                request.working_path, "init", session_id
+            )
             await self.controller.emit_agent_message(
                 request.context,
                 "system",
@@ -227,17 +229,20 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
 
             # Prepare message with file attachment info if present
             prompt_text = self._prepare_message_with_files(request)
+            platform = (
+                request.context.platform
+                or (request.context.platform_specific or {}).get("platform")
+                or self.controller.config.platform
+            )
 
             # Inject reply-enhancement instructions via the system field (appended by OpenCode)
             reply_system: Optional[str] = None
             if getattr(self.controller.config, "reply_enhancements", True):
                 from core.reply_enhancer import build_reply_enhancements_prompt
 
-                reply_system = build_reply_enhancements_prompt(
-                    include_quick_replies=self.controller.config.platform != "wechat"
-                )
+                reply_system = build_reply_enhancements_prompt(include_quick_replies=platform != "wechat")
 
-            request_tools = {"question": False} if self.controller.config.platform == "wechat" else None
+            request_tools = {"question": False} if platform == "wechat" else None
 
             await server.prompt_async(
                 session_id=session_id,
@@ -268,6 +273,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 ack_reaction_message_id=request.ack_reaction_message_id,
                 ack_reaction_emoji=request.ack_reaction_emoji,
                 user_id=request.context.user_id or "",
+                platform=request.context.platform or (request.context.platform_specific or {}).get("platform") or "",
             )
 
             final_text, should_emit = await self._poll_loop.run_prompt_poll(

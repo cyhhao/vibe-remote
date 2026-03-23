@@ -4,6 +4,7 @@ import logging
 from typing import Union, TYPE_CHECKING
 
 from .base import BaseIMClient
+from .multi import MultiIMClient
 
 # Use delayed imports to avoid circular import issues
 if TYPE_CHECKING:
@@ -17,6 +18,14 @@ class IMFactory:
 
     @staticmethod
     def create_client(config) -> BaseIMClient:
+        clients = IMFactory.create_clients(config)
+        primary = getattr(getattr(config, "platforms", None), "primary", getattr(config, "platform", "slack"))
+        if len(clients) == 1 and primary in clients:
+            return clients[primary]
+        return MultiIMClient(clients, primary_platform=primary)
+
+    @staticmethod
+    def create_clients(config) -> dict[str, BaseIMClient]:
         """Create and return the appropriate IM client based on configuration
 
         Args:
@@ -32,32 +41,39 @@ class IMFactory:
         from .slack import SlackBot
         from .discord import DiscordBot
 
-        platform = getattr(config, "platform", "slack")
-        if platform == "slack":
-            if not config.slack:
-                raise ValueError("Slack configuration not found")
-            logger.info("Creating Slack client")
-            return SlackBot(config.slack)
-        if platform == "discord":
-            if not config.discord:
-                raise ValueError("Discord configuration not found")
-            logger.info("Creating Discord client")
-            return DiscordBot(config.discord)
-        if platform == "lark":
-            from .feishu import FeishuBot
+        enabled_platforms = list(getattr(config, "enabled_platforms", lambda: [getattr(config, "platform", "slack")])())
+        clients: dict[str, BaseIMClient] = {}
+        for platform in enabled_platforms:
+            if platform == "slack":
+                if not config.slack:
+                    raise ValueError("Slack configuration not found")
+                logger.info("Creating Slack client")
+                clients[platform] = SlackBot(config.slack)
+                continue
+            if platform == "discord":
+                if not config.discord:
+                    raise ValueError("Discord configuration not found")
+                logger.info("Creating Discord client")
+                clients[platform] = DiscordBot(config.discord)
+                continue
+            if platform == "lark":
+                from .feishu import FeishuBot
 
-            if not config.lark:
-                raise ValueError("Lark configuration not found")
-            logger.info("Creating Lark/Feishu client")
-            return FeishuBot(config.lark)
-        if platform == "wechat":
-            from .wechat import WeChatBot
+                if not config.lark:
+                    raise ValueError("Lark configuration not found")
+                logger.info("Creating Lark/Feishu client")
+                clients[platform] = FeishuBot(config.lark)
+                continue
+            if platform == "wechat":
+                from .wechat import WeChatBot
 
-            if not config.wechat:
-                raise ValueError("WeChat configuration not found")
-            logger.info("Creating WeChat client")
-            return WeChatBot(config.wechat)
-        raise ValueError(f"Unsupported platform: {platform}")
+                if not config.wechat:
+                    raise ValueError("WeChat configuration not found")
+                logger.info("Creating WeChat client")
+                clients[platform] = WeChatBot(config.wechat)
+                continue
+            raise ValueError(f"Unsupported platform: {platform}")
+        return clients
 
     @staticmethod
     def get_supported_platforms() -> list[str]:
@@ -78,25 +94,25 @@ class IMFactory:
         Raises:
             ValueError: If configuration is invalid
         """
-        platform = getattr(config, "platform", "slack")
-        if platform == "slack":
-            if config.slack is None:
-                raise ValueError("Missing configuration for platform: slack")
-            config.slack.validate()
-            return
-        if platform == "discord":
-            if config.discord is None:
-                raise ValueError("Missing configuration for platform: discord")
-            config.discord.validate()
-            return
-        if platform == "lark":
-            if config.lark is None:
-                raise ValueError("Missing configuration for platform: lark")
-            config.lark.validate()
-            return
-        if platform == "wechat":
-            if config.wechat is None:
-                raise ValueError("Missing configuration for platform: wechat")
-            config.wechat.validate()
-            return
-        raise ValueError(f"Unsupported platform: {platform}")
+        for platform in getattr(config, "enabled_platforms", lambda: [getattr(config, "platform", "slack")])():
+            if platform == "slack":
+                if config.slack is None:
+                    raise ValueError("Missing configuration for platform: slack")
+                config.slack.validate()
+                continue
+            if platform == "discord":
+                if config.discord is None:
+                    raise ValueError("Missing configuration for platform: discord")
+                config.discord.validate()
+                continue
+            if platform == "lark":
+                if config.lark is None:
+                    raise ValueError("Missing configuration for platform: lark")
+                config.lark.validate()
+                continue
+            if platform == "wechat":
+                if config.wechat is None:
+                    raise ValueError("Missing configuration for platform: wechat")
+                config.wechat.validate()
+                continue
+            raise ValueError(f"Unsupported platform: {platform}")

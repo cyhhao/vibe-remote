@@ -5,7 +5,7 @@ import types
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -96,6 +96,15 @@ class _StubIMClient:
     def should_use_thread_for_reply(self):
         return False
 
+    async def get_user_info(self, user_id):
+        return {"display_name": f"user:{user_id}"}
+
+    async def download_file_to_path(self, file_info, target_path):
+        self.sent_messages.append(("download", file_info["name"], target_path))
+        from modules.im.base import FileDownloadResult
+
+        return FileDownloadResult(False, "not implemented")
+
     async def send_typing_indicator(self, context):
         self.typing_calls.append((context.channel_id, context.user_id))
         return self.typing_result
@@ -136,12 +145,17 @@ class _StubController:
         self.im_client = _StubIMClient(typing_result=typing_result)
         self.settings_manager = _StubSettingsManager()
         self.session_manager = object()
+        self.session_handler = None
         self.receiver_tasks = {}
         self.agent_service = _StubAgentService()
+        self.settings_handler = type("Settings", (), {})()
         self.command_handler = type("Cmd", (), {"handle_start": staticmethod(lambda context, args: None)})()
 
     def update_thread_message_id(self, context):
         return None
+
+    def get_im_client_for_context(self, context):
+        return self.im_client
 
     def resolve_agent_for_context(self, context):
         return "codex"
@@ -191,6 +205,69 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.ack_reaction_message_id, "m1")
         self.assertEqual(request.ack_reaction_emoji, ":eyes:")
         self.assertEqual(controller.im_client.reactions, [("C1", "m1", ":eyes:")])
+
+    async def test_wechat_context_forces_typing_even_when_primary_platform_is_slack(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="wx-user",
+            channel_id="wx-chat",
+            message_id="m1",
+            platform="wechat",
+            platform_specific={"platform": "wechat"},
+        )
+
+        await handler.handle_user_message(context, "hello")
+
+        _, request = controller.agent_service.requests[0]
+        self.assertTrue(request.typing_indicator_active)
+        self.assertEqual(controller.im_client.reactions, [])
+        self.assertGreaterEqual(len(controller.im_client.typing_calls), 1)
+
+    async def test_platform_specific_client_is_used_for_user_info(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        context = MessageContext(user_id="wx-user", channel_id="wx-chat", platform="wechat")
+
+        class _WechatClient(_StubIMClient):
+            async def get_user_info(self, user_id):
+                return {"display_name": "WeChat User"}
+
+        wechat_client = _WechatClient(typing_result=True)
+        controller.get_im_client_for_context = lambda _context: wechat_client  # type: ignore[method-assign]
+
+        result = await handler._prepend_user_info(context, "hello")
+
+        self.assertEqual(result, "[WeChat User<wx-user>] hello")
+
+    async def test_resume_session_callback_preserves_platform(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        setattr(
+            controller,
+            "session_handler",
+            type("SessionHandler", (), {"handle_resume_session_submission": AsyncMock()})(),
+        )
+        handler = MessageHandler(controller)
+        context = MessageContext(
+            user_id="u1",
+            channel_id="c1",
+            thread_id="t1",
+            platform="lark",
+            platform_specific={"platform": "lark", "is_dm": False},
+        )
+
+        await handler.handle_callback_query(context, "resume_session:opencode:session-1")
+
+        getattr(controller, "session_handler").handle_resume_session_submission.assert_awaited_once_with(
+            user_id="u1",
+            channel_id="c1",
+            thread_id="t1",
+            agent="opencode",
+            session_id="session-1",
+            is_dm=False,
+            platform="lark",
+        )
 
 
 if __name__ == "__main__":

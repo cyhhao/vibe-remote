@@ -232,6 +232,10 @@ def save_config(payload: dict) -> V2Config:
 def config_to_payload(config: V2Config) -> dict:
     payload = {
         "platform": config.platform,
+        "platforms": {
+            "enabled": config.platforms.enabled,
+            "primary": config.platforms.primary,
+        },
         "mode": config.mode,
         "version": config.version,
         "slack": {
@@ -263,14 +267,14 @@ def config_to_payload(config: V2Config) -> dict:
     return payload
 
 
-def get_settings() -> dict:
+def get_settings(platform: Optional[str] = None) -> dict:
     store = SettingsStore.get_instance()
-    return _settings_to_payload(store, platform=_current_platform())
+    return _settings_to_payload(store, platform=platform or _current_platform())
 
 
 def save_settings(payload: dict) -> dict:
     store = SettingsStore.get_instance()
-    platform = _current_platform()
+    platform = payload.get("platform") or _current_platform()
 
     def _normalize_routing_payload(routing_payload: dict) -> dict:
         from modules.agents.opencode.utils import normalize_claude_reasoning_effort
@@ -1244,10 +1248,10 @@ def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu") -> dic
 # ---------------------------------------------------------------------------
 
 
-def get_users() -> dict:
+def get_users(platform: Optional[str] = None) -> dict:
     """Get all bound users."""
     store = SettingsStore.get_instance()
-    platform = _current_platform()
+    platform = platform or _current_platform()
     users = {}
     for user_id, u in store.get_users_for_platform(platform).items():
         users[user_id] = {
@@ -1265,7 +1269,7 @@ def get_users() -> dict:
 def save_users(payload: dict) -> dict:
     """Save user settings (bulk update from UI)."""
     store = SettingsStore.get_instance()
-    platform = _current_platform()
+    platform = payload.get("platform") or _current_platform()
 
     def _normalize_routing_payload(routing_payload: dict) -> dict:
         from modules.agents.opencode.utils import normalize_claude_reasoning_effort
@@ -1301,13 +1305,13 @@ def save_users(payload: dict) -> dict:
         current_users[uid] = user_settings
     store.set_users_for_platform(platform, current_users)
     store.save()
-    return get_users()
+    return get_users(platform)
 
 
-def toggle_admin(user_id: str, is_admin: bool) -> dict:
+def toggle_admin(user_id: str, is_admin: bool, platform: Optional[str] = None) -> dict:
     """Toggle admin status for a user."""
     store = SettingsStore.get_instance()
-    platform = _current_platform()
+    platform = platform or _current_platform()
     if not store.set_admin(user_id, is_admin, platform=platform):
         if not store.is_bound_user(user_id, platform=platform):
             return {"ok": False, "error": "User not found"}
@@ -1315,10 +1319,10 @@ def toggle_admin(user_id: str, is_admin: bool) -> dict:
     return {"ok": True}
 
 
-def remove_user(user_id: str) -> dict:
+def remove_user(user_id: str, platform: Optional[str] = None) -> dict:
     """Remove a bound user."""
     store = SettingsStore.get_instance()
-    platform = _current_platform()
+    platform = platform or _current_platform()
     user = store.get_user(user_id, platform=platform)
     if user is None:
         return {"ok": False, "error": "User not found"}

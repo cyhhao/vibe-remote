@@ -147,7 +147,35 @@ class UpdateConfig:
     auto_update: bool = True  # Auto-install updates when idle
     check_interval_minutes: int = 60  # How often to check for updates (0 = disable)
     idle_minutes: int = 30  # Minutes of inactivity before auto-update
-    notify_slack: bool = True  # Send update notification when update is available
+    notify_admins: bool = True  # Send update notification to admins when update is available
+
+
+@dataclass
+class PlatformsConfig:
+    """Multi-platform enablement metadata.
+
+    ``primary`` remains the compatibility anchor for legacy single-platform
+    code paths while ``enabled`` is the new source of truth.
+    """
+
+    enabled: list[str] = field(default_factory=lambda: ["slack"])
+    primary: str = "slack"
+
+    def validate(self) -> None:
+        supported = {"slack", "discord", "lark", "wechat"}
+        normalized: list[str] = []
+        for platform in self.enabled:
+            if platform not in supported:
+                raise ValueError(f"Unsupported enabled platform: {platform}")
+            if platform not in normalized:
+                normalized.append(platform)
+        if not normalized:
+            raise ValueError("Config 'platforms.enabled' must contain at least one platform")
+        if self.primary not in supported:
+            raise ValueError("Config 'platforms.primary' must be 'slack', 'discord', 'lark', or 'wechat'")
+        if self.primary not in normalized:
+            normalized.insert(0, self.primary)
+        self.enabled = normalized
 
 
 @dataclass
@@ -158,13 +186,14 @@ class V2Config:
     runtime: RuntimeConfig
     agents: AgentsConfig
     platform: str = "slack"
+    platforms: PlatformsConfig = field(default_factory=PlatformsConfig)
     discord: Optional[DiscordConfig] = None
     lark: Optional[LarkConfig] = None
     wechat: Optional[WeChatConfig] = None
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
-    ack_mode: str = "reaction"
+    ack_mode: str = "typing"
     show_duration: bool = True  # Show task duration in result messages
     include_user_info: bool = True  # Prepend user identity to agent messages
     reply_enhancements: bool = True  # Enable file sending & quick-reply buttons
@@ -193,6 +222,25 @@ class V2Config:
         if platform not in {"slack", "discord", "lark", "wechat"}:
             raise ValueError("Config 'platform' must be 'slack', 'discord', 'lark', or 'wechat'")
 
+        platforms_payload = payload.get("platforms")
+        if platforms_payload is not None and not isinstance(platforms_payload, dict):
+            raise ValueError("Config 'platforms' must be an object")
+        if platforms_payload:
+            platforms = PlatformsConfig(
+                enabled=list(platforms_payload.get("enabled") or []),
+                primary=platforms_payload.get("primary") or platform,
+            )
+        else:
+            platforms = PlatformsConfig(enabled=[platform], primary=platform)
+        # When the caller explicitly set 'platform' but did not provide
+        # 'platforms', treat it as a legacy single-platform update and
+        # sync the new structure so that the old field is not silently
+        # overridden by a stale 'platforms' value from a prior merge.
+        if "platform" in payload and "platforms" not in payload:
+            platforms = PlatformsConfig(enabled=[platform], primary=platform)
+        platforms.validate()
+        platform = platforms.primary
+
         slack_payload = payload.get("slack") or {}
         if not isinstance(slack_payload, dict):
             raise ValueError("Config 'slack' must be an object")
@@ -211,8 +259,6 @@ class V2Config:
         if discord_payload is not None:
             discord = DiscordConfig(**_filter_dataclass_fields(DiscordConfig, discord_payload))
             discord.validate()
-        if platform == "discord" and discord is None:
-            raise ValueError("Config 'discord' must be provided when platform is discord")
 
         lark_payload = payload.get("lark")
         if lark_payload is not None and not isinstance(lark_payload, dict):
@@ -221,8 +267,6 @@ class V2Config:
         if lark_payload is not None:
             lark = LarkConfig(**_filter_dataclass_fields(LarkConfig, lark_payload))
             lark.validate()
-        if platform == "lark" and lark is None:
-            raise ValueError("Config 'lark' must be provided when platform is lark")
 
         wechat_payload = payload.get("wechat")
         if wechat_payload is not None and not isinstance(wechat_payload, dict):
@@ -231,8 +275,19 @@ class V2Config:
         if wechat_payload is not None:
             wechat = WeChatConfig(**_filter_dataclass_fields(WeChatConfig, wechat_payload))
             wechat.validate()
-        if platform == "wechat" and wechat is None:
-            raise ValueError("Config 'wechat' must be provided when platform is wechat")
+
+        # Validate that every enabled platform has its config section present.
+        # The old single-platform check (``if platform == "discord"``) only
+        # guarded the primary; with multi-platform enabled we must ensure ALL
+        # enabled platforms have valid credentials so that the runtime won't
+        # crash on startup with a config that was already persisted to disk.
+        for _ep in platforms.enabled:
+            if _ep == "discord" and discord is None:
+                raise ValueError("Config 'discord' must be provided when discord is enabled")
+            if _ep == "lark" and lark is None:
+                raise ValueError("Config 'lark' must be provided when lark is enabled")
+            if _ep == "wechat" and wechat is None:
+                raise ValueError("Config 'wechat' must be provided when wechat is enabled")
 
         gateway_payload = payload.get("gateway")
         if gateway_payload is not None and not isinstance(gateway_payload, dict):
@@ -283,9 +338,12 @@ class V2Config:
         update_payload = payload.get("update") or {}
         if not isinstance(update_payload, dict):
             raise ValueError("Config 'update' must be an object")
+        # Backward compat: rename legacy "notify_slack" → "notify_admins"
+        if "notify_slack" in update_payload and "notify_admins" not in update_payload:
+            update_payload["notify_admins"] = update_payload.pop("notify_slack")
         update = UpdateConfig(**_filter_dataclass_fields(UpdateConfig, update_payload))
 
-        ack_mode = payload.get("ack_mode", "reaction")
+        ack_mode = payload.get("ack_mode", "typing")
         if ack_mode not in {"reaction", "message", "typing"}:
             raise ValueError("Config 'ack_mode' must be 'reaction', 'message', or 'typing'")
 
@@ -305,6 +363,7 @@ class V2Config:
 
         return cls(
             platform=platform,
+            platforms=platforms,
             mode=mode,
             version=payload.get("version", "v2"),
             slack=slack,
@@ -326,8 +385,14 @@ class V2Config:
     def save(self, config_path: Optional[Path] = None) -> None:
         paths.ensure_data_dirs()
         path = config_path or paths.get_config_path()
+        self.platforms.validate()
+        self.platform = self.platforms.primary
         payload = {
             "platform": self.platform,
+            "platforms": {
+                "enabled": self.platforms.enabled,
+                "primary": self.platforms.primary,
+            },
             "mode": self.mode,
             "version": self.version,
             "slack": self.slack.__dict__,
@@ -362,3 +427,6 @@ class V2Config:
                 os.fsync(tmp.fileno())
                 temp_name = tmp.name
             os.replace(temp_name, path)
+
+    def enabled_platforms(self) -> list[str]:
+        return list(self.platforms.enabled)

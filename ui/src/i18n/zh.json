@@ -67,7 +67,10 @@
   },
   "platform": {
     "title": "选择平台",
-    "subtitle": "选择要连接的聊天平台。",
+    "subtitle": "选择一个或多个要连接的聊天平台。",
+    "primary": "主平台",
+    "primaryTitle": "主平台",
+    "primaryDesc": "仅用于兼容排序和默认界面展示焦点。",
     "slack": {
       "title": "Slack",
       "desc": "连接 Slack 工作区并启用频道。"
@@ -227,7 +230,10 @@
     "pollError": "检查状态时发生错误。",
     "errorTitle": "连接失败",
     "retry": "重试",
-    "refreshQr": "刷新二维码"
+    "refreshQr": "刷新二维码",
+    "alreadyBound": "微信已绑定",
+    "alreadyBoundDesc": "你的微信账号已绑定。可以直接继续，或点击下方按钮重新绑定其他账号。",
+    "rebind": "重新绑定"
   },
   "slackConfig": {
     "title": "Slack 配置",
@@ -358,8 +364,8 @@
     "autoUpdate": "自动更新",
     "autoUpdateHint": "系统空闲时自动安装更新",
     "usageTips": "快速上手",
-    "tipStartCommand": "使用 @Vibe Remote /start 开始",
-    "tipStartCommandDesc": "在任意已启用的频道输入 @Vibe Remote /start 打开控制面板。",
+    "tipStartCommand": "使用 /start 开始",
+    "tipStartCommandDesc": "在任意已启用的会话中输入 /start 打开控制面板。",
     "tipAgentSwitch": "即时切换 Agent",
     "tipAgentSwitchDesc": "在消息前加 AgentName: 前缀即可路由到指定 Agent，如 \"Plan: 设计 API\"",
     "tipThread": "Thread = 会话",
@@ -390,10 +396,10 @@
     "requireMention": "需要 @提及",
     "requireMentionHint": "机器人仅在被 @提及时响应",
     "ackMode": "确认模式",
-    "ackModeHint": "机器人如何确认收到的消息",
+    "ackModeHint": "机器人如何确认收到消息。当前模式不可用时，会自动降级到下一个模式。",
     "ackReaction": "👀 表情回应",
-    "ackTyping": "Typing 指示",
-    "ackMessage": "消息回复",
+    "ackTyping": "✏️ 正在输入...",
+    "ackMessage": "💬 消息回复",
     "errorRetryLimit": "错误重试次数",
     "errorRetryLimitHint": "当 LLM 流式响应出错时，自动发送 'continue' 重试（0 = 不重试）",
     "showDuration": "显示耗时",

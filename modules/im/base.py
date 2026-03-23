@@ -36,6 +36,7 @@ class MessageContext:
 
     user_id: str
     channel_id: str
+    platform: Optional[str] = None
     thread_id: Optional[str] = None
     message_id: Optional[str] = None
     platform_specific: Optional[Dict[str, Any]] = None
@@ -571,6 +572,11 @@ class BaseIMClient(ABC):
         """Clear a previously started typing indicator for the conversation."""
 
         return False
+
+    async def run_on_client_loop(self, coro):
+        """Run a coroutine on the platform client's preferred event loop."""
+
+        return await coro
 
     async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
         """Send a direct message to a user by their platform user ID.

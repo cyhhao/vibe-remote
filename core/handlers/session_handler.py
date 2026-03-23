@@ -24,11 +24,22 @@ class SessionHandler(BaseHandler):
 
     def get_base_session_id(self, context: MessageContext) -> str:
         """Get base session ID based on platform and context (without path)"""
-        platform = getattr(self.config, "platform", "slack")
+        platform = (
+            context.platform
+            or (context.platform_specific or {}).get("platform")
+            or getattr(self.config, "platform", "slack")
+        )
         is_dm = bool((context.platform_specific or {}).get("is_dm", False))
         if is_dm:
             use_dm_threads = False
-            im_client = getattr(self.controller, "im_client", None)
+            getter = getattr(self.controller, "get_im_client_for_context", None)
+            if callable(getter):
+                try:
+                    im_client = getter(context)
+                except AttributeError:
+                    im_client = getattr(self.controller, "im_client", None)
+            else:
+                im_client = getattr(self.controller, "im_client", None)
             if im_client and hasattr(im_client, "should_use_thread_for_dm_session"):
                 use_dm_threads = bool(im_client.should_use_thread_for_dm_session())
 
@@ -203,7 +214,9 @@ class SessionHandler(BaseHandler):
         if reply_enhancements_on:
             from core.reply_enhancer import build_reply_enhancements_prompt
 
-            reply_prompt = build_reply_enhancements_prompt(include_quick_replies=self.config.platform != "wechat")
+            platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
+
+            reply_prompt = build_reply_enhancements_prompt(include_quick_replies=platform != "wechat")
 
             if base_prompt:
                 final_system_prompt = f"{base_prompt}\n\n{reply_prompt}"
@@ -303,6 +316,7 @@ class SessionHandler(BaseHandler):
         session_id: Optional[str],
         host_message_ts: Optional[str] = None,
         is_dm: bool = False,
+        platform: Optional[str] = None,
     ) -> None:
         """Bind a provided session_id to the current thread for the chosen agent."""
         from modules.settings_manager import ChannelRouting
@@ -325,6 +339,7 @@ class SessionHandler(BaseHandler):
             context = MessageContext(
                 user_id=user_id,
                 channel_id=channel_id or user_id,
+                platform=platform or self.config.platform,
                 thread_id=target_thread or None,
                 platform_specific={"is_dm": is_dm},
             )
@@ -354,12 +369,15 @@ class SessionHandler(BaseHandler):
                 ]
             )
 
-            confirmation_ts = await self.im_client.send_message(context, confirmation, parse_mode="markdown")
+            confirmation_ts = await self._get_im_client(context).send_message(
+                context, confirmation, parse_mode="markdown"
+            )
 
             mapped_thread = target_thread or confirmation_ts
             mapping_context = MessageContext(
                 user_id=user_id,
                 channel_id=context.channel_id,
+                platform=context.platform,
                 thread_id=mapped_thread,
                 message_id=confirmation_ts,
                 platform_specific={"is_dm": is_dm},
@@ -380,10 +398,11 @@ class SessionHandler(BaseHandler):
             context = MessageContext(
                 user_id=user_id,
                 channel_id=channel_id or user_id,
+                platform=platform or self.config.platform,
                 thread_id=thread_id or None,
                 platform_specific={"is_dm": is_dm},
             )
-            await self.im_client.send_message(
+            await self._get_im_client(context).send_message(
                 context,
                 f"❌ {self._t('error.resumeSubmitFailed', error=str(e))}",
             )
@@ -422,20 +441,25 @@ class SessionHandler(BaseHandler):
             await self.cleanup_session(composite_key)
 
             # Notify user and suggest retry
-            await self.im_client.send_message(context, self.formatter.format_error(self._t("error.sessionReset")))
+            await self._get_im_client(context).send_message(
+                context,
+                self._get_formatter(context).format_error(self._t("error.sessionReset")),
+            )
         elif "Session is broken" in error_msg or "Connection closed" in error_msg or "Connection lost" in error_msg:
             logger.error(f"Session {composite_key} is broken - cleaning up")
             await self.cleanup_session(composite_key)
 
             # Notify user
-            await self.im_client.send_message(
-                context, self.formatter.format_error(self._t("error.sessionConnectionLost"))
+            await self._get_im_client(context).send_message(
+                context,
+                self._get_formatter(context).format_error(self._t("error.sessionConnectionLost")),
             )
         else:
             # Generic error handling
             logger.error(f"Error in session {composite_key}: {error}")
-            await self.im_client.send_message(
-                context, self.formatter.format_error(self._t("error.sessionGeneric", error=error_msg))
+            await self._get_im_client(context).send_message(
+                context,
+                self._get_formatter(context).format_error(self._t("error.sessionGeneric", error=error_msg)),
             )
 
     def capture_session_id(self, base_session_id: str, claude_session_id: str, settings_key: str):
