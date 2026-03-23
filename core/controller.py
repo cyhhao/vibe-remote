@@ -419,6 +419,9 @@ class Controller:
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
         return self.im_clients.get(platform, self.im_clients[self.primary_platform])
 
+    def _get_im_client_for_platform(self, platform: str) -> BaseIMClient:
+        return self.im_clients.get(platform, self.im_clients[self.primary_platform])
+
     def get_settings_manager_for_context(self, context: Optional[MessageContext] = None) -> SettingsManager:
         if context is None:
             return self.platform_settings_managers[self.primary_platform]

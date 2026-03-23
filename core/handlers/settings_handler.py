@@ -235,6 +235,7 @@ class SettingsHandler(BaseHandler):
     async def handle_toggle_message_type(self, context: MessageContext, msg_type: str):
         """Handle toggle for message type visibility"""
         try:
+            im_client = self._get_im_client(context)
             # Toggle message type visibility
             settings_key = self._get_settings_key(context)
             is_shown = self.settings_manager.toggle_show_message_type(settings_key, msg_type)
@@ -268,29 +269,29 @@ class SettingsHandler(BaseHandler):
 
             # Update message
             if context.message_id:
-                await self.im_client.edit_message(context, context.message_id, keyboard=keyboard)
+                await im_client.edit_message(context, context.message_id, keyboard=keyboard)
 
             # Answer callback (for Telegram)
             display_name = display_names.get(msg_type, msg_type)
             action = self._t("settings.visibilityShown") if is_shown else self._t("settings.visibilityHidden")
 
             # Platform-specific callback answering
-            await self.im_client.send_message(
+            await im_client.send_message(
                 context,
                 self._t("settings.messageTypeStatus", name=display_name, action=action),
             )
 
         except Exception as e:
             logger.error(f"Error toggling message type {msg_type}: {e}")
-            await self.im_client.send_message(
+            await self._get_im_client(context).send_message(
                 context,
-                self.formatter.format_error(self._t("error.toggleSettingFailed", error=str(e))),
+                self._get_formatter(context).format_error(self._t("error.toggleSettingFailed", error=str(e))),
             )
 
     async def handle_info_message_types(self, context: MessageContext):
         """Show information about different message types"""
         try:
-            formatter = self.im_client.formatter
+            formatter = self._get_formatter(context)
 
             # Use the new format_info_message method for clean, platform-agnostic formatting
             info_text = formatter.format_info_message(
@@ -306,17 +307,17 @@ class SettingsHandler(BaseHandler):
             )
 
             # Send as new message
-            await self.im_client.send_message(context, info_text)
+            await self._get_im_client(context).send_message(context, info_text)
             logger.info(f"Sent info_msg_types message to user {context.user_id}")
 
         except Exception as e:
             logger.error(f"Error in info_msg_types handler: {e}", exc_info=True)
-            await self.im_client.send_message(context, f"❌ {self._t('error.messageTypesInfoFailed')}")
+            await self._get_im_client(context).send_message(context, f"❌ {self._t('error.messageTypesInfoFailed')}")
 
     async def handle_info_how_it_works(self, context: MessageContext):
         """Show information about how the bot works"""
         try:
-            formatter = self.im_client.formatter
+            formatter = self._get_formatter(context)
             agent_label = self._get_agent_display_name(context)
 
             # Use format_info_message for clean, platform-agnostic formatting
@@ -337,12 +338,12 @@ class SettingsHandler(BaseHandler):
             )
 
             # Send as new message
-            await self.im_client.send_message(context, info_text)
+            await self._get_im_client(context).send_message(context, info_text)
             logger.info(f"Sent how_it_works info to user {context.user_id}")
 
         except Exception as e:
             logger.error(f"Error in handle_info_how_it_works: {e}", exc_info=True)
-            await self.im_client.send_message(context, f"❌ {self._t('error.helpInfoFailed')}")
+            await self._get_im_client(context).send_message(context, f"❌ {self._t('error.helpInfoFailed')}")
 
     async def handle_routing(self, context: MessageContext):
         """Handle routing command - show agent/model selection"""

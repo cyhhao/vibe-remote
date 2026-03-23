@@ -348,7 +348,9 @@ class SessionHandler(BaseHandler):
                 ]
             )
 
-            confirmation_ts = await self.im_client.send_message(context, confirmation, parse_mode="markdown")
+            confirmation_ts = await self._get_im_client(context).send_message(
+                context, confirmation, parse_mode="markdown"
+            )
 
             mapped_thread = target_thread or confirmation_ts
             mapping_context = MessageContext(
@@ -372,7 +374,7 @@ class SessionHandler(BaseHandler):
                 thread_id=thread_id or None,
                 platform_specific={"is_dm": is_dm},
             )
-            await self.im_client.send_message(
+            await self._get_im_client(context).send_message(
                 context,
                 f"❌ {self._t('error.resumeSubmitFailed', error=str(e))}",
             )
@@ -411,20 +413,25 @@ class SessionHandler(BaseHandler):
             await self.cleanup_session(composite_key)
 
             # Notify user and suggest retry
-            await self.im_client.send_message(context, self.formatter.format_error(self._t("error.sessionReset")))
+            await self._get_im_client(context).send_message(
+                context,
+                self._get_formatter(context).format_error(self._t("error.sessionReset")),
+            )
         elif "Session is broken" in error_msg or "Connection closed" in error_msg or "Connection lost" in error_msg:
             logger.error(f"Session {composite_key} is broken - cleaning up")
             await self.cleanup_session(composite_key)
 
             # Notify user
-            await self.im_client.send_message(
-                context, self.formatter.format_error(self._t("error.sessionConnectionLost"))
+            await self._get_im_client(context).send_message(
+                context,
+                self._get_formatter(context).format_error(self._t("error.sessionConnectionLost")),
             )
         else:
             # Generic error handling
             logger.error(f"Error in session {composite_key}: {error}")
-            await self.im_client.send_message(
-                context, self.formatter.format_error(self._t("error.sessionGeneric", error=error_msg))
+            await self._get_im_client(context).send_message(
+                context,
+                self._get_formatter(context).format_error(self._t("error.sessionGeneric", error=error_msg)),
             )
 
     def capture_session_id(self, base_session_id: str, claude_session_id: str, settings_key: str):

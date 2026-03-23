@@ -70,7 +70,7 @@ def _full_config_payload() -> dict:
             "auto_update": False,
             "check_interval_minutes": 0,
             "idle_minutes": 30,
-            "notify_slack": False,
+            "notify_admins": False,
         },
         "ack_mode": "reaction",
         "show_duration": True,

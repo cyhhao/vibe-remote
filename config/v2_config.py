@@ -147,7 +147,7 @@ class UpdateConfig:
     auto_update: bool = True  # Auto-install updates when idle
     check_interval_minutes: int = 60  # How often to check for updates (0 = disable)
     idle_minutes: int = 30  # Minutes of inactivity before auto-update
-    notify_slack: bool = True  # Send update notification when update is available
+    notify_admins: bool = True  # Send update notification to admins when update is available
 
 
 @dataclass
@@ -325,6 +325,9 @@ class V2Config:
         update_payload = payload.get("update") or {}
         if not isinstance(update_payload, dict):
             raise ValueError("Config 'update' must be an object")
+        # Backward compat: rename legacy "notify_slack" → "notify_admins"
+        if "notify_slack" in update_payload and "notify_admins" not in update_payload:
+            update_payload["notify_admins"] = update_payload.pop("notify_slack")
         update = UpdateConfig(**_filter_dataclass_fields(UpdateConfig, update_payload))
 
         ack_mode = payload.get("ack_mode", "typing")
