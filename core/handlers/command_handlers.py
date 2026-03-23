@@ -42,6 +42,7 @@ class CommandHandlers(BaseHandler):
         user_name: str,
         show_channel: bool,
         channel_name: str,
+        supports_threads: bool = False,
     ) -> str:
         lines = [
             f"{self._t('command.start.welcome')}",
@@ -53,17 +54,17 @@ class CommandHandlers(BaseHandler):
         if show_channel:
             lines.append(self._t("command.start.channel", channel=channel_name))
 
-        lines.extend(
-            [
-                "",
-                self._t("command.start.commandsTitle"),
-                self._t("command.start.commandStart"),
-                self._t("command.start.commandCwd"),
-                self._t("command.start.commandSetCwd"),
-                self._t("command.start.commandStop", agent=agent_display_name),
-                self._t("command.start.commandNew"),
-            ]
-        )
+        commands = [
+            "",
+            self._t("command.start.commandsTitle"),
+            self._t("command.start.commandStart"),
+            self._t("command.start.commandCwd"),
+            self._t("command.start.commandSetCwd"),
+            self._t("command.start.commandStop", agent=agent_display_name),
+        ]
+        if not supports_threads:
+            commands.append(self._t("command.start.commandNew"))
+        lines.extend(commands)
         return "\n".join(line for line in lines if line)
 
     async def handle_start(self, context: MessageContext, args: str = ""):
@@ -94,6 +95,14 @@ class CommandHandlers(BaseHandler):
         default_agent = getattr(self.controller.agent_service, "default_agent", None)
         agent_display_name = get_agent_display_name(agent_name, fallback=default_agent or "Unknown")
 
+        # Determine whether this conversation supports threads.
+        # If it does, each new thread is already a fresh session, so the
+        # "New Session" button/command is unnecessary.
+        is_dm = bool((context.platform_specific or {}).get("is_dm", False))
+        supports_threads = (
+            im_client.should_use_thread_for_dm_session() if is_dm else im_client.should_use_thread_for_reply()
+        )
+
         # For non-interactive platforms, use traditional text message
         if platform not in {"slack", "discord", "lark"}:
             user_name = self._resolve_user_display_name(user_info, self._t("command.start.userFallback"))
@@ -104,6 +113,7 @@ class CommandHandlers(BaseHandler):
                 user_name=user_name,
                 show_channel=show_channel,
                 channel_name=channel_info.get("name", "Unknown"),
+                supports_threads=supports_threads,
             )
             channel_context = self._get_channel_context(context)
             await im_client.send_message(channel_context, message_text)
@@ -113,17 +123,19 @@ class CommandHandlers(BaseHandler):
         user_name = self._resolve_user_display_name(user_info, "User")
 
         # Create interactive buttons for commands
+        session_row = []
+        if not supports_threads:
+            session_row.append(InlineButton(text=f"🆕 {self._t('button.newSession')}", callback_data="cmd_new"))
+        session_row.append(InlineButton(text=f"⚙️ {self._t('button.settings')}", callback_data="cmd_settings"))
+
         buttons = [
             # Row 1: Directory management
             [
                 InlineButton(text=f"📁 {self._t('button.currentDir')}", callback_data="cmd_cwd"),
                 InlineButton(text=f"📂 {self._t('button.changeDir')}", callback_data="cmd_change_cwd"),
             ],
-            # Row 2: Session and Settings
-            [
-                InlineButton(text=f"🆕 {self._t('button.newSession')}", callback_data="cmd_new"),
-                InlineButton(text=f"⚙️ {self._t('button.settings')}", callback_data="cmd_settings"),
-            ],
+            # Row 2: Session and/or Settings
+            session_row,
             # Row 3: Resume + Agent/Model switching
             [
                 InlineButton(text=f"⏮️ {self._t('button.resumeSession')}", callback_data="cmd_resume"),
