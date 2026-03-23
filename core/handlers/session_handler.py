@@ -54,6 +54,20 @@ class SessionHandler(BaseHandler):
         permission_mode = getattr(getattr(self.config, "claude", None), "permission_mode", None)
         return permission_mode == "bypassPermissions" and self._running_as_root()
 
+    def _get_claude_cli_path_override(self) -> Optional[str]:
+        cli_path = getattr(getattr(self.config, "claude", None), "cli_path", None)
+        if cli_path is None:
+            return None
+
+        normalized = str(cli_path).strip()
+        if not normalized:
+            return None
+
+        if normalized == "claude":
+            return None
+
+        return os.path.expanduser(normalized)
+
     def _load_agent_file(self, agent_name: str, working_path: str) -> Optional[Dict[str, Any]]:
         """Load an agent file and return its parsed content.
 
@@ -228,6 +242,9 @@ class SessionHandler(BaseHandler):
             "disallowed_tools": ["AskUserQuestion"],
             "env": claude_env,  # Pass Anthropic/Claude env vars
         }
+        cli_path_override = self._get_claude_cli_path_override()
+        if cli_path_override:
+            option_kwargs["cli_path"] = cli_path_override
         if effective_effort:
             option_kwargs["effort"] = effective_effort
         # Only set allowed_tools if agent file specifies tools.
@@ -265,6 +282,7 @@ class SessionHandler(BaseHandler):
         logger.info(f"  - system_prompt: {options.system_prompt}")
         logger.info(f"  - resume: {options.resume}")
         logger.info(f"  - continue_conversation: {options.continue_conversation}")
+        logger.info(f"  - cli_path: {options.cli_path}")
         if subagent_name:
             logger.info(f"  - subagent: {subagent_name}")
 
