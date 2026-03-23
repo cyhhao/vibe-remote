@@ -10,10 +10,13 @@ class ClaudeCompatConfig:
     cwd: str
     system_prompt: Optional[str] = None
     default_model: Optional[str] = None
+    cli_path: Optional[str] = None
 
     def __post_init__(self) -> None:
         self.permission_mode = str(self.permission_mode)
         self.cwd = str(self.cwd)
+        if self.cli_path is not None:
+            self.cli_path = str(self.cli_path)
 
 
 @dataclass
@@ -63,6 +66,7 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         cwd=v2.runtime.default_cwd,
         system_prompt=None,
         default_model=v2.agents.claude.default_model,
+        cli_path=v2.agents.claude.cli_path,
     )
     codex = None
     if v2.agents.codex.enabled:

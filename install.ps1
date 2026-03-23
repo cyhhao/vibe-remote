@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 # Configuration
 $REPO = "cyhhao/vibe-remote"
 $PACKAGE_NAME = "vibe-remote"
+$TSINGHUA_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 function Write-Banner {
     Write-Host @"
@@ -83,17 +84,97 @@ function Install-Uv {
     }
 }
 
+function Invoke-UvToolInstallAttempt {
+    param([string[]]$Arguments)
+
+    $hasNativeCommandPreference = $null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)
+    if ($hasNativeCommandPreference) {
+        $originalNativeCommandPreference = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+
+    try {
+        $installOutput = (& uv tool install @Arguments 2>&1) | Out-String
+        $exitCode = $LASTEXITCODE
+        return @{
+            Success = ($exitCode -eq 0)
+            ExitCode = $exitCode
+            Output = $installOutput.Trim()
+        }
+    } catch {
+        return @{
+            Success = $false
+            ExitCode = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } else { 1 }
+            Output = ($_ | Out-String).Trim()
+        }
+    } finally {
+        if ($hasNativeCommandPreference) {
+            $PSNativeCommandUseErrorActionPreference = $originalNativeCommandPreference
+        }
+    }
+}
+
 function Install-Vibe {
     Write-Info "Installing vibe-remote (Python will be downloaded automatically if needed)..."
-    
-    # uv tool install will auto-download Python if not available
-    try {
-        & uv tool install $PACKAGE_NAME --force 2>$null
-    } catch {
-        & uv tool install "git+https://github.com/$REPO.git" --force
+
+    $customPackageSpec = $env:VIBE_INSTALL_PACKAGE_SPEC
+
+    if ($customPackageSpec) {
+        Write-Info "Trying custom package spec..."
+        $result = Invoke-UvToolInstallAttempt -Arguments @($customPackageSpec, "--force")
+        if ($result.Success) {
+            Write-Success "vibe-remote installed successfully (from custom package spec)"
+            return
+        }
+
+        $failureMessage = "Failed to install vibe-remote from custom package spec"
+        if ($result.ExitCode -ne $null) {
+            $failureMessage += " (exit code $($result.ExitCode))"
+        }
+        if ($result.Output) {
+            $failureMessage += ":`n$($result.Output)"
+        }
+
+        Write-Error $failureMessage
     }
-    
-    Write-Success "vibe-remote installed successfully"
+
+    $attempts = @(
+        @{
+            Name = "PyPI"
+            Arguments = @($PACKAGE_NAME, "--force", "--refresh")
+        },
+        @{
+            Name = "Tsinghua mirror"
+            Arguments = @($PACKAGE_NAME, "--force", "--refresh", "--index-url", $TSINGHUA_INDEX_URL)
+        },
+        @{
+            Name = "GitHub"
+            Arguments = @("git+https://github.com/$REPO.git", "--force")
+        }
+    )
+    $failures = @()
+
+    foreach ($attempt in $attempts) {
+        Write-Info "Trying $($attempt.Name)..."
+        $result = Invoke-UvToolInstallAttempt -Arguments $attempt.Arguments
+        if ($result.Success) {
+            Write-Success "vibe-remote installed successfully (from $($attempt.Name))"
+            return
+        }
+
+        $failureMessage = "- $($attempt.Name) failed"
+        if ($result.ExitCode -ne $null) {
+            $failureMessage += " (exit code $($result.ExitCode))"
+        }
+
+        if ($result.Output) {
+            $failureMessage += ":`n$($result.Output)"
+        }
+
+        $failures += $failureMessage
+    }
+
+    Write-Error "Failed to install vibe-remote from all sources.`n$($failures -join "`n`n")"
 }
 
 function Test-Installation {
