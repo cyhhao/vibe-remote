@@ -8,6 +8,7 @@ This module provides:
 """
 
 import asyncio
+import calendar
 import json
 import logging
 import tempfile
@@ -31,6 +32,10 @@ UPDATE_BUTTON_ACTION_ID = "vibe_update_now"
 
 # Minimum check interval to prevent tight loops (in minutes)
 MIN_CHECK_INTERVAL_MINUTES = 1
+
+# Grace period after sending an update notification before auto-update can proceed (in minutes).
+# This gives admins time to read the notification and decide whether to update manually.
+NOTIFICATION_GRACE_PERIOD_MINUTES = 10
 
 
 def _compare_versions(latest: str, current: str) -> bool:
@@ -227,17 +232,26 @@ class UpdateChecker:
             current = version_info["current"]
             logger.info(f"Update available: {current} -> {latest}")
 
-            # Notification flow (independent)
+            # Notification flow — failure must not block auto-update
             if self.config.notify_slack and self.state.notified_version != latest:
-                await self._send_update_notification(current, latest)
+                try:
+                    await self._send_update_notification(current, latest)
+                    # Only record delivery time on success — grace period depends on this
+                    self.state.notified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                except Exception as e:
+                    logger.error(f"Failed to send update notification: {e}", exc_info=True)
+                # Always mark version to prevent retry every cycle (even if send failed)
                 self.state.notified_version = latest
-                self.state.notified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 self.state.save()
 
-            # Auto-update flow (independent)
+            # Auto-update flow — respect a grace period after successful notification
+            # so the admin has time to read the notification before auto-update kicks in.
             if self.config.auto_update and self._is_idle():
-                logger.info("System is idle, performing auto-update...")
-                await self._perform_update(latest)
+                if self._within_notification_grace_period(latest):
+                    logger.info("Within notification grace period, deferring auto-update")
+                else:
+                    logger.info("System is idle, performing auto-update...")
+                    await self._perform_update(latest)
         except Exception as e:
             logger.error(f"Update check failed: {e}", exc_info=True)
 
@@ -265,6 +279,25 @@ class UpdateChecker:
             return False
 
         return True
+
+    def _within_notification_grace_period(self, target_version: str) -> bool:
+        """Check if we're still within the grace period after sending an update notification.
+
+        Returns True if a notification for *this version* was successfully delivered
+        recently and we should defer auto-update to give the admin time to read it.
+        """
+        if not self.state.notified_at:
+            return False
+        # Only apply grace for the version we actually notified about
+        if self.state.notified_version != target_version:
+            return False
+        try:
+            notified_ts = calendar.timegm(time.strptime(self.state.notified_at, "%Y-%m-%dT%H:%M:%SZ"))
+            elapsed_minutes = (time.time() - notified_ts) / 60
+            return elapsed_minutes < NOTIFICATION_GRACE_PERIOD_MINUTES
+        except (ValueError, OverflowError) as e:
+            logger.warning(f"Failed to parse notified_at '{self.state.notified_at}': {e}")
+            return False
 
     def _has_active_sessions(self) -> bool:
         """Check if any agent has active sessions."""
