@@ -81,6 +81,18 @@ irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | ie
 
 ---
 
+## Why Vibe Remote over OpenClaw?
+
+| | Vibe Remote | OpenClaw |
+|---|---|---|
+| **Setup** | One command + web wizard. Done in 2 minutes. | Gateway + channels + skills + JSON config. Expect an afternoon. |
+| **Security** | Local-first. Socket Mode / WebSocket only. No public endpoints, no inbound ports. | Gateway exposes ports. Has had critical RCE vulnerabilities (CVE-2026-25253). |
+| **Token cost** | Thin transport layer — relays messages between your IM and agent. Zero LLM overhead from the middleware itself. | Full agent framework with its own LLM reasoning loop for routing, skill selection, and orchestration. Tokens burn before your actual task even starts. |
+
+Vibe Remote is not an agent framework. It's a **remote control** — a minimal bridge between your chat app and whatever AI agent you already use. It adds no extra intelligence layer, no extra token spend, and no extra attack surface.
+
+---
+
 ## Highlights
 
 <table>
