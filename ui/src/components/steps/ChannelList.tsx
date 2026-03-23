@@ -394,7 +394,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   const defaultConfig = (): ChannelConfig => ({
     enabled: false,
-    show_message_types: [],
+    show_message_types: ['assistant'],
     custom_cwd: '',
       routing: {
         agent_backend: null,

@@ -443,7 +443,7 @@ export const UserList: React.FC = () => {
     is_admin: false,
     bound_at: '',
     enabled: true,
-    show_message_types: [],
+    show_message_types: ['assistant'],
     custom_cwd: '',
     routing: {
       agent_backend: null,

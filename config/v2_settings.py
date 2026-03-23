@@ -12,7 +12,7 @@ from config import paths
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SHOW_MESSAGE_TYPES: List[str] = []
+DEFAULT_SHOW_MESSAGE_TYPES: List[str] = ["assistant"]
 ALLOWED_MESSAGE_TYPES = {"system", "assistant", "toolcall"}
 SCHEMA_VERSION = 3
 SCOPED_KEY_SEP = "::"

@@ -221,7 +221,7 @@ def _build_settings_payload(service_name: str) -> dict:
     if channel_id:
         channel_scope[channel_id] = {
             "enabled": True,
-            "show_message_types": [],
+            "show_message_types": ["assistant"],
             "custom_cwd": _service_default_cwd(service_name),
             "routing": routing,
             "require_mention": _parse_bool(

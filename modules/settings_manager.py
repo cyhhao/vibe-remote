@@ -13,7 +13,7 @@ from modules.sessions_facade import SessionsFacade
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_SHOW_MESSAGE_TYPES: List[str] = []
+DEFAULT_SHOW_MESSAGE_TYPES: List[str] = ["assistant"]
 
 
 ChannelRouting = RoutingSettings
