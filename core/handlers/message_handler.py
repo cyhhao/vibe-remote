@@ -52,7 +52,7 @@ class MessageHandler(BaseHandler):
         platform = self._get_context_platform(context)
         if platform == "wechat":
             return True
-        return getattr(self.config, "ack_mode", "reaction") == "typing"
+        return getattr(self.config, "ack_mode", "typing") == "typing"
 
     async def _typing_keepalive_loop(self, context: MessageContext) -> None:
         im_client = self._get_im_client(context)
@@ -215,7 +215,7 @@ class MessageHandler(BaseHandler):
                 composite_key = f"{base_session_id}:{working_path}"
 
             ack_message_id = None
-            ack_mode = getattr(self.config, "ack_mode", "reaction")
+            ack_mode = getattr(self.config, "ack_mode", "typing")
             effective_ack_mode = "typing" if self._get_context_platform(context) == "wechat" else ack_mode
             if effective_ack_mode == "message":
                 ack_context = self._get_target_context(context)
@@ -503,7 +503,7 @@ class MessageHandler(BaseHandler):
                         logger.debug(f"Failed to send quick-reply echo message: {err}")
 
                     # Add ack reaction on the echo message before dispatching.
-                    if quick_reply_echo_id and getattr(self.config, "ack_mode", "reaction") == "reaction":
+                    if quick_reply_echo_id and getattr(self.config, "ack_mode", "typing") == "reaction":
                         try:
                             await im_client.add_reaction(
                                 self._get_target_context(context),

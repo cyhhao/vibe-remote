@@ -193,7 +193,7 @@ class V2Config:
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
-    ack_mode: str = "reaction"
+    ack_mode: str = "typing"
     show_duration: bool = True  # Show task duration in result messages
     include_user_info: bool = True  # Prepend user identity to agent messages
     reply_enhancements: bool = True  # Enable file sending & quick-reply buttons
@@ -327,7 +327,7 @@ class V2Config:
             raise ValueError("Config 'update' must be an object")
         update = UpdateConfig(**_filter_dataclass_fields(UpdateConfig, update_payload))
 
-        ack_mode = payload.get("ack_mode", "reaction")
+        ack_mode = payload.get("ack_mode", "typing")
         if ack_mode not in {"reaction", "message", "typing"}:
             raise ValueError("Config 'ack_mode' must be 'reaction', 'message', or 'typing'")
 

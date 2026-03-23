@@ -291,9 +291,9 @@ export const Dashboard: React.FC = () => {
                             </span>
                         </span>
                         <select
-                            value={config.ack_mode || 'reaction'}
+                            value={config.ack_mode || 'typing'}
                             onChange={(e) => {
-                                const mode = e.target.value || 'reaction';
+                                const mode = e.target.value || 'typing';
                                 setSettingsMessage(null);
                                 const newConfig = {
                                     ...config,
@@ -304,8 +304,8 @@ export const Dashboard: React.FC = () => {
                             }}
                             className="w-36 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono"
                         >
-                            <option value="reaction">{t('dashboard.ackReaction')}</option>
                             <option value="typing">{t('dashboard.ackTyping')}</option>
+                            <option value="reaction">{t('dashboard.ackReaction')}</option>
                             <option value="message">{t('dashboard.ackMessage')}</option>
                         </select>
                     </div>
