@@ -100,7 +100,9 @@ class CommandHandlers(BaseHandler):
         # "New Session" button/command is unnecessary.
         is_dm = bool((context.platform_specific or {}).get("is_dm", False))
         supports_threads = (
-            im_client.should_use_thread_for_dm_session() if is_dm else im_client.should_use_thread_for_reply()
+            getattr(im_client, "should_use_thread_for_dm_session", lambda: False)()
+            if is_dm
+            else getattr(im_client, "should_use_thread_for_reply", lambda: False)()
         )
 
         # For non-interactive platforms, use traditional text message

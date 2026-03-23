@@ -9,7 +9,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional, cast
 
-from config.v2_settings import _infer_channel_platform, _infer_user_platform
+from config.v2_settings import _infer_channel_platform, _infer_user_platform, _split_scoped_key
 from .base import BaseIMClient, InlineKeyboard, MessageContext
 
 logger = logging.getLogger(__name__)
@@ -263,14 +263,16 @@ class MultiIMClient(BaseIMClient):
             logger.exception("IM runtime for %s crashed", platform)
 
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
-        platform = _infer_user_platform(user_id)
+        platform, raw_user_id = _split_scoped_key(str(user_id))
+        platform = platform or _infer_user_platform(user_id)
         client = self.clients.get(platform, self.clients[self.primary_platform])
-        return await client.get_user_info(user_id)
+        return await client.get_user_info(raw_user_id)
 
     async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
-        platform = _infer_channel_platform(channel_id)
+        platform, raw_channel_id = _split_scoped_key(str(channel_id))
+        platform = platform or _infer_channel_platform(channel_id)
         client = self.clients.get(platform, self.clients[self.primary_platform])
-        return await client.get_channel_info(channel_id)
+        return await client.get_channel_info(raw_channel_id)
 
     async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
         return await self.get_client_for_context(context).add_reaction(context, message_id, emoji)
@@ -285,9 +287,10 @@ class MultiIMClient(BaseIMClient):
         return await self.get_client_for_context(context).clear_typing_indicator(context)
 
     async def send_dm(self, user_id: str, text: str, **kwargs):
-        platform = _infer_user_platform(user_id)
+        platform, raw_user_id = _split_scoped_key(str(user_id))
+        platform = platform or _infer_user_platform(user_id)
         client = self.clients.get(platform, self.clients[self.primary_platform])
-        return await client.send_dm(user_id, text, **kwargs)
+        return await client.send_dm(raw_user_id, text, **kwargs)
 
     def stop(self):
         self._stop_requested.set()

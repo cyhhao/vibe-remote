@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import logging
+import threading
 from typing import Optional, Dict, Any
 from config import paths
 from modules.im import BaseIMClient, MessageContext, IMFactory
@@ -34,6 +35,9 @@ class Controller:
         """Initialize controller with configuration"""
         self.config = config
         self._config_mtime: Optional[float] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._im_thread: Optional[threading.Thread] = None
+        self._im_run_exception: Optional[BaseException] = None
         self.enabled_platforms = list(getattr(config, "enabled_platforms", lambda: [config.platform])())
         self.primary_platform = getattr(getattr(config, "platforms", None), "primary", config.platform)
 
@@ -286,27 +290,59 @@ class Controller:
         # Admin protection for "set_cwd" and "settings" is now handled by
         # the centralized auth pipeline (core.auth.check_auth) in IM entry points.
         command_handlers = {
-            "start": self.command_handler.handle_start,
-            "new": self.command_handler.handle_new,
-            "cwd": self.command_handler.handle_cwd,
-            "set_cwd": self.command_handler.handle_set_cwd,
-            "settings": self.settings_handler.handle_settings,
-            "stop": self.command_handler.handle_stop,
-            "bind": self.command_handler.handle_bind,
+            "start": self._dispatch_to_controller_loop(self.command_handler.handle_start),
+            "new": self._dispatch_to_controller_loop(self.command_handler.handle_new),
+            "cwd": self._dispatch_to_controller_loop(self.command_handler.handle_cwd),
+            "set_cwd": self._dispatch_to_controller_loop(self.command_handler.handle_set_cwd),
+            "settings": self._dispatch_to_controller_loop(self.settings_handler.handle_settings),
+            "stop": self._dispatch_to_controller_loop(self.command_handler.handle_stop),
+            "bind": self._dispatch_to_controller_loop(self.command_handler.handle_bind),
         }
 
         # Register callbacks with the IM client
         self.im_client.register_callbacks(
-            on_message=self.message_handler.handle_user_message,
+            on_message=self._dispatch_to_controller_loop(self.message_handler.handle_user_message),
             on_command=command_handlers,
-            on_callback_query=self.message_handler.handle_callback_query,
-            on_settings_update=self.settings_handler.handle_settings_update,
-            on_change_cwd=self.command_handler.handle_change_cwd_submission,
-            on_routing_update=self.settings_handler.handle_routing_update,
-            on_routing_modal_update=self.settings_handler.handle_routing_modal_update,
-            on_resume_session=self.session_handler.handle_resume_session_submission,
-            on_ready=self._on_im_ready,
+            on_callback_query=self._dispatch_to_controller_loop(self.message_handler.handle_callback_query),
+            on_settings_update=self._dispatch_to_controller_loop(self.settings_handler.handle_settings_update),
+            on_change_cwd=self._dispatch_to_controller_loop(self.command_handler.handle_change_cwd_submission),
+            on_routing_update=self._dispatch_to_controller_loop(self.settings_handler.handle_routing_update),
+            on_routing_modal_update=self._dispatch_to_controller_loop(
+                self.settings_handler.handle_routing_modal_update
+            ),
+            on_resume_session=self._dispatch_to_controller_loop(self.session_handler.handle_resume_session_submission),
+            on_ready=self._dispatch_to_controller_loop(self._on_im_ready),
         )
+
+    def _dispatch_to_controller_loop(self, callback):
+        async def _wrapped(*args, **kwargs):
+            loop = self._loop
+            if loop is None:
+                return await callback(*args, **kwargs)
+
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+
+            if current_loop is loop:
+                return await callback(*args, **kwargs)
+
+            future = asyncio.run_coroutine_threadsafe(callback(*args, **kwargs), loop)
+            return await asyncio.wrap_future(future)
+
+        return _wrapped
+
+    def _run_im_runtime(self) -> None:
+        try:
+            self.im_client.run()
+        except BaseException as exc:  # noqa: BLE001
+            self._im_run_exception = exc
+            logger.error("IM runtime thread exited with error: %s", exc, exc_info=True)
+        finally:
+            loop = self._loop
+            if loop and loop.is_running():
+                loop.call_soon_threadsafe(loop.stop)
 
     async def _on_im_ready(self):
         """Called when IM client is connected and ready.
@@ -464,20 +500,27 @@ class Controller:
         """Run the controller"""
         logger.info("Starting Claude Proxy Controller with platforms: %s", ", ".join(self.enabled_platforms))
 
-        # 不再创建额外事件循环，避免与 IM 客户端的内部事件循环冲突
-        # 清理职责改为：
-        # - 进程退出时做一次同步的 best-effort 取消（不跨循环 await）
-
         try:
-            # Run the IM client (blocking)
-            self.im_client.run()
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._im_thread = threading.Thread(target=self._run_im_runtime, name="im-runtime", daemon=True)
+            self._im_thread.start()
+            self._loop.run_forever()
+            if self._im_run_exception and not isinstance(self._im_run_exception, (KeyboardInterrupt, SystemExit)):
+                raise self._im_run_exception
         except KeyboardInterrupt:
             logger.info("Received keyboard interrupt, shutting down...")
         except Exception as e:
             logger.error(f"Error in main run loop: {e}", exc_info=True)
         finally:
-            # Best-effort 同步清理，避免跨事件循环 await
             self.cleanup_sync()
+            if self._loop is not None:
+                try:
+                    self._loop.stop()
+                except Exception:
+                    pass
+                self._loop.close()
+                self._loop = None
 
     async def periodic_cleanup(self):
         """[Deprecated] Periodic cleanup is disabled in favor of safe on-demand cleanup"""
@@ -525,14 +568,21 @@ class Controller:
                 import inspect
 
                 if inspect.iscoroutinefunction(shutdown_attr):
-                    try:
-                        asyncio.run(shutdown_attr())
-                    except RuntimeError:
-                        pass
+                    loop = self._loop
+                    if loop and loop.is_running():
+                        try:
+                            future = asyncio.run_coroutine_threadsafe(shutdown_attr(), loop)
+                            future.result(timeout=5)
+                        except Exception:
+                            pass
                 else:
                     shutdown_attr()
         except Exception as e:
             logger.warning("Failed to shutdown IM client: %s", e)
+
+        if self._im_thread and self._im_thread.is_alive():
+            self._im_thread.join(timeout=5)
+        self._im_thread = None
 
         # Stop OpenCode server if running
         try:

@@ -49,6 +49,10 @@ class _StubClient(BaseIMClient):
     async def get_channel_info(self, channel_id: str):
         return {"id": channel_id, "name": self.name}
 
+    async def send_dm(self, user_id: str, text: str, **kwargs):
+        self.sent.append(("dm", user_id, text))
+        return self.name
+
     def format_markdown(self, text: str) -> str:
         return text
 
@@ -94,3 +98,17 @@ def test_multi_im_client_annotates_inbound_context_platform():
     asyncio.run(callback(MessageContext(user_id="u", channel_id="c"), "hello"))
 
     assert captured == ["wechat"]
+
+
+def test_multi_im_client_routes_scoped_identity_lookups():
+    slack = _StubClient("slack")
+    wechat = _StubClient("wechat")
+    client = MultiIMClient({"slack": slack, "wechat": wechat}, primary_platform="slack")
+
+    user_info = asyncio.run(client.get_user_info("wechat::wx-user"))
+    channel_info = asyncio.run(client.get_channel_info("wechat::wx-chat"))
+    asyncio.run(client.send_dm("wechat::wx-user", "hello"))
+
+    assert user_info == {"id": "wx-user", "name": "wechat"}
+    assert channel_info == {"id": "wx-chat", "name": "wechat"}
+    assert wechat.sent[-1] == ("dm", "wx-user", "hello")
