@@ -232,6 +232,12 @@ class V2Config:
             )
         else:
             platforms = PlatformsConfig(enabled=[platform], primary=platform)
+        # When the caller explicitly set 'platform' but did not provide
+        # 'platforms', treat it as a legacy single-platform update and
+        # sync the new structure so that the old field is not silently
+        # overridden by a stale 'platforms' value from a prior merge.
+        if "platform" in payload and "platforms" not in payload:
+            platforms = PlatformsConfig(enabled=[platform], primary=platform)
         platforms.validate()
         platform = platforms.primary
 

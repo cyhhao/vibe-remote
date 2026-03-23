@@ -417,20 +417,23 @@ class DiscordBot(BaseIMClient):
         text: Optional[str] = None,
         parse_mode: Optional[str] = None,
     ) -> bool:
-        # When called from a button callback, use the interaction's message
-        # object to edit directly (the interaction response is already deferred).
-        interaction = (context.platform_specific or {}).get("interaction") if context.platform_specific else None
-        if interaction is not None and interaction.message is not None:
-            try:
-                kwargs: dict = {"view": None}
-                if text is not None:
-                    kwargs["content"] = text
-                await interaction.message.edit(**kwargs)
-                return True
-            except Exception as err:
-                logger.info("Failed to remove Discord keyboard via interaction.message: %s", err)
-                return False
-        return await self.edit_message(context, message_id, text=text, keyboard=None, parse_mode=parse_mode)
+        async def _impl() -> bool:
+            # When called from a button callback, use the interaction's message
+            # object to edit directly (the interaction response is already deferred).
+            interaction = (context.platform_specific or {}).get("interaction") if context.platform_specific else None
+            if interaction is not None and interaction.message is not None:
+                try:
+                    kwargs: dict = {"view": None}
+                    if text is not None:
+                        kwargs["content"] = text
+                    await interaction.message.edit(**kwargs)
+                    return True
+                except Exception as err:
+                    logger.info("Failed to remove Discord keyboard via interaction.message: %s", err)
+                    return False
+            return await self.edit_message(context, message_id, text=text, keyboard=None, parse_mode=parse_mode)
+
+        return await self._run_on_client_loop(_impl())
 
     async def answer_callback(self, callback_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
         return True

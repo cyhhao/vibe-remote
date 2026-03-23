@@ -151,3 +151,33 @@ def test_multi_im_client_routes_download_by_file_info_platform():
 
     assert slack.sent == []
     assert wechat.sent == [("download_to_path", "wechat", "/tmp/a.jpg")]
+
+
+def test_multi_im_client_on_ready_fires_only_after_all_platforms():
+    """on_ready callback must wait for all platform clients to be ready."""
+    slack = _StubClient("slack")
+    wechat = _StubClient("wechat")
+    client = MultiIMClient({"slack": slack, "wechat": wechat}, primary_platform="slack")
+
+    ready_calls: list[bool] = []
+
+    async def _on_ready():
+        ready_calls.append(True)
+
+    client.register_callbacks(on_message=None, on_ready=_on_ready)
+
+    # Simulate only Slack becoming ready — on_ready should NOT fire yet
+    slack_on_ready = slack.on_ready_callback
+    assert slack_on_ready is not None
+    asyncio.run(slack_on_ready())
+    assert ready_calls == [], "on_ready fired before all platforms were ready"
+
+    # Now simulate WeChat becoming ready — on_ready should fire exactly once
+    wechat_on_ready = wechat.on_ready_callback
+    assert wechat_on_ready is not None
+    asyncio.run(wechat_on_ready())
+    assert ready_calls == [True], "on_ready should fire exactly once after all platforms are ready"
+
+    # Calling again should not fire a second time
+    asyncio.run(wechat_on_ready())
+    assert len(ready_calls) == 1, "on_ready should not fire more than once"

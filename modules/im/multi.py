@@ -25,6 +25,7 @@ class MultiIMClient(BaseIMClient):
         self.primary_platform = primary_platform
         self._threads: Dict[str, threading.Thread] = {}
         self._stop_requested = threading.Event()
+        self._ready_lock = threading.Lock()
         self._ready_platforms: set[str] = set()
         self._ready_emitted = False
         super().__init__(clients[primary_platform].config)
@@ -152,11 +153,20 @@ class MultiIMClient(BaseIMClient):
             return None
 
         async def _wrapped(*args: Any, **kwargs: Any):
-            self._ready_platforms.add(platform)
-            if self._ready_emitted:
-                return
-            self._ready_emitted = True
-            await callback(*args, **kwargs)
+            should_fire = False
+            with self._ready_lock:
+                self._ready_platforms.add(platform)
+                logger.info(
+                    "Platform '%s' ready (%d/%d)",
+                    platform,
+                    len(self._ready_platforms),
+                    len(self.clients),
+                )
+                if not self._ready_emitted and len(self._ready_platforms) >= len(self.clients):
+                    self._ready_emitted = True
+                    should_fire = True
+            if should_fire:
+                await callback(*args, **kwargs)
 
         return _wrapped
 
