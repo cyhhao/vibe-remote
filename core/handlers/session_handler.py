@@ -144,8 +144,18 @@ class SessionHandler(BaseHandler):
         explicit_effort = subagent_reasoning_effort or (routing.claude_reasoning_effort if routing else None)
 
         if composite_key in self.claude_sessions and not effective_agent:
-            logger.info(f"Using existing Claude SDK client for {base_session_id} at {working_path}")
-            return self.claude_sessions[composite_key]
+            client = self.claude_sessions[composite_key]
+            # Apply current model from routing on every request, consistent with
+            # how OpenCode/Codex pass the model on each prompt/turn call.
+            current_model = explicit_model or self.config.claude.default_model
+            try:
+                await client.set_model(current_model)
+            except Exception as e:
+                logger.warning(f"Failed to update model on cached Claude session: {e}")
+            logger.info(
+                f"Using existing Claude SDK client for {base_session_id} at {working_path} (model={current_model})"
+            )
+            return client
 
         if effective_agent:
             cached_base = f"{base_session_id}:{effective_agent}"
@@ -156,8 +166,23 @@ class SessionHandler(BaseHandler):
                 agent_name="claude",
             )
             if cached_key in self.claude_sessions:
-                logger.info("Using Claude subagent session for %s at %s", cached_base, working_path)
-                return self.claude_sessions[cached_key]
+                client = self.claude_sessions[cached_key]
+                # Apply explicit model override from routing/subagent params,
+                # consistent with how OpenCode/Codex pass the model per request.
+                # When no explicit override, keep the agent frontmatter model
+                # that was set at session creation.
+                if explicit_model:
+                    try:
+                        await client.set_model(explicit_model)
+                    except Exception as e:
+                        logger.warning(f"Failed to update model on cached Claude subagent session: {e}")
+                logger.info(
+                    "Using Claude subagent session for %s at %s (model_override=%s)",
+                    cached_base,
+                    working_path,
+                    explicit_model,
+                )
+                return client
             # Always use agent-specific key when effective_agent is set
             # This ensures session continuity even on first use
             composite_key = cached_key
