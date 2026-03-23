@@ -121,7 +121,8 @@ class SessionsStore:
             # Migrate unscoped settings_key → platform::key
             sk = data.get("settings_key", "")
             if sk and "::" not in sk:
-                data["settings_key"] = f"{default_platform}::{sk}"
+                prefix = data.get("platform") or default_platform
+                data["settings_key"] = f"{prefix}::{sk}"
                 migrated = True
         if migrated:
             self.save()

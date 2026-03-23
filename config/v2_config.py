@@ -259,8 +259,6 @@ class V2Config:
         if discord_payload is not None:
             discord = DiscordConfig(**_filter_dataclass_fields(DiscordConfig, discord_payload))
             discord.validate()
-        if platform == "discord" and discord is None:
-            raise ValueError("Config 'discord' must be provided when platform is discord")
 
         lark_payload = payload.get("lark")
         if lark_payload is not None and not isinstance(lark_payload, dict):
@@ -269,8 +267,6 @@ class V2Config:
         if lark_payload is not None:
             lark = LarkConfig(**_filter_dataclass_fields(LarkConfig, lark_payload))
             lark.validate()
-        if platform == "lark" and lark is None:
-            raise ValueError("Config 'lark' must be provided when platform is lark")
 
         wechat_payload = payload.get("wechat")
         if wechat_payload is not None and not isinstance(wechat_payload, dict):
@@ -279,8 +275,19 @@ class V2Config:
         if wechat_payload is not None:
             wechat = WeChatConfig(**_filter_dataclass_fields(WeChatConfig, wechat_payload))
             wechat.validate()
-        if platform == "wechat" and wechat is None:
-            raise ValueError("Config 'wechat' must be provided when platform is wechat")
+
+        # Validate that every enabled platform has its config section present.
+        # The old single-platform check (``if platform == "discord"``) only
+        # guarded the primary; with multi-platform enabled we must ensure ALL
+        # enabled platforms have valid credentials so that the runtime won't
+        # crash on startup with a config that was already persisted to disk.
+        for _ep in platforms.enabled:
+            if _ep == "discord" and discord is None:
+                raise ValueError("Config 'discord' must be provided when discord is enabled")
+            if _ep == "lark" and lark is None:
+                raise ValueError("Config 'lark' must be provided when lark is enabled")
+            if _ep == "wechat" and wechat is None:
+                raise ValueError("Config 'wechat' must be provided when wechat is enabled")
 
         gateway_payload = payload.get("gateway")
         if gateway_payload is not None and not isinstance(gateway_payload, dict):

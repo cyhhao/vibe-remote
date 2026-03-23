@@ -111,6 +111,13 @@ def test_save_config_preserves_platforms_metadata(monkeypatch, tmp_path):
     updated = api.save_config(
         {
             **_full_config_payload(),
+            "wechat": {
+                "corp_id": "wk123",
+                "agent_id": "agent1",
+                "secret": "sec",
+                "token": "tok",
+                "aes_key": "aes",
+            },
             "platforms": {"enabled": ["slack", "discord", "wechat"], "primary": "discord"},
         }
     )
@@ -129,3 +136,18 @@ def test_save_config_migrates_legacy_single_platform(monkeypatch, tmp_path):
     assert updated.platforms.primary == "discord"
     assert updated.platforms.enabled == ["discord"]
     assert payload["platforms"] == {"enabled": ["discord"], "primary": "discord"}
+
+
+def test_save_config_rejects_enabled_platform_without_credentials(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    import pytest
+
+    with pytest.raises(ValueError, match="wechat.*must be provided"):
+        api.save_config(
+            {
+                **_full_config_payload(),
+                "platforms": {"enabled": ["slack", "discord", "wechat"], "primary": "discord"},
+                # wechat config intentionally omitted
+            }
+        )
