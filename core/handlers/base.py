@@ -22,6 +22,9 @@ class BaseHandler:
     def _get_settings_key(self, context: MessageContext) -> str:
         return self.controller._get_settings_key(context)
 
+    def _get_session_key(self, context: MessageContext) -> str:
+        return self.controller._get_session_key(context)
+
     def _get_im_client(self, context: MessageContext):
         getter = getattr(self.controller, "get_im_client_for_context", None)
         if callable(getter):

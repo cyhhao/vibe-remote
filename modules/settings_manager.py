@@ -474,12 +474,15 @@ class MultiSettingsManager:
     def get_platform_manager(self, platform: str) -> SettingsManager:
         return self.managers[platform]
 
-    def _resolve(self, settings_key: Union[int, str]) -> tuple[SettingsManager, str]:
+    def _resolve(self, settings_key: Union[int, str], platform: Optional[str] = None) -> tuple[SettingsManager, str]:
         key = str(settings_key)
+        if platform and platform in self.managers:
+            return self.managers[platform], key
+        # Backward compat: still try to split if :: present (for any legacy callers)
         if SCOPED_KEY_SEP in key:
-            platform, raw = key.split(SCOPED_KEY_SEP, 1)
-            if platform in self.managers:
-                return self.managers[platform], raw
+            plat, raw = key.split(SCOPED_KEY_SEP, 1)
+            if plat in self.managers:
+                return self.managers[plat], raw
         return self.managers[self.primary_platform], key
 
     def iter_bound_users(self, platform: Optional[str] = None):

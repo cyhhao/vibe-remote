@@ -51,6 +51,13 @@ class _StubController:
     def _get_settings_key(context: MessageContext) -> str:
         return f"{context.channel_id}:{context.user_id}"
 
+    @staticmethod
+    def _get_session_key(context: MessageContext) -> str:
+        return f"{getattr(context, 'platform', None) or 'test'}::{context.channel_id}:{context.user_id}"
+
+    def get_settings_manager_for_context(self, context=None):
+        return self.settings_manager
+
 
 class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
     def test_prompt_can_exclude_quick_replies(self):

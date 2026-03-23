@@ -30,6 +30,9 @@ class ConsolidatedMessageDispatcher:
     def _get_settings_key(self, context: MessageContext) -> str:
         return self.controller._get_settings_key(context)
 
+    def _get_session_key(self, context: MessageContext) -> str:
+        return self.controller._get_session_key(context)
+
     def _get_im_client(self, context: MessageContext):
         getter = getattr(self.controller, "get_im_client_for_context", None)
         if callable(getter):
@@ -49,18 +52,18 @@ class ConsolidatedMessageDispatcher:
         return context
 
     def _get_consolidated_message_key(self, context: MessageContext) -> str:
-        settings_key = self._get_settings_key(context)
+        session_key = self._get_session_key(context)
         thread_key = context.thread_id or context.channel_id
-        tracking_key = f"{settings_key}:{thread_key}"
+        tracking_key = f"{session_key}:{thread_key}"
         trigger_id = self._thread_current_message_id.get(tracking_key) or context.message_id or ""
-        return f"{settings_key}:{thread_key}:{trigger_id}"
+        return f"{session_key}:{thread_key}:{trigger_id}"
 
     def update_thread_message_id(self, context: MessageContext) -> None:
         if not context.message_id:
             return
-        settings_key = self._get_settings_key(context)
+        session_key = self._get_session_key(context)
         thread_key = context.thread_id or context.channel_id
-        tracking_key = f"{settings_key}:{thread_key}"
+        tracking_key = f"{session_key}:{thread_key}"
         self._thread_current_message_id[tracking_key] = context.message_id
 
     def _get_consolidated_message_lock(self, key: str) -> asyncio.Lock:
@@ -73,10 +76,10 @@ class ConsolidatedMessageDispatcher:
         context: MessageContext,
         trigger_message_id: Optional[str] = None,
     ) -> None:
-        settings_key = self._get_settings_key(context)
+        session_key = self._get_session_key(context)
         thread_key = context.thread_id or context.channel_id
         msg_id = trigger_message_id if trigger_message_id else (context.message_id or "")
-        key = f"{settings_key}:{thread_key}:{msg_id}"
+        key = f"{session_key}:{thread_key}:{msg_id}"
 
         lock = self._get_consolidated_message_lock(key)
         async with lock:
@@ -153,7 +156,7 @@ class ConsolidatedMessageDispatcher:
         if not text or not text.strip():
             return
 
-        settings_manager = self.controller.settings_manager
+        settings_manager = self.controller.get_settings_manager_for_context(context)
         im_client = self._get_im_client(context)
 
         canonical_type = settings_manager._canonicalize_message_type(message_type or "")

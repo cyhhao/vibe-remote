@@ -376,7 +376,8 @@ class Controller:
         settings_key = self._get_settings_key(context)
 
         # Get custom CWD from settings
-        custom_cwd = self.settings_manager.get_custom_cwd(settings_key)
+        settings_manager = self.get_settings_manager_for_context(context)
+        custom_cwd = settings_manager.get_custom_cwd(settings_key)
 
         # Use custom CWD if available, otherwise use default from config
         if custom_cwd:
@@ -409,9 +410,18 @@ class Controller:
         ``context.platform_specific`` (see Phase 2 of the refactoring).
         """
         is_dm = (context.platform_specific or {}).get("is_dm", False)
+        return context.user_id if is_dm else context.channel_id
+
+    def _get_session_key(self, context: MessageContext) -> str:
+        """Get a globally unique session-scope key.
+
+        Unlike ``_get_settings_key`` (which returns a raw ID for settings
+        lookup routed by platform), this key must be unique across all
+        platforms so that sessions, polls, and message-consolidation
+        tracking never collide.
+        """
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
-        raw_key = context.user_id if is_dm else context.channel_id
-        return f"{platform}::{raw_key}"
+        return f"{platform}::{self._get_settings_key(context)}"
 
     def get_im_client_for_context(self, context: Optional[MessageContext] = None) -> BaseIMClient:
         if context is None:
@@ -449,7 +459,8 @@ class Controller:
         settings_key = self._get_settings_key(context)
 
         # Check dynamic override first
-        routing = self.settings_manager.get_channel_routing(settings_key)
+        settings_manager = self.get_settings_manager_for_context(context)
+        routing = settings_manager.get_channel_routing(settings_key)
         if routing and routing.agent_backend:
             # Verify the agent is registered
             if routing.agent_backend in self.agent_service.agents:
@@ -474,7 +485,8 @@ class Controller:
             or (None, None, None) if no overrides.
         """
         settings_key = self._get_settings_key(context)
-        routing = self.settings_manager.get_channel_routing(settings_key)
+        settings_manager = self.get_settings_manager_for_context(context)
+        routing = settings_manager.get_channel_routing(settings_key)
         if routing:
             return (
                 routing.opencode_agent,

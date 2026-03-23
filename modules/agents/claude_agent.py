@@ -192,7 +192,7 @@ class ClaudeAgent(BaseAgent):
     ):
         """Receive messages from Claude SDK client."""
         try:
-            settings_key = self.controller._get_settings_key(context)
+            settings_key = self.controller._get_session_key(context)
             composite_key = f"{base_session_id}:{working_path}"
 
             # Build a request object for question handler

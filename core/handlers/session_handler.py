@@ -129,11 +129,12 @@ class SessionHandler(BaseHandler):
         base_session_id, working_path, composite_key = self.get_session_info(context)
 
         settings_key = self._get_settings_key(context)
-        stored_claude_session_id = self.sessions.get_claude_session_id(settings_key, base_session_id)
+        session_key = self._get_session_key(context)
+        stored_claude_session_id = self.sessions.get_claude_session_id(session_key, base_session_id)
 
         # Read routing overrides via get_channel_routing which correctly
         # resolves DM users from the users store (not the stale channels store).
-        routing = self.settings_manager.get_channel_routing(settings_key)
+        routing = self._get_settings_manager(context).get_channel_routing(settings_key)
 
         # Priority: subagent params > channel config > agent frontmatter > global default
         # Note: agent frontmatter model is applied later after loading agent file
@@ -150,7 +151,7 @@ class SessionHandler(BaseHandler):
             cached_base = f"{base_session_id}:{effective_agent}"
             cached_key = f"{cached_base}:{working_path}"
             cached_session_id = self.sessions.get_agent_session_id(
-                settings_key,
+                session_key,
                 cached_base,
                 agent_name="claude",
             )
@@ -345,7 +346,9 @@ class SessionHandler(BaseHandler):
             )
 
             settings_key = self._get_settings_key(context)
-            current_routing = self.settings_manager.get_channel_routing(settings_key)
+            session_key = self._get_session_key(context)
+            settings_manager = self._get_settings_manager(context)
+            current_routing = settings_manager.get_channel_routing(settings_key)
 
             routing = ChannelRouting(
                 agent_backend=agent,
@@ -358,7 +361,7 @@ class SessionHandler(BaseHandler):
                 codex_model=current_routing.codex_model if current_routing else None,
                 codex_reasoning_effort=current_routing.codex_reasoning_effort if current_routing else None,
             )
-            self.settings_manager.set_channel_routing(settings_key, routing)
+            settings_manager.set_channel_routing(settings_key, routing)
 
             agent_label = agent.capitalize()
             confirmation = "\n".join(
@@ -391,7 +394,7 @@ class SessionHandler(BaseHandler):
                 working_path = self.get_working_path(mapping_context)
                 mapping_key = f"{base_session_id}:{working_path}"
 
-            self.sessions.set_agent_session_mapping(settings_key, agent, mapping_key, session_id)
+            self.sessions.set_agent_session_mapping(session_key, agent, mapping_key, session_id)
             self.sessions.mark_thread_active(user_id, context.channel_id, mapped_thread)
         except Exception as e:
             logger.error(f"Error resuming session: {e}", exc_info=True)

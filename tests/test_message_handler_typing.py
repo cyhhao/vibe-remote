@@ -163,6 +163,9 @@ class _StubController:
     def _get_settings_key(self, context):
         return context.channel_id
 
+    def _get_session_key(self, context):
+        return f"{getattr(context, 'platform', None) or 'test'}::{self._get_settings_key(context)}"
+
     def _get_lang(self):
         return "en"
 

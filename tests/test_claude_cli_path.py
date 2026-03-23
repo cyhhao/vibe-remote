@@ -34,7 +34,7 @@ class _Config:
 class _Sessions:
     @staticmethod
     def get_claude_session_id(settings_key, base_session_id):
-        assert settings_key == "C123"
+        assert settings_key == "test::C123"
         assert base_session_id == "slack_C123"
         return None
 
@@ -49,7 +49,11 @@ class _SettingsManager:
 
     @staticmethod
     def get_channel_settings(settings_key):
-        assert settings_key == "C123"
+        assert settings_key == "test::C123"
+        return None
+
+    @staticmethod
+    def get_channel_routing(settings_key):
         return None
 
 
@@ -58,6 +62,7 @@ class _Controller:
         self.config = _Config()
         self.im_client = type("IM", (), {"formatter": None})()
         self.settings_manager = _SettingsManager()
+        self.platform_settings_managers = {"slack": self.settings_manager}
         self.session_manager = object()
         self.claude_sessions = {}
         self.receiver_tasks = {}
@@ -70,6 +75,13 @@ class _Controller:
     @staticmethod
     def _get_settings_key(context) -> str:
         return context.channel_id
+
+    @staticmethod
+    def _get_session_key(context) -> str:
+        return f"{getattr(context, 'platform', None) or 'test'}::{context.channel_id}"
+
+    def get_settings_manager_for_context(self, context=None):
+        return self.settings_manager
 
 
 def _run_session(handler: SessionHandler, context: MessageContext):
