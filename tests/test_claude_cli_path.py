@@ -9,6 +9,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import core.handlers.session_handler as session_handler_module
+import vibe.api as vibe_api
 from config.v2_compat import to_app_config
 from config.v2_config import AgentsConfig, ClaudeConfig, RuntimeConfig, SlackConfig, V2Config
 from core.handlers.session_handler import SessionHandler
@@ -124,6 +125,7 @@ def test_session_handler_keeps_sdk_default_for_default_claude_binary(monkeypatch
             captured["connected"] = True
 
     monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+    monkeypatch.setattr(vibe_api, "resolve_cli_path", lambda binary: None)
 
     controller = _Controller(tmp_path)
     controller.config.claude.cli_path = "claude"
@@ -134,3 +136,52 @@ def test_session_handler_keeps_sdk_default_for_default_claude_binary(monkeypatch
 
     assert captured["connected"] is True
     assert captured["options"].cli_path is None
+
+
+def test_session_handler_uses_resolved_path_for_claude_binary(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+    resolved_path = "/opt/homebrew/bin/claude"
+
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+    monkeypatch.setattr(vibe_api, "resolve_cli_path", lambda binary: resolved_path)
+
+    controller = _Controller(tmp_path)
+    controller.config.claude.cli_path = "claude"
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    _run_session(handler, context)
+
+    assert captured["connected"] is True
+    assert captured["options"].cli_path == resolved_path
+
+
+def test_session_handler_expands_tilde_in_claude_cli_path(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    controller.config.claude.cli_path = "~/bin/claude"
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    _run_session(handler, context)
+
+    assert captured["connected"] is True
+    assert captured["options"].cli_path == str(Path("~/bin/claude").expanduser())

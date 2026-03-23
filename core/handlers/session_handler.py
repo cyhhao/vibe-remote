@@ -60,10 +60,16 @@ class SessionHandler(BaseHandler):
             return None
 
         normalized = str(cli_path).strip()
-        if not normalized or normalized == "claude":
+        if not normalized:
             return None
 
-        return normalized
+        expanded = os.path.expanduser(normalized)
+        if normalized == "claude":
+            from vibe.api import resolve_cli_path
+
+            return resolve_cli_path(normalized)
+
+        return expanded
 
     def _load_agent_file(self, agent_name: str, working_path: str) -> Optional[Dict[str, Any]]:
         """Load an agent file and return its parsed content.
