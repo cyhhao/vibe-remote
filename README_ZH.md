@@ -85,11 +85,11 @@ irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | ie
 
 | | Vibe Remote | OpenClaw |
 |---|---|---|
-| **上手** | 一行命令 + Web 向导，2 分钟搞定。 | Gateway + channels + skills + JSON 配置，准备花一下午。 |
-| **安全** | 本地运行，仅 Socket Mode / WebSocket 出站连接。无公开端口，无入站流量。 | Gateway 暴露端口，曾爆出严重 RCE 漏洞（CVE-2026-25253）。 |
-| **Token 成本** | 薄传输层 — 只在 IM 和 Agent 之间转发消息，中间件本身零 LLM 开销。 | 完整 agent 框架，每次交互都跑自己的 LLM 推理来做路由、技能选择和编排。你的任务还没开始，token 已经在烧了。 |
+| **上手** | 一行命令 + Web 向导，2 分钟搞定。 | Gateway + channels + JSON 配置，准备花一下午。 |
+| **安全** | 本地运行，仅 Socket Mode / WebSocket 出站连接。无公开端口，无入站流量，攻击面极小。 | Gateway 暴露端口，组件多，攻击面大。 |
+| **Token 成本** | 薄传输层 — 只在 IM 和 Agent 之间转发消息，中间件本身零 LLM 开销。 | 每条消息都带着长长的系统上下文：维持助手人格、IM 工具调用、编排管线等。你的任务还没开始，token 已经在烧了。 |
 
-Vibe Remote 不是 agent 框架，而是一个**遥控器** — 聊天 App 和 AI agent 之间的极简桥梁。不加额外智能层，不加额外 token 开销，不加额外攻击面。
+OpenClaw 是个人 AI 助手 — 闲聊很好用，但它始终运转的 agent 循环让真正的生产力场景成本很高。Vibe Remote 不是 agent 框架，而是一个**遥控器** — 聊天 App 和 AI agent 之间的极简桥梁。不加额外智能层，不加额外 token 开销，不加额外攻击面。每一个 token 都直接花在你的任务上。
 
 ---
 

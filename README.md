@@ -85,11 +85,11 @@ irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | ie
 
 | | Vibe Remote | OpenClaw |
 |---|---|---|
-| **Setup** | One command + web wizard. Done in 2 minutes. | Gateway + channels + skills + JSON config. Expect an afternoon. |
-| **Security** | Local-first. Socket Mode / WebSocket only. No public endpoints, no inbound ports. | Gateway exposes ports. Has had critical RCE vulnerabilities (CVE-2026-25253). |
-| **Token cost** | Thin transport layer — relays messages between your IM and agent. Zero LLM overhead from the middleware itself. | Full agent framework with its own LLM reasoning loop for routing, skill selection, and orchestration. Tokens burn before your actual task even starts. |
+| **Setup** | One command + web wizard. Done in 2 minutes. | Gateway + channels + JSON config. Expect an afternoon. |
+| **Security** | Local-first. Socket Mode / WebSocket only. No public endpoints, no inbound ports, minimal attack surface. | Gateway exposes ports. More moving parts, more attack surface. |
+| **Token cost** | Thin transport layer — relays messages between your IM and agent. Zero LLM overhead from the middleware itself. | Every message carries a long system context for maintaining agent persona, IM tooling, and orchestration plumbing. Tokens burn on overhead before your actual task even starts. |
 
-Vibe Remote is not an agent framework. It's a **remote control** — a minimal bridge between your chat app and whatever AI agent you already use. It adds no extra intelligence layer, no extra token spend, and no extra attack surface.
+OpenClaw is a personal AI assistant — great for casual chat, but its always-on agent loop makes it expensive for real productivity workloads. Vibe Remote is not an agent framework. It's a **remote control** — a minimal bridge between your chat app and whatever AI agent you already use. It adds no extra intelligence layer, no extra token spend, and no extra attack surface. Every token goes straight to your task.
 
 ---
 
