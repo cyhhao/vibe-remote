@@ -96,13 +96,18 @@ jobs:
           $env:VIBE_INSTALL_PACKAGE_SPEC = $wheel
           & .\install.ps1 *>&1 | Tee-Object -FilePath install-output.log
 
-          $vibeCommand = Get-Command vibe
-          $vibeCommand | Out-String | Tee-Object -FilePath vibe-command.log
-          vibe version | Tee-Object -FilePath vibe-version.log
-
           if (-not (Select-String -Path install-output.log -Pattern 'vibe-remote installed successfully \(from custom package spec\)' -Quiet)) {
             throw "Installer output missing custom package success message"
           }
+
+      - name: Verify vibe in fresh PowerShell session
+        shell: pwsh
+        run: |
+          $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path', 'User')
+
+          $vibeCommand = Get-Command vibe -ErrorAction Stop
+          $vibeCommand | Out-String | Tee-Object -FilePath vibe-command.log
+          vibe version | Tee-Object -FilePath vibe-version.log
 
           if (-not $vibeCommand.Source.ToLowerInvariant().EndsWith('vibe.exe')) {
             throw "Get-Command vibe did not resolve to vibe.exe"
