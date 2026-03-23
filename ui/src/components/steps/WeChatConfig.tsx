@@ -11,7 +11,7 @@ interface WeChatConfigProps {
   onBack: () => void;
 }
 
-const QR_POLL_INTERVAL_MS = 8000;
+const QR_POLL_INTERVAL_MS = 5000;
 
 export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack }) => {
   const { t } = useTranslation();
