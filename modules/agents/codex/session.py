@@ -20,6 +20,8 @@ class CodexSessionManager:
         self._threads: dict[str, str] = {}
         # base_session_id → settings_key (for scoped clear)
         self._settings_keys: dict[str, str] = {}
+        # base_session_id → working directory (for cwd-scoped invalidation)
+        self._cwds: dict[str, str] = {}
 
     # -- Thread mapping ---------------------------------------------------
 
@@ -30,6 +32,10 @@ class CodexSessionManager:
         self._threads[base_session_id] = thread_id
         logger.info("Session %s → Codex thread %s", base_session_id, thread_id)
 
+    def invalidate_thread(self, base_session_id: str) -> None:
+        """Remove only the thread_id, preserving settings_key and cwd metadata."""
+        self._threads.pop(base_session_id, None)
+
     # -- Settings-key tracking --------------------------------------------
 
     def set_settings_key(self, base_session_id: str, settings_key: str) -> None:
@@ -37,6 +43,15 @@ class CodexSessionManager:
 
     def get_settings_key(self, base_session_id: str) -> Optional[str]:
         return self._settings_keys.get(base_session_id)
+
+    # -- Cwd tracking -----------------------------------------------------
+
+    def set_cwd(self, base_session_id: str, cwd: str) -> None:
+        self._cwds[base_session_id] = cwd
+
+    def sessions_for_cwd(self, cwd: str) -> list[str]:
+        """Return base_session_ids associated with a given working directory."""
+        return [bid for bid, stored_cwd in self._cwds.items() if stored_cwd == cwd]
 
     def get_sessions_by_settings_key(self, settings_key: str) -> list[str]:
         """Return base_session_ids associated with a given settings_key."""
@@ -48,6 +63,7 @@ class CodexSessionManager:
         for bid in to_remove:
             self._threads.pop(bid, None)
             self._settings_keys.pop(bid, None)
+            self._cwds.pop(bid, None)
         return len(to_remove)
 
     # -- Cleanup ----------------------------------------------------------
@@ -56,12 +72,14 @@ class CodexSessionManager:
         """Remove all state for a session."""
         self._threads.pop(base_session_id, None)
         self._settings_keys.pop(base_session_id, None)
+        self._cwds.pop(base_session_id, None)
 
     def clear_all(self) -> int:
         """Remove all tracked sessions. Returns count cleared."""
         count = len(self._threads)
         self._threads.clear()
         self._settings_keys.clear()
+        self._cwds.clear()
         return count
 
     def all_thread_ids(self) -> list[str]:

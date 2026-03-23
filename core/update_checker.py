@@ -330,14 +330,17 @@ class UpdateChecker:
     def _get_admin_user_ids(self) -> list:
         """Get admin user IDs from the settings store.
 
-        Returns a list of admin user IDs, or empty list if none configured.
+        Returns a list of raw platform user IDs (without scoped prefix)
+        for admins on the current platform, or empty list if none configured.
         """
         try:
             if hasattr(self.controller, "settings_manager"):
                 store = self.controller.settings_manager.get_store()
-                if store and hasattr(store, "get_admins"):
-                    admins = store.get_admins()
-                    return list(admins.keys())
+                if store:
+                    platform = getattr(self.controller.config, "platform", "slack")
+                    # get_users_for_platform() returns raw IDs (e.g. "U0E0FM3QT")
+                    # unlike get_admins() which returns scoped keys (e.g. "slack::U0E0FM3QT").
+                    return [uid for uid, user in store.get_users_for_platform(platform).items() if user.is_admin]
         except Exception as e:
             logger.warning(f"Failed to get admin user IDs: {e}")
         return []

@@ -271,6 +271,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 ack_reaction_message_id=request.ack_reaction_message_id,
                 ack_reaction_emoji=request.ack_reaction_emoji,
                 user_id=request.context.user_id or "",
+                platform=request.context.platform or (request.context.platform_specific or {}).get("platform") or "",
             )
 
             final_text, should_emit = await self._poll_loop.run_prompt_poll(

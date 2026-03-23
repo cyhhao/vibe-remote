@@ -5,7 +5,7 @@ import types
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -145,8 +145,10 @@ class _StubController:
         self.im_client = _StubIMClient(typing_result=typing_result)
         self.settings_manager = _StubSettingsManager()
         self.session_manager = object()
+        self.session_handler = None
         self.receiver_tasks = {}
         self.agent_service = _StubAgentService()
+        self.settings_handler = type("Settings", (), {})()
         self.command_handler = type("Cmd", (), {"handle_start": staticmethod(lambda context, args: None)})()
 
     def update_thread_message_id(self, context):
@@ -238,6 +240,34 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         result = await handler._prepend_user_info(context, "hello")
 
         self.assertEqual(result, "[WeChat User<wx-user>] hello")
+
+    async def test_resume_session_callback_preserves_platform(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        setattr(
+            controller,
+            "session_handler",
+            type("SessionHandler", (), {"handle_resume_session_submission": AsyncMock()})(),
+        )
+        handler = MessageHandler(controller)
+        context = MessageContext(
+            user_id="u1",
+            channel_id="c1",
+            thread_id="t1",
+            platform="lark",
+            platform_specific={"platform": "lark", "is_dm": False},
+        )
+
+        await handler.handle_callback_query(context, "resume_session:opencode:session-1")
+
+        getattr(controller, "session_handler").handle_resume_session_submission.assert_awaited_once_with(
+            user_id="u1",
+            channel_id="c1",
+            thread_id="t1",
+            agent="opencode",
+            session_id="session-1",
+            is_dm=False,
+            platform="lark",
+        )
 
 
 if __name__ == "__main__":

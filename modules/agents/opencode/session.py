@@ -114,15 +114,53 @@ class OpenCodeSessionManager:
             os.makedirs(working_path, exist_ok=True)
 
     async def get_or_create_session_id(self, request: AgentRequest, server: OpenCodeServerManager) -> Optional[str]:
-        """Get a cached OpenCode session id, or create a new session."""
+        """Get a cached OpenCode session id, or create a new session.
+
+        The session mapping key includes working_path so that changing the
+        working directory (e.g. via the Web UI) automatically creates a new
+        session instead of reusing the old one anchored to a stale directory.
+        This mirrors how Claude sessions use composite_key = base:working_path.
+        """
 
         sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
 
+        # Include working_path in the mapping key so cwd changes create new sessions
+        composite_session_key = f"{request.base_session_id}:{request.working_path}"
+
         session_id = sessions.get_agent_session_id(
             request.settings_key,
-            request.base_session_id,
+            composite_session_key,
             agent_name=self._agent_name,
         )
+
+        # Legacy fallback: migrate sessions stored under the old key format
+        # (base_session_id only, without working_path) so existing users
+        # don't lose session continuity on upgrade.
+        if not session_id:
+            legacy_id = sessions.get_agent_session_id(
+                request.settings_key,
+                request.base_session_id,
+                agent_name=self._agent_name,
+            )
+            if legacy_id:
+                if await server.get_session(legacy_id, request.working_path):
+                    sessions.set_agent_session_mapping(
+                        request.settings_key,
+                        self._agent_name,
+                        composite_session_key,
+                        legacy_id,
+                    )
+                    logger.info(
+                        "Migrated legacy OpenCode session %s to composite key for %s",
+                        legacy_id,
+                        request.base_session_id,
+                    )
+                    return legacy_id
+                else:
+                    logger.info(
+                        "Legacy OpenCode session %s no longer valid, will create new session",
+                        legacy_id,
+                    )
 
         if not session_id:
             try:
@@ -135,7 +173,7 @@ class OpenCodeSessionManager:
                     sessions.set_agent_session_mapping(
                         request.settings_key,
                         self._agent_name,
-                        request.base_session_id,
+                        composite_session_key,
                         session_id,
                     )
                     logger.info(f"Created OpenCode session {session_id} for {request.base_session_id}")
@@ -158,7 +196,7 @@ class OpenCodeSessionManager:
                 sessions.set_agent_session_mapping(
                     request.settings_key,
                     self._agent_name,
-                    request.base_session_id,
+                    composite_session_key,
                     new_session_id,
                 )
                 logger.info(f"Recreated OpenCode session {new_session_id} for {request.base_session_id}")

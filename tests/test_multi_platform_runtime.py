@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from modules.im.base import BaseIMClient, BaseIMConfig, MessageContext
 from modules.im.multi import MultiIMClient
 from modules.settings_manager import MultiSettingsManager
+from config.v2_sessions import ActivePollInfo
 
 
 @dataclass
@@ -112,3 +113,20 @@ def test_multi_im_client_routes_scoped_identity_lookups():
     assert user_info == {"id": "wx-user", "name": "wechat"}
     assert channel_info == {"id": "wx-chat", "name": "wechat"}
     assert wechat.sent[-1] == ("dm", "wx-user", "hello")
+
+
+def test_active_poll_info_round_trips_platform():
+    poll = ActivePollInfo(
+        opencode_session_id="ses-1",
+        base_session_id="base-1",
+        channel_id="chan-1",
+        thread_id="thread-1",
+        settings_key="discord::chan-1",
+        working_path="/tmp/work",
+        user_id="user-1",
+        platform="discord",
+    )
+
+    restored = ActivePollInfo.from_dict(poll.to_dict())
+
+    assert restored.platform == "discord"

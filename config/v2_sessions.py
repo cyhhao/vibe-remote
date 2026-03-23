@@ -28,6 +28,7 @@ class ActivePollInfo:
     ack_reaction_emoji: Optional[str] = None
     # User identity for restoring question UI context
     user_id: str = ""
+    platform: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -44,6 +45,7 @@ class ActivePollInfo:
             "ack_reaction_message_id": self.ack_reaction_message_id,
             "ack_reaction_emoji": self.ack_reaction_emoji,
             "user_id": self.user_id,
+            "platform": self.platform,
         }
 
     @classmethod
@@ -62,6 +64,7 @@ class ActivePollInfo:
             ack_reaction_message_id=data.get("ack_reaction_message_id"),
             ack_reaction_emoji=data.get("ack_reaction_emoji"),
             user_id=data.get("user_id", ""),
+            platform=data.get("platform", ""),
         )
 
 

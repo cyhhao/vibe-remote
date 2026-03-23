@@ -425,6 +425,7 @@ class MessageHandler(BaseHandler):
                     agent=agent,
                     session_id=session_id,
                     is_dm=(context.platform_specific or {}).get("is_dm", False),
+                    platform=context.platform or (context.platform_specific or {}).get("platform"),
                 )
 
             elif callback_data.startswith("opencode_question:"):
