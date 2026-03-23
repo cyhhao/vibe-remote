@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Prepare generated config/state for three-end regression containers."""
+"""Prepare generated config/state for the unified regression container.
+
+Generates a single config.json with all four IM platforms enabled and all
+three agent backends configured, plus per-channel routing in settings.json.
+"""
 
 from __future__ import annotations
 
@@ -11,10 +15,11 @@ import sys
 from pathlib import Path
 
 
-SERVICE_DEFS = {
+PLATFORM_DEFS = {
     "slack": {
         "platform": "slack",
         "channel_env": "THREE_REGRESSION_SLACK_CHANNEL",
+        "backend_env": "THREE_REGRESSION_SLACK_BACKEND",
         "required_envs": (
             "THREE_REGRESSION_SLACK_BOT_TOKEN",
             "THREE_REGRESSION_SLACK_APP_TOKEN",
@@ -23,11 +28,13 @@ SERVICE_DEFS = {
     "discord": {
         "platform": "discord",
         "channel_env": "THREE_REGRESSION_DISCORD_CHANNEL",
+        "backend_env": "THREE_REGRESSION_DISCORD_BACKEND",
         "required_envs": ("THREE_REGRESSION_DISCORD_BOT_TOKEN",),
     },
     "feishu": {
         "platform": "lark",
         "channel_env": "THREE_REGRESSION_FEISHU_CHAT_ID",
+        "backend_env": "THREE_REGRESSION_FEISHU_BACKEND",
         "required_envs": (
             "THREE_REGRESSION_FEISHU_APP_ID",
             "THREE_REGRESSION_FEISHU_APP_SECRET",
@@ -36,6 +43,7 @@ SERVICE_DEFS = {
     "wechat": {
         "platform": "wechat",
         "channel_env": "THREE_REGRESSION_WECHAT_CHANNEL",
+        "backend_env": "THREE_REGRESSION_WECHAT_BACKEND",
         "required_envs": (),  # bot_token obtained via QR login, not env
     },
 }
@@ -73,19 +81,19 @@ def _require_envs(keys: tuple[str, ...]) -> None:
         raise SystemExit(f"Missing required environment variables: {joined}")
 
 
-def _service_prefix(service_name: str) -> str:
-    return f"THREE_REGRESSION_{service_name.upper()}"
+def _platform_prefix(name: str) -> str:
+    return f"THREE_REGRESSION_{name.upper()}"
 
 
-def _build_routing(service_name: str) -> dict:
-    prefix = _service_prefix(service_name)
+def _build_routing(name: str) -> dict:
+    prefix = _platform_prefix(name)
     backend = _env(f"{prefix}_BACKEND")
-    if backend not in SUPPORTED_BACKENDS:
+    if backend and backend not in SUPPORTED_BACKENDS:
         allowed = ", ".join(sorted(SUPPORTED_BACKENDS))
         raise SystemExit(f"{prefix}_BACKEND must be one of: {allowed}")
 
     return {
-        "agent_backend": backend,
+        "agent_backend": backend or None,
         "opencode_agent": _optional(f"{prefix}_OPENCODE_AGENT"),
         "opencode_model": _optional(f"{prefix}_OPENCODE_MODEL"),
         "opencode_reasoning_effort": _optional(f"{prefix}_OPENCODE_REASONING_EFFORT"),
@@ -96,100 +104,107 @@ def _build_routing(service_name: str) -> dict:
     }
 
 
-def _service_default_cwd(service_name: str) -> str:
-    prefix = _service_prefix(service_name)
-    return _env(f"{prefix}_DEFAULT_CWD", _env("THREE_REGRESSION_DEFAULT_CWD", "/data/vibe_remote/workdir"))
+def _default_cwd() -> str:
+    return _env("THREE_REGRESSION_DEFAULT_CWD", "/data/vibe_remote/workdir")
 
 
 def _ui_host() -> str:
     return _env("THREE_REGRESSION_UI_HOST", "127.0.0.1")
 
 
-def _base_slack_payload() -> dict:
+def _build_slack_payload() -> dict:
+    prefix = _platform_prefix("slack")
+    require_mention = _parse_bool(_env(f"{prefix}_REQUIRE_MENTION"), default=False)
     return {
-        "bot_token": "",
-        "app_token": None,
+        "bot_token": _env("THREE_REGRESSION_SLACK_BOT_TOKEN"),
+        "app_token": _env("THREE_REGRESSION_SLACK_APP_TOKEN") or None,
         "signing_secret": None,
         "team_id": None,
         "team_name": None,
         "app_id": None,
-        "require_mention": False,
+        "require_mention": require_mention,
     }
 
 
-def _build_config_payload(service_name: str) -> dict:
-    service = SERVICE_DEFS[service_name]
-    prefix = _service_prefix(service_name)
-    routing = _build_routing(service_name)
-    backend = routing["agent_backend"]
+def _build_discord_payload() -> dict:
+    prefix = _platform_prefix("discord")
     require_mention = _parse_bool(_env(f"{prefix}_REQUIRE_MENTION"), default=False)
-
-    slack_payload = _base_slack_payload()
-    discord_payload = None
-    lark_payload = None
-    wechat_payload = None
-
-    if service_name == "slack":
-        slack_payload = {
-            **slack_payload,
-            "bot_token": _env("THREE_REGRESSION_SLACK_BOT_TOKEN"),
-            "app_token": _env("THREE_REGRESSION_SLACK_APP_TOKEN"),
-            "require_mention": require_mention,
-        }
-    elif service_name == "discord":
-        discord_payload = {
-            "bot_token": _env("THREE_REGRESSION_DISCORD_BOT_TOKEN"),
-            "application_id": None,
-            "guild_allowlist": _parse_csv(_optional("THREE_REGRESSION_DISCORD_GUILD_ALLOWLIST")),
-            "guild_denylist": _parse_csv(_optional("THREE_REGRESSION_DISCORD_GUILD_DENYLIST")),
-            "require_mention": require_mention,
-        }
-    elif service_name == "feishu":
-        lark_payload = {
-            "app_id": _env("THREE_REGRESSION_FEISHU_APP_ID"),
-            "app_secret": _env("THREE_REGRESSION_FEISHU_APP_SECRET"),
-            "require_mention": require_mention,
-            "domain": _env("THREE_REGRESSION_FEISHU_DOMAIN", "feishu"),
-        }
-    elif service_name == "wechat":
-        wechat_payload = {
-            "bot_token": _env("THREE_REGRESSION_WECHAT_BOT_TOKEN"),
-            "base_url": _env("THREE_REGRESSION_WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com"),
-            "cdn_base_url": _env("THREE_REGRESSION_WECHAT_CDN_BASE_URL", "https://novac2c.cdn.weixin.qq.com/c2c"),
-            "require_mention": require_mention,
-        }
-
     return {
-        "platform": service["platform"],
+        "bot_token": _env("THREE_REGRESSION_DISCORD_BOT_TOKEN"),
+        "application_id": None,
+        "guild_allowlist": _parse_csv(_optional("THREE_REGRESSION_DISCORD_GUILD_ALLOWLIST")),
+        "guild_denylist": _parse_csv(_optional("THREE_REGRESSION_DISCORD_GUILD_DENYLIST")),
+        "require_mention": require_mention,
+    }
+
+
+def _build_lark_payload() -> dict:
+    prefix = _platform_prefix("feishu")
+    require_mention = _parse_bool(_env(f"{prefix}_REQUIRE_MENTION"), default=False)
+    return {
+        "app_id": _env("THREE_REGRESSION_FEISHU_APP_ID"),
+        "app_secret": _env("THREE_REGRESSION_FEISHU_APP_SECRET"),
+        "require_mention": require_mention,
+        "domain": _env("THREE_REGRESSION_FEISHU_DOMAIN", "feishu"),
+    }
+
+
+def _build_wechat_payload() -> dict:
+    prefix = _platform_prefix("wechat")
+    require_mention = _parse_bool(_env(f"{prefix}_REQUIRE_MENTION"), default=False)
+    return {
+        "bot_token": _env("THREE_REGRESSION_WECHAT_BOT_TOKEN"),
+        "base_url": _env("THREE_REGRESSION_WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com"),
+        "cdn_base_url": _env("THREE_REGRESSION_WECHAT_CDN_BASE_URL", "https://novac2c.cdn.weixin.qq.com/c2c"),
+        "require_mention": require_mention,
+    }
+
+
+def _default_backend() -> str:
+    backend = _env("THREE_REGRESSION_DEFAULT_BACKEND", "opencode")
+    if backend not in SUPPORTED_BACKENDS:
+        allowed = ", ".join(sorted(SUPPORTED_BACKENDS))
+        raise SystemExit(f"THREE_REGRESSION_DEFAULT_BACKEND must be one of: {allowed}")
+    return backend
+
+
+def _build_config_payload() -> dict:
+    """Build a unified config.json with all four platforms and all three backends."""
+    return {
+        "platforms": {
+            "enabled": ["slack", "discord", "lark", "wechat"],
+            "primary": "slack",
+        },
+        "platform": "slack",
         "mode": "self_host",
         "version": "v2",
-        "slack": slack_payload,
-        "discord": discord_payload,
-        "lark": lark_payload,
-        "wechat": wechat_payload,
+        "slack": _build_slack_payload(),
+        "discord": _build_discord_payload(),
+        "lark": _build_lark_payload(),
+        "wechat": _build_wechat_payload(),
         "runtime": {
-            "default_cwd": _service_default_cwd(service_name),
+            "default_cwd": _default_cwd(),
             "log_level": _env("THREE_REGRESSION_LOG_LEVEL", "INFO"),
         },
         "agents": {
-            "default_backend": backend,
+            "default_backend": _default_backend(),
             "opencode": {
                 "enabled": True,
                 "cli_path": "opencode",
-                "default_agent": routing["opencode_agent"],
-                "default_model": routing["opencode_model"],
-                "default_reasoning_effort": routing["opencode_reasoning_effort"],
+                "default_agent": _optional("THREE_REGRESSION_OPENCODE_AGENT"),
+                "default_model": _optional("THREE_REGRESSION_OPENCODE_MODEL"),
+                "default_reasoning_effort": _optional("THREE_REGRESSION_OPENCODE_REASONING_EFFORT"),
                 "error_retry_limit": 1,
             },
             "claude": {
                 "enabled": True,
                 "cli_path": "claude",
-                "default_model": routing["claude_model"],
+                "default_model": _optional("THREE_REGRESSION_CLAUDE_MODEL"),
             },
             "codex": {
                 "enabled": True,
                 "cli_path": "codex",
-                "default_model": routing["codex_model"],
+                "default_model": _optional("THREE_REGRESSION_CODEX_MODEL"),
             },
         },
         "gateway": None,
@@ -212,37 +227,39 @@ def _build_config_payload(service_name: str) -> dict:
     }
 
 
-def _build_settings_payload(service_name: str) -> dict:
-    service = SERVICE_DEFS[service_name]
-    channel_id = _env(service["channel_env"])
-    routing = _build_routing(service_name)
-    channel_scope = {}
+def _build_settings_payload() -> dict:
+    """Build a unified settings.json with per-channel routing for every platform."""
+    channel_scopes: dict[str, dict] = {}
 
-    if channel_id:
-        channel_scope[channel_id] = {
-            "enabled": True,
-            "show_message_types": ["assistant"],
-            "custom_cwd": _service_default_cwd(service_name),
-            "routing": routing,
-            "require_mention": _parse_bool(
-                _env(f"{_service_prefix(service_name)}_REQUIRE_MENTION"),
-                default=False,
-            ),
-        }
+    for name, pdef in PLATFORM_DEFS.items():
+        platform_key = pdef["platform"]
+        channel_id = _env(pdef["channel_env"])
+        routing = _build_routing(name)
+        scope: dict = {}
+
+        if channel_id and routing["agent_backend"]:
+            prefix = _platform_prefix(name)
+            scope[channel_id] = {
+                "enabled": True,
+                "show_message_types": ["assistant"],
+                "custom_cwd": _default_cwd(),
+                "routing": routing,
+                "require_mention": _parse_bool(
+                    _env(f"{prefix}_REQUIRE_MENTION"),
+                    default=False,
+                ),
+            }
+
+        channel_scopes[platform_key] = scope
 
     return {
         "schema_version": 3,
         "scopes": {
-            "channel": {service["platform"]: channel_scope},
+            "channel": channel_scopes,
             "user": {},
         },
         "bind_codes": [],
     }
-
-
-def _summary_channel(service: dict) -> str:
-    channel = _env(service["channel_env"])
-    return channel or "(configure later in UI)"
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -255,21 +272,21 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _ensure_service_dir(service_dir: Path, reset_mode: str = "none") -> None:
+def _ensure_vibe_dir(vibe_dir: Path, reset_mode: str = "none") -> None:
     if reset_mode not in RESET_MODES:
         allowed = ", ".join(sorted(RESET_MODES))
         raise SystemExit(f"reset_mode must be one of: {allowed}")
 
-    if reset_mode == "all" and service_dir.exists():
-        shutil.rmtree(service_dir)
-    elif reset_mode == "config" and service_dir.exists():
+    if reset_mode == "all" and vibe_dir.exists():
+        shutil.rmtree(vibe_dir)
+    elif reset_mode == "config" and vibe_dir.exists():
         for subdir in ("config", "state", "runtime"):
-            target = service_dir / subdir
+            target = vibe_dir / subdir
             if target.exists():
                 shutil.rmtree(target)
 
     for subdir in ("config", "state", "logs", "runtime", "attachments", "workdir"):
-        (service_dir / subdir).mkdir(parents=True, exist_ok=True)
+        (vibe_dir / subdir).mkdir(parents=True, exist_ok=True)
 
 
 def _build_claude_settings_payload() -> dict:
@@ -390,37 +407,37 @@ def _write_shared_agent_configs(output_root: Path) -> None:
 
 def prepare(output_root: Path, reset_mode: str = "none") -> None:
     _require_envs(("ANTHROPIC_API_KEY", "OPENAI_API_KEY"))
+
+    # Validate platform-specific required env vars
+    for name, pdef in PLATFORM_DEFS.items():
+        _require_envs(pdef["required_envs"])
+
     _write_shared_agent_configs(output_root)
 
-    summary: list[str] = []
-    for service_name, service in SERVICE_DEFS.items():
-        _require_envs(service["required_envs"])
-        service_dir = output_root / service_name
-        _ensure_service_dir(service_dir, reset_mode=reset_mode)
+    vibe_dir = output_root / "vibe"
+    _ensure_vibe_dir(vibe_dir, reset_mode=reset_mode)
 
-        config_path = service_dir / "config" / "config.json"
-        settings_path = service_dir / "state" / "settings.json"
-        sessions_path = service_dir / "state" / "sessions.json"
+    config_path = vibe_dir / "config" / "config.json"
+    settings_path = vibe_dir / "state" / "settings.json"
+    sessions_path = vibe_dir / "state" / "sessions.json"
 
-        if reset_mode in {"config", "all"} or not config_path.exists():
-            _write_json(config_path, _build_config_payload(service_name))
-        if reset_mode in {"config", "all"} or not settings_path.exists():
-            _write_json(settings_path, _build_settings_payload(service_name))
-        if reset_mode in {"config", "all"} or not sessions_path.exists():
-            _write_json(sessions_path, {})
+    if reset_mode in {"config", "all"} or not config_path.exists():
+        _write_json(config_path, _build_config_payload())
+    if reset_mode in {"config", "all"} or not settings_path.exists():
+        _write_json(settings_path, _build_settings_payload())
+    if reset_mode in {"config", "all"} or not sessions_path.exists():
+        _write_json(sessions_path, {})
 
-        summary.append(
-            "- {service}: platform={platform} channel={channel} backend={backend} state={state}".format(
-                service=service_name,
-                platform=service["platform"],
-                channel=_summary_channel(service),
-                backend=_env(f"{_service_prefix(service_name)}_BACKEND"),
-                state=reset_mode if reset_mode != "none" else "preserved",
-            )
-        )
+    summary_lines: list[str] = []
+    for name, pdef in PLATFORM_DEFS.items():
+        channel = _env(pdef["channel_env"]) or "(configure later in UI)"
+        backend = _env(pdef["backend_env"]) or _default_backend()
+        summary_lines.append(f"  {name}: platform={pdef['platform']} channel={channel} backend={backend}")
 
-    print(f"Prepared three-end regression state under {output_root}")
-    print("\n".join(summary))
+    print(f"Prepared unified regression state under {output_root / 'vibe'}")
+    print("Platform routing:")
+    print("\n".join(summary_lines))
+    print(f"State: {reset_mode if reset_mode != 'none' else 'preserved'}")
 
 
 def main() -> int:
@@ -428,7 +445,7 @@ def main() -> int:
     parser.add_argument(
         "--output-root",
         default=str(Path("_tmp") / "three-regression"),
-        help="Directory that will hold generated per-service state",
+        help="Directory that will hold generated state",
     )
     parser.add_argument(
         "--reset-mode",
