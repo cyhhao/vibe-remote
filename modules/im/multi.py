@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import threading
@@ -300,7 +301,13 @@ class MultiIMClient(BaseIMClient):
 
     async def shutdown(self) -> None:
         self._stop_requested.set()
+        self.stop()
+        for thread in list(self._threads.values()):
+            await asyncio.to_thread(thread.join, 2.0)
+
         for client in self.clients.values():
+            if any(thread.is_alive() for thread in self._threads.values()):
+                break
             shutdown_attr = getattr(client, "shutdown", None)
             if callable(shutdown_attr):
                 try:

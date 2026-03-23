@@ -332,7 +332,7 @@ class MessageHandler(BaseHandler):
     async def _prepend_user_info(self, context: MessageContext, message: str) -> str:
         """Prepend user identity as [username<user_id>] to the message."""
         try:
-            user_info = await self.im_client.get_user_info(context.user_id)
+            user_info = await self._get_im_client(context).get_user_info(context.user_id)
             raw_name = self._resolve_user_display_name(user_info, context.user_id)
         except Exception as e:
             logger.debug(f"Failed to fetch user info for {context.user_id}: {e}")
@@ -345,6 +345,7 @@ class MessageHandler(BaseHandler):
         """Route callback queries to appropriate handlers"""
         try:
             logger.info(f"handle_callback_query called with data: {callback_data} for user {context.user_id}")
+            im_client = self._get_im_client(context)
 
             settings_handler = self.controller.settings_handler
             command_handlers = self.controller.command_handler
@@ -397,7 +398,7 @@ class MessageHandler(BaseHandler):
                 if hasattr(self.controller, "update_checker"):
                     await self.controller.update_checker.handle_update_button_click(context, target_version)
                 else:
-                    await self.im_client.send_message(
+                    await im_client.send_message(
                         context,
                         self.formatter.format_warning(self._t("error.updateUnavailable")),
                     )
@@ -410,7 +411,7 @@ class MessageHandler(BaseHandler):
                     emoji="ℹ️",
                     footer=self._t("info.genericFooter"),
                 )
-                await self.im_client.send_message(context, info_text)
+                await im_client.send_message(context, info_text)
 
             elif callback_data.startswith("resume_session:"):
                 # Feishu resume button: resume_session:{agent}:{session_id}
@@ -484,7 +485,7 @@ class MessageHandler(BaseHandler):
                         )
                     try:
                         if remove_target_message_id or can_remove_via_interaction:
-                            await self.im_client.remove_inline_keyboard(context, remove_target_message_id or "")
+                            await im_client.remove_inline_keyboard(context, remove_target_message_id or "")
                         else:
                             logger.debug("Skip quick-reply keyboard removal: message id unavailable")
                     except Exception as err:
@@ -494,7 +495,7 @@ class MessageHandler(BaseHandler):
                     quick_reply_echo_id = None
                     try:
                         quick_reply_echo = self._t("message.quickReplyNote", text=reply_text)
-                        quick_reply_echo_id = await self.im_client.send_message(
+                        quick_reply_echo_id = await im_client.send_message(
                             self._get_target_context(context),
                             quick_reply_echo,
                         )
@@ -504,7 +505,7 @@ class MessageHandler(BaseHandler):
                     # Add ack reaction on the echo message before dispatching.
                     if quick_reply_echo_id and getattr(self.config, "ack_mode", "reaction") == "reaction":
                         try:
-                            await self.im_client.add_reaction(
+                            await im_client.add_reaction(
                                 self._get_target_context(context),
                                 quick_reply_echo_id,
                                 ":eyes:",
@@ -526,14 +527,14 @@ class MessageHandler(BaseHandler):
 
             else:
                 logger.warning(f"Unknown callback data: {callback_data}")
-                await self.im_client.send_message(
+                await im_client.send_message(
                     context,
                     self.formatter.format_warning(self._t("error.unknownAction", action=callback_data)),
                 )
 
         except Exception as e:
             logger.error(f"Error handling callback query: {e}", exc_info=True)
-            await self.im_client.send_message(
+            await self._get_im_client(context).send_message(
                 context,
                 self.formatter.format_error(self._t("error.processActionFailed", error=str(e))),
             )
@@ -561,7 +562,7 @@ class MessageHandler(BaseHandler):
                 await self._handle_missing_agent(context, agent_name)
                 return False
             if not handled:
-                await self.im_client.send_message(context, f"ℹ️ {self._t('command.stop.noActiveSession')}")
+                await self._get_im_client(context).send_message(context, f"ℹ️ {self._t('command.stop.noActiveSession')}")
             return handled
         except Exception as e:
             logger.error(f"Error handling inline stop: {e}", exc_info=True)
@@ -571,13 +572,14 @@ class MessageHandler(BaseHandler):
         """Notify user when a requested agent backend is unavailable."""
         target = agent_name or self.controller.agent_service.default_agent
         msg = f"❌ {self._t('error.agentNotConfigured', agent=target)}"
-        await self.im_client.send_message(context, msg)
+        await self._get_im_client(context).send_message(context, msg)
 
     async def _delete_ack(self, channel_id: str, request: AgentRequest):
         """Delete acknowledgement message if it still exists."""
-        if request.ack_message_id and hasattr(self.im_client, "delete_message"):
+        im_client = self._get_im_client(request.context)
+        if request.ack_message_id and hasattr(im_client, "delete_message"):
             try:
-                await self.im_client.delete_message(channel_id, request.ack_message_id)
+                await im_client.delete_message(channel_id, request.ack_message_id)
             except Exception as err:
                 logger.debug(f"Failed to delete ack message: {err}")
             finally:
@@ -585,6 +587,7 @@ class MessageHandler(BaseHandler):
 
     async def _remove_ack_reaction(self, context: MessageContext, request: AgentRequest):
         """Remove acknowledgement reaction / typing indicator if it still exists."""
+        im_client = self._get_im_client(context)
         typing_task = request.typing_indicator_task
         if typing_task is not None:
             typing_task.cancel()
@@ -599,7 +602,7 @@ class MessageHandler(BaseHandler):
 
         if request.typing_indicator_active:
             try:
-                await self.im_client.clear_typing_indicator(context)
+                await im_client.clear_typing_indicator(context)
             except Exception as err:
                 logger.debug(f"Failed to clear typing ack: {err}")
             finally:
@@ -607,7 +610,7 @@ class MessageHandler(BaseHandler):
 
         if request.ack_reaction_message_id and request.ack_reaction_emoji:
             try:
-                await self.im_client.remove_reaction(
+                await im_client.remove_reaction(
                     context,
                     request.ack_reaction_message_id,
                     request.ack_reaction_emoji,
@@ -660,8 +663,9 @@ class MessageHandler(BaseHandler):
                 continue
 
             try:
+                im_client = self._get_im_client(context)
                 # Download the file content
-                if hasattr(self.im_client, "download_file") and attachment.url:
+                if hasattr(im_client, "download_file") and attachment.url:
                     # Platform-agnostic download info dict
                     file_info = {
                         "url": attachment.url,
@@ -683,9 +687,9 @@ class MessageHandler(BaseHandler):
                     detected_sample = None
                     content_size = None
 
-                    if hasattr(self.im_client, "download_file_to_path"):
+                    if hasattr(im_client, "download_file_to_path"):
                         self._cleanup_partial_attachment(temp_path)
-                        result = await self.im_client.download_file_to_path(file_info, str(temp_path))
+                        result = await im_client.download_file_to_path(file_info, str(temp_path))
                         if not isinstance(result, FileDownloadResult):
                             result = FileDownloadResult(bool(result), None if result else "Download failed")
 
@@ -700,7 +704,7 @@ class MessageHandler(BaseHandler):
                             logger.warning("Failed to download file %s: %s", attachment.name, error_text)
                             errors.append(f"Attachment '{attachment.name}' could not be downloaded: {error_text}")
                     else:
-                        content = await self.im_client.download_file(file_info)
+                        content = await im_client.download_file(file_info)
                         if content:
                             with open(local_path, "wb") as f:
                                 f.write(content)

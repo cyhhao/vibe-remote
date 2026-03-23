@@ -170,6 +170,7 @@ class DiscordBot(BaseIMClient):
             raise ValueError("Discord bot token is required")
 
         async def _run():
+            self._loop = asyncio.get_running_loop()
             # Inject SOCKS proxy connector inside the event loop (required
             # by aiohttp).  Must happen before login() creates the session.
             from vibe.proxy import get_system_socks_proxy
@@ -192,6 +193,15 @@ class DiscordBot(BaseIMClient):
         except KeyboardInterrupt:
             return
 
+    def stop(self) -> None:
+        loop = getattr(self, "_loop", None)
+        if loop is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(lambda: loop.create_task(self.client.close()))
+        except Exception:
+            logger.exception("Failed to stop Discord client")
+
     @staticmethod
     def _redact_proxy_url(proxy_url: str) -> str:
         """Return a proxy URL safe for logs (credentials stripped)."""
@@ -209,7 +219,10 @@ class DiscordBot(BaseIMClient):
         return "<configured>"
 
     async def shutdown(self) -> None:
-        await self.client.close()
+        loop = getattr(self, "_loop", None)
+        current_loop = asyncio.get_running_loop()
+        if loop is None or loop is current_loop:
+            await self.client.close()
 
     # ---------------------------------------------------------------------
     # Message helpers

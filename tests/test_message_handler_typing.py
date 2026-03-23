@@ -96,6 +96,15 @@ class _StubIMClient:
     def should_use_thread_for_reply(self):
         return False
 
+    async def get_user_info(self, user_id):
+        return {"display_name": f"user:{user_id}"}
+
+    async def download_file_to_path(self, file_info, target_path):
+        self.sent_messages.append(("download", file_info["name"], target_path))
+        from modules.im.base import FileDownloadResult
+
+        return FileDownloadResult(False, "not implemented")
+
     async def send_typing_indicator(self, context):
         self.typing_calls.append((context.channel_id, context.user_id))
         return self.typing_result
@@ -142,6 +151,9 @@ class _StubController:
 
     def update_thread_message_id(self, context):
         return None
+
+    def get_im_client_for_context(self, context):
+        return self.im_client
 
     def resolve_agent_for_context(self, context):
         return "codex"
@@ -210,6 +222,22 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(request.typing_indicator_active)
         self.assertEqual(controller.im_client.reactions, [])
         self.assertGreaterEqual(len(controller.im_client.typing_calls), 1)
+
+    async def test_platform_specific_client_is_used_for_user_info(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        context = MessageContext(user_id="wx-user", channel_id="wx-chat", platform="wechat")
+
+        class _WechatClient(_StubIMClient):
+            async def get_user_info(self, user_id):
+                return {"display_name": "WeChat User"}
+
+        wechat_client = _WechatClient(typing_result=True)
+        controller.get_im_client_for_context = lambda _context: wechat_client  # type: ignore[method-assign]
+
+        result = await handler._prepend_user_info(context, "hello")
+
+        self.assertEqual(result, "[WeChat User<wx-user>] hello")
 
 
 if __name__ == "__main__":
