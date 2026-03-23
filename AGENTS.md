@@ -11,7 +11,7 @@ Current product shape:
 - V2 config-driven service with a Web UI setup wizard and settings pages
 - multi-platform message transport with shared core orchestration
 - multi-backend agent routing across OpenCode, Claude Code, and Codex
-- Docker-based three-end regression environment for real cross-platform verification
+- Docker-based unified regression container for real cross-platform verification
 
 Default mindset:
 
@@ -80,13 +80,15 @@ Hard rule:
 - The local `vibe` process may be the coding agent runtime itself; restarting it can interrupt the session.
 - Unless the user explicitly asks otherwise, use the Docker three-end regression environment for user-facing verification.
 
-### Three-End Regression (Docker)
+### Regression Testing (Docker)
 
 When the user says `三端回归测试`, treat it as:
 
 - update the latest code into the existing Docker-based regression environment
-- let the user verify behavior on Slack, Discord, and Feishu/Lark
+- let the user verify behavior on Slack, Discord, Feishu/Lark, and WeChat
 - preserve previously accumulated regression config/state unless the user explicitly asks for a reset
+
+The regression environment runs a single unified container with all four IM platforms enabled simultaneously.
 
 Standard path:
 
@@ -96,7 +98,7 @@ Rules:
 
 - do **not** use `--reset-config` or `--reset-all` unless the user explicitly requests reset behavior
 - do **not** use `--no-build` when code changes must take effect; it is only for restarting with the existing image
-- after running the script, verify the three services are healthy before handing back to the user
+- after running the script, verify the service is healthy before handing back to the user
 - prefer Docker regression over local `vibe` whenever validating cross-platform behavior, setup wizard behavior, or user-facing IM flows
 
 ## 4. Configuration and Routing Model

@@ -42,7 +42,6 @@ resolve_docker_bin
 
 MODE="up"
 BUILD_FLAG="--build"
-LOGS_SERVICE=""
 RESET_MODE="none"
 
 usage() {
@@ -54,7 +53,7 @@ Usage:
   ./scripts/run_three_regression.sh --reset-all
   ./scripts/run_three_regression.sh --down
   ./scripts/run_three_regression.sh --status
-  ./scripts/run_three_regression.sh --logs [slack|discord|feishu|wechat]
+  ./scripts/run_three_regression.sh --logs
   ./scripts/run_three_regression.sh --env-file /path/to/.env.three-regression
 EOF
 }
@@ -80,12 +79,7 @@ while [ $# -gt 0 ]; do
             ;;
         --logs)
             MODE="logs"
-            if [ $# -gt 1 ] && [[ "$2" != --* ]]; then
-                LOGS_SERVICE="$2"
-                shift 2
-            else
-                shift
-            fi
+            shift
             ;;
         --no-build)
             BUILD_FLAG=""
@@ -136,37 +130,35 @@ elif [ "$MODE" = "up" ]; then
 fi
 
 print_summary() {
+    local port="${THREE_REGRESSION_PORT:-15130}"
+    local ui_host="${THREE_REGRESSION_UI_HOST:-127.0.0.1}"
+    local default_backend="${THREE_REGRESSION_DEFAULT_BACKEND:-opencode}"
+
     local slack_channel="${THREE_REGRESSION_SLACK_CHANNEL:-}"
     local discord_channel="${THREE_REGRESSION_DISCORD_CHANNEL:-}"
     local feishu_channel="${THREE_REGRESSION_FEISHU_CHAT_ID:-}"
     local wechat_channel="${THREE_REGRESSION_WECHAT_CHANNEL:-}"
-    local ui_host="${THREE_REGRESSION_UI_HOST:-127.0.0.1}"
 
-    if [ -z "$slack_channel" ]; then
-        slack_channel="(configure later in UI)"
-    fi
-    if [ -z "$discord_channel" ]; then
-        discord_channel="(configure later in UI)"
-    fi
-    if [ -z "$feishu_channel" ]; then
-        feishu_channel="(configure later in UI)"
-    fi
-    if [ -z "$wechat_channel" ]; then
-        wechat_channel="(QR login required in UI)"
-    fi
+    [ -z "$slack_channel" ] && slack_channel="(configure later in UI)"
+    [ -z "$discord_channel" ] && discord_channel="(configure later in UI)"
+    [ -z "$feishu_channel" ] && feishu_channel="(configure later in UI)"
+    [ -z "$wechat_channel" ] && wechat_channel="(QR login required in UI)"
 
     cat <<EOF
-Four-platform regression environment is ready:
-- Slack:   http://${ui_host}:${THREE_REGRESSION_SLACK_PORT:-15131}  channel=${slack_channel}  backend=${THREE_REGRESSION_SLACK_BACKEND}
-- Discord: http://${ui_host}:${THREE_REGRESSION_DISCORD_PORT:-15132}  channel=${discord_channel}  backend=${THREE_REGRESSION_DISCORD_BACKEND}
-- Feishu:  http://${ui_host}:${THREE_REGRESSION_FEISHU_PORT:-15133}  channel=${feishu_channel}  backend=${THREE_REGRESSION_FEISHU_BACKEND}
-- WeChat:  http://${ui_host}:${THREE_REGRESSION_WECHAT_PORT:-15134}  channel=${wechat_channel}  backend=${THREE_REGRESSION_WECHAT_BACKEND:-opencode}
+Unified regression environment is ready:
+  URL: http://${ui_host}:${port}
+  Default backend: ${default_backend}
+
+  Platform routing:
+  - Slack:   channel=${slack_channel}  backend=${THREE_REGRESSION_SLACK_BACKEND:-${default_backend}}
+  - Discord: channel=${discord_channel}  backend=${THREE_REGRESSION_DISCORD_BACKEND:-${default_backend}}
+  - Feishu:  channel=${feishu_channel}  backend=${THREE_REGRESSION_FEISHU_BACKEND:-${default_backend}}
+  - WeChat:  channel=${wechat_channel}  backend=${THREE_REGRESSION_WECHAT_BACKEND:-${default_backend}}
 EOF
 }
 
 wait_for_service() {
-    local service="$1"
-    local port="$2"
+    local port="$1"
     local url="http://127.0.0.1:${port}"
 
     for _ in $(seq 1 60); do
@@ -177,8 +169,8 @@ wait_for_service() {
         sleep 2
     done
 
-    echo "Service $service did not become ready on port $port" >&2
-    "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs "$service" || true
+    echo "Service did not become ready on port $port" >&2
+    "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs vibe || true
     return 1
 }
 
@@ -195,16 +187,12 @@ case "$MODE" in
         exit 0
         ;;
     logs)
-        if [ -n "$LOGS_SERVICE" ]; then
-            "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs -f "$LOGS_SERVICE"
-        else
-            "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs -f
-        fi
+        "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs -f vibe
         exit 0
         ;;
 esac
 
-echo "Stopping previous three-end regression containers..."
+echo "Stopping previous regression container..."
 "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans >/dev/null 2>&1 || true
 
 echo "Preparing generated config and state..."
@@ -212,17 +200,14 @@ PREPARE_ARGS=(--output-root "$OUTPUT_ROOT")
 PREPARE_ARGS+=(--reset-mode "$RESET_MODE")
 "$PYTHON_BIN" "$REPO_ROOT/scripts/prepare_three_regression.py" "${PREPARE_ARGS[@]}"
 
-echo "Starting three-end regression containers..."
+echo "Starting unified regression container..."
 if [ -n "$BUILD_FLAG" ]; then
     "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d --build --force-recreate --remove-orphans
 else
     "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans
 fi
 
-echo "Waiting for services to become healthy..."
-wait_for_service slack "${THREE_REGRESSION_SLACK_PORT:-15131}"
-wait_for_service discord "${THREE_REGRESSION_DISCORD_PORT:-15132}"
-wait_for_service feishu "${THREE_REGRESSION_FEISHU_PORT:-15133}"
-wait_for_service wechat "${THREE_REGRESSION_WECHAT_PORT:-15134}"
+echo "Waiting for service to become healthy..."
+wait_for_service "${THREE_REGRESSION_PORT:-15130}"
 
 print_summary

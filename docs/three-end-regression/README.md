@@ -1,13 +1,13 @@
-# Three-End Regression
+# Regression Testing
 
-`三端回归测试` is the manual regression workflow for this repository. It starts three isolated containers in parallel, one for Slack, one for Discord, and one for Feishu, with each environment pre-bound to its own channel and backend agent.
+`三端回归测试` is the manual regression workflow for this repository. It starts a single unified container with all four IM platforms (Slack, Discord, Feishu, WeChat) running simultaneously, each with per-channel backend routing pre-configured.
 
 The container state is persistent by default. Changes you make through the UI or inside the running service, such as channel routing and other saved settings, stay under `_tmp/three-regression/` across normal restarts.
 
 It complements the existing automated `E2E` flow instead of replacing it:
 
 - `E2E testing` keeps using scripts and pytest for automatable scenarios.
-- `Three-end regression` is for human-triggered checks on real IM platforms.
+- `Regression testing` is for human-triggered checks on real IM platforms.
 
 ## Setup
 
@@ -21,12 +21,12 @@ It complements the existing automated `E2E` flow instead of replacing it:
 
 - shared LLM credentials: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
 - optional API base URLs: `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`
-- optional UI host override: `THREE_REGRESSION_UI_HOST` (useful when exposing the three UIs on a LAN host)
-- platform-specific bot credentials for Slack, Discord, and Feishu
+- optional UI host override: `THREE_REGRESSION_UI_HOST` (useful when exposing the UI on a LAN host)
+- platform-specific bot credentials for Slack, Discord, Feishu, and WeChat
 - the target regression channel for each platform, if you want channel routing preseeded at startup
-- the backend that each platform should pin to by default
+- the backend that each platform's channel should pin to by default
 
-Channel IDs are optional. If you leave them empty, the containers still start and you can configure channels later from the Web UI.
+Channel IDs are optional. If you leave them empty, the container still starts and you can configure channels later from the Web UI.
 
 3. Keep these local-only files out of git:
 
@@ -35,7 +35,7 @@ Channel IDs are optional. If you leave them empty, the containers still start an
 
 ## Usage
 
-The default command rebuilds the image, preserves your current regression state, and recreates all three containers:
+The default command rebuilds the image, preserves your current regression state, and recreates the container:
 
 ```bash
 ./scripts/run_three_regression.sh
@@ -49,7 +49,6 @@ Common commands:
 ./scripts/run_three_regression.sh --reset-all
 ./scripts/run_three_regression.sh --status
 ./scripts/run_three_regression.sh --logs
-./scripts/run_three_regression.sh --logs slack
 ./scripts/run_three_regression.sh --down
 ```
 
@@ -62,45 +61,60 @@ DOCKER_BIN=/usr/local/bin/docker ./scripts/run_three_regression.sh
 Reset modes:
 
 - `--reset-config`: re-seed `config/`, `state/`, and `runtime/` from `.env.three-regression`, while preserving `workdir/`, `attachments/`, and `logs/`
-- `--reset-all`: wipe the full per-service state directory, including `workdir/`, then re-seed from `.env.three-regression`
+- `--reset-all`: wipe the full state directory, including `workdir/`, then re-seed from `.env.three-regression`
 
 `--reset-state` remains available as a backward-compatible alias for `--reset-all`.
 
 ## What You Get
 
-On success, the script prints three local UI URLs together with the configured channel/backend mapping, for example:
+On success, the script prints one local UI URL together with the configured per-platform channel/backend mapping:
 
 ```text
-Slack   -> http://127.0.0.1:15131
-Discord -> http://127.0.0.1:15132
-Feishu  -> http://127.0.0.1:15133
+Unified regression environment is ready:
+  URL: http://127.0.0.1:15130
+  Default backend: opencode
+
+  Platform routing:
+  - Slack:   channel=C123SLACK  backend=opencode
+  - Discord: channel=1234567890  backend=codex
+  - Feishu:  channel=oc_xxx     backend=claude
+  - WeChat:  channel=(QR login)  backend=opencode
 ```
 
-If you set `THREE_REGRESSION_UI_HOST=192.168.2.3`, the printed URLs and generated UI config will use that host instead.
+If you set `THREE_REGRESSION_UI_HOST=192.168.2.3`, the printed URL and generated UI config will use that host instead.
 
-On first startup, or when you run with `--reset-config` / `--reset-all`, the runner seeds these files for every service:
+On first startup, or when you run with `--reset-config` / `--reset-all`, the runner seeds these files under `_tmp/three-regression/vibe/`:
 
 - `config/config.json`
 - `state/settings.json`
 - `state/sessions.json`
 
-The generated state lives under `_tmp/three-regression/`, which keeps each regression environment isolated while preserving your later modifications by default.
+The generated state lives under `_tmp/three-regression/`, which keeps the regression environment isolated while preserving your later modifications by default.
 
 Persistence rules:
 
 - `./scripts/run_three_regression.sh` preserves UI changes, sessions, and files under `workdir/`
 - `--reset-config` preserves `workdir/` files but resets service config/state
-- `--reset-all` clears everything under each service directory
+- `--reset-all` clears everything under the state directory
+
+## Architecture
+
+The unified container leverages the multi-platform IM support to run all four platforms in one process:
+
+- **Config**: A single `config.json` with `platforms.enabled: ["slack", "discord", "lark", "wechat"]` and all four platform credential blocks populated.
+- **Routing**: Per-channel backend routing via `settings.json` scoped by platform, so each platform's test channel resolves to its designated backend.
+- **Agents**: All three backend agents (OpenCode, Claude, Codex) are enabled and installed in the container image.
+- **State**: A single `_tmp/three-regression/vibe/` directory holds config, state, logs, and the agent workdir.
+- **Shared agent home configs**: Generated under `_tmp/three-regression/shared-home/` and mounted read-only into the container.
 
 ## Configuration Rules
 
-- The Slack container always runs Slack platform config.
-- The Discord container always runs Discord platform config.
-- The Feishu container uses the internal `lark` platform config while keeping `feishu` naming in the regression workflow.
-- All three containers receive the shared credentials needed by Claude, Codex, and OpenCode.
-- Shared Claude / Codex / OpenCode home configs are generated under `_tmp/three-regression/shared-home/` and mounted into all three containers.
-- Each container preloads channel routing in `settings.json`, so the target channel resolves to the expected backend immediately after startup.
-- The default working directory is `/data/vibe_remote/workdir`, a writable per-container sandbox under the generated regression state.
+- All four IM platforms (Slack, Discord, Feishu, WeChat) run in a single container process.
+- The `platforms.primary` is set to `slack` by default (controls fallback behavior).
+- `THREE_REGRESSION_DEFAULT_BACKEND` sets the global default backend (default: `opencode`).
+- Per-platform backend vars (`THREE_REGRESSION_SLACK_BACKEND`, etc.) control per-channel routing in `settings.json`.
+- All three agent CLIs receive shared credentials via `_tmp/three-regression/shared-home/`.
+- The default working directory is `/data/vibe_remote/workdir`, a writable sandbox under the generated state.
 
 ## Secret Safety
 

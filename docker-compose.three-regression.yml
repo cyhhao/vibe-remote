@@ -1,66 +1,30 @@
-x-vibe-regression: &vibe-regression
-  image: vibe-remote-three-regression:latest
-  build:
-    context: .
-    dockerfile: Dockerfile
-    target: integration
-  command: ["full"]
-  environment:
-    VIBE_REMOTE_HOME: /data/vibe_remote
-    VIBE_UI_PORT: 5123
-    PYTHONUNBUFFERED: "1"
-    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-    ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-    ANTHROPIC_AUTH_TOKEN: ${THREE_REGRESSION_CLAUDE_AUTH_TOKEN:-}
-    CLAUDE_CODE_ATTRIBUTION_HEADER: ${THREE_REGRESSION_CLAUDE_ATTRIBUTION_HEADER:-0}
-    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-  healthcheck:
-    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5123/health', timeout=3)"]
-    interval: 3s
-    timeout: 5s
-    retries: 20
-    start_period: 30s
-
 services:
-  slack:
-    <<: *vibe-regression
+  vibe:
+    image: vibe-remote-three-regression:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: integration
+    command: ["full"]
+    environment:
+      VIBE_REMOTE_HOME: /data/vibe_remote
+      VIBE_UI_PORT: 5123
+      PYTHONUNBUFFERED: "1"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_AUTH_TOKEN: ${THREE_REGRESSION_CLAUDE_AUTH_TOKEN:-}
+      CLAUDE_CODE_ATTRIBUTION_HEADER: ${THREE_REGRESSION_CLAUDE_ATTRIBUTION_HEADER:-0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5123/health', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     ports:
-      - "${THREE_REGRESSION_SLACK_PORT:-15131}:5123"
+      - "${THREE_REGRESSION_PORT:-15130}:5123"
     volumes:
-      - ./_tmp/three-regression/slack:/data/vibe_remote
-      - ./_tmp/three-regression/shared-home/.claude/settings.json:/root/.claude/settings.json:ro
-      - ./_tmp/three-regression/shared-home/.codex/config.toml:/root/.codex/config.toml:ro
-      - ./_tmp/three-regression/shared-home/.codex/auth.json:/root/.codex/auth.json:ro
-      - ./_tmp/three-regression/shared-home/.config/opencode/opencode.json:/root/.config/opencode/opencode.json:ro
-
-  discord:
-    <<: *vibe-regression
-    ports:
-      - "${THREE_REGRESSION_DISCORD_PORT:-15132}:5123"
-    volumes:
-      - ./_tmp/three-regression/discord:/data/vibe_remote
-      - ./_tmp/three-regression/shared-home/.claude/settings.json:/root/.claude/settings.json:ro
-      - ./_tmp/three-regression/shared-home/.codex/config.toml:/root/.codex/config.toml:ro
-      - ./_tmp/three-regression/shared-home/.codex/auth.json:/root/.codex/auth.json:ro
-      - ./_tmp/three-regression/shared-home/.config/opencode/opencode.json:/root/.config/opencode/opencode.json:ro
-
-  feishu:
-    <<: *vibe-regression
-    ports:
-      - "${THREE_REGRESSION_FEISHU_PORT:-15133}:5123"
-    volumes:
-      - ./_tmp/three-regression/feishu:/data/vibe_remote
-      - ./_tmp/three-regression/shared-home/.claude/settings.json:/root/.claude/settings.json:ro
-      - ./_tmp/three-regression/shared-home/.codex/config.toml:/root/.codex/config.toml:ro
-      - ./_tmp/three-regression/shared-home/.codex/auth.json:/root/.codex/auth.json:ro
-      - ./_tmp/three-regression/shared-home/.config/opencode/opencode.json:/root/.config/opencode/opencode.json:ro
-
-  wechat:
-    <<: *vibe-regression
-    ports:
-      - "${THREE_REGRESSION_WECHAT_PORT:-15134}:5123"
-    volumes:
-      - ./_tmp/three-regression/wechat:/data/vibe_remote
+      - ./_tmp/three-regression/vibe:/data/vibe_remote
       - ./_tmp/three-regression/shared-home/.claude/settings.json:/root/.claude/settings.json:ro
       - ./_tmp/three-regression/shared-home/.codex/config.toml:/root/.codex/config.toml:ro
       - ./_tmp/three-regression/shared-home/.codex/auth.json:/root/.codex/auth.json:ro
