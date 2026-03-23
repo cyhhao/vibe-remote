@@ -221,6 +221,7 @@ class SessionHandler(BaseHandler):
             "cwd": working_path,
             "system_prompt": final_system_prompt,
             "resume": stored_claude_session_id if stored_claude_session_id else None,
+            "cli_path": getattr(self.config.claude, "cli_path", None) or None,
             "extra_args": extra_args,
             "setting_sources": ["user"],  # Load user settings from ~/.claude/settings.json
             # Disable AskUserQuestion tool - SDK cannot respond to it programmatically
@@ -265,6 +266,7 @@ class SessionHandler(BaseHandler):
         logger.info(f"  - system_prompt: {options.system_prompt}")
         logger.info(f"  - resume: {options.resume}")
         logger.info(f"  - continue_conversation: {options.continue_conversation}")
+        logger.info(f"  - cli_path: {options.cli_path}")
         if subagent_name:
             logger.info(f"  - subagent: {subagent_name}")
 
