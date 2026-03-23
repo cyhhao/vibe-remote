@@ -309,21 +309,25 @@ class DiscordBot(BaseIMClient):
 
     async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
         """Send a direct message to a Discord user."""
-        try:
-            uid = self._to_int_id(user_id)
-            if uid is None:
+
+        async def _impl() -> Optional[str]:
+            try:
+                uid = self._to_int_id(user_id)
+                if uid is None:
+                    return None
+                user = self.client.get_user(uid)
+                if user is None:
+                    user = await self.client.fetch_user(uid)
+                if user is None:
+                    return None
+                dm_channel = user.dm_channel or await user.create_dm()
+                message = await dm_channel.send(content=text)
+                return str(message.id)
+            except Exception as e:
+                logger.error("Failed to send DM to Discord user %s: %s", user_id, e)
                 return None
-            user = self.client.get_user(uid)
-            if user is None:
-                user = await self.client.fetch_user(uid)
-            if user is None:
-                return None
-            dm_channel = user.dm_channel or await user.create_dm()
-            message = await dm_channel.send(content=text)
-            return str(message.id)
-        except Exception as e:
-            logger.error("Failed to send DM to Discord user %s: %s", user_id, e)
-            return None
+
+        return await self._run_on_client_loop(_impl())
 
     async def send_message(
         self,
@@ -432,34 +436,40 @@ class DiscordBot(BaseIMClient):
         return True
 
     async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
-        target = await self._fetch_channel(context.thread_id or context.channel_id)
-        if target is None:
-            return False
-        try:
-            msg = await target.fetch_message(int(message_id))
-            normalized = emoji
-            if normalized in [":eyes:", "eyes", "eye", "👀"]:
-                normalized = "👀"
-            await msg.add_reaction(normalized)
-            return True
-        except Exception as err:
-            logger.debug("Failed to add Discord reaction: %s", err)
-            return False
+        async def _impl() -> bool:
+            target = await self._resolve_target(context)
+            if target is None:
+                return False
+            try:
+                msg = await target.fetch_message(int(message_id))
+                normalized = emoji
+                if normalized in [":eyes:", "eyes", "eye", "👀"]:
+                    normalized = "👀"
+                await msg.add_reaction(normalized)
+                return True
+            except Exception as err:
+                logger.debug("Failed to add Discord reaction: %s", err)
+                return False
+
+        return await self._run_on_client_loop(_impl())
 
     async def remove_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
-        target = await self._fetch_channel(context.thread_id or context.channel_id)
-        if target is None:
-            return False
-        try:
-            msg = await target.fetch_message(int(message_id))
-            normalized = emoji
-            if normalized in [":eyes:", "eyes", "eye", "👀"]:
-                normalized = "👀"
-            await msg.remove_reaction(normalized, self.client.user)
-            return True
-        except Exception as err:
-            logger.debug("Failed to remove Discord reaction: %s", err)
-            return False
+        async def _impl() -> bool:
+            target = await self._resolve_target(context)
+            if target is None:
+                return False
+            try:
+                msg = await target.fetch_message(int(message_id))
+                normalized = emoji
+                if normalized in [":eyes:", "eyes", "eye", "👀"]:
+                    normalized = "👀"
+                await msg.remove_reaction(normalized, self.client.user)
+                return True
+            except Exception as err:
+                logger.debug("Failed to remove Discord reaction: %s", err)
+                return False
+
+        return await self._run_on_client_loop(_impl())
 
     async def upload_markdown(
         self,
@@ -468,13 +478,16 @@ class DiscordBot(BaseIMClient):
         content: str,
         filetype: str = "markdown",
     ) -> str:
-        target = await self._fetch_channel(context.thread_id or context.channel_id)
-        if target is None:
-            raise RuntimeError("Discord channel not found")
-        data = (content or "").encode("utf-8")
-        file_obj = discord.File(io.BytesIO(data), filename=title)
-        message = await target.send(file=file_obj)
-        return str(message.id)
+        async def _impl() -> str:
+            target = await self._resolve_target(context)
+            if target is None:
+                raise RuntimeError("Discord channel not found")
+            data = (content or "").encode("utf-8")
+            file_obj = discord.File(io.BytesIO(data), filename=title)
+            message = await target.send(file=file_obj)
+            return str(message.id)
+
+        return await self._run_on_client_loop(_impl())
 
     async def send_typing_indicator(self, context: MessageContext) -> bool:
         async def _impl() -> bool:
@@ -507,15 +520,19 @@ class DiscordBot(BaseIMClient):
         title: Optional[str] = None,
     ) -> str:
         """Upload a local file to the Discord conversation."""
-        target = await self._fetch_channel(context.thread_id or context.channel_id)
-        if target is None:
-            raise RuntimeError("Discord channel not found")
 
-        # Keep original extension for proper Discord preview handling.
-        filename = os.path.basename(file_path)
-        file_obj = discord.File(file_path, filename=filename)
-        message = await target.send(file=file_obj)
-        return str(message.id)
+        async def _impl() -> str:
+            target = await self._resolve_target(context)
+            if target is None:
+                raise RuntimeError("Discord channel not found")
+
+            # Keep original extension for proper Discord preview handling.
+            filename = os.path.basename(file_path)
+            file_obj = discord.File(file_path, filename=filename)
+            message = await target.send(file=file_obj)
+            return str(message.id)
+
+        return await self._run_on_client_loop(_impl())
 
     async def download_file(
         self,
@@ -585,27 +602,34 @@ class DiscordBot(BaseIMClient):
         cached = self._user_info_cache.get(user_id)
         if cached is not None:
             return cached
-        uid = self._to_int_id(user_id)
-        if uid is None:
-            return {"id": user_id}
-        user = self.client.get_user(uid)
-        if user is None:
-            try:
-                user = await self.client.fetch_user(uid)
-            except Exception:
-                user = None
-        if user is None:
-            return {"id": user_id}
-        info = {"id": str(user.id), "name": user.name, "display_name": user.display_name}
-        self._user_info_cache[user_id] = info
-        return info
+
+        async def _impl() -> Dict[str, Any]:
+            uid = self._to_int_id(user_id)
+            if uid is None:
+                return {"id": user_id}
+            user = self.client.get_user(uid)
+            if user is None:
+                try:
+                    user = await self.client.fetch_user(uid)
+                except Exception:
+                    user = None
+            if user is None:
+                return {"id": user_id}
+            info = {"id": str(user.id), "name": user.name, "display_name": user.display_name}
+            self._user_info_cache[user_id] = info
+            return info
+
+        return await self._run_on_client_loop(_impl())
 
     async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
-        channel = await self._fetch_channel(channel_id)
-        if channel is None:
-            return {"id": channel_id, "name": channel_id}
-        name = getattr(channel, "name", None) or channel_id
-        return {"id": str(channel.id), "name": name}
+        async def _impl() -> Dict[str, Any]:
+            channel = await self._fetch_channel(channel_id)
+            if channel is None:
+                return {"id": channel_id, "name": channel_id}
+            name = getattr(channel, "name", None) or channel_id
+            return {"id": str(channel.id), "name": name}
+
+        return await self._run_on_client_loop(_impl())
 
     # ---------------------------------------------------------------------
     # Discord-specific interaction helpers

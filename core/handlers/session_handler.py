@@ -131,9 +131,9 @@ class SessionHandler(BaseHandler):
         settings_key = self._get_settings_key(context)
         stored_claude_session_id = self.sessions.get_claude_session_id(settings_key, base_session_id)
 
-        # Read configuration overrides using settings_key (user_id for DM, channel_id for channels)
-        channel_settings = self.settings_manager.get_channel_settings(settings_key)
-        routing = channel_settings.routing if channel_settings else None
+        # Read routing overrides via get_channel_routing which correctly
+        # resolves DM users from the users store (not the stale channels store).
+        routing = self.settings_manager.get_channel_routing(settings_key)
 
         # Priority: subagent params > channel config > agent frontmatter > global default
         # Note: agent frontmatter model is applied later after loading agent file
