@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 import sys
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -71,6 +72,10 @@ class _Controller:
         return context.channel_id
 
 
+def _run_session(handler: SessionHandler, context: MessageContext):
+    return asyncio.run(handler.get_or_create_claude_session(context))
+
+
 def test_to_app_config_preserves_claude_cli_path() -> None:
     v2 = V2Config(
         mode="self_host",
@@ -86,7 +91,7 @@ def test_to_app_config_preserves_claude_cli_path() -> None:
 
 
 def test_session_handler_passes_configured_claude_cli_path(monkeypatch, tmp_path: Path) -> None:
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
     class _StubClaudeSDKClient:
         def __init__(self, options):
@@ -101,8 +106,31 @@ def test_session_handler_passes_configured_claude_cli_path(monkeypatch, tmp_path
     handler = SessionHandler(controller)
     context = MessageContext(user_id="U123", channel_id="C123")
 
-    client = asyncio.run(handler.get_or_create_claude_session(context))
+    client = _run_session(handler, context)
 
     assert captured["connected"] is True
     assert captured["options"].cli_path == "/usr/local/bin/claude-proxy"
     assert controller.claude_sessions[f"slack_C123:{tmp_path}"] is client
+
+
+def test_session_handler_keeps_sdk_default_for_default_claude_binary(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    controller.config.claude.cli_path = "claude"
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    _run_session(handler, context)
+
+    assert captured["connected"] is True
+    assert captured["options"].cli_path is None

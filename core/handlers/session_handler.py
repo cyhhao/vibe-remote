@@ -54,6 +54,17 @@ class SessionHandler(BaseHandler):
         permission_mode = getattr(getattr(self.config, "claude", None), "permission_mode", None)
         return permission_mode == "bypassPermissions" and self._running_as_root()
 
+    def _get_claude_cli_path_override(self) -> Optional[str]:
+        cli_path = getattr(getattr(self.config, "claude", None), "cli_path", None)
+        if cli_path is None:
+            return None
+
+        normalized = str(cli_path).strip()
+        if not normalized or normalized == "claude":
+            return None
+
+        return normalized
+
     def _load_agent_file(self, agent_name: str, working_path: str) -> Optional[Dict[str, Any]]:
         """Load an agent file and return its parsed content.
 
@@ -221,7 +232,6 @@ class SessionHandler(BaseHandler):
             "cwd": working_path,
             "system_prompt": final_system_prompt,
             "resume": stored_claude_session_id if stored_claude_session_id else None,
-            "cli_path": getattr(self.config.claude, "cli_path", None) or None,
             "extra_args": extra_args,
             "setting_sources": ["user"],  # Load user settings from ~/.claude/settings.json
             # Disable AskUserQuestion tool - SDK cannot respond to it programmatically
@@ -229,6 +239,9 @@ class SessionHandler(BaseHandler):
             "disallowed_tools": ["AskUserQuestion"],
             "env": claude_env,  # Pass Anthropic/Claude env vars
         }
+        cli_path_override = self._get_claude_cli_path_override()
+        if cli_path_override:
+            option_kwargs["cli_path"] = cli_path_override
         if effective_effort:
             option_kwargs["effort"] = effective_effort
         # Only set allowed_tools if agent file specifies tools.
