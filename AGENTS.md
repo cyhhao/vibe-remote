@@ -47,7 +47,7 @@ Decision checklist before writing code:
 - `modules/im/formatters/` - platform-specific formatting built on shared formatter concepts
 - `config/` - V2 config, settings, sessions, paths, and compatibility conversion
 - `ui/` - React + Vite + TypeScript Web UI
-- `scripts/` - operational helpers, including three-end regression workflows
+- `scripts/` - operational helpers, including regression testing workflows
 - `tests/` - pytest-style unit/integration/regression coverage
 
 ### Runtime Data and Important Paths
@@ -55,7 +55,7 @@ Decision checklist before writing code:
 - logs: `~/.vibe_remote/logs/vibe_remote.log`
 - persisted state: `~/.vibe_remote/state/`
 - default agent working directory: `_tmp/`
-- generated three-end regression data: `_tmp/three-regression/`
+- generated regression data: `_tmp/three-regression/`
 
 ## 3. Runtime Environments
 
@@ -78,11 +78,11 @@ Hard rule:
 
 - **Never restart the local `vibe` service for routine verification.**
 - The local `vibe` process may be the coding agent runtime itself; restarting it can interrupt the session.
-- Unless the user explicitly asks otherwise, use the Docker three-end regression environment for user-facing verification.
+- Unless the user explicitly asks otherwise, use the Docker regression environment for user-facing verification.
 
 ### Regression Testing (Docker)
 
-When the user says `三端回归测试`, treat it as:
+When the user says `回归测试`, treat it as:
 
 - update the latest code into the existing Docker-based regression environment
 - let the user verify behavior on Slack, Discord, Feishu/Lark, and WeChat
@@ -206,7 +206,7 @@ Testing guidance:
 - use pytest-style tests (`test_<feature>.py`) colocated or under `tests/`
 - for IM integrations, stub/mock platform clients and validate outbound payload/schema behavior
 - for UI changes, run `npm run build` in `ui/`
-- for cross-platform or user-facing verification, use the Docker three-end regression workflow
+- for cross-platform or user-facing verification, use the Docker regression workflow
 - until CI fully covers a flow, do a manual sanity check for the affected workflow when practical
 
 ## 8. Git, Security, and Operational Safety

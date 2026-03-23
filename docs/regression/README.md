@@ -1,6 +1,6 @@
 # Regression Testing
 
-`三端回归测试` is the manual regression workflow for this repository. It starts a single unified container with all four IM platforms (Slack, Discord, Feishu, WeChat) running simultaneously, each with per-channel backend routing pre-configured.
+`回归测试` is the manual regression workflow for this repository. It starts a single unified container with all four IM platforms (Slack, Discord, Feishu, WeChat) running simultaneously, each with per-channel backend routing pre-configured.
 
 The container state is persistent by default. Changes you make through the UI or inside the running service, such as channel routing and other saved settings, stay under `_tmp/three-regression/` across normal restarts.
 
