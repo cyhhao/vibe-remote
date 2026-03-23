@@ -175,6 +175,9 @@ class DiscordBot(BaseIMClient):
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         return await asyncio.wrap_future(future)
 
+    async def run_on_client_loop(self, coro):
+        return await self._run_on_client_loop(coro)
+
     def register_handlers(self):
         return
 

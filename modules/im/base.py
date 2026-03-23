@@ -573,6 +573,11 @@ class BaseIMClient(ABC):
 
         return False
 
+    async def run_on_client_loop(self, coro):
+        """Run a coroutine on the platform client's preferred event loop."""
+
+        return await coro
+
     async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
         """Send a direct message to a user by their platform user ID.
 

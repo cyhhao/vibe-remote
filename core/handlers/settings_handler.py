@@ -150,15 +150,17 @@ class SettingsHandler(BaseHandler):
             current_language = self.config.language
 
             try:
-                await im_client.open_settings_modal(
-                    trigger_id,
-                    user_settings,
-                    message_types,
-                    display_names,
-                    context.channel_id,
-                    current_require_mention=current_require_mention,
-                    global_require_mention=global_require_mention,
-                    current_language=current_language,
+                await im_client.run_on_client_loop(
+                    im_client.open_settings_modal(
+                        trigger_id,
+                        user_settings,
+                        message_types,
+                        display_names,
+                        context.channel_id,
+                        current_require_mention=current_require_mention,
+                        global_require_mention=global_require_mention,
+                        current_language=current_language,
+                    )
                 )
             except Exception as e:
                 logger.error(f"Error opening settings modal: {e}")
@@ -188,16 +190,18 @@ class SettingsHandler(BaseHandler):
         current_language = self.config.language
 
         if hasattr(im_client, "open_settings_modal"):
-            await im_client.open_settings_modal(
-                interaction,
-                user_settings,
-                message_types,
-                display_names,
-                context.channel_id,
-                current_require_mention=current_require_mention,
-                global_require_mention=global_require_mention,
-                current_language=current_language,
-                owner_user_id=context.user_id,
+            await im_client.run_on_client_loop(
+                im_client.open_settings_modal(
+                    interaction,
+                    user_settings,
+                    message_types,
+                    display_names,
+                    context.channel_id,
+                    current_require_mention=current_require_mention,
+                    global_require_mention=global_require_mention,
+                    current_language=current_language,
+                    owner_user_id=context.user_id,
+                )
             )
             return
         await self._handle_settings_traditional(context)
@@ -216,15 +220,17 @@ class SettingsHandler(BaseHandler):
 
         if hasattr(im_client, "open_settings_modal"):
             try:
-                await im_client.open_settings_modal(
-                    trigger_id=context,
-                    user_settings=user_settings,
-                    message_types=message_types,
-                    display_names=display_names,
-                    channel_id=context.channel_id,
-                    current_require_mention=current_require_mention,
-                    global_require_mention=global_require_mention,
-                    current_language=current_language,
+                await im_client.run_on_client_loop(
+                    im_client.open_settings_modal(
+                        trigger_id=context,
+                        user_settings=user_settings,
+                        message_types=message_types,
+                        display_names=display_names,
+                        channel_id=context.channel_id,
+                        current_require_mention=current_require_mention,
+                        global_require_mention=global_require_mention,
+                        current_language=current_language,
+                    )
                 )
             except Exception as e:
                 logger.error(f"Error opening settings card for Lark: {e}", exc_info=True)
@@ -461,10 +467,12 @@ class SettingsHandler(BaseHandler):
 
         # Open modal
         try:
-            await im_client.open_routing_modal(
-                trigger_id=trigger_id,
-                channel_id=context.channel_id,
-                **routing_data.as_kwargs(),
+            await im_client.run_on_client_loop(
+                im_client.open_routing_modal(
+                    trigger_id=trigger_id,
+                    channel_id=context.channel_id,
+                    **routing_data.as_kwargs(),
+                )
             )
         except Exception as e:
             logger.error(f"Error opening routing modal: {e}", exc_info=True)
@@ -476,10 +484,12 @@ class SettingsHandler(BaseHandler):
         routing_data = await self._gather_routing_modal_data(context)
 
         try:
-            await im_client.open_routing_modal(
-                trigger_id=interaction or context,
-                channel_id=context.channel_id,
-                **routing_data.as_kwargs(),
+            await im_client.run_on_client_loop(
+                im_client.open_routing_modal(
+                    trigger_id=interaction or context,
+                    channel_id=context.channel_id,
+                    **routing_data.as_kwargs(),
+                )
             )
         except Exception as e:
             logger.error(f"Error opening routing modal: {e}", exc_info=True)
@@ -495,10 +505,12 @@ class SettingsHandler(BaseHandler):
         routing_data = await self._gather_routing_modal_data(context)
 
         try:
-            await im_client.open_routing_modal(
-                trigger_id=context,
-                channel_id=context.channel_id,
-                **routing_data.as_kwargs(),
+            await im_client.run_on_client_loop(
+                im_client.open_routing_modal(
+                    trigger_id=context,
+                    channel_id=context.channel_id,
+                    **routing_data.as_kwargs(),
+                )
             )
         except Exception as e:
             logger.error(f"Error opening routing card for Lark: {e}", exc_info=True)

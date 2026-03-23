@@ -311,7 +311,9 @@ class CommandHandlers(BaseHandler):
             if interaction and hasattr(im_client, "open_change_cwd_modal"):
                 try:
                     current_cwd = self.controller.get_cwd(context)
-                    await im_client.open_change_cwd_modal(interaction, current_cwd, context.channel_id)
+                    await im_client.run_on_client_loop(
+                        im_client.open_change_cwd_modal(interaction, current_cwd, context.channel_id)
+                    )
                     return
                 except Exception as e:
                     logger.error(f"Error opening change CWD modal: {e}")
@@ -325,10 +327,12 @@ class CommandHandlers(BaseHandler):
             if hasattr(im_client, "open_change_cwd_modal"):
                 try:
                     current_cwd = self.controller.get_cwd(context)
-                    await im_client.open_change_cwd_modal(
-                        trigger_id=context,
-                        current_cwd=current_cwd,
-                        channel_id=context.channel_id,
+                    await im_client.run_on_client_loop(
+                        im_client.open_change_cwd_modal(
+                            trigger_id=context,
+                            current_cwd=current_cwd,
+                            channel_id=context.channel_id,
+                        )
                     )
                     return
                 except Exception as e:
@@ -356,7 +360,9 @@ class CommandHandlers(BaseHandler):
                 # Get current CWD based on context
                 current_cwd = self.controller.get_cwd(context)
 
-                await im_client.open_change_cwd_modal(trigger_id, current_cwd, context.channel_id)
+                await im_client.run_on_client_loop(
+                    im_client.open_change_cwd_modal(trigger_id, current_cwd, context.channel_id)
+                )
             except Exception as e:
                 logger.error(f"Error opening change CWD modal: {e}")
                 channel_context = self._get_channel_context(context)
@@ -389,12 +395,14 @@ class CommandHandlers(BaseHandler):
                 return
             if interaction and hasattr(im_client, "open_resume_session_modal"):
                 try:
-                    await im_client.open_resume_session_modal(
-                        trigger_id=interaction,
-                        sessions_by_agent=sessions_by_agent,
-                        channel_id=context.channel_id,
-                        thread_id=context.thread_id or context.message_id or "",
-                        host_message_ts=context.message_id,
+                    await im_client.run_on_client_loop(
+                        im_client.open_resume_session_modal(
+                            trigger_id=interaction,
+                            sessions_by_agent=sessions_by_agent,
+                            channel_id=context.channel_id,
+                            thread_id=context.thread_id or context.message_id or "",
+                            host_message_ts=context.message_id,
+                        )
                     )
                     return
                 except Exception as e:
@@ -411,12 +419,14 @@ class CommandHandlers(BaseHandler):
             # Allow opening modal even with no sessions (user can paste manually)
             if hasattr(im_client, "open_resume_session_modal"):
                 try:
-                    await im_client.open_resume_session_modal(
-                        trigger_id=context,
-                        sessions_by_agent=sessions_by_agent or {},
-                        channel_id=context.channel_id,
-                        thread_id=context.thread_id or context.message_id or "",
-                        host_message_ts=context.message_id,
+                    await im_client.run_on_client_loop(
+                        im_client.open_resume_session_modal(
+                            trigger_id=context,
+                            sessions_by_agent=sessions_by_agent or {},
+                            channel_id=context.channel_id,
+                            thread_id=context.thread_id or context.message_id or "",
+                            host_message_ts=context.message_id,
+                        )
                     )
                     return
                 except Exception as e:
@@ -456,12 +466,14 @@ class CommandHandlers(BaseHandler):
             )
 
         try:
-            await im_client.open_resume_session_modal(
-                trigger_id=trigger_id,
-                sessions_by_agent=sessions_by_agent,
-                channel_id=context.channel_id,
-                thread_id=context.thread_id or context.message_id or "",
-                host_message_ts=context.message_id,
+            await im_client.run_on_client_loop(
+                im_client.open_resume_session_modal(
+                    trigger_id=trigger_id,
+                    sessions_by_agent=sessions_by_agent,
+                    channel_id=context.channel_id,
+                    thread_id=context.thread_id or context.message_id or "",
+                    host_message_ts=context.message_id,
+                )
             )
         except Exception as e:
             logger.error(f"Error opening resume modal: {e}")
