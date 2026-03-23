@@ -151,7 +151,7 @@ class SessionHandler(BaseHandler):
             cached_base = f"{base_session_id}:{effective_agent}"
             cached_key = f"{cached_base}:{working_path}"
             cached_session_id = self.sessions.get_agent_session_id(
-                settings_key,
+                session_key,
                 cached_base,
                 agent_name="claude",
             )

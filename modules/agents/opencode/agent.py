@@ -457,7 +457,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 poll_info.base_session_id,
                 poll_info.opencode_session_id,
                 poll_info.working_path,
-                poll_info.settings_key,
+                f"{poll_info.platform}::{poll_info.settings_key}" if poll_info.platform else poll_info.settings_key,
             )
             restored_count += 1
 
