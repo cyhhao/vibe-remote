@@ -248,6 +248,31 @@ class DiscordBot(BaseIMClient):
             logger.debug("Failed to fetch channel %s: %s", channel_id, err)
             return None
 
+    def _get_context_channel(self, context: MessageContext):
+        payload = context.platform_specific or {}
+        interaction = payload.get("interaction") if isinstance(payload, dict) else None
+        if interaction is not None and getattr(interaction, "channel", None) is not None:
+            return interaction.channel
+        message = payload.get("message") if isinstance(payload, dict) else None
+        if message is not None and getattr(message, "channel", None) is not None:
+            return message.channel
+        return None
+
+    async def _resolve_target(self, context: MessageContext) -> Optional[discord.abc.Messageable]:
+        direct_channel = self._get_context_channel(context)
+        if isinstance(direct_channel, discord.Thread):
+            return direct_channel
+
+        if context.thread_id:
+            target = await self._fetch_channel(context.thread_id)
+            if isinstance(target, discord.Thread):
+                return target
+
+        if direct_channel is not None:
+            return direct_channel
+
+        return await self._fetch_channel(context.channel_id)
+
     def _extract_context_ids(self, channel: discord.abc.GuildChannel | discord.Thread) -> tuple[str, Optional[str]]:
         if isinstance(channel, discord.Thread):
             parent_id = str(channel.parent_id) if channel.parent_id else str(channel.id)
@@ -293,13 +318,7 @@ class DiscordBot(BaseIMClient):
     ) -> str:
         if not text:
             raise ValueError("Discord send_message requires non-empty text")
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
+        target = await self._resolve_target(context)
         if target is None:
             raise RuntimeError("Discord channel not found")
         message = await target.send(content=text)
@@ -318,13 +337,7 @@ class DiscordBot(BaseIMClient):
         keyboard: InlineKeyboard,
         parse_mode: Optional[str] = None,
     ) -> str:
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
+        target = await self._resolve_target(context)
         if target is None:
             raise RuntimeError("Discord channel not found")
 
@@ -350,13 +363,7 @@ class DiscordBot(BaseIMClient):
         keyboard: Optional[InlineKeyboard] = None,
         parse_mode: Optional[str] = None,
     ) -> bool:
-        target = None
-        if context.thread_id:
-            target = await self._fetch_channel(context.thread_id)
-            if not isinstance(target, discord.Thread):
-                target = None
-        if target is None:
-            target = await self._fetch_channel(context.channel_id)
+        target = await self._resolve_target(context)
         if target is None:
             return False
         try:
