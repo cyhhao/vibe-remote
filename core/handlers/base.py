@@ -25,13 +25,19 @@ class BaseHandler:
     def _get_im_client(self, context: MessageContext):
         getter = getattr(self.controller, "get_im_client_for_context", None)
         if callable(getter):
-            return getter(context)
+            try:
+                return getter(context)
+            except AttributeError:
+                pass
         return self.im_client
 
     def _get_settings_manager(self, context: MessageContext):
         getter = getattr(self.controller, "get_settings_manager_for_context", None)
         if callable(getter):
-            return getter(context)
+            try:
+                return getter(context)
+            except AttributeError:
+                pass
         return self.settings_manager
 
     def _get_formatter(self, context: MessageContext):

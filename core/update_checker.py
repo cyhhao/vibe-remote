@@ -736,7 +736,8 @@ class UpdateChecker:
                 if admin_ids:
                     for uid in admin_ids:
                         try:
-                            await im_client.send_dm(uid, success_text)
+                            admin_client, raw_user_id, _ = self._get_im_client_for_user(uid)
+                            await admin_client.send_dm(raw_user_id, success_text)
                             logger.info(f"Sent post-update notification to admin {uid}")
                         except Exception as e:
                             logger.error(f"Failed to send post-update notification to admin {uid}: {e}")

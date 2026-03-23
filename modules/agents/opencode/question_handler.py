@@ -37,7 +37,10 @@ class OpenCodeQuestionHandler:
         self._answer_reactions: Dict[str, tuple] = {}
 
     def _platform_supports_question_tool(self, request: AgentRequest) -> bool:
-        return getattr(self._controller.config, "platform", "") != "wechat"
+        platform = request.context.platform or (request.context.platform_specific or {}).get("platform")
+        if not platform:
+            platform = getattr(self._controller.config, "platform", "")
+        return platform != "wechat"
 
     def _question_tool_disabled_text(self) -> str:
         translator = getattr(self._controller, "_t", None)

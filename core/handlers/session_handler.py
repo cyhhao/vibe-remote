@@ -32,11 +32,14 @@ class SessionHandler(BaseHandler):
         is_dm = bool((context.platform_specific or {}).get("is_dm", False))
         if is_dm:
             use_dm_threads = False
-            im_client = getattr(
-                self.controller,
-                "get_im_client_for_context",
-                lambda _context: getattr(self.controller, "im_client", None),
-            )(context)
+            getter = getattr(self.controller, "get_im_client_for_context", None)
+            if callable(getter):
+                try:
+                    im_client = getter(context)
+                except AttributeError:
+                    im_client = getattr(self.controller, "im_client", None)
+            else:
+                im_client = getattr(self.controller, "im_client", None)
             if im_client and hasattr(im_client, "should_use_thread_for_dm_session"):
                 use_dm_threads = bool(im_client.should_use_thread_for_dm_session())
 
