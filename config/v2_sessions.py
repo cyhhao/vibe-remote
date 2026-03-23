@@ -114,14 +114,18 @@ class SessionsStore:
         for _sid, data in self.state.active_polls.items():
             if not isinstance(data, dict):
                 continue
-            # Backfill missing platform
-            if not data.get("platform"):
-                data["platform"] = default_platform
-                migrated = True
-            # Strip any scoped settings_key back to raw ID
+            # Strip any scoped settings_key back to raw ID, and extract
+            # the platform from the prefix when the platform field is missing.
             sk = data.get("settings_key", "")
             if sk and "::" in sk:
-                data["settings_key"] = sk.split("::", 1)[1]
+                prefix, raw = sk.split("::", 1)
+                if not data.get("platform") and prefix:
+                    data["platform"] = prefix
+                data["settings_key"] = raw
+                migrated = True
+            # Backfill missing platform (when key was never scoped)
+            if not data.get("platform"):
+                data["platform"] = default_platform
                 migrated = True
         if migrated:
             self.save()

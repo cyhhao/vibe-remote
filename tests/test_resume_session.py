@@ -70,6 +70,9 @@ class _StubController(Controller):
     def _get_settings_key(self, context: MessageContext) -> str:
         return context.user_id if (context.platform_specific or {}).get("is_dm") else context.channel_id
 
+    def _get_session_key(self, context: MessageContext) -> str:
+        return f"{getattr(context, 'platform', None) or 'test'}::{self._get_settings_key(context)}"
+
 
 class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_handle_resume_session_submission_threads(self):

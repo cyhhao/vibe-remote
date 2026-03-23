@@ -83,6 +83,9 @@ class _StubController:
     def _get_settings_key(self, context: MessageContext) -> str:
         return context.user_id if context.channel_id.startswith("D") else context.channel_id
 
+    def _get_session_key(self, context: MessageContext) -> str:
+        return f"{getattr(context, 'platform', None) or 'test'}::{self._get_settings_key(context)}"
+
     def resolve_agent_for_context(self, context: MessageContext) -> str:
         return "codex"
 

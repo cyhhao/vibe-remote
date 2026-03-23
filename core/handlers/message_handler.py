@@ -139,6 +139,7 @@ class MessageHandler(BaseHandler):
 
             base_session_id, working_path, composite_key = self.session_handler.get_session_info(context)
             settings_key = self._get_settings_key(context)
+            session_key = self._get_session_key(context)
 
             # Update thread's current message_id so log messages follow this user message
             # This is critical for proper log message grouping when agent receivers
@@ -267,7 +268,7 @@ class MessageHandler(BaseHandler):
                 working_path=working_path,
                 base_session_id=base_session_id,
                 composite_session_id=composite_key,
-                settings_key=settings_key,
+                settings_key=session_key,
                 ack_message_id=ack_message_id,
                 subagent_name=subagent_name,
                 subagent_key=matched_prefix,
@@ -433,14 +434,14 @@ class MessageHandler(BaseHandler):
                     raise RuntimeError("Session handler not initialized")
 
                 base_session_id, working_path, composite_key = self.session_handler.get_session_info(context)
-                settings_key = self._get_settings_key(context)
+                session_key = self._get_session_key(context)
                 request = AgentRequest(
                     context=context,
                     message=callback_data,
                     working_path=working_path,
                     base_session_id=base_session_id,
                     composite_session_id=composite_key,
-                    settings_key=settings_key,
+                    settings_key=session_key,
                 )
                 await self.controller.agent_service.handle_message("opencode", request)
 
@@ -449,14 +450,14 @@ class MessageHandler(BaseHandler):
                     raise RuntimeError("Session handler not initialized")
 
                 base_session_id, working_path, composite_key = self.session_handler.get_session_info(context)
-                settings_key = self._get_settings_key(context)
+                session_key = self._get_session_key(context)
                 request = AgentRequest(
                     context=context,
                     message=callback_data,
                     working_path=working_path,
                     base_session_id=base_session_id,
                     composite_session_id=composite_key,
-                    settings_key=settings_key,
+                    settings_key=session_key,
                 )
                 await self.controller.agent_service.handle_message("claude", request)
 
@@ -547,7 +548,7 @@ class MessageHandler(BaseHandler):
                 raise RuntimeError("Session handler not initialized")
 
             base_session_id, working_path, composite_key = self.session_handler.get_session_info(context)
-            settings_key = self._get_settings_key(context)
+            session_key = self._get_session_key(context)
             agent_name = self.controller.resolve_agent_for_context(context)
             request = AgentRequest(
                 context=context,
@@ -555,7 +556,7 @@ class MessageHandler(BaseHandler):
                 working_path=working_path,
                 base_session_id=base_session_id,
                 composite_session_id=composite_key,
-                settings_key=settings_key,
+                settings_key=session_key,
             )
             try:
                 handled = await self.controller.agent_service.handle_stop(agent_name, request)

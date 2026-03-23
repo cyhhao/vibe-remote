@@ -36,6 +36,9 @@ class _Controller:
     def _get_settings_key(self, context: MessageContext) -> str:
         return context.user_id if (context.platform_specific or {}).get("is_dm") else context.channel_id
 
+    def _get_session_key(self, context: MessageContext) -> str:
+        return f"{getattr(context, 'platform', None) or 'test'}::{self._get_settings_key(context)}"
+
     def get_im_client_for_context(self, context: MessageContext):
         return self.im_client
 

@@ -37,6 +37,9 @@ class _Controller:
     def _get_settings_key(self, context):  # pragma: no cover - unused in these tests
         return "dummy"
 
+    def _get_session_key(self, context):  # pragma: no cover - unused in these tests
+        return f"{getattr(context, 'platform', None) or 'test'}::{self._get_settings_key(context)}"
+
 
 def test_force_claude_sandbox_in_root_container(monkeypatch) -> None:
     monkeypatch.delenv("IS_SANDBOX", raising=False)

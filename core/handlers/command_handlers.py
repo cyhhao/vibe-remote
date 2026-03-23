@@ -167,7 +167,7 @@ class CommandHandlers(BaseHandler):
         """Handle /new command - reset active session state for a fresh start."""
         try:
             im_client = self._get_im_client(context)
-            settings_key = self._get_settings_key(context)
+            settings_key = self._get_session_key(context)
             await self.controller.agent_service.clear_sessions(settings_key)
             full_response = f"🆕 {self._t('command.new.started')}"
 
@@ -384,8 +384,8 @@ class CommandHandlers(BaseHandler):
         im_client = self._get_im_client(context)
         if platform == "discord":
             interaction = context.platform_specific.get("interaction") if context.platform_specific else None
-            settings_key = self._get_settings_key(context)
-            sessions_by_agent = self.sessions.list_all_agent_sessions(settings_key)
+            session_key = self._get_session_key(context)
+            sessions_by_agent = self.sessions.list_all_agent_sessions(session_key)
             if not sessions_by_agent:
                 channel_context = self._get_channel_context(context)
                 await im_client.send_message(
@@ -414,8 +414,8 @@ class CommandHandlers(BaseHandler):
             )
             return
         if platform == "lark":
-            settings_key = self._get_settings_key(context)
-            sessions_by_agent = self.sessions.list_all_agent_sessions(settings_key)
+            session_key = self._get_session_key(context)
+            sessions_by_agent = self.sessions.list_all_agent_sessions(session_key)
             # Allow opening modal even with no sessions (user can paste manually)
             if hasattr(im_client, "open_resume_session_modal"):
                 try:
@@ -455,8 +455,8 @@ class CommandHandlers(BaseHandler):
             )
             return
 
-        settings_key = self._get_settings_key(context)
-        sessions_by_agent = self.sessions.list_all_agent_sessions(settings_key)
+        session_key = self._get_session_key(context)
+        sessions_by_agent = self.sessions.list_all_agent_sessions(session_key)
 
         if not sessions_by_agent:
             channel_context = self._get_channel_context(context)
@@ -578,7 +578,7 @@ class CommandHandlers(BaseHandler):
             im_client = self._get_im_client(context)
             session_handler = self.controller.session_handler
             base_session_id, working_path, composite_key = session_handler.get_session_info(context)
-            settings_key = self._get_settings_key(context)
+            session_key = self._get_session_key(context)
             agent_name = self.controller.resolve_agent_for_context(context)
             request = AgentRequest(
                 context=context,
@@ -586,7 +586,7 @@ class CommandHandlers(BaseHandler):
                 working_path=working_path,
                 base_session_id=base_session_id,
                 composite_session_id=composite_key,
-                settings_key=settings_key,
+                settings_key=session_key,
             )
 
             handled = await self.controller.agent_service.handle_stop(agent_name, request)

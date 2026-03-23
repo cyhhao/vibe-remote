@@ -81,3 +81,30 @@ def test_migrate_active_polls_strips_scoped_key(tmp_path, monkeypatch):
     poll = reloaded.state.active_polls["oc-session-2"]
     assert poll["platform"] == "discord"
     assert poll["settings_key"] == "C456"
+
+
+def test_migrate_active_polls_extracts_platform_from_scoped_key(tmp_path, monkeypatch):
+    """When platform is empty but settings_key is scoped, extract platform from prefix."""
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    store = SessionsStore()
+    store.state.active_polls = {
+        "oc-session-3": {
+            "opencode_session_id": "oc-session-3",
+            "base_session_id": "C789:msg3",
+            "channel_id": "C789",
+            "thread_id": "t3",
+            "settings_key": "discord::C789",
+            "working_path": "/tmp/work",
+            "platform": "",  # missing platform, but scoped key has it
+            "user_id": "U3",
+        }
+    }
+    store.save()
+
+    reloaded = SessionsStore()
+    reloaded.load()
+    reloaded.migrate_active_polls("slack")
+
+    poll = reloaded.state.active_polls["oc-session-3"]
+    assert poll["platform"] == "discord", "Should extract platform from scoped key prefix, not default"
+    assert poll["settings_key"] == "C789"
