@@ -93,10 +93,10 @@ jobs:
           if [ -z "$PREV" ]; then
             RANGE="$TAG"
             echo "No previous tag found. Summarizing commits reachable by $TAG (limited)."
-            git log --first-parent --no-merges --pretty=format:'- %h %s' "$TAG" -n "$MAX_COMMITS" > commits.txt
+            git log --no-merges --pretty=format:'- %h %s' "$TAG" -n "$MAX_COMMITS" > commits.txt
           else
             RANGE="$PREV..$TAG"
-            git log --first-parent --no-merges --pretty=format:'- %h %s' "$RANGE" -n "$MAX_COMMITS" > commits.txt
+            git log --no-merges --pretty=format:'- %h %s' "$RANGE" -n "$MAX_COMMITS" > commits.txt
           fi
 
           echo "range=$RANGE" >> "$GITHUB_OUTPUT"
