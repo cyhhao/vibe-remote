@@ -174,7 +174,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         )
 
         if self._session_manager.mark_initialized(session_id):
-            system_text = self.im_client.formatter.format_system_message(request.working_path, "init", session_id)
+            system_text = self._get_formatter(request.context).format_system_message(
+                request.working_path, "init", session_id
+            )
             await self.controller.emit_agent_message(
                 request.context,
                 "system",

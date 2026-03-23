@@ -74,6 +74,15 @@ class BaseAgent(ABC):
         elapsed = time.monotonic() - started_at
         return max(0, int(elapsed * 1000))
 
+    def _get_im_client(self, context: MessageContext):
+        getter = getattr(self.controller, "get_im_client_for_context", None)
+        if callable(getter):
+            return getter(context)
+        return self.im_client
+
+    def _get_formatter(self, context: MessageContext):
+        return getattr(self._get_im_client(context), "formatter", self.im_client.formatter)
+
     async def _remove_ack_reaction(self, request: AgentRequest) -> None:
         """Remove the acknowledgement reaction / typing indicator.
 
@@ -96,7 +105,7 @@ class BaseAgent(ABC):
 
         if request.typing_indicator_active:
             try:
-                await self.im_client.clear_typing_indicator(request.context)
+                await self._get_im_client(request.context).clear_typing_indicator(request.context)
             except Exception as err:
                 logger.debug(f"Failed to clear typing indicator: {err}")
             finally:
@@ -104,7 +113,7 @@ class BaseAgent(ABC):
 
         if request.ack_reaction_message_id and request.ack_reaction_emoji:
             try:
-                await self.im_client.remove_reaction(
+                await self._get_im_client(request.context).remove_reaction(
                     request.context,
                     request.ack_reaction_message_id,
                     request.ack_reaction_emoji,
@@ -142,7 +151,7 @@ class BaseAgent(ABC):
                 formatted = "\n".join(parts)
                 await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
         else:
-            formatted = self.im_client.formatter.format_result_message(
+            formatted = self._get_formatter(context).format_result_message(
                 subtype or "",
                 duration_ms,
                 result_text,

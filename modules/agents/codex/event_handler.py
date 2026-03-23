@@ -55,7 +55,7 @@ class CodexEventHandler:
                 thread_id,
             )
 
-        system_text = self._agent.im_client.formatter.format_system_message(
+        system_text = self._agent._get_formatter(request.context).format_system_message(
             request.working_path,
             "init",
             thread_id,
@@ -180,7 +180,7 @@ class CodexEventHandler:
             exit_code = item.get("exitCode")
             output = item.get("aggregatedOutput", "")
             if command:
-                toolcall = self._agent.im_client.formatter.format_toolcall(
+                toolcall = self._agent._get_formatter(request.context).format_toolcall(
                     "bash",
                     {
                         "command": command,
@@ -204,7 +204,7 @@ class CodexEventHandler:
                 file_path = change.get("path", "")
                 change_kind = change.get("kind", "")
                 if file_path:
-                    toolcall = self._agent.im_client.formatter.format_toolcall(
+                    toolcall = self._agent._get_formatter(request.context).format_toolcall(
                         "file_change",
                         {"file": file_path, "type": change_kind},
                     )

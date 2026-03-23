@@ -172,7 +172,7 @@ class OpenCodePollLoop:
                         # Timeout -> end request without final result message
                         return None, False
 
-                    toolcall = self._agent.im_client.formatter.format_toolcall(
+                    toolcall = self._agent._get_formatter(request.context).format_toolcall(
                         tool_name,
                         tool_input,
                         get_relative_path=_relative_path,

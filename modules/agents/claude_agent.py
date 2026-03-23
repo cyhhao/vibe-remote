@@ -215,7 +215,7 @@ class ClaudeAgent(BaseAgent):
                         continue
 
                     message_type = self._detect_message_type(message)
-                    formatter = self.im_client.formatter
+                    formatter = self._get_formatter(context)
 
                     if message_type == "assistant":
                         toolcalls = []
@@ -298,6 +298,7 @@ class ClaudeAgent(BaseAgent):
                         formatted_message = self.claude_client.format_message(
                             message,
                             get_relative_path=lambda path: self.get_relative_path(path, context),
+                            formatter=formatter,
                         )
                         if formatted_message and formatted_message.strip():
                             await self.controller.emit_agent_message(
@@ -519,7 +520,7 @@ class ClaudeAgent(BaseAgent):
             if isinstance(block, TextBlock):
                 text = block.text.strip() if block.text else ""
                 if text:
-                    parts.append(self.claude_client.formatter.escape_special_chars(text))
+                    parts.append(self._get_formatter(context).escape_special_chars(text))
         return "\n\n".join(parts).strip()
 
     def _detect_message_type(self, message) -> Optional[str]:

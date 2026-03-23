@@ -188,6 +188,30 @@ class OpenCodeQuestionHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(im_client.sent_messages, [])
         self.assertIn("call-1", seen_tool_calls)
 
+    async def test_handle_question_toolcall_uses_request_context_platform(self):
+        controller = _StubController(lang="zh", platform="slack")
+        im_client = _StubIMClient()
+        handler = OpenCodeQuestionHandler(controller, im_client, object())
+        server = _StubServer(ok=True)
+        request = _build_request("ask")
+        request.context.platform = "wechat"
+        request.context.platform_specific = {"platform": "wechat"}
+        seen_tool_calls = set()
+
+        answered = await handler.handle_question_toolcall(
+            request=request,
+            server=server,
+            opencode_session_id="oc-session",
+            message_id="msg-1",
+            tool_part={"callID": "call-1"},
+            tool_input={"questions": [{"question": "Need input?"}]},
+            call_key="call-1",
+            seen_tool_calls=seen_tool_calls,
+        )
+
+        self.assertFalse(answered)
+        self.assertEqual(server.abort_calls, [("oc-session", "/tmp/work")])
+
 
 class QuestionUIHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_send_answer_receipt_formats_multi_question_answers(self):
