@@ -546,6 +546,9 @@ class MultiSettingsManager:
     def get_message_type_display_names(self) -> Dict[str, str]:
         return self.managers[self.primary_platform].get_message_type_display_names()
 
+    def _canonicalize_message_type(self, message_type: str) -> str:
+        return self.managers[self.primary_platform]._canonicalize_message_type(message_type)
+
     def get_channel_routing(self, settings_key: Union[int, str]) -> Optional[ChannelRouting]:
         manager, raw = self._resolve(settings_key)
         return manager.get_channel_routing(raw)

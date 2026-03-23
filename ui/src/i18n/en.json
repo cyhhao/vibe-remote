@@ -230,7 +230,10 @@
     "pollError": "An error occurred while checking status.",
     "errorTitle": "Connection Failed",
     "retry": "Try Again",
-    "refreshQr": "Refresh QR Code"
+    "refreshQr": "Refresh QR Code",
+    "alreadyBound": "WeChat Connected",
+    "alreadyBoundDesc": "Your WeChat account is already linked. You can proceed or rebind with a different account.",
+    "rebind": "Rebind Account"
   },
   "slackConfig": {
     "title": "Slack Configuration",

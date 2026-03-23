@@ -54,7 +54,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
         <p className="text-muted mt-1">{t('platform.subtitle')}</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 flex-1">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
         {ALL_PLATFORMS.map((option) => {
           const active = selected.includes(option);
           return (
@@ -74,11 +74,11 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
                 </div>
                 <div
                   className={clsx(
-                    'mt-1 h-5 w-5 rounded border flex items-center justify-center text-xs font-bold',
-                    active ? 'border-accent bg-accent text-white' : 'border-border text-transparent'
+                    'mt-1 h-5 w-5 rounded-full border flex items-center justify-center text-xs font-bold',
+                    active ? 'border-accent bg-accent text-white' : 'border-border bg-bg'
                   )}
                 >
-                  ✓
+                  {active ? selected.indexOf(option) + 1 : ''}
                 </div>
               </div>
               {active && primary === option && (

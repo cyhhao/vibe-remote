@@ -449,21 +449,32 @@ class DiscordBot(BaseIMClient):
         if context.thread_id:
             target = await self._fetch_channel(context.thread_id)
             if not isinstance(target, discord.Thread):
+                logger.info(
+                    "Discord typing: thread_id %s resolved to %s (not Thread), falling back to channel_id",
+                    context.thread_id,
+                    type(target).__name__ if target else None,
+                )
                 target = None
         if target is None:
             target = await self._fetch_channel(context.channel_id)
         if target is None:
+            logger.info(
+                "Discord typing: could not fetch channel (channel_id=%s, thread_id=%s)",
+                context.channel_id,
+                context.thread_id,
+            )
             return False
 
         trigger = getattr(target, "trigger_typing", None)
         if not callable(trigger):
+            logger.info("Discord typing: %s has no trigger_typing method", type(target).__name__)
             return False
 
         try:
             await trigger()
             return True
         except Exception as err:
-            logger.debug("Failed to trigger Discord typing indicator: %s", err)
+            logger.info("Discord typing: trigger_typing failed: %s", err)
             return False
 
     async def clear_typing_indicator(self, context: MessageContext) -> bool:

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Check, RefreshCw, Smartphone, Wifi, AlertTriangle, Loader2 } from 'lucide-react';
+import { Check, RefreshCw, Smartphone, Wifi, AlertTriangle, Loader2, KeyRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
@@ -97,10 +97,12 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     if (autoStartedRef.current) return;
     if (starting) return;
     if (loginState !== 'idle') return;
+    // Don't auto-start QR flow if we already have a token from previous config
+    if (data.wechat?.bot_token) return;
 
     autoStartedRef.current = true;
     void startLogin();
-  }, [loginState, startLogin, starting]);
+  }, [loginState, startLogin, starting, data.wechat?.bot_token]);
 
   const startPolling = (key: string) => {
     stopPolling();
@@ -143,7 +145,10 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     void pollOnce();
   };
 
-  const isConnected = loginState === 'connected' && !!botToken;
+  // Allow proceeding if we have a token (either freshly scanned or from existing config)
+  const canProceed = !!botToken;
+  // Whether we're showing the "already bound" idle state (existing token, QR not started)
+  const isAlreadyBound = loginState === 'idle' && !!botToken;
 
   const stepIndicator = (stepNum: number, label: string, active: boolean, completed: boolean) => (
     <div className="flex items-center gap-2">
@@ -160,6 +165,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
   );
 
   const getStepState = () => {
+    if (isAlreadyBound) return { step: 3, scanning: false, connected: true };
     if (loginState === 'idle') return { step: 1, scanning: false, connected: false };
     if (loginState === 'qr_ready') return { step: 2, scanning: false, connected: false };
     if (loginState === 'scanning' || loginState === 'confirming') return { step: 2, scanning: true, connected: false };
@@ -188,8 +194,38 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto pr-1">
-        {/* Start Login */}
-        {loginState === 'idle' && (
+        {/* Already bound — existing token, no QR needed */}
+        {isAlreadyBound && (
+          <div className="bg-panel border border-border rounded-xl p-6 space-y-4">
+            <div className="flex flex-col items-center space-y-4">
+              <div className="w-20 h-20 bg-success/10 text-success rounded-full flex items-center justify-center">
+                <Check size={40} />
+              </div>
+              <div className="text-center">
+                <h3 className="text-lg font-semibold text-text">{t('wechatConfig.alreadyBound')}</h3>
+                <p className="text-sm text-muted mt-1">{t('wechatConfig.alreadyBoundDesc')}</p>
+              </div>
+              <div className="w-full bg-bg border border-border rounded-lg p-3">
+                <div className="text-xs text-muted mb-1 flex items-center gap-1"><KeyRound size={12} /> Token</div>
+                <div className="text-sm font-mono text-text truncate">{botToken.slice(0, 12)}{'•'.repeat(16)}</div>
+              </div>
+              <button
+                onClick={() => {
+                  autoStartedRef.current = true;
+                  void startLogin();
+                }}
+                disabled={starting}
+                className="px-4 py-2 bg-panel border border-border text-text rounded-lg flex items-center gap-2 text-sm font-medium hover:bg-neutral-50 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={starting ? 'animate-spin' : ''} />
+                {t('wechatConfig.rebind')}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Start Login — only when no existing token */}
+        {loginState === 'idle' && !botToken && (
           <div className="bg-panel border border-border rounded-xl p-6 text-center space-y-4">
             <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto">
               <Loader2 size={32} className="animate-spin" />
@@ -301,10 +337,10 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
               },
             });
           }}
-          disabled={!isConnected}
+          disabled={!canProceed}
           className={clsx(
             'px-8 py-3 rounded-lg font-medium transition-colors shadow-sm',
-            isConnected ? 'bg-accent hover:bg-accent/90 text-white' : 'bg-neutral-200 text-muted cursor-not-allowed'
+            canProceed ? 'bg-accent hover:bg-accent/90 text-white' : 'bg-neutral-200 text-muted cursor-not-allowed'
           )}
         >
           {t('common.continue')}

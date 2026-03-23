@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { Welcome } from './steps/Welcome';
-import { ModeSelection } from './steps/ModeSelection';
+// import { ModeSelection } from './steps/ModeSelection'; // temporarily hidden — SaaS mode not yet available
 import { PlatformSelection } from './steps/PlatformSelection';
 import { AgentDetection } from './steps/AgentDetection';
 import { SlackConfig } from './steps/SlackConfig';
@@ -130,21 +130,19 @@ export const Wizard: React.FC = () => {
       };
     });
 
-    const channelSteps = enabledPlatforms
-      .filter((platform) => platformSupportsChannels(platform))
-      .map((platform) => ({
-        id: `channels-${platform}`,
-        title: `${platform}-channels`,
-        component: (props: any) => <ChannelList {...props} forcedPlatform={platform} />,
-      }));
+    // Channel steps: merge into a single step with platform tabs (instead of one step per platform)
+    const channelPlatforms = enabledPlatforms.filter(platformSupportsChannels);
+    const channelStep = channelPlatforms.length > 0
+      ? [{ id: 'channels', title: 'Channels', component: (props: any) => <ChannelList {...props} wizardPlatforms={channelPlatforms} /> }]
+      : [];
 
     return [
       { id: 'welcome', title: 'Welcome', component: Welcome },
-      { id: 'mode', title: 'Mode', component: ModeSelection },
+      // { id: 'mode', title: 'Mode', component: ModeSelection }, // temporarily hidden — SaaS mode not yet available
       { id: 'agents', title: 'Agents', component: AgentDetection },
       { id: 'platform', title: 'Platform', component: PlatformSelection },
       ...platformSteps,
-      ...channelSteps,
+      ...channelStep,
       { id: 'summary', title: 'Finish', component: Summary },
     ];
   }, [data]);
@@ -219,11 +217,14 @@ export const Wizard: React.FC = () => {
     ) {
       await api.saveConfig(buildConfigPayload(mergedData));
     }
-    if (stepData?.settingsPlatform && stepData?.channelConfigsByPlatform) {
-      await api.saveSettings(
-        { channels: stepData.channelConfigsByPlatform[stepData.settingsPlatform] || {} },
-        stepData.settingsPlatform,
-      );
+    if (stepData?.channelConfigsByPlatform) {
+      const platforms = Object.keys(stepData.channelConfigsByPlatform);
+      for (const p of platforms) {
+        const channelConfigs = stepData.channelConfigsByPlatform[p];
+        if (channelConfigs && Object.keys(channelConfigs).length > 0) {
+          await api.saveSettings({ channels: channelConfigs }, p);
+        }
+      }
     }
   };
 

@@ -230,7 +230,10 @@
     "pollError": "检查状态时发生错误。",
     "errorTitle": "连接失败",
     "retry": "重试",
-    "refreshQr": "刷新二维码"
+    "refreshQr": "刷新二维码",
+    "alreadyBound": "微信已绑定",
+    "alreadyBoundDesc": "你的微信账号已绑定。可以直接继续，或点击下方按钮重新绑定其他账号。",
+    "rebind": "重新绑定"
   },
   "slackConfig": {
     "title": "Slack 配置",
