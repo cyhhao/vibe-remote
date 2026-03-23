@@ -57,3 +57,57 @@ jobs:
             tests/e2e/test_install_command.py \
             tests/e2e/test_upgrade_command.py \
             -v
+
+  windows-install-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build UI assets
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: pip install build
+
+      - name: Build package artifact
+        run: python -m build
+
+      - name: Run Windows installer smoke test
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          if (-not $wheel) {
+            throw "Missing wheel artifact"
+          }
+
+          $env:VIBE_INSTALL_PACKAGE_SPEC = $wheel
+          & .\install.ps1 *>&1 | Tee-Object -FilePath install-output.log
+
+          $vibeCommand = Get-Command vibe
+          $vibeCommand | Out-String | Tee-Object -FilePath vibe-command.log
+          vibe version | Tee-Object -FilePath vibe-version.log
+
+          if (-not (Select-String -Path install-output.log -Pattern 'vibe-remote installed successfully \(from custom package spec\)' -Quiet)) {
+            throw "Installer output missing custom package success message"
+          }
+
+          if (-not $vibeCommand.Source.ToLowerInvariant().EndsWith('vibe.exe')) {
+            throw "Get-Command vibe did not resolve to vibe.exe"
+          }
+
+          if (-not (Select-String -Path vibe-version.log -Pattern 'vibe-remote ' -Quiet)) {
+            throw "vibe version output missing expected marker"
+          }
