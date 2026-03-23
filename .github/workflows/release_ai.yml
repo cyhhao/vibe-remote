@@ -260,7 +260,7 @@ jobs:
             exit 1
           fi
 
-          if ! grep -qi "Full Changelog:" release.md || ! grep -qF "$COMPARE_URL" release.md; then
+          if ! grep -qF "$COMPARE_URL" release.md; then
             printf "\n\nFull Changelog: %s\n" "$COMPARE_URL" >> release.md
           fi
 
