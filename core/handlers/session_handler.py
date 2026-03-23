@@ -133,7 +133,7 @@ class SessionHandler(BaseHandler):
 
         # Read routing overrides via get_channel_routing which correctly
         # resolves DM users from the users store (not the stale channels store).
-        routing = self.settings_manager.get_channel_routing(settings_key)
+        routing = self._get_settings_manager(context).get_channel_routing(settings_key)
 
         # Priority: subagent params > channel config > agent frontmatter > global default
         # Note: agent frontmatter model is applied later after loading agent file
@@ -345,7 +345,8 @@ class SessionHandler(BaseHandler):
             )
 
             settings_key = self._get_settings_key(context)
-            current_routing = self.settings_manager.get_channel_routing(settings_key)
+            settings_manager = self._get_settings_manager(context)
+            current_routing = settings_manager.get_channel_routing(settings_key)
 
             routing = ChannelRouting(
                 agent_backend=agent,
@@ -358,7 +359,7 @@ class SessionHandler(BaseHandler):
                 codex_model=current_routing.codex_model if current_routing else None,
                 codex_reasoning_effort=current_routing.codex_reasoning_effort if current_routing else None,
             )
-            self.settings_manager.set_channel_routing(settings_key, routing)
+            settings_manager.set_channel_routing(settings_key, routing)
 
             agent_label = agent.capitalize()
             confirmation = "\n".join(

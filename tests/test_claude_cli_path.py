@@ -52,12 +52,17 @@ class _SettingsManager:
         assert settings_key == "C123"
         return None
 
+    @staticmethod
+    def get_channel_routing(settings_key):
+        return None
+
 
 class _Controller:
     def __init__(self, working_path: Path) -> None:
         self.config = _Config()
         self.im_client = type("IM", (), {"formatter": None})()
         self.settings_manager = _SettingsManager()
+        self.platform_settings_managers = {"slack": self.settings_manager}
         self.session_manager = object()
         self.claude_sessions = {}
         self.receiver_tasks = {}
@@ -70,6 +75,9 @@ class _Controller:
     @staticmethod
     def _get_settings_key(context) -> str:
         return context.channel_id
+
+    def get_settings_manager_for_context(self, context=None):
+        return self.settings_manager
 
 
 def _run_session(handler: SessionHandler, context: MessageContext):

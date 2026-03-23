@@ -91,10 +91,11 @@ class SettingsHandler(BaseHandler):
         im_client = self._get_im_client(context)
         # Get current settings
         settings_key = self._get_settings_key(context)
-        user_settings = self.settings_manager.get_user_settings(settings_key)
+        settings_manager = self._get_settings_manager(context)
+        user_settings = settings_manager.get_user_settings(settings_key)
 
         # Get available message types and display names
-        message_types = self.settings_manager.get_available_message_types()
+        message_types = settings_manager.get_available_message_types()
         display_names = self._message_type_display_names()
 
         # Create inline keyboard buttons in 2x2 layout
@@ -138,12 +139,13 @@ class SettingsHandler(BaseHandler):
         if trigger_id and hasattr(im_client, "open_settings_modal"):
             # We have trigger_id, open modal directly
             settings_key = self._get_settings_key(context)
-            user_settings = self.settings_manager.get_user_settings(settings_key)
-            message_types = self.settings_manager.get_available_message_types()
+            settings_manager = self._get_settings_manager(context)
+            user_settings = settings_manager.get_user_settings(settings_key)
+            message_types = settings_manager.get_available_message_types()
             display_names = self._message_type_display_names()
 
             # Get current require_mention override for this channel
-            current_require_mention = self.settings_manager.get_require_mention_override(settings_key)
+            current_require_mention = settings_manager.get_require_mention_override(settings_key)
             global_require_mention = self.config.slack.require_mention
 
             # Get current language from global config
@@ -181,11 +183,12 @@ class SettingsHandler(BaseHandler):
         im_client = self._get_im_client(context)
         interaction = context.platform_specific.get("interaction") if context.platform_specific else None
         settings_key = self._get_settings_key(context)
-        user_settings = self.settings_manager.get_user_settings(settings_key)
-        message_types = self.settings_manager.get_available_message_types()
+        settings_manager = self._get_settings_manager(context)
+        user_settings = settings_manager.get_user_settings(settings_key)
+        message_types = settings_manager.get_available_message_types()
         display_names = self._message_type_display_names()
 
-        current_require_mention = self.settings_manager.get_require_mention_override(settings_key)
+        current_require_mention = settings_manager.get_require_mention_override(settings_key)
         global_require_mention = self.config.discord.require_mention if self.config.discord else False
         current_language = self.config.language
 
@@ -210,11 +213,12 @@ class SettingsHandler(BaseHandler):
         """Handle settings for Lark/Feishu using interactive form card."""
         im_client = self._get_im_client(context)
         settings_key = self._get_settings_key(context)
-        user_settings = self.settings_manager.get_user_settings(settings_key)
-        message_types = self.settings_manager.get_available_message_types()
+        settings_manager = self._get_settings_manager(context)
+        user_settings = settings_manager.get_user_settings(settings_key)
+        message_types = settings_manager.get_available_message_types()
         display_names = self._message_type_display_names()
 
-        current_require_mention = self.settings_manager.get_require_mention_override(settings_key)
+        current_require_mention = settings_manager.get_require_mention_override(settings_key)
         global_require_mention = self.config.lark.require_mention if self.config.lark else False
         current_language = self.config.language
 
@@ -242,13 +246,14 @@ class SettingsHandler(BaseHandler):
         """Handle toggle for message type visibility"""
         try:
             im_client = self._get_im_client(context)
+            settings_manager = self._get_settings_manager(context)
             # Toggle message type visibility
             settings_key = self._get_settings_key(context)
-            is_shown = self.settings_manager.toggle_show_message_type(settings_key, msg_type)
+            is_shown = settings_manager.toggle_show_message_type(settings_key, msg_type)
 
             # Update the keyboard
-            user_settings = self.settings_manager.get_user_settings(settings_key)
-            message_types = self.settings_manager.get_available_message_types()
+            user_settings = settings_manager.get_user_settings(settings_key)
+            message_types = settings_manager.get_available_message_types()
             display_names = self._message_type_display_names()
 
             buttons = []
@@ -377,7 +382,7 @@ class SettingsHandler(BaseHandler):
     async def _gather_routing_modal_data(self, context: MessageContext) -> RoutingModalData:
         """Collect backend/agent/model data for routing modal renderers."""
         settings_key = self._get_settings_key(context)
-        current_routing = self.settings_manager.get_channel_routing(settings_key)
+        current_routing = self._get_settings_manager(context).get_channel_routing(settings_key)
 
         all_backends = list(self.controller.agent_service.agents.keys())
         registered_backends = sorted(all_backends, key=lambda x: (x != "opencode", x))
@@ -537,13 +542,14 @@ class SettingsHandler(BaseHandler):
             )
             settings_key = self._get_settings_key(context)
             im_client = self._get_im_client(context)
+            settings_manager = self._get_settings_manager(context)
 
-            user_settings = self.settings_manager.get_user_settings(settings_key)
+            user_settings = settings_manager.get_user_settings(settings_key)
             user_settings.show_message_types = show_message_types
-            self.settings_manager.update_user_settings(settings_key, user_settings)
+            settings_manager.update_user_settings(settings_key, user_settings)
 
             if not is_dm:
-                self.settings_manager.set_require_mention(settings_key, require_mention)
+                settings_manager.set_require_mention(settings_key, require_mention)
 
             language_saved = True
             if language is not None and language != self.config.language:
@@ -676,7 +682,8 @@ class SettingsHandler(BaseHandler):
             )
             settings_key = self._get_settings_key(context)
             im_client = self._get_im_client(context)
-            existing_routing = self.settings_manager.get_channel_routing(settings_key)
+            settings_manager = self._get_settings_manager(context)
+            existing_routing = settings_manager.get_channel_routing(settings_key)
             normalized_claude_reasoning_effort = normalize_claude_reasoning_effort(
                 claude_model,
                 claude_reasoning_effort,
@@ -710,7 +717,7 @@ class SettingsHandler(BaseHandler):
                 else (existing_routing.codex_reasoning_effort if existing_routing else None),
             )
 
-            self.settings_manager.set_channel_routing(settings_key, routing)
+            settings_manager.set_channel_routing(settings_key, routing)
 
             parts = [f"{self._t('routing.label.backend')}: **{backend}**"]
             if backend == "opencode":
