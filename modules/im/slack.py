@@ -75,6 +75,13 @@ class SlackBot(BaseIMClient):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._on_ready: Optional[Callable] = None
 
+        # RTM typing indicator (best-effort, may not work with modern Slack apps)
+        self._rtm_ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._rtm_session: Optional[aiohttp.ClientSession] = None
+        self._rtm_available: Optional[bool] = None  # None = not yet attempted
+        self._rtm_msg_id: int = 0
+        self._rtm_drain_task: Optional[asyncio.Task] = None
+
     def set_settings_manager(self, settings_manager):
         """Set the settings manager for thread tracking"""
         self.settings_manager = settings_manager
@@ -734,6 +741,115 @@ class SlackBot(BaseIMClient):
         except Exception as err:
             logger.debug(f"Failed to remove Slack reaction: {err}")
             return False
+
+    # ------------------------------------------------------------------
+    # RTM-based typing indicator (best-effort)
+    # ------------------------------------------------------------------
+
+    async def _ensure_rtm_connection(self) -> Optional[aiohttp.ClientWebSocketResponse]:
+        """Lazily establish an RTM WebSocket solely for typing indicator events.
+
+        Returns the WebSocket on success or ``None`` when RTM is unavailable
+        (e.g. modern Slack apps that lack the ``rtm:stream`` scope).  A
+        negative result is cached so subsequent calls return immediately.
+        """
+        if self._rtm_available is False:
+            return None
+
+        # Reuse an existing live connection
+        if self._rtm_ws is not None and not self._rtm_ws.closed:
+            return self._rtm_ws
+
+        # Close stale resources before reconnecting
+        await self._close_rtm()
+
+        self._ensure_clients()
+        try:
+            resp = await self.web_client.rtm_connect()
+            if not resp.get("ok"):
+                err_msg = resp.get("error", "unknown")
+                logger.info("Slack RTM unavailable (%s) — typing indicator disabled", err_msg)
+                self._rtm_available = False
+                return None
+
+            wss_url = resp["url"]
+            self._rtm_session = aiohttp.ClientSession()
+            self._rtm_ws = await self._rtm_session.ws_connect(
+                wss_url,
+                heartbeat=30,
+                autoclose=True,
+            )
+            self._rtm_available = True
+            self._rtm_drain_task = asyncio.create_task(self._rtm_drain_loop())
+            logger.info("Slack RTM WebSocket connected for typing indicator")
+            return self._rtm_ws
+        except Exception as exc:
+            logger.info("Slack RTM connect failed: %s — typing indicator disabled", exc)
+            self._rtm_available = False
+            await self._close_rtm()
+            return None
+
+    async def _rtm_drain_loop(self) -> None:
+        """Read and discard incoming RTM messages to prevent buffer buildup."""
+        try:
+            ws = self._rtm_ws
+            if ws is None:
+                return
+            async for _ in ws:
+                pass  # discard all incoming RTM events
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass  # connection lost — handled on next send attempt
+
+    async def _close_rtm(self) -> None:
+        """Tear down RTM WebSocket and its aiohttp session."""
+        if self._rtm_drain_task is not None:
+            self._rtm_drain_task.cancel()
+            try:
+                await self._rtm_drain_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._rtm_drain_task = None
+
+        if self._rtm_ws is not None:
+            try:
+                await self._rtm_ws.close()
+            except Exception:
+                pass
+            self._rtm_ws = None
+
+        if self._rtm_session is not None:
+            try:
+                await self._rtm_session.close()
+            except Exception:
+                pass
+            self._rtm_session = None
+
+    async def send_typing_indicator(self, context: MessageContext) -> bool:
+        """Send a typing indicator via RTM WebSocket (best-effort)."""
+        ws = await self._ensure_rtm_connection()
+        if ws is None:
+            return False
+        try:
+            self._rtm_msg_id += 1
+            await ws.send_json(
+                {
+                    "id": self._rtm_msg_id,
+                    "type": "typing",
+                    "channel": context.channel_id,
+                }
+            )
+            return True
+        except Exception as exc:
+            logger.debug("Slack RTM typing send failed: %s", exc)
+            # Connection may be broken; reset so next call reconnects
+            self._rtm_ws = None
+            return False
+
+    async def clear_typing_indicator(self, context: MessageContext) -> bool:
+        """Slack typing indicators auto-expire (~3 s); no explicit clear needed."""
+        return True
 
     async def send_message_with_buttons(
         self,
@@ -1775,6 +1891,8 @@ class SlackBot(BaseIMClient):
         await self._async_close()
 
     async def _async_close(self) -> None:
+        await self._close_rtm()
+
         if self.socket_client is not None:
             try:
                 disconnect = getattr(self.socket_client, "disconnect", None)

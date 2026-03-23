@@ -387,7 +387,13 @@ class DiscordBot(BaseIMClient):
         return True
 
     async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
-        target = await self._fetch_channel(context.thread_id or context.channel_id)
+        target = None
+        if context.thread_id:
+            target = await self._fetch_channel(context.thread_id)
+            if not isinstance(target, discord.Thread):
+                target = None
+        if target is None:
+            target = await self._fetch_channel(context.channel_id)
         if target is None:
             return False
         try:
@@ -402,7 +408,13 @@ class DiscordBot(BaseIMClient):
             return False
 
     async def remove_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
-        target = await self._fetch_channel(context.thread_id or context.channel_id)
+        target = None
+        if context.thread_id:
+            target = await self._fetch_channel(context.thread_id)
+            if not isinstance(target, discord.Thread):
+                target = None
+        if target is None:
+            target = await self._fetch_channel(context.channel_id)
         if target is None:
             return False
         try:
@@ -423,7 +435,13 @@ class DiscordBot(BaseIMClient):
         content: str,
         filetype: str = "markdown",
     ) -> str:
-        target = await self._fetch_channel(context.thread_id or context.channel_id)
+        target = None
+        if context.thread_id:
+            target = await self._fetch_channel(context.thread_id)
+            if not isinstance(target, discord.Thread):
+                target = None
+        if target is None:
+            target = await self._fetch_channel(context.channel_id)
         if target is None:
             raise RuntimeError("Discord channel not found")
         data = (content or "").encode("utf-8")
@@ -442,12 +460,12 @@ class DiscordBot(BaseIMClient):
         if target is None:
             return False
 
-        trigger = getattr(target, "trigger_typing", None)
-        if not callable(trigger):
+        typing_method = getattr(target, "typing", None)
+        if not callable(typing_method):
             return False
 
         try:
-            await trigger()
+            await typing_method()
             return True
         except Exception as err:
             logger.debug("Failed to trigger Discord typing indicator: %s", err)
@@ -465,7 +483,13 @@ class DiscordBot(BaseIMClient):
         title: Optional[str] = None,
     ) -> str:
         """Upload a local file to the Discord conversation."""
-        target = await self._fetch_channel(context.thread_id or context.channel_id)
+        target = None
+        if context.thread_id:
+            target = await self._fetch_channel(context.thread_id)
+            if not isinstance(target, discord.Thread):
+                target = None
+        if target is None:
+            target = await self._fetch_channel(context.channel_id)
         if target is None:
             raise RuntimeError("Discord channel not found")
 
