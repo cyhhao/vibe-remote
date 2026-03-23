@@ -673,6 +673,7 @@ class MessageHandler(BaseHandler):
                         "url_private_download": attachment.url,  # Slack compat
                         "name": attachment.name,
                         "size": attachment.size,
+                        "platform": context.platform,
                     }
                     attachment_data = getattr(attachment, "__dict__", {})
                     for key, value in attachment_data.items():

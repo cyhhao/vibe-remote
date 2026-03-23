@@ -46,6 +46,22 @@ class MultiIMClient(BaseIMClient):
         except KeyError as exc:
             raise ValueError(f"Platform '{platform}' is not enabled") from exc
 
+    def _resolve_platform_from_file_info(self, file_info: Dict[str, Any]) -> str:
+        platform = str(file_info.get("platform") or "").strip()
+        if platform in self.clients:
+            return platform
+
+        url = str(file_info.get("url") or file_info.get("url_private_download") or "")
+        if "wechat" in url:
+            return "wechat"
+        if "discordapp" in url or "discord.com" in url:
+            return "discord"
+        if "slack" in url:
+            return "slack"
+        if "feishu" in url or "lark" in url:
+            return "lark"
+        return self.primary_platform
+
     def get_client_for_context(self, context: Optional[MessageContext] = None) -> BaseIMClient:
         return self.get_client(self._resolve_platform(context))
 
@@ -190,9 +206,8 @@ class MultiIMClient(BaseIMClient):
     async def download_file(
         self, file_info: Dict[str, Any], max_bytes: Optional[int] = None, timeout_seconds: int = 30
     ):
-        return await self.clients[self.primary_platform].download_file(
-            file_info, max_bytes=max_bytes, timeout_seconds=timeout_seconds
-        )
+        client = self.get_client(self._resolve_platform_from_file_info(file_info))
+        return await client.download_file(file_info, max_bytes=max_bytes, timeout_seconds=timeout_seconds)
 
     async def download_file_to_path(
         self,
@@ -201,7 +216,8 @@ class MultiIMClient(BaseIMClient):
         max_bytes: Optional[int] = None,
         timeout_seconds: int = 30,
     ):
-        return await self.clients[self.primary_platform].download_file_to_path(
+        client = self.get_client(self._resolve_platform_from_file_info(file_info))
+        return await client.download_file_to_path(
             file_info,
             target_path,
             max_bytes=max_bytes,

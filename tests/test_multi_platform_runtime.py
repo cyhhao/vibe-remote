@@ -54,6 +54,16 @@ class _StubClient(BaseIMClient):
         self.sent.append(("dm", user_id, text))
         return self.name
 
+    async def download_file(self, file_info, max_bytes=None, timeout_seconds=30):
+        self.sent.append(("download", file_info.get("platform"), file_info.get("name")))
+        return b"data"
+
+    async def download_file_to_path(self, file_info, target_path, max_bytes=None, timeout_seconds=30):
+        self.sent.append(("download_to_path", file_info.get("platform"), target_path))
+        from modules.im.base import FileDownloadResult
+
+        return FileDownloadResult(True, target_path)
+
     def format_markdown(self, text: str) -> str:
         return text
 
@@ -130,3 +140,14 @@ def test_active_poll_info_round_trips_platform():
     restored = ActivePollInfo.from_dict(poll.to_dict())
 
     assert restored.platform == "discord"
+
+
+def test_multi_im_client_routes_download_by_file_info_platform():
+    slack = _StubClient("slack")
+    wechat = _StubClient("wechat")
+    client = MultiIMClient({"slack": slack, "wechat": wechat}, primary_platform="slack")
+
+    asyncio.run(client.download_file_to_path({"platform": "wechat", "name": "a.jpg"}, "/tmp/a.jpg"))
+
+    assert slack.sent == []
+    assert wechat.sent == [("download_to_path", "wechat", "/tmp/a.jpg")]

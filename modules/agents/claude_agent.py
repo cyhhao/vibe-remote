@@ -243,7 +243,7 @@ class ClaudeAgent(BaseAgent):
                                 if text:
                                     text_parts.append(text)
 
-                        assistant_text = self._extract_text_blocks(message)
+                        assistant_text = self._extract_text_blocks(message, context)
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
@@ -513,7 +513,7 @@ class ClaudeAgent(BaseAgent):
                 return session_id
         return None
 
-    def _extract_text_blocks(self, message) -> str:
+    def _extract_text_blocks(self, message, context: MessageContext) -> str:
         """Extract text-only content blocks for result fallbacks."""
         parts = []
         for block in getattr(message, "content", []) or []:
