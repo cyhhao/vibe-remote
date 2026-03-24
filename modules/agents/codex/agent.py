@@ -237,6 +237,11 @@ class CodexAgent(BaseAgent):
                 binary=self.codex_config.binary,
                 cwd=cwd,
                 extra_args=list(self.codex_config.extra_args),
+                dangerously_bypass_approvals_and_sandbox=getattr(
+                    self.codex_config,
+                    "dangerously_bypass_approvals_and_sandbox",
+                    False,
+                ),
             )
 
             # Wire up callbacks
@@ -346,7 +351,7 @@ class CodexAgent(BaseAgent):
             "threadId": thread_id,
             "input": input_items,
             "approvalPolicy": "never",
-            "sandbox": "danger-full-access",
+            "sandboxPolicy": {"type": "dangerFullAccess"},
         }
         if effective_model:
             turn_params["model"] = effective_model

@@ -123,6 +123,7 @@ class CodexConfig:
     enabled: bool = True
     cli_path: str = "codex"
     default_model: Optional[str] = None
+    dangerously_bypass_approvals_and_sandbox: bool = True
 
 
 @dataclass
