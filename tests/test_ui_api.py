@@ -1,6 +1,7 @@
 import json
 
 from vibe import api
+from vibe.opencode_config import parse_jsonc_object
 
 
 def test_detect_cli_prefers_claude_local(monkeypatch, tmp_path):
@@ -231,4 +232,40 @@ def test_setup_opencode_permission_accepts_jsonc_config(monkeypatch, tmp_path):
         "model": "openai/gpt-5",
         "agent": {"build": {"model": "anthropic/claude-sonnet-4-5"}},
         "permission": "allow",
+    }
+
+
+def test_parse_jsonc_object_preserves_comment_markers_inside_strings():
+    parsed = parse_jsonc_object(
+        """{
+  "line": "https://example.com // keep",
+  "block": "value /* keep */ text"
+}"""
+    )
+
+    assert parsed == {
+        "line": "https://example.com // keep",
+        "block": "value /* keep */ text",
+    }
+
+
+def test_parse_jsonc_object_accepts_inline_block_comments_before_values():
+    parsed = parse_jsonc_object(
+        """{
+  "model": /* keep this comment */ "openai/gpt-5",
+  "agent": {
+    "build": /* another comment */ {
+      "reasoningEffort": "high",
+    },
+  },
+}"""
+    )
+
+    assert parsed == {
+        "model": "openai/gpt-5",
+        "agent": {
+            "build": {
+                "reasoningEffort": "high",
+            }
+        },
     }
