@@ -29,3 +29,16 @@ class WeChatAuthManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "expired")
         self.assertIn("start a new login", result["message"].lower())
+
+    async def test_start_login_returns_error_payload_when_qr_fetch_fails(self):
+        manager = WeChatAuthManager()
+
+        with patch(
+            "modules.im.wechat_auth.get_bot_qrcode",
+            new=AsyncMock(side_effect=RuntimeError("upstream unavailable")),
+        ):
+            result = await manager.start_login(base_url="https://wechat.example.com")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Failed to start login", result["error"])
+        self.assertIsNone(manager.get_session(result["session_key"]))

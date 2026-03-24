@@ -187,9 +187,10 @@ class WeChatAuthManager:
 
         if not base_url:
             return {
+                "ok": False,
                 "session_key": session_key,
                 "qrcode_url": "",
-                "message": "No base URL configured. Please set the WeChat base URL before logging in.",
+                "error": "No base URL configured. Please set the WeChat base URL before logging in.",
             }
 
         try:
@@ -223,9 +224,10 @@ class WeChatAuthManager:
         except Exception as exc:
             logger.error("Failed to start WeChat login: %s", exc)
             return {
+                "ok": False,
                 "session_key": session_key,
                 "qrcode_url": "",
-                "message": f"Failed to start login: {exc}",
+                "error": f"Failed to start login: {exc}",
             }
 
     async def poll_status(self, session_key: str) -> dict:
