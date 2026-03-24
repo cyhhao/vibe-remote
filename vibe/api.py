@@ -724,12 +724,16 @@ def setup_opencode_permission() -> dict:
             }
 
         probe.config["permission"] = "allow"
-        probe.path.write_text(json.dumps(probe.config, indent=2) + "\n", encoding="utf-8")
-        return {
-            "ok": True,
-            "message": "Permission set to 'allow'",
-            "config_path": str(probe.path),
-        }
+        try:
+            probe.path.write_text(json.dumps(probe.config, indent=2) + "\n", encoding="utf-8")
+            return {
+                "ok": True,
+                "message": "Permission set to 'allow'",
+                "config_path": str(probe.path),
+            }
+        except Exception as e:
+            logger.error(f"Failed to update OpenCode config at {probe.path}: {e}")
+            return {"ok": False, "message": str(e), "config_path": str(probe.path)}
 
     if probe.existing_paths:
         error_path, error_message = probe.errors[0] if probe.errors else (probe.existing_paths[0], "unknown parse error")

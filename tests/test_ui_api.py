@@ -279,6 +279,31 @@ def test_setup_opencode_permission_skips_comment_only_file_and_uses_next_valid_p
     }
 
 
+def test_setup_opencode_permission_returns_error_when_existing_config_update_fails(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text('{"model": "openai/gpt-5"}\n', encoding="utf-8")
+
+    original_write_text = api.Path.write_text
+
+    def failing_write_text(self, data, encoding=None, errors=None, newline=None):
+        if self == config_path:
+            raise OSError("read-only file system")
+        return original_write_text(self, data, encoding=encoding, errors=errors, newline=newline)
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(api.Path, "write_text", failing_write_text)
+
+    result = api.setup_opencode_permission()
+
+    assert result == {
+        "ok": False,
+        "message": "read-only file system",
+        "config_path": str(config_path),
+    }
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {"model": "openai/gpt-5"}
+
+
 def test_parse_jsonc_object_preserves_comment_markers_inside_strings():
     parsed = parse_jsonc_object(
         """{
