@@ -645,8 +645,8 @@ class OpenCodeServerManager:
         Returns:
             Parsed config dict, or None if file doesn't exist or is invalid.
         """
-        config, _ = load_first_opencode_user_config(logger_instance=logger)
-        return config
+        probe = load_first_opencode_user_config(logger_instance=logger)
+        return probe.config
 
     def _get_agent_config(self, config: Dict[str, Any], agent_name: Optional[str]) -> Dict[str, Any]:
         """Get agent-specific config from opencode.json with type safety."""

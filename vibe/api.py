@@ -706,27 +706,38 @@ def setup_opencode_permission() -> dict:
     3. Create new file at ~/.config/opencode/opencode.json (XDG standard)
 
     Mirrors _load_opencode_user_config behavior: skips invalid files and tries next.
+    If config files exist but none can be parsed, returns an error instead of
+    overwriting the existing file contents.
 
     Returns:
         {"ok": bool, "message": str, "config_path": str}
     """
     config_paths = get_opencode_config_paths(Path.home())
-    config, config_path = load_first_opencode_user_config(home=Path.home(), logger_instance=logger)
+    probe = load_first_opencode_user_config(home=Path.home(), logger_instance=logger)
 
-    if config is not None and config_path is not None:
-        if config.get("permission") == "allow":
+    if probe.config is not None and probe.path is not None:
+        if probe.config.get("permission") == "allow":
             return {
                 "ok": True,
                 "message": "Permission already set",
-                "config_path": str(config_path),
+                "config_path": str(probe.path),
             }
 
-        config["permission"] = "allow"
-        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        probe.config["permission"] = "allow"
+        probe.path.write_text(json.dumps(probe.config, indent=2) + "\n", encoding="utf-8")
         return {
             "ok": True,
             "message": "Permission set to 'allow'",
-            "config_path": str(config_path),
+            "config_path": str(probe.path),
+        }
+
+    if probe.existing_paths:
+        error_path, error_message = probe.errors[0] if probe.errors else (probe.existing_paths[0], "unknown parse error")
+        logger.error(f"Refusing to overwrite invalid OpenCode config at {error_path}: {error_message}")
+        return {
+            "ok": False,
+            "message": f"Existing OpenCode config could not be parsed: {error_message}",
+            "config_path": str(error_path),
         }
 
     # No existing valid config found, create at XDG path (first in list)

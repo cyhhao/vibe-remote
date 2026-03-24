@@ -235,6 +235,50 @@ def test_setup_opencode_permission_accepts_jsonc_config(monkeypatch, tmp_path):
     }
 
 
+def test_setup_opencode_permission_does_not_overwrite_invalid_existing_config(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    original = '{\n  "model": "openai/gpt-5",\n'
+    config_path.write_text(original, encoding="utf-8")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+
+    assert result["ok"] is False
+    assert result["config_path"] == str(config_path)
+    assert "could not be parsed" in result["message"]
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_setup_opencode_permission_skips_comment_only_file_and_uses_next_valid_path(monkeypatch, tmp_path):
+    xdg_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    legacy_path = tmp_path / ".opencode" / "opencode.json"
+    xdg_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    xdg_path.write_text("// placeholder only\n", encoding="utf-8")
+    legacy_path.write_text(
+        """{
+  "model": "openai/gpt-5",
+}
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated = json.loads(legacy_path.read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(legacy_path)
+    assert xdg_path.read_text(encoding="utf-8") == "// placeholder only\n"
+    assert updated == {
+        "model": "openai/gpt-5",
+        "permission": "allow",
+    }
+
+
 def test_parse_jsonc_object_preserves_comment_markers_inside_strings():
     parsed = parse_jsonc_object(
         """{
