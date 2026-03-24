@@ -187,9 +187,10 @@ class WeChatAuthManager:
 
         if not base_url:
             return {
+                "ok": False,
                 "session_key": session_key,
                 "qrcode_url": "",
-                "message": "No base URL configured. Please set the WeChat base URL before logging in.",
+                "error": "No base URL configured. Please set the WeChat base URL before logging in.",
             }
 
         try:
@@ -211,6 +212,7 @@ class WeChatAuthManager:
                 qrcode_url=qrcode_url,
                 started_at=time.time(),
                 status="wait",
+                base_url=base_url,
             )
             self._sessions[session_key] = session
 
@@ -222,9 +224,10 @@ class WeChatAuthManager:
         except Exception as exc:
             logger.error("Failed to start WeChat login: %s", exc)
             return {
+                "ok": False,
                 "session_key": session_key,
                 "qrcode_url": "",
-                "message": f"Failed to start login: {exc}",
+                "error": f"Failed to start login: {exc}",
             }
 
     async def poll_status(self, session_key: str) -> dict:
@@ -237,8 +240,8 @@ class WeChatAuthManager:
         session = self._sessions.get(session_key)
         if session is None:
             return {
-                "status": "error",
-                "message": "No active login session. Please start a new login.",
+                "status": "expired",
+                "message": "Login session expired. Please start a new login.",
             }
 
         if not self._is_session_fresh(session):
@@ -376,12 +379,15 @@ class WeChatAuthManager:
         while time.time() < deadline:
             result = await self.poll_status(session_key)
             status = result.get("status")
+            message = result.get("message", "").lower()
 
             if status in ("confirmed", "error"):
                 return result
 
-            if status == "expired" and "restart" in result.get("message", "").lower():
-                # Max refreshes exhausted
+            if status == "expired" and (
+                "restart" in message or "start a new login" in message
+            ):
+                # Max refreshes exhausted or the session no longer exists.
                 return result
 
             # For "wait", "scaned", "refreshed" — keep polling

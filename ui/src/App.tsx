@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Wizard } from './components/Wizard';
 import { AppShell } from './components/AppShell';
 import { Dashboard } from './components/Dashboard';
@@ -15,11 +15,23 @@ import { getEnabledPlatforms } from './lib/platforms';
 // Wrapper to check if setup is needed
 const AuthGuard = ({ children }: { children: any }) => {
     const { getConfig } = useApi();
+    const location = useLocation();
     const [loading, setLoading] = useState(true);
     const [needsSetup, setNeedsSetup] = useState(false);
+    const bypassSetupGuard = location.pathname === '/doctor/logs';
 
     useEffect(() => {
+        if (bypassSetupGuard) {
+            setLoading(false);
+            setNeedsSetup(false);
+            return;
+        }
+
+        let cancelled = false;
+        setLoading(true);
+
         getConfig().then(config => {
+            if (cancelled) return;
             const enabledPlatforms = getEnabledPlatforms(config);
             const hasToken = enabledPlatforms.some((platform) =>
               platform === 'discord'
@@ -30,19 +42,22 @@ const AuthGuard = ({ children }: { children: any }) => {
                     ? !!config?.wechat?.bot_token
                     : !!config?.slack?.bot_token
             );
-            if (!config || !config.mode || !hasToken) {
-                setNeedsSetup(true);
-            }
+            setNeedsSetup(!config || !config.mode || !hasToken);
             setLoading(false);
         }).catch(() => {
+             if (cancelled) return;
              // If fetch fails (e.g. config doesn't exist), setup is needed
              setNeedsSetup(true);
              setLoading(false);
         });
-    }, []);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [bypassSetupGuard]);
 
     if (loading) return <div className="min-h-screen flex items-center justify-center bg-bg text-text">Loading...</div>;
-    if (needsSetup) return <Navigate to="/setup" replace />;
+    if (needsSetup && !bypassSetupGuard) return <Navigate to="/setup" replace />;
     return children;
 };
 
