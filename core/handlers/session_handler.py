@@ -490,10 +490,9 @@ class SessionHandler(BaseHandler):
                 self._get_formatter(context).format_error(self._t("error.sessionGeneric", error=error_msg)),
             )
 
-    def capture_session_id(self, base_session_id: str, claude_session_id: str, settings_key: str):
+    def capture_session_id(self, base_session_id: str, claude_session_id: str, session_key: str):
         """Capture and store Claude session ID mapping"""
-        # Persist to settings (settings_key is channel_id for Slack)
-        self.sessions.set_session_mapping(settings_key, base_session_id, claude_session_id)
+        self.sessions.set_session_mapping(session_key, base_session_id, claude_session_id)
 
         logger.info(f"Captured Claude session_id: {claude_session_id} for {base_session_id}")
 

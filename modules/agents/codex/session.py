@@ -18,8 +18,8 @@ class CodexSessionManager:
     def __init__(self) -> None:
         # base_session_id → Codex threadId
         self._threads: dict[str, str] = {}
-        # base_session_id → settings_key (for scoped clear)
-        self._settings_keys: dict[str, str] = {}
+        # base_session_id → session_key (for scoped clear)
+        self._session_keys: dict[str, str] = {}
         # base_session_id → working directory (for cwd-scoped invalidation)
         self._cwds: dict[str, str] = {}
 
@@ -33,16 +33,16 @@ class CodexSessionManager:
         logger.info("Session %s → Codex thread %s", base_session_id, thread_id)
 
     def invalidate_thread(self, base_session_id: str) -> None:
-        """Remove only the thread_id, preserving settings_key and cwd metadata."""
+        """Remove only the thread_id, preserving session_key and cwd metadata."""
         self._threads.pop(base_session_id, None)
 
-    # -- Settings-key tracking --------------------------------------------
+    # -- Session-key tracking ---------------------------------------------
 
-    def set_settings_key(self, base_session_id: str, settings_key: str) -> None:
-        self._settings_keys[base_session_id] = settings_key
+    def set_session_key(self, base_session_id: str, session_key: str) -> None:
+        self._session_keys[base_session_id] = session_key
 
-    def get_settings_key(self, base_session_id: str) -> Optional[str]:
-        return self._settings_keys.get(base_session_id)
+    def get_session_key(self, base_session_id: str) -> Optional[str]:
+        return self._session_keys.get(base_session_id)
 
     # -- Cwd tracking -----------------------------------------------------
 
@@ -53,16 +53,16 @@ class CodexSessionManager:
         """Return base_session_ids associated with a given working directory."""
         return [bid for bid, stored_cwd in self._cwds.items() if stored_cwd == cwd]
 
-    def get_sessions_by_settings_key(self, settings_key: str) -> list[str]:
-        """Return base_session_ids associated with a given settings_key."""
-        return [bid for bid, sk in self._settings_keys.items() if sk == settings_key]
+    def get_sessions_by_session_key(self, session_key: str) -> list[str]:
+        """Return base_session_ids associated with a given session_key."""
+        return [bid for bid, sk in self._session_keys.items() if sk == session_key]
 
-    def clear_by_settings_key(self, settings_key: str) -> int:
-        """Remove all sessions associated with a given settings_key. Returns count cleared."""
-        to_remove = [bid for bid, sk in self._settings_keys.items() if sk == settings_key]
+    def clear_by_session_key(self, session_key: str) -> int:
+        """Remove all sessions associated with a given session_key. Returns count cleared."""
+        to_remove = [bid for bid, sk in self._session_keys.items() if sk == session_key]
         for bid in to_remove:
             self._threads.pop(bid, None)
-            self._settings_keys.pop(bid, None)
+            self._session_keys.pop(bid, None)
             self._cwds.pop(bid, None)
         return len(to_remove)
 
@@ -71,14 +71,14 @@ class CodexSessionManager:
     def clear(self, base_session_id: str) -> None:
         """Remove all state for a session."""
         self._threads.pop(base_session_id, None)
-        self._settings_keys.pop(base_session_id, None)
+        self._session_keys.pop(base_session_id, None)
         self._cwds.pop(base_session_id, None)
 
     def clear_all(self) -> int:
         """Remove all tracked sessions. Returns count cleared."""
         count = len(self._threads)
         self._threads.clear()
-        self._settings_keys.clear()
+        self._session_keys.clear()
         self._cwds.clear()
         return count
 

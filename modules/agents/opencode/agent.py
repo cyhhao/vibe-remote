@@ -170,7 +170,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             request.base_session_id,
             session_id,
             request.working_path,
-            request.settings_key,
+            request.session_key,
         )
 
         if self._session_manager.mark_initialized(session_id):
@@ -263,9 +263,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             )
 
             # ActivePollInfo stores raw settings_key + separate platform field;
-            # request.settings_key is the scoped session key (platform::raw_id),
+            # request.session_key is the scoped session key (platform::raw_id),
             # so strip the prefix before persisting.
-            raw_settings_key = request.settings_key
+            raw_settings_key = request.session_key
             if "::" in raw_settings_key:
                 raw_settings_key = raw_settings_key.split("::", 1)[1]
 
@@ -378,12 +378,12 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         logger.info(f"OpenCode session {request.base_session_id} terminated via /stop")
         return True
 
-    async def clear_sessions(self, settings_key: str) -> int:
-        self.sessions.clear_agent_sessions(settings_key, self.name)
+    async def clear_sessions(self, session_key: str) -> int:
+        self.sessions.clear_agent_sessions(session_key, self.name)
         terminated = 0
         for base_id, task in list(self._active_requests.items()):
             req_info = self._session_manager.get_request_session(base_id)
-            if req_info and len(req_info) >= 3 and req_info[2] == settings_key:
+            if req_info and len(req_info) >= 3 and req_info[2] == session_key:
                 opencode_session_id = req_info[0]
                 if not task.done():
                     try:

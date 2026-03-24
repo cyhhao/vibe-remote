@@ -24,7 +24,7 @@ def _load_message_handler_class():
             working_path: str
             base_session_id: str
             composite_session_id: str
-            settings_key: str
+            session_key: str
             ack_message_id: str | None = None
             subagent_name: str | None = None
             subagent_key: str | None = None

@@ -167,8 +167,8 @@ class CommandHandlers(BaseHandler):
         """Handle /new command - reset active session state for a fresh start."""
         try:
             im_client = self._get_im_client(context)
-            settings_key = self._get_session_key(context)
-            await self.controller.agent_service.clear_sessions(settings_key)
+            session_key = self._get_session_key(context)
+            await self.controller.agent_service.clear_sessions(session_key)
             full_response = f"🆕 {self._t('command.new.started')}"
 
             channel_context = self._get_channel_context(context)
@@ -586,7 +586,7 @@ class CommandHandlers(BaseHandler):
                 working_path=working_path,
                 base_session_id=base_session_id,
                 composite_session_id=composite_key,
-                settings_key=session_key,
+                session_key=session_key,
             )
 
             handled = await self.controller.agent_service.handle_stop(agent_name, request)

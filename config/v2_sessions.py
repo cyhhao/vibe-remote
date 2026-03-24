@@ -131,6 +131,104 @@ class SessionsStore:
             self.save()
             logger.info("Migrated legacy active_polls (default_platform=%s)", default_platform)
 
+    @staticmethod
+    def _infer_platform_from_thread_ids(agent_maps: Dict[str, Dict[str, str]]) -> Optional[str]:
+        """Infer the platform from thread ID prefixes within a legacy mapping.
+
+        Thread IDs are formatted as ``<platform>_<ts>`` or
+        ``<platform>_<ts>:<working_path>``, e.g. ``slack_1774074591.762089``
+        or ``discord_1485641561998889093:/work``.  Returns the platform if
+        all thread IDs agree, otherwise ``None``.
+        """
+        platforms: set[str] = set()
+        for thread_map in agent_maps.values():
+            for thread_id in thread_map:
+                if "_" in thread_id:
+                    prefix = thread_id.split("_", 1)[0]
+                    if prefix.isalpha():
+                        platforms.add(prefix)
+        if len(platforms) == 1:
+            return platforms.pop()
+        return None
+
+    def migrate_session_mappings(self, default_platform: str) -> None:
+        """Migrate legacy session_mappings stored under raw keys to prefixed keys.
+
+        Before the settings_key/session_key split (commit 674e24d), session
+        mappings were stored under raw channel/user IDs (e.g. ``C0A6U2GH6P5``).
+        After the split, they are stored under platform-prefixed keys
+        (e.g. ``slack::C0A6U2GH6P5``).  This method merges old-format entries
+        into their prefixed counterparts so that existing sessions are not
+        orphaned on upgrade.
+
+        The platform is inferred from thread ID prefixes where possible,
+        falling back to ``default_platform`` only when inference fails.
+
+        Also removes empty orphan keys left behind by the migration.
+        """
+        mappings = self.state.session_mappings
+        old_keys = [
+            k
+            for k in list(mappings.keys())
+            if "::" not in k and mappings[k]  # non-prefixed AND non-empty
+        ]
+        if not old_keys:
+            # Still clean up any empty orphan keys (e.g. "U0E0FM3QT": {})
+            empty_keys = [k for k in list(mappings.keys()) if not mappings[k]]
+            if empty_keys:
+                for k in empty_keys:
+                    del mappings[k]
+                self.save()
+                logger.info(
+                    "Cleaned up %d empty session_mapping keys: %s",
+                    len(empty_keys),
+                    empty_keys,
+                )
+            return
+
+        migrated_count = 0
+        for old_key in old_keys:
+            old_agents = mappings[old_key]
+
+            # Infer platform from thread IDs; fall back to default_platform
+            inferred = self._infer_platform_from_thread_ids(old_agents)
+            platform = inferred or default_platform
+            if not inferred:
+                logger.warning(
+                    "Could not infer platform for legacy key %s, falling back to default_platform=%s",
+                    old_key,
+                    default_platform,
+                )
+            new_key = f"{platform}::{old_key}"
+
+            # Merge into prefixed key, preserving any entries already there
+            if new_key not in mappings:
+                mappings[new_key] = {}
+            for agent_name, thread_map in old_agents.items():
+                if agent_name not in mappings[new_key]:
+                    mappings[new_key][agent_name] = {}
+                for thread_id, session_id in thread_map.items():
+                    # Only carry over if the new key doesn't already have this thread
+                    if thread_id not in mappings[new_key][agent_name]:
+                        mappings[new_key][agent_name][thread_id] = session_id
+                        migrated_count += 1
+
+            # Remove the old key
+            del mappings[old_key]
+
+        # Also clean up any remaining empty orphan keys
+        empty_keys = [k for k in list(mappings.keys()) if not mappings[k]]
+        for k in empty_keys:
+            del mappings[k]
+
+        self.save()
+        logger.info(
+            "Migrated %d session entries from %d legacy keys; removed %d empty keys",
+            migrated_count,
+            len(old_keys),
+            len(empty_keys),
+        )
+
     def _ensure_user_namespace(self, user_id: str) -> None:
         if user_id not in self.state.session_mappings:
             self.state.session_mappings[user_id] = {}

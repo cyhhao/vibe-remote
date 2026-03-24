@@ -114,12 +114,12 @@ class ClaudeAgent(BaseAgent):
         )
         return
 
-    async def clear_sessions(self, settings_key: str) -> int:
-        """Clear Claude sessions scoped to the provided settings key."""
-        agent_map = self.sessions.list_agent_sessions(settings_key, self.name)
+    async def clear_sessions(self, session_key: str) -> int:
+        """Clear Claude sessions scoped to the provided session key."""
+        agent_map = self.sessions.list_agent_sessions(session_key, self.name)
         session_bases_to_clear = set(agent_map.keys())
 
-        self.sessions.clear_agent_sessions(settings_key, self.name)
+        self.sessions.clear_agent_sessions(session_key, self.name)
 
         sessions_to_clear = []
         for session_key in list(self.claude_sessions.keys()):
@@ -152,7 +152,7 @@ class ClaudeAgent(BaseAgent):
                 self._pending_requests.pop(session_key, None)
 
         # Legacy session manager cleanup (best-effort)
-        await self.session_manager.clear_session(settings_key)
+        await self.session_manager.clear_session(session_key)
 
         return len(sessions_to_clear) or len(session_bases_to_clear)
 
@@ -192,7 +192,7 @@ class ClaudeAgent(BaseAgent):
     ):
         """Receive messages from Claude SDK client."""
         try:
-            settings_key = self.controller._get_session_key(context)
+            session_key = self.controller._get_session_key(context)
             composite_key = f"{base_session_id}:{working_path}"
 
             # Build a request object for question handler
@@ -202,12 +202,12 @@ class ClaudeAgent(BaseAgent):
                 working_path=working_path,
                 base_session_id=base_session_id,
                 composite_session_id=composite_key,
-                settings_key=settings_key,
+                session_key=session_key,
             )
 
             async for message in client.receive_messages():
                 try:
-                    claude_session_id = self._maybe_capture_session_id(message, base_session_id, settings_key)
+                    claude_session_id = self._maybe_capture_session_id(message, base_session_id, session_key)
                     if claude_session_id:
                         logger.info(f"Captured Claude session id {claude_session_id} for {base_session_id}")
 
@@ -498,7 +498,7 @@ class ClaudeAgent(BaseAgent):
         self,
         message,
         base_session_id: str,
-        settings_key: str,
+        session_key: str,
     ) -> Optional[str]:
         """Capture session id from system init messages."""
         if (
@@ -509,7 +509,7 @@ class ClaudeAgent(BaseAgent):
         ):
             session_id = message.data.get("session_id")
             if session_id:
-                self.session_handler.capture_session_id(base_session_id, session_id, settings_key)
+                self.session_handler.capture_session_id(base_session_id, session_id, session_key)
                 return session_id
         return None
 

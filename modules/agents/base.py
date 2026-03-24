@@ -24,7 +24,7 @@ class AgentRequest:
     working_path: str
     base_session_id: str
     composite_session_id: str
-    settings_key: str
+    session_key: str
     ack_message_id: Optional[str] = None
     subagent_name: Optional[str] = None
     subagent_key: Optional[str] = None
@@ -169,8 +169,8 @@ class BaseAgent(ABC):
     async def handle_message(self, request: AgentRequest) -> None:
         """Process a user message routed to this agent."""
 
-    async def clear_sessions(self, settings_key: str) -> int:
-        """Clear session state for a given settings key. Returns cleared count."""
+    async def clear_sessions(self, session_key: str) -> int:
+        """Clear session state for a given session scope key. Returns cleared count."""
         return 0
 
     async def handle_stop(self, request: AgentRequest) -> bool:

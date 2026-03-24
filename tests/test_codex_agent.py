@@ -248,7 +248,7 @@ class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
             base_session_id="session-1",
             working_path="/tmp",
             context=object(),
-            settings_key="settings-1",
+            session_key="settings-1",
             ack_message_id=None,
         )
 
@@ -262,7 +262,7 @@ class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
         agent.controller = SimpleNamespace(emit_agent_message=AsyncMock())
         agent._get_or_create_transport = AsyncMock(return_value=transport)
         agent._session_mgr = SimpleNamespace(
-            set_settings_key=lambda base_session_id, settings_key: None,
+            set_session_key=lambda base_session_id, session_key: None,
             set_cwd=lambda base_session_id, cwd: None,
             get_thread_id=lambda base_session_id: "thread-1",
         )

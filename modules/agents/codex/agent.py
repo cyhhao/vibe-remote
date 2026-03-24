@@ -73,8 +73,8 @@ class CodexAgent(BaseAgent):
             await self._remove_ack_reaction(request)
             return
 
-        # Track settings_key and cwd for scoped invalidation
-        self._session_mgr.set_settings_key(request.base_session_id, request.settings_key)
+        # Track session_key and cwd for scoped invalidation
+        self._session_mgr.set_session_key(request.base_session_id, request.session_key)
         self._session_mgr.set_cwd(request.base_session_id, request.working_path)
 
         await self._delete_ack(request)
@@ -128,7 +128,7 @@ class CodexAgent(BaseAgent):
                     self._session_mgr.invalidate_thread(request.base_session_id)
                     self._turn_registry.clear_session(request.base_session_id)
                     self.sessions.clear_agent_session_mapping(
-                        request.settings_key,
+                        request.session_key,
                         self.name,
                         request.base_session_id,
                     )
@@ -179,15 +179,15 @@ class CodexAgent(BaseAgent):
             logger.error("Failed to interrupt Codex turn: %s", e)
             return False
 
-    async def clear_sessions(self, settings_key: str) -> int:
-        """Clear sessions scoped to a specific settings_key."""
-        self.sessions.clear_agent_sessions(settings_key, self.name)
+    async def clear_sessions(self, session_key: str) -> int:
+        """Clear sessions scoped to a specific session_key."""
+        self.sessions.clear_agent_sessions(session_key, self.name)
 
-        # Use settings_key index (not _threads) so sessions with
+        # Use session_key index (not _threads) so sessions with
         # invalidated threads are still cleaned up properly.
-        to_clear = self._session_mgr.get_sessions_by_settings_key(settings_key)
+        to_clear = self._session_mgr.get_sessions_by_session_key(session_key)
 
-        count = self._session_mgr.clear_by_settings_key(settings_key)
+        count = self._session_mgr.clear_by_session_key(session_key)
 
         # Clean up in-memory turn state and session locks for cleared sessions
         for bid in to_clear:
@@ -288,7 +288,7 @@ class CodexAgent(BaseAgent):
         self._session_mgr.set_thread_id(request.base_session_id, thread_id)
         # Also persist for resume support
         self.sessions.set_agent_session_mapping(
-            request.settings_key,
+            request.session_key,
             self.name,
             request.base_session_id,
             thread_id,
@@ -303,7 +303,7 @@ class CodexAgent(BaseAgent):
         """Try to resume a persisted thread, fall back to creating a new one."""
         # Check if we have a persisted Codex thread_id from settings_manager
         persisted = self.sessions.get_agent_session_id(
-            request.settings_key,
+            request.session_key,
             request.base_session_id,
             self.name,
         )
@@ -337,7 +337,7 @@ class CodexAgent(BaseAgent):
         """Build input, configure overrides, and send turn/start to Codex."""
         input_items = self._build_input(request)
 
-        channel_settings = self.settings_manager.get_channel_settings(request.settings_key)
+        channel_settings = self.settings_manager.get_channel_settings(request.session_key)
         routing = channel_settings.routing if channel_settings else None
         effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
         effective_effort = routing.codex_reasoning_effort if routing else None

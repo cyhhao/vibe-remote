@@ -268,7 +268,7 @@ class MessageHandler(BaseHandler):
                 working_path=working_path,
                 base_session_id=base_session_id,
                 composite_session_id=composite_key,
-                settings_key=session_key,
+                session_key=session_key,
                 ack_message_id=ack_message_id,
                 subagent_name=subagent_name,
                 subagent_key=matched_prefix,
@@ -441,7 +441,7 @@ class MessageHandler(BaseHandler):
                     working_path=working_path,
                     base_session_id=base_session_id,
                     composite_session_id=composite_key,
-                    settings_key=session_key,
+                    session_key=session_key,
                 )
                 await self.controller.agent_service.handle_message("opencode", request)
 
@@ -457,7 +457,7 @@ class MessageHandler(BaseHandler):
                     working_path=working_path,
                     base_session_id=base_session_id,
                     composite_session_id=composite_key,
-                    settings_key=session_key,
+                    session_key=session_key,
                 )
                 await self.controller.agent_service.handle_message("claude", request)
 
@@ -556,7 +556,7 @@ class MessageHandler(BaseHandler):
                 working_path=working_path,
                 base_session_id=base_session_id,
                 composite_session_id=composite_key,
-                settings_key=session_key,
+                session_key=session_key,
             )
             try:
                 handled = await self.controller.agent_service.handle_stop(agent_name, request)

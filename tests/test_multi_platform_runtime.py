@@ -131,7 +131,7 @@ def test_active_poll_info_round_trips_platform():
         base_session_id="base-1",
         channel_id="chan-1",
         thread_id="thread-1",
-        settings_key="discord::chan-1",
+        settings_key="chan-1",
         working_path="/tmp/work",
         user_id="user-1",
         platform="discord",

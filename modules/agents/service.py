@@ -28,10 +28,10 @@ class AgentService:
         agent = self.get(agent_name)
         await agent.handle_message(request)
 
-    async def clear_sessions(self, settings_key: str) -> Dict[str, int]:
+    async def clear_sessions(self, session_key: str) -> Dict[str, int]:
         cleared: Dict[str, int] = {}
         for name, agent in self.agents.items():
-            count = await agent.clear_sessions(settings_key)
+            count = await agent.clear_sessions(session_key)
             if count:
                 cleared[name] = count
         return cleared
