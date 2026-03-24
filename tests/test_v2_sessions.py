@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from config import paths
 from config.v2_sessions import SessionsStore
 
@@ -108,3 +113,152 @@ def test_migrate_active_polls_extracts_platform_from_scoped_key(tmp_path, monkey
     poll = reloaded.state.active_polls["oc-session-3"]
     assert poll["platform"] == "discord", "Should extract platform from scoped key prefix, not default"
     assert poll["settings_key"] == "C789"
+
+
+# --- session_mappings migration tests ---
+
+
+def test_migrate_session_mappings_moves_old_key_to_prefixed(tmp_path, monkeypatch):
+    """Old raw key entries are merged into the platform-prefixed key."""
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    store = SessionsStore()
+    store.state.session_mappings = {
+        "C0A6U2GH6P5": {
+            "opencode": {
+                "slack_123.456:/tmp/work": "ses_old_abc",
+                "slack_789.012:/tmp/work": "ses_old_def",
+            }
+        }
+    }
+    store.save()
+
+    reloaded = SessionsStore()
+    reloaded.load()
+    reloaded.migrate_session_mappings("slack")
+
+    # Old raw key should be gone
+    assert "C0A6U2GH6P5" not in reloaded.state.session_mappings
+    # New prefixed key should have the entries
+    prefixed = reloaded.state.session_mappings.get("slack::C0A6U2GH6P5", {})
+    assert prefixed["opencode"]["slack_123.456:/tmp/work"] == "ses_old_abc"
+    assert prefixed["opencode"]["slack_789.012:/tmp/work"] == "ses_old_def"
+
+
+def test_migrate_session_mappings_merges_without_overwriting(tmp_path, monkeypatch):
+    """Old entries don't overwrite newer entries already under the prefixed key."""
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    store = SessionsStore()
+    store.state.session_mappings = {
+        # Old key with a stale session for thread A, and a session for thread B
+        "C123": {
+            "opencode": {
+                "slack_threadA:/work": "ses_stale",
+                "slack_threadB:/work": "ses_old_B",
+            }
+        },
+        # New key already has a fresh session for thread A
+        "slack::C123": {
+            "opencode": {
+                "slack_threadA:/work": "ses_fresh",
+            }
+        },
+    }
+    store.save()
+
+    reloaded = SessionsStore()
+    reloaded.load()
+    reloaded.migrate_session_mappings("slack")
+
+    assert "C123" not in reloaded.state.session_mappings
+    oc = reloaded.state.session_mappings["slack::C123"]["opencode"]
+    # Thread A keeps the fresh value (not overwritten by stale)
+    assert oc["slack_threadA:/work"] == "ses_fresh"
+    # Thread B is carried over from old key
+    assert oc["slack_threadB:/work"] == "ses_old_B"
+
+
+def test_migrate_session_mappings_cleans_empty_keys(tmp_path, monkeypatch):
+    """Empty orphan keys are removed even when no real migration is needed."""
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    store = SessionsStore()
+    store.state.session_mappings = {
+        "U0E0FM3QT": {},  # empty orphan
+        "749794605024936027": {},  # empty orphan
+        "slack::C123": {"opencode": {"t1": "s1"}},
+    }
+    store.save()
+
+    reloaded = SessionsStore()
+    reloaded.load()
+    reloaded.migrate_session_mappings("slack")
+
+    assert "U0E0FM3QT" not in reloaded.state.session_mappings
+    assert "749794605024936027" not in reloaded.state.session_mappings
+    assert reloaded.state.session_mappings["slack::C123"]["opencode"]["t1"] == "s1"
+
+
+def test_migrate_session_mappings_noop_when_already_prefixed(tmp_path, monkeypatch):
+    """No changes when all keys are already platform-prefixed."""
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    store = SessionsStore()
+    store.state.session_mappings = {
+        "slack::C123": {"opencode": {"t1": "s1"}},
+        "discord::D456": {"opencode": {"t2": "s2"}},
+    }
+    store.save()
+
+    reloaded = SessionsStore()
+    reloaded.load()
+    reloaded.migrate_session_mappings("slack")
+
+    # Nothing should change
+    assert set(reloaded.state.session_mappings.keys()) == {"slack::C123", "discord::D456"}
+
+
+def test_migrate_session_mappings_infers_platform_from_thread_ids(tmp_path, monkeypatch):
+    """Platform is inferred from thread ID prefixes, not blindly using default_platform."""
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    store = SessionsStore()
+    store.state.session_mappings = {
+        # Legacy key with discord thread IDs, but default_platform will be "slack"
+        "D456": {
+            "opencode": {
+                "discord_1485641561998889093:/work": "ses_discord_1",
+                "discord_1485641756535165051:/work": "ses_discord_2",
+            }
+        }
+    }
+    store.save()
+
+    reloaded = SessionsStore()
+    reloaded.load()
+    reloaded.migrate_session_mappings("slack")  # default is slack, but data is discord
+
+    # Should migrate to discord:: not slack::
+    assert "D456" not in reloaded.state.session_mappings
+    assert "slack::D456" not in reloaded.state.session_mappings
+    prefixed = reloaded.state.session_mappings.get("discord::D456", {})
+    assert prefixed["opencode"]["discord_1485641561998889093:/work"] == "ses_discord_1"
+
+
+def test_migrate_session_mappings_is_idempotent(tmp_path, monkeypatch):
+    """Running migration twice does not duplicate or corrupt data."""
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    store = SessionsStore()
+    store.state.session_mappings = {
+        "C123": {"opencode": {"slack_123.456:/work": "ses_abc"}},
+    }
+    store.save()
+
+    # First migration
+    store1 = SessionsStore()
+    store1.load()
+    store1.migrate_session_mappings("slack")
+
+    # Second migration (reload from disk)
+    store2 = SessionsStore()
+    store2.load()
+    store2.migrate_session_mappings("slack")
+
+    assert set(store2.state.session_mappings.keys()) == {"slack::C123"}
+    assert store2.state.session_mappings["slack::C123"]["opencode"]["slack_123.456:/work"] == "ses_abc"

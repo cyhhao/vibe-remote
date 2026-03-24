@@ -126,7 +126,7 @@ def _build_request(message: str) -> AgentRequest:
         working_path="/tmp/work",
         base_session_id="base-session",
         composite_session_id="base-session:/tmp/work",
-        settings_key="C123",
+        session_key="C123",
     )
 
 

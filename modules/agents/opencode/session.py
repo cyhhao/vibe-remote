@@ -41,21 +41,21 @@ class OpenCodeSessionManager:
         base_session_id: str,
         opencode_session_id: str,
         working_path: str,
-        settings_key: str,
+        session_key: str,
     ) -> None:
         self._request_sessions[base_session_id] = (
             opencode_session_id,
             working_path,
-            settings_key,
+            session_key,
         )
 
     def pop_request_session(self, base_session_id: str) -> Optional[RequestSessionTuple]:
         return self._request_sessions.pop(base_session_id, None)
 
-    def pop_all_for_settings_key(self, settings_key: str) -> Dict[str, RequestSessionTuple]:
+    def pop_all_for_session_key(self, session_key: str) -> Dict[str, RequestSessionTuple]:
         matches: Dict[str, RequestSessionTuple] = {}
         for base_id, info in list(self._request_sessions.items()):
-            if len(info) >= 3 and info[2] == settings_key:
+            if len(info) >= 3 and info[2] == session_key:
                 matches[base_id] = info
         return matches
 
@@ -128,7 +128,7 @@ class OpenCodeSessionManager:
         composite_session_key = f"{request.base_session_id}:{request.working_path}"
 
         session_id = sessions.get_agent_session_id(
-            request.settings_key,
+            request.session_key,
             composite_session_key,
             agent_name=self._agent_name,
         )
@@ -138,14 +138,14 @@ class OpenCodeSessionManager:
         # don't lose session continuity on upgrade.
         if not session_id:
             legacy_id = sessions.get_agent_session_id(
-                request.settings_key,
+                request.session_key,
                 request.base_session_id,
                 agent_name=self._agent_name,
             )
             if legacy_id:
                 if await server.get_session(legacy_id, request.working_path):
                     sessions.set_agent_session_mapping(
-                        request.settings_key,
+                        request.session_key,
                         self._agent_name,
                         composite_session_key,
                         legacy_id,
@@ -171,7 +171,7 @@ class OpenCodeSessionManager:
                 session_id = session_data.get("id")
                 if session_id:
                     sessions.set_agent_session_mapping(
-                        request.settings_key,
+                        request.session_key,
                         self._agent_name,
                         composite_session_key,
                         session_id,
@@ -194,7 +194,7 @@ class OpenCodeSessionManager:
             new_session_id = session_data.get("id")
             if new_session_id:
                 sessions.set_agent_session_mapping(
-                    request.settings_key,
+                    request.session_key,
                     self._agent_name,
                     composite_session_key,
                     new_session_id,

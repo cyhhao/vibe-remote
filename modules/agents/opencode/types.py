@@ -31,4 +31,4 @@ class PendingQuestionPayload(TypedDict, total=False):
 class RequestSessionInfo:
     opencode_session_id: str
     working_path: str
-    settings_key: str
+    session_key: str

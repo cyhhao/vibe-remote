@@ -114,29 +114,29 @@ class ClaudeAgent(BaseAgent):
         )
         return
 
-    async def clear_sessions(self, settings_key: str) -> int:
-        """Clear Claude sessions scoped to the provided settings key."""
-        agent_map = self.sessions.list_agent_sessions(settings_key, self.name)
+    async def clear_sessions(self, session_key: str) -> int:
+        """Clear Claude sessions scoped to the provided session key."""
+        agent_map = self.sessions.list_agent_sessions(session_key, self.name)
         session_bases_to_clear = set(agent_map.keys())
 
-        self.sessions.clear_agent_sessions(settings_key, self.name)
+        self.sessions.clear_agent_sessions(session_key, self.name)
 
         sessions_to_clear = []
-        for session_key in list(self.claude_sessions.keys()):
-            base_part = session_key.split(":")[0] if ":" in session_key else session_key
+        for composite_id in list(self.claude_sessions.keys()):
+            base_part = composite_id.split(":")[0] if ":" in composite_id else composite_id
             if base_part in session_bases_to_clear:
-                sessions_to_clear.append(session_key)
+                sessions_to_clear.append(composite_id)
 
-        for session_key in sessions_to_clear:
+        for composite_id in sessions_to_clear:
             try:
-                client = self.claude_sessions[session_key]
+                client = self.claude_sessions[composite_id]
                 if hasattr(client, "close"):
                     await client.close()
             except Exception as e:
-                logger.warning(f"Error closing Claude session {session_key}: {e}")
+                logger.warning(f"Error closing Claude session {composite_id}: {e}")
             finally:
-                self.claude_sessions.pop(session_key, None)
-                receiver_task = self.receiver_tasks.pop(session_key, None)
+                self.claude_sessions.pop(composite_id, None)
+                receiver_task = self.receiver_tasks.pop(composite_id, None)
                 if receiver_task is not None:
                     receiver_task.cancel()
                     try:
@@ -144,15 +144,15 @@ class ClaudeAgent(BaseAgent):
                     except asyncio.CancelledError:
                         pass
                     except Exception as task_err:
-                        logger.warning(f"Error stopping Claude receiver {session_key}: {task_err}")
+                        logger.warning(f"Error stopping Claude receiver {composite_id}: {task_err}")
 
-                self._last_assistant_text.pop(session_key, None)
-                self._pending_assistant_message.pop(session_key, None)
-                self._pending_reactions.pop(session_key, None)
-                self._pending_requests.pop(session_key, None)
+                self._last_assistant_text.pop(composite_id, None)
+                self._pending_assistant_message.pop(composite_id, None)
+                self._pending_reactions.pop(composite_id, None)
+                self._pending_requests.pop(composite_id, None)
 
         # Legacy session manager cleanup (best-effort)
-        await self.session_manager.clear_session(settings_key)
+        await self.session_manager.clear_session(session_key)
 
         return len(sessions_to_clear) or len(session_bases_to_clear)
 
@@ -192,7 +192,7 @@ class ClaudeAgent(BaseAgent):
     ):
         """Receive messages from Claude SDK client."""
         try:
-            settings_key = self.controller._get_session_key(context)
+            session_key = self.controller._get_session_key(context)
             composite_key = f"{base_session_id}:{working_path}"
 
             # Build a request object for question handler
@@ -202,12 +202,12 @@ class ClaudeAgent(BaseAgent):
                 working_path=working_path,
                 base_session_id=base_session_id,
                 composite_session_id=composite_key,
-                settings_key=settings_key,
+                session_key=session_key,
             )
 
             async for message in client.receive_messages():
                 try:
-                    claude_session_id = self._maybe_capture_session_id(message, base_session_id, settings_key)
+                    claude_session_id = self._maybe_capture_session_id(message, base_session_id, session_key)
                     if claude_session_id:
                         logger.info(f"Captured Claude session id {claude_session_id} for {base_session_id}")
 
@@ -498,7 +498,7 @@ class ClaudeAgent(BaseAgent):
         self,
         message,
         base_session_id: str,
-        settings_key: str,
+        session_key: str,
     ) -> Optional[str]:
         """Capture session id from system init messages."""
         if (
@@ -509,7 +509,7 @@ class ClaudeAgent(BaseAgent):
         ):
             session_id = message.data.get("session_id")
             if session_id:
-                self.session_handler.capture_session_id(base_session_id, session_id, settings_key)
+                self.session_handler.capture_session_id(base_session_id, session_id, session_key)
                 return session_id
         return None
 

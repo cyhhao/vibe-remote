@@ -457,6 +457,7 @@ class MultiSettingsManager:
         self.sessions_store = SessionsStore()
         self.sessions_store.load()
         self.sessions_store.migrate_active_polls(primary_platform)
+        self.sessions_store.migrate_session_mappings(primary_platform)
         self.sessions = SessionsFacade(self.sessions_store)
         self.managers = {
             platform: SettingsManager(

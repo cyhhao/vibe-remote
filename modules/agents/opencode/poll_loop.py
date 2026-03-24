@@ -405,7 +405,7 @@ class OpenCodePollLoop:
                                     platform_specific={"platform": poll_info.platform} if poll_info.platform else None,
                                 ),
                                 message="",
-                                settings_key=f"{poll_info.platform}::{poll_info.settings_key}"
+                                session_key=f"{poll_info.platform}::{poll_info.settings_key}"
                                 if poll_info.platform
                                 else poll_info.settings_key,
                                 working_path=poll_info.working_path,
