@@ -122,21 +122,21 @@ class ClaudeAgent(BaseAgent):
         self.sessions.clear_agent_sessions(session_key, self.name)
 
         sessions_to_clear = []
-        for session_key in list(self.claude_sessions.keys()):
-            base_part = session_key.split(":")[0] if ":" in session_key else session_key
+        for composite_id in list(self.claude_sessions.keys()):
+            base_part = composite_id.split(":")[0] if ":" in composite_id else composite_id
             if base_part in session_bases_to_clear:
-                sessions_to_clear.append(session_key)
+                sessions_to_clear.append(composite_id)
 
-        for session_key in sessions_to_clear:
+        for composite_id in sessions_to_clear:
             try:
-                client = self.claude_sessions[session_key]
+                client = self.claude_sessions[composite_id]
                 if hasattr(client, "close"):
                     await client.close()
             except Exception as e:
-                logger.warning(f"Error closing Claude session {session_key}: {e}")
+                logger.warning(f"Error closing Claude session {composite_id}: {e}")
             finally:
-                self.claude_sessions.pop(session_key, None)
-                receiver_task = self.receiver_tasks.pop(session_key, None)
+                self.claude_sessions.pop(composite_id, None)
+                receiver_task = self.receiver_tasks.pop(composite_id, None)
                 if receiver_task is not None:
                     receiver_task.cancel()
                     try:
@@ -144,12 +144,12 @@ class ClaudeAgent(BaseAgent):
                     except asyncio.CancelledError:
                         pass
                     except Exception as task_err:
-                        logger.warning(f"Error stopping Claude receiver {session_key}: {task_err}")
+                        logger.warning(f"Error stopping Claude receiver {composite_id}: {task_err}")
 
-                self._last_assistant_text.pop(session_key, None)
-                self._pending_assistant_message.pop(session_key, None)
-                self._pending_reactions.pop(session_key, None)
-                self._pending_requests.pop(session_key, None)
+                self._last_assistant_text.pop(composite_id, None)
+                self._pending_assistant_message.pop(composite_id, None)
+                self._pending_reactions.pop(composite_id, None)
+                self._pending_requests.pop(composite_id, None)
 
         # Legacy session manager cleanup (best-effort)
         await self.session_manager.clear_session(session_key)
