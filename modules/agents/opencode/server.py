@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 from config import paths
+from vibe.opencode_config import load_first_opencode_user_config
 
 logger = logging.getLogger(__name__)
 
@@ -644,29 +645,8 @@ class OpenCodeServerManager:
         Returns:
             Parsed config dict, or None if file doesn't exist or is invalid.
         """
-
-        from pathlib import Path
-
-        config_paths = [
-            Path.home() / ".config" / "opencode" / "opencode.json",
-            Path.home() / ".opencode" / "opencode.json",
-        ]
-
-        for config_path in config_paths:
-            if not config_path.exists():
-                continue
-            try:
-                with open(config_path, "r") as f:
-                    config = json.load(f)
-                if not isinstance(config, dict):
-                    logger.warning(f"{config_path}: root is not a dict")
-                    continue
-                return config
-            except Exception as e:
-                logger.warning(f"Failed to load {config_path}: {e}")
-                continue
-
-        return None
+        config, _ = load_first_opencode_user_config(logger_instance=logger)
+        return config
 
     def _get_agent_config(self, config: Dict[str, Any], agent_name: Optional[str]) -> Dict[str, Any]:
         """Get agent-specific config from opencode.json with type safety."""

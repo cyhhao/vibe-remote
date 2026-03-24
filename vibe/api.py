@@ -21,6 +21,7 @@ from config.v2_settings import (
     _routing_to_dict,
 )
 from config.v2_sessions import SessionsStore
+from vibe.opencode_config import get_opencode_config_paths, load_first_opencode_user_config
 from vibe.upgrade import build_upgrade_plan, get_latest_version_info, get_restart_shell_command, get_running_vibe_path
 
 
@@ -700,8 +701,8 @@ def setup_opencode_permission() -> dict:
     """Set OpenCode permission to 'allow' in config file.
 
     Detection priority (aligned with _load_opencode_user_config):
-    1. ~/.config/opencode/opencode.json - if exists and valid, update it
-    2. ~/.opencode/opencode.json - if exists and valid, update it
+    1. ~/.config/opencode/opencode.json - if exists and valid JSON/JSONC, update it
+    2. ~/.opencode/opencode.json - if exists and valid JSON/JSONC, update it
     3. Create new file at ~/.config/opencode/opencode.json (XDG standard)
 
     Mirrors _load_opencode_user_config behavior: skips invalid files and tries next.
@@ -709,50 +710,24 @@ def setup_opencode_permission() -> dict:
     Returns:
         {"ok": bool, "message": str, "config_path": str}
     """
-    from pathlib import Path
+    config_paths = get_opencode_config_paths(Path.home())
+    config, config_path = load_first_opencode_user_config(home=Path.home(), logger_instance=logger)
 
-    config_paths = [
-        Path.home() / ".config" / "opencode" / "opencode.json",
-        Path.home() / ".opencode" / "opencode.json",
-    ]
-
-    # Try each path in priority order
-    for config_path in config_paths:
-        if not config_path.exists():
-            continue
-
-        try:
-            content = config_path.read_text(encoding="utf-8").strip()
-            if not content:
-                # Empty file, treat as valid empty config
-                config = {}
-            else:
-                config = json.loads(content)
-                if not isinstance(config, dict):
-                    logger.warning(f"{config_path}: not a JSON object, skipping")
-                    continue
-
-            # Found a valid config file, update it
-            if config.get("permission") == "allow":
-                return {
-                    "ok": True,
-                    "message": "Permission already set",
-                    "config_path": str(config_path),
-                }
-
-            config["permission"] = "allow"
-            config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    if config is not None and config_path is not None:
+        if config.get("permission") == "allow":
             return {
                 "ok": True,
-                "message": "Permission set to 'allow'",
+                "message": "Permission already set",
                 "config_path": str(config_path),
             }
-        except json.JSONDecodeError as e:
-            logger.warning(f"{config_path}: invalid JSON ({e}), skipping")
-            continue
-        except Exception as e:
-            logger.warning(f"{config_path}: failed to read ({e}), skipping")
-            continue
+
+        config["permission"] = "allow"
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        return {
+            "ok": True,
+            "message": "Permission set to 'allow'",
+            "config_path": str(config_path),
+        }
 
     # No existing valid config found, create at XDG path (first in list)
     config_path = config_paths[0]

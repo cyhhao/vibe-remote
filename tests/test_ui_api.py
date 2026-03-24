@@ -1,3 +1,5 @@
+import json
+
 from vibe import api
 
 
@@ -172,3 +174,61 @@ def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
     assert result["path"] == str(codex_path)
     assert calls[0][0] == [str(npm_path), "install", "-g", "@openai/codex"]
     assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == str(npm_path.parent)
+
+
+def test_setup_opencode_permission_preserves_existing_json_fields(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "model": "openai/gpt-5",
+                "agent": {"build": {"model": "anthropic/claude-sonnet-4-5"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(config_path)
+    assert updated == {
+        "model": "openai/gpt-5",
+        "agent": {"build": {"model": "anthropic/claude-sonnet-4-5"}},
+        "permission": "allow",
+    }
+
+
+def test_setup_opencode_permission_accepts_jsonc_config(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """{
+  // Global defaults should be preserved.
+  "model": "openai/gpt-5",
+  "agent": {
+    "build": {
+      "model": "anthropic/claude-sonnet-4-5",
+    },
+  },
+}
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(config_path)
+    assert updated == {
+        "model": "openai/gpt-5",
+        "agent": {"build": {"model": "anthropic/claude-sonnet-4-5"}},
+        "permission": "allow",
+    }
