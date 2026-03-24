@@ -20,7 +20,7 @@ from config.v2_config import (
     V2Config,
 )
 from vibe import __version__, api, runtime
-from vibe.upgrade import build_upgrade_plan, cache_running_vibe_path, get_latest_version_info
+from vibe.upgrade import build_upgrade_plan, cache_running_vibe_path, get_latest_version_info, get_safe_cwd
 
 logger = logging.getLogger(__name__)
 
@@ -652,8 +652,12 @@ def cmd_upgrade():
     plan = build_upgrade_plan(vibe_path=current_vibe_path)
     print(f"Using {plan.method}: {' '.join(plan.command)}")
 
+    # Use a stable directory as cwd to avoid issues when running from a
+    # directory that uv may delete during upgrade (e.g. inside the uv tool venv).
+    safe_cwd = get_safe_cwd()
+
     try:
-        result = subprocess.run(plan.command, capture_output=True, text=True, env=plan.env)
+        result = subprocess.run(plan.command, capture_output=True, text=True, env=plan.env, cwd=safe_cwd)
         if result.returncode == 0:
             print("\033[32mUpgrade successful!\033[0m")
             print("Please restart vibe to use the new version:")

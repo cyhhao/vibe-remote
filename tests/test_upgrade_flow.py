@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from vibe.upgrade import (
     get_latest_version_info,
     get_restart_command,
     get_running_vibe_path,
+    get_safe_cwd,
 )
 
 
@@ -203,15 +205,17 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     assert result["ok"] is True
     assert result["restarting"] is True
     assert calls["run_cmd"] == plan.command
-    assert calls["run_kwargs"] == {
-        "capture_output": True,
-        "text": True,
-        "timeout": 120,
-        "env": plan.env,
-    }
+    assert calls["run_kwargs"]["capture_output"] is True
+    assert calls["run_kwargs"]["text"] is True
+    assert calls["run_kwargs"]["timeout"] == 120
+    assert calls["run_kwargs"]["env"] == plan.env
+    safe_cwd = calls["run_kwargs"].get("cwd")
+    assert safe_cwd and os.path.isabs(safe_cwd), f"subprocess.run cwd must be an absolute path, got {safe_cwd!r}"
     assert calls["popen_cmd"] == "sleep 2 && /custom/bin/vibe"
     assert calls["popen_kwargs"]["shell"] is True
     assert calls["popen_kwargs"]["start_new_session"] is True
+    popen_cwd = calls["popen_kwargs"].get("cwd")
+    assert popen_cwd and os.path.isabs(popen_cwd), f"Popen cwd must be an absolute path, got {popen_cwd!r}"
 
 
 def test_cmd_upgrade_uses_upgrade_plan_env(monkeypatch):
@@ -237,7 +241,11 @@ def test_cmd_upgrade_uses_upgrade_plan_env(monkeypatch):
 
     assert result == 0
     assert calls["cmd"] == plan.command
-    assert calls["kwargs"] == {"capture_output": True, "text": True, "env": plan.env}
+    assert calls["kwargs"]["capture_output"] is True
+    assert calls["kwargs"]["text"] is True
+    assert calls["kwargs"]["env"] == plan.env
+    assert "cwd" in calls["kwargs"], "subprocess.run must specify cwd to avoid stale venv cwd"
+    assert os.path.isabs(calls["kwargs"]["cwd"]), f"cwd must be absolute, got {calls['kwargs']['cwd']!r}"
 
 
 def test_cmd_upgrade_skips_install_when_already_latest(monkeypatch):
@@ -249,3 +257,17 @@ def test_cmd_upgrade_skips_install_when_already_latest(monkeypatch):
     monkeypatch.setattr(cli.subprocess, "run", fail_run)
 
     assert cli.cmd_upgrade() == 0
+
+
+def test_get_safe_cwd_returns_absolute_existing_dir():
+    cwd = get_safe_cwd()
+    assert os.path.isabs(cwd)
+    assert os.path.isdir(cwd)
+
+
+def test_get_safe_cwd_falls_back_when_home_invalid(monkeypatch):
+    monkeypatch.setenv("HOME", "/nonexistent_dir_for_test")
+    cwd = get_safe_cwd()
+    assert os.path.isabs(cwd)
+    assert os.path.isdir(cwd)
+    assert cwd != "/nonexistent_dir_for_test"
