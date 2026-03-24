@@ -157,6 +157,47 @@ Unified regression environment is ready:
 EOF
 }
 
+container_exists() {
+    local cid
+    cid="$("$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" ps -q vibe 2>/dev/null || true)"
+    [ -n "$cid" ]
+}
+
+snapshot_container_path() {
+    local container_path="$1"
+    local host_parent="$2"
+    local host_name="$3"
+
+    if ! "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" exec -T vibe sh -lc "test -e '$container_path'" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    mkdir -p "$host_parent"
+    "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" exec -T vibe sh -lc \
+        "tar --ignore-failed-read --warning=no-file-changed -C \"$(dirname "$container_path")\" -cf - \"$(basename "$container_path")\"" \
+        | tar -C "$host_parent" -xf - || true
+}
+
+snapshot_agent_runtime_state() {
+    if [ "$RESET_MODE" = "all" ]; then
+        return 0
+    fi
+
+    if ! container_exists; then
+        return 0
+    fi
+
+    local shared_root="$OUTPUT_ROOT/shared-home"
+    mkdir -p "$shared_root"
+
+    echo "Snapshotting agent runtime state from existing regression container..."
+    snapshot_container_path "/root/.claude" "$shared_root" ".claude"
+    snapshot_container_path "/root/.claude.json" "$shared_root" ".claude.json"
+    snapshot_container_path "/root/.codex" "$shared_root" ".codex"
+    snapshot_container_path "/root/.config/opencode" "$shared_root/.config" "opencode"
+    snapshot_container_path "/root/.local/share/opencode" "$shared_root/.local/share" "opencode"
+}
+
 wait_for_service() {
     local port="$1"
     local url="http://127.0.0.1:${port}"
@@ -176,6 +217,7 @@ wait_for_service() {
 
 case "$MODE" in
     down)
+        snapshot_agent_runtime_state
         "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans
         exit 0
         ;;
@@ -191,6 +233,8 @@ case "$MODE" in
         exit 0
         ;;
 esac
+
+snapshot_agent_runtime_state
 
 echo "Stopping previous regression container..."
 "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down --remove-orphans >/dev/null 2>&1 || true

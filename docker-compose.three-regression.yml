@@ -25,7 +25,8 @@ services:
       - "${THREE_REGRESSION_PORT:-15130}:5123"
     volumes:
       - ./_tmp/three-regression/vibe:/data/vibe_remote
-      - ./_tmp/three-regression/shared-home/.claude/settings.json:/root/.claude/settings.json:ro
-      - ./_tmp/three-regression/shared-home/.codex/config.toml:/root/.codex/config.toml:ro
-      - ./_tmp/three-regression/shared-home/.codex/auth.json:/root/.codex/auth.json:ro
-      - ./_tmp/three-regression/shared-home/.config/opencode/opencode.json:/root/.config/opencode/opencode.json:ro
+      - ./_tmp/three-regression/shared-home/.claude:/root/.claude
+      - ./_tmp/three-regression/shared-home/.claude.json:/root/.claude.json
+      - ./_tmp/three-regression/shared-home/.codex:/root/.codex
+      - ./_tmp/three-regression/shared-home/.config/opencode:/root/.config/opencode
+      - ./_tmp/three-regression/shared-home/.local/share/opencode:/root/.local/share/opencode
