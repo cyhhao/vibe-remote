@@ -652,8 +652,12 @@ def cmd_upgrade():
     plan = build_upgrade_plan(vibe_path=current_vibe_path)
     print(f"Using {plan.method}: {' '.join(plan.command)}")
 
+    # Use home directory as cwd to avoid issues when running from a directory
+    # that uv may delete during upgrade (e.g. inside the uv tool venv).
+    safe_cwd = os.path.expanduser("~")
+
     try:
-        result = subprocess.run(plan.command, capture_output=True, text=True, env=plan.env)
+        result = subprocess.run(plan.command, capture_output=True, text=True, env=plan.env, cwd=safe_cwd)
         if result.returncode == 0:
             print("\033[32mUpgrade successful!\033[0m")
             print("Please restart vibe to use the new version:")

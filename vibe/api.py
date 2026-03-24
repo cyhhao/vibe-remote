@@ -21,7 +21,11 @@ from config.v2_settings import (
     _routing_to_dict,
 )
 from config.v2_sessions import SessionsStore
-from vibe.opencode_config import get_opencode_config_paths, load_first_opencode_user_config, set_jsonc_top_level_string_property
+from vibe.opencode_config import (
+    get_opencode_config_paths,
+    load_first_opencode_user_config,
+    set_jsonc_top_level_string_property,
+)
 from vibe.upgrade import build_upgrade_plan, get_latest_version_info, get_restart_shell_command, get_running_vibe_path
 
 
@@ -652,6 +656,11 @@ def do_upgrade(auto_restart: bool = True) -> dict:
     current_vibe_path = get_running_vibe_path()
     plan = build_upgrade_plan(vibe_path=current_vibe_path)
 
+    # Use home directory as cwd to avoid "Current directory does not exist" errors.
+    # The vibe service process cwd may be inside the uv tool venv directory, which
+    # uv deletes and recreates during upgrade.
+    safe_cwd = os.path.expanduser("~")
+
     try:
         result = subprocess.run(
             plan.command,
@@ -659,6 +668,7 @@ def do_upgrade(auto_restart: bool = True) -> dict:
             text=True,
             timeout=120,
             env=plan.env,
+            cwd=safe_cwd,
         )
         if result.returncode == 0:
             restarting = False
@@ -670,6 +680,7 @@ def do_upgrade(auto_restart: bool = True) -> dict:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
+                    cwd=safe_cwd,
                 )
                 restarting = True
 
@@ -740,7 +751,9 @@ def setup_opencode_permission() -> dict:
             return {"ok": False, "message": str(e), "config_path": str(probe.path)}
 
     if probe.existing_paths:
-        error_path, error_message = probe.errors[0] if probe.errors else (probe.existing_paths[0], "unknown parse error")
+        error_path, error_message = (
+            probe.errors[0] if probe.errors else (probe.existing_paths[0], "unknown parse error")
+        )
         logger.error(f"Refusing to overwrite invalid OpenCode config at {error_path}: {error_message}")
         return {
             "ok": False,
