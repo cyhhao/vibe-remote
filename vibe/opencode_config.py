@@ -252,6 +252,10 @@ def _detect_newline(source: str) -> str:
     return "\r\n" if "\r\n" in source else "\n"
 
 
+def _indent_slice(source: str, line_start: int, token_start: int) -> str:
+    return source[line_start:token_start].replace("\ufeff", "")
+
+
 def _scan_jsonc_top_level_properties(source: str) -> tuple[int, int, list[_JsoncTopLevelProperty]]:
     root_start = 1 if source.startswith("\ufeff") else 0
     root_start = _skip_jsonc_whitespace_and_comments(source, root_start)
@@ -319,12 +323,12 @@ def set_jsonc_top_level_string_property(source: str, key: str, value: str) -> st
     newline = _detect_newline(source)
     root_line_start = _line_start(source, root_start)
     closing_line_start = _line_start(source, root_end)
-    root_indent = source[root_line_start:root_start]
+    root_indent = _indent_slice(source, root_line_start, root_start)
     first_property_indent = None
     if properties:
         first_property = properties[0]
         first_property_line_start = _line_start(source, first_property.key_start)
-        candidate_indent = source[first_property_line_start:first_property.key_start]
+        candidate_indent = _indent_slice(source, first_property_line_start, first_property.key_start)
         if candidate_indent.strip() == "":
             first_property_indent = candidate_indent
 
