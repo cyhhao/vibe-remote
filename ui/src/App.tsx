@@ -27,7 +27,11 @@ const AuthGuard = ({ children }: { children: any }) => {
             return;
         }
 
+        let cancelled = false;
+        setLoading(true);
+
         getConfig().then(config => {
+            if (cancelled) return;
             const enabledPlatforms = getEnabledPlatforms(config);
             const hasToken = enabledPlatforms.some((platform) =>
               platform === 'discord'
@@ -38,16 +42,19 @@ const AuthGuard = ({ children }: { children: any }) => {
                     ? !!config?.wechat?.bot_token
                     : !!config?.slack?.bot_token
             );
-            if (!config || !config.mode || !hasToken) {
-                setNeedsSetup(true);
-            }
+            setNeedsSetup(!config || !config.mode || !hasToken);
             setLoading(false);
         }).catch(() => {
+             if (cancelled) return;
              // If fetch fails (e.g. config doesn't exist), setup is needed
              setNeedsSetup(true);
              setLoading(false);
         });
-    }, [bypassSetupGuard, getConfig]);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [bypassSetupGuard]);
 
     if (loading) return <div className="min-h-screen flex items-center justify-center bg-bg text-text">Loading...</div>;
     if (needsSetup && !bypassSetupGuard) return <Navigate to="/setup" replace />;

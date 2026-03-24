@@ -42,3 +42,11 @@ class WeChatAuthManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["ok"])
         self.assertIn("Failed to start login", result["error"])
         self.assertIsNone(manager.get_session(result["session_key"]))
+
+    async def test_wait_for_login_returns_immediately_when_session_missing(self):
+        manager = WeChatAuthManager()
+
+        result = await manager.wait_for_login("missing-session", timeout_s=5)
+
+        self.assertEqual(result["status"], "expired")
+        self.assertIn("start a new login", result["message"].lower())

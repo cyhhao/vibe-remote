@@ -379,12 +379,15 @@ class WeChatAuthManager:
         while time.time() < deadline:
             result = await self.poll_status(session_key)
             status = result.get("status")
+            message = result.get("message", "").lower()
 
             if status in ("confirmed", "error"):
                 return result
 
-            if status == "expired" and "restart" in result.get("message", "").lower():
-                # Max refreshes exhausted
+            if status == "expired" and (
+                "restart" in message or "start a new login" in message
+            ):
+                # Max refreshes exhausted or the session no longer exists.
                 return result
 
             # For "wait", "scaned", "refreshed" — keep polling
