@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Wizard } from './components/Wizard';
 import { AppShell } from './components/AppShell';
 import { Dashboard } from './components/Dashboard';
@@ -15,10 +15,18 @@ import { getEnabledPlatforms } from './lib/platforms';
 // Wrapper to check if setup is needed
 const AuthGuard = ({ children }: { children: any }) => {
     const { getConfig } = useApi();
+    const location = useLocation();
     const [loading, setLoading] = useState(true);
     const [needsSetup, setNeedsSetup] = useState(false);
+    const bypassSetupGuard = location.pathname === '/doctor/logs';
 
     useEffect(() => {
+        if (bypassSetupGuard) {
+            setLoading(false);
+            setNeedsSetup(false);
+            return;
+        }
+
         getConfig().then(config => {
             const enabledPlatforms = getEnabledPlatforms(config);
             const hasToken = enabledPlatforms.some((platform) =>
@@ -39,10 +47,10 @@ const AuthGuard = ({ children }: { children: any }) => {
              setNeedsSetup(true);
              setLoading(false);
         });
-    }, []);
+    }, [bypassSetupGuard, getConfig]);
 
     if (loading) return <div className="min-h-screen flex items-center justify-center bg-bg text-text">Loading...</div>;
-    if (needsSetup) return <Navigate to="/setup" replace />;
+    if (needsSetup && !bypassSetupGuard) return <Navigate to="/setup" replace />;
     return children;
 };
 

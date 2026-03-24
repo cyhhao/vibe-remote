@@ -26,10 +26,11 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
 
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoStartedRef = useRef(false);
+  const activeSessionKeyRef = useRef<string | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
+      clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     }
   }, []);
@@ -48,6 +49,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     setQrCodeUrl('');
     setBotToken('');
     setBaseUrl('');
+    activeSessionKeyRef.current = null;
     stopPolling();
 
     try {
@@ -67,6 +69,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
 
       // Start polling
       if (result.session_key) {
+        activeSessionKeyRef.current = result.session_key;
         startPolling(result.session_key);
       }
     } catch (err: any) {
@@ -82,6 +85,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
         setMessage(retryResult.message || '');
         setLoginState('qr_ready');
         if (retryResult.session_key) {
+          activeSessionKeyRef.current = retryResult.session_key;
           startPolling(retryResult.session_key);
         }
       } catch (retryErr: any) {
@@ -109,7 +113,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     const pollOnce = async () => {
       try {
         const result = await api.wechatPollLogin(key);
-        if (!result) return;
+        if (!result || activeSessionKeyRef.current !== key) return;
 
         const status = result.status;
         if (status === 'scaned') {
@@ -120,14 +124,23 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
           setMessage(result.message || t('wechatConfig.connected'));
           setBotToken(result.bot_token || '');
           setBaseUrl(result.base_url || '');
+          activeSessionKeyRef.current = null;
           stopPolling();
+          return;
+        } else if (status === 'refreshed') {
+          setLoginState('qr_ready');
+          setQrCodeUrl(result.qrcode_url || '');
+          setMessage(result.message || t('wechatConfig.qrExpired'));
         } else if (status === 'expired') {
           setLoginState('error');
           setMessage(result.message || t('wechatConfig.qrExpired'));
+          activeSessionKeyRef.current = null;
           stopPolling();
+          return;
         } else if (status === 'error') {
           setLoginState('error');
           setMessage(result.message || t('wechatConfig.pollError'));
+          activeSessionKeyRef.current = null;
           stopPolling();
           return;
         }
@@ -136,6 +149,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
           void pollOnce();
         }, QR_POLL_INTERVAL_MS);
       } catch {
+        if (activeSessionKeyRef.current !== key) return;
         pollTimerRef.current = setTimeout(() => {
           void pollOnce();
         }, QR_POLL_INTERVAL_MS);

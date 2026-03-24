@@ -211,6 +211,7 @@ class WeChatAuthManager:
                 qrcode_url=qrcode_url,
                 started_at=time.time(),
                 status="wait",
+                base_url=base_url,
             )
             self._sessions[session_key] = session
 
@@ -237,8 +238,8 @@ class WeChatAuthManager:
         session = self._sessions.get(session_key)
         if session is None:
             return {
-                "status": "error",
-                "message": "No active login session. Please start a new login.",
+                "status": "expired",
+                "message": "Login session expired. Please start a new login.",
             }
 
         if not self._is_session_fresh(session):
