@@ -84,34 +84,76 @@ function Install-Uv {
     }
 }
 
+function Invoke-NativeCommand {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+
+    try {
+        $process = Start-Process -FilePath $FilePath `
+            -ArgumentList $Arguments `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -ErrorAction Stop
+
+        $stdout = if (Test-Path $stdoutPath) { [System.IO.File]::ReadAllText($stdoutPath) } else { "" }
+        $stderr = if (Test-Path $stderrPath) { [System.IO.File]::ReadAllText($stderrPath) } else { "" }
+        $capturedOutput = @()
+
+        foreach ($streamOutput in @($stdout, $stderr)) {
+            $trimmedOutput = $streamOutput.Trim()
+            if ($trimmedOutput) {
+                $capturedOutput += $trimmedOutput
+            }
+        }
+
+        return @{
+            Success = ($process.ExitCode -eq 0)
+            ExitCode = $process.ExitCode
+            Output = ($capturedOutput -join [System.Environment]::NewLine).Trim()
+        }
+    } catch {
+        $capturedOutput = @()
+
+        foreach ($path in @($stdoutPath, $stderrPath)) {
+            if (Test-Path $path) {
+                $streamOutput = [System.IO.File]::ReadAllText($path).Trim()
+                if ($streamOutput) {
+                    $capturedOutput += $streamOutput
+                }
+            }
+        }
+
+        $errorText = ($_ | Out-String).Trim()
+        if ($errorText) {
+            $capturedOutput += $errorText
+        }
+
+        return @{
+            Success = $false
+            ExitCode = 1
+            Output = ($capturedOutput -join [System.Environment]::NewLine).Trim()
+        }
+    } finally {
+        foreach ($path in @($stdoutPath, $stderrPath)) {
+            if (Test-Path $path) {
+                Remove-Item $path -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 function Invoke-UvToolInstallAttempt {
     param([string[]]$Arguments)
 
-    $hasNativeCommandPreference = $null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)
-    if ($hasNativeCommandPreference) {
-        $originalNativeCommandPreference = $PSNativeCommandUseErrorActionPreference
-        $PSNativeCommandUseErrorActionPreference = $false
-    }
-
-    try {
-        $installOutput = (& uv tool install @Arguments 2>&1) | Out-String
-        $exitCode = $LASTEXITCODE
-        return @{
-            Success = ($exitCode -eq 0)
-            ExitCode = $exitCode
-            Output = $installOutput.Trim()
-        }
-    } catch {
-        return @{
-            Success = $false
-            ExitCode = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } else { 1 }
-            Output = ($_ | Out-String).Trim()
-        }
-    } finally {
-        if ($hasNativeCommandPreference) {
-            $PSNativeCommandUseErrorActionPreference = $originalNativeCommandPreference
-        }
-    }
+    return Invoke-NativeCommand -FilePath "uv" -Arguments (@("tool", "install") + $Arguments)
 }
 
 function Install-Vibe {
