@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import sys
+import tempfile
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -233,3 +234,17 @@ def build_upgrade_plan(
         env=dict(base_env or os.environ),
         method="pip",
     )
+
+
+def get_safe_cwd() -> str:
+    """Return a stable, existing absolute directory for subprocess cwd.
+
+    The vibe service process cwd may be inside the uv tool venv directory,
+    which uv deletes and recreates during upgrade.  Using the home directory
+    avoids 'Current directory does not exist' errors.  Falls back to the
+    system temp directory or ``/`` when HOME is unset or invalid.
+    """
+    for candidate in (os.path.expanduser("~"), tempfile.gettempdir(), "/"):
+        if os.path.isabs(candidate) and os.path.isdir(candidate):
+            return candidate
+    return "/"

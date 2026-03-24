@@ -16,6 +16,7 @@ from vibe.upgrade import (
     get_latest_version_info,
     get_restart_command,
     get_running_vibe_path,
+    get_safe_cwd,
 )
 
 
@@ -256,3 +257,17 @@ def test_cmd_upgrade_skips_install_when_already_latest(monkeypatch):
     monkeypatch.setattr(cli.subprocess, "run", fail_run)
 
     assert cli.cmd_upgrade() == 0
+
+
+def test_get_safe_cwd_returns_absolute_existing_dir():
+    cwd = get_safe_cwd()
+    assert os.path.isabs(cwd)
+    assert os.path.isdir(cwd)
+
+
+def test_get_safe_cwd_falls_back_when_home_invalid(monkeypatch):
+    monkeypatch.setenv("HOME", "/nonexistent_dir_for_test")
+    cwd = get_safe_cwd()
+    assert os.path.isabs(cwd)
+    assert os.path.isdir(cwd)
+    assert cwd != "/nonexistent_dir_for_test"

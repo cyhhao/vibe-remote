@@ -26,7 +26,13 @@ from vibe.opencode_config import (
     load_first_opencode_user_config,
     set_jsonc_top_level_string_property,
 )
-from vibe.upgrade import build_upgrade_plan, get_latest_version_info, get_restart_shell_command, get_running_vibe_path
+from vibe.upgrade import (
+    build_upgrade_plan,
+    get_latest_version_info,
+    get_restart_shell_command,
+    get_running_vibe_path,
+    get_safe_cwd,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -656,10 +662,10 @@ def do_upgrade(auto_restart: bool = True) -> dict:
     current_vibe_path = get_running_vibe_path()
     plan = build_upgrade_plan(vibe_path=current_vibe_path)
 
-    # Use home directory as cwd to avoid "Current directory does not exist" errors.
-    # The vibe service process cwd may be inside the uv tool venv directory, which
-    # uv deletes and recreates during upgrade.
-    safe_cwd = os.path.expanduser("~")
+    # Use a stable directory as cwd to avoid "Current directory does not exist"
+    # errors.  The vibe service process cwd may be inside the uv tool venv
+    # directory, which uv deletes and recreates during upgrade.
+    safe_cwd = get_safe_cwd()
 
     try:
         result = subprocess.run(
