@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from vibe import api
 from vibe.opencode_config import parse_jsonc_object
 
@@ -235,6 +237,30 @@ def test_setup_opencode_permission_accepts_jsonc_config(monkeypatch, tmp_path):
     }
 
 
+def test_setup_opencode_permission_preserves_existing_permission_node(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    original = json.dumps(
+        {
+            "model": "openai/gpt-5",
+            "permission": "allow",
+        },
+        indent=2,
+    ) + "\n"
+    config_path.write_text(original, encoding="utf-8")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+
+    assert result == {
+        "ok": True,
+        "message": "Permission already set",
+        "config_path": str(config_path),
+    }
+    assert config_path.read_text(encoding="utf-8") == original
+
+
 def test_setup_opencode_permission_does_not_overwrite_invalid_existing_config(monkeypatch, tmp_path):
     config_path = tmp_path / ".config" / "opencode" / "opencode.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -338,3 +364,15 @@ def test_parse_jsonc_object_accepts_inline_block_comments_before_values():
             }
         },
     }
+
+
+def test_parse_jsonc_object_rejects_invalid_jsonc():
+    with pytest.raises(json.JSONDecodeError):
+        parse_jsonc_object(
+            """{
+  "model": "openai/gpt-5",
+  "agent": {
+    "build":
+  }
+}"""
+        )

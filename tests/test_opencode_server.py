@@ -8,16 +8,29 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-aiohttp_stub = types.ModuleType("aiohttp")
-aiohttp_stub.ClientSession = object
-aiohttp_stub.ClientTimeout = object
-sys.modules.setdefault("aiohttp", aiohttp_stub)
-
 MODULE_PATH = Path(__file__).resolve().parents[1] / "modules" / "agents" / "opencode" / "server.py"
-SPEC = importlib.util.spec_from_file_location("opencode_server_for_test", MODULE_PATH)
-assert SPEC and SPEC.loader
-SERVER_MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(SERVER_MODULE)
+
+
+def _load_server_module():
+    aiohttp_stub = types.ModuleType("aiohttp")
+    aiohttp_stub.ClientSession = object
+    aiohttp_stub.ClientTimeout = object
+    previous_aiohttp = sys.modules.get("aiohttp")
+    sys.modules["aiohttp"] = aiohttp_stub
+    try:
+        spec = importlib.util.spec_from_file_location("opencode_server_for_test", MODULE_PATH)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        if previous_aiohttp is None:
+            sys.modules.pop("aiohttp", None)
+        else:
+            sys.modules["aiohttp"] = previous_aiohttp
+
+
+SERVER_MODULE = _load_server_module()
 OpenCodeServerManager = SERVER_MODULE.OpenCodeServerManager
 
 
