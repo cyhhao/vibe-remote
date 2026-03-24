@@ -1,5 +1,5 @@
-import json
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -21,7 +21,7 @@ from config.v2_settings import (
     _routing_to_dict,
 )
 from config.v2_sessions import SessionsStore
-from vibe.opencode_config import get_opencode_config_paths, load_first_opencode_user_config
+from vibe.opencode_config import get_opencode_config_paths, load_first_opencode_user_config, set_jsonc_top_level_string_property
 from vibe.upgrade import build_upgrade_plan, get_latest_version_info, get_restart_shell_command, get_running_vibe_path
 
 
@@ -723,9 +723,13 @@ def setup_opencode_permission() -> dict:
                 "config_path": str(probe.path),
             }
 
-        probe.config["permission"] = "allow"
         try:
-            probe.path.write_text(json.dumps(probe.config, indent=2) + "\n", encoding="utf-8")
+            original_content = probe.content
+            if original_content is None:
+                original_content = probe.path.read_text(encoding="utf-8")
+
+            updated_content = set_jsonc_top_level_string_property(original_content, "permission", "allow")
+            probe.path.write_text(updated_content, encoding="utf-8")
             return {
                 "ok": True,
                 "message": "Permission set to 'allow'",
@@ -740,7 +744,7 @@ def setup_opencode_permission() -> dict:
         logger.error(f"Refusing to overwrite invalid OpenCode config at {error_path}: {error_message}")
         return {
             "ok": False,
-            "message": f"Existing OpenCode config could not be parsed: {error_message}",
+            "message": f"Existing OpenCode config could not be parsed: {error_message}. File left unchanged.",
             "config_path": str(error_path),
         }
 

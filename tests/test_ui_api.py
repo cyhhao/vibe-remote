@@ -195,7 +195,7 @@ def test_setup_opencode_permission_preserves_existing_json_fields(monkeypatch, t
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
 
     result = api.setup_opencode_permission()
-    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    updated = parse_jsonc_object(config_path.read_text(encoding="utf-8"))
 
     assert result["ok"] is True
     assert result["config_path"] == str(config_path)
@@ -226,10 +226,14 @@ def test_setup_opencode_permission_accepts_jsonc_config(monkeypatch, tmp_path):
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
 
     result = api.setup_opencode_permission()
-    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    updated_text = config_path.read_text(encoding="utf-8")
+    updated = parse_jsonc_object(updated_text)
 
     assert result["ok"] is True
     assert result["config_path"] == str(config_path)
+    assert "// Global defaults should be preserved." in updated_text
+    assert '"permission": "allow",' in updated_text
+    assert '"model": "anthropic/claude-sonnet-4-5",' in updated_text
     assert updated == {
         "model": "openai/gpt-5",
         "agent": {"build": {"model": "anthropic/claude-sonnet-4-5"}},
@@ -274,7 +278,117 @@ def test_setup_opencode_permission_does_not_overwrite_invalid_existing_config(mo
     assert result["ok"] is False
     assert result["config_path"] == str(config_path)
     assert "could not be parsed" in result["message"]
+    assert "File left unchanged." in result["message"]
     assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_setup_opencode_permission_preserves_comments_when_updating_existing_permission(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """{
+  "model": "openai/gpt-5",
+  "permission": /* keep this block comment */ "prompt", // keep this inline comment
+}
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated_text = config_path.read_text(encoding="utf-8")
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(config_path)
+    assert '/* keep this block comment */ "allow", // keep this inline comment' in updated_text
+    assert parse_jsonc_object(updated_text) == {
+        "model": "openai/gpt-5",
+        "permission": "allow",
+    }
+
+
+def test_setup_opencode_permission_handles_multiline_object_with_inline_closing_brace(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """{
+  "model": "openai/gpt-5"}""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated_text = config_path.read_text(encoding="utf-8")
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(config_path)
+    assert updated_text == """{
+  "model": "openai/gpt-5",
+  "permission": "allow"
+}"""
+    assert parse_jsonc_object(updated_text) == {
+        "model": "openai/gpt-5",
+        "permission": "allow",
+    }
+
+
+def test_setup_opencode_permission_updates_last_duplicate_permission_entry(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """{
+  "permission": "prompt",
+  "model": "openai/gpt-5",
+  "permission": "deny"
+}
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated_text = config_path.read_text(encoding="utf-8")
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(config_path)
+    assert updated_text == """{
+  "permission": "prompt",
+  "model": "openai/gpt-5",
+  "permission": "allow"
+}
+"""
+    assert parse_jsonc_object(updated_text) == {
+        "permission": "allow",
+        "model": "openai/gpt-5",
+    }
+
+
+def test_setup_opencode_permission_preserves_leading_bom_when_inserting_multiline_property(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "\ufeff{\n  \"model\": \"openai/gpt-5\"\n}\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated_text = config_path.read_text(encoding="utf-8")
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(config_path)
+    assert updated_text.startswith("\ufeff{\n")
+    assert updated_text.count("\ufeff") == 1
+    assert parse_jsonc_object(updated_text) == {
+        "model": "openai/gpt-5",
+        "permission": "allow",
+    }
 
 
 def test_setup_opencode_permission_skips_comment_only_file_and_uses_next_valid_path(monkeypatch, tmp_path):
@@ -294,7 +408,7 @@ def test_setup_opencode_permission_skips_comment_only_file_and_uses_next_valid_p
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
 
     result = api.setup_opencode_permission()
-    updated = json.loads(legacy_path.read_text(encoding="utf-8"))
+    updated = parse_jsonc_object(legacy_path.read_text(encoding="utf-8"))
 
     assert result["ok"] is True
     assert result["config_path"] == str(legacy_path)
