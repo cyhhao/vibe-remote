@@ -133,7 +133,7 @@ export const Wizard: React.FC = () => {
     // Channel steps: merge into a single step with platform tabs (instead of one step per platform)
     const channelPlatforms = enabledPlatforms.filter(platformSupportsChannels);
     const channelStep = channelPlatforms.length > 0
-      ? [{ id: 'channels', title: 'Channels', component: (props: any) => <ChannelList {...props} wizardPlatforms={channelPlatforms} /> }]
+      ? [{ id: 'channels', title: t('nav.channels'), component: (props: any) => <ChannelList {...props} wizardPlatforms={channelPlatforms} /> }]
       : [];
 
     return [
@@ -145,7 +145,7 @@ export const Wizard: React.FC = () => {
       ...channelStep,
       { id: 'summary', title: 'Finish', component: Summary },
     ];
-  }, [data]);
+  }, [data, t]);
 
   useEffect(() => {
     const bootstrap = async () => {
