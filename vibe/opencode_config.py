@@ -308,9 +308,13 @@ def set_jsonc_top_level_string_property(source: str, key: str, value: str) -> st
     root_start, root_end, properties = _scan_jsonc_top_level_properties(source)
     serialized_value = json.dumps(value)
 
-    for prop in properties:
-        if prop.key == key:
-            return source[: prop.value_start] + serialized_value + source[prop.value_end :]
+    matching_property = next((prop for prop in reversed(properties) if prop.key == key), None)
+    if matching_property is not None:
+        return (
+            source[: matching_property.value_start]
+            + serialized_value
+            + source[matching_property.value_end :]
+        )
 
     newline = _detect_newline(source)
     root_line_start = _line_start(source, root_start)

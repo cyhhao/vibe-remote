@@ -334,6 +334,38 @@ def test_setup_opencode_permission_handles_multiline_object_with_inline_closing_
     }
 
 
+def test_setup_opencode_permission_updates_last_duplicate_permission_entry(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """{
+  "permission": "prompt",
+  "model": "openai/gpt-5",
+  "permission": "deny"
+}
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated_text = config_path.read_text(encoding="utf-8")
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(config_path)
+    assert updated_text == """{
+  "permission": "prompt",
+  "model": "openai/gpt-5",
+  "permission": "allow"
+}
+"""
+    assert parse_jsonc_object(updated_text) == {
+        "permission": "allow",
+        "model": "openai/gpt-5",
+    }
+
+
 def test_setup_opencode_permission_skips_comment_only_file_and_uses_next_valid_path(monkeypatch, tmp_path):
     xdg_path = tmp_path / ".config" / "opencode" / "opencode.json"
     legacy_path = tmp_path / ".opencode" / "opencode.json"
