@@ -1,10 +1,37 @@
+import importlib.util
 import sys
+import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from modules.agents.opencode.server import OpenCodeServerManager
+MODULE_PATH = Path(__file__).resolve().parents[1] / "modules" / "agents" / "opencode" / "server.py"
+
+
+def _load_server_module():
+    aiohttp_stub = types.ModuleType("aiohttp")
+    aiohttp_stub.ClientSession = object
+    aiohttp_stub.ClientTimeout = object
+    previous_aiohttp = sys.modules.get("aiohttp")
+    sys.modules["aiohttp"] = aiohttp_stub
+    try:
+        spec = importlib.util.spec_from_file_location("opencode_server_for_test", MODULE_PATH)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        if previous_aiohttp is None:
+            sys.modules.pop("aiohttp", None)
+        else:
+            sys.modules["aiohttp"] = previous_aiohttp
+
+
+SERVER_MODULE = _load_server_module()
+OpenCodeServerManager = SERVER_MODULE.OpenCodeServerManager
 
 
 class _FakeResponse:
@@ -51,6 +78,33 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(fake_session.posts), 1)
         body = fake_session.posts[0]["json"]
         self.assertEqual(body["tools"], {"question": False})
+
+    async def test_load_opencode_user_config_supports_jsonc(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_home = Path(tmp_dir)
+            config_path = tmp_home / ".config" / "opencode" / "opencode.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                """{
+  // Preserve defaults from JSONC config.
+  "model": "openai/gpt-5",
+  "reasoningEffort": "high",
+}
+""",
+                encoding="utf-8",
+            )
+
+            manager = OpenCodeServerManager(binary="opencode", port=4096)
+            with patch("vibe.opencode_config.Path.home", return_value=tmp_home):
+                config = manager._load_opencode_user_config()
+
+            self.assertEqual(
+                config,
+                {
+                    "model": "openai/gpt-5",
+                    "reasoningEffort": "high",
+                },
+            )
 
 
 if __name__ == "__main__":

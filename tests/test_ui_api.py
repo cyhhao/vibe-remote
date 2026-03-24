@@ -1,4 +1,9 @@
+import json
+
+import pytest
+
 from vibe import api
+from vibe.opencode_config import parse_jsonc_object
 
 
 def test_detect_cli_prefers_claude_local(monkeypatch, tmp_path):
@@ -172,3 +177,202 @@ def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
     assert result["path"] == str(codex_path)
     assert calls[0][0] == [str(npm_path), "install", "-g", "@openai/codex"]
     assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == str(npm_path.parent)
+
+
+def test_setup_opencode_permission_preserves_existing_json_fields(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "model": "openai/gpt-5",
+                "agent": {"build": {"model": "anthropic/claude-sonnet-4-5"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(config_path)
+    assert updated == {
+        "model": "openai/gpt-5",
+        "agent": {"build": {"model": "anthropic/claude-sonnet-4-5"}},
+        "permission": "allow",
+    }
+
+
+def test_setup_opencode_permission_accepts_jsonc_config(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """{
+  // Global defaults should be preserved.
+  "model": "openai/gpt-5",
+  "agent": {
+    "build": {
+      "model": "anthropic/claude-sonnet-4-5",
+    },
+  },
+}
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(config_path)
+    assert updated == {
+        "model": "openai/gpt-5",
+        "agent": {"build": {"model": "anthropic/claude-sonnet-4-5"}},
+        "permission": "allow",
+    }
+
+
+def test_setup_opencode_permission_preserves_existing_permission_node(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    original = json.dumps(
+        {
+            "model": "openai/gpt-5",
+            "permission": "allow",
+        },
+        indent=2,
+    ) + "\n"
+    config_path.write_text(original, encoding="utf-8")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+
+    assert result == {
+        "ok": True,
+        "message": "Permission already set",
+        "config_path": str(config_path),
+    }
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_setup_opencode_permission_does_not_overwrite_invalid_existing_config(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    original = '{\n  "model": "openai/gpt-5",\n'
+    config_path.write_text(original, encoding="utf-8")
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+
+    assert result["ok"] is False
+    assert result["config_path"] == str(config_path)
+    assert "could not be parsed" in result["message"]
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_setup_opencode_permission_skips_comment_only_file_and_uses_next_valid_path(monkeypatch, tmp_path):
+    xdg_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    legacy_path = tmp_path / ".opencode" / "opencode.json"
+    xdg_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    xdg_path.write_text("// placeholder only\n", encoding="utf-8")
+    legacy_path.write_text(
+        """{
+  "model": "openai/gpt-5",
+}
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.setup_opencode_permission()
+    updated = json.loads(legacy_path.read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["config_path"] == str(legacy_path)
+    assert xdg_path.read_text(encoding="utf-8") == "// placeholder only\n"
+    assert updated == {
+        "model": "openai/gpt-5",
+        "permission": "allow",
+    }
+
+
+def test_setup_opencode_permission_returns_error_when_existing_config_update_fails(monkeypatch, tmp_path):
+    config_path = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text('{"model": "openai/gpt-5"}\n', encoding="utf-8")
+
+    original_write_text = api.Path.write_text
+
+    def failing_write_text(self, data, encoding=None, errors=None, newline=None):
+        if self == config_path:
+            raise OSError("read-only file system")
+        return original_write_text(self, data, encoding=encoding, errors=errors, newline=newline)
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(api.Path, "write_text", failing_write_text)
+
+    result = api.setup_opencode_permission()
+
+    assert result == {
+        "ok": False,
+        "message": "read-only file system",
+        "config_path": str(config_path),
+    }
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {"model": "openai/gpt-5"}
+
+
+def test_parse_jsonc_object_preserves_comment_markers_inside_strings():
+    parsed = parse_jsonc_object(
+        """{
+  "line": "https://example.com // keep",
+  "block": "value /* keep */ text"
+}"""
+    )
+
+    assert parsed == {
+        "line": "https://example.com // keep",
+        "block": "value /* keep */ text",
+    }
+
+
+def test_parse_jsonc_object_accepts_inline_block_comments_before_values():
+    parsed = parse_jsonc_object(
+        """{
+  "model": /* keep this comment */ "openai/gpt-5",
+  "agent": {
+    "build": /* another comment */ {
+      "reasoningEffort": "high",
+    },
+  },
+}"""
+    )
+
+    assert parsed == {
+        "model": "openai/gpt-5",
+        "agent": {
+            "build": {
+                "reasoningEffort": "high",
+            }
+        },
+    }
+
+
+def test_parse_jsonc_object_rejects_invalid_jsonc():
+    with pytest.raises(json.JSONDecodeError):
+        parse_jsonc_object(
+            """{
+  "model": "openai/gpt-5",
+  "agent": {
+    "build":
+  }
+}"""
+        )
