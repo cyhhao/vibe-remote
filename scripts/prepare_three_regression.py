@@ -272,6 +272,23 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _ensure_shared_home(output_root: Path, reset_mode: str = "none") -> Path:
+    if reset_mode == "all":
+        shared_root = output_root / "shared-home"
+        if shared_root.exists():
+            shutil.rmtree(shared_root)
+
+    shared_root = output_root / "shared-home"
+    for subdir in (
+        ".claude",
+        ".codex",
+        ".config/opencode",
+        ".local/share/opencode",
+    ):
+        (shared_root / subdir).mkdir(parents=True, exist_ok=True)
+    return shared_root
+
+
 def _ensure_vibe_dir(vibe_dir: Path, reset_mode: str = "none") -> None:
     if reset_mode not in RESET_MODES:
         allowed = ", ".join(sorted(RESET_MODES))
@@ -398,8 +415,11 @@ def _build_opencode_payload() -> dict:
 
 
 def _write_shared_agent_configs(output_root: Path) -> None:
-    shared_root = output_root / "shared-home"
+    shared_root = _ensure_shared_home(output_root)
     _write_json(shared_root / ".claude" / "settings.json", _build_claude_settings_payload())
+    claude_state_path = shared_root / ".claude.json"
+    if not claude_state_path.exists():
+        _write_text(claude_state_path, "{}\n")
     _write_text(shared_root / ".codex" / "config.toml", _build_codex_config_toml())
     _write_json(shared_root / ".codex" / "auth.json", _build_codex_auth_payload())
     _write_json(shared_root / ".config" / "opencode" / "opencode.json", _build_opencode_payload())
@@ -412,6 +432,7 @@ def prepare(output_root: Path, reset_mode: str = "none") -> None:
     for name, pdef in PLATFORM_DEFS.items():
         _require_envs(pdef["required_envs"])
 
+    _ensure_shared_home(output_root, reset_mode=reset_mode)
     _write_shared_agent_configs(output_root)
 
     vibe_dir = output_root / "vibe"
