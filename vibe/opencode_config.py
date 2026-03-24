@@ -327,6 +327,7 @@ def set_jsonc_top_level_string_property(source: str, key: str, value: str) -> st
     child_indent = first_property_indent or (root_indent + "  ")
     property_text = f'{json.dumps(key)}: {serialized_value}'
     has_multiline_layout = "\n" in source[root_start:root_end]
+    closing_brace_on_own_line = source[closing_line_start:root_end].strip() == ""
 
     if not properties:
         if has_multiline_layout:
@@ -353,9 +354,17 @@ def set_jsonc_top_level_string_property(source: str, key: str, value: str) -> st
         if insertion_point > last_property.value_end:
             insertion_point += 1
 
-    if has_multiline_layout:
+    if has_multiline_layout and closing_brace_on_own_line:
         suffix = "," if trailing_comma else ""
         insertion = f"{child_indent}{property_text}{suffix}{newline}"
+        return updated_source[:insertion_point] + insertion + updated_source[insertion_point:]
+
+    if has_multiline_layout:
+        insertion_point = root_end
+        if not trailing_comma:
+            insertion_point += 1
+        suffix = "," if trailing_comma else ""
+        insertion = f"{newline}{child_indent}{property_text}{suffix}{newline}{root_indent}"
         return updated_source[:insertion_point] + insertion + updated_source[insertion_point:]
 
 
