@@ -13,7 +13,7 @@ from config.v2_config import V2Config
 
 logger = logging.getLogger(__name__)
 
-# Fill this with the real project DSN to make Sentry default-on in production.
+# Fill this with the real project DSN to make Sentry default-on across deployments.
 DEFAULT_SENTRY_DSN = "https://389134cd3be10054d640f631d7eac382@o4511104395051008.ingest.us.sentry.io/4511104396820480"
 DEFAULT_TRACES_SAMPLE_RATE = 0.0
 DEFAULT_PROFILES_SAMPLE_RATE = 0.0
@@ -102,7 +102,10 @@ def detect_sentry_environment() -> str:
     if "three-regression" in vibe_home:
         return "regression"
 
-    return "development"
+    if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
+        return "integration"
+
+    return "local"
 
 
 def resolve_sentry_options() -> Optional[dict[str, Any]]:

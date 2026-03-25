@@ -50,14 +50,15 @@ def test_resolve_sentry_options_honors_empty_env_dsn_as_opt_out(monkeypatch):
     assert sentry_integration.resolve_sentry_options() is None
 
 
-def test_detect_sentry_environment_defaults_to_development(monkeypatch):
+def test_detect_sentry_environment_defaults_to_local(monkeypatch):
     monkeypatch.delenv("VIBE_SENTRY_ENVIRONMENT", raising=False)
     monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
     monkeypatch.delenv("VIBE_DEPLOYMENT_ENV", raising=False)
+    monkeypatch.delenv("E2E_TEST_MODE", raising=False)
     monkeypatch.setenv("VIBE_REMOTE_HOME", "/tmp/vibe-remote-home")
     monkeypatch.setattr(sentry_integration, "Path", lambda _: type("P", (), {"exists": staticmethod(lambda: False)})())
 
-    assert sentry_integration.detect_sentry_environment() == "development"
+    assert sentry_integration.detect_sentry_environment() == "local"
 
 
 def test_detect_sentry_environment_uses_explicit_deployment_env(monkeypatch):
@@ -66,6 +67,16 @@ def test_detect_sentry_environment_uses_explicit_deployment_env(monkeypatch):
     monkeypatch.setenv("VIBE_DEPLOYMENT_ENV", "production")
 
     assert sentry_integration.detect_sentry_environment() == "production"
+
+
+def test_detect_sentry_environment_marks_integration_mode(monkeypatch):
+    monkeypatch.delenv("VIBE_SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("VIBE_DEPLOYMENT_ENV", raising=False)
+    monkeypatch.setenv("E2E_TEST_MODE", "true")
+    monkeypatch.setenv("VIBE_REMOTE_HOME", "/tmp/vibe-remote-home")
+
+    assert sentry_integration.detect_sentry_environment() == "integration"
 
 
 def test_build_sentry_contexts_contains_debug_metadata(monkeypatch):
