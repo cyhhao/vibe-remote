@@ -244,6 +244,10 @@ Web UI (`http://127.0.0.1:5123`) 提供相同的控制功能：
 | 变量 | 说明 |
 |------|------|
 | `OPENCODE_PORT` | 覆盖 OpenCode 服务器端口（默认：4096） |
+| `VIBE_SENTRY_DSN` / `SENTRY_DSN` | 为主服务和 Web UI 启用 Sentry 错误上报 |
+| `VIBE_SENTRY_ENVIRONMENT` / `SENTRY_ENVIRONMENT` | 覆盖 Sentry 的 environment 标签 |
+| `VIBE_SENTRY_TRACES_SAMPLE_RATE` | 覆盖 Sentry traces 采样率（0.0-1.0） |
+| `VIBE_SENTRY_PROFILES_SAMPLE_RATE` | 覆盖 Sentry profiles 采样率（0.0-1.0） |
 
 ## 另请参阅
 

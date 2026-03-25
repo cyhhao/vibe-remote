@@ -102,6 +102,22 @@ class RuntimeConfig:
 
 
 @dataclass
+class SentryConfig:
+    dsn: Optional[str] = None
+    environment: Optional[str] = None
+    traces_sample_rate: float = 0.0
+    profiles_sample_rate: float = 0.0
+    send_default_pii: bool = False
+
+    def validate(self) -> None:
+        for field_name in ("traces_sample_rate", "profiles_sample_rate"):
+            value = getattr(self, field_name)
+            if not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
+                raise ValueError(f"Config 'sentry.{field_name}' must be a number between 0 and 1")
+            setattr(self, field_name, float(value))
+
+
+@dataclass
 class OpenCodeConfig:
     enabled: bool = True
     cli_path: str = "opencode"
@@ -191,6 +207,7 @@ class V2Config:
     lark: Optional[LarkConfig] = None
     wechat: Optional[WeChatConfig] = None
     gateway: Optional[GatewayConfig] = None
+    sentry: Optional[SentryConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "typing"
@@ -294,6 +311,14 @@ class V2Config:
             raise ValueError("Config 'gateway' must be an object")
         gateway = GatewayConfig(**_filter_dataclass_fields(GatewayConfig, gateway_payload)) if gateway_payload else None
 
+        sentry_payload = payload.get("sentry")
+        if sentry_payload is not None and not isinstance(sentry_payload, dict):
+            raise ValueError("Config 'sentry' must be an object")
+        sentry = None
+        if sentry_payload is not None:
+            sentry = SentryConfig(**_filter_dataclass_fields(SentryConfig, sentry_payload))
+            sentry.validate()
+
         runtime_payload = payload.get("runtime")
         if not isinstance(runtime_payload, dict):
             raise ValueError("Config 'runtime' must be an object")
@@ -373,6 +398,7 @@ class V2Config:
             runtime=runtime,
             agents=agents,
             gateway=gateway,
+            sentry=sentry,
             ui=ui,
             update=update,
             ack_mode=ack_mode,
@@ -410,6 +436,7 @@ class V2Config:
                 "codex": self.agents.codex.__dict__,
             },
             "gateway": self.gateway.__dict__ if self.gateway else None,
+            "sentry": self.sentry.__dict__ if self.sentry else None,
             "ui": self.ui.__dict__,
             "update": self.update.__dict__,
             "ack_mode": self.ack_mode,

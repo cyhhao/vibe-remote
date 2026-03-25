@@ -62,6 +62,13 @@ def _full_config_payload() -> dict:
             },
         },
         "gateway": None,
+        "sentry": {
+            "dsn": "https://public@example.ingest.sentry.io/1",
+            "environment": "test",
+            "traces_sample_rate": 0.0,
+            "profiles_sample_rate": 0.0,
+            "send_default_pii": False,
+        },
         "ui": {
             "setup_host": "127.0.0.1",
             "setup_port": 5123,
@@ -96,6 +103,8 @@ def test_save_config_merges_partial_payload(monkeypatch, tmp_path):
     assert updated.discord is not None
     assert updated.discord.bot_token == "discord-token-1234567890"
     assert updated.runtime.default_cwd == "/tmp/workdir"
+    assert updated.sentry is not None
+    assert updated.sentry.dsn == "https://public@example.ingest.sentry.io/1"
 
 
 def test_save_config_accepts_typing_ack_mode(monkeypatch, tmp_path):
@@ -152,6 +161,17 @@ def test_save_config_rejects_enabled_platform_without_credentials(monkeypatch, t
                 # wechat config intentionally omitted
             }
         )
+
+
+def test_save_config_round_trips_sentry_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    updated = api.save_config(_full_config_payload())
+    payload = api.config_to_payload(updated)
+
+    assert payload["sentry"]["dsn"] == "https://public@example.ingest.sentry.io/1"
+    assert payload["sentry"]["environment"] == "test"
+    assert payload["sentry"]["traces_sample_rate"] == 0.0
 
 
 def test_init_sessions_is_noop_when_sessions_file_exists(monkeypatch, tmp_path):
