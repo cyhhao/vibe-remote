@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
@@ -151,3 +152,39 @@ def test_save_config_rejects_enabled_platform_without_credentials(monkeypatch, t
                 # wechat config intentionally omitted
             }
         )
+
+
+def test_init_sessions_is_noop_when_sessions_file_exists(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    store = api.SessionsStore()
+    store.state.session_mappings = {
+        "discord::749794605024936027": {
+            "codex": {"discord_1482432040375943208": "019d1f70-692b-7c32-b152-b4aef9e24002"}
+        }
+    }
+    store.save()
+
+    api.init_sessions()
+
+    reloaded = api.SessionsStore()
+    reloaded.load()
+    assert reloaded.state.session_mappings == store.state.session_mappings
+
+
+def test_config_post_does_not_call_init_sessions():
+    source = Path("vibe/ui_server.py").read_text(encoding="utf-8")
+    module = ast.parse(source)
+
+    config_post = next(
+        node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "config_post"
+    )
+
+    calls_init_sessions = False
+    for node in ast.walk(config_post):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if isinstance(node.func.value, ast.Name) and node.func.value.id == "api" and node.func.attr == "init_sessions":
+                calls_init_sessions = True
+                break
+
+    assert calls_init_sessions is False
