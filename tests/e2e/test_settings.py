@@ -54,7 +54,10 @@ class TestLogsAPI:
         """POST /logs should return log lines and total count."""
         status, data = _post(f"{api_url}/logs", {"lines": 10})
         assert status == 200
+        assert "source" in data
         assert "logs" in data
+        assert "sources" in data
         assert "total" in data
         assert isinstance(data["logs"], list)
+        assert isinstance(data["sources"], list)
         assert isinstance(data["total"], int)

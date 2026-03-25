@@ -130,7 +130,7 @@ def _log_path(name: str) -> Path:
     return paths.get_runtime_dir() / name
 
 
-def spawn_background(args, pid_path, stdout_name: str, stderr_name: str):
+def spawn_background(args, pid_path, stdout_name: str, stderr_name: str, env: dict[str, str] | None = None):
     stdout_path = _log_path(stdout_name)
     stderr_path = _log_path(stderr_name)
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
@@ -143,6 +143,7 @@ def spawn_background(args, pid_path, stdout_name: str, stderr_name: str):
         start_new_session=True,
         cwd=str(get_working_dir()),
         close_fds=True,
+        env=env,
     )
     stdout.close()
     stderr.close()
@@ -216,6 +217,10 @@ def start_service():
             pid_path,
             "service_stdout.log",
             "service_stderr.log",
+            env={
+                **os.environ,
+                "VIBE_DISABLE_STDOUT_LOGGING": "1",
+            },
         )
 
 

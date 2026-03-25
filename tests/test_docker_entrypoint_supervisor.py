@@ -1,4 +1,5 @@
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -119,20 +120,110 @@ class DockerEntrypointSupervisorTests(unittest.TestCase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                start_new_session=True,
             )
             try:
                 time.sleep(4)
                 self.assertIsNone(proc.poll())
             finally:
-                proc.terminate()
+                os.killpg(proc.pid, signal.SIGTERM)
                 try:
                     _stdout, stderr = proc.communicate(timeout=5)
                 except subprocess.TimeoutExpired:
-                    proc.kill()
+                    os.killpg(proc.pid, signal.SIGKILL)
                     _stdout, stderr = proc.communicate(timeout=5)
 
             self.assertNotIn("Service exited unexpectedly", stderr)
             self.assertIn("Detected replacement service PID", stderr)
+
+    def test_full_mode_keeps_ui_alive_when_service_is_stopped_intentionally(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            fake_python = tmp_path / "python"
+            fake_python.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env python3
+                    import json
+                    import os
+                    import sys
+                    import threading
+                    import time
+                    from pathlib import Path
+
+                    args = sys.argv[1:]
+                    runtime_dir = Path(os.environ["VIBE_REMOTE_HOME"]) / "runtime"
+                    runtime_dir.mkdir(parents=True, exist_ok=True)
+                    status_path = runtime_dir / "status.json"
+
+                    if args and args[0] == "main.py":
+                        time.sleep(1)
+                        sys.exit(0)
+
+                    if args and args[0] == "-":
+                        try:
+                            payload = json.loads(Path(args[1]).read_text(encoding="utf-8"))
+                        except Exception:
+                            sys.exit(1)
+                        state = payload.get("state")
+                        if isinstance(state, str):
+                            print(state)
+                        sys.exit(0)
+
+                    if len(args) >= 2 and args[0] == "-c":
+                        code = args[1]
+                        if "run_ui_server" in code:
+                            def stop_service_later():
+                                time.sleep(0.5)
+                                status_path.write_text(json.dumps({"state": "stopped"}), encoding="utf-8")
+
+                            threading.Thread(target=stop_service_later, daemon=True).start()
+                            time.sleep(30)
+                            sys.exit(0)
+                        if "write_status" in code:
+                            state = "running"
+                            if "stopping" in code:
+                                state = "stopping"
+                            elif "stopped" in code:
+                                state = "stopped"
+                            elif "restarting" in code:
+                                state = "restarting"
+                            status_path.write_text(json.dumps({"state": state}), encoding="utf-8")
+                            sys.exit(0)
+                        sys.exit(0)
+
+                    sys.exit(0)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            fake_python.chmod(fake_python.stat().st_mode | stat.S_IEXEC)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{tmp_path}{os.pathsep}{env.get('PATH', '')}"
+            env["VIBE_REMOTE_HOME"] = str(tmp_path / "home")
+
+            proc = subprocess.Popen(
+                ["bash", str(ENTRYPOINT), "full"],
+                cwd=REPO_ROOT,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                time.sleep(4)
+                self.assertIsNone(proc.poll())
+            finally:
+                os.killpg(proc.pid, signal.SIGTERM)
+                try:
+                    _stdout, stderr = proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    _stdout, stderr = proc.communicate(timeout=5)
+
+            self.assertNotIn("Service exited unexpectedly", stderr)
 
 
 if __name__ == "__main__":
