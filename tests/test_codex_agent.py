@@ -4,7 +4,7 @@ import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -292,6 +292,137 @@ class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(resolved)
+
+
+class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_thread_requests_danger_full_access(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=False))
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(platform="slack", platform_specific={}),
+            base_session_id="session-1",
+            session_key="channel-1",
+        )
+
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-1"}}))
+
+        thread_id = await agent._start_thread(transport, request)
+
+        self.assertEqual(thread_id, "thread-1")
+        transport.send_request.assert_awaited_once_with(
+            "thread/start",
+            {
+                "cwd": "/tmp/work",
+                "approvalPolicy": "never",
+                "sandbox": "danger-full-access",
+            },
+        )
+
+    async def test_start_turn_uses_sandbox_policy_object(self):
+        agent = object.__new__(CodexAgent)
+        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
+        agent._turn_registry = SimpleNamespace(
+            begin_turn_start=Mock(),
+            get_bootstrapped_turn_id=Mock(return_value=None),
+            finalize_turn_start_response=Mock(return_value=SimpleNamespace()),
+        )
+        request = SimpleNamespace(
+            session_key="channel-1",
+            base_session_id="session-1",
+            composite_session_id="slack:C1:T1",
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"turn": {"id": "turn-1"}}))
+
+        thread_id = await agent._start_turn(transport, request, "thread-1")
+
+        self.assertEqual(thread_id, "thread-1")
+        transport.send_request.assert_awaited_once_with(
+            "turn/start",
+            {
+                "threadId": "thread-1",
+                "input": [{"type": "text", "text": "hello"}],
+                "approvalPolicy": "never",
+                "sandboxPolicy": {"type": "dangerFullAccess"},
+            },
+        )
+
+
+class CodexTransportCommandTests(unittest.IsolatedAsyncioTestCase):
+    async def test_transport_always_starts_app_server_with_global_bypass_flag(self):
+        import importlib.util
+        from pathlib import Path
+
+        transport_path = Path(__file__).resolve().parents[1] / "modules/agents/codex/transport.py"
+        spec = importlib.util.spec_from_file_location("test_codex_transport_module", transport_path)
+        assert spec is not None and spec.loader is not None
+        transport_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(transport_module)
+        Transport = transport_module.CodexTransport
+
+        writes = []
+        created_cmd = {}
+
+        class _FakeStdin:
+            def __init__(self):
+                self._closing = False
+
+            def write(self, data):
+                writes.append(data.decode())
+
+            async def drain(self):
+                return None
+
+            def is_closing(self):
+                return self._closing
+
+            def close(self):
+                self._closing = True
+
+        class _FakeStdout:
+            def __init__(self):
+                self._lines = [b'{"jsonrpc":"2.0","id":1,"result":{}}\n', b""]
+
+            async def readline(self):
+                return self._lines.pop(0)
+
+        class _FakeStderr:
+            async def readline(self):
+                return b""
+
+        class _FakeProcess:
+            def __init__(self):
+                self.stdin = _FakeStdin()
+                self.stdout = _FakeStdout()
+                self.stderr = _FakeStderr()
+                self.pid = 123
+                self.returncode = None
+
+            async def wait(self):
+                self.returncode = 0
+                return 0
+
+        async def fake_create_subprocess_exec(*cmd, **kwargs):
+            created_cmd["cmd"] = list(cmd)
+            return _FakeProcess()
+
+        with patch.object(
+            transport_module.asyncio,
+            "create_subprocess_exec",
+            new=fake_create_subprocess_exec,
+        ):
+            transport = Transport(binary="codex", cwd="/tmp/work")
+            await transport.start()
+            await transport.stop()
+
+        self.assertEqual(
+            created_cmd["cmd"],
+            ["codex", "--dangerously-bypass-approvals-and-sandbox", "app-server"],
+        )
 
 
 if __name__ == "__main__":

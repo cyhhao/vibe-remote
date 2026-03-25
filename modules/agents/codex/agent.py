@@ -346,7 +346,7 @@ class CodexAgent(BaseAgent):
             "threadId": thread_id,
             "input": input_items,
             "approvalPolicy": "never",
-            "sandbox": "danger-full-access",
+            "sandboxPolicy": {"type": "dangerFullAccess"},
         }
         if effective_model:
             turn_params["model"] = effective_model

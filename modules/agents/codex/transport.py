@@ -57,7 +57,7 @@ class CodexTransport:
             logger.warning("CodexTransport.start() called but process is already running")
             return
 
-        cmd = [self._binary, "app-server"] + self._extra_args
+        cmd = [self._binary, "--dangerously-bypass-approvals-and-sandbox", "app-server"] + self._extra_args
         logger.info("Launching Codex app-server: %s (cwd=%s)", " ".join(cmd), self._cwd)
 
         if not os.path.exists(self._cwd):
