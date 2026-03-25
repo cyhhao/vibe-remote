@@ -14,7 +14,7 @@ from config.v2_config import V2Config
 logger = logging.getLogger(__name__)
 
 # Fill this with the real project DSN to make Sentry default-on in production.
-DEFAULT_SENTRY_DSN = ""
+DEFAULT_SENTRY_DSN = "https://389134cd3be10054d640f631d7eac382@o4511104395051008.ingest.us.sentry.io/4511104396820480"
 DEFAULT_TRACES_SAMPLE_RATE = 0.0
 DEFAULT_PROFILES_SAMPLE_RATE = 0.0
 DEPLOYMENT_ENV_VAR = "VIBE_DEPLOYMENT_ENV"
