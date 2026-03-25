@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import re
+import socket
+import sys
+from pathlib import Path
 from typing import Any, Optional
 
 from config.v2_config import V2Config
 
 logger = logging.getLogger(__name__)
+
+# Fill this with the real project DSN to make Sentry default-on in production.
+DEFAULT_SENTRY_DSN = ""
+DEFAULT_TRACES_SAMPLE_RATE = 0.0
+DEFAULT_PROFILES_SAMPLE_RATE = 0.0
+DEPLOYMENT_ENV_VAR = "VIBE_DEPLOYMENT_ENV"
 
 _SENSITIVE_KEY_PARTS = (
     "access_key",
@@ -79,33 +89,71 @@ def _safe_float(raw: Optional[str], fallback: float) -> float:
     return fallback
 
 
-def resolve_sentry_options(config: V2Config) -> Optional[dict[str, Any]]:
-    sentry_config = getattr(config, "sentry", None)
-    env_dsn = os.environ.get("VIBE_SENTRY_DSN") or os.environ.get("SENTRY_DSN")
-    dsn = env_dsn or (sentry_config.dsn if sentry_config else None)
+def detect_sentry_environment() -> str:
+    explicit = os.environ.get("VIBE_SENTRY_ENVIRONMENT") or os.environ.get("SENTRY_ENVIRONMENT")
+    if explicit:
+        return explicit.strip()
+
+    deployment = os.environ.get(DEPLOYMENT_ENV_VAR)
+    if deployment:
+        return deployment.strip()
+
+    vibe_home = os.environ.get("VIBE_REMOTE_HOME", "")
+    if "three-regression" in vibe_home:
+        return "regression"
+
+    if Path("/.dockerenv").exists():
+        return "production"
+
+    return "development"
+
+
+def resolve_sentry_options() -> Optional[dict[str, Any]]:
+    dsn = os.environ.get("VIBE_SENTRY_DSN") or os.environ.get("SENTRY_DSN") or DEFAULT_SENTRY_DSN
     if not dsn:
         return None
 
-    environment = (
-        os.environ.get("VIBE_SENTRY_ENVIRONMENT")
-        or os.environ.get("SENTRY_ENVIRONMENT")
-        or (sentry_config.environment if sentry_config else None)
-        or config.mode
-    )
-    traces_sample_rate = _safe_float(
-        os.environ.get("VIBE_SENTRY_TRACES_SAMPLE_RATE"),
-        sentry_config.traces_sample_rate if sentry_config else 0.0,
-    )
-    profiles_sample_rate = _safe_float(
-        os.environ.get("VIBE_SENTRY_PROFILES_SAMPLE_RATE"),
-        sentry_config.profiles_sample_rate if sentry_config else 0.0,
-    )
     return {
         "dsn": dsn,
-        "environment": environment,
-        "traces_sample_rate": traces_sample_rate,
-        "profiles_sample_rate": profiles_sample_rate,
-        "send_default_pii": bool(sentry_config.send_default_pii) if sentry_config else False,
+        "environment": detect_sentry_environment(),
+        "traces_sample_rate": _safe_float(
+            os.environ.get("VIBE_SENTRY_TRACES_SAMPLE_RATE"),
+            DEFAULT_TRACES_SAMPLE_RATE,
+        ),
+        "profiles_sample_rate": _safe_float(
+            os.environ.get("VIBE_SENTRY_PROFILES_SAMPLE_RATE"),
+            DEFAULT_PROFILES_SAMPLE_RATE,
+        ),
+    }
+
+
+def build_sentry_contexts(config: V2Config, component: str, environment: str) -> dict[str, dict[str, Any]]:
+    vibe_home = os.environ.get("VIBE_REMOTE_HOME") or str(Path.home() / ".vibe_remote")
+    return {
+        "runtime": {
+            "python_version": platform.python_version(),
+            "python_implementation": platform.python_implementation(),
+            "platform": sys.platform,
+        },
+        "host": {
+            "hostname": socket.gethostname(),
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+            "machine": platform.machine(),
+            "processor": platform.processor() or None,
+            "docker": Path("/.dockerenv").exists(),
+        },
+        "deployment": {
+            "component": component,
+            "environment": environment,
+            "mode": config.mode,
+            "primary_platform": config.platforms.primary,
+            "enabled_platforms": config.platforms.enabled,
+            "default_backend": config.agents.default_backend,
+            "cwd": config.runtime.default_cwd,
+            "vibe_home": vibe_home,
+        },
     }
 
 
@@ -120,7 +168,7 @@ def before_breadcrumb(crumb: dict[str, Any], hint: dict[str, Any]) -> dict[str, 
 
 
 def init_sentry(config: V2Config, component: str, enable_flask: bool = False) -> bool:
-    options = resolve_sentry_options(config)
+    options = resolve_sentry_options()
     if not options:
         return False
 
@@ -157,20 +205,18 @@ def init_sentry(config: V2Config, component: str, enable_flask: bool = False) ->
         attach_stacktrace=True,
         ignore_errors=[KeyboardInterrupt, SystemExit],
         max_breadcrumbs=50,
+        sample_rate=1.0,
         traces_sample_rate=options["traces_sample_rate"],
         profiles_sample_rate=options["profiles_sample_rate"],
-        send_default_pii=options["send_default_pii"],
+        send_default_pii=False,
+        server_name=socket.gethostname(),
     )
     sentry_sdk.set_tag("component", component)
     sentry_sdk.set_tag("mode", config.mode)
     sentry_sdk.set_tag("primary_platform", config.platforms.primary)
-    sentry_sdk.set_context(
-        "vibe_remote",
-        {
-            "enabled_platforms": config.platforms.enabled,
-            "default_backend": config.agents.default_backend,
-        },
-    )
+    sentry_sdk.set_tag("deployment_environment", options["environment"])
+    for name, context in build_sentry_contexts(config, component, options["environment"]).items():
+        sentry_sdk.set_context(name, context)
     logger.info("Sentry initialized for %s (environment=%s)", component, options["environment"])
     return True
 

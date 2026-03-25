@@ -267,7 +267,6 @@ def config_to_payload(config: V2Config) -> dict:
             "codex": config.agents.codex.__dict__,
         },
         "gateway": config.gateway.__dict__ if config.gateway else None,
-        "sentry": config.sentry.__dict__ if config.sentry else None,
         "ui": config.ui.__dict__,
         "update": config.update.__dict__,
         "ack_mode": config.ack_mode,

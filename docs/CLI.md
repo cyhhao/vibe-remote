@@ -244,10 +244,6 @@ The web UI (`http://127.0.0.1:5123`) provides the same controls:
 | Variable | Description |
 |----------|-------------|
 | `OPENCODE_PORT` | Override OpenCode server port (default: 4096) |
-| `VIBE_SENTRY_DSN` / `SENTRY_DSN` | Enable Sentry error reporting for the main service and Web UI |
-| `VIBE_SENTRY_ENVIRONMENT` / `SENTRY_ENVIRONMENT` | Override the Sentry environment tag |
-| `VIBE_SENTRY_TRACES_SAMPLE_RATE` | Override Sentry traces sample rate (0.0-1.0) |
-| `VIBE_SENTRY_PROFILES_SAMPLE_RATE` | Override Sentry profiles sample rate (0.0-1.0) |
 
 ## See Also
 

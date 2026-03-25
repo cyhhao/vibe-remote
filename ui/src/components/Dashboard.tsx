@@ -94,21 +94,11 @@ export const Dashboard: React.FC = () => {
         setDiagnosticsSaving(true);
         setDiagnosticsMessage(null);
         try {
-            const sentryDsn = (config.sentry?.dsn || '').trim();
-            const sentryEnvironment = (config.sentry?.environment || '').trim();
-            const sentryPayload = sentryDsn || sentryEnvironment || config.sentry?.traces_sample_rate || config.sentry?.profiles_sample_rate || config.sentry?.send_default_pii
-                ? {
-                    ...(config.sentry || {}),
-                    dsn: sentryDsn || null,
-                    environment: sentryEnvironment || null,
-                }
-                : null;
             const runtimePayload = {
                 log_level: config.runtime?.log_level || 'INFO',
             };
             const configPayload = {
                 runtime: runtimePayload,
-                sentry: sentryPayload,
             };
             await fetch('/config', {
                 method: 'POST',
@@ -530,43 +520,6 @@ export const Dashboard: React.FC = () => {
                                 <option key={level} value={level}>{level}</option>
                             ))}
                         </select>
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.sentryDsn')}</span>
-                        <input
-                            type="password"
-                            value={config.sentry?.dsn || ''}
-                            onChange={(e) => {
-                                const dsn = e.target.value;
-                                setDiagnosticsMessage(null);
-                                setConfig((prev: any) => ({
-                                    ...prev,
-                                    sentry: { ...(prev.sentry || {}), dsn },
-                                }));
-                            }}
-                            placeholder="https://..."
-                            className="w-64 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono"
-                        />
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.sentryEnvironment')}</span>
-                        <input
-                            type="text"
-                            value={config.sentry?.environment || ''}
-                            onChange={(e) => {
-                                const environment = e.target.value;
-                                setDiagnosticsMessage(null);
-                                setConfig((prev: any) => ({
-                                    ...prev,
-                                    sentry: { ...(prev.sentry || {}), environment },
-                                }));
-                            }}
-                            placeholder="production"
-                            className="w-40 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono"
-                        />
-                    </div>
-                    <div className="text-xs text-muted">
-                        {t('dashboard.sentryHint')}
                     </div>
                     <div className="flex justify-between items-center">
                         <span className="text-muted">{t('dashboard.configFile')}</span>
