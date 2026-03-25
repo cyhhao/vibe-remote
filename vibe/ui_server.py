@@ -4,6 +4,7 @@ import logging
 import mimetypes
 import re
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -94,26 +95,51 @@ def _fallback_log_entry(line: str, source_key: str) -> dict[str, str]:
     }
 
 
-def _read_log_entries(log_path: Path, source_key: str, lines: int) -> tuple[list[dict[str, str]], int]:
+def _timestamp_to_sort_ns(timestamp: str) -> int | None:
+    try:
+        return int(datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S,%f").timestamp() * 1_000_000_000)
+    except ValueError:
+        return None
+
+
+def _serialize_log_entries(entries: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {
+            "timestamp": str(entry.get("timestamp", "")),
+            "logger": str(entry.get("logger", "")),
+            "level": str(entry.get("level", "INFO")),
+            "message": str(entry.get("message", "")),
+            "source": str(entry.get("source", "")),
+        }
+        for entry in entries
+    ]
+
+
+def _read_log_entries(log_path: Path, source_key: str, lines: int) -> tuple[list[dict[str, Any]], int]:
     if not log_path.exists():
         return [], 0
 
     with log_path.open("r", encoding="utf-8", errors="replace") as f:
         all_lines = f.readlines()
     recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+    file_sort_ns = log_path.stat().st_mtime_ns
+    first_recent_line_index = len(all_lines) - len(recent_lines)
 
-    logs_list: list[dict[str, str]] = []
-    for raw_line in recent_lines:
+    logs_list: list[dict[str, Any]] = []
+    for line_offset, raw_line in enumerate(recent_lines):
         line = raw_line.rstrip("\n")
         match = STRUCTURED_LOG_PATTERN.match(line)
         if match:
+            parsed_timestamp = match.group(1)
             logs_list.append(
                 {
-                    "timestamp": match.group(1),
+                    "timestamp": parsed_timestamp,
                     "logger": match.group(2),
                     "level": match.group(3),
                     "message": match.group(4),
                     "source": source_key,
+                    "_sort_ns": _timestamp_to_sort_ns(parsed_timestamp) or file_sort_ns,
+                    "_sort_index": first_recent_line_index + line_offset,
                 }
             )
             continue
@@ -125,7 +151,10 @@ def _read_log_entries(log_path: Path, source_key: str, lines: int) -> tuple[list
             logs_list[-1]["message"] += "\n" + line
             continue
 
-        logs_list.append(_fallback_log_entry(line, source_key))
+        fallback_entry = _fallback_log_entry(line, source_key)
+        fallback_entry["_sort_ns"] = file_sort_ns
+        fallback_entry["_sort_index"] = first_recent_line_index + line_offset
+        logs_list.append(fallback_entry)
 
     return logs_list, len(all_lines)
 
@@ -539,7 +568,7 @@ def logs():
     active_source = source_map.get(selected_source) or source_map["all"]
 
     try:
-        aggregated_logs: list[dict[str, str]] = []
+        aggregated_logs: list[dict[str, Any]] = []
         aggregated_total = 0
         for source in sources:
             if source["key"] == "all":
@@ -559,7 +588,12 @@ def logs():
         if active_source["key"] == "all":
             active_logs = sorted(
                 aggregated_logs,
-                key=lambda entry: (entry.get("timestamp") or "", entry.get("source") or "", entry.get("logger") or ""),
+                key=lambda entry: (
+                    int(entry.get("_sort_ns", 0)),
+                    int(entry.get("_sort_index", 0)),
+                    entry.get("source") or "",
+                    entry.get("logger") or "",
+                ),
             )
             if len(active_logs) > lines:
                 active_logs = active_logs[-lines:]
@@ -567,7 +601,7 @@ def logs():
         return jsonify(
             {
                 "source": active_source["key"],
-                "logs": active_logs,
+                "logs": _serialize_log_entries(active_logs),
                 "total": active_total,
                 "sources": sources,
             }

@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime
+
 from config import paths
 from vibe.ui_server import app
+
+
+def _set_mtime(path, timestamp: str) -> None:
+    value = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").timestamp()
+    os.utime(path, (value, value))
 
 
 def test_logs_endpoint_returns_multiple_sources(monkeypatch, tmp_path):
@@ -43,18 +51,23 @@ def test_logs_endpoint_returns_aggregated_all_view(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()
 
-    (paths.get_logs_dir() / "vibe_remote.log").write_text(
+    service_log = paths.get_logs_dir() / "vibe_remote.log"
+    service_log.write_text(
         "2026-03-25 15:51:17,428 - asyncio - ERROR - main service failed\n",
         encoding="utf-8",
     )
-    (paths.get_runtime_dir() / "service_stderr.log").write_text(
+    service_stderr_log = paths.get_runtime_dir() / "service_stderr.log"
+    service_stderr_log.write_text(
         "service stderr line\n",
         encoding="utf-8",
     )
-    (paths.get_runtime_dir() / "ui_stderr.log").write_text(
+    ui_stderr_log = paths.get_runtime_dir() / "ui_stderr.log"
+    ui_stderr_log.write_text(
         "UI boot failed\n",
         encoding="utf-8",
     )
+    _set_mtime(service_stderr_log, "2026-03-25 15:51:18")
+    _set_mtime(ui_stderr_log, "2026-03-25 15:51:19")
 
     client = app.test_client()
     response = client.post("/logs", json={"lines": 20, "source": "all"})
@@ -64,9 +77,9 @@ def test_logs_endpoint_returns_aggregated_all_view(monkeypatch, tmp_path):
     assert payload["source"] == "all"
     assert payload["total"] == 3
     assert [entry["source"] for entry in payload["logs"]] == [
+        "service",
         "service_stderr",
         "ui_stderr",
-        "service",
     ]
     assert {entry["source"] for entry in payload["logs"]} == {"service", "service_stderr", "ui_stderr"}
 
@@ -141,6 +154,38 @@ def test_logs_endpoint_keeps_traceback_exception_summary_with_error_entry(monkey
     assert len(payload["logs"]) == 1
     assert payload["logs"][0]["level"] == "ERROR"
     assert payload["logs"][0]["message"].endswith("ValueError: boom")
+
+
+def test_logs_endpoint_preserves_recent_unstructured_logs_in_all_view(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+
+    service_log = paths.get_logs_dir() / "vibe_remote.log"
+    service_log.write_text(
+        "\n".join(
+            [
+                "2026-03-25 15:51:17,428 - service.main - INFO - service line 1",
+                "2026-03-25 15:51:18,428 - service.main - INFO - service line 2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    ui_stderr_log = paths.get_runtime_dir() / "ui_stderr.log"
+    ui_stderr_log.write_text("latest ui crash line\n", encoding="utf-8")
+    _set_mtime(ui_stderr_log, "2026-03-25 15:51:19")
+
+    client = app.test_client()
+    response = client.post("/logs", json={"lines": 2, "source": "all"})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["source"] == "all"
+    assert payload["total"] == 3
+    assert [entry["message"] for entry in payload["logs"]] == [
+        "service line 2",
+        "latest ui crash line",
+    ]
 
 
 def test_logs_endpoint_falls_back_to_service_for_unknown_source(monkeypatch, tmp_path):
