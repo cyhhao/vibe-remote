@@ -10,6 +10,13 @@ from core.controller import Controller
 from vibe.sentry_integration import init_sentry
 
 
+def _build_logging_handlers(logs_dir: str) -> list[logging.Handler]:
+    handlers: list[logging.Handler] = [logging.FileHandler(f"{logs_dir}/vibe_remote.log")]
+    if os.environ.get("VIBE_DISABLE_STDOUT_LOGGING", "").lower() not in {"1", "true", "yes"}:
+        handlers.insert(0, logging.StreamHandler(sys.stdout))
+    return handlers
+
+
 def setup_logging(level: str = "INFO"):
     """Setup logging configuration with file location and line numbers"""
     # Create a custom formatter with file location
@@ -24,10 +31,7 @@ def setup_logging(level: str = "INFO"):
     logging.basicConfig(
         level=getattr(logging, level.upper()),
         format=log_format,
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(f"{logs_dir}/vibe_remote.log"),
-        ],
+        handlers=_build_logging_handlers(logs_dir),
     )
 
 
