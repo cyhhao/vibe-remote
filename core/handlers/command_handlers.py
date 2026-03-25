@@ -353,6 +353,22 @@ class CommandHandlers(BaseHandler):
                 f"📂 {self._t('command.cwd.changeInstructions')}",
             )
             return
+        if platform == "telegram":
+            if hasattr(im_client, "open_change_cwd_modal"):
+                try:
+                    current_cwd = self.controller.get_cwd(context)
+                    await im_client.run_on_client_loop(
+                        im_client.open_change_cwd_modal(context, current_cwd, context.channel_id)
+                    )
+                    return
+                except Exception as e:
+                    logger.error(f"Error opening Telegram change CWD flow: {e}")
+            channel_context = self._get_channel_context(context)
+            await im_client.send_message(
+                channel_context,
+                f"📂 {self._t('command.cwd.changeInstructions')}",
+            )
+            return
 
         if platform not in {"slack"}:
             channel_context = self._get_channel_context(context)
@@ -400,7 +416,7 @@ class CommandHandlers(BaseHandler):
                 channel_context = self._get_channel_context(context)
                 await im_client.send_message(
                     channel_context,
-                    f"ℹ️ {self._t('command.resume.noStoredSessions')}",
+                    f"ℹ️ {self._t('telegram.resumeNoStoredSessions')}",
                 )
                 return
             if interaction and hasattr(im_client, "open_resume_session_modal"):
@@ -417,6 +433,36 @@ class CommandHandlers(BaseHandler):
                     return
                 except Exception as e:
                     logger.error(f"Error opening resume modal: {e}")
+            channel_context = self._get_channel_context(context)
+            await im_client.send_message(
+                channel_context,
+                f"⏮️ {self._t('command.resume.clickButton')}",
+            )
+            return
+        if platform == "telegram":
+            session_key = self._get_session_key(context)
+            sessions_by_agent = self.sessions.list_all_agent_sessions(session_key)
+            if not sessions_by_agent:
+                channel_context = self._get_channel_context(context)
+                await im_client.send_message(
+                    channel_context,
+                    f"ℹ️ {self._t('command.resume.noStoredSessions')}",
+                )
+                return
+            if hasattr(im_client, "open_resume_session_modal"):
+                try:
+                    await im_client.run_on_client_loop(
+                        im_client.open_resume_session_modal(
+                            trigger_id=context,
+                            sessions_by_agent=sessions_by_agent,
+                            channel_id=context.channel_id,
+                            thread_id=context.thread_id or context.message_id or "",
+                            host_message_ts=context.message_id,
+                        )
+                    )
+                    return
+                except Exception as e:
+                    logger.error(f"Error opening Telegram resume flow: {e}")
             channel_context = self._get_channel_context(context)
             await im_client.send_message(
                 channel_context,

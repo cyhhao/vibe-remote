@@ -276,6 +276,18 @@
   },
   "telegram": {
     "autoTopicGeneralNotice": "Started a new topic for this request: {topic}. Continue there.",
-    "autoTopicIntro": "New session topic created: {topic}"
+    "autoTopicIntro": "New session topic created: {topic}",
+    "cwdPromptTitle": "Change working directory",
+    "cwdPromptBody": "Send the new path as your next message. Use `/cancel` or the button below to abort.",
+    "cwdPromptCanceled": "Working directory change canceled.",
+    "resumeTitle": "Resume a saved session",
+    "resumeBody": "Pick one of the saved sessions below.",
+    "resumeNoStoredSessions": "No stored sessions are available for this chat yet.",
+    "resumeCanceled": "Resume canceled.",
+    "resumeSubmitting": "Resuming the selected session...",
+    "routingTitle": "Agent & model settings",
+    "routingChoosePrefix": "Choose a value for",
+    "routingSaving": "Saving routing settings...",
+    "routingCanceled": "Routing update canceled."
   }
 }

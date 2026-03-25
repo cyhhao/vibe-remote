@@ -214,7 +214,7 @@ class ConsolidatedMessageDispatcher:
                     context.platform
                     or (context.platform_specific or {}).get("platform")
                     or self.controller.config.platform
-                ) in {"slack", "discord", "lark"} and hasattr(im_client, "upload_markdown"):
+                ) in {"slack", "discord", "telegram", "lark"} and hasattr(im_client, "upload_markdown"):
                     try:
                         await im_client.upload_markdown(
                             target_context,
