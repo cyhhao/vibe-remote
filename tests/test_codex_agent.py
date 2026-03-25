@@ -4,7 +4,7 @@ import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -410,11 +410,14 @@ class CodexTransportCommandTests(unittest.IsolatedAsyncioTestCase):
             created_cmd["cmd"] = list(cmd)
             return _FakeProcess()
 
-        transport_module.asyncio.create_subprocess_exec = fake_create_subprocess_exec
-
-        transport = Transport(binary="codex", cwd="/tmp/work")
-        await transport.start()
-        await transport.stop()
+        with patch.object(
+            transport_module.asyncio,
+            "create_subprocess_exec",
+            new=fake_create_subprocess_exec,
+        ):
+            transport = Transport(binary="codex", cwd="/tmp/work")
+            await transport.start()
+            await transport.stop()
 
         self.assertEqual(
             created_cmd["cmd"],
