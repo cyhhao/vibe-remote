@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any
 from config import paths
 from modules.im import BaseIMClient, MessageContext, IMFactory
 from modules.im.multi import MultiIMClient
-from modules.im.formatters import SlackFormatter, DiscordFormatter
+from modules.im.formatters import SlackFormatter, DiscordFormatter, TelegramFormatter
 from modules.agent_router import AgentRouter
 from modules.agents import AgentService, ClaudeAgent, CodexAgent, OpenCodeAgent
 from modules.claude_client import ClaudeClient
@@ -113,6 +113,8 @@ class Controller:
     def _create_formatter(self, platform: str):
         if platform == "discord":
             return DiscordFormatter()
+        if platform == "telegram":
+            return TelegramFormatter()
         if platform == "lark":
             from modules.im.formatters.feishu_formatter import FeishuFormatter
 
@@ -173,6 +175,8 @@ class Controller:
                         im_cfg.require_mention = v2_config.slack.require_mention
                     elif platform == "discord" and v2_config.discord:
                         im_cfg.require_mention = v2_config.discord.require_mention
+                    elif platform == "telegram" and v2_config.telegram:
+                        im_cfg.require_mention = v2_config.telegram.require_mention
                     elif platform == "wechat" and v2_config.wechat:
                         im_cfg.require_mention = v2_config.wechat.require_mention
 

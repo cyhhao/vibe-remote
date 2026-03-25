@@ -79,6 +79,10 @@
       "title": "Discord",
       "desc": "Connect a Discord bot and choose a guild."
     },
+    "telegram": {
+      "title": "Telegram",
+      "desc": "Connect a Telegram bot for DMs, groups, and forum topics."
+    },
     "lark": {
       "title": "Lark",
       "desc": "Connect to Feishu/Lark workspace for team collaboration"
@@ -135,6 +139,26 @@
     "dmTroubleshoot1": "Make sure your account and the bot are in at least one common server.",
     "dmTroubleshoot2": "In server Privacy Settings, enable \"Allow direct messages from server members\".",
     "dmTroubleshoot3": "Ensure you didn't block the bot account."
+  },
+  "telegramConfig": {
+    "title": "Telegram Configuration",
+    "subtitle": "Connect a Telegram bot with button-first interaction and topic-aware sessions.",
+    "buttonFirstTitle": "Button-first interaction",
+    "buttonFirstDesc": "Telegram should behave more like Discord than a command-first bot. Commands remain available as fallback entrypoints.",
+    "sessionPlainTitle": "Plain chat session",
+    "sessionPlainDesc": "Direct messages and plain groups keep one session by default. Users explicitly start a new one with the New Session button.",
+    "sessionForumTitle": "Forum topic session",
+    "sessionForumDesc": "In forum-enabled supergroups, new top-level messages can branch into dedicated topics that each hold one session.",
+    "botToken": "Bot Token",
+    "botTokenPlaceholder": "Paste your Telegram bot token",
+    "botTokenHint": "Create a bot with @BotFather, then paste the token here.",
+    "validateToken": "Validate Token",
+    "tokenValidated": "Token validated",
+    "authFailed": "Validation failed",
+    "requireMention": "Require explicit bot targeting in groups",
+    "requireMentionHint": "When enabled, the bot responds in groups only when explicitly addressed by command, mention, or reply.",
+    "forumAutoTopic": "Forum auto-topic mode",
+    "forumAutoTopicHint": "For forum-enabled supergroups, new top-level messages can automatically create a new topic that becomes the session container."
   },
   "larkConfig": {
     "title": "Configure Lark",
@@ -307,11 +331,22 @@
     "inviteBotHint": "Invite the bot to your channel first:\n1. Open the channel, click ⚙️ Settings → Integrations → Add apps\n2. Or type /invite @YourBotName in the channel",
     "discordInviteBotHint": "Add the bot to your guild and grant access to the channel.",
     "larkInviteBotHint": "Add the bot to a group chat: Open the group → Settings → Bots → Add Bot.",
+    "telegramInviteBotHint": "Send a message from the Telegram group or forum to the bot first, then refresh this list.",
     "wechatInviteBotHint": "Send a message to your WeChat bot account to start a conversation.",
     "guild": "Guild",
     "guildPlaceholder": "Select a guild",
     "discordText": "Text",
     "discordNews": "News",
+    "telegramForum": "Forum",
+    "telegramSupergroup": "Supergroup",
+    "telegramGroup": "Group",
+    "telegramChat": "Chat",
+    "telegramDiscoveryTitle": "Telegram uses discovered chats",
+    "telegramDiscoveryInfo": "This page shows Telegram groups and forums that the bot has already seen from incoming messages. Direct messages stay hidden here.",
+    "telegramDiscoveryStats": "{{visible}} visible chats · {{forum}} forums · {{hidden}} hidden DMs",
+    "telegramDiscoveryEmptyTitle": "No Telegram chats discovered yet",
+    "telegramDiscoveryEmptyDesc": "Send a message in any Telegram group or forum where the bot is present, then refresh this page.",
+    "telegramLastSeen": "Last seen {{time}}",
     "enabledCount": "{{count}} enabled",
     "accessPolicy": "Access Policy",
     "accessPolicyHint": "Groups are enabled only when checked below.",
@@ -353,6 +388,7 @@
     "slackBotToken": "Slack Bot Token",
     "slackAppToken": "Slack App Token",
     "discordBotToken": "Discord Bot Token",
+    "telegramBotToken": "Telegram Bot Token",
     "larkAppId": "Lark App ID",
     "wechatBotToken": "WeChat Bot Token",
     "discordGuild": "Discord Guild",

@@ -48,7 +48,20 @@ class SessionHandler(BaseHandler):
             else:
                 base_id = context.channel_id or context.user_id
         else:
-            base_id = context.thread_id or context.message_id or context.channel_id
+            base_id = context.thread_id
+            if not base_id:
+                use_message_id = True
+                getter = getattr(self.controller, "get_im_client_for_context", None)
+                if callable(getter):
+                    try:
+                        im_client = getter(context)
+                    except AttributeError:
+                        im_client = getattr(self.controller, "im_client", None)
+                else:
+                    im_client = getattr(self.controller, "im_client", None)
+                if im_client and hasattr(im_client, "should_use_message_id_for_channel_session"):
+                    use_message_id = bool(im_client.should_use_message_id_for_channel_session(context))
+                base_id = context.message_id if use_message_id and context.message_id else context.channel_id
         return f"{platform}_{base_id}"
 
     def get_working_path(self, context: MessageContext) -> str:

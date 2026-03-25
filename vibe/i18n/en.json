@@ -273,5 +273,9 @@
     "systemDefault": "(System Default)",
     "en": "English",
     "zh": "\u4e2d\u6587"
+  },
+  "telegram": {
+    "autoTopicGeneralNotice": "Started a new topic for this request: {topic}. Continue there.",
+    "autoTopicIntro": "New session topic created: {topic}"
   }
 }

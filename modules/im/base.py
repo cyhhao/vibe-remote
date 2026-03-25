@@ -146,6 +146,10 @@ class BaseIMClient(ABC):
         """
         return False
 
+    def should_use_message_id_for_channel_session(self, context: Optional[MessageContext] = None) -> bool:
+        """Whether non-thread channel messages should default to per-message sessions."""
+        return True
+
     @staticmethod
     def extract_command_action(text: str, allow_plain_bind: bool = False) -> str:
         """Extract command action name from slash command text.

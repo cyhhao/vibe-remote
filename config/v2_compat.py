@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from config.v2_config import V2Config, SlackConfig, DiscordConfig, LarkConfig, WeChatConfig
+from config.v2_config import V2Config, SlackConfig, DiscordConfig, TelegramConfig, LarkConfig, WeChatConfig
 
 
 @dataclass
@@ -44,6 +44,7 @@ class AppCompatConfig:
     language: str
     platforms: dict = field(default_factory=lambda: {"enabled": ["slack"], "primary": "slack"})
     discord: Optional[DiscordConfig] = None
+    telegram: Optional[TelegramConfig] = None
     lark: Optional[LarkConfig] = None
     wechat: Optional[WeChatConfig] = None
     codex: Optional[CodexCompatConfig] = None
@@ -92,6 +93,7 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         },
         slack=slack,
         discord=v2.discord,
+        telegram=v2.telegram,
         lark=v2.lark,
         wechat=v2.wechat,
         claude=claude,

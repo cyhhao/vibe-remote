@@ -16,13 +16,23 @@ class _Config:
 
 
 class _Controller:
-    def __init__(self, *, platform: str = "discord", dm_threads: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        platform: str = "discord",
+        dm_threads: bool = False,
+        channel_message_sessions: bool = True,
+    ) -> None:
         self.config = _Config()
         self.config.platform = platform
         self.im_client = type(
             "IM",
             (),
-            {"formatter": None, "should_use_thread_for_dm_session": lambda self: dm_threads},
+            {
+                "formatter": None,
+                "should_use_thread_for_dm_session": lambda self: dm_threads,
+                "should_use_message_id_for_channel_session": lambda self, context=None: channel_message_sessions,
+            },
         )()
         self.settings_manager = type("Settings", (), {"sessions": None})()
         self.session_manager = object()
@@ -105,3 +115,16 @@ def test_channel_session_base_id_keeps_thread_or_message_behavior() -> None:
     )
 
     assert handler.get_base_session_id(context) == "discord_msg-999"
+
+
+def test_telegram_plain_group_session_base_id_uses_stable_channel_id() -> None:
+    handler = SessionHandler(_Controller(platform="telegram", channel_message_sessions=False))
+    context = MessageContext(
+        user_id="u-1",
+        channel_id="-100123",
+        message_id="42",
+        platform="telegram",
+        platform_specific={"is_dm": False, "chat_type": "supergroup"},
+    )
+
+    assert handler.get_base_session_id(context) == "telegram_-100123"

@@ -1,4 +1,4 @@
-export const ALL_PLATFORMS = ['slack', 'discord', 'lark', 'wechat'] as const;
+export const ALL_PLATFORMS = ['slack', 'discord', 'telegram', 'lark', 'wechat'] as const;
 
 export type PlatformName = (typeof ALL_PLATFORMS)[number];
 
@@ -25,4 +25,4 @@ export const getPrimaryPlatform = (data: any): PlatformName => {
   return enabled[0] || 'slack';
 };
 
-export const platformSupportsChannels = (platform: string): boolean => platform !== 'wechat';
+export const platformSupportsChannels = (platform: string): boolean => !['wechat'].includes(platform);

@@ -57,6 +57,10 @@ def get_sessions_path() -> Path:
     return get_state_dir() / "sessions.json"
 
 
+def get_discovered_chats_path() -> Path:
+    return get_state_dir() / "discovered_chats.json"
+
+
 def ensure_data_dirs() -> None:
     get_config_dir().mkdir(parents=True, exist_ok=True)
     get_state_dir().mkdir(parents=True, exist_ok=True)

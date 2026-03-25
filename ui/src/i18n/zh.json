@@ -79,6 +79,10 @@
       "title": "Discord",
       "desc": "连接 Discord 机器人并选择服务器。"
     },
+    "telegram": {
+      "title": "Telegram",
+      "desc": "连接 Telegram 机器人，支持私聊、群组和 forum topic。"
+    },
     "lark": {
       "title": "飞书",
       "desc": "连接飞书工作区，实现团队协作"
@@ -135,6 +139,26 @@
     "dmTroubleshoot1": "确认你的账号和机器人至少在同一个服务器中。",
     "dmTroubleshoot2": "在服务器隐私设置中开启「允许来自服务器成员的私信」。",
     "dmTroubleshoot3": "确认你没有屏蔽该机器人账号。"
+  },
+  "telegramConfig": {
+    "title": "Telegram 配置",
+    "subtitle": "连接 Telegram 机器人，采用按钮优先交互，并为 topic 会话做好准备。",
+    "buttonFirstTitle": "按钮优先交互",
+    "buttonFirstDesc": "Telegram 的体验应更接近 Discord，而不是 command-first 机器人。命令只作为兜底入口保留。",
+    "sessionPlainTitle": "普通会话模式",
+    "sessionPlainDesc": "私聊和普通群默认保持单一 session，只有用户点击 New Session 才会切换到新 session。",
+    "sessionForumTitle": "Forum topic 会话模式",
+    "sessionForumDesc": "在启用 forum 的 supergroup 中，新的顶层消息可以自动分叉到独立 topic，每个 topic 承载一个 session。",
+    "botToken": "机器人令牌",
+    "botTokenPlaceholder": "粘贴 Telegram 机器人令牌",
+    "botTokenHint": "先通过 @BotFather 创建机器人，再把令牌粘贴到这里。",
+    "validateToken": "验证令牌",
+    "tokenValidated": "令牌验证成功",
+    "authFailed": "验证失败",
+    "requireMention": "群组中需要显式触发",
+    "requireMentionHint": "开启后，机器人只会在群组中响应显式 command、@提及或回复。",
+    "forumAutoTopic": "Forum 自动建 Topic",
+    "forumAutoTopicHint": "对启用了 forum 的 supergroup，新顶层消息可以自动创建新的 topic，并把它作为 session 容器。"
   },
   "larkConfig": {
     "title": "配置飞书",
@@ -307,11 +331,22 @@
     "inviteBotHint": "请先将 Bot 邀请到频道：\n1. 打开频道，点击 ⚙️ 设置 → 集成 → 添加应用\n2. 或在频道中输入 /invite @你的Bot名称",
     "discordInviteBotHint": "请确保机器人已加入服务器并具备访问频道的权限。",
     "larkInviteBotHint": "将机器人添加到群聊：打开群 → 设置 → 群机器人 → 添加机器人。",
+    "telegramInviteBotHint": "先让 Telegram 群组或 forum 给机器人发过一条消息，再回来刷新列表。",
     "wechatInviteBotHint": "向微信机器人账号发送消息即可开始对话。",
     "guild": "服务器",
     "guildPlaceholder": "选择服务器",
     "discordText": "文本",
     "discordNews": "公告",
+    "telegramForum": "Forum",
+    "telegramSupergroup": "Supergroup",
+    "telegramGroup": "群组",
+    "telegramChat": "会话",
+    "telegramDiscoveryTitle": "Telegram 这里只展示已发现会话",
+    "telegramDiscoveryInfo": "这里只有 bot 已经从入站消息里见过的 Telegram 群组和 forum。私聊不会在这里展示。",
+    "telegramDiscoveryStats": "{{visible}} 个可见会话 · {{forum}} 个 forum · {{hidden}} 个隐藏私聊",
+    "telegramDiscoveryEmptyTitle": "还没有发现任何 Telegram 会话",
+    "telegramDiscoveryEmptyDesc": "先在 bot 已加入的 Telegram 群组或 forum 里发一条消息，再回来刷新这个页面。",
+    "telegramLastSeen": "最近出现于 {{time}}",
     "enabledCount": "已启用 {{count}} 个",
     "accessPolicy": "访问策略",
     "accessPolicyHint": "只有勾选的群组才会启用",
@@ -353,6 +388,7 @@
     "slackBotToken": "Slack Bot 令牌",
     "slackAppToken": "Slack App 令牌",
     "discordBotToken": "Discord 机器人令牌",
+    "telegramBotToken": "Telegram 机器人令牌",
     "larkAppId": "飞书 App ID",
     "wechatBotToken": "微信 Bot Token",
     "discordGuild": "Discord 服务器",

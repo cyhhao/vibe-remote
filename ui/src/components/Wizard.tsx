@@ -7,6 +7,7 @@ import { PlatformSelection } from './steps/PlatformSelection';
 import { AgentDetection } from './steps/AgentDetection';
 import { SlackConfig } from './steps/SlackConfig';
 import { DiscordConfig } from './steps/DiscordConfig';
+import { TelegramConfig } from './steps/TelegramConfig';
 import { LarkConfig } from './steps/LarkConfig';
 import { WeChatConfig } from './steps/WeChatConfig';
 import { ChannelList } from './steps/ChannelList';
@@ -42,6 +43,13 @@ const buildConfigPayload = (data: any) => {
     guild_allowlist: data.discord?.guild_allowlist || [],
     guild_denylist: data.discord?.guild_denylist || [],
     require_mention: data.discord?.require_mention || false,
+  },
+  telegram: {
+    ...data.telegram,
+    bot_token: data.telegram?.bot_token || '',
+    require_mention: data.telegram?.require_mention ?? true,
+    forum_auto_topic: data.telegram?.forum_auto_topic ?? true,
+    use_webhook: data.telegram?.use_webhook ?? false,
   },
   lark: {
     ...data.lark,
@@ -118,6 +126,8 @@ export const Wizard: React.FC = () => {
     const platformSteps = enabledPlatforms.map((platform) => {
       const component = platform === 'discord'
         ? DiscordConfig
+        : platform === 'telegram'
+          ? TelegramConfig
         : platform === 'lark'
           ? LarkConfig
           : platform === 'wechat'
@@ -208,6 +218,7 @@ export const Wizard: React.FC = () => {
       mergedData.agents ||
       mergedData.slack ||
       mergedData.discord ||
+      mergedData.telegram ||
       mergedData.lark ||
       mergedData.wechat ||
       mergedData.mode ||

@@ -2,6 +2,8 @@ import json
 
 import pytest
 
+from config import paths
+from config.discovered_chats import DiscoveredChatsStore
 from vibe import api
 from vibe.opencode_config import parse_jsonc_object
 
@@ -177,7 +179,6 @@ def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
     assert result["path"] == str(codex_path)
     assert calls[0][0] == [str(npm_path), "install", "-g", "@openai/codex"]
     assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == str(npm_path.parent)
-
 
 def test_setup_opencode_permission_preserves_existing_json_fields(monkeypatch, tmp_path):
     config_path = tmp_path / ".config" / "opencode" / "opencode.json"
@@ -490,3 +491,32 @@ def test_parse_jsonc_object_rejects_invalid_jsonc():
   }
 }"""
         )
+
+
+def test_telegram_auth_test_returns_response(monkeypatch):
+    async def fake_get_me(bot_token: str):
+        assert bot_token == "123456:test-token"
+        return {"id": 1, "username": "vibe_remote_bot"}
+
+    monkeypatch.setattr(api, "_telegram_get_me", fake_get_me)
+
+    result = api.telegram_auth_test("123456:test-token")
+
+    assert result["ok"] is True
+    assert result["response"]["username"] == "vibe_remote_bot"
+
+
+def test_telegram_list_chats_returns_discovered_groups(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    DiscoveredChatsStore.reset_instance()
+    store = DiscoveredChatsStore.get_instance()
+    store.remember_chat(platform="telegram", chat_id="-1001", name="Core Group", chat_type="supergroup")
+    store.remember_chat(platform="telegram", chat_id="42", name="Alex", chat_type="private", is_private=True)
+
+    result = api.telegram_list_chats()
+
+    assert result["ok"] is True
+    assert [chat["id"] for chat in result["channels"]] == ["-1001"]
+    assert result["summary"]["visible_count"] == 1
+    assert result["summary"]["hidden_private_count"] == 1
+    DiscoveredChatsStore.reset_instance()

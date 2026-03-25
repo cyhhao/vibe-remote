@@ -273,5 +273,9 @@
     "systemDefault": "(系统默认)",
     "en": "English",
     "zh": "中文"
+  },
+  "telegram": {
+    "autoTopicGeneralNotice": "已为这次请求创建新的 Topic：{topic}，请在那里继续。",
+    "autoTopicIntro": "已创建新的会话 Topic：{topic}"
   }
 }

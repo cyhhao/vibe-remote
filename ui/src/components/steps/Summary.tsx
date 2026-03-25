@@ -33,6 +33,8 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         platform,
         platform === 'discord'
           ? (data.discord?.require_mention || false)
+          : platform === 'telegram'
+            ? (data.telegram?.require_mention ?? true)
           : platform === 'lark'
             ? (data.lark?.require_mention || false)
             : platform === 'wechat'
@@ -74,6 +76,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         discord: {
           ...data.discord,
           require_mention: requireMentionByPlatform.discord ?? data.discord?.require_mention,
+        },
+        telegram: {
+          ...data.telegram,
+          require_mention: requireMentionByPlatform.telegram ?? data.telegram?.require_mention,
         },
         lark: {
           ...data.lark,
@@ -204,6 +210,9 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             <Section title={t('summary.discordBotToken')} value={mask(data.discord?.bot_token || '')} />
             <Section title={t('summary.discordGuild')} value={(data.discord?.guild_allowlist || [])[0] || t('summary.notSet')} />
           </>
+        )}
+        {enabledPlatforms.includes('telegram') && (
+          <Section title={t('summary.telegramBotToken')} value={mask(data.telegram?.bot_token || '')} />
         )}
         {enabledPlatforms.includes('lark') && (
           <Section title={t('summary.larkAppId')} value={mask(data.lark?.app_id || '')} />
@@ -366,6 +375,13 @@ const buildConfigPayload = (data: any) => {
       guild_allowlist: data.discord?.guild_allowlist || [],
       guild_denylist: data.discord?.guild_denylist || [],
       require_mention: data.discord?.require_mention || false,
+    },
+    telegram: {
+      ...data.telegram,
+      bot_token: data.telegram?.bot_token || '',
+      require_mention: data.telegram?.require_mention ?? true,
+      forum_auto_topic: data.telegram?.forum_auto_topic ?? true,
+      use_webhook: data.telegram?.use_webhook ?? false,
     },
     lark: {
       ...data.lark,
