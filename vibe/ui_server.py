@@ -12,7 +12,7 @@ from flask import Flask, request, jsonify, send_file, Response
 from config import paths
 from config.v2_config import V2Config
 from vibe.runtime import get_ui_dist_path, get_working_dir
-from vibe.sentry_integration import capture_exception, init_sentry
+from vibe.sentry_integration import init_sentry
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,6 @@ def handle_exception(e):
         return jsonify({"error": e.description}), e.code
 
     # Log and return 500 for unexpected server errors
-    capture_exception(e)
     logger.exception("Unhandled exception in UI server")
     return jsonify({"error": str(e)}), 500
 

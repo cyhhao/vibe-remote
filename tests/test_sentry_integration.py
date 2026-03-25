@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import types
 import importlib
+import ast
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -154,6 +155,23 @@ def test_run_ui_server_skips_sentry_when_config_load_fails(monkeypatch):
     ui_server.run_ui_server("127.0.0.1", 0)
 
     assert sentry_calls == []
+
+
+def test_ui_error_handler_does_not_explicitly_capture_exceptions():
+    source = Path("vibe/ui_server.py").read_text(encoding="utf-8")
+    module = ast.parse(source)
+
+    handle_exception = next(
+        node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "handle_exception"
+    )
+
+    calls_capture_exception = False
+    for node in ast.walk(handle_exception):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "capture_exception":
+            calls_capture_exception = True
+            break
+
+    assert calls_capture_exception is False
 
 
 def test_scrub_data_redacts_sensitive_values():
