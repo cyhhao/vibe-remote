@@ -7,6 +7,7 @@ import asyncio
 from config.paths import ensure_data_dirs, get_logs_dir
 from config.v2_config import V2Config
 from core.controller import Controller
+from vibe.sentry_integration import init_sentry
 
 
 def setup_logging(level: str = "INFO"):
@@ -61,6 +62,7 @@ def main():
         logger = logging.getLogger(__name__)
 
         apply_claude_sdk_patches()
+        init_sentry(config, component="service")
         
         logger.info("Starting vibe-remote service...")
         logger.info(f"Working directory: {config.runtime.default_cwd}")

@@ -10,7 +10,9 @@ from typing import Any
 from flask import Flask, request, jsonify, send_file, Response
 
 from config import paths
+from config.v2_config import V2Config
 from vibe.runtime import get_ui_dist_path, get_working_dir
+from vibe.sentry_integration import init_sentry
 
 logger = logging.getLogger(__name__)
 
@@ -847,6 +849,15 @@ def run_ui_server(host: str, port: int) -> None:
     from werkzeug.serving import make_server
 
     paths.ensure_data_dirs()
+    try:
+        config = V2Config.load()
+    except FileNotFoundError:
+        config = None
+    except Exception as exc:
+        logger.warning("Skipping UI Sentry init because config load failed: %s", exc)
+        config = None
+    if config is not None:
+        init_sentry(config, component="ui", enable_flask=True)
     print(f"UI Server running at http://{host}:{port}")
 
     # Use make_server directly for better compatibility with subprocess/multiprocessing

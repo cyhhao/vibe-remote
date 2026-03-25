@@ -19,6 +19,7 @@ services:
       - .env.e2e
     environment:
       - VIBE_REMOTE_HOME=/data/vibe_remote
+      - VIBE_DEPLOYMENT_ENV=integration
       - VIBE_UI_PORT=5123
       - E2E_TEST_MODE=true
     volumes:

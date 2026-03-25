@@ -37,6 +37,7 @@ dependencies = [
     "PyYAML>=6.0",
     "flask>=3.0.0",
     "lark-oapi>=1.4.0",
+    "sentry-sdk>=2.0.0",
     "python-socks[asyncio]>=2.0.0",
     "aiohttp-socks>=0.8.0",
 ]
