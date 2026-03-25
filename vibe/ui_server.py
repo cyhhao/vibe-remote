@@ -854,6 +854,9 @@ def run_ui_server(host: str, port: int) -> None:
         config = V2Config.load()
     except FileNotFoundError:
         config = None
+    except Exception as exc:
+        logger.warning("Skipping UI Sentry init because config load failed: %s", exc)
+        config = None
     if config is not None:
         init_sentry(config, component="ui", enable_flask=True)
     print(f"UI Server running at http://{host}:{port}")

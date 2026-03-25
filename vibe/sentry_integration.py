@@ -195,28 +195,32 @@ def init_sentry(config: V2Config, component: str, enable_flask: bool = False) ->
 
     from vibe import __version__
 
-    sentry_sdk.init(
-        dsn=options["dsn"],
-        environment=options["environment"],
-        release=f"vibe-remote@{__version__}",
-        integrations=integrations,
-        before_send=before_send,
-        before_breadcrumb=before_breadcrumb,
-        attach_stacktrace=True,
-        ignore_errors=[KeyboardInterrupt, SystemExit],
-        max_breadcrumbs=50,
-        sample_rate=1.0,
-        traces_sample_rate=options["traces_sample_rate"],
-        profiles_sample_rate=options["profiles_sample_rate"],
-        send_default_pii=True,
-        server_name=socket.gethostname(),
-    )
-    sentry_sdk.set_tag("component", component)
-    sentry_sdk.set_tag("mode", config.mode)
-    sentry_sdk.set_tag("primary_platform", config.platforms.primary)
-    sentry_sdk.set_tag("deployment_environment", options["environment"])
-    for name, context in build_sentry_contexts(config, component, options["environment"]).items():
-        sentry_sdk.set_context(name, context)
+    try:
+        sentry_sdk.init(
+            dsn=options["dsn"],
+            environment=options["environment"],
+            release=f"vibe-remote@{__version__}",
+            integrations=integrations,
+            before_send=before_send,
+            before_breadcrumb=before_breadcrumb,
+            attach_stacktrace=True,
+            ignore_errors=[KeyboardInterrupt, SystemExit],
+            max_breadcrumbs=50,
+            sample_rate=1.0,
+            traces_sample_rate=options["traces_sample_rate"],
+            profiles_sample_rate=options["profiles_sample_rate"],
+            send_default_pii=True,
+            server_name=socket.gethostname(),
+        )
+        sentry_sdk.set_tag("component", component)
+        sentry_sdk.set_tag("mode", config.mode)
+        sentry_sdk.set_tag("primary_platform", config.platforms.primary)
+        sentry_sdk.set_tag("deployment_environment", options["environment"])
+        for name, context in build_sentry_contexts(config, component, options["environment"]).items():
+            sentry_sdk.set_context(name, context)
+    except Exception as exc:
+        logger.warning("Sentry initialization failed for %s: %s", component, exc)
+        return False
     logger.info("Sentry initialized for %s (environment=%s)", component, options["environment"])
     return True
 
