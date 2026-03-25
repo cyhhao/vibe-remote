@@ -184,7 +184,6 @@ def config_post():
 
     payload = request.json or {}
     config = api.save_config(payload)
-    api.init_sessions()
     return jsonify(api.config_to_payload(config))
 
 

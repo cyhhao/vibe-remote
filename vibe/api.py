@@ -313,6 +313,8 @@ def save_settings(payload: dict) -> dict:
 
 def init_sessions() -> None:
     store = SessionsStore()
+    if store.sessions_path.exists():
+        return
     store.save()
 
 
