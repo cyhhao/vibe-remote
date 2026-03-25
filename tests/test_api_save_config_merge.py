@@ -153,7 +153,6 @@ def test_save_config_rejects_enabled_platform_without_credentials(monkeypatch, t
             }
         )
 
-
 def test_init_sessions_is_noop_when_sessions_file_exists(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 

@@ -8,6 +8,7 @@ services:
     command: ["full"]
     environment:
       VIBE_REMOTE_HOME: /data/vibe_remote
+      VIBE_DEPLOYMENT_ENV: regression
       VIBE_UI_PORT: 5123
       PYTHONUNBUFFERED: "1"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
