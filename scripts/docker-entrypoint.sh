@@ -57,6 +57,31 @@ read_runtime_service_pid() {
     echo "$runtime_pid"
 }
 
+read_runtime_state() {
+    local runtime_dir="$1"
+    local status_file="$runtime_dir/status.json"
+
+    if [ ! -f "$status_file" ]; then
+        return 1
+    fi
+
+    python - "$status_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+status_path = Path(sys.argv[1])
+try:
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+
+state = payload.get("state")
+if isinstance(state, str):
+    print(state)
+PY
+}
+
 wait_for_replacement_service_pid() {
     local runtime_dir="$1"
     local previous_pid="$2"
@@ -74,6 +99,17 @@ wait_for_replacement_service_pid() {
     done
 
     return 1
+}
+
+is_intentional_service_stop_state() {
+    case "$1" in
+        stopped|stopping|restarting|starting)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 ensure_service_pid() {
@@ -99,6 +135,12 @@ ensure_service_pid() {
         echo "Detected replacement service PID ${replacement_pid}, continuing supervisor loop." >&2
         write_runtime_status "running" "service restarted in container" "$replacement_pid" "$ui_pid"
         echo "$replacement_pid"
+        return 0
+    fi
+
+    local runtime_state=""
+    runtime_state="$(read_runtime_state "$runtime_dir" 2>/dev/null || true)"
+    if is_intentional_service_stop_state "$runtime_state"; then
         return 0
     fi
 
@@ -159,17 +201,33 @@ run_ui_server('0.0.0.0', ${VIBE_UI_PORT:-5123})
                 CURRENT_UI_PID="$(cat "$RUNTIME_DIR/vibe-ui.pid")"
             fi
 
-            SERVICE_PID="$(ensure_service_pid "$RUNTIME_DIR" "$SERVICE_PID" "${CURRENT_UI_PID:-$UI_PID}")"
+            SERVICE_PID="$(ensure_service_pid "$RUNTIME_DIR" "${SERVICE_PID:-}" "${CURRENT_UI_PID:-$UI_PID}")"
 
             if [ -z "$CURRENT_UI_PID" ]; then
                 UI_PID="$(start_ui_process "$RUNTIME_DIR")"
-                write_runtime_status "running" "ui restarted" "$SERVICE_PID" "$UI_PID"
+                CURRENT_STATE="$(read_runtime_state "$RUNTIME_DIR" 2>/dev/null || true)"
+                if [ -z "$CURRENT_STATE" ]; then
+                    if [ -n "${SERVICE_PID:-}" ]; then
+                        CURRENT_STATE="running"
+                    else
+                        CURRENT_STATE="stopped"
+                    fi
+                fi
+                write_runtime_status "$CURRENT_STATE" "ui restarted" "${SERVICE_PID:-None}" "$UI_PID"
             elif ! kill -0 "$CURRENT_UI_PID" 2>/dev/null; then
                 UI_EXIT_CODE=0
                 wait "$CURRENT_UI_PID" 2>/dev/null || UI_EXIT_CODE=$?
                 echo "UI server exited unexpectedly (code: ${UI_EXIT_CODE:-unknown}), restarting..."
                 UI_PID="$(start_ui_process "$RUNTIME_DIR")"
-                write_runtime_status "running" "ui restarted after crash" "$SERVICE_PID" "$UI_PID"
+                CURRENT_STATE="$(read_runtime_state "$RUNTIME_DIR" 2>/dev/null || true)"
+                if [ -z "$CURRENT_STATE" ]; then
+                    if [ -n "${SERVICE_PID:-}" ]; then
+                        CURRENT_STATE="running"
+                    else
+                        CURRENT_STATE="stopped"
+                    fi
+                fi
+                write_runtime_status "$CURRENT_STATE" "ui restarted after crash" "${SERVICE_PID:-None}" "$UI_PID"
             fi
 
             sleep 1

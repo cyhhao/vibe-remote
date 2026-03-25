@@ -548,7 +548,14 @@ class Controller:
 
         # Stop update checker
         try:
-            self.update_checker.stop()
+            update_task = self.update_checker.stop()
+            if update_task and not update_task.done():
+                loop = self._loop
+                if loop and not loop.is_running() and not loop.is_closed():
+                    try:
+                        loop.run_until_complete(self.update_checker.wait_stopped(update_task))
+                    except Exception:
+                        pass
         except Exception as e:
             logger.debug(f"Update checker cleanup skipped: {e}")
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { FileText, RefreshCw, Search, Filter, ArrowDown, Pause, Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useApi, type LogEntry } from '../../context/ApiContext';
+import { useApi, type LogEntry, type LogSource } from '../../context/ApiContext';
 import clsx from 'clsx';
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'ALL';
@@ -26,6 +26,8 @@ export const LogsPanel: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [sources, setSources] = useState<LogSource[]>([]);
+  const [selectedSource, setSelectedSource] = useState('all');
   const [loading, setLoading] = useState(false);
   const [logsTotal, setLogsTotal] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
@@ -34,25 +36,29 @@ export const LogsPanel: React.FC = () => {
   const logsContainerRef = useRef<HTMLDivElement>(null);
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadLogs = async () => {
+  const loadLogs = async (source = selectedSource) => {
     setLoading(true);
     try {
-      const res = await api.getLogs(2000);
+      const res = await api.getLogs(2000, source);
       setLogs(res.logs);
       setLogsTotal(res.total);
+      setSources(res.sources);
+      setSelectedSource(res.source);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadLogs();
+    void loadLogs();
   }, []);
 
   // Auto-refresh logic
   useEffect(() => {
     if (autoRefresh) {
-      autoRefreshRef.current = setInterval(loadLogs, 5000);
+      autoRefreshRef.current = setInterval(() => {
+        void loadLogs(selectedSource);
+      }, 5000);
     } else if (autoRefreshRef.current) {
       clearInterval(autoRefreshRef.current);
       autoRefreshRef.current = null;
@@ -62,7 +68,7 @@ export const LogsPanel: React.FC = () => {
         clearInterval(autoRefreshRef.current);
       }
     };
-  }, [autoRefresh]);
+  }, [autoRefresh, selectedSource]);
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
@@ -93,6 +99,30 @@ export const LogsPanel: React.FC = () => {
     });
     return counts;
   }, [logs]);
+
+  const selectedSourceMeta = useMemo(
+    () => sources.find((source) => source.key === selectedSource) ?? null,
+    [selectedSource, sources]
+  );
+
+  const getSourceLabel = (sourceKey: string) => {
+    switch (sourceKey) {
+      case 'all':
+        return t('logs.sources.all');
+      case 'service':
+        return t('logs.sources.service');
+      case 'service_stdout':
+        return t('logs.sources.serviceStdout');
+      case 'service_stderr':
+        return t('logs.sources.serviceStderr');
+      case 'ui_stdout':
+        return t('logs.sources.uiStdout');
+      case 'ui_stderr':
+        return t('logs.sources.uiStderr');
+      default:
+        return sourceKey;
+    }
+  };
 
   const LogLevelBadge = ({ level }: { level: string }) => {
     const colors = LOG_LEVEL_COLORS[level] || LOG_LEVEL_COLORS.INFO;
@@ -133,7 +163,7 @@ export const LogsPanel: React.FC = () => {
             {autoRefresh ? t('logs.autoRefreshOn') : t('logs.autoRefresh')}
           </button>
           <button
-            onClick={loadLogs}
+            onClick={() => void loadLogs(selectedSource)}
             disabled={loading}
             className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 disabled:opacity-50 transition-colors font-medium shadow-sm"
           >
@@ -174,6 +204,24 @@ export const LogsPanel: React.FC = () => {
 
         {/* Level Quick Filters */}
         <div className="flex gap-2 flex-wrap">
+          {sources.map((source) => (
+            <button
+              key={source.key}
+              onClick={() => void loadLogs(source.key)}
+              className={clsx(
+                'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
+                selectedSource === source.key
+                  ? 'bg-accent text-white border-accent'
+                  : 'bg-white text-muted border-border hover:border-accent/50'
+              )}
+            >
+              {getSourceLabel(source.key)}
+              {source.total > 0 && ` (${source.total})`}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-2 flex-wrap">
           {(['ALL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'] as LogLevel[]).map((level) => (
             <button
               key={level}
@@ -206,7 +254,7 @@ export const LogsPanel: React.FC = () => {
                 <ArrowDown size={12} /> {t('logs.jumpToLatest')}
               </button>
               <code className="text-xs text-muted bg-neutral-100 px-2 py-1 rounded">
-                ~/.vibe_remote/logs/vibe_remote.log
+                {selectedSourceMeta?.path || t('logs.allFiles')}
               </code>
             </div>
           </div>
@@ -246,6 +294,9 @@ export const LogsPanel: React.FC = () => {
                       <LogLevelBadge level={log.level} />
                       <span className="text-muted text-xs truncate max-w-[200px]" title={log.logger}>
                         {log.logger}
+                      </span>
+                      <span className="text-muted/60 text-xs font-normal">
+                        {getSourceLabel(log.source)}
                       </span>
                       {location && (
                         <span className="text-muted/60 text-xs font-normal">

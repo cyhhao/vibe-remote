@@ -456,10 +456,19 @@
     "all": "全部",
     "entriesCount": "{{filtered}} / {{total}} 条",
     "totalInFile": "（文件中共 {{total}} 条）",
+    "allFiles": "全部日志文件",
     "jumpToLatest": "跳转到最新",
     "loadingLogs": "加载日志中...",
     "noLogsAvailable": "暂无日志",
-    "noLogsMatch": "没有匹配的日志"
+    "noLogsMatch": "没有匹配的日志",
+    "sources": {
+      "all": "全部",
+      "service": "主服务日志",
+      "serviceStdout": "主服务标准输出",
+      "serviceStderr": "主服务错误输出",
+      "uiStdout": "UI 标准输出",
+      "uiStderr": "UI 错误输出"
+    }
   },
   "language": {
     "switchLanguage": "语言",

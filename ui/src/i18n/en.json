@@ -456,10 +456,19 @@
     "all": "All",
     "entriesCount": "{{filtered}} of {{total}} entries",
     "totalInFile": "({{total}} total in file)",
+    "allFiles": "All log files",
     "jumpToLatest": "Jump to latest",
     "loadingLogs": "Loading logs...",
     "noLogsAvailable": "No logs available",
-    "noLogsMatch": "No logs match your filter"
+    "noLogsMatch": "No logs match your filter",
+    "sources": {
+      "all": "All",
+      "service": "Main service log",
+      "serviceStdout": "Main service stdout",
+      "serviceStderr": "Main service stderr",
+      "uiStdout": "UI stdout",
+      "uiStderr": "UI stderr"
+    }
   },
   "language": {
     "switchLanguage": "Language",
