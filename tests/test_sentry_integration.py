@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from config.v2_config import AgentsConfig, RuntimeConfig, SlackConfig, V2Config
 from vibe import sentry_integration
 

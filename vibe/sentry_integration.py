@@ -208,7 +208,7 @@ def init_sentry(config: V2Config, component: str, enable_flask: bool = False) ->
         sample_rate=1.0,
         traces_sample_rate=options["traces_sample_rate"],
         profiles_sample_rate=options["profiles_sample_rate"],
-        send_default_pii=False,
+        send_default_pii=True,
         server_name=socket.gethostname(),
     )
     sentry_sdk.set_tag("component", component)
