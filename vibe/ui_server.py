@@ -27,6 +27,9 @@ log.setLevel(logging.WARNING)
 
 STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
 LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
+TRACEBACK_EXCEPTION_PATTERN = re.compile(
+    r"^[A-Za-z_][\w.]*(?:Error|Exception|Warning|Exit|Interrupt|Failure|Fault|Group)(?:[:(]|$)"
+)
 LOG_SOURCES = (
     ("service", "vibe_remote.log", lambda: paths.get_logs_dir() / "vibe_remote.log"),
     ("service_stdout", "service_stdout.log", lambda: paths.get_runtime_dir() / "service_stdout.log"),
@@ -60,7 +63,7 @@ def _run_async(coro, timeout: float = 10.0) -> dict:
     return result
 
 
-def _is_continuation_line(line: str) -> bool:
+def _is_continuation_line(line: str, previous_message: str | None = None) -> bool:
     stripped = line.lstrip()
     return (
         line[:1].isspace()
@@ -69,6 +72,11 @@ def _is_continuation_line(line: str) -> bool:
         or stripped.startswith("File ")
         or stripped.startswith("task:")
         or stripped.startswith("^")
+        or (
+            previous_message is not None
+            and "Traceback " in previous_message
+            and bool(TRACEBACK_EXCEPTION_PATTERN.match(stripped))
+        )
     )
 
 
@@ -113,7 +121,7 @@ def _read_log_entries(log_path: Path, source_key: str, lines: int) -> tuple[list
         if not line:
             continue
 
-        if logs_list and _is_continuation_line(line):
+        if logs_list and _is_continuation_line(line, logs_list[-1]["message"]):
             logs_list[-1]["message"] += "\n" + line
             continue
 
@@ -553,6 +561,8 @@ def logs():
                 aggregated_logs,
                 key=lambda entry: (entry.get("timestamp") or "", entry.get("source") or "", entry.get("logger") or ""),
             )
+            if len(active_logs) > lines:
+                active_logs = active_logs[-lines:]
             active_total = aggregated_total
         return jsonify(
             {

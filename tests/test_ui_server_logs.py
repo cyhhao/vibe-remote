@@ -71,6 +71,78 @@ def test_logs_endpoint_returns_aggregated_all_view(monkeypatch, tmp_path):
     assert {entry["source"] for entry in payload["logs"]} == {"service", "service_stderr", "ui_stderr"}
 
 
+def test_logs_endpoint_caps_aggregated_all_view_to_requested_lines(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+
+    (paths.get_logs_dir() / "vibe_remote.log").write_text(
+        "\n".join(
+            [
+                "2026-03-25 15:51:17,428 - service.main - INFO - service line 1",
+                "2026-03-25 15:51:18,428 - service.main - INFO - service line 2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (paths.get_runtime_dir() / "service_stderr.log").write_text(
+        "\n".join(
+            [
+                "2026-03-25 15:51:19,428 - service.stderr - ERROR - service stderr line 1",
+                "2026-03-25 15:51:20,428 - service.stderr - ERROR - service stderr line 2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (paths.get_runtime_dir() / "ui_stderr.log").write_text(
+        "\n".join(
+            [
+                "2026-03-25 15:51:21,428 - ui.stderr - ERROR - ui stderr line 1",
+                "2026-03-25 15:51:22,428 - ui.stderr - ERROR - ui stderr line 2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    client = app.test_client()
+    response = client.post("/logs", json={"lines": 2, "source": "all"})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["source"] == "all"
+    assert payload["total"] == 6
+    assert len(payload["logs"]) == 2
+    assert [entry["message"] for entry in payload["logs"]] == [
+        "ui stderr line 1",
+        "ui stderr line 2",
+    ]
+
+
+def test_logs_endpoint_keeps_traceback_exception_summary_with_error_entry(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+
+    (paths.get_logs_dir() / "vibe_remote.log").write_text(
+        "2026-03-25 15:51:17,428 - asyncio - ERROR - Task was destroyed but it is pending!\n"
+        "Traceback (most recent call last):\n"
+        '  File "/app/core/update_checker.py", line 222, in _check_loop\n'
+        "ValueError: boom\n",
+        encoding="utf-8",
+    )
+
+    client = app.test_client()
+    response = client.post("/logs", json={"lines": 20, "source": "service"})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["source"] == "service"
+    assert len(payload["logs"]) == 1
+    assert payload["logs"][0]["level"] == "ERROR"
+    assert payload["logs"][0]["message"].endswith("ValueError: boom")
+
+
 def test_logs_endpoint_falls_back_to_service_for_unknown_source(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     paths.ensure_data_dirs()
