@@ -27,12 +27,10 @@ class CodexTransport:
         binary: str,
         cwd: str,
         extra_args: list[str] | None = None,
-        dangerously_bypass_approvals_and_sandbox: bool = False,
     ) -> None:
         self._binary = binary
         self._cwd = cwd
         self._extra_args = extra_args or []
-        self._dangerously_bypass_approvals_and_sandbox = dangerously_bypass_approvals_and_sandbox
         self._process: Optional[Process] = None
         self._request_id: int = 0
         self._pending: dict[int | str, asyncio.Future[dict[str, Any]]] = {}
@@ -59,10 +57,7 @@ class CodexTransport:
             logger.warning("CodexTransport.start() called but process is already running")
             return
 
-        cmd = [self._binary]
-        if self._dangerously_bypass_approvals_and_sandbox:
-            cmd.append("--dangerously-bypass-approvals-and-sandbox")
-        cmd += ["app-server"] + self._extra_args
+        cmd = [self._binary, "--dangerously-bypass-approvals-and-sandbox", "app-server"] + self._extra_args
         logger.info("Launching Codex app-server: %s (cwd=%s)", " ".join(cmd), self._cwd)
 
         if not os.path.exists(self._cwd):

@@ -24,7 +24,6 @@ class CodexCompatConfig:
     binary: str
     extra_args: list[str]
     default_model: Optional[str] = None
-    dangerously_bypass_approvals_and_sandbox: bool = True
 
 
 @dataclass
@@ -75,7 +74,6 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
             binary=v2.agents.codex.cli_path,
             extra_args=[],
             default_model=v2.agents.codex.default_model,
-            dangerously_bypass_approvals_and_sandbox=v2.agents.codex.dangerously_bypass_approvals_and_sandbox,
         )
     opencode = None
     if v2.agents.opencode.enabled:

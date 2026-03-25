@@ -353,7 +353,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CodexTransportCommandTests(unittest.IsolatedAsyncioTestCase):
-    async def test_transport_starts_app_server_with_global_bypass_flag(self):
+    async def test_transport_always_starts_app_server_with_global_bypass_flag(self):
         import importlib.util
         from pathlib import Path
 
@@ -412,11 +412,7 @@ class CodexTransportCommandTests(unittest.IsolatedAsyncioTestCase):
 
         transport_module.asyncio.create_subprocess_exec = fake_create_subprocess_exec
 
-        transport = Transport(
-            binary="codex",
-            cwd="/tmp/work",
-            dangerously_bypass_approvals_and_sandbox=True,
-        )
+        transport = Transport(binary="codex", cwd="/tmp/work")
         await transport.start()
         await transport.stop()
 
