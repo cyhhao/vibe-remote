@@ -102,14 +102,23 @@ def detect_sentry_environment() -> str:
     if "three-regression" in vibe_home:
         return "regression"
 
-    if Path("/.dockerenv").exists():
-        return "production"
-
     return "development"
 
 
 def resolve_sentry_options() -> Optional[dict[str, Any]]:
-    dsn = os.environ.get("VIBE_SENTRY_DSN") or os.environ.get("SENTRY_DSN") or DEFAULT_SENTRY_DSN
+    env_dsn = os.environ.get("VIBE_SENTRY_DSN")
+    if env_dsn is not None:
+        dsn = env_dsn.strip()
+        if not dsn:
+            return None
+    else:
+        fallback_dsn = os.environ.get("SENTRY_DSN")
+        if fallback_dsn is not None:
+            dsn = fallback_dsn.strip()
+            if not dsn:
+                return None
+        else:
+            dsn = DEFAULT_SENTRY_DSN
     if not dsn:
         return None
 

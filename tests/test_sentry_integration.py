@@ -42,6 +42,13 @@ def test_resolve_sentry_options_returns_none_without_dsn(monkeypatch):
     assert sentry_integration.resolve_sentry_options() is None
 
 
+def test_resolve_sentry_options_honors_empty_env_dsn_as_opt_out(monkeypatch):
+    monkeypatch.setenv("VIBE_SENTRY_DSN", "")
+    monkeypatch.setattr(sentry_integration, "DEFAULT_SENTRY_DSN", "https://default@example.ingest.sentry.io/1")
+
+    assert sentry_integration.resolve_sentry_options() is None
+
+
 def test_detect_sentry_environment_defaults_to_development(monkeypatch):
     monkeypatch.delenv("VIBE_SENTRY_ENVIRONMENT", raising=False)
     monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
@@ -50,6 +57,14 @@ def test_detect_sentry_environment_defaults_to_development(monkeypatch):
     monkeypatch.setattr(sentry_integration, "Path", lambda _: type("P", (), {"exists": staticmethod(lambda: False)})())
 
     assert sentry_integration.detect_sentry_environment() == "development"
+
+
+def test_detect_sentry_environment_uses_explicit_deployment_env(monkeypatch):
+    monkeypatch.delenv("VIBE_SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("VIBE_DEPLOYMENT_ENV", "production")
+
+    assert sentry_integration.detect_sentry_environment() == "production"
 
 
 def test_build_sentry_contexts_contains_debug_metadata(monkeypatch):
