@@ -1,7 +1,7 @@
 import logging
 import os
 from typing import Optional, Callable
-from claude_agent_sdk import (
+from modules.claude_sdk_compat import (
     ClaudeAgentOptions,
     SystemMessage,
     AssistantMessage,

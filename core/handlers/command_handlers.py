@@ -3,7 +3,8 @@
 import os
 import logging
 from typing import Optional
-from modules.agents import AgentRequest, get_agent_display_name
+from modules.agents import get_agent_display_name
+from modules.agents.base import AgentRequest
 from modules.im import MessageContext, InlineKeyboard, InlineButton
 
 from .base import BaseHandler
@@ -382,23 +383,18 @@ class CommandHandlers(BaseHandler):
         """Open resume-session modal (Slack) or explain availability."""
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
         im_client = self._get_im_client(context)
+        working_path = self.controller.get_cwd(context)
+        native_session_service = getattr(self.controller, "native_session_service", None)
+        limit = 25 if platform == "discord" else 100
+        sessions = native_session_service.list_recent_sessions(working_path, limit=limit) if native_session_service else []
         if platform == "discord":
             interaction = context.platform_specific.get("interaction") if context.platform_specific else None
-            session_key = self._get_session_key(context)
-            sessions_by_agent = self.sessions.list_all_agent_sessions(session_key)
-            if not sessions_by_agent:
-                channel_context = self._get_channel_context(context)
-                await im_client.send_message(
-                    channel_context,
-                    f"ℹ️ {self._t('command.resume.noStoredSessions')}",
-                )
-                return
             if interaction and hasattr(im_client, "open_resume_session_modal"):
                 try:
                     await im_client.run_on_client_loop(
                         im_client.open_resume_session_modal(
                             trigger_id=interaction,
-                            sessions_by_agent=sessions_by_agent,
+                            sessions=sessions,
                             channel_id=context.channel_id,
                             thread_id=context.thread_id or context.message_id or "",
                             host_message_ts=context.message_id,
@@ -414,15 +410,12 @@ class CommandHandlers(BaseHandler):
             )
             return
         if platform == "lark":
-            session_key = self._get_session_key(context)
-            sessions_by_agent = self.sessions.list_all_agent_sessions(session_key)
-            # Allow opening modal even with no sessions (user can paste manually)
             if hasattr(im_client, "open_resume_session_modal"):
                 try:
                     await im_client.run_on_client_loop(
                         im_client.open_resume_session_modal(
                             trigger_id=context,
-                            sessions_by_agent=sessions_by_agent or {},
+                            sessions=sessions,
                             channel_id=context.channel_id,
                             thread_id=context.thread_id or context.message_id or "",
                             host_message_ts=context.message_id,
@@ -455,21 +448,11 @@ class CommandHandlers(BaseHandler):
             )
             return
 
-        session_key = self._get_session_key(context)
-        sessions_by_agent = self.sessions.list_all_agent_sessions(session_key)
-
-        if not sessions_by_agent:
-            channel_context = self._get_channel_context(context)
-            await im_client.send_message(
-                channel_context,
-                f"ℹ️ {self._t('command.resume.noStoredSessions')}",
-            )
-
         try:
             await im_client.run_on_client_loop(
                 im_client.open_resume_session_modal(
                     trigger_id=trigger_id,
-                    sessions_by_agent=sessions_by_agent,
+                    sessions=sessions,
                     channel_id=context.channel_id,
                     thread_id=context.thread_id or context.message_id or "",
                     host_message_ts=context.message_id,

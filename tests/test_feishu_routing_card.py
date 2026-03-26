@@ -165,6 +165,46 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
         reasoning_values = [option["value"] for option in reasoning_select["options"]]
         self.assertIn("max", reasoning_values)
 
+    async def test_quick_reply_card_action_sets_lark_platform(self):
+        bot = self._make_bot()
+        bot.check_authorization = lambda **kwargs: AuthResult(allowed=True)
+        bot.on_callback_query_callback = AsyncMock()
+
+        event = {
+            "operator": {"open_id": "user"},
+            "context": {"open_message_id": "om_123", "open_chat_id": "chat"},
+            "action": {
+                "tag": "button",
+                "value": {"key": "quick_reply:继续"},
+            },
+        }
+
+        await bot._async_handle_card_action(event)
+
+        bot.on_callback_query_callback.assert_awaited_once()
+        callback_context, callback_data = bot.on_callback_query_callback.await_args.args
+        self.assertEqual(callback_data, "quick_reply:继续")
+        self.assertEqual(callback_context.platform, "lark")
+        self.assertEqual(callback_context.platform_specific["platform"], "lark")
+
+    async def test_remove_inline_keyboard_prefers_cached_text(self):
+        bot = self._make_bot()
+        bot.edit_message = AsyncMock(return_value=True)
+        bot._fetch_message_card_content = AsyncMock(return_value=None)
+        bot._message_text_cache["om_123"] = "Original body"
+
+        ok = await bot.remove_inline_keyboard(
+            MessageContext(user_id="user", channel_id="chat", platform="lark"),
+            "om_123",
+        )
+
+        self.assertTrue(ok)
+        bot.edit_message.assert_awaited_once()
+        _, kwargs = bot.edit_message.await_args
+        self.assertEqual(kwargs["text"], "Original body")
+        self.assertIsNone(kwargs["keyboard"])
+        bot._fetch_message_card_content.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

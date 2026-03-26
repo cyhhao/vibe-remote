@@ -250,6 +250,23 @@ class MultiIMClient(BaseIMClient):
             parse_mode=parse_mode,
         )
 
+    async def remove_inline_keyboard(
+        self,
+        context: MessageContext,
+        message_id: str,
+        text: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+    ) -> bool:
+        return await self.get_client_for_context(context).remove_inline_keyboard(
+            context,
+            message_id,
+            text=text,
+            parse_mode=parse_mode,
+        )
+
+    async def dismiss_form_message(self, context: MessageContext) -> None:
+        await self.get_client_for_context(context).dismiss_form_message(context)
+
     async def answer_callback(self, callback_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
         return await self.clients[self.primary_platform].answer_callback(callback_id, text=text, show_alert=show_alert)
 

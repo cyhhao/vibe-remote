@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import List, Optional, Tuple
 
-from modules.agents import AgentRequest
+from modules.agents.base import AgentRequest
 from modules.im import MessageContext
 from modules.im.base import FileAttachment
 
@@ -521,6 +521,7 @@ class MessageHandler(BaseHandler):
                     context_for_reply = MessageContext(
                         user_id=context.user_id,
                         channel_id=context.channel_id,
+                        platform=context.platform or (context.platform_specific or {}).get("platform"),
                         thread_id=context.thread_id,
                         message_id=None,
                         platform_specific=context.platform_specific,

@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Callable, Optional
 
-from claude_agent_sdk import TextBlock, ToolUseBlock
+from modules.claude_sdk_compat import TextBlock, ToolUseBlock
 
 from modules.agents.base import AgentRequest, BaseAgent
 

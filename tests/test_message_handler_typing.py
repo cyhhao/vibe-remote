@@ -16,6 +16,7 @@ from modules.im import MessageContext
 def _load_message_handler_class():
     with patch.dict(sys.modules, {}, clear=False):
         agents_module = types.ModuleType("modules.agents")
+        agents_module.__path__ = [str(ROOT / "modules" / "agents")]
 
         @dataclass
         class _AgentRequest:
@@ -38,6 +39,9 @@ def _load_message_handler_class():
 
         setattr(agents_module, "AgentRequest", _AgentRequest)
         sys.modules["modules.agents"] = agents_module
+        agents_base_module = types.ModuleType("modules.agents.base")
+        setattr(agents_base_module, "AgentRequest", _AgentRequest)
+        sys.modules["modules.agents.base"] = agents_base_module
 
         core_pkg = types.ModuleType("core")
         core_pkg.__path__ = [str(ROOT / "core")]
@@ -91,6 +95,7 @@ class _StubIMClient:
         self.clear_calls = []
         self.reactions = []
         self.sent_messages = []
+        self.removed_keyboards = []
         self.formatter = None
 
     def should_use_thread_for_reply(self):
@@ -124,6 +129,10 @@ class _StubIMClient:
     async def send_message(self, context, text, parse_mode=None, reply_to=None):
         self.sent_messages.append((context.channel_id, text))
         return "msg-1"
+
+    async def remove_inline_keyboard(self, context, message_id, text=None, parse_mode=None):
+        self.removed_keyboards.append((context.channel_id, context.platform, message_id))
+        return True
 
 
 class _StubAgentService:
@@ -271,6 +280,26 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
             is_dm=False,
             platform="lark",
         )
+
+    async def test_quick_reply_callback_preserves_platform(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.handle_user_message = AsyncMock()  # type: ignore[method-assign]
+        context = MessageContext(
+            user_id="u1",
+            channel_id="chat1",
+            message_id="om_123",
+            platform="lark",
+            platform_specific={"platform": "lark", "is_dm": False},
+        )
+
+        await handler.handle_callback_query(context, "quick_reply:继续")
+
+        self.assertEqual(controller.im_client.removed_keyboards, [("chat1", "lark", "om_123")])
+        handler.handle_user_message.assert_awaited_once()
+        forwarded_context, forwarded_text = handler.handle_user_message.await_args.args
+        self.assertEqual(forwarded_text, "继续")
+        self.assertEqual(forwarded_context.platform, "lark")
 
 
 if __name__ == "__main__":

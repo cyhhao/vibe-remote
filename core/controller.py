@@ -11,8 +11,9 @@ from modules.im import BaseIMClient, MessageContext, IMFactory
 from modules.im.multi import MultiIMClient
 from modules.im.formatters import SlackFormatter, DiscordFormatter
 from modules.agent_router import AgentRouter
-from modules.agents import AgentService, ClaudeAgent, CodexAgent, OpenCodeAgent
+from modules.agents.service import AgentService
 from modules.claude_client import ClaudeClient
+from modules.agents.native_sessions import AgentNativeSessionService
 from modules.session_manager import SessionManager
 from modules.settings_manager import SettingsManager, MultiSettingsManager
 from core.handlers import (
@@ -95,6 +96,7 @@ class Controller:
         self.settings_manager = MultiSettingsManager(self.enabled_platforms, primary_platform=self.primary_platform)
         self.platform_settings_managers = self.settings_manager.managers
         self.sessions = self.settings_manager.sessions
+        self.native_session_service = AgentNativeSessionService()
 
         # Migrate legacy per-channel language into global config
         self._migrate_language_from_settings()
@@ -240,6 +242,10 @@ class Controller:
         self.message_handler.set_session_handler(self.session_handler)
 
     def _init_agents(self):
+        from modules.agents.claude_agent import ClaudeAgent
+        from modules.agents.codex import CodexAgent
+        from modules.agents.opencode import OpenCodeAgent
+
         self.agent_service = AgentService(self)
         self.agent_service.register(ClaudeAgent(self))
         if self.config.codex:
