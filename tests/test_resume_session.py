@@ -1,4 +1,6 @@
 import unittest
+from datetime import datetime
+from unittest.mock import AsyncMock
 
 from core.controller import Controller
 from core.handlers.command_handlers import CommandHandlers
@@ -279,6 +281,137 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((trigger_id, channel_id, thread_id, host_ts), ("TRIG", "CCHAN", "TH1", "TS1"))
         self.assertEqual([item.native_session_id for item in sessions], ["thread_123"])
         self.assertEqual(ctrl.native_session_service.calls, [("/Users/cyh/vibe-remote", 100)])
+
+    async def test_command_handlers_handle_resume_wechat_lists_recent_sessions(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="wechat"))
+        ctrl.config.language = "zh"
+        ctrl.native_session_service = _StubNativeSessionService(
+            [
+                NativeResumeSession(
+                    agent="claude",
+                    agent_prefix="cc",
+                    native_session_id="claude-1",
+                    working_path="/Users/cyh/vibe-remote",
+                    created_at=None,
+                    updated_at=datetime(2026, 3, 27, 14, 32),
+                    sort_ts=10.0,
+                    last_agent_message="",
+                    last_agent_tail="...修好了 Claude fallback 列表",
+                ),
+                NativeResumeSession(
+                    agent="codex",
+                    agent_prefix="cx",
+                    native_session_id="codex-1",
+                    working_path="/Users/cyh/vibe-remote",
+                    created_at=None,
+                    updated_at=datetime(2026, 3, 27, 14, 10),
+                    sort_ts=9.0,
+                    last_agent_message="",
+                    last_agent_tail="...继续在子区里回复这条消息",
+                ),
+            ]
+        )
+
+        ctx = MessageContext(
+            user_id="wx-user",
+            channel_id="wx-chat",
+            platform="wechat",
+            platform_specific={"is_dm": True, "platform": "wechat"},
+        )
+
+        await ctrl.command_handler.handle_resume(ctx)
+
+        self.assertEqual(len(im_client.messages), 1)
+        text = im_client.messages[0][2]
+        self.assertIn("当前工作目录下最近的 Agent 会话", text)
+        self.assertIn("1. cc ...修好了 Claude fallback 列表", text)
+        self.assertIn("2. cx ...继续在子区里回复这条消息", text)
+        self.assertIn("/resume 1 - 恢复当前列表中的第 1 条", text)
+        self.assertIn("/resume more - 查看下一页", text)
+
+    async def test_command_handlers_handle_resume_wechat_numeric_selection_uses_snapshot(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="wechat"))
+        ctrl.native_session_service = _StubNativeSessionService(
+            [
+                NativeResumeSession(
+                    agent="opencode",
+                    agent_prefix="oc",
+                    native_session_id="oc-1",
+                    working_path="/Users/cyh/vibe-remote",
+                    created_at=None,
+                    updated_at=None,
+                    sort_ts=10.0,
+                    last_agent_message="",
+                    last_agent_tail="...第一条",
+                ),
+                NativeResumeSession(
+                    agent="claude",
+                    agent_prefix="cc",
+                    native_session_id="cc-2",
+                    working_path="/Users/cyh/vibe-remote",
+                    created_at=None,
+                    updated_at=None,
+                    sort_ts=9.0,
+                    last_agent_message="",
+                    last_agent_tail="...第二条",
+                ),
+            ]
+        )
+        ctrl.session_handler.handle_resume_session_submission = AsyncMock()
+        ctx = MessageContext(
+            user_id="wx-user",
+            channel_id="wx-chat",
+            platform="wechat",
+            message_id="MSG1",
+            platform_specific={"is_dm": True, "platform": "wechat"},
+        )
+
+        await ctrl.command_handler.handle_resume(ctx)
+        await ctrl.command_handler.handle_resume(ctx, "2")
+
+        ctrl.session_handler.handle_resume_session_submission.assert_awaited_once_with(
+            user_id="wx-user",
+            channel_id="wx-chat",
+            thread_id=None,
+            agent="claude",
+            session_id="cc-2",
+            host_message_ts="MSG1",
+            is_dm=True,
+            platform="wechat",
+        )
+
+    async def test_command_handlers_handle_resume_wechat_manual_backend_session_id(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="wechat"))
+        ctrl.session_handler.handle_resume_session_submission = AsyncMock()
+        ctx = MessageContext(
+            user_id="wx-user",
+            channel_id="wx-chat",
+            platform="wechat",
+            message_id="MSG1",
+            platform_specific={"is_dm": True, "platform": "wechat"},
+        )
+
+        await ctrl.command_handler.handle_resume(ctx, "cc 59adbb74-ce14-418f-b176-28210e21b6ae")
+
+        ctrl.session_handler.handle_resume_session_submission.assert_awaited_once_with(
+            user_id="wx-user",
+            channel_id="wx-chat",
+            thread_id=None,
+            agent="claude",
+            session_id="59adbb74-ce14-418f-b176-28210e21b6ae",
+            host_message_ts="MSG1",
+            is_dm=True,
+            platform="wechat",
+        )
 
     async def test_resume_modal_manual_session_uses_manual_agent(self):
         if SlackBot is None:

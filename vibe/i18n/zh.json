@@ -184,6 +184,7 @@
       "commandStart": "/start - 显示欢迎消息",
       "commandCwd": "/cwd - 显示当前工作目录",
       "commandSetCwd": "/setcwd <路径> - 设置工作目录",
+      "commandResume": "/resume - 恢复当前目录下最近的会话",
       "commandStop": "/stop - 中断 {agent} 当前执行",
       "commandNew": "/new - 开启一个全新的会话",
       "quickActions": "快捷操作：",
@@ -210,7 +211,23 @@
     "resume": {
       "slackOnly": "恢复功能目前仅在 Slack 上可用。在同一线程中继续可自动恢复。",
       "clickButton": "请在 Slack 中点击“恢复”按钮打开选择器。",
-      "noStoredSessions": "当前工作目录下未找到最近的 Agent 会话。您仍可以在恢复对话框中手动粘贴会话 ID。"
+      "noStoredSessions": "当前工作目录下未找到最近的 Agent 会话。",
+      "noStoredSessionsForBackend": "当前工作目录下未找到最近的 {backend} 会话。",
+      "listTitle": "当前工作目录下最近的 Agent 会话",
+      "listPage": "第 {page} / {total} 页",
+      "listItemTitle": "{index}. {prefix} {preview}",
+      "listItemTime": "   {time}",
+      "usageTitle": "使用方式：",
+      "usageList": "/resume - 查看最近会话",
+      "usagePick": "/resume 1 - 恢复当前列表中的第 1 条",
+      "usageMore": "/resume more - 查看下一页",
+      "usageLatest": "/resume latest [oc|cc|cx] - 恢复最近一条会话",
+      "usageManual": "/resume <oc|cc|cx> <session_id> - 手动恢复指定会话",
+      "snapshotExpired": "上一次显示的会话列表已过期，请先重新执行 /resume。",
+      "invalidSelection": "请选择当前列表中的有效编号。",
+      "unknownBackend": "后端不合法，请使用 oc、cc、cx 或完整后端名。",
+      "unknownCommand": "未识别的恢复命令。",
+      "noMorePages": "已经没有更多会话了。"
     },
     "stop": {
       "noActiveSession": "此频道没有要停止的活动会话。"
