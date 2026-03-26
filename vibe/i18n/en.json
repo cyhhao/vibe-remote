@@ -210,7 +210,7 @@
     },
     "resume": {
       "slackOnly": "Resume is currently available only on Slack. Continue in the same thread to auto-resume.",
-      "clickButton": "Please click the Resume button inside Slack to open the picker.",
+      "clickButton": "Please click the Resume Session button in the menu message below to open the picker.",
       "noStoredSessions": "No recent agent sessions found for this working directory.",
       "noStoredSessionsForBackend": "No recent {backend} sessions found for this working directory.",
       "listTitle": "Recent agent sessions for the current working directory",

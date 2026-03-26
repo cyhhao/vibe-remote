@@ -282,6 +282,28 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.native_session_id for item in sessions], ["thread_123"])
         self.assertEqual(ctrl.native_session_service.calls, [("/Users/cyh/vibe-remote", 100)])
 
+    async def test_command_handlers_handle_resume_without_trigger_sends_menu_prompt(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="slack"))
+        ctrl.command_handler.handle_start = AsyncMock()
+
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="CCHAN",
+            thread_id="TH1",
+            message_id="TS1",
+            platform="slack",
+            platform_specific={},
+        )
+
+        await ctrl.command_handler.handle_resume(ctx)
+
+        self.assertEqual(len(im_client.messages), 1)
+        self.assertIn("menu message", im_client.messages[0][2])
+        ctrl.command_handler.handle_start.assert_awaited_once()
+
     async def test_command_handlers_handle_resume_wechat_lists_recent_sessions(self):
         settings = _StubSettingsManager()
         im_client = _StubIMClient()

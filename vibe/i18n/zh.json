@@ -210,7 +210,7 @@
     },
     "resume": {
       "slackOnly": "恢复功能目前仅在 Slack 上可用。在同一线程中继续可自动恢复。",
-      "clickButton": "请在 Slack 中点击“恢复”按钮打开选择器。",
+      "clickButton": "请在下面这条菜单消息中点击“恢复会话”按钮打开选择器。",
       "noStoredSessions": "当前工作目录下未找到最近的 Agent 会话。",
       "noStoredSessionsForBackend": "当前工作目录下未找到最近的 {backend} 会话。",
       "listTitle": "当前工作目录下最近的 Agent 会话",

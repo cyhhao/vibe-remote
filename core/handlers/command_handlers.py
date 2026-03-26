@@ -347,6 +347,14 @@ class CommandHandlers(BaseHandler):
         )
         await self._send_wechat_resume_usage(context)
 
+    async def _send_resume_menu_prompt(self, context: MessageContext) -> None:
+        channel_context = self._get_channel_context(context)
+        await self._get_im_client(channel_context).send_message(
+            channel_context,
+            f"⏮️ {self._t('command.resume.clickButton')}",
+        )
+        await self.handle_start(channel_context)
+
     async def handle_start(self, context: MessageContext, args: str = ""):
         """Handle /start command with interactive buttons"""
         im_client = self._get_im_client(context)
@@ -684,10 +692,7 @@ class CommandHandlers(BaseHandler):
                 except Exception as e:
                     logger.error(f"Error opening resume modal: {e}")
             channel_context = self._get_channel_context(context)
-            await im_client.send_message(
-                channel_context,
-                f"⏮️ {self._t('command.resume.clickButton')}",
-            )
+            await self._send_resume_menu_prompt(context)
             return
         if platform == "lark":
             if hasattr(im_client, "open_resume_session_modal"):
@@ -705,10 +710,7 @@ class CommandHandlers(BaseHandler):
                 except Exception as e:
                     logger.error(f"Error opening resume session card for Lark: {e}")
             channel_context = self._get_channel_context(context)
-            await im_client.send_message(
-                channel_context,
-                f"⏮️ {self._t('command.resume.clickButton')}",
-            )
+            await self._send_resume_menu_prompt(context)
             return
 
         if platform not in {"slack"}:
@@ -721,11 +723,7 @@ class CommandHandlers(BaseHandler):
 
         trigger_id = context.platform_specific.get("trigger_id") if context.platform_specific else None
         if not trigger_id:
-            channel_context = self._get_channel_context(context)
-            await im_client.send_message(
-                channel_context,
-                f"⏮️ {self._t('command.resume.clickButton')}",
-            )
+            await self._send_resume_menu_prompt(context)
             return
 
         try:
