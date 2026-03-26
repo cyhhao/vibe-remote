@@ -132,7 +132,13 @@ class CommandHandlers(BaseHandler):
         native_session_service = getattr(self.controller, "native_session_service", None)
         if native_session_service is None:
             return working_path, []
-        return working_path, native_session_service.list_recent_sessions(working_path, limit=limit)
+        sessions = native_session_service.list_recent_sessions(working_path, limit=limit)
+        agent_service = getattr(self.controller, "agent_service", None)
+        registered_agents = getattr(agent_service, "agents", None)
+        if isinstance(registered_agents, dict) and registered_agents:
+            allowed_agents = set(registered_agents.keys())
+            sessions = [item for item in sessions if item.agent in allowed_agents]
+        return working_path, sessions
 
     @staticmethod
     def _format_resume_time(item: NativeResumeSession) -> str:

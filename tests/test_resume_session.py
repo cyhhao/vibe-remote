@@ -282,6 +282,53 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.native_session_id for item in sessions], ["thread_123"])
         self.assertEqual(ctrl.native_session_service.calls, [("/Users/cyh/vibe-remote", 100)])
 
+    async def test_command_handlers_handle_resume_filters_disabled_backends_before_modal(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="slack"))
+        ctrl.native_session_service = _StubNativeSessionService(
+            [
+                NativeResumeSession(
+                    agent="opencode",
+                    agent_prefix="oc",
+                    native_session_id="oc_disabled",
+                    working_path="/Users/cyh/vibe-remote",
+                    created_at=None,
+                    updated_at=None,
+                    sort_ts=200.0,
+                    last_agent_message="done",
+                    last_agent_tail="...done",
+                ),
+                NativeResumeSession(
+                    agent="codex",
+                    agent_prefix="cx",
+                    native_session_id="cx_enabled",
+                    working_path="/Users/cyh/vibe-remote",
+                    created_at=None,
+                    updated_at=None,
+                    sort_ts=100.0,
+                    last_agent_message="done",
+                    last_agent_tail="...done",
+                ),
+            ]
+        )
+
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="CCHAN",
+            thread_id="TH1",
+            message_id="TS1",
+            platform="slack",
+            platform_specific={"trigger_id": "TRIG"},
+        )
+
+        await ctrl.command_handler.handle_resume(ctx)
+
+        self.assertEqual(len(im_client.resume_calls), 1)
+        _, sessions, _, _, _ = im_client.resume_calls[0]
+        self.assertEqual([item.native_session_id for item in sessions], ["cx_enabled"])
+
     async def test_command_handlers_handle_resume_without_trigger_sends_menu_prompt(self):
         settings = _StubSettingsManager()
         im_client = _StubIMClient()
@@ -395,7 +442,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         )
 
         await ctrl.command_handler.handle_resume(ctx)
-        await ctrl.command_handler.handle_resume(ctx, "2")
+        await ctrl.command_handler.handle_resume(ctx, "1")
 
         ctrl.session_handler.handle_resume_session_submission.assert_awaited_once_with(
             user_id="wx-user",
@@ -430,6 +477,59 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
             thread_id=None,
             agent="claude",
             session_id="59adbb74-ce14-418f-b176-28210e21b6ae",
+            host_message_ts="MSG1",
+            is_dm=True,
+            platform="wechat",
+        )
+
+    async def test_command_handlers_handle_resume_wechat_latest_skips_disabled_backends(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="wechat"))
+        ctrl.native_session_service = _StubNativeSessionService(
+            [
+                NativeResumeSession(
+                    agent="opencode",
+                    agent_prefix="oc",
+                    native_session_id="oc_disabled",
+                    working_path="/Users/cyh/vibe-remote",
+                    created_at=None,
+                    updated_at=None,
+                    sort_ts=200.0,
+                    last_agent_message="",
+                    last_agent_tail="...latest disabled",
+                ),
+                NativeResumeSession(
+                    agent="codex",
+                    agent_prefix="cx",
+                    native_session_id="cx_enabled",
+                    working_path="/Users/cyh/vibe-remote",
+                    created_at=None,
+                    updated_at=None,
+                    sort_ts=100.0,
+                    last_agent_message="",
+                    last_agent_tail="...latest enabled",
+                ),
+            ]
+        )
+        ctrl.session_handler.handle_resume_session_submission = AsyncMock()
+        ctx = MessageContext(
+            user_id="wx-user",
+            channel_id="wx-chat",
+            platform="wechat",
+            message_id="MSG1",
+            platform_specific={"is_dm": True, "platform": "wechat"},
+        )
+
+        await ctrl.command_handler.handle_resume(ctx, "latest")
+
+        ctrl.session_handler.handle_resume_session_submission.assert_awaited_once_with(
+            user_id="wx-user",
+            channel_id="wx-chat",
+            thread_id=None,
+            agent="codex",
+            session_id="cx_enabled",
             host_message_ts="MSG1",
             is_dm=True,
             platform="wechat",

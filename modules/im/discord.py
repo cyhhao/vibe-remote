@@ -1143,6 +1143,13 @@ class DiscordBot(BaseIMClient):
     ):
         interaction = trigger_id if isinstance(trigger_id, discord.Interaction) else None
         t = lambda key, **kw: self._t(key, channel_id, **kw)
+        common_agents = ["claude", "codex", "opencode"]
+        registered_backends = None
+        if getattr(self, "_controller", None) and getattr(self._controller, "agent_service", None):
+            registered_backends = list(self._controller.agent_service.agents.keys())
+        allowed_agents = set(registered_backends or common_agents)
+        sessions = [item for item in sessions if item.agent in allowed_agents]
+
         options = []
         for item in sessions:
             label = AgentNativeSessionService.format_display_summary(item)
@@ -1159,12 +1166,7 @@ class DiscordBot(BaseIMClient):
         if not options:
             options = [discord.SelectOption(label=t("modal.resume.noRecentSessionsOption"), value="__none__")]
 
-        common_agents = ["claude", "codex", "opencode"]
-        registered_backends = None
-        if getattr(self, "_controller", None) and getattr(self._controller, "agent_service", None):
-            registered_backends = list(self._controller.agent_service.agents.keys())
-        allowed_agents = registered_backends or common_agents
-        agent_options = [discord.SelectOption(label=agent, value=agent) for agent in allowed_agents]
+        agent_options = [discord.SelectOption(label=agent, value=agent) for agent in sorted(allowed_agents)]
         if len(agent_options) > 25:
             agent_options = agent_options[:25]
         if not agent_options:
