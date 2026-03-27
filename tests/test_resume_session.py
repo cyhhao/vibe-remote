@@ -349,6 +349,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(im_client.messages), 1)
         self.assertIn("menu message", im_client.messages[0][2])
+        self.assertEqual(ctrl.native_session_service.calls, [])
         ctrl.command_handler.handle_start.assert_awaited_once()
 
     async def test_command_handlers_handle_resume_wechat_lists_recent_sessions(self):

@@ -680,11 +680,11 @@ class CommandHandlers(BaseHandler):
             await self._handle_wechat_resume(context, args)
             return
 
-        working_path, sessions = self._list_recent_native_sessions(context, limit=25 if platform == "discord" else 100)
         if platform == "discord":
             interaction = context.platform_specific.get("interaction") if context.platform_specific else None
             if interaction and hasattr(im_client, "open_resume_session_modal"):
                 try:
+                    _, sessions = self._list_recent_native_sessions(context, limit=25)
                     await im_client.run_on_client_loop(
                         im_client.open_resume_session_modal(
                             trigger_id=interaction,
@@ -703,6 +703,7 @@ class CommandHandlers(BaseHandler):
         if platform == "lark":
             if hasattr(im_client, "open_resume_session_modal"):
                 try:
+                    _, sessions = self._list_recent_native_sessions(context, limit=100)
                     await im_client.run_on_client_loop(
                         im_client.open_resume_session_modal(
                             trigger_id=context,
@@ -733,6 +734,7 @@ class CommandHandlers(BaseHandler):
             return
 
         try:
+            _, sessions = self._list_recent_native_sessions(context, limit=100)
             await im_client.run_on_client_loop(
                 im_client.open_resume_session_modal(
                     trigger_id=trigger_id,
