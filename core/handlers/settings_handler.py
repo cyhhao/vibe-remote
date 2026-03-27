@@ -342,6 +342,7 @@ class SettingsHandler(BaseHandler):
                     ),
                     (self._t("info.howItWorksPersistentLabel"), self._t("info.howItWorksPersistentDesc")),
                     (self._t("info.howItWorksCommandsLabel"), self._t("info.howItWorksCommandsDesc")),
+                    (self._t("info.howItWorksResumeLabel"), self._t("info.howItWorksResumeDesc")),
                     (self._t("info.howItWorksWorkDirLabel"), self._t("info.howItWorksWorkDirDesc")),
                     (self._t("info.howItWorksSettingsLabel"), self._t("info.howItWorksSettingsDesc")),
                 ],

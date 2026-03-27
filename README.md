@@ -73,6 +73,7 @@ irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | ie
 |---------|----------|
 | Claude Code is amazing but needs a terminal | Slack/Discord/WeChat/Lark IS your terminal now |
 | Context-switching kills flow | Stay in one app |
+| Start on desktop, continue on phone | Resume the exact agent session from the current project in seconds |
 | Can't code from phone | Yes you can |
 | Multiple agents, multiple setups | One chat app, any agent |
 
@@ -136,6 +137,12 @@ Get notified the moment your AI finishes. Like assigning tasks to employees — 
 ### Thread = Session
 
 Each Slack/Discord/WeChat/Lark thread is an isolated workspace. Open 5 threads, run 5 parallel tasks. Context stays separate.
+
+### Resume Anywhere
+
+Laptop closed. Commute started. Production still needs you.
+
+Vibe Remote lets you reopen real agent sessions from your current working directory across Claude Code, OpenCode, and Codex. Pick the latest session, jump from desktop to mobile, and keep going without re-explaining the task, hunting for an old thread, or losing the thread of thought.
 
 ### Interactive Prompts
 

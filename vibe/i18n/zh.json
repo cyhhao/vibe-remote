@@ -92,6 +92,8 @@
     "howItWorksPersistentDesc": "Agent 运行中直接发新消息即可打断并开始新任务，或输入 `stop` 取消。",
     "howItWorksCommandsLabel": "Thread = 会话",
     "howItWorksCommandsDesc": "每个 Thread 是独立会话，开多个 Thread 可并行执行任务。",
+    "howItWorksResumeLabel": "随时恢复会话",
+    "howItWorksResumeDesc": "从电脑切到手机也不断档。可直接恢复当前工作目录下最近的 Claude Code、OpenCode 或 Codex 会话，接着继续。",
     "howItWorksWorkDirLabel": "文件附件",
     "howItWorksWorkDirDesc": "直接在消息中附带图片或文件，Agent 可以读取。",
     "howItWorksSettingsLabel": "灵活设置",
