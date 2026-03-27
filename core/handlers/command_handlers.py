@@ -1,9 +1,12 @@
 """Command handlers for bot commands like /start, /new, /cwd, etc."""
 
-import os
 import logging
-from typing import Optional
-from modules.agents import AgentRequest, get_agent_display_name
+import os
+import time
+from typing import Any, Optional
+from modules.agents import get_agent_display_name
+from modules.agents.native_sessions import NativeResumeSession
+from modules.agents.base import AgentRequest
 from modules.im import MessageContext, InlineKeyboard, InlineButton
 
 from .base import BaseHandler
@@ -18,6 +21,9 @@ class CommandHandlers(BaseHandler):
         """Initialize with reference to main controller"""
         super().__init__(controller)
         self.session_manager = controller.session_manager
+        self._resume_snapshots: dict[str, dict[str, Any]] = {}
+        self._resume_snapshot_ttl_seconds = 600.0
+        self._wechat_resume_page_size = 5
 
     def _get_channel_context(self, context: MessageContext) -> MessageContext:
         """Get context for channel messages (no thread)"""
@@ -60,12 +66,300 @@ class CommandHandlers(BaseHandler):
             self._t("command.start.commandStart"),
             self._t("command.start.commandCwd"),
             self._t("command.start.commandSetCwd"),
+            self._t("command.start.commandResume"),
             self._t("command.start.commandStop", agent=agent_display_name),
         ]
         if not supports_threads:
             commands.append(self._t("command.start.commandNew"))
         lines.extend(commands)
         return "\n".join(line for line in lines if line)
+
+    def _normalize_resume_agent(self, value: str) -> Optional[str]:
+        normalized = (value or "").strip().lower()
+        aliases = {
+            "oc": "opencode",
+            "opencode": "opencode",
+            "open-code": "opencode",
+            "cc": "claude",
+            "claude": "claude",
+            "claudecode": "claude",
+            "claude-code": "claude",
+            "cx": "codex",
+            "codex": "codex",
+        }
+        return aliases.get(normalized)
+
+    def _get_resume_snapshot_key(self, context: MessageContext) -> str:
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
+        return f"{platform}::{self._get_settings_key(context)}"
+
+    def _store_resume_snapshot(
+        self,
+        context: MessageContext,
+        *,
+        items: list[NativeResumeSession],
+        page: int,
+        total: int,
+        working_path: str,
+    ) -> None:
+        self._resume_snapshots[self._get_resume_snapshot_key(context)] = {
+            "stored_at": time.time(),
+            "items": list(items),
+            "page": page,
+            "total": total,
+            "working_path": working_path,
+        }
+
+    def _get_resume_snapshot(self, context: MessageContext) -> Optional[dict[str, Any]]:
+        snapshot = self._resume_snapshots.get(self._get_resume_snapshot_key(context))
+        if not snapshot:
+            return None
+        if time.time() - float(snapshot.get("stored_at", 0.0)) > self._resume_snapshot_ttl_seconds:
+            self._resume_snapshots.pop(self._get_resume_snapshot_key(context), None)
+            return None
+        if snapshot.get("working_path") != self.controller.get_cwd(context):
+            self._resume_snapshots.pop(self._get_resume_snapshot_key(context), None)
+            return None
+        return snapshot
+
+    def _list_recent_native_sessions(
+        self,
+        context: MessageContext,
+        *,
+        limit: int = 100,
+    ) -> tuple[str, list[NativeResumeSession]]:
+        working_path = self.controller.get_cwd(context)
+        native_session_service = getattr(self.controller, "native_session_service", None)
+        if native_session_service is None:
+            return working_path, []
+        sessions = native_session_service.list_recent_sessions(working_path, limit=limit)
+        agent_service = getattr(self.controller, "agent_service", None)
+        registered_agents = getattr(agent_service, "agents", None)
+        if isinstance(registered_agents, dict) and registered_agents:
+            allowed_agents = set(registered_agents.keys())
+            sessions = [item for item in sessions if item.agent in allowed_agents]
+        return working_path, sessions
+
+    @staticmethod
+    def _format_resume_time(item: NativeResumeSession) -> str:
+        dt = item.updated_at or item.created_at
+        if dt is None:
+            return "--"
+        return dt.strftime("%m-%d %H:%M")
+
+    @staticmethod
+    def _format_resume_tail(item: NativeResumeSession) -> str:
+        preview = (item.last_agent_tail or item.last_agent_message or "").strip()
+        if preview:
+            return preview
+        suffix = item.native_session_id[-15:] if len(item.native_session_id) > 15 else item.native_session_id
+        return f"...{suffix}"
+
+    async def _send_wechat_resume_usage(self, context: MessageContext, *, include_snapshot_expired: bool = False) -> None:
+        channel_context = self._get_channel_context(context)
+        lines = []
+        if include_snapshot_expired:
+            lines.append(f"⏮️ {self._t('command.resume.snapshotExpired')}")
+            lines.append("")
+        lines.extend(
+            [
+                self._t("command.resume.usageTitle"),
+                self._t("command.resume.usageList"),
+                self._t("command.resume.usagePick"),
+                self._t("command.resume.usageMore"),
+                self._t("command.resume.usageLatest"),
+                self._t("command.resume.usageManual"),
+            ]
+        )
+        await self._get_im_client(channel_context).send_message(channel_context, "\n".join(lines))
+
+    async def _send_wechat_resume_page(self, context: MessageContext, *, page: int) -> None:
+        page_size = self._wechat_resume_page_size
+        working_path, sessions = self._list_recent_native_sessions(context, limit=100)
+        channel_context = self._get_channel_context(context)
+        if not sessions:
+            await self._get_im_client(channel_context).send_message(
+                channel_context,
+                "\n".join(
+                    [
+                        f"⏮️ {self._t('command.resume.noStoredSessions')}",
+                        "",
+                        self._t("command.resume.usageManual"),
+                    ]
+                ),
+            )
+            return
+
+        total = len(sessions)
+        page_count = max(1, (total + page_size - 1) // page_size)
+        if page < 1:
+            page = 1
+        if page > page_count:
+            await self._get_im_client(channel_context).send_message(
+                channel_context,
+                f"⏮️ {self._t('command.resume.noMorePages')}",
+            )
+            return
+
+        start = (page - 1) * page_size
+        page_items = sessions[start : start + page_size]
+        self._store_resume_snapshot(context, items=page_items, page=page, total=total, working_path=working_path)
+
+        lines = [
+            f"⏮️ {self._t('command.resume.listTitle')}",
+            self._t("command.resume.listPage", page=page, total=page_count),
+            "",
+        ]
+        for idx, item in enumerate(page_items, start=1):
+            lines.append(
+                self._t(
+                    "command.resume.listItemTitle",
+                    index=idx,
+                    prefix=item.agent_prefix,
+                    preview=self._format_resume_tail(item),
+                )
+            )
+            lines.append(self._t("command.resume.listItemTime", time=self._format_resume_time(item)))
+            lines.append("")
+
+        if lines and not lines[-1]:
+            lines.pop()
+
+        lines.extend(
+            [
+                "",
+                self._t("command.resume.usagePick"),
+                self._t("command.resume.usageMore"),
+                self._t("command.resume.usageLatest"),
+                self._t("command.resume.usageManual"),
+            ]
+        )
+
+        await self._get_im_client(channel_context).send_message(channel_context, "\n".join(lines))
+
+    async def _handle_wechat_resume_selection(self, context: MessageContext, *, selection: int) -> None:
+        snapshot = self._get_resume_snapshot(context)
+        if not snapshot:
+            await self._send_wechat_resume_usage(context, include_snapshot_expired=True)
+            return
+
+        items = snapshot.get("items") or []
+        if not isinstance(items, list) or selection < 1 or selection > len(items):
+            channel_context = self._get_channel_context(context)
+            await self._get_im_client(channel_context).send_message(
+                channel_context,
+                f"⏮️ {self._t('command.resume.invalidSelection')}",
+            )
+            return
+
+        item = items[selection - 1]
+        if not isinstance(item, NativeResumeSession):
+            await self._send_wechat_resume_usage(context, include_snapshot_expired=True)
+            return
+
+        await self.controller.session_handler.handle_resume_session_submission(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            thread_id=context.thread_id,
+            agent=item.agent,
+            session_id=item.native_session_id,
+            host_message_ts=context.message_id,
+            is_dm=bool((context.platform_specific or {}).get("is_dm", False)),
+            platform=context.platform or (context.platform_specific or {}).get("platform") or self.config.platform,
+        )
+
+    async def _handle_wechat_resume_latest(self, context: MessageContext, *, agent: Optional[str] = None) -> None:
+        _, sessions = self._list_recent_native_sessions(context, limit=100)
+        if agent:
+            sessions = [item for item in sessions if item.agent == agent]
+        if not sessions:
+            channel_context = self._get_channel_context(context)
+            key = "command.resume.noStoredSessionsForBackend" if agent else "command.resume.noStoredSessions"
+            kwargs = {"backend": agent} if agent else {}
+            await self._get_im_client(channel_context).send_message(
+                channel_context,
+                f"⏮️ {self._t(key, **kwargs)}",
+            )
+            return
+
+        item = sessions[0]
+        await self.controller.session_handler.handle_resume_session_submission(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            thread_id=context.thread_id,
+            agent=item.agent,
+            session_id=item.native_session_id,
+            host_message_ts=context.message_id,
+            is_dm=bool((context.platform_specific or {}).get("is_dm", False)),
+            platform=context.platform or (context.platform_specific or {}).get("platform") or self.config.platform,
+        )
+
+    async def _handle_wechat_resume(self, context: MessageContext, args: str) -> None:
+        stripped_args = args.strip()
+        if not stripped_args:
+            await self._send_wechat_resume_page(context, page=1)
+            return
+
+        parts = stripped_args.split()
+        head = parts[0].lower()
+
+        if head.isdigit():
+            await self._handle_wechat_resume_selection(context, selection=int(head))
+            return
+
+        if head == "more":
+            snapshot = self._get_resume_snapshot(context)
+            if not snapshot:
+                await self._send_wechat_resume_usage(context, include_snapshot_expired=True)
+                return
+            page = int(snapshot.get("page", 1)) + 1
+            await self._send_wechat_resume_page(context, page=page)
+            return
+
+        if head == "latest":
+            agent = self._normalize_resume_agent(parts[1]) if len(parts) > 1 else None
+            if len(parts) > 1 and not agent:
+                channel_context = self._get_channel_context(context)
+                await self._get_im_client(channel_context).send_message(
+                    channel_context,
+                    f"⏮️ {self._t('command.resume.unknownBackend')}",
+                )
+                return
+            await self._handle_wechat_resume_latest(context, agent=agent)
+            return
+
+        agent = self._normalize_resume_agent(head)
+        if agent:
+            session_id = stripped_args[len(parts[0]) :].strip()
+            if not session_id:
+                await self._send_wechat_resume_usage(context)
+                return
+            await self.controller.session_handler.handle_resume_session_submission(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                thread_id=context.thread_id,
+                agent=agent,
+                session_id=session_id,
+                host_message_ts=context.message_id,
+                is_dm=bool((context.platform_specific or {}).get("is_dm", False)),
+                platform=context.platform or (context.platform_specific or {}).get("platform") or self.config.platform,
+            )
+            return
+
+        channel_context = self._get_channel_context(context)
+        await self._get_im_client(channel_context).send_message(
+            channel_context,
+            f"⏮️ {self._t('command.resume.unknownCommand')}",
+        )
+        await self._send_wechat_resume_usage(context)
+
+    async def _send_resume_menu_prompt(self, context: MessageContext) -> None:
+        channel_context = self._get_channel_context(context)
+        await self._get_im_client(channel_context).send_message(
+            channel_context,
+            f"⏮️ {self._t('command.resume.clickButton')}",
+        )
+        await self.handle_start(channel_context)
 
     async def handle_start(self, context: MessageContext, args: str = ""):
         """Handle /start command with interactive buttons"""
@@ -378,27 +672,23 @@ class CommandHandlers(BaseHandler):
                 f"📂 {self._t('command.cwd.clickButton')}",
             )
 
-    async def handle_resume(self, context: MessageContext):
+    async def handle_resume(self, context: MessageContext, args: str = ""):
         """Open resume-session modal (Slack) or explain availability."""
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
         im_client = self._get_im_client(context)
+        if platform == "wechat":
+            await self._handle_wechat_resume(context, args)
+            return
+
         if platform == "discord":
             interaction = context.platform_specific.get("interaction") if context.platform_specific else None
-            session_key = self._get_session_key(context)
-            sessions_by_agent = self.sessions.list_all_agent_sessions(session_key)
-            if not sessions_by_agent:
-                channel_context = self._get_channel_context(context)
-                await im_client.send_message(
-                    channel_context,
-                    f"ℹ️ {self._t('command.resume.noStoredSessions')}",
-                )
-                return
             if interaction and hasattr(im_client, "open_resume_session_modal"):
                 try:
+                    _, sessions = self._list_recent_native_sessions(context, limit=25)
                     await im_client.run_on_client_loop(
                         im_client.open_resume_session_modal(
                             trigger_id=interaction,
-                            sessions_by_agent=sessions_by_agent,
+                            sessions=sessions,
                             channel_id=context.channel_id,
                             thread_id=context.thread_id or context.message_id or "",
                             host_message_ts=context.message_id,
@@ -408,21 +698,16 @@ class CommandHandlers(BaseHandler):
                 except Exception as e:
                     logger.error(f"Error opening resume modal: {e}")
             channel_context = self._get_channel_context(context)
-            await im_client.send_message(
-                channel_context,
-                f"⏮️ {self._t('command.resume.clickButton')}",
-            )
+            await self._send_resume_menu_prompt(context)
             return
         if platform == "lark":
-            session_key = self._get_session_key(context)
-            sessions_by_agent = self.sessions.list_all_agent_sessions(session_key)
-            # Allow opening modal even with no sessions (user can paste manually)
             if hasattr(im_client, "open_resume_session_modal"):
                 try:
+                    _, sessions = self._list_recent_native_sessions(context, limit=100)
                     await im_client.run_on_client_loop(
                         im_client.open_resume_session_modal(
                             trigger_id=context,
-                            sessions_by_agent=sessions_by_agent or {},
+                            sessions=sessions,
                             channel_id=context.channel_id,
                             thread_id=context.thread_id or context.message_id or "",
                             host_message_ts=context.message_id,
@@ -432,10 +717,7 @@ class CommandHandlers(BaseHandler):
                 except Exception as e:
                     logger.error(f"Error opening resume session card for Lark: {e}")
             channel_context = self._get_channel_context(context)
-            await im_client.send_message(
-                channel_context,
-                f"⏮️ {self._t('command.resume.clickButton')}",
-            )
+            await self._send_resume_menu_prompt(context)
             return
 
         if platform not in {"slack"}:
@@ -448,28 +730,15 @@ class CommandHandlers(BaseHandler):
 
         trigger_id = context.platform_specific.get("trigger_id") if context.platform_specific else None
         if not trigger_id:
-            channel_context = self._get_channel_context(context)
-            await im_client.send_message(
-                channel_context,
-                f"⏮️ {self._t('command.resume.clickButton')}",
-            )
+            await self._send_resume_menu_prompt(context)
             return
 
-        session_key = self._get_session_key(context)
-        sessions_by_agent = self.sessions.list_all_agent_sessions(session_key)
-
-        if not sessions_by_agent:
-            channel_context = self._get_channel_context(context)
-            await im_client.send_message(
-                channel_context,
-                f"ℹ️ {self._t('command.resume.noStoredSessions')}",
-            )
-
         try:
+            _, sessions = self._list_recent_native_sessions(context, limit=100)
             await im_client.run_on_client_loop(
                 im_client.open_resume_session_modal(
                     trigger_id=trigger_id,
-                    sessions_by_agent=sessions_by_agent,
+                    sessions=sessions,
                     channel_id=context.channel_id,
                     thread_id=context.thread_id or context.message_id or "",
                     host_message_ts=context.message_id,

@@ -13,11 +13,15 @@ sys.path.insert(0, str(ROOT))
 
 def _load_command_handlers_class():
     agents_module = types.ModuleType("modules.agents")
+    agents_module.__path__ = [str(ROOT / "modules" / "agents")]
     setattr(agents_module, "AgentRequest", type("AgentRequest", (), {}))
     setattr(
         agents_module, "get_agent_display_name", lambda agent_name, fallback=None: agent_name or fallback or "Unknown"
     )
     sys.modules["modules.agents"] = agents_module
+    agents_base_module = types.ModuleType("modules.agents.base")
+    setattr(agents_base_module, "AgentRequest", type("AgentRequest", (), {}))
+    sys.modules["modules.agents.base"] = agents_base_module
 
     core_pkg = types.ModuleType("core")
     core_pkg.__path__ = [str(ROOT / "core")]
@@ -129,6 +133,7 @@ class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("你好 小王！", message)
         self.assertIn("/start - 显示欢迎消息", message)
         self.assertIn("/setcwd <路径> - 设置工作目录", message)
+        self.assertIn("/resume - 恢复当前目录下最近的会话", message)
         self.assertIn("/new - 开启一个全新的会话", message)
         self.assertNotIn("User ID", message)
         self.assertNotIn("How it works", message)

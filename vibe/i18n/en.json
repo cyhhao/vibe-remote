@@ -51,8 +51,11 @@
     "settingsUpdated": "Settings updated successfully!",
     "cwdChanged": "Working directory changed to:\n`{path}`",
     "sessionResumed": "Resumed {agent} session.\nSession ID: `{sessionId}`",
-    "sessionResumedTip1": "💬 *Click this message and reply in the thread sidebar* to continue with this session.",
-    "sessionResumedTip2": "_(Sending a new message in the channel will start a fresh session.)_",
+    "sessionResumedContinueThread": "💬 *Reply in this thread* to continue with this session.",
+    "sessionResumedContinueFeishuThread": "💬 *Reply to this message* to continue with this session.",
+    "sessionResumedContinueDiscordThread": "💬 *Reply in the subchannel to this message* to continue with this session.",
+    "sessionResumedContinueDirect": "💬 *Send your next message directly* to continue with this session.",
+    "sessionResumedThreadFreshTip": "_(Sending a new message in the main channel will start a fresh session.)_",
     "routingUpdated": "Agent routing updated!"
   },
   "settings": {
@@ -128,15 +131,22 @@
     },
     "resume": {
       "title": "Resume Session",
-      "description": "Select a saved session or paste a session ID to resume work in this thread.",
-      "pickExisting": "Pick an existing session",
+      "description": "Select a recent agent session from the current working directory, or paste a session ID to resume work in this thread.",
+      "chooseOneOf": "Choose one of the two options below:",
+      "discordPickOrPaste": "Select a recent session below, or use the OR button to paste a Session ID manually.",
+      "pickExisting": "Pick a recent session",
       "selectSession": "Select a session",
       "pasteId": "Or paste a session ID",
       "pasteIdPlaceholder": "e.g., ses_12345",
+      "sessionIdLabel": "Session ID",
+      "manualInputTitle": "Paste Session ID",
+      "manualInputButton": "OR: Paste Session ID",
+      "manualCaptured": "Session ID captured. Click Resume to continue.",
       "agentBackend": "Agent backend",
       "selectAgentBackend": "Select agent backend",
-      "showingFirst100": "Showing the first 100 saved sessions. Paste a session ID below for others.",
-      "noSessionsFound": "No stored sessions found. Paste a session ID below to resume."
+      "showingFirst100": "Showing the first 100 recent sessions for this working directory. Paste a session ID below for others.",
+      "noSessionsFound": "No recent agent sessions found for this working directory. Use the OR button below to paste a session ID and resume manually.",
+      "noRecentSessionsOption": "No recent sessions"
     },
     "routing": {
       "title": "Agent Settings",
@@ -174,6 +184,7 @@
       "commandStart": "/start - Show this welcome message",
       "commandCwd": "/cwd - Show current working directory",
       "commandSetCwd": "/setcwd <path> - Set working directory",
+      "commandResume": "/resume - Restore a recent session for this working directory",
       "commandStop": "/stop - Interrupt {agent} execution",
       "commandNew": "/new - Start a fresh session",
       "quickActions": "Quick Actions:",
@@ -199,8 +210,24 @@
     },
     "resume": {
       "slackOnly": "Resume is currently available only on Slack. Continue in the same thread to auto-resume.",
-      "clickButton": "Please click the Resume button inside Slack to open the picker.",
-      "noStoredSessions": "No stored sessions found. You can still paste a session ID manually in the resume modal."
+      "clickButton": "Please click the Resume Session button in the menu message below to open the picker.",
+      "noStoredSessions": "No recent agent sessions found for this working directory.",
+      "noStoredSessionsForBackend": "No recent {backend} sessions found for this working directory.",
+      "listTitle": "Recent agent sessions for the current working directory",
+      "listPage": "Page {page} / {total}",
+      "listItemTitle": "{index}. {prefix} {preview}",
+      "listItemTime": "   {time}",
+      "usageTitle": "Usage:",
+      "usageList": "/resume - Show recent sessions",
+      "usagePick": "/resume 1 - Restore item 1 from the current list",
+      "usageMore": "/resume more - Show the next page",
+      "usageLatest": "/resume latest [oc|cc|cx] - Restore the latest session",
+      "usageManual": "/resume <oc|cc|cx> <session_id> - Restore a session manually",
+      "snapshotExpired": "The last shown session list expired. Please run /resume again first.",
+      "invalidSelection": "Choose a valid number from the current list.",
+      "unknownBackend": "Unknown backend. Use oc, cc, cx, or a full backend name.",
+      "unknownCommand": "Unknown resume command.",
+      "noMorePages": "There are no more sessions to show."
     },
     "stop": {
       "noActiveSession": "No active session to stop for this channel."

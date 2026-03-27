@@ -30,6 +30,7 @@ from modules.agents.opencode.utils import (
     resolve_opencode_default_model,
     resolve_opencode_provider_preferences,
 )
+from modules.agents.native_sessions import AgentNativeSessionService, NativeResumeSession
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,44 @@ class DiscordBot(BaseIMClient):
 
     def should_use_thread_for_dm_session(self) -> bool:
         return False
+
+    async def prepare_resume_context(
+        self,
+        context: MessageContext,
+        *,
+        host_message_ts: Optional[str] = None,
+        is_dm: bool = False,
+    ) -> MessageContext:
+        if context.thread_id or is_dm or not host_message_ts:
+            return context
+
+        async def _impl() -> MessageContext:
+            channel = await self._fetch_channel(context.channel_id)
+            if channel is None or not hasattr(channel, "fetch_message"):
+                return context
+            try:
+                message = await channel.fetch_message(int(host_message_ts))
+            except Exception as err:
+                logger.warning("Failed to fetch Discord host message %s: %s", host_message_ts, err)
+                return context
+
+            thread = getattr(message, "thread", None)
+            if thread is None:
+                thread = await self._maybe_create_thread(message)
+            if thread is None:
+                return context
+
+            return MessageContext(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                platform=context.platform,
+                thread_id=str(thread.id),
+                message_id=context.message_id,
+                platform_specific=context.platform_specific,
+                files=context.files,
+            )
+
+        return await self._run_on_client_loop(_impl())
 
     def format_markdown(self, text: str) -> str:
         return text
@@ -1097,37 +1136,61 @@ class DiscordBot(BaseIMClient):
     async def open_resume_session_modal(
         self,
         trigger_id: Any,
-        sessions_by_agent: dict,
+        sessions: List[NativeResumeSession],
         channel_id: str,
         thread_id: str,
         host_message_ts: Optional[str] = None,
     ):
         interaction = trigger_id if isinstance(trigger_id, discord.Interaction) else None
+        t = lambda key, **kw: self._t(key, channel_id, **kw)
+        common_agents = ["claude", "codex", "opencode"]
+        registered_backends = None
+        if getattr(self, "_controller", None) and getattr(self._controller, "agent_service", None):
+            registered_backends = list(self._controller.agent_service.agents.keys())
+        allowed_agents = set(registered_backends or common_agents)
+        sessions = [item for item in sessions if item.agent in allowed_agents]
+
         options = []
-        for agent, mapping in sessions_by_agent.items():
-            for thread_key, session_id in mapping.items():
-                label = f"{agent}:{session_id[:24]}"
-                options.append(discord.SelectOption(label=label, value=f"{agent}|{session_id}"))
+        for item in sessions:
+            label = AgentNativeSessionService.format_display_summary(item)
+            options.append(
+                discord.SelectOption(
+                    label=label[:100],
+                    value=f"{item.agent}|{item.native_session_id}",
+                    description=AgentNativeSessionService.format_display_time(item)[:100],
+                )
+            )
         if len(options) > 25:
             options = options[:25]
+        has_recent_sessions = bool(options)
         if not options:
-            options = [discord.SelectOption(label="No stored sessions", value="__none__")]
+            options = [discord.SelectOption(label=t("modal.resume.noRecentSessionsOption"), value="__none__")]
 
-        agent_options = [discord.SelectOption(label=agent, value=agent) for agent in sorted(sessions_by_agent.keys())]
+        agent_options = [discord.SelectOption(label=agent, value=agent) for agent in sorted(allowed_agents)]
         if len(agent_options) > 25:
             agent_options = agent_options[:25]
         if not agent_options:
             agent_options = [discord.SelectOption(label="default", value="opencode")]
 
-        class ManualSessionModal(discord.ui.Modal, title="Resume Session"):
-            session_id = discord.ui.TextInput(label="Session ID", required=True)
+        class ManualSessionModal(discord.ui.Modal):
+            def __init__(self):
+                super().__init__(title=t("modal.resume.manualInputTitle"))
+                self.session_id = discord.ui.TextInput(
+                    label=t("modal.resume.sessionIdLabel"),
+                    placeholder=t("modal.resume.pasteIdPlaceholder"),
+                    required=True,
+                )
+                self.add_item(self.session_id)
 
             async def on_submit(self, submit_interaction: discord.Interaction):
                 if not hasattr(self, "_view"):
                     return
                 view: ResumeView = getattr(self, "_view")
                 view.manual_session = str(self.session_id.value)
-                await submit_interaction.response.send_message("✅ Session ID captured.", ephemeral=True)
+                await submit_interaction.response.send_message(
+                    f"✅ {t('modal.resume.manualCaptured')}",
+                    ephemeral=True,
+                )
 
         class ResumeView(discord.ui.View):
             def __init__(self, outer: DiscordBot, owner_id: Optional[str]):
@@ -1136,17 +1199,22 @@ class DiscordBot(BaseIMClient):
                 self.owner_id = owner_id
                 self.manual_session: Optional[str] = None
                 self.session_select = discord.ui.Select(
-                    placeholder="Choose a stored session",
+                    placeholder=t("modal.resume.selectSession"),
                     options=options,
                     min_values=1,
                     max_values=1,
                 )
                 self.agent_select = discord.ui.Select(
-                    placeholder="Agent (for manual input)",
+                    placeholder=t("modal.resume.selectAgentBackend"),
                     options=agent_options,
                     min_values=1,
                     max_values=1,
                 )
+                self.manual_button = discord.ui.Button(
+                    label=t("modal.resume.manualInputButton"),
+                    style=discord.ButtonStyle.secondary,
+                )
+                self.resume_button = discord.ui.Button(label=t("common.resume"), style=discord.ButtonStyle.primary)
 
                 async def _defer(interaction: discord.Interaction):
                     await interaction.response.defer()
@@ -1155,8 +1223,8 @@ class DiscordBot(BaseIMClient):
                 self.agent_select.callback = _defer
                 self.add_item(self.session_select)
                 self.add_item(self.agent_select)
-                self.add_item(discord.ui.Button(label="Enter session ID", style=discord.ButtonStyle.secondary))
-                self.add_item(discord.ui.Button(label="Resume", style=discord.ButtonStyle.primary))
+                self.add_item(self.manual_button)
+                self.add_item(self.resume_button)
 
         owner_id = str(interaction.user.id) if interaction else None
         view = ResumeView(self, owner_id)
@@ -1167,6 +1235,12 @@ class DiscordBot(BaseIMClient):
             await manual_interaction.response.send_modal(modal)
 
         async def resume_callback(resume_interaction: discord.Interaction):
+            try:
+                if not resume_interaction.response.is_done():
+                    await resume_interaction.response.defer(ephemeral=True)
+            except Exception as err:
+                logger.debug("Failed to defer Discord resume interaction: %s", err)
+
             selected = view.session_select.values[0] if view.session_select.values else None
             chosen_agent = view.agent_select.values[0] if view.agent_select.values else None
             chosen_session = None
@@ -1184,21 +1258,33 @@ class DiscordBot(BaseIMClient):
                     host_message_ts,
                     resume_interaction.guild is None,
                 )
-            await resume_interaction.response.edit_message(content="✅ Session resumed.", view=None)
+            try:
+                await self._dismiss_interaction_message(resume_interaction, " ")
+            except Exception as err:
+                logger.debug("Failed to dismiss Discord resume message: %s", err)
 
-        for item in view.children:
-            if isinstance(item, discord.ui.Button) and item.label == "Enter session ID":
-                item.callback = manual_callback
-            if isinstance(item, discord.ui.Button) and item.label == "Resume":
-                item.callback = resume_callback
+        view.manual_button.callback = manual_callback
+        view.resume_button.callback = resume_callback
+
+        intro_text = "\n".join(
+            [
+                f"⏮️ {t('modal.resume.title')}",
+                t("modal.resume.chooseOneOf"),
+                (
+                    t("modal.resume.discordPickOrPaste")
+                    if has_recent_sessions
+                    else t("modal.resume.noSessionsFound")
+                ),
+            ]
+        )
 
         if interaction:
-            await interaction.response.send_message("⏮️ Resume session", view=view, ephemeral=True)
+            await interaction.response.send_message(intro_text, view=view, ephemeral=True)
         else:
             channel = await self._fetch_channel(channel_id)
             if channel is None:
                 raise RuntimeError("Discord channel not found")
-            await channel.send("⏮️ Resume session", view=view)
+            await channel.send(intro_text, view=view)
 
     async def open_routing_modal(
         self,

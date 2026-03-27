@@ -24,6 +24,8 @@ class _StubClient(BaseIMClient):
         super().__init__(_StubConfig())
         self.name = name
         self.sent = []
+        self.removed = []
+        self.dismissed = []
 
     async def send_message(self, context, text, parse_mode=None, reply_to=None):
         self.sent.append((context.platform, context.channel_id, text))
@@ -34,6 +36,13 @@ class _StubClient(BaseIMClient):
 
     async def edit_message(self, context, message_id, text=None, keyboard=None, parse_mode=None):
         return True
+
+    async def remove_inline_keyboard(self, context, message_id, text=None, parse_mode=None):
+        self.removed.append((context.platform, message_id, text))
+        return True
+
+    async def dismiss_form_message(self, context):
+        self.dismissed.append((context.platform, context.message_id))
 
     async def answer_callback(self, callback_id, text=None, show_alert=False):
         return True
@@ -151,6 +160,37 @@ def test_multi_im_client_routes_download_by_file_info_platform():
 
     assert slack.sent == []
     assert wechat.sent == [("download_to_path", "wechat", "/tmp/a.jpg")]
+
+
+def test_multi_im_client_routes_remove_inline_keyboard_by_context_platform():
+    slack = _StubClient("slack")
+    lark = _StubClient("lark")
+    client = MultiIMClient({"slack": slack, "lark": lark}, primary_platform="slack")
+
+    asyncio.run(
+        client.remove_inline_keyboard(
+            MessageContext(user_id="u", channel_id="c", platform="lark"),
+            "om_123",
+        )
+    )
+
+    assert slack.removed == []
+    assert lark.removed == [("lark", "om_123", None)]
+
+
+def test_multi_im_client_routes_dismiss_form_message_by_context_platform():
+    slack = _StubClient("slack")
+    lark = _StubClient("lark")
+    client = MultiIMClient({"slack": slack, "lark": lark}, primary_platform="slack")
+
+    asyncio.run(
+        client.dismiss_form_message(
+            MessageContext(user_id="u", channel_id="c", platform="lark", message_id="om_456")
+        )
+    )
+
+    assert slack.dismissed == []
+    assert lark.dismissed == [("lark", "om_456")]
 
 
 def test_multi_im_client_on_ready_fires_only_after_all_platforms():

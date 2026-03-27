@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import time
@@ -33,6 +34,7 @@ from modules.agents.opencode.utils import (
     resolve_opencode_allowed_providers,
     resolve_opencode_provider_preferences,
 )
+from modules.agents.native_sessions import AgentNativeSessionService, NativeResumeSession
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +133,25 @@ class SlackBot(BaseIMClient):
     def should_use_thread_for_dm_session(self) -> bool:
         """Slack DMs also support thread-based replies."""
         return True
+
+    async def prepare_resume_context(
+        self,
+        context: MessageContext,
+        *,
+        host_message_ts: Optional[str] = None,
+        is_dm: bool = False,
+    ) -> MessageContext:
+        if context.thread_id or not host_message_ts:
+            return context
+        return MessageContext(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            platform=context.platform,
+            thread_id=host_message_ts,
+            message_id=context.message_id,
+            platform_specific=context.platform_specific,
+            files=context.files,
+        )
 
     def _ensure_clients(self):
         """Ensure web and socket clients are initialized"""
@@ -2279,7 +2300,7 @@ class SlackBot(BaseIMClient):
     async def open_resume_session_modal(
         self,
         trigger_id: str,
-        sessions_by_agent: Dict[str, Dict[str, str]],
+        sessions: List[NativeResumeSession],
         channel_id: Optional[str],
         thread_id: Optional[str],
         host_message_ts: Optional[str],
@@ -2303,38 +2324,24 @@ class SlackBot(BaseIMClient):
                 }
             )
 
-        session_option_groups = []
+        session_options = []
         total_session_options = 0
         max_session_options = 100
-        for agent, mapping in sessions_by_agent.items():
-            if agent not in allowed_agents:
-                continue
-            if not mapping:
-                continue
-            options = []
-            for thread, session_id in mapping.items():
-                if total_session_options >= max_session_options:
-                    break
-                thread_label = thread.replace("slack_", "", 1) if thread.startswith("slack_") else thread
-                truncated = session_id[:60]
-                desc = f"thread {thread_label}"
-                options.append(
-                    {
-                        "text": {"type": "plain_text", "text": truncated, "emoji": True},
-                        "value": f"{agent}|{session_id}",
-                        "description": {"type": "plain_text", "text": desc[:75], "emoji": True},
-                    }
-                )
-                total_session_options += 1
-            if options:
-                session_option_groups.append(
-                    {
-                        "label": {"type": "plain_text", "text": agent.capitalize(), "emoji": True},
-                        "options": options,
-                    }
-                )
+        for item in sessions:
             if total_session_options >= max_session_options:
                 break
+            if item.agent not in allowed_agents:
+                continue
+            label = AgentNativeSessionService.format_display_summary(item)
+            desc = AgentNativeSessionService.format_display_time(item)
+            session_options.append(
+                {
+                    "text": {"type": "plain_text", "text": label[:75], "emoji": True},
+                    "value": f"{item.agent}|{item.native_session_id}",
+                    "description": {"type": "plain_text", "text": desc[:75], "emoji": True},
+                }
+            )
+            total_session_options += 1
 
         blocks: list = [
             {
@@ -2346,7 +2353,7 @@ class SlackBot(BaseIMClient):
             },
         ]
 
-        if session_option_groups:
+        if session_options:
             blocks.append(
                 {
                     "type": "input",
@@ -2356,7 +2363,7 @@ class SlackBot(BaseIMClient):
                     "element": {
                         "type": "static_select",
                         "action_id": "session_select",
-                        "option_groups": session_option_groups,
+                        "options": session_options,
                         "placeholder": {
                             "type": "plain_text",
                             "text": self._t("modal.resume.selectSession"),
@@ -2422,7 +2429,6 @@ class SlackBot(BaseIMClient):
             "default_agent": agent_options[0]["value"] if agent_options else "opencode",
             "agent_options": agent_options,  # Store for dynamic update
         }
-        import json
 
         view = {
             "type": "modal",
@@ -2442,8 +2448,6 @@ class SlackBot(BaseIMClient):
 
     async def _handle_resume_modal_manual_input(self, view: Dict[str, Any], action: Dict[str, Any]):
         """Handle manual_input changes in resume_session_modal - dynamically show/hide agent_block."""
-        import json
-
         self._ensure_clients()
 
         view_id = view.get("id")
