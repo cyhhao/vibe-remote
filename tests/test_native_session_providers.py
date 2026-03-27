@@ -1,8 +1,10 @@
 from pathlib import Path
 from types import SimpleNamespace
+import json
 
 from modules.agents.native_sessions.base import build_resume_preview, build_tail_preview
-from modules.agents.native_sessions.claude import ClaudeNativeSessionProvider
+from modules.agents.native_sessions import claude as claude_module
+from modules.agents.native_sessions.claude import ClaudeNativeSessionProvider, encode_project_path
 from modules.agents.native_sessions.service import AgentNativeSessionService
 from modules.agents.native_sessions.types import NativeResumeSession
 
@@ -32,6 +34,95 @@ def test_claude_provider_falls_back_to_history_jsonl(tmp_path: Path) -> None:
     hydrated = provider.hydrate_preview(items[0])
     assert hydrated.last_agent_message == "latest prompt"
     assert hydrated.last_agent_tail == "latest prompt"
+
+
+def test_claude_provider_does_not_scan_unrelated_project_jsonl(tmp_path: Path, monkeypatch) -> None:
+    projects_root = tmp_path / "projects"
+    history_path = tmp_path / "history.jsonl"
+    projects_root.mkdir(parents=True, exist_ok=True)
+    history_path.write_text("", encoding="utf-8")
+
+    working_path = "/Users/cyh/vibe-remote"
+    candidate_dir = projects_root / encode_project_path(working_path)
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    target_jsonl = candidate_dir / "sess_target.jsonl"
+    target_jsonl.write_text(
+        '{"type":"assistant","timestamp":"2026-03-27T10:00:00Z","message":{"content":"done"}}\n',
+        encoding="utf-8",
+    )
+
+    unrelated_dir = projects_root / "-Users-cyh-other"
+    unrelated_dir.mkdir(parents=True, exist_ok=True)
+    unrelated_jsonl = unrelated_dir / "sess_other.jsonl"
+    unrelated_jsonl.write_text(
+        '{"type":"assistant","timestamp":"2026-03-27T10:00:00Z","message":{"content":"should not read"}}\n',
+        encoding="utf-8",
+    )
+
+    read_paths: list[Path] = []
+    original_read_json_lines = claude_module.read_json_lines
+
+    def _tracking_read_json_lines(path: Path) -> list[dict]:
+        read_paths.append(Path(path))
+        return original_read_json_lines(path)
+
+    monkeypatch.setattr(claude_module, "read_json_lines", _tracking_read_json_lines)
+    provider = ClaudeNativeSessionProvider(root=str(projects_root), history_path=str(history_path))
+
+    items = provider.list_metadata(working_path)
+
+    assert [item.native_session_id for item in items] == ["sess_target"]
+    assert target_jsonl in read_paths
+    assert unrelated_jsonl not in read_paths
+
+
+def test_claude_provider_uses_global_index_fallback_without_scanning_all_jsonl(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    history_path = tmp_path / "history.jsonl"
+    projects_root.mkdir(parents=True, exist_ok=True)
+    history_path.write_text("", encoding="utf-8")
+
+    working_path = "/Users/cyh/vibe-remote"
+    indexed_dir = projects_root / "-Users-cyh"
+    indexed_dir.mkdir(parents=True, exist_ok=True)
+    session_jsonl = indexed_dir / "sess_idx.jsonl"
+    session_jsonl.write_text(
+        "\n".join(
+            [
+                '{"type":"user","timestamp":"2026-03-27T09:59:00Z","cwd":"/Users/cyh/vibe-remote","message":{"content":"hello"}}',
+                '{"type":"assistant","timestamp":"2026-03-27T10:00:00Z","message":{"content":"reply from indexed session"}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (indexed_dir / "sessions-index.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": [
+                    {
+                        "sessionId": "sess_idx",
+                        "projectPath": "/Users/cyh/vibe-remote",
+                        "created": "2026-03-27T09:59:00Z",
+                        "modified": "2026-03-27T10:00:00Z",
+                        "firstPrompt": "hello",
+                        "fullPath": str(session_jsonl),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider = ClaudeNativeSessionProvider(root=str(projects_root), history_path=str(history_path))
+
+    items = provider.list_metadata(working_path)
+
+    assert [item.native_session_id for item in items] == ["sess_idx"]
+    hydrated = provider.hydrate_preview(items[0])
+    assert hydrated.last_agent_message == "reply from indexed session"
+    assert hydrated.last_agent_tail.startswith("...")
+    assert "indexed session" in hydrated.last_agent_tail
 
 
 def test_native_session_service_preserves_agent_visibility_when_limited() -> None:
