@@ -5,6 +5,8 @@ import json
 from modules.agents.native_sessions.base import build_resume_preview, build_tail_preview
 from modules.agents.native_sessions import claude as claude_module
 from modules.agents.native_sessions.claude import ClaudeNativeSessionProvider, encode_project_path
+from modules.agents.native_sessions import codex as codex_module
+from modules.agents.native_sessions.codex import CodexNativeSessionProvider
 from modules.agents.native_sessions.service import AgentNativeSessionService
 from modules.agents.native_sessions.types import NativeResumeSession
 
@@ -123,6 +125,35 @@ def test_claude_provider_uses_global_index_fallback_without_scanning_all_jsonl(t
     assert hydrated.last_agent_message == "reply from indexed session"
     assert hydrated.last_agent_tail.startswith("...")
     assert "indexed session" in hydrated.last_agent_tail
+
+
+def test_codex_provider_skips_empty_rollout_path(monkeypatch) -> None:
+    provider = CodexNativeSessionProvider(db_path="/tmp/does-not-matter.sqlite")
+    item = NativeResumeSession(
+        agent="codex",
+        agent_prefix="cx",
+        native_session_id="thread_1",
+        working_path="/tmp/project",
+        created_at=None,
+        updated_at=None,
+        sort_ts=1.0,
+        locator={"title": "Fallback title", "rollout_path": ""},
+    )
+
+    called = False
+
+    def _unexpected_read_json_lines(_path: Path) -> list[dict]:
+        nonlocal called
+        called = True
+        return []
+
+    monkeypatch.setattr(codex_module, "read_json_lines", _unexpected_read_json_lines)
+
+    hydrated = provider.hydrate_preview(item)
+
+    assert called is False
+    assert hydrated.last_agent_message == "Fallback title"
+    assert hydrated.last_agent_tail == "Fallback title"
 
 
 def test_native_session_service_preserves_agent_visibility_when_limited() -> None:

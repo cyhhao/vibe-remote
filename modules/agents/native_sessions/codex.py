@@ -59,8 +59,9 @@ class CodexNativeSessionProvider(NativeSessionProvider):
 
     def hydrate_preview(self, item: NativeResumeSession) -> NativeResumeSession:
         preview = ""
-        rollout_path = Path(str(item.locator.get("rollout_path") or ""))
-        if rollout_path.exists():
+        rollout_path_raw = str(item.locator.get("rollout_path") or "").strip()
+        rollout_path = Path(rollout_path_raw) if rollout_path_raw else None
+        if rollout_path and rollout_path.is_file():
             rows = read_json_lines(rollout_path)
             for row in reversed(rows):
                 if row.get("type") != "response_item":
