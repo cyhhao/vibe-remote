@@ -29,6 +29,7 @@ from modules.agents.opencode.utils import (
     resolve_opencode_allowed_providers,
     resolve_opencode_provider_preferences,
 )
+from modules.agents.native_sessions import AgentNativeSessionService, NativeResumeSession
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,7 @@ class FeishuBot(BaseIMClient):
         self._token_expires_at: Optional[float] = None
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
         self._dm_chat_ids: set = set()
+        self._message_text_cache: Dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle / injection
@@ -158,6 +160,25 @@ class FeishuBot(BaseIMClient):
 
     def should_use_thread_for_dm_session(self) -> bool:
         return True
+
+    async def prepare_resume_context(
+        self,
+        context: MessageContext,
+        *,
+        host_message_ts: Optional[str] = None,
+        is_dm: bool = False,
+    ) -> MessageContext:
+        if context.thread_id or not host_message_ts:
+            return context
+        return MessageContext(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            platform=context.platform,
+            thread_id=host_message_ts,
+            message_id=context.message_id,
+            platform_specific=context.platform_specific,
+            files=context.files,
+        )
 
     def _get_sdk_domain(self) -> str:
         """Return the lark-oapi SDK domain constant based on config."""
@@ -513,6 +534,7 @@ class FeishuBot(BaseIMClient):
         root_id = context.thread_id
         if root_id:
             message_id = await self._reply_message_with_card(root_id, card_json)
+            self._remember_message_text(message_id, text)
             if self.settings_manager:
                 if self.sessions:
                     self.sessions.mark_thread_active(context.user_id, context.channel_id, root_id)
@@ -541,6 +563,7 @@ class FeishuBot(BaseIMClient):
             raise RuntimeError(f"Feishu send card failed: {response.msg}")
 
         message_id = response.data.message_id
+        self._remember_message_text(message_id, text)
         if self.settings_manager and context.thread_id:
             if self.sessions:
                 self.sessions.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
@@ -623,10 +646,20 @@ class FeishuBot(BaseIMClient):
                     response.msg,
                 )
                 return False
+            if text is not None:
+                self._remember_message_text(message_id, text)
             return True
         except Exception as exc:
             logger.error("Error editing Feishu message %s: %s", message_id, exc)
             return False
+
+    def _remember_message_text(self, message_id: Optional[str], text: Optional[str]) -> None:
+        if not message_id or text is None:
+            return
+        self._message_text_cache[message_id] = text
+        while len(self._message_text_cache) > 200:
+            oldest_key = next(iter(self._message_text_cache))
+            self._message_text_cache.pop(oldest_key, None)
 
     async def _fetch_message_card_content(self, message_id: str) -> Optional[Dict[str, Any]]:
         """Fetch and parse card content JSON for an existing message."""
@@ -728,6 +761,8 @@ class FeishuBot(BaseIMClient):
         card text before updating the card without buttons.
         """
         display_text = text
+        if display_text is None:
+            display_text = self._message_text_cache.get(message_id)
         if display_text is None:
             card_content = await self._fetch_message_card_content(message_id)
             if card_content is None:
@@ -1490,9 +1525,11 @@ class FeishuBot(BaseIMClient):
             context = MessageContext(
                 user_id=user_id,
                 channel_id=chat_id,
+                platform="lark",
                 thread_id=thread_id,
                 message_id=message_id,
                 platform_specific={
+                    "platform": "lark",
                     "event": event_data,
                     "msg_type": msg_type,
                     "mentions": mentions,
@@ -1616,9 +1653,11 @@ class FeishuBot(BaseIMClient):
             context = MessageContext(
                 user_id=user_id,
                 channel_id=chat_id,
+                platform="lark",
                 message_id=message_id,
                 thread_id=callback_thread_id or None,
                 platform_specific={
+                    "platform": "lark",
                     "event": event_data,
                     "action": action,
                     "is_dm": is_dm,
@@ -1925,6 +1964,7 @@ class FeishuBot(BaseIMClient):
             context = MessageContext(
                 user_id=context.user_id,
                 channel_id=context.channel_id,
+                platform=context.platform,
                 message_id=context.message_id,
                 thread_id=embedded_thread_id,
                 platform_specific=context.platform_specific,
@@ -1977,6 +2017,7 @@ class FeishuBot(BaseIMClient):
             context = MessageContext(
                 user_id=context.user_id,
                 channel_id=context.channel_id,
+                platform=context.platform,
                 message_id=context.message_id,
                 thread_id=embedded_thread_id,
                 platform_specific=context.platform_specific,
@@ -2587,8 +2628,8 @@ class FeishuBot(BaseIMClient):
         channel_id: str = None,
         thread_id: str = None,
         host_message_ts: str = None,
-        # Legacy compat — ignored; use sessions_by_agent instead
-        sessions: list = None,
+        # Legacy compat — ignored; use sessions instead
+        sessions: List[NativeResumeSession] | None = None,
         **kwargs,
     ):
         """Send an interactive JSON 2.0 form card for session resume.
@@ -2598,6 +2639,8 @@ class FeishuBot(BaseIMClient):
         """
         t = lambda key, **kw: self._t(key, channel_id, **kw)
 
+        if sessions is None:
+            sessions = []
         if sessions_by_agent is None:
             sessions_by_agent = {}
 
@@ -2615,26 +2658,42 @@ class FeishuBot(BaseIMClient):
         session_options = []
         total = 0
         max_options = 100
-        for agent_name, mapping in sessions_by_agent.items():
-            if agent_name not in allowed_agents:
-                continue
-            if not mapping:
-                continue
-            for thread_key, session_id in mapping.items():
+        if sessions:
+            for item in sessions:
                 if total >= max_options:
                     break
-                thread_label = thread_key.replace("lark_", "", 1) if thread_key.startswith("lark_") else thread_key
-                label = f"[{agent_name}] {session_id[:24]}"
-                desc = f"thread {thread_label[:30]}"
+                if item.agent not in allowed_agents:
+                    continue
+                label = (
+                    f"{AgentNativeSessionService.format_display_summary(item)}"
+                    f" · {AgentNativeSessionService.format_display_time(item)}"
+                )
                 session_options.append(
                     {
-                        "text": {"tag": "plain_text", "content": label},
-                        "value": f"{agent_name}|{session_id}",
+                        "text": {"tag": "plain_text", "content": label[:120]},
+                        "value": f"{item.agent}|{item.native_session_id}",
                     }
                 )
                 total += 1
-            if total >= max_options:
-                break
+        else:
+            for agent_name, mapping in sessions_by_agent.items():
+                if agent_name not in allowed_agents:
+                    continue
+                if not mapping:
+                    continue
+                for _thread_key, session_id in mapping.items():
+                    if total >= max_options:
+                        break
+                    label = f"[{agent_name}] {session_id[:24]}"
+                    session_options.append(
+                        {
+                            "text": {"tag": "plain_text", "content": label},
+                            "value": f"{agent_name}|{session_id}",
+                        }
+                    )
+                    total += 1
+                if total >= max_options:
+                    break
 
         # --- Build form elements ---
         form_elements: list = []

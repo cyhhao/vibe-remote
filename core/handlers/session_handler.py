@@ -4,7 +4,8 @@ import logging
 import os
 from typing import Optional, Dict, Any, Tuple
 from modules.im import MessageContext
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from modules.claude_sdk_compat import ClaudeSDKClient, ClaudeAgentOptions
+from modules.agents.native_sessions.base import build_resume_preview
 
 from .base import BaseHandler
 
@@ -130,6 +131,82 @@ class SessionHandler(BaseHandler):
         # Create composite key for internal storage
         composite_key = f"{base_session_id}:{working_path}"
         return base_session_id, working_path, composite_key
+
+    async def _prepare_resume_context(
+        self,
+        context: MessageContext,
+        host_message_ts: Optional[str],
+        is_dm: bool,
+    ) -> MessageContext:
+        im_client = self._get_im_client(context)
+        prepare = getattr(im_client, "prepare_resume_context", None)
+        if not callable(prepare):
+            return context
+        try:
+            prepared = await prepare(context, host_message_ts=host_message_ts, is_dm=is_dm)
+        except Exception as exc:
+            logger.warning("Failed to prepare resume context for %s: %s", context.platform, exc)
+            return context
+        return prepared if isinstance(prepared, MessageContext) else context
+
+    def _supports_resume_threading(self, context: MessageContext, *, is_dm: bool) -> bool:
+        im_client = self._get_im_client(context)
+        if is_dm:
+            return bool(getattr(im_client, "should_use_thread_for_dm_session", lambda: False)())
+        return bool(getattr(im_client, "should_use_thread_for_reply", lambda: False)())
+
+    def _build_resume_confirmation(
+        self,
+        *,
+        agent_label: str,
+        session_id: str,
+        preview: str = "",
+    ) -> str:
+        lines = [f"✅ {self._t('success.sessionResumed', agent=agent_label, sessionId=session_id)}"]
+        if preview:
+            lines.extend(["", preview])
+        return "\n".join(lines)
+
+    def _build_resume_followup(
+        self,
+        context: MessageContext,
+        *,
+        is_dm: bool,
+    ) -> str:
+        lines: list[str] = []
+        platform = context.platform or self.config.platform
+        if context.thread_id:
+            if platform == "discord":
+                lines.append(self._t("success.sessionResumedContinueDiscordThread"))
+            elif platform == "lark":
+                lines.append(self._t("success.sessionResumedContinueFeishuThread"))
+            else:
+                lines.append(self._t("success.sessionResumedContinueThread"))
+            if not is_dm:
+                lines.append(self._t("success.sessionResumedThreadFreshTip"))
+        else:
+            lines.append(self._t("success.sessionResumedContinueDirect"))
+        return "\n".join(line for line in lines if line)
+
+    def _get_resume_preview(
+        self,
+        context: MessageContext,
+        *,
+        agent: str,
+        session_id: str,
+    ) -> str:
+        native_session_service = getattr(self.controller, "native_session_service", None)
+        if native_session_service is None:
+            return ""
+        try:
+            working_path = self.get_working_path(context)
+            item = native_session_service.get_session(working_path, agent, session_id)
+        except Exception as exc:
+            logger.warning("Failed to resolve resume preview for %s session %s: %s", agent, session_id, exc)
+            return ""
+        if item is None:
+            return ""
+        return build_resume_preview(item.last_agent_message or item.last_agent_tail)
 
     async def get_or_create_claude_session(
         self,
@@ -380,8 +457,10 @@ class SessionHandler(BaseHandler):
                 channel_id=channel_id or user_id,
                 platform=platform or self.config.platform,
                 thread_id=target_thread or None,
+                message_id=host_message_ts or None,
                 platform_specific={"is_dm": is_dm},
             )
+            thread_capable = self._supports_resume_threading(context, is_dm=is_dm)
 
             settings_key = self._get_settings_key(context)
             session_key = self._get_session_key(context)
@@ -402,23 +481,55 @@ class SessionHandler(BaseHandler):
             settings_manager.set_channel_routing(settings_key, routing)
 
             agent_label = agent.capitalize()
-            confirmation = "\n".join(
-                [
-                    f"✅ {self._t('success.sessionResumed', agent=agent_label, sessionId=session_id)}",
-                    self._t("success.sessionResumedTip1"),
-                    self._t("success.sessionResumedTip2"),
-                ]
+            preview = self._get_resume_preview(context, agent=agent, session_id=session_id)
+            confirmation = self._build_resume_confirmation(
+                agent_label=agent_label,
+                session_id=session_id,
+                preview=preview,
             )
 
-            confirmation_ts = await self._get_im_client(context).send_message(
-                context, confirmation, parse_mode="markdown"
+            initial_context = context
+            if thread_capable and not target_thread:
+                initial_context = MessageContext(
+                    user_id=context.user_id,
+                    channel_id=context.channel_id,
+                    platform=context.platform,
+                    thread_id=None,
+                    message_id=context.message_id,
+                    platform_specific=context.platform_specific,
+                    files=context.files,
+                )
+
+            confirmation_ts = await self._get_im_client(initial_context).send_message(
+                initial_context, confirmation, parse_mode="markdown"
             )
 
-            mapped_thread = target_thread or confirmation_ts
+            followup_context = context
+            if thread_capable and not target_thread:
+                anchor_context = MessageContext(
+                    user_id=context.user_id,
+                    channel_id=context.channel_id,
+                    platform=context.platform,
+                    thread_id=None,
+                    message_id=confirmation_ts,
+                    platform_specific=context.platform_specific,
+                    files=context.files,
+                )
+                followup_context = await self._prepare_resume_context(anchor_context, confirmation_ts, is_dm)
+
+            followup = self._build_resume_followup(followup_context, is_dm=is_dm)
+            if followup:
+                await self._get_im_client(followup_context).send_message(
+                    followup_context,
+                    followup,
+                    parse_mode="markdown",
+                )
+
+            mapped_thread = followup_context.thread_id or confirmation_ts
             mapping_context = MessageContext(
                 user_id=user_id,
-                channel_id=context.channel_id,
-                platform=context.platform,
+                channel_id=followup_context.channel_id,
+                platform=followup_context.platform,
                 thread_id=mapped_thread,
                 message_id=confirmation_ts,
                 platform_specific={"is_dm": is_dm},

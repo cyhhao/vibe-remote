@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, Optional
 from config.discovered_chats import DiscoveredChatsStore
 from config.v2_config import TelegramConfig
 from vibe.i18n import t as i18n_t
+from modules.agents.native_sessions import AgentNativeSessionService, NativeResumeSession
 
 from .base import BaseIMClient, FileAttachment, MessageContext, InlineButton, InlineKeyboard
 from .formatters import TelegramFormatter
@@ -711,7 +712,7 @@ class TelegramBot(BaseIMClient):
     async def open_resume_session_modal(
         self,
         trigger_id: Any,
-        sessions_by_agent: dict[str, dict[str, str]],
+        sessions: list[NativeResumeSession],
         channel_id: str,
         thread_id: Optional[str],
         host_message_ts: Optional[str],
@@ -722,25 +723,23 @@ class TelegramBot(BaseIMClient):
 
         options: list[tuple[str, str]] = []
         rows: list[list[InlineButton]] = []
-        for agent, mappings in sorted(sessions_by_agent.items()):
-            for _, session_id in list(mappings.items())[:12]:
-                idx = len(options)
-                options.append((agent, session_id))
-                session_preview = session_id[-6:] if len(session_id) > 6 else session_id
-                label = f"{self._get_backend_label(agent)} · {session_preview}"
-                rows.append([InlineButton(text=label[:40], callback_data=f"tg_resume:{idx}")])
-                if len(options) >= 12:
-                    break
+        summary_lines = [
+            f"⏮️ {self._t('telegram.resumeTitle')}",
+            self._t("telegram.resumeBody"),
+        ]
+        for item in list(sessions)[:12]:
+            idx = len(options)
+            options.append((item.agent, item.native_session_id))
+            label = AgentNativeSessionService.format_display_summary(item)
+            rows.append([InlineButton(text=label[:40], callback_data=f"tg_resume:{idx}")])
+            summary_lines.append(
+                f"{idx + 1}. {label} ({AgentNativeSessionService.format_display_time(item)})"
+            )
             if len(options) >= 12:
                 break
 
         rows.append([InlineButton(text=f"✖️ {self._t('common.cancel')}", callback_data="tg_resume:cancel")])
-        text = "\n".join(
-            [
-                f"⏮️ {self._t('telegram.resumeTitle')}",
-                self._t("telegram.resumeBody"),
-            ]
-        )
+        text = "\n".join(summary_lines)
         if not options:
             text += f"\n\nℹ️ {self._t('telegram.resumeNoStoredSessions')}"
         message_id = await self.send_message_with_buttons(context, text, InlineKeyboard(buttons=rows))

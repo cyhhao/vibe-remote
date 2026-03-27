@@ -379,7 +379,9 @@ class ConsolidatedMessageDispatcher:
             callback = f"quick_reply:{btn.text}"
             row.append(InlineButton(text=btn.text, callback_data=callback))
 
-        keyboard = InlineKeyboard(buttons=[row])
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        rows = [[button] for button in row] if platform == "lark" else [row]
+        keyboard = InlineKeyboard(buttons=rows)
         await im_client.send_message_with_buttons(
             context,
             text,

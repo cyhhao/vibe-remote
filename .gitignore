@@ -176,3 +176,4 @@ sessions/
 
 # Worktrees
 .worktrees/
+.gstack/

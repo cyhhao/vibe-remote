@@ -36,7 +36,7 @@ export type ApiContextType = {
   claudeAgents: (cwd?: string) => Promise<{ ok: boolean; agents?: { id: string; name: string; path: string; source?: string }[]; error?: string }>;
   claudeModels: () => Promise<{ ok: boolean; models?: string[]; reasoning_options?: Record<string, { value: string; label: string }[]>; error?: string }>;
   codexModels: () => Promise<{ ok: boolean; models?: string[]; error?: string }>;
-  getLogs: (lines?: number) => Promise<{ logs: LogEntry[]; total: number }>;
+  getLogs: (lines?: number, source?: string) => Promise<{ logs: LogEntry[]; total: number; source: string; sources: LogSource[] }>;
   getVersion: () => Promise<VersionInfo>;
   doUpgrade: () => Promise<UpgradeResult>;
   browseDirectory: (path: string, showHidden?: boolean) => Promise<{ ok: boolean; path?: string; parent?: string | null; dirs?: { name: string; path: string }[]; error?: string }>;
@@ -47,6 +47,16 @@ export type LogEntry = {
   level: string;
   logger: string;
   message: string;
+  source: string;
+};
+
+export type LogSource = {
+  key: string;
+  filename: string;
+  path: string;
+  exists: boolean;
+  total: number;
+  logs?: LogEntry[];
 };
 
 export type VersionInfo = {
@@ -164,7 +174,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     claudeAgents: (cwd) => cwd ? getJson(`/claude/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/claude/agents'),
     claudeModels: () => getJson('/claude/models'),
     codexModels: () => getJson('/codex/models'),
-    getLogs: (lines = 500) => postJson('/logs', { lines }),
+    getLogs: (lines = 500, source) => postJson('/logs', source ? { lines, source } : { lines }),
     getVersion: () => getJson('/version'),
     doUpgrade: () => postJson('/upgrade', {}),
     browseDirectory: (path, showHidden) => postJson('/browse', { path, show_hidden: showHidden || false }),

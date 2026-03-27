@@ -162,12 +162,26 @@ class UpdateChecker:
             f"auto_update={self.config.auto_update}, idle_minutes={self.config.idle_minutes})"
         )
 
-    def stop(self) -> None:
-        """Stop the periodic update checker."""
+    def stop(self) -> Optional[asyncio.Task]:
+        """Stop the periodic update checker and return the cancelled task, if any."""
         self._running = False
-        if self._check_task:
-            self._check_task.cancel()
-            self._check_task = None
+        task = self._check_task
+        if task:
+            task.cancel()
+        return task
+
+    async def wait_stopped(self, task: Optional[asyncio.Task] = None) -> None:
+        """Wait for the periodic checker task to finish after cancellation."""
+        task = task or self._check_task
+        if not task:
+            return
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self._check_task is task:
+                self._check_task = None
 
     def record_activity(self) -> None:
         """Record user activity (called when a Slack message is received)."""

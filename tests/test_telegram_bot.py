@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import paths
 from config.discovered_chats import DiscoveredChatsStore
+from modules.agents.native_sessions import NativeResumeSession
 from modules.im import MessageContext
 from modules.im.telegram import TelegramBot
 from config.v2_config import TelegramConfig
@@ -124,22 +125,37 @@ def test_resume_menu_uses_short_callback_ids() -> None:
         platform="telegram",
         platform_specific={"is_dm": False},
     )
+    sessions = [
+        NativeResumeSession(
+            agent="codex",
+            agent_prefix="cx",
+            native_session_id="session_abcdefghijklmnopqrstuvwxyz",
+            working_path="/Users/cyh/vibe-remote",
+            created_at=None,
+            updated_at=None,
+            sort_ts=100.0,
+            last_agent_message="Latest answer",
+            last_agent_tail="...Latest answer",
+        )
+    ]
 
     with patch.object(bot, "send_message_with_buttons", new=AsyncMock(return_value="55")) as send_mock:
         asyncio.run(
             bot.open_resume_session_modal(
                 context,
-                {"codex": {"thread-a": "session_abcdefghijklmnopqrstuvwxyz"}},
+                sessions,
                 context.channel_id,
                 context.thread_id,
                 context.message_id,
             )
         )
 
+    text = send_mock.await_args.args[1]
     keyboard = send_mock.await_args.args[2]
     assert keyboard.buttons[0][0].callback_data == "tg_resume:0"
     state = bot._resume_states[bot._interaction_scope_key(context)]
     assert state.options == [("codex", "session_abcdefghijklmnopqrstuvwxyz")]
+    assert "cx...Latest answer" in text
 
 
 def test_resume_callback_submits_selected_session() -> None:

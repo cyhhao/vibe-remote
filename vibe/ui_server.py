@@ -4,6 +4,7 @@ import logging
 import mimetypes
 import re
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,19 @@ _server = None
 # Disable Flask's default logging
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.WARNING)
+
+STRUCTURED_LOG_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
+LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
+TRACEBACK_EXCEPTION_PATTERN = re.compile(
+    r"^[A-Za-z_][\w.]*(?:Error|Exception|Warning|Exit|Interrupt|Failure|Fault|Group)(?:[:(]|$)"
+)
+LOG_SOURCES = (
+    ("service", "vibe_remote.log", lambda: paths.get_logs_dir() / "vibe_remote.log"),
+    ("service_stdout", "service_stdout.log", lambda: paths.get_runtime_dir() / "service_stdout.log"),
+    ("service_stderr", "service_stderr.log", lambda: paths.get_runtime_dir() / "service_stderr.log"),
+    ("ui_stdout", "ui_stdout.log", lambda: paths.get_runtime_dir() / "ui_stdout.log"),
+    ("ui_stderr", "ui_stderr.log", lambda: paths.get_runtime_dir() / "ui_stderr.log"),
+)
 
 
 def _run_async(coro, timeout: float = 10.0) -> dict:
@@ -48,6 +62,123 @@ def _run_async(coro, timeout: float = 10.0) -> dict:
     if error:
         return {"ok": False, "error": error}
     return result
+
+
+def _is_continuation_line(line: str, previous_message: str | None = None) -> bool:
+    stripped = line.lstrip()
+    return (
+        line[:1].isspace()
+        or stripped.startswith("Traceback ")
+        or stripped.startswith("During handling of the above exception")
+        or stripped.startswith("File ")
+        or stripped.startswith("task:")
+        or stripped.startswith("^")
+        or (
+            previous_message is not None
+            and "Traceback " in previous_message
+            and bool(TRACEBACK_EXCEPTION_PATTERN.match(stripped))
+        )
+    )
+
+
+def _fallback_log_entry(line: str, source_key: str) -> dict[str, str]:
+    level_match = LEVEL_HINT_PATTERN.search(line)
+    level = level_match.group(1) if level_match else "INFO"
+    if level == "CRITICAL":
+        level = "ERROR"
+    return {
+        "timestamp": "",
+        "logger": source_key,
+        "level": level,
+        "message": line,
+        "source": source_key,
+    }
+
+
+def _timestamp_to_sort_ns(timestamp: str) -> int | None:
+    try:
+        return int(datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S,%f").timestamp() * 1_000_000_000)
+    except ValueError:
+        return None
+
+
+def _serialize_log_entries(entries: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {
+            "timestamp": str(entry.get("timestamp", "")),
+            "logger": str(entry.get("logger", "")),
+            "level": str(entry.get("level", "INFO")),
+            "message": str(entry.get("message", "")),
+            "source": str(entry.get("source", "")),
+        }
+        for entry in entries
+    ]
+
+
+def _read_log_entries(log_path: Path, source_key: str, lines: int) -> tuple[list[dict[str, Any]], int]:
+    if not log_path.exists():
+        return [], 0
+
+    with log_path.open("r", encoding="utf-8", errors="replace") as f:
+        all_lines = f.readlines()
+    recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+    file_sort_ns = log_path.stat().st_mtime_ns
+    first_recent_line_index = len(all_lines) - len(recent_lines)
+
+    logs_list: list[dict[str, Any]] = []
+    for line_offset, raw_line in enumerate(recent_lines):
+        line = raw_line.rstrip("\n")
+        match = STRUCTURED_LOG_PATTERN.match(line)
+        if match:
+            parsed_timestamp = match.group(1)
+            logs_list.append(
+                {
+                    "timestamp": parsed_timestamp,
+                    "logger": match.group(2),
+                    "level": match.group(3),
+                    "message": match.group(4),
+                    "source": source_key,
+                    "_sort_ns": _timestamp_to_sort_ns(parsed_timestamp) or file_sort_ns,
+                    "_sort_index": first_recent_line_index + line_offset,
+                }
+            )
+            continue
+
+        if not line:
+            continue
+
+        if logs_list and _is_continuation_line(line, logs_list[-1]["message"]):
+            logs_list[-1]["message"] += "\n" + line
+            continue
+
+        fallback_entry = _fallback_log_entry(line, source_key)
+        fallback_entry["_sort_ns"] = file_sort_ns
+        fallback_entry["_sort_index"] = first_recent_line_index + line_offset
+        logs_list.append(fallback_entry)
+
+    return logs_list, len(all_lines)
+
+
+def _resolve_log_sources() -> list[dict[str, Any]]:
+    resolved = [
+        {
+            "key": "all",
+            "filename": "*",
+            "path": "",
+            "exists": True,
+        }
+    ]
+    for key, filename, path_factory in LOG_SOURCES:
+        path = path_factory()
+        resolved.append(
+            {
+                "key": key,
+                "filename": filename,
+                "path": str(path),
+                "exists": path.exists(),
+            }
+        )
+    return resolved
 
 
 # =============================================================================
@@ -165,12 +296,14 @@ def control():
         service_pid = runtime.start_service()
         runtime.write_status("running", "started", service_pid, status.get("ui_pid"))
     elif action == "stop":
+        runtime.write_status("stopping", "stopping", status.get("service_pid"), status.get("ui_pid"))
         runtime.stop_service()
         _stop_opencode_server()
-        runtime.write_status("stopped")
+        runtime.write_status("stopped", "stopped", None, status.get("ui_pid"))
     elif action == "restart":
         import time
 
+        runtime.write_status("restarting", "restarting", status.get("service_pid"), status.get("ui_pid"))
         runtime.stop_service()
         _stop_opencode_server()
         time.sleep(3)
@@ -442,31 +575,54 @@ def doctor_post():
 @app.route("/logs", methods=["POST"])
 def logs():
     payload = request.json or {}
-    lines = payload.get("lines", 500)
-    log_path = paths.get_logs_dir() / "vibe_remote.log"
-    if not log_path.exists():
-        return jsonify({"logs": [], "total": 0})
     try:
-        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-            all_lines = f.readlines()
-            recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
-        log_pattern = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(\w+)\s+-\s+(.*)$")
-        logs_list = []
-        for line in recent_lines:
-            line = line.rstrip("\n")
-            match = log_pattern.match(line)
-            if match:
-                logs_list.append(
-                    {
-                        "timestamp": match.group(1),
-                        "logger": match.group(2),
-                        "level": match.group(3),
-                        "message": match.group(4),
-                    }
-                )
-            elif logs_list and line:
-                logs_list[-1]["message"] += "\n" + line
-        return jsonify({"logs": logs_list, "total": len(all_lines)})
+        lines = max(int(payload.get("lines", 500)), 1)
+    except (TypeError, ValueError):
+        lines = 500
+    selected_source = payload.get("source", "service")
+    sources = _resolve_log_sources()
+    source_map = {source["key"]: source for source in sources}
+    active_source = source_map.get(selected_source) or source_map["all"]
+
+    try:
+        aggregated_logs: list[dict[str, Any]] = []
+        aggregated_total = 0
+        for source in sources:
+            if source["key"] == "all":
+                continue
+            source_logs, total = _read_log_entries(Path(source["path"]), source["key"], lines)
+            source["total"] = total
+            aggregated_logs.extend(source_logs)
+            aggregated_total += total
+            if source["key"] == active_source["key"]:
+                source["logs"] = source_logs
+                active_logs = source_logs
+                active_total = total
+            else:
+                source["logs"] = []
+        sources[0]["total"] = aggregated_total
+        sources[0]["logs"] = []
+        if active_source["key"] == "all":
+            active_logs = sorted(
+                aggregated_logs,
+                key=lambda entry: (
+                    int(entry.get("_sort_ns", 0)),
+                    int(entry.get("_sort_index", 0)),
+                    entry.get("source") or "",
+                    entry.get("logger") or "",
+                ),
+            )
+            if len(active_logs) > lines:
+                active_logs = active_logs[-lines:]
+            active_total = aggregated_total
+        return jsonify(
+            {
+                "source": active_source["key"],
+                "logs": _serialize_log_entries(active_logs),
+                "total": active_total,
+                "sources": sources,
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

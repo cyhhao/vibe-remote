@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -38,3 +39,19 @@ def test_get_admin_user_ids_includes_all_platforms(monkeypatch, tmp_path):
     admin_ids = checker._get_admin_user_ids()
 
     assert set(admin_ids) == {"slack::U1", "discord::D1"}
+
+
+def test_stop_returns_cancellable_task(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+
+    async def run_test():
+        checker = UpdateChecker(_StubController(SettingsStore.get_instance()), UpdateConfig(check_interval_minutes=1))
+        checker.start()
+        await asyncio.sleep(0)
+        task = checker.stop()
+        assert task is not None
+        await checker.wait_stopped(task)
+        assert task.done()
+
+    asyncio.run(run_test())

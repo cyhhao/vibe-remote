@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union, Any
 from datetime import datetime
-from claude_agent_sdk import ClaudeSDKClient
+from modules.claude_sdk_compat import ClaudeSDKClient
 
 
 logger = logging.getLogger(__name__)

@@ -11,8 +11,9 @@ from modules.im import BaseIMClient, MessageContext, IMFactory
 from modules.im.multi import MultiIMClient
 from modules.im.formatters import SlackFormatter, DiscordFormatter, TelegramFormatter
 from modules.agent_router import AgentRouter
-from modules.agents import AgentService, ClaudeAgent, CodexAgent, OpenCodeAgent
+from modules.agents.service import AgentService
 from modules.claude_client import ClaudeClient
+from modules.agents.native_sessions import AgentNativeSessionService
 from modules.session_manager import SessionManager
 from modules.settings_manager import SettingsManager, MultiSettingsManager
 from core.handlers import (
@@ -95,6 +96,7 @@ class Controller:
         self.settings_manager = MultiSettingsManager(self.enabled_platforms, primary_platform=self.primary_platform)
         self.platform_settings_managers = self.settings_manager.managers
         self.sessions = self.settings_manager.sessions
+        self.native_session_service = AgentNativeSessionService()
 
         # Migrate legacy per-channel language into global config
         self._migrate_language_from_settings()
@@ -244,6 +246,10 @@ class Controller:
         self.message_handler.set_session_handler(self.session_handler)
 
     def _init_agents(self):
+        from modules.agents.claude_agent import ClaudeAgent
+        from modules.agents.codex import CodexAgent
+        from modules.agents.opencode import OpenCodeAgent
+
         self.agent_service = AgentService(self)
         self.agent_service.register(ClaudeAgent(self))
         if self.config.codex:
@@ -298,6 +304,7 @@ class Controller:
             "new": self._dispatch_to_controller_loop(self.command_handler.handle_new),
             "cwd": self._dispatch_to_controller_loop(self.command_handler.handle_cwd),
             "set_cwd": self._dispatch_to_controller_loop(self.command_handler.handle_set_cwd),
+            "resume": self._dispatch_to_controller_loop(self.command_handler.handle_resume),
             "settings": self._dispatch_to_controller_loop(self.settings_handler.handle_settings),
             "stop": self._dispatch_to_controller_loop(self.command_handler.handle_stop),
             "bind": self._dispatch_to_controller_loop(self.command_handler.handle_bind),
@@ -552,7 +559,14 @@ class Controller:
 
         # Stop update checker
         try:
-            self.update_checker.stop()
+            update_task = self.update_checker.stop()
+            if update_task and not update_task.done():
+                loop = self._loop
+                if loop and not loop.is_running() and not loop.is_closed():
+                    try:
+                        loop.run_until_complete(self.update_checker.wait_stopped(update_task))
+                    except Exception:
+                        pass
         except Exception as e:
             logger.debug(f"Update checker cleanup skipped: {e}")
 
