@@ -102,3 +102,15 @@ def test_stop_pid_handles_process_lookup_race(monkeypatch):
     monkeypatch.setattr(runtime.os, "kill", _kill)
 
     assert runtime.stop_pid(12345) is False
+
+
+def test_stop_pid_handles_permission_error(monkeypatch):
+    monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: True)
+
+    def _kill(pid, sig):
+        raise PermissionError()
+
+    monkeypatch.setattr(runtime.os, "kill", _kill)
+
+    assert runtime.stop_pid(12345) is False

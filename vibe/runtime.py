@@ -258,6 +258,8 @@ def stop_pid(pid: int, timeout: float = 5) -> bool:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         return False
+    except PermissionError:
+        return False
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not pid_alive(pid):
