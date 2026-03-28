@@ -278,7 +278,9 @@ class SlackBot(BaseIMClient):
                 context.user_id,
             )
             kwargs["channel"] = recovered_channel_id
+            kwargs.pop("thread_ts", None)
             context.channel_id = recovered_channel_id
+            context.thread_id = None
             return await self.web_client.chat_postMessage(**kwargs)
 
     async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:

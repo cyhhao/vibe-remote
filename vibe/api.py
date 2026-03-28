@@ -45,15 +45,15 @@ _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
 def _delayed_restart_helper_command() -> list[str]:
     candidates: list[list[str]] = []
+    current = sys.executable
+
+    if current and os.path.isabs(current) and os.path.exists(current) and os.access(current, os.X_OK):
+        candidates.append([current])
 
     if os.name == "nt":
         candidates.extend((["py", "-3"], ["python"], ["python3"]))
     else:
         candidates.extend((["python3"], ["python"]))
-
-    current = sys.executable
-    if current:
-        candidates.append([current])
 
     for candidate in candidates:
         binary = candidate[0]

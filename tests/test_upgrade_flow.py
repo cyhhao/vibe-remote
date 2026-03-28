@@ -226,7 +226,21 @@ def test_delayed_restart_helper_prefers_stable_launcher_over_sys_executable(monk
     monkeypatch.setattr(api.shutil, "which", lambda binary: f"/usr/bin/{binary}" if binary == "python3" else None)
     monkeypatch.setattr(api.sys, "executable", "/volatile/.venv/bin/python", raising=False)
 
-    assert api._delayed_restart_helper_command() == ["/usr/bin/python3"]
+    monkeypatch.setattr(api.os.path, "exists", lambda path: path == "/volatile/.venv/bin/python")
+    monkeypatch.setattr(api.os, "access", lambda path, mode: path == "/volatile/.venv/bin/python")
+
+    assert api._delayed_restart_helper_command() == ["/volatile/.venv/bin/python"]
+
+
+def test_delayed_restart_helper_skips_missing_sys_executable_on_windows(monkeypatch):
+    monkeypatch.setattr(api.os, "name", "nt", raising=False)
+    monkeypatch.setattr(api.sys, "executable", "C:\\missing\\python.exe", raising=False)
+    monkeypatch.setattr(api.os.path, "isabs", lambda path: path.startswith("C:\\"))
+    monkeypatch.setattr(api.os.path, "exists", lambda path: False)
+    monkeypatch.setattr(api.os, "access", lambda path, mode: False)
+    monkeypatch.setattr(api.shutil, "which", lambda binary: "C:\\Python311\\python.exe" if binary == "python" else None)
+
+    assert api._delayed_restart_helper_command() == ["C:\\Python311\\python.exe"]
 
 
 def test_cmd_upgrade_uses_upgrade_plan_env(monkeypatch):

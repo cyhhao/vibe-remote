@@ -119,6 +119,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
     async def test_send_message_recovers_dm_channel_after_channel_not_found(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         sent_channels = []
+        sent_thread_ts = []
 
         class _WebClient:
             def __init__(self):
@@ -126,6 +127,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
             async def chat_postMessage(self, **kwargs):
                 sent_channels.append(kwargs["channel"])
+                sent_thread_ts.append(kwargs.get("thread_ts"))
                 if self.fail_once:
                     self.fail_once = False
                     raise sys.modules["slack_sdk.errors"].SlackApiError(
@@ -149,11 +151,14 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(message_ts, "1710000000.000001")
         self.assertEqual(sent_channels, ["D123", "D999"])
+        self.assertEqual(sent_thread_ts, ["1710000000.000100", None])
         self.assertEqual(context.channel_id, "D999")
+        self.assertIsNone(context.thread_id)
 
     async def test_send_message_with_buttons_recovers_dm_channel_after_channel_not_found(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         sent_channels = []
+        sent_thread_ts = []
 
         class _WebClient:
             def __init__(self):
@@ -161,6 +166,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
             async def chat_postMessage(self, **kwargs):
                 sent_channels.append(kwargs["channel"])
+                sent_thread_ts.append(kwargs.get("thread_ts"))
                 if self.fail_once:
                     self.fail_once = False
                     raise sys.modules["slack_sdk.errors"].SlackApiError(
@@ -191,7 +197,9 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(message_ts, "1710000000.000002")
         self.assertEqual(sent_channels, ["D123", "D999"])
+        self.assertEqual(sent_thread_ts, ["1710000000.000100", None])
         self.assertEqual(context.channel_id, "D999")
+        self.assertIsNone(context.thread_id)
 
     async def test_get_user_info_prefers_normalized_profile_names(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
