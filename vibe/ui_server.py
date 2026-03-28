@@ -217,7 +217,11 @@ def status():
     payload = runtime.read_status()
     pid_path = paths.get_runtime_pid_path()
     pid = pid_path.read_text(encoding="utf-8").strip() if pid_path.exists() else None
-    running = bool(pid and pid.isdigit() and runtime.pid_alive(int(pid)))
+    try:
+        running = bool(pid and pid.isdigit() and runtime.pid_alive(int(pid)))
+    except Exception as exc:
+        logger.warning("Failed to inspect service pid %s: %s", pid, exc)
+        running = False
     payload["running"] = running
     payload["pid"] = int(pid) if pid and pid.isdigit() else None
     if running:

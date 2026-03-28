@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 from config import paths
+from vibe import runtime
 from vibe.opencode_config import load_first_opencode_user_config
 
 logger = logging.getLogger(__name__)
@@ -146,29 +147,11 @@ class OpenCodeServerManager:
 
     @staticmethod
     def _pid_exists(pid: int) -> bool:
-        if not isinstance(pid, int) or pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
+        return runtime.pid_alive(pid)
 
     @staticmethod
     def _get_pid_command(pid: int) -> Optional[str]:
-        try:
-            result = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "command="],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except Exception:
-            return None
-        cmd = (result.stdout or "").strip()
-        return cmd or None
+        return runtime.get_process_command(pid)
 
     @staticmethod
     def _is_opencode_serve_cmd(command: str, port: int) -> bool:
@@ -187,6 +170,36 @@ class OpenCodeServerManager:
 
     @staticmethod
     def _find_opencode_serve_pids(port: int) -> List[int]:
+        if os.name == "nt":
+            try:
+                result = subprocess.run(
+                    ["netstat", "-ano", "-p", "tcp"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except Exception:
+                return []
+
+            pids: List[int] = []
+            for line in (result.stdout or "").splitlines():
+                parts = line.split()
+                if len(parts) < 5 or parts[0].upper() != "TCP":
+                    continue
+                local_addr = parts[1]
+                state = parts[3].upper()
+                pid_str = parts[4]
+                if state != "LISTENING" or local_addr.rsplit(":", 1)[-1] != str(port):
+                    continue
+                try:
+                    pid = int(pid_str)
+                except ValueError:
+                    continue
+                command = runtime.get_process_command(pid)
+                if command and OpenCodeServerManager._is_opencode_serve_cmd(command, port):
+                    pids.append(pid)
+            return pids
+
         try:
             result = subprocess.run(
                 ["ps", "-ax", "-o", "pid=,command="],
@@ -216,24 +229,8 @@ class OpenCodeServerManager:
 
     async def _terminate_pid(self, pid: int, reason: str) -> None:
         logger.info(f"Stopping OpenCode server pid={pid} ({reason})")
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        except Exception as e:
-            logger.debug(f"Failed to terminate OpenCode server pid={pid}: {e}")
-            return
-
-        start_time = time.monotonic()
-        while time.monotonic() - start_time < 5:
-            if not self._pid_exists(pid):
-                return
-            await asyncio.sleep(0.25)
-
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except Exception:
-            pass
+        if not runtime.stop_pid(pid, timeout=5) and self._pid_exists(pid):
+            logger.debug("Failed to terminate OpenCode server pid=%s", pid)
 
     async def _cleanup_orphaned_managed_server(self) -> None:
         info = self._read_pid_file()

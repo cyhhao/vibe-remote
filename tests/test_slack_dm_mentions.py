@@ -5,11 +5,28 @@ import types
 from pathlib import Path
 
 from config.v2_config import SlackConfig
+from modules.im.base import InlineButton, InlineKeyboard, MessageContext
 
 
 def _install_slack_stubs() -> None:
     if "aiohttp" not in sys.modules:
-        sys.modules["aiohttp"] = types.ModuleType("aiohttp")
+        aiohttp_mod = types.ModuleType("aiohttp")
+
+        class _ClientWebSocketResponse:
+            closed = False
+
+        class _ClientSession:
+            async def close(self):
+                return None
+
+        class _ClientTimeout:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        aiohttp_mod.ClientWebSocketResponse = _ClientWebSocketResponse
+        aiohttp_mod.ClientSession = _ClientSession
+        aiohttp_mod.ClientTimeout = _ClientTimeout
+        sys.modules["aiohttp"] = aiohttp_mod
 
     if "markdown_to_mrkdwn" not in sys.modules:
         markdown_mod = types.ModuleType("markdown_to_mrkdwn")
@@ -52,7 +69,9 @@ def _install_slack_stubs() -> None:
             pass
 
     class _SlackApiError(Exception):
-        pass
+        def __init__(self, message="", response=None):
+            super().__init__(message)
+            self.response = response
 
     web_async_mod.AsyncWebClient = _AsyncWebClient
     socket_mode_aiohttp_mod.SocketModeClient = _SocketModeClient
@@ -97,6 +116,91 @@ from modules.im.slack import SlackBot
 
 
 class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_send_message_recovers_dm_channel_after_channel_not_found(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        sent_channels = []
+        sent_thread_ts = []
+
+        class _WebClient:
+            def __init__(self):
+                self.fail_once = True
+
+            async def chat_postMessage(self, **kwargs):
+                sent_channels.append(kwargs["channel"])
+                sent_thread_ts.append(kwargs.get("thread_ts"))
+                if self.fail_once:
+                    self.fail_once = False
+                    raise sys.modules["slack_sdk.errors"].SlackApiError(
+                        "channel missing",
+                        response={"error": "channel_not_found"},
+                    )
+                return {"ts": "1710000000.000001"}
+
+            async def conversations_open(self, users):
+                return {"ok": True, "channel": {"id": "D999"}}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(
+            user_id="U123",
+            channel_id="D123",
+            thread_id="1710000000.000100",
+            platform_specific={"is_dm": True},
+        )
+
+        message_ts = await slack.send_message(context, "hello", parse_mode="markdown")
+
+        self.assertEqual(message_ts, "1710000000.000001")
+        self.assertEqual(sent_channels, ["D123", "D999"])
+        self.assertEqual(sent_thread_ts, ["1710000000.000100", None])
+        self.assertEqual(context.channel_id, "D999")
+        self.assertIsNone(context.thread_id)
+
+    async def test_send_message_with_buttons_recovers_dm_channel_after_channel_not_found(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        sent_channels = []
+        sent_thread_ts = []
+
+        class _WebClient:
+            def __init__(self):
+                self.fail_once = True
+
+            async def chat_postMessage(self, **kwargs):
+                sent_channels.append(kwargs["channel"])
+                sent_thread_ts.append(kwargs.get("thread_ts"))
+                if self.fail_once:
+                    self.fail_once = False
+                    raise sys.modules["slack_sdk.errors"].SlackApiError(
+                        "channel missing",
+                        response={"error": "channel_not_found"},
+                    )
+                return {"ts": "1710000000.000002"}
+
+            async def conversations_open(self, users):
+                return {"ok": True, "channel": {"id": "D999"}}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(
+            user_id="U123",
+            channel_id="D123",
+            thread_id="1710000000.000100",
+            platform_specific={"is_dm": True},
+        )
+        keyboard = InlineKeyboard(
+            buttons=[
+                [
+                    InlineButton(text="One", callback_data="choose:1")
+                ]
+            ]
+        )
+
+        message_ts = await slack.send_message_with_buttons(context, "hello", keyboard, parse_mode="markdown")
+
+        self.assertEqual(message_ts, "1710000000.000002")
+        self.assertEqual(sent_channels, ["D123", "D999"])
+        self.assertEqual(sent_thread_ts, ["1710000000.000100", None])
+        self.assertEqual(context.channel_id, "D999")
+        self.assertIsNone(context.thread_id)
+
     async def test_get_user_info_prefers_normalized_profile_names(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
 

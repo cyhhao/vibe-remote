@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -17,6 +18,9 @@ from config.v2_config import (
     SlackConfig,
     V2Config,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_package_root() -> Path:
@@ -118,12 +122,156 @@ def read_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _pid_alive_windows(pid: int) -> bool:
+    if pid <= 0:
+        return False
+
+    try:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        synchronize = 0x00100000
+        query_limited_information = 0x1000
+        still_active = 259
+
+        handle = kernel32.OpenProcess(synchronize | query_limited_information, False, pid)
+        if not handle:
+            last_error = ctypes.get_last_error()
+            # Access denied still means the process exists.
+            if last_error == 5:
+                return True
+            return False
+
+        try:
+            exit_code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        logger.debug("Windows pid_alive probe failed for pid=%s", pid, exc_info=True)
+        return False
+
+
+def _terminate_process_windows(pid: int, timeout: float = 5) -> bool:
+    if pid <= 0:
+        return False
+
+    try:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        synchronize = 0x00100000
+        query_limited_information = 0x1000
+        process_terminate = 0x0001
+        wait_object_0 = 0
+
+        handle = kernel32.OpenProcess(
+            synchronize | query_limited_information | process_terminate,
+            False,
+            pid,
+        )
+        if not handle:
+            return not _pid_alive_windows(pid)
+
+        try:
+            if not kernel32.TerminateProcess(handle, 1):
+                return False
+
+            timeout_ms = max(0, int(timeout * 1000))
+            wait_result = kernel32.WaitForSingleObject(handle, timeout_ms)
+            return wait_result == wait_object_0
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        logger.debug("Windows process termination failed for pid=%s", pid, exc_info=True)
+        return False
+
+
+def _get_process_command_windows(pid: int) -> str | None:
+    script = f'$p = Get-CimInstance Win32_Process -Filter "ProcessId = {pid}"; if ($p) {{ $p.CommandLine }}'
+    for shell in ("powershell", "pwsh"):
+        try:
+            result = subprocess.run(
+                [shell, "-NoProfile", "-Command", script],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception:
+            continue
+        command = (result.stdout or "").strip()
+        if command:
+            return command
+    return None
+
+
+def get_process_command(pid: int) -> str | None:
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+
+    if os.name == "nt":
+        return _get_process_command_windows(pid)
+
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return None
+    command = (result.stdout or "").strip()
+    return command or None
+
+
 def pid_alive(pid):
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+
+    if os.name == "nt":
+        return _pid_alive_windows(pid)
+
     try:
         os.kill(pid, 0)
         return True
-    except OSError:
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
+    except (OSError, ValueError, SystemError):
+        return False
+
+
+def stop_pid(pid: int, timeout: float = 5) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if not pid_alive(pid):
+        return False
+
+    if os.name == "nt":
+        return _terminate_process_windows(pid, timeout=timeout)
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return False
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not pid_alive(pid):
+            return True
+        time.sleep(0.2)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        pass
+    return True
 
 
 def _log_path(name: str) -> Path:
@@ -158,20 +306,9 @@ def stop_process(pid_path, timeout=5):
     if not pid_alive(pid):
         pid_path.unlink(missing_ok=True)
         return False
-    os.kill(pid, signal.SIGTERM)
+    stopped = stop_pid(pid, timeout=timeout)
     pid_path.unlink(missing_ok=True)
-    # Wait for the process to actually exit; SIGKILL if it doesn't
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not pid_alive(pid):
-            return True
-        time.sleep(0.2)
-    # Process didn't exit in time — force kill
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        pass
-    return True
+    return stopped
 
 
 def write_status(state, detail=None, service_pid=None, ui_pid=None):
