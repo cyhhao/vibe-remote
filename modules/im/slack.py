@@ -239,15 +239,53 @@ class SlackBot(BaseIMClient):
             # Fallback to original text if conversion fails
             return text
 
+    @staticmethod
+    def _is_dm_context(context: MessageContext) -> bool:
+        if bool((context.platform_specific or {}).get("is_dm", False)):
+            return True
+        return isinstance(context.channel_id, str) and context.channel_id.startswith("D")
+
+    async def _open_dm_channel(self, user_id: str) -> Optional[str]:
+        self._ensure_clients()
+        resp = await self.web_client.conversations_open(users=[user_id])
+        if not resp.get("ok"):
+            logger.warning("Failed to open DM channel with user %s", user_id)
+            return None
+        return resp.get("channel", {}).get("id")
+
+    async def _post_message_with_dm_recovery(
+        self,
+        context: MessageContext,
+        kwargs: Dict[str, Any],
+        *,
+        log_label: str,
+    ):
+        try:
+            return await self.web_client.chat_postMessage(**kwargs)
+        except SlackApiError as err:
+            error_code = err.response.get("error") if getattr(err, "response", None) else None
+            if error_code != "channel_not_found" or not self._is_dm_context(context) or not context.user_id:
+                raise
+
+            recovered_channel_id = await self._open_dm_channel(context.user_id)
+            if not recovered_channel_id or recovered_channel_id == kwargs.get("channel"):
+                raise
+
+            logger.warning(
+                "Retrying Slack %s in recovered DM channel %s for user %s",
+                log_label,
+                recovered_channel_id,
+                context.user_id,
+            )
+            kwargs["channel"] = recovered_channel_id
+            context.channel_id = recovered_channel_id
+            return await self.web_client.chat_postMessage(**kwargs)
+
     async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
         """Send a direct message to a Slack user by opening a DM channel first."""
         self._ensure_clients()
         try:
-            resp = await self.web_client.conversations_open(users=[user_id])
-            if not resp.get("ok"):
-                logger.warning("Failed to open DM channel with user %s", user_id)
-                return None
-            dm_channel = resp.get("channel", {}).get("id")
+            dm_channel = await self._open_dm_channel(user_id)
             if not dm_channel:
                 return None
             msg_kwargs = {"channel": dm_channel, "text": text}
@@ -305,7 +343,11 @@ class SlackBot(BaseIMClient):
                 ]
 
             # Send message
-            response = await self.web_client.chat_postMessage(**kwargs)
+            response = await self._post_message_with_dm_recovery(
+                context,
+                kwargs,
+                log_label="message send",
+            )
 
             # Mark thread as active if we sent a message to a thread
             if self.settings_manager and (context.thread_id or reply_to):
@@ -934,7 +976,11 @@ class SlackBot(BaseIMClient):
             if context.thread_id:
                 kwargs["thread_ts"] = context.thread_id
 
-            response = await self.web_client.chat_postMessage(**kwargs)
+            response = await self._post_message_with_dm_recovery(
+                context,
+                kwargs,
+                log_label="message-with-buttons send",
+            )
 
             # Mark thread as active if we sent a message to a thread
             if self.settings_manager and context.thread_id:

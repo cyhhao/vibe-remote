@@ -52,14 +52,24 @@ class _StubIMClient:
     def __init__(self, user_info):
         self.user_info = user_info
         self.sent_messages = []
+        self.sent_button_messages = []
+        self.channel_info_calls = []
         self.formatter = None
 
     async def get_user_info(self, user_id):
         return self.user_info
 
+    async def get_channel_info(self, channel_id):
+        self.channel_info_calls.append(channel_id)
+        return {"id": channel_id, "name": channel_id}
+
     async def send_message(self, context, text, parse_mode=None):
         self.sent_messages.append((context.channel_id, text))
         return "T1"
+
+    async def send_message_with_buttons(self, context, text, keyboard, parse_mode=None):
+        self.sent_button_messages.append((context.channel_id, text, keyboard))
+        return "T2"
 
 
 class _StubSettingsManager:
@@ -151,6 +161,23 @@ class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
             controller.im_client.sent_messages,
             [("wx-chat", "🆕 已开启新的会话。你下一条消息会从全新对话开始。")],
         )
+
+    async def test_slack_dm_start_skips_channel_info_lookup(self):
+        controller = _StubController({"display_name": "Alex"})
+        handler = CommandHandlers(controller)
+        context = MessageContext(
+            user_id="U0E0FM3QT",
+            channel_id="D123",
+            platform="slack",
+            platform_specific={"is_dm": True, "platform": "slack"},
+        )
+
+        await handler.handle_start(context)
+
+        self.assertEqual(controller.im_client.channel_info_calls, [])
+        self.assertEqual(len(controller.im_client.sent_button_messages), 1)
+        _, text, _ = controller.im_client.sent_button_messages[0]
+        self.assertIn("私信", text)
 
 
 async def _clear_sessions(_settings_key):

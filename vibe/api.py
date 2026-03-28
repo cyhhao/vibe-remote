@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -29,7 +30,7 @@ from vibe.opencode_config import (
 from vibe.upgrade import (
     build_upgrade_plan,
     get_latest_version_info,
-    get_restart_shell_command,
+    get_restart_command,
     get_running_vibe_path,
     get_safe_cwd,
 )
@@ -40,6 +41,23 @@ logger = logging.getLogger(__name__)
 # Cache per cwd: { cwd: { "data": ..., "updated_at": ... } }
 _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
+
+
+def _spawn_delayed_restart(command: list[str], cwd: str, delay_seconds: float = 2.0) -> None:
+    helper_code = (
+        "import subprocess, time\n"
+        f"time.sleep({delay_seconds!r})\n"
+        f"subprocess.Popen({command!r}, cwd={cwd!r}, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL, close_fds=True)\n"
+    )
+    subprocess.Popen(
+        [sys.executable, "-c", helper_code],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        close_fds=True,
+        cwd=cwd,
+    )
 
 
 def _is_executable_file(path: Path) -> bool:
@@ -681,14 +699,9 @@ def do_upgrade(auto_restart: bool = True) -> dict:
         if result.returncode == 0:
             restarting = False
             if auto_restart:
-                restart_cmd = f"sleep 2 && {get_restart_shell_command(vibe_path=current_vibe_path)}"
-                subprocess.Popen(
-                    restart_cmd,
-                    shell=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                    cwd=safe_cwd,
+                _spawn_delayed_restart(
+                    get_restart_command(vibe_path=current_vibe_path),
+                    safe_cwd,
                 )
                 restarting = True
 

@@ -5,6 +5,7 @@ from datetime import datetime
 
 from config import paths
 from vibe.ui_server import app
+from vibe import runtime
 
 
 def _set_mtime(path, timestamp: str) -> None:
@@ -205,3 +206,24 @@ def test_logs_endpoint_falls_back_to_service_for_unknown_source(monkeypatch, tmp
     assert payload["source"] == "all"
     assert payload["total"] == 1
     assert payload["logs"][0]["logger"] == "asyncio"
+
+
+def test_status_endpoint_degrades_when_pid_probe_raises(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    paths.get_runtime_pid_path().write_text("12345", encoding="utf-8")
+    runtime.write_status("running", detail="pid=12345", service_pid=12345)
+
+    def _raise(_pid):
+        raise SystemError("boom")
+
+    monkeypatch.setattr(runtime, "pid_alive", _raise)
+
+    client = app.test_client()
+    response = client.get("/status")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["running"] is False
+    assert payload["pid"] is None
+    assert payload["state"] == "stopped"

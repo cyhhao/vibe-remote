@@ -36,11 +36,7 @@ def _read_json(path):
 
 
 def _pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    return runtime.pid_alive(pid)
 
 
 def _in_ssh_session() -> bool:
@@ -134,15 +130,7 @@ def _spawn_background(
 
 
 def _stop_process(pid_path):
-    if not pid_path.exists():
-        return False
-    pid = int(pid_path.read_text(encoding="utf-8").strip())
-    if not _pid_alive(pid):
-        pid_path.unlink(missing_ok=True)
-        return False
-    os.kill(pid, signal.SIGTERM)
-    pid_path.unlink(missing_ok=True)
-    return True
+    return runtime.stop_process(pid_path)
 
 
 def _render_status():
@@ -519,28 +507,18 @@ def _stop_opencode_server():
         return False
 
     # Verify it's actually an opencode serve process
-    try:
-        import subprocess
-
-        result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "command="],
-            capture_output=True,
-            text=True,
-        )
-        cmd = result.stdout.strip()
-        if "opencode" not in cmd or "serve" not in cmd:
-            return False
-    except Exception as e:
-        logger.debug("Failed to verify OpenCode process (pid=%s): %s", pid, e)
+    cmd = runtime.get_process_command(pid)
+    if not cmd:
+        logger.debug("Failed to verify OpenCode process (pid=%s): command not available", pid)
+        return False
+    if "opencode" not in cmd or "serve" not in cmd:
         return False
 
-    try:
-        os.kill(pid, signal.SIGTERM)
+    if runtime.stop_pid(pid, timeout=5):
         pid_file.unlink(missing_ok=True)
         return True
-    except Exception as e:
-        logger.warning("Failed to stop OpenCode server (pid=%s): %s", pid, e)
-        return False
+    logger.warning("Failed to stop OpenCode server (pid=%s)", pid)
+    return False
 
 
 def cmd_stop():
