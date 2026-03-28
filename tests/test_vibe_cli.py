@@ -90,3 +90,15 @@ def test_cli_stop_opencode_server_uses_runtime_helpers(tmp_path, monkeypatch):
 
     assert cli._stop_opencode_server() is True
     assert not pid_file.exists()
+
+
+def test_stop_pid_handles_process_lookup_race(monkeypatch):
+    monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: True)
+
+    def _kill(pid, sig):
+        raise ProcessLookupError()
+
+    monkeypatch.setattr(runtime.os, "kill", _kill)
+
+    assert runtime.stop_pid(12345) is False

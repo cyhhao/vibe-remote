@@ -43,6 +43,31 @@ _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
 
 
+def _delayed_restart_helper_command() -> list[str]:
+    candidates: list[list[str]] = []
+
+    if os.name == "nt":
+        candidates.extend((["py", "-3"], ["python"], ["python3"]))
+    else:
+        candidates.extend((["python3"], ["python"]))
+
+    current = sys.executable
+    if current:
+        candidates.append([current])
+
+    for candidate in candidates:
+        binary = candidate[0]
+        if os.path.isabs(binary):
+            if os.path.exists(binary) and os.access(binary, os.X_OK):
+                return candidate
+            continue
+        resolved = shutil.which(binary)
+        if resolved:
+            return [resolved, *candidate[1:]]
+
+    raise FileNotFoundError("No stable Python launcher available for delayed restart helper")
+
+
 def _spawn_delayed_restart(command: list[str], cwd: str, delay_seconds: float = 2.0) -> None:
     helper_code = (
         "import subprocess, time\n"
@@ -50,8 +75,9 @@ def _spawn_delayed_restart(command: list[str], cwd: str, delay_seconds: float = 
         f"subprocess.Popen({command!r}, cwd={cwd!r}, stdout=subprocess.DEVNULL, "
         "stderr=subprocess.DEVNULL, close_fds=True)\n"
     )
+    helper_cmd = [*_delayed_restart_helper_command(), "-c", helper_code]
     subprocess.Popen(
-        [sys.executable, "-c", helper_code],
+        helper_cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,

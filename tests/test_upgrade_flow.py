@@ -183,6 +183,7 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     monkeypatch.setattr(api, "build_upgrade_plan", lambda **kwargs: plan)
     monkeypatch.setattr(api, "get_running_vibe_path", lambda: "/custom/bin/vibe")
     monkeypatch.setattr(api, "get_restart_command", lambda **kwargs: ["/custom/bin/vibe"])
+    monkeypatch.setattr(api, "_delayed_restart_helper_command", lambda: ["/usr/bin/python3"])
 
     def fake_run(cmd, **kwargs):
         calls["run_cmd"] = cmd
@@ -211,13 +212,21 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     assert calls["run_kwargs"]["env"] == plan.env
     safe_cwd = calls["run_kwargs"].get("cwd")
     assert safe_cwd and os.path.isabs(safe_cwd), f"subprocess.run cwd must be an absolute path, got {safe_cwd!r}"
-    assert calls["popen_cmd"][0] == sys.executable
+    assert calls["popen_cmd"][0] == "/usr/bin/python3"
     assert calls["popen_cmd"][1] == "-c"
     assert "time.sleep(2.0)" in calls["popen_cmd"][2]
     assert "/custom/bin/vibe" in calls["popen_cmd"][2]
     assert calls["popen_kwargs"]["start_new_session"] is True
     popen_cwd = calls["popen_kwargs"].get("cwd")
     assert popen_cwd and os.path.isabs(popen_cwd), f"Popen cwd must be an absolute path, got {popen_cwd!r}"
+
+
+def test_delayed_restart_helper_prefers_stable_launcher_over_sys_executable(monkeypatch):
+    monkeypatch.setattr(api.os, "name", "posix", raising=False)
+    monkeypatch.setattr(api.shutil, "which", lambda binary: f"/usr/bin/{binary}" if binary == "python3" else None)
+    monkeypatch.setattr(api.sys, "executable", "/volatile/.venv/bin/python", raising=False)
+
+    assert api._delayed_restart_helper_command() == ["/usr/bin/python3"]
 
 
 def test_cmd_upgrade_uses_upgrade_plan_env(monkeypatch):

@@ -254,7 +254,10 @@ def stop_pid(pid: int, timeout: float = 5) -> bool:
     if os.name == "nt":
         return _terminate_process_windows(pid, timeout=timeout)
 
-    os.kill(pid, signal.SIGTERM)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return False
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not pid_alive(pid):
@@ -262,6 +265,8 @@ def stop_pid(pid: int, timeout: float = 5) -> bool:
         time.sleep(0.2)
     try:
         os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
     except OSError:
         pass
     return True
