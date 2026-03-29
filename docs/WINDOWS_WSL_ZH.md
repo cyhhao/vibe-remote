@@ -1,214 +1,400 @@
-# 在 Windows 上通过 WSL 使用 Vibe Remote
+# Windows 用户：从零开始用 WSL 运行 Vibe Remote
 
-这篇文档面向希望在 Windows 电脑上使用 Vibe Remote 的用户。
+这篇文档是写给 `完全没有用过 WSL` 的 Windows 用户的。
 
-如果你发现原生 Windows 运行某些 Agent CLI 不够稳定，或者希望获得更接近 Linux/macOS 的命令行体验，推荐使用 WSL 运行 Vibe Remote。
+如果你看到“推荐用 WSL”，但完全不知道它去哪里安装、怎么打开、要在哪个窗口里执行命令，就按这篇文档一步一步做。
+
+## 先说结论
+
+如果你在 Windows 上使用 Vibe Remote，我更推荐下面这套方式：
+
+- `Windows`：浏览器、Slack、Discord、微信、飞书
+- `WSL`：Vibe Remote、Claude Code / Codex / OpenCode、你的代码仓库
+
+简单理解就是：
+
+- 你平时还是在 Windows 里点浏览器、看聊天工具
+- 但真正执行命令和跑 Agent 的地方，不在 PowerShell，也不在 CMD，而是在一个 Linux 终端窗口里
+
+这个 Linux 终端窗口，就是 WSL。
 
 ## 什么是 WSL
 
-WSL 是 `Windows Subsystem for Linux`。
+WSL 的全称是 `Windows Subsystem for Linux`。
 
-简单说，它让你可以在 Windows 里运行一个 Linux 用户态环境。对 Vibe Remote 这类依赖命令行工具、Python、Node、Agent CLI 的程序来说，WSL 通常比原生 Windows 更顺畅。
+你可以把它理解成：
 
-## 什么时候推荐用 WSL
+- 你的电脑还是 Windows
+- 但 Windows 里面多开了一个 Linux 命令行环境
+- 你可以在这个 Linux 环境里运行很多更适合开发者工具的命令
 
-推荐优先使用 WSL 的情况：
+对 Vibe Remote 这种要调用 Python、Node、Agent CLI 的程序来说，WSL 通常比原生 Windows 更稳。
 
-- 你主要使用 OpenCode
-- 你希望尽量减少 Windows 原生兼容性问题
-- 你习惯 Linux 命令行
-- 你的项目本身已经在 WSL 开发
+## 你会用到两个窗口
 
-如果你主要使用 Claude Code 或 Codex，WSL 同样是一个很稳妥的方案。
+这一步非常重要，很多人第一次会搞混。
 
-## 总体思路
+### 窗口 1：PowerShell
 
-推荐的运行方式是：
+PowerShell 只在最开始安装 WSL 时用一下。
 
-- Windows 负责浏览器和聊天工具
-- WSL 负责运行 Vibe Remote
-- Agent CLI 也安装在 WSL 里
-- 项目代码放在 WSL 的 Linux 文件系统里
+你可以把它理解成：
 
-这样做的好处是：
+- 用来“安装 WSL 本身”的 Windows 终端
 
-- 环境更统一
-- 大多数命令行工具行为更接近官方文档
-- 避免一部分原生 Windows 的进程和路径兼容问题
+### 窗口 2：Ubuntu 终端
 
-## 先决条件
+Ubuntu 终端才是后面真正运行 Vibe Remote 的地方。
 
-开始前请确认：
+你可以把它理解成：
 
-- 你已经安装 WSL2
-- 你已经安装一个 Linux 发行版，例如 Ubuntu
-- 你能打开 WSL 终端
-- 你的 Windows 浏览器可以访问本机地址
+- 用来“安装和运行 Vibe Remote”的 Linux 终端
 
-## 推荐目录
-
-建议把项目放在 WSL 自己的 Linux 文件系统里，例如：
+后面看到类似下面这些命令：
 
 ```bash
-~/work
-```
-
-不建议优先把项目放在 `/mnt/c/...` 下长期使用。
-
-原因是：
-
-- 一些工具在 `/mnt/c/...` 下会更慢
-- 文件监听、权限和路径行为更容易出现边角问题
-- Agent CLI 在原生 Linux 路径里通常更稳定
-
-## 安装 Vibe Remote
-
-在 WSL 终端中执行：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
-```
-
-安装完成后启动：
-
-```bash
+curl ...
 vibe
+which codex
 ```
 
-## 打开 Web UI
+都应该在 `Ubuntu 终端` 里执行，不是在 PowerShell 里执行。
 
-Vibe Remote 默认会在运行它的那台机器上监听：
+## 第一步：安装 WSL
+
+### 1. 打开 PowerShell
+
+在 Windows 里：
+
+1. 点开始菜单
+2. 搜索 `PowerShell`
+3. 找到 `Windows PowerShell` 或 `PowerShell`
+4. 右键
+5. 选择 `以管理员身份运行`
+
+### 2. 在 PowerShell 里执行安装命令
+
+输入：
+
+```powershell
+wsl --install
+```
+
+这条命令的作用是：
+
+- 安装 WSL
+- 安装默认 Linux 发行版（通常是 Ubuntu）
+
+如果系统提示你重启，就重启电脑。
+
+### 3. 重启后再次进入 Windows
+
+安装完成后，你的开始菜单里通常会出现：
+
+- `Ubuntu`
+
+如果没有看到，也可以搜索：
+
+- `Ubuntu`
+- `Windows Terminal`
+
+## 第二步：第一次启动 Ubuntu
+
+### 1. 打开 Ubuntu
+
+点开始菜单，搜索并打开：
+
+- `Ubuntu`
+
+第一次打开时，系统会做一些初始化，这一步可能要等几十秒到几分钟。
+
+### 2. 创建 Linux 用户名和密码
+
+初始化完成后，Ubuntu 会提示你创建：
+
+- 一个 Linux 用户名
+- 一个 Linux 密码
+
+这里的用户名和密码是 `WSL 里的 Linux 账号`，不是你的 Windows 账号。
+
+比如它可能让你输入：
 
 ```text
-http://127.0.0.1:5123
+Enter new UNIX username:
+Enter new UNIX password:
 ```
 
-在现代 WSL2 环境里，通常可以直接在 Windows 浏览器里打开：
+设好之后，以后这个 Ubuntu 终端就是你的 WSL 工作环境。
 
-```text
-http://127.0.0.1:5123
-```
+## 第三步：确认你已经进入 WSL 终端
 
-如果浏览器没有自动弹出，手动打开上面的地址即可。
-
-## 安装 Agent CLI
-
-重要：请把你要使用的 Agent CLI 也安装在 WSL 里，而不是只安装在 Windows 里。
-
-例如：
-
-- `claude`
-- `codex`
-- `opencode`
-
-Vibe Remote 会从它自己的运行环境里调用这些命令。如果 Vibe Remote 跑在 WSL，那么这些 CLI 也应该能在 WSL 终端里直接执行。
-
-你可以先在 WSL 里确认：
+当你看到类似下面这样的提示符时，通常就说明你已经在 Ubuntu 里了：
 
 ```bash
-which claude
-which codex
-which opencode
+yourname@DESKTOP-XXXX:~$
 ```
 
-如果某个命令找不到，请先在 WSL 内完成安装。
+注意这里通常会有：
 
-## 设置工作目录
+- 你的 Linux 用户名
+- 一个波浪号 `~`
+- 一个美元符号 `$`
 
-在 Web UI 的设置向导或 Dashboard 中，把默认工作目录设置成 WSL 路径，例如：
+这表示你现在在 Linux 终端里。
+
+从这一步开始，后面的命令都在这个窗口里执行。
+
+## 第四步：先更新 Ubuntu 里的基础工具
+
+在 Ubuntu 终端里执行：
+
+```bash
+sudo apt update
+sudo apt install -y curl git
+```
+
+如果系统要求输入密码，就输入你刚才创建的 `Linux 密码`。
+
+## 第五步：准备一个工作目录
+
+推荐把代码放在 WSL 自己的 Linux 文件系统里，而不是放在 Windows 的 `C:` 盘映射路径里。
+
+在 Ubuntu 终端里执行：
+
+```bash
+mkdir -p ~/work
+cd ~/work
+```
+
+推荐使用：
 
 ```text
-/home/<your-user>/work
+/home/<你的 Linux 用户名>/work
 ```
 
-不要把默认工作目录优先设成 Windows 风格路径，例如：
-
-```text
-C:\Users\...
-```
-
-也不要优先设成：
+不建议长期把项目放在：
 
 ```text
 /mnt/c/Users/...
 ```
 
-如果你必须访问 Windows 文件，也可以临时使用 `/mnt/c/...`，但不建议把它作为长期默认工作目录。
+因为那样通常更慢，也更容易遇到权限和路径兼容问题。
 
-## 推荐的使用方式
+## 第六步：安装 Vibe Remote
 
-### 方案 A：全部跑在 WSL
+现在你已经在正确的地方了。
 
-这是最推荐的方式。
+就在 `Ubuntu 终端` 里执行：
 
-- Vibe Remote 跑在 WSL
-- Agent CLI 跑在 WSL
-- 项目代码放在 WSL
-- 浏览器在 Windows 中访问 `http://127.0.0.1:5123`
+```bash
+curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
+```
 
-### 方案 B：Windows 只负责界面
+安装完成后，继续在同一个 Ubuntu 终端里执行：
 
-这也是推荐做法。
+```bash
+vibe
+```
 
-- Slack / Discord / 微信 / 飞书客户端照常装在 Windows
-- 浏览器在 Windows 中打开 Web UI
-- 所有实际执行代码的命令都在 WSL 内完成
+再次强调：
 
-## 常见问题
+- 这条命令在 `Ubuntu 终端` 里执行
+- 不是在 PowerShell 里执行
+- 也不是在 CMD 里执行
 
-### 1. 浏览器没有自动打开
+## 第七步：在 Windows 浏览器里打开 Web UI
 
-这是正常的。
-
-直接在 Windows 浏览器中打开：
+Vibe Remote 启动后，Web UI 默认地址是：
 
 ```text
 http://127.0.0.1:5123
 ```
 
-### 2. 在 Web UI 里点安装 Agent 失败
+这时候你可以在 `Windows 的浏览器` 里打开这个地址，比如：
 
-如果你在 WSL 中运行 Vibe Remote，而在 Windows 浏览器中操作，有时本地安全校验可能导致安装接口失败。
+- Chrome
+- Edge
+- Firefox
 
-如果出现这种情况，不要卡在 UI 按钮里，直接在 WSL 终端里手动安装对应 CLI，然后回到 Web UI 填路径或重新检测即可。
+直接访问：
 
-### 3. OpenCode 在 Windows 原生环境里不够稳定
+```text
+http://127.0.0.1:5123
+```
 
-如果你主要使用 OpenCode，优先推荐在 WSL 中运行它。
+如果浏览器没有自动弹出来，手动打开这个地址就行。
 
-这通常比原生 Windows 更稳定，也更接近 OpenCode 官方推荐的使用方式。
+## 第八步：安装 Agent CLI
 
-### 4. 可以在 WSL 里用 Docker 吗
+如果你要用 Claude Code、Codex 或 OpenCode，这些 CLI 也应该安装在 `Ubuntu 终端` 里。
 
-可以，但前提是你的 Docker Desktop 已开启 WSL 集成，或者你自己在 WSL 里具备可用的 Docker 环境。
+不要只装在 Windows 里。
 
-如果你只是在本机日常使用 Vibe Remote，本身并不要求必须用 Docker。
+因为：
 
-## 快速检查清单
+- Vibe Remote 跑在 WSL 里
+- 它只会调用 WSL 里能找到的命令
 
-在 WSL 中确认以下命令都正常：
+安装完成后，你可以在 Ubuntu 终端里确认：
 
 ```bash
-vibe version
-vibe doctor
 which claude
 which codex
 which opencode
 ```
 
-然后在 Windows 浏览器中确认：
+如果能看到类似下面的输出，就说明这个命令已经能在 WSL 里被找到：
+
+```text
+/home/yourname/.local/bin/codex
+```
+
+## 第九步：设置默认工作目录
+
+在 Vibe Remote 的 Web UI 里，把默认工作目录设置成 WSL 路径，例如：
+
+```text
+/home/yourname/work
+```
+
+不要优先设置成：
+
+```text
+C:\Users\...
+```
+
+也不要优先设置成：
+
+```text
+/mnt/c/Users/...
+```
+
+如果你一定要访问 Windows 文件，也可以临时用 `/mnt/c/...`，但不建议作为长期默认目录。
+
+## 一个最容易理解的使用例子
+
+你每天可以这样使用：
+
+### 1. 打开 Ubuntu
+
+开始菜单 -> 搜索 `Ubuntu` -> 打开
+
+### 2. 进入项目目录
+
+在 Ubuntu 终端里：
+
+```bash
+cd ~/work/your-project
+```
+
+### 3. 启动 Vibe Remote
+
+在 Ubuntu 终端里：
+
+```bash
+vibe
+```
+
+### 4. 打开浏览器
+
+在 Windows 浏览器里访问：
 
 ```text
 http://127.0.0.1:5123
 ```
 
-可以正常打开。
+### 5. 在聊天工具里使用
+
+之后你就在 Slack、Discord、微信、飞书里和 Agent 交互。
+
+## 如何再次打开 WSL
+
+以后每次想继续使用，不需要重新安装。
+
+你只需要：
+
+1. 打开开始菜单
+2. 搜索 `Ubuntu`
+3. 打开 Ubuntu
+4. 在里面执行：
+
+```bash
+cd ~/work/你的项目
+vibe
+```
+
+## 常见问题
+
+### 1. 我应该在哪个窗口里执行 `vibe`？
+
+答：在 `Ubuntu 终端` 里，不是在 PowerShell 里。
+
+### 2. 我应该在哪个窗口里执行 `curl ... | bash`？
+
+答：在 `Ubuntu 终端` 里，不是在 PowerShell 里。
+
+### 3. PowerShell 还要不要继续用？
+
+只在最开始安装 WSL 时需要。
+
+安装完成后，日常使用 Vibe Remote 基本都在 Ubuntu 终端里。
+
+### 4. 浏览器打不开 `127.0.0.1:5123` 怎么办？
+
+先确认 Ubuntu 终端里 `vibe` 还在运行。
+
+如果 `vibe` 已经退出，浏览器当然打不开。
+
+你可以先在 Ubuntu 终端里看一下：
+
+```bash
+vibe status
+```
+
+### 5. Web UI 里安装 Agent 失败怎么办？
+
+如果你是在 Windows 浏览器里操作，而 Vibe Remote 跑在 WSL 里，有时本地安全校验可能让某些安装按钮失败。
+
+这时不要卡在按钮里，直接回到 `Ubuntu 终端` 手动安装对应的 CLI，然后回到 Web UI 填路径或重新检测即可。
+
+### 6. 我必须懂 Linux 才能用吗？
+
+不用。
+
+你只需要会做这几件事：
+
+- 打开 Ubuntu
+- `cd` 进入目录
+- 运行 `vibe`
+- 在浏览器里打开 `http://127.0.0.1:5123`
+
+这就够开始用了。
+
+## 快速检查清单
+
+如果下面这些都成立，说明你的 WSL 方案已经跑通了：
+
+- 你能在开始菜单里打开 `Ubuntu`
+- Ubuntu 打开后能看到类似 `yourname@DESKTOP-XXXX:~$`
+- 你能在 Ubuntu 终端里运行 `vibe`
+- 你能在 Windows 浏览器里打开 `http://127.0.0.1:5123`
+- `which codex` / `which claude` / `which opencode` 能在 Ubuntu 里找到对应命令
+
+## 官方参考
+
+如果你想看微软官方文档，可以参考：
+
+- WSL 安装：<https://learn.microsoft.com/windows/wsl/install>
+- WSL 基础命令：<https://learn.microsoft.com/windows/wsl/basic-commands>
+- WSL 开发环境说明：<https://learn.microsoft.com/windows/wsl/setup/environment>
 
 ## 一句话建议
 
-如果你在 Windows 上想获得更稳定的 Vibe Remote 使用体验，推荐采用下面这套组合：
+如果你是 Windows 用户，而且不确定原生 Windows 能不能稳定跑所有 Agent CLI，那么最稳的方式就是：
 
-- Windows：浏览器 + 聊天工具
-- WSL：Vibe Remote + Agent CLI + 代码仓库
+- 先在 Windows 里安装 WSL
+- 再打开 Ubuntu
+- 在 Ubuntu 终端里安装并运行 Vibe Remote
+- 在 Windows 浏览器里访问 `http://127.0.0.1:5123`
 
-这通常是当前最稳妥、最省心的方案。
+这样通常最省心。
