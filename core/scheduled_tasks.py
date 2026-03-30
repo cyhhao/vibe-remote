@@ -283,7 +283,6 @@ class TaskExecutionStore:
         self.processing_dir = self.root / "processing"
         self.completed_dir = self.root / "completed"
         self._ensure_dirs()
-        self.recover_processing()
 
     def _ensure_dirs(self) -> None:
         self.pending_dir.mkdir(parents=True, exist_ok=True)
@@ -408,6 +407,7 @@ class ScheduledTaskService:
         self._reconcile_task: Optional[asyncio.Task] = None
         self._job_signatures: Dict[str, tuple[Any, ...]] = {}
         self._running = False
+        self.request_store.recover_processing()
 
     def validate_platform(self, platform: str) -> None:
         if platform not in self.controller.platform_settings_managers:

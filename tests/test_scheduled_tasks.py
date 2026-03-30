@@ -258,6 +258,21 @@ def test_request_store_enqueue_claim_and_complete(tmp_path: Path) -> None:
     assert not (store.processing_dir / f"{request.id}.json").exists()
 
 
+def test_request_store_constructor_does_not_requeue_processing_files(tmp_path: Path) -> None:
+    root = tmp_path / "task_requests"
+    store = TaskExecutionStore(root)
+    request = store.enqueue_hook_send(session_key="slack::channel::C123", prompt="hello")
+    claimed = store.claim(request.id)
+
+    assert claimed is not None
+    assert (store.processing_dir / f"{request.id}.json").exists()
+
+    producer_view = TaskExecutionStore(root)
+
+    assert not (producer_view.pending_dir / f"{request.id}.json").exists()
+    assert (producer_view.processing_dir / f"{request.id}.json").exists()
+
+
 def test_drain_requests_executes_hook_send(tmp_path: Path) -> None:
     request_store = TaskExecutionStore(tmp_path / "task_requests")
     request = request_store.enqueue_hook_send(session_key="slack::channel::C123", prompt="ship it")
