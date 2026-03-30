@@ -188,7 +188,6 @@ _SCHEDULED_TASKS_PROMPT = """\
 
 ## 3. Scheduled tasks and hooks
 Use `vibe task add` to store recurring or one-off tasks.
-Use `vibe task run <id>` to trigger an existing task immediately.
 Use `vibe hook send --session-key ... --prompt ...` for one-shot asynchronous sends without storing a task.
 
 Current conversation targeting:

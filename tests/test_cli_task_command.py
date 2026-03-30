@@ -120,6 +120,18 @@ def test_task_add_help_includes_examples_and_threadless_guidance(capsys) -> None
     assert "vibe task add --session-key 'slack::channel::C123'" in captured.out
 
 
+def test_task_list_help_mentions_completed_one_shots_hidden_by_default(capsys) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["task", "list", "--help"])
+
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert "Completed one-shot tasks are hidden unless --all is used." in captured.out
+    assert "--all" in captured.out
+
+
 def test_hook_send_help_includes_examples_and_threadless_guidance(capsys) -> None:
     parser = cli.build_parser()
 
@@ -241,6 +253,55 @@ def test_task_run_missing_id_returns_guidance(tmp_path: Path) -> None:
     assert result == 1
     assert payload["code"] == "task_not_found"
     assert payload["help_command"] == "vibe task list"
+
+
+def test_task_list_hides_completed_one_shots_by_default(tmp_path: Path, capsys) -> None:
+    store_path = tmp_path / "scheduled_tasks.json"
+    store = cli.ScheduledTaskStore(store_path)
+    store.add_task(
+        session_key="slack::channel::C123",
+        prompt="recurring",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+    done = store.add_task(
+        session_key="slack::channel::C123",
+        prompt="one-shot",
+        schedule_type="at",
+        run_at="2026-03-31T09:00:00+08:00",
+        timezone_name="Asia/Shanghai",
+    )
+    store.mark_task_result(done.id, error=None)
+
+    with patch("vibe.cli._task_store", return_value=store):
+        result = cli.cmd_task_list()
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    ids = [item["id"] for item in payload["tasks"]]
+    assert done.id not in ids
+
+
+def test_task_list_all_includes_completed_one_shots(tmp_path: Path, capsys) -> None:
+    store_path = tmp_path / "scheduled_tasks.json"
+    store = cli.ScheduledTaskStore(store_path)
+    done = store.add_task(
+        session_key="slack::channel::C123",
+        prompt="one-shot",
+        schedule_type="at",
+        run_at="2026-03-31T09:00:00+08:00",
+        timezone_name="Asia/Shanghai",
+    )
+    store.mark_task_result(done.id, error=None)
+
+    with patch("vibe.cli._task_store", return_value=store):
+        result = cli.cmd_task_list(include_all=True)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    ids = [item["id"] for item in payload["tasks"]]
+    assert done.id in ids
 
 
 def test_task_run_enqueues_request(tmp_path: Path, capsys) -> None:

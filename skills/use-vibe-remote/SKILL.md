@@ -258,6 +258,7 @@ Do not hand-edit this file during normal operations unless the user explicitly a
 
 - `vibe task add`
 - `vibe task list`
+- `vibe task list --all`
 - `vibe task show <id>`
 - `vibe task run <id>`
 - `vibe task pause <id>`
@@ -321,6 +322,7 @@ Default rule:
 Operational guidance:
 
 - use `vibe task list` before editing or deleting an existing task
+- `vibe task list` hides completed one-shot tasks by default; use `vibe task list --all` when you need the full history
 - use `vibe task show <id>` to inspect the exact stored schedule and target
 - use `vibe task run <id>` when the user wants to trigger one stored task immediately without changing its schedule
 - use `vibe hook send` when the user wants one asynchronous turn without storing a task definition

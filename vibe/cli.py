@@ -380,6 +380,10 @@ def _supported_task_platforms() -> set[str]:
     return {getattr(config, "platform", "slack")}
 
 
+def _is_completed_one_shot(task) -> bool:
+    return task.schedule_type == "at" and not task.enabled and bool(task.last_run_at)
+
+
 def _parse_validated_session_key(
     session_key: str,
     *,
@@ -482,9 +486,12 @@ def cmd_task_add(args):
         return 1
 
 
-def cmd_task_list():
+def cmd_task_list(*, include_all: bool = False):
     store = _task_store()
-    print(json.dumps({"tasks": [_task_payload(task) for task in store.list_tasks()]}, indent=2))
+    tasks = store.list_tasks()
+    if not include_all:
+        tasks = [task for task in tasks if not _is_completed_one_shot(task)]
+    print(json.dumps({"tasks": [_task_payload(task) for task in tasks]}, indent=2))
     return 0
 
 
@@ -1168,12 +1175,17 @@ def build_parser():
     task_subparsers.add_parser(
         "list",
         help="List scheduled tasks",
-        description="List all stored scheduled tasks.",
-        epilog="Use the returned task IDs with 'vibe task show', 'vibe task pause', 'vibe task resume', or 'vibe task remove'.",
+        description="List stored scheduled tasks. Completed one-shot tasks are hidden unless --all is used.",
+        epilog="Use the returned task IDs with 'vibe task show', 'vibe task run', 'vibe task pause', 'vibe task resume', or 'vibe task remove'.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe task list --help",
     )
     task_list_parser = task_subparsers.choices["list"]
+    task_list_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Include completed one-shot tasks that are hidden by default",
+    )
     _add_hidden_task_alias(task_subparsers, "ls", task_list_parser)
 
     task_show_parser = task_subparsers.add_parser(
@@ -1280,7 +1292,7 @@ def main():
         if args.task_command == "add":
             sys.exit(cmd_task_add(args))
         if args.task_command in {"list", "ls"}:
-            sys.exit(cmd_task_list())
+            sys.exit(cmd_task_list(include_all=getattr(args, "all", False)))
         if args.task_command == "show":
             sys.exit(cmd_task_show(args.task_id))
         if args.task_command == "pause":

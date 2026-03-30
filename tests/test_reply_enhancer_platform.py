@@ -80,7 +80,6 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("## 3. Scheduled tasks and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
-        self.assertIn("`vibe task run <id>`", prompt)
         self.assertIn("`vibe hook send --session-key ... --prompt ...`", prompt)
         self.assertIn("Default session key: `slack::channel::C1`", prompt)
         self.assertIn("Current thread ID: `171717.123`", prompt)
