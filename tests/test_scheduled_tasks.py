@@ -75,6 +75,19 @@ def test_build_session_key_for_context_defaults_to_threadless_scope() -> None:
     assert parsed.thread_id is None
 
 
+def test_build_session_key_for_context_uses_fallback_platform() -> None:
+    context = MessageContext(
+        user_id="U123",
+        channel_id="C123",
+        thread_id="171717.123",
+        platform_specific={"is_dm": False},
+    )
+
+    parsed = build_session_key_for_context(context, fallback_platform="slack")
+
+    assert parsed.to_key(include_thread=False) == "slack::channel::C123"
+
+
 def test_store_round_trip_persists_task(tmp_path: Path) -> None:
     store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
     task = store.add_task(

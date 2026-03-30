@@ -274,6 +274,7 @@ class CodexAgent(BaseAgent):
             params["developerInstructions"] = build_reply_enhancements_prompt(
                 include_quick_replies=platform != "wechat",
                 context=request.context,
+                fallback_platform=platform,
             )
 
         resp = await transport.send_request("thread/start", params)

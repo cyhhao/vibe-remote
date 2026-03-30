@@ -385,6 +385,7 @@ class SessionHandler(BaseHandler):
             reply_prompt = build_reply_enhancements_prompt(
                 include_quick_replies=platform != "wechat",
                 context=context,
+                fallback_platform=platform,
             )
 
             if base_prompt:

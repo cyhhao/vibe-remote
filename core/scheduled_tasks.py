@@ -75,9 +75,14 @@ def parse_session_key(value: str) -> ParsedSessionKey:
     )
 
 
-def build_session_key_for_context(context: MessageContext, *, include_thread: bool = False) -> ParsedSessionKey:
+def build_session_key_for_context(
+    context: MessageContext,
+    *,
+    include_thread: bool = False,
+    fallback_platform: Optional[str] = None,
+) -> ParsedSessionKey:
     payload = context.platform_specific or {}
-    platform = context.platform or payload.get("platform") or ""
+    platform = context.platform or payload.get("platform") or fallback_platform or ""
     is_dm = bool(payload.get("is_dm", False))
     scope_type = "user" if is_dm else "channel"
     scope_id = context.user_id if is_dm else context.channel_id

@@ -205,10 +205,14 @@ Examples:
 """
 
 
-def _build_scheduled_tasks_prompt(context: MessageContext) -> str:
+def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform: Optional[str] = None) -> str:
     from core.scheduled_tasks import build_session_key_for_context
 
-    default_key = build_session_key_for_context(context, include_thread=False).to_key(include_thread=False)
+    default_key = build_session_key_for_context(
+        context,
+        include_thread=False,
+        fallback_platform=fallback_platform,
+    ).to_key(include_thread=False)
     thread_id = context.thread_id or "(none)"
     if context.thread_id:
         session_key_with_thread = f"{default_key}::thread::{context.thread_id}"
@@ -225,6 +229,7 @@ def build_reply_enhancements_prompt(
     *,
     include_quick_replies: bool = True,
     context: Optional[MessageContext] = None,
+    fallback_platform: Optional[str] = None,
 ) -> str:
     """Build the reply-enhancement prompt for the current platform/backend."""
 
@@ -232,7 +237,7 @@ def build_reply_enhancements_prompt(
     if include_quick_replies:
         prompt += _QUICK_REPLIES_PROMPT
     if context is not None:
-        prompt += _build_scheduled_tasks_prompt(context)
+        prompt += _build_scheduled_tasks_prompt(context, fallback_platform=fallback_platform)
     return prompt
 
 

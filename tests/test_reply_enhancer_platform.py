@@ -83,6 +83,22 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Current thread ID: `171717.123`", prompt)
         self.assertIn("slack::channel::C1::thread::171717.123", prompt)
 
+    def test_prompt_uses_fallback_platform_for_unannotated_context(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            thread_id="171717.123",
+            platform_specific={"is_dm": False},
+        )
+
+        prompt = build_reply_enhancements_prompt(
+            include_quick_replies=True,
+            context=context,
+            fallback_platform="slack",
+        )
+
+        self.assertIn("Default session key: `slack::channel::C1`", prompt)
+
     def test_file_links_with_parentheses_are_preserved(self):
         enhanced = process_reply("![video](file:///Users/test/SaveTwitter.Net_GABV3XNWYAARAZz(gif).mp4)")
 
