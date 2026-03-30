@@ -9,6 +9,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from textwrap import dedent
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
@@ -29,6 +30,105 @@ from vibe import __version__, api, runtime
 from vibe.upgrade import build_upgrade_plan, cache_running_vibe_path, get_latest_version_info, get_safe_cwd
 
 logger = logging.getLogger(__name__)
+
+
+class VibeArgumentParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        self.error_help_command = kwargs.pop("error_help_command", None)
+        self.error_hint = kwargs.pop("error_hint", None)
+        super().__init__(*args, **kwargs)
+
+    def error(self, message):
+        payload = {
+            "ok": False,
+            "code": "invalid_arguments",
+            "error": message,
+            "usage": self.format_usage().strip(),
+        }
+        if self.error_hint:
+            payload["hint"] = self.error_hint
+        if self.error_help_command:
+            payload["help_command"] = self.error_help_command
+        self.exit(2, json.dumps(payload, indent=2) + "\n")
+
+
+class TaskCliError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        hint: str | None = None,
+        example: str | None = None,
+        help_command: str | None = None,
+        details: dict | None = None,
+    ):
+        super().__init__(message)
+        self.code = code
+        self.hint = hint
+        self.example = example
+        self.help_command = help_command
+        self.details = details or {}
+
+
+def _print_task_error(exc: Exception, *, help_command: str | None = None) -> None:
+    if isinstance(exc, TaskCliError):
+        payload = {
+            "ok": False,
+            "code": exc.code,
+            "error": str(exc),
+        }
+        if exc.hint:
+            payload["hint"] = exc.hint
+        if exc.example:
+            payload["example"] = exc.example
+        if exc.help_command or help_command:
+            payload["help_command"] = exc.help_command or help_command
+        if exc.details:
+            payload["details"] = exc.details
+    else:
+        payload = {
+            "ok": False,
+            "code": "task_command_failed",
+            "error": str(exc),
+        }
+        if help_command:
+            payload["help_command"] = help_command
+    print(json.dumps(payload, indent=2), file=sys.stderr)
+
+
+def _task_examples_text() -> str:
+    return dedent(
+        """\
+        Examples:
+          vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
+          vibe task add --session-key 'discord::user::123456789' --at '2026-03-31T09:00:00+08:00' --prompt-file briefing.md
+          vibe task add --session-key 'lark::channel::oc_abc::thread::om_123' --cron '30 9 * * 1-5' --prompt 'Post the daily standup reminder in this thread.'
+        """
+    )
+
+
+def _task_add_examples_text() -> str:
+    return dedent(
+        """\
+        Session key format:
+          <platform>::channel::<channel_id>
+          <platform>::user::<user_id>
+          <platform>::channel::<channel_id>::thread::<thread_id>
+          <platform>::user::<user_id>::thread::<thread_id>
+
+        Guidance:
+          Prefer a threadless session key by default.
+          Only append ::thread::<thread_id> when the task must continue inside a specific thread.
+          Use --cron for recurring jobs and --at for one-shot jobs.
+          --timezone controls how --cron and naive --at timestamps are interpreted.
+
+        Examples:
+          vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
+          vibe task add --session-key 'discord::user::123456789' --at '2026-03-31T09:00:00+08:00' --prompt 'Send the release reminder.'
+          vibe task add --session-key 'lark::channel::oc_abc::thread::om_123' --cron '30 9 * * 1-5' --timezone 'Asia/Shanghai' --prompt-file standup.txt
+        """
+    )
 
 
 def _write_json(path, payload):
@@ -164,12 +264,49 @@ def _resolve_task_prompt(args) -> str:
     prompt = (getattr(args, "prompt", None) or "").strip()
     prompt_file = getattr(args, "prompt_file", None)
     if prompt and prompt_file:
-        raise ValueError("use either --prompt or --prompt-file")
+        raise TaskCliError(
+            "use either --prompt or --prompt-file",
+            code="conflicting_prompt_inputs",
+            hint="Pass inline text with --prompt or load it from disk with --prompt-file, but not both.",
+            help_command="vibe task add --help",
+        )
     if prompt:
         return prompt
+    if getattr(args, "prompt", None) is not None:
+        raise TaskCliError(
+            "prompt text cannot be empty",
+            code="empty_prompt",
+            hint="Provide non-empty text after --prompt, or use --prompt-file with a readable text file.",
+            help_command="vibe task add --help",
+        )
     if prompt_file:
-        return Path(prompt_file).read_text(encoding="utf-8").strip()
-    raise ValueError("one of --prompt or --prompt-file is required")
+        try:
+            content = Path(prompt_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise TaskCliError(
+                f"failed to read prompt file: {exc}",
+                code="prompt_file_read_failed",
+                hint="Use --prompt-file with a readable UTF-8 text file.",
+                example="vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt-file briefing.md",
+                help_command="vibe task add --help",
+                details={"prompt_file": prompt_file},
+            ) from exc
+        if not content:
+            raise TaskCliError(
+                "prompt file is empty",
+                code="empty_prompt",
+                hint="Put the prompt text in the file, or pass it directly with --prompt.",
+                example="vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'",
+                help_command="vibe task add --help",
+                details={"prompt_file": prompt_file},
+            )
+        return content
+    raise TaskCliError(
+        "one of --prompt or --prompt-file is required",
+        code="missing_prompt",
+        hint="Pass inline text with --prompt or load it from disk with --prompt-file.",
+        help_command="vibe task add --help",
+    )
 
 
 def _normalize_run_at(value: str, timezone_name: str) -> str:
@@ -203,18 +340,60 @@ def _supported_task_platforms() -> set[str]:
 
 def cmd_task_add(args):
     try:
-        parsed = parse_session_key(args.session_key)
+        try:
+            parsed = parse_session_key(args.session_key)
+        except ValueError as exc:
+            raise TaskCliError(
+                str(exc),
+                code="invalid_session_key",
+                hint="Use <platform>::<channel|user>::<id>[::thread::<thread_id>]. Prefer a threadless key unless the task must reply in one specific thread.",
+                example="slack::channel::C123",
+                help_command="vibe task add --help",
+                details={"session_key": args.session_key},
+            ) from exc
+
         supported_platforms = _supported_task_platforms()
         if parsed.platform not in supported_platforms:
             supported_text = ", ".join(sorted(supported_platforms)) or "none"
-            raise ValueError(f"unsupported task platform: {parsed.platform} (configured: {supported_text})")
+            raise TaskCliError(
+                f"unsupported task platform: {parsed.platform}",
+                code="unsupported_platform",
+                hint="Choose a platform that is enabled in Vibe Remote before creating the task.",
+                example="slack::channel::C123",
+                help_command="vibe task add --help",
+                details={
+                    "requested_platform": parsed.platform,
+                    "configured_platforms": sorted(supported_platforms),
+                    "configured_platforms_text": supported_text,
+                },
+            )
         prompt = _resolve_task_prompt(args)
         timezone_name = args.timezone or _default_timezone_name()
-        ZoneInfo(timezone_name)
+        try:
+            timezone = ZoneInfo(timezone_name)
+        except Exception as exc:
+            raise TaskCliError(
+                f"invalid timezone: {timezone_name}",
+                code="invalid_timezone",
+                hint="Use a valid IANA timezone such as UTC, Asia/Shanghai, or America/Los_Angeles.",
+                example="Asia/Shanghai",
+                help_command="vibe task add --help",
+                details={"timezone": timezone_name},
+            ) from exc
         store = _task_store()
 
         if args.cron:
-            CronTrigger.from_crontab(args.cron, timezone=ZoneInfo(timezone_name))
+            try:
+                CronTrigger.from_crontab(args.cron, timezone=timezone)
+            except ValueError as exc:
+                raise TaskCliError(
+                    f"invalid cron expression: {args.cron}",
+                    code="invalid_cron",
+                    hint="Use standard 5-field crontab format: minute hour day-of-month month day-of-week.",
+                    example="0 * * * *",
+                    help_command="vibe task add --help",
+                    details={"cron": args.cron},
+                ) from exc
             task = store.add_task(
                 session_key=args.session_key,
                 prompt=prompt,
@@ -223,7 +402,17 @@ def cmd_task_add(args):
                 timezone_name=timezone_name,
             )
         else:
-            run_at = _normalize_run_at(args.at, timezone_name)
+            try:
+                run_at = _normalize_run_at(args.at, timezone_name)
+            except ValueError as exc:
+                raise TaskCliError(
+                    f"invalid --at timestamp: {args.at}",
+                    code="invalid_run_at",
+                    hint="Use ISO 8601, for example 2026-03-31T09:00:00+08:00 or 2026-03-31T09:00:00.",
+                    example="2026-03-31T09:00:00+08:00",
+                    help_command="vibe task add --help",
+                    details={"at": args.at, "timezone": timezone_name},
+                ) from exc
             task = store.add_task(
                 session_key=args.session_key,
                 prompt=prompt,
@@ -234,7 +423,7 @@ def cmd_task_add(args):
         print(json.dumps({"ok": True, "task": _task_payload(task)}, indent=2))
         return 0
     except Exception as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+        _print_task_error(exc, help_command="vibe task add --help")
         return 1
 
 
@@ -248,7 +437,15 @@ def cmd_task_show(task_id: str):
     store = _task_store()
     task = store.get_task(task_id)
     if task is None:
-        print(json.dumps({"ok": False, "error": f"task '{task_id}' not found"}), file=sys.stderr)
+        _print_task_error(
+            TaskCliError(
+                f"task '{task_id}' not found",
+                code="task_not_found",
+                hint="Use 'vibe task list' to find a valid task ID before calling show.",
+                help_command="vibe task list",
+                details={"task_id": task_id},
+            )
+        )
         return 1
     print(json.dumps({"ok": True, "task": _task_payload(task)}, indent=2))
     return 0
@@ -258,7 +455,16 @@ def cmd_task_set_enabled(task_id: str, enabled: bool):
     store = _task_store()
     task = store.get_task(task_id)
     if task is None:
-        print(json.dumps({"ok": False, "error": f"task '{task_id}' not found"}), file=sys.stderr)
+        action = "resume" if enabled else "pause"
+        _print_task_error(
+            TaskCliError(
+                f"task '{task_id}' not found",
+                code="task_not_found",
+                hint=f"Use 'vibe task list' to find a valid task ID before calling {action}.",
+                help_command="vibe task list",
+                details={"task_id": task_id},
+            )
+        )
         return 1
     updated = store.set_enabled(task_id, enabled)
     print(json.dumps({"ok": True, "task": _task_payload(updated)}, indent=2))
@@ -269,7 +475,15 @@ def cmd_task_remove(task_id: str):
     store = _task_store()
     removed = store.remove_task(task_id)
     if not removed:
-        print(json.dumps({"ok": False, "error": f"task '{task_id}' not found"}), file=sys.stderr)
+        _print_task_error(
+            TaskCliError(
+                f"task '{task_id}' not found",
+                code="task_not_found",
+                hint="Use 'vibe task list' to find a valid task ID before calling rm.",
+                help_command="vibe task list",
+                details={"task_id": task_id},
+            )
+        )
         return 1
     print(json.dumps({"ok": True, "removed_id": task_id}, indent=2))
     return 0
@@ -791,7 +1005,7 @@ def cmd_restart():
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="vibe")
+    parser = VibeArgumentParser(prog="vibe")
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("stop", help="Stop all services")
@@ -802,32 +1016,88 @@ def build_parser():
     subparsers.add_parser("check-update", help="Check for updates")
     subparsers.add_parser("upgrade", help="Upgrade to latest version")
 
-    task_parser = subparsers.add_parser("task", help="Manage scheduled tasks")
+    task_parser = subparsers.add_parser(
+        "task",
+        help="Manage scheduled tasks",
+        description="Create, inspect, and control scheduled prompts for Vibe Remote.",
+        epilog=_task_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe task --help",
+        error_hint="Run one of the task subcommands below. Use 'vibe task add --help' for task creation details.",
+    )
     task_subparsers = task_parser.add_subparsers(dest="task_command")
+    task_subparsers.required = True
 
-    task_add_parser = task_subparsers.add_parser("add", help="Create a scheduled task")
-    task_add_parser.add_argument("--session-key", required=True, help="Target session key")
+    task_add_parser = task_subparsers.add_parser(
+        "add",
+        help="Create a scheduled task",
+        description="Create a recurring or one-shot scheduled prompt.",
+        epilog=_task_add_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe task add --help",
+        error_hint="Use --session-key together with exactly one schedule flag and one prompt input flag.",
+    )
+    task_add_parser.add_argument(
+        "--session-key",
+        required=True,
+        help="Target session key. Prefer a threadless key unless the task must stay in one thread.",
+    )
     schedule_group = task_add_parser.add_mutually_exclusive_group(required=True)
-    schedule_group.add_argument("--cron", help="Cron expression in crontab format")
+    schedule_group.add_argument("--cron", help="Recurring schedule in 5-field crontab format")
     schedule_group.add_argument("--at", help="One-shot timestamp in ISO 8601 format")
     prompt_group = task_add_parser.add_mutually_exclusive_group(required=True)
     prompt_group.add_argument("--prompt", help="Prompt text to send")
-    prompt_group.add_argument("--prompt-file", help="Read prompt text from a file")
-    task_add_parser.add_argument("--timezone", help="IANA timezone name")
+    prompt_group.add_argument("--prompt-file", help="Read prompt text from a UTF-8 text file")
+    task_add_parser.add_argument("--timezone", help="IANA timezone name used for --cron and naive --at values")
 
-    task_subparsers.add_parser("list", help="List scheduled tasks")
+    task_subparsers.add_parser(
+        "list",
+        help="List scheduled tasks",
+        description="List all stored scheduled tasks.",
+        epilog="Use the returned task IDs with 'vibe task show', 'vibe task pause', 'vibe task resume', or 'vibe task rm'.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe task list --help",
+    )
 
-    task_show_parser = task_subparsers.add_parser("show", help="Show a scheduled task")
-    task_show_parser.add_argument("task_id")
+    task_show_parser = task_subparsers.add_parser(
+        "show",
+        help="Show a scheduled task",
+        description="Show one scheduled task by ID.",
+        epilog="Find task IDs with: vibe task list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe task show --help",
+    )
+    task_show_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
 
-    task_pause_parser = task_subparsers.add_parser("pause", help="Pause a scheduled task")
-    task_pause_parser.add_argument("task_id")
+    task_pause_parser = task_subparsers.add_parser(
+        "pause",
+        help="Pause a scheduled task",
+        description="Disable one scheduled task without deleting it.",
+        epilog="Find task IDs with: vibe task list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe task pause --help",
+    )
+    task_pause_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
 
-    task_resume_parser = task_subparsers.add_parser("resume", help="Resume a scheduled task")
-    task_resume_parser.add_argument("task_id")
+    task_resume_parser = task_subparsers.add_parser(
+        "resume",
+        help="Resume a scheduled task",
+        description="Re-enable one paused scheduled task.",
+        epilog="Find task IDs with: vibe task list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe task resume --help",
+    )
+    task_resume_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
 
-    task_rm_parser = task_subparsers.add_parser("rm", help="Remove a scheduled task")
-    task_rm_parser.add_argument("task_id")
+    task_rm_parser = task_subparsers.add_parser(
+        "rm",
+        help="Remove a scheduled task",
+        description="Delete one scheduled task permanently.",
+        epilog="Find task IDs with: vibe task list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe task rm --help",
+    )
+    task_rm_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
     return parser
 
 
