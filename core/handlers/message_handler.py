@@ -106,7 +106,7 @@ class MessageHandler(BaseHandler):
             payload = dict(context.platform_specific or {})
             payload["parsed_session_key"] = parsed_session_key
             context.platform_specific = payload
-        await self._handle_turn(context, message, source=self.TURN_SOURCE_SCHEDULED)
+        return await self._handle_turn(context, message, source=self.TURN_SOURCE_SCHEDULED)
 
     async def _prepare_turn_context(self, context: MessageContext, source: str) -> MessageContext:
         payload = dict(context.platform_specific or {})
@@ -118,7 +118,7 @@ class MessageHandler(BaseHandler):
         prepared.platform_specific = prepared_payload
         return prepared
 
-    async def _handle_turn(self, context: MessageContext, message: str, *, source: str):
+    async def _handle_turn(self, context: MessageContext, message: str, *, source: str) -> Optional[str]:
         """Shared turn-processing pipeline used by both human and scheduled turns."""
         ack_reaction_message_id = None
         ack_reaction_emoji = None
@@ -137,7 +137,7 @@ class MessageHandler(BaseHandler):
             if (not message or not message.strip()) and not has_files:
                 if is_human:
                     await self.controller.command_handler.handle_start(context, "")
-                return
+                return None
 
             if is_human:
                 # Deduplication: check if this message has already been processed
@@ -151,7 +151,7 @@ class MessageHandler(BaseHandler):
                             f"Skipping already processed message: channel={context.channel_id}, "
                             f"thread={thread_ts}, message={message_ts}"
                         )
-                        return
+                        return None
                     # Record this message as processed immediately to prevent duplicates
                     # even if processing fails (we don't want to retry failed messages forever)
                     self.sessions.record_processed_message(context.channel_id, thread_ts, message_ts)
@@ -161,7 +161,7 @@ class MessageHandler(BaseHandler):
             # Allow "stop" shortcut inside Slack threads
             if is_human and context.thread_id and message.strip().lower() in ["stop", "/stop"]:
                 if await self._handle_inline_stop(context):
-                    return
+                    return None
 
             if not self.session_handler:
                 raise RuntimeError("Session handler not initialized")
@@ -335,9 +335,11 @@ class MessageHandler(BaseHandler):
                 await self._handle_missing_agent(context, agent_name)
                 # Clean up reaction on error
                 await self._remove_ack_reaction(context, request)
+                return f"agent '{agent_name}' is not available"
             finally:
                 if request.ack_message_id:
                     await self._delete_ack(context.channel_id, request)
+            return None
         except Exception as e:
             logger.error(f"Error processing user message: {e}", exc_info=True)
             # Clean up reaction on any exception
@@ -370,6 +372,7 @@ class MessageHandler(BaseHandler):
                 context,
                 self.formatter.format_error(self._t("error.processMessageFailed", error=str(e))),
             )
+            return str(e)
 
     @staticmethod
     def _sanitize_identity(value: str) -> str:

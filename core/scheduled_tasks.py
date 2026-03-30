@@ -219,14 +219,18 @@ class ScheduledTaskStore:
         self._save()
         return task
 
-    def mark_task_result(self, task_id: str, *, error: Optional[str]) -> None:
-        task = self._tasks[task_id]
+    def mark_task_result(self, task_id: str, *, error: Optional[str]) -> bool:
+        self.maybe_reload()
+        task = self._tasks.get(task_id)
+        if task is None:
+            return False
         task.last_run_at = _utc_now_iso()
         task.last_error = error
         if task.schedule_type == "at":
             task.enabled = False
         task.updated_at = _utc_now_iso()
         self._save()
+        return True
 
 
 class ScheduledTaskService:
@@ -331,7 +335,7 @@ class ScheduledTaskService:
         try:
             target = parse_session_key(task.session_key)
             context = await self._build_context(target, task_id=task.id)
-            await self.controller.message_handler.handle_scheduled_message(
+            error = await self.controller.message_handler.handle_scheduled_message(
                 context=context,
                 message=task.prompt,
                 parsed_session_key=target,
