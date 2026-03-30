@@ -240,7 +240,10 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             if getattr(self.controller.config, "reply_enhancements", True):
                 from core.reply_enhancer import build_reply_enhancements_prompt
 
-                reply_system = build_reply_enhancements_prompt(include_quick_replies=platform != "wechat")
+                reply_system = build_reply_enhancements_prompt(
+                    include_quick_replies=platform != "wechat",
+                    context=request.context,
+                )
 
             request_tools = {"question": False} if platform == "wechat" else None
 
