@@ -204,6 +204,13 @@ Examples:
 - Current thread only when needed: `vibe task add --session-key '{session_key_with_thread}' --cron '0 9 * * *' --prompt 'Post the daily summary in this thread.'`
 """
 
+_VIBE_SKILL_PROMPT = """\
+
+## 4. Vibe Remote skill
+When the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes.
+Use that skill for configuration file locations, scope rules, routing behavior, scheduled-task operations, and troubleshooting steps.
+"""
+
 
 def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform: Optional[str] = None) -> str:
     from core.scheduled_tasks import build_session_key_for_context
@@ -238,6 +245,7 @@ def build_reply_enhancements_prompt(
         prompt += _QUICK_REPLIES_PROMPT
     if context is not None:
         prompt += _build_scheduled_tasks_prompt(context, fallback_platform=fallback_platform)
+    prompt += _VIBE_SKILL_PROMPT
     return prompt
 
 

@@ -65,6 +65,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("## 1. Send files", prompt)
         self.assertNotIn("## 2. Quick-reply buttons", prompt)
+        self.assertIn("https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md", prompt)
 
     def test_prompt_includes_scheduled_task_usage_with_threadless_default_session_key(self):
         context = MessageContext(
@@ -82,6 +83,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Default session key: `slack::channel::C1`", prompt)
         self.assertIn("Current thread ID: `171717.123`", prompt)
         self.assertIn("slack::channel::C1::thread::171717.123", prompt)
+        self.assertIn("https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md", prompt)
 
     def test_prompt_uses_fallback_platform_for_unannotated_context(self):
         context = MessageContext(
