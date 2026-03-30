@@ -194,7 +194,7 @@ class V2Config:
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "typing"
-    show_duration: bool = True  # Show task duration in result messages
+    show_duration: bool = False  # Show task duration in result messages
     include_user_info: bool = True  # Prepend user identity to agent messages
     reply_enhancements: bool = True  # Enable file sending & quick-reply buttons
     language: str = "en"  # Global language setting (see vibe/i18n)
@@ -347,9 +347,9 @@ class V2Config:
         if ack_mode not in {"reaction", "message", "typing"}:
             raise ValueError("Config 'ack_mode' must be 'reaction', 'message', or 'typing'")
 
-        show_duration = payload.get("show_duration", True)
+        show_duration = payload.get("show_duration", False)
         if not isinstance(show_duration, bool):
-            show_duration = True
+            show_duration = False
 
         include_user_info = payload.get("include_user_info", True)
         if not isinstance(include_user_info, bool):

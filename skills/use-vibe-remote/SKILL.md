@@ -2,7 +2,7 @@
 name: use-vibe-remote
 slug: use-vibe-remote
 description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, scheduled tasks, and operational state.
-version: 0.1.2
+version: 0.1.3
 ---
 
 # Use Vibe Remote
@@ -105,7 +105,7 @@ Current top-level structure:
   "ui": {},
   "update": {},
   "ack_mode": "reaction",
-  "show_duration": true,
+  "show_duration": false,
   "include_user_info": true,
   "reply_enhancements": true,
   "language": "en"
