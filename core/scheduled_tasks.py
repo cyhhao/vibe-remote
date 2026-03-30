@@ -253,8 +253,11 @@ class ScheduledTaskService:
             return
         self.scheduler.start()
         self._running = True
-        self.reconcile_jobs()
         self._reconcile_task = asyncio.create_task(self._watch_store())
+        try:
+            self.reconcile_jobs()
+        except Exception as exc:
+            logger.error("Initial scheduled task reconcile failed: %s", exc, exc_info=True)
 
     async def stop(self) -> None:
         self._running = False
@@ -297,15 +300,21 @@ class ScheduledTaskService:
                 continue
             if self.scheduler.get_job(task.id):
                 self.scheduler.remove_job(task.id)
-            self.scheduler.add_job(
-                self._run_task,
-                trigger=self._build_trigger(task),
-                id=task.id,
-                replace_existing=True,
-                coalesce=True,
-                max_instances=1,
-                args=[task.id],
-            )
+            try:
+                trigger = self._build_trigger(task)
+                self.scheduler.add_job(
+                    self._run_task,
+                    trigger=trigger,
+                    id=task.id,
+                    replace_existing=True,
+                    coalesce=True,
+                    max_instances=1,
+                    args=[task.id],
+                )
+            except Exception as exc:
+                self._job_signatures.pop(task.id, None)
+                logger.error("Failed to reconcile scheduled task %s: %s", task.id, exc, exc_info=True)
+                continue
             self._job_signatures[task.id] = signature
 
         for job in list(self.scheduler.get_jobs()):

@@ -11,6 +11,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.scheduled_tasks import ScheduledTaskService, ScheduledTaskStore, parse_session_key
 
 
+class _StubScheduler:
+    def __init__(self) -> None:
+        self.jobs = {}
+        self.started = False
+        self.shutdown_calls = 0
+
+    def start(self) -> None:
+        self.started = True
+
+    def shutdown(self, wait: bool = False) -> None:
+        self.shutdown_calls += 1
+
+    def get_job(self, job_id):
+        return self.jobs.get(job_id)
+
+    def add_job(self, func, trigger, id, replace_existing, coalesce, max_instances, args):
+        self.jobs[id] = SimpleNamespace(id=id, trigger=trigger, args=args)
+
+    def remove_job(self, job_id):
+        self.jobs.pop(job_id, None)
+
+    def get_jobs(self):
+        return list(self.jobs.values())
+
+
 def test_parse_session_key_accepts_channel_and_thread() -> None:
     parsed = parse_session_key("slack::channel::C123::thread::171717.123")
 
@@ -138,3 +163,57 @@ def test_run_task_records_scheduled_handler_error(tmp_path: Path) -> None:
     assert updated is not None
     assert updated.last_error == "scheduled turn failed"
     assert updated.enabled is False
+
+
+def test_reconcile_jobs_skips_invalid_tasks_and_keeps_valid_jobs(tmp_path: Path) -> None:
+    store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+    valid = store.add_task(
+        session_key="slack::channel::C123",
+        prompt="send digest",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+    invalid = store.add_task(
+        session_key="slack::channel::C123",
+        prompt="broken digest",
+        schedule_type="cron",
+        cron="not-a-cron",
+        timezone_name="Asia/Shanghai",
+    )
+    controller = SimpleNamespace(platform_settings_managers={})
+    service = ScheduledTaskService(controller=controller, store=store)
+    service.scheduler = _StubScheduler()
+
+    service.reconcile_jobs()
+
+    assert valid.id in service.scheduler.jobs
+    assert invalid.id not in service.scheduler.jobs
+
+
+def test_start_keeps_watcher_alive_after_initial_reconcile_failure(tmp_path: Path) -> None:
+    store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+    controller = SimpleNamespace(platform_settings_managers={})
+    service = ScheduledTaskService(controller=controller, store=store)
+    service.scheduler = _StubScheduler()
+
+    async def _watch_store():
+        await asyncio.Event().wait()
+
+    def _fail_once():
+        raise ValueError("bad trigger")
+
+    service._watch_store = _watch_store  # type: ignore[method-assign]
+    service.reconcile_jobs = _fail_once  # type: ignore[method-assign]
+
+    async def _exercise():
+        service.start()
+        assert service._running is True
+        assert service._reconcile_task is not None
+        service._reconcile_task.cancel()
+        try:
+            await service._reconcile_task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_exercise())

@@ -15,6 +15,9 @@ class _FakeSessions:
     def has_any_agent_session_base(self, user_id, base_session_id):
         return user_id == "discord::C123" and base_session_id == "discord_555"
 
+    def is_thread_active(self, user_id, channel_id, thread_ts):
+        return user_id == "scheduled" and channel_id == "C123" and thread_ts == "777"
+
 
 class _FakeChannel:
     async def fetch_message(self, message_id):
@@ -51,3 +54,12 @@ class DiscordReplyAnchorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(prepared.thread_id, "777")
         self.assertEqual(prepared.platform_specific["reply_anchor_base_session_id"], "discord_555")
         self.assertEqual(prepared.platform_specific["reply_anchor_message_id"], "555")
+
+    def test_scheduled_thread_activity_allows_replies_under_mention_gating(self):
+        bot = object.__new__(DiscordBot)
+        bot.sessions = _FakeSessions()
+        bot.settings_manager = object()
+
+        allowed = DiscordBot._is_thread_reply_allowed(bot, "U123", "C123", "777")
+
+        self.assertTrue(allowed)
