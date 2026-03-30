@@ -71,6 +71,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md", prompt)
         self.assertIn("## 5. User preference file", prompt)
         self.assertIn("`/tmp/user_preferences.md`", prompt)
+        self.assertIn("`<platform>/<user_id>`", prompt)
 
     def test_prompt_includes_scheduled_task_usage_with_threadless_default_session_key(self):
         context = MessageContext(
@@ -91,7 +92,9 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("slack::channel::C1::thread::171717.123", prompt)
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
         self.assertIn("https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md", prompt)
-        self.assertIn("When useful, you may read it to learn the user's stable habits, preferences, and recurring rules.", prompt)
+        self.assertIn("When useful, you may read it to learn stable habits, preferences, and recurring rules.", prompt)
+        self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
+        self.assertIn("Only write to a shared section when a rule truly applies across users.", prompt)
         self.assertIn("Keep it short, factual, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
 
     def test_prompt_uses_fallback_platform_for_unannotated_context(self):
@@ -110,6 +113,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIn("Default session key: `slack::channel::C1`", prompt)
+        self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
 
     def test_file_links_with_parentheses_are_preserved(self):
         enhanced = process_reply("![video](file:///Users/test/SaveTwitter.Net_GABV3XNWYAARAZz(gif).mp4)")

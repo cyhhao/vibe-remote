@@ -22,4 +22,6 @@ def test_ensure_data_dirs(tmp_path, monkeypatch):
     assert preferences_path.exists()
     text = preferences_path.read_text(encoding="utf-8")
     assert "# User Preferences" in text
+    assert "Prefer user-specific notes under `## Users`." in text
+    assert "### platform/user_id" in text
     assert "Do not store secrets here unless the user explicitly asks." in text

@@ -63,21 +63,18 @@ def get_user_preferences_path() -> Path:
 
 _USER_PREFERENCES_TEMPLATE = """# User Preferences
 
-Use this file for stable user-specific habits, preferences, and recurring rules.
+Use this file for stable long-term habits, preferences, and recurring rules.
+Prefer user-specific notes under `## Users`.
+Only put rules under `## Shared` when they truly apply across users.
 Keep it concise, factual, and deduplicated.
 Do not store secrets here unless the user explicitly asks.
 
-## Communication
-- Add stable communication preferences here.
+## Shared
+- Add rules here only when they truly apply across users.
 
-## Engineering Habits
-- Add stable workflow preferences here.
-
-## Project Rules
-- Add recurring project or repo rules here.
-
-## Avoid
-- Add stable things to avoid here.
+## Users
+### platform/user_id
+- Add stable preferences for this user here.
 """
 
 

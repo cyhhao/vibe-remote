@@ -218,8 +218,9 @@ _USER_PREFERENCES_PROMPT = """\
 
 ## 5. User preference file
 A shared user preference file is available at `{preferences_path}`.
-When useful, you may read it to learn the user's stable habits, preferences, and recurring rules.
-You may also update it as you learn durable preferences from repeated interactions.
+When useful, you may read it to learn stable habits, preferences, and recurring rules.
+You may also update it, usually in the current user's section: `{user_section}`.
+Only write to a shared section when a rule truly applies across users.
 Keep it short, factual, deduplicated, and free of secrets unless the user explicitly asks.
 """
 
@@ -244,6 +245,23 @@ def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform:
     )
 
 
+def _build_user_preferences_prompt(
+    context: Optional[MessageContext],
+    *,
+    fallback_platform: Optional[str] = None,
+) -> str:
+    platform = fallback_platform
+    user_id = "<user_id>"
+    if context is not None:
+        platform = context.platform or context.platform_specific.get("platform") or fallback_platform
+        user_id = context.user_id or "<user_id>"
+    user_section = f"{platform or '<platform>'}/{user_id}"
+    return _USER_PREFERENCES_PROMPT.format(
+        preferences_path=f"`{paths.get_user_preferences_path()}`",
+        user_section=user_section,
+    )
+
+
 def build_reply_enhancements_prompt(
     *,
     include_quick_replies: bool = True,
@@ -258,7 +276,7 @@ def build_reply_enhancements_prompt(
     if context is not None:
         prompt += _build_scheduled_tasks_prompt(context, fallback_platform=fallback_platform)
     prompt += _VIBE_SKILL_PROMPT
-    prompt += _USER_PREFERENCES_PROMPT.format(preferences_path=f"`{paths.get_user_preferences_path()}`")
+    prompt += _build_user_preferences_prompt(context, fallback_platform=fallback_platform)
     return prompt
 
 
