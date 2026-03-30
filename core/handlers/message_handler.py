@@ -183,7 +183,7 @@ class MessageHandler(BaseHandler):
                     context,
                     source_base_session_id=reply_anchor_base_session_id,
                     alias_base_session_id=base_session_id,
-                    clear_source=True,
+                    clear_source=False,
                 )
             settings_key = self._get_settings_key(context)
             session_key = self._get_session_key(context)

@@ -183,6 +183,9 @@ class _StubController:
 
 
 class _StubSessionHandler:
+    def __init__(self):
+        self.alias_calls = []
+
     @staticmethod
     def get_session_info(context, source="human"):
         return ("base-session", "/tmp", "base-session:/tmp")
@@ -191,8 +194,14 @@ class _StubSessionHandler:
     def should_allocate_scheduled_anchor(context, source="human"):
         return False
 
-    @staticmethod
-    def alias_session_base(context, *, source_base_session_id, alias_base_session_id, clear_source=False):
+    def alias_session_base(self, context, *, source_base_session_id, alias_base_session_id, clear_source=False):
+        self.alias_calls.append(
+            {
+                "source_base_session_id": source_base_session_id,
+                "alias_base_session_id": alias_base_session_id,
+                "clear_source": clear_source,
+            }
+        )
         return False
 
 
@@ -228,6 +237,33 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.ack_reaction_message_id, "m1")
         self.assertEqual(request.ack_reaction_emoji, ":eyes:")
         self.assertEqual(controller.im_client.reactions, [("C1", "m1", ":eyes:")])
+
+    async def test_reply_anchor_alias_keeps_original_anchor_mapping(self):
+        controller = _StubController(platform="discord", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        session_handler = _StubSessionHandler()
+        handler.set_session_handler(session_handler)
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            thread_id="thread-1",
+            message_id="m1",
+            platform="discord",
+            platform_specific={"reply_anchor_base_session_id": "discord_anchor-1"},
+        )
+
+        await handler.handle_user_message(context, "hello")
+
+        self.assertEqual(
+            session_handler.alias_calls,
+            [
+                {
+                    "source_base_session_id": "discord_anchor-1",
+                    "alias_base_session_id": "base-session",
+                    "clear_source": False,
+                }
+            ],
+        )
 
     async def test_wechat_context_forces_typing_even_when_primary_platform_is_slack(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
