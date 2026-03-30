@@ -130,6 +130,30 @@ class ScheduledTask:
         )
 
 
+@dataclass
+class TaskExecutionRequest:
+    id: str
+    request_type: str
+    created_at: str = field(default_factory=_utc_now_iso)
+    task_id: Optional[str] = None
+    session_key: Optional[str] = None
+    prompt: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "TaskExecutionRequest":
+        return cls(
+            id=str(payload.get("id") or uuid4().hex[:12]),
+            request_type=str(payload.get("request_type") or ""),
+            created_at=str(payload.get("created_at") or _utc_now_iso()),
+            task_id=payload.get("task_id"),
+            session_key=payload.get("session_key"),
+            prompt=payload.get("prompt"),
+        )
+
+
 class ScheduledTaskStore:
     def __init__(self, path: Optional[Path] = None):
         self.path = path or (paths.get_state_dir() / "scheduled_tasks.json")
@@ -238,30 +262,166 @@ class ScheduledTaskStore:
         self._save()
         return task
 
-    def mark_task_result(self, task_id: str, *, error: Optional[str]) -> bool:
+    def mark_task_result(self, task_id: str, *, error: Optional[str], disable_one_shot: bool = True) -> bool:
         self.maybe_reload()
         task = self._tasks.get(task_id)
         if task is None:
             return False
         task.last_run_at = _utc_now_iso()
         task.last_error = error
-        if task.schedule_type == "at":
+        if disable_one_shot and task.schedule_type == "at":
             task.enabled = False
         task.updated_at = _utc_now_iso()
         self._save()
         return True
 
 
+class TaskExecutionStore:
+    def __init__(self, root: Optional[Path] = None):
+        self.root = root or (paths.get_state_dir() / "task_requests")
+        self.pending_dir = self.root / "pending"
+        self.processing_dir = self.root / "processing"
+        self.completed_dir = self.root / "completed"
+        self._ensure_dirs()
+
+    def _ensure_dirs(self) -> None:
+        self.pending_dir.mkdir(parents=True, exist_ok=True)
+        self.processing_dir.mkdir(parents=True, exist_ok=True)
+        self.completed_dir.mkdir(parents=True, exist_ok=True)
+
+    def _request_path(self, request_id: str, *, state: str) -> Path:
+        directory = {
+            "pending": self.pending_dir,
+            "processing": self.processing_dir,
+            "completed": self.completed_dir,
+        }[state]
+        return directory / f"{request_id}.json"
+
+    def recover_processing(self) -> None:
+        self._ensure_dirs()
+        for path in self.processing_dir.glob("*.json"):
+            pending_path = self.pending_dir / path.name
+            completed_path = self.completed_dir / path.name
+            if pending_path.exists():
+                path.unlink(missing_ok=True)
+                continue
+            if completed_path.exists():
+                path.unlink(missing_ok=True)
+                continue
+            path.replace(pending_path)
+
+    def enqueue(self, request: TaskExecutionRequest) -> TaskExecutionRequest:
+        self._ensure_dirs()
+        path = self._request_path(request.id, state="pending")
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=self.pending_dir,
+            suffix=".tmp",
+            delete=False,
+            encoding="utf-8",
+        ) as handle:
+            json.dump(request.to_dict(), handle, indent=2)
+            tmp_path = Path(handle.name)
+        tmp_path.replace(path)
+        return request
+
+    def enqueue_task_run(self, task_id: str) -> TaskExecutionRequest:
+        return self.enqueue(TaskExecutionRequest(id=uuid4().hex[:12], request_type="task_run", task_id=task_id))
+
+    def enqueue_hook_send(self, *, session_key: str, prompt: str) -> TaskExecutionRequest:
+        return self.enqueue(
+            TaskExecutionRequest(
+                id=uuid4().hex[:12],
+                request_type="hook_send",
+                session_key=session_key,
+                prompt=prompt,
+            )
+        )
+
+    def list_pending(self) -> list[TaskExecutionRequest]:
+        self._ensure_dirs()
+        requests: list[TaskExecutionRequest] = []
+        for path in self.pending_dir.glob("*.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.error("Failed to read task request %s: %s", path, exc)
+                continue
+            if not isinstance(payload, dict):
+                continue
+            requests.append(TaskExecutionRequest.from_dict(payload))
+        return sorted(requests, key=lambda item: (item.created_at, item.id))
+
+    def claim(self, request_id: str) -> Optional[TaskExecutionRequest]:
+        pending_path = self._request_path(request_id, state="pending")
+        processing_path = self._request_path(request_id, state="processing")
+        if not pending_path.exists():
+            return None
+        pending_path.replace(processing_path)
+        payload = json.loads(processing_path.read_text(encoding="utf-8"))
+        return TaskExecutionRequest.from_dict(payload)
+
+    def requeue(self, request_id: str) -> None:
+        processing_path = self._request_path(request_id, state="processing")
+        pending_path = self._request_path(request_id, state="pending")
+        if not processing_path.exists():
+            return
+        if pending_path.exists():
+            processing_path.unlink(missing_ok=True)
+            return
+        processing_path.replace(pending_path)
+
+    def complete(
+        self,
+        request: TaskExecutionRequest,
+        *,
+        ok: bool,
+        error: Optional[str] = None,
+        task_id: Optional[str] = None,
+        session_key: Optional[str] = None,
+    ) -> None:
+        processing_path = self._request_path(request.id, state="processing")
+        completed_path = self._request_path(request.id, state="completed")
+        payload = request.to_dict()
+        payload.update(
+            {
+                "ok": ok,
+                "error": error,
+                "completed_at": _utc_now_iso(),
+                "task_id": task_id if task_id is not None else request.task_id,
+                "session_key": session_key if session_key is not None else request.session_key,
+            }
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=self.completed_dir,
+            suffix=".tmp",
+            delete=False,
+            encoding="utf-8",
+        ) as handle:
+            json.dump(payload, handle, indent=2)
+            tmp_path = Path(handle.name)
+        tmp_path.replace(completed_path)
+        processing_path.unlink(missing_ok=True)
+
+
 class ScheduledTaskService:
     """Controller-owned runtime that executes persisted scheduled tasks."""
 
-    def __init__(self, controller, store: Optional[ScheduledTaskStore] = None):
+    def __init__(
+        self,
+        controller,
+        store: Optional[ScheduledTaskStore] = None,
+        request_store: Optional[TaskExecutionStore] = None,
+    ):
         self.controller = controller
         self.store = store or ScheduledTaskStore()
+        self.request_store = request_store or TaskExecutionStore()
         self.scheduler = AsyncIOScheduler(timezone="UTC")
         self._reconcile_task: Optional[asyncio.Task] = None
         self._job_signatures: Dict[str, tuple[Any, ...]] = {}
         self._running = False
+        self.request_store.recover_processing()
 
     def validate_platform(self, platform: str) -> None:
         if platform not in self.controller.platform_settings_managers:
@@ -294,6 +454,7 @@ class ScheduledTaskService:
             try:
                 if self.store.maybe_reload():
                     self.reconcile_jobs()
+                await self._drain_requests()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -358,24 +519,114 @@ class ScheduledTaskService:
         task = self.store.get_task(task_id)
         if not task or not task.enabled:
             return
+        execution_id = uuid4().hex[:12]
+        error = await self._execute_task(task, execution_id=execution_id, disable_one_shot=True)
+        if error:
+            logger.error("Scheduled task %s failed: %s", task_id, error)
 
+    async def _drain_requests(self) -> None:
+        for pending in self.request_store.list_pending():
+            request = self.request_store.claim(pending.id)
+            if request is None:
+                continue
+            error: Optional[str] = None
+            should_complete = True
+            task_id = request.task_id
+            session_key = request.session_key
+            try:
+                if request.request_type == "task_run":
+                    self.store.maybe_reload()
+                    task = self.store.get_task(request.task_id or "")
+                    if task is None:
+                        raise ValueError(f"task '{request.task_id}' not found")
+                    task_id = task.id
+                    session_key = task.session_key
+                    error = await self._execute_task(task, execution_id=request.id, disable_one_shot=False)
+                elif request.request_type == "hook_send":
+                    if not request.session_key or not request.prompt:
+                        raise ValueError("hook request requires both session_key and prompt")
+                    error = await self._execute_request(
+                        session_key=request.session_key,
+                        prompt=request.prompt,
+                        execution_id=request.id,
+                        trigger_kind="hook",
+                    )
+                else:
+                    raise ValueError(f"unknown task request type: {request.request_type}")
+            except asyncio.CancelledError:
+                self.request_store.requeue(request.id)
+                should_complete = False
+                raise
+            except Exception as exc:
+                error = str(exc)
+                logger.error("Task execution request %s failed: %s", request.id, exc, exc_info=True)
+            finally:
+                if should_complete:
+                    self.request_store.complete(
+                        request,
+                        ok=not error,
+                        error=error,
+                        task_id=task_id,
+                        session_key=session_key,
+                    )
+
+    async def _execute_task(
+        self,
+        task: ScheduledTask,
+        *,
+        execution_id: str,
+        disable_one_shot: bool,
+    ) -> Optional[str]:
         error: Optional[str] = None
         try:
-            target = parse_session_key(task.session_key)
-            context = await self._build_context(target, task_id=task.id)
-            error = await self.controller.message_handler.handle_scheduled_message(
-                context=context,
-                message=task.prompt,
-                parsed_session_key=target,
+            error = await self._execute_request(
+                session_key=task.session_key,
+                prompt=task.prompt,
+                execution_id=execution_id,
+                task_id=task.id,
+                trigger_kind="scheduled",
             )
+        except asyncio.CancelledError:
+            self.reconcile_jobs()
+            raise
         except Exception as exc:
             error = str(exc)
-            logger.error("Scheduled task %s failed: %s", task_id, exc, exc_info=True)
-        finally:
-            self.store.mark_task_result(task_id, error=error)
-            self.reconcile_jobs()
+            logger.error("Scheduled task %s failed: %s", task.id, exc, exc_info=True)
+        self.store.mark_task_result(task.id, error=error, disable_one_shot=disable_one_shot)
+        self.reconcile_jobs()
+        return error
 
-    async def _build_context(self, target: ParsedSessionKey, *, task_id: str) -> MessageContext:
+
+    async def _execute_request(
+        self,
+        *,
+        session_key: str,
+        prompt: str,
+        execution_id: str,
+        task_id: Optional[str] = None,
+        trigger_kind: str,
+    ) -> Optional[str]:
+        target = parse_session_key(session_key)
+        context = await self._build_context(
+            target,
+            execution_id=execution_id,
+            task_id=task_id,
+            trigger_kind=trigger_kind,
+        )
+        return await self.controller.message_handler.handle_scheduled_message(
+            context=context,
+            message=prompt,
+            parsed_session_key=target,
+        )
+
+    async def _build_context(
+        self,
+        target: ParsedSessionKey,
+        *,
+        execution_id: str,
+        task_id: Optional[str] = None,
+        trigger_kind: str = "scheduled",
+    ) -> MessageContext:
         platform = target.platform
         self.validate_platform(platform)
         settings_manager = self.controller.platform_settings_managers[platform]
@@ -398,11 +649,25 @@ class ScheduledTaskService:
             channel_id=channel_id,
             platform=platform,
             thread_id=target.thread_id,
-            message_id=f"scheduled:{task_id}:{uuid4().hex}",
+            message_id=self._build_message_id(
+                execution_id=execution_id,
+                task_id=task_id,
+                trigger_kind=trigger_kind,
+            ),
             platform_specific={
                 "platform": platform,
                 "is_dm": target.is_dm,
                 "turn_source": "scheduled",
                 "session_key_external": target.to_key(),
+                "task_execution_id": execution_id,
+                "task_trigger_kind": trigger_kind,
             },
         )
+
+    @staticmethod
+    def _build_message_id(*, execution_id: str, task_id: Optional[str], trigger_kind: str) -> str:
+        if trigger_kind == "hook":
+            return f"hook:{execution_id}"
+        if task_id:
+            return f"scheduled:{task_id}:{execution_id}"
+        return f"scheduled:{execution_id}"

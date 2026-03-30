@@ -36,6 +36,11 @@ def _parse_task_add(argv: list[str]):
     return parser.parse_args(["task", "add", *argv])
 
 
+def _parse_hook_send(argv: list[str]):
+    parser = cli.build_parser()
+    return parser.parse_args(["hook", "send", *argv])
+
+
 def _capture_stderr_json(func, *args):
     stderr = io.StringIO()
     with redirect_stderr(stderr):
@@ -97,7 +102,7 @@ def test_task_help_describes_session_key_guidance(capsys) -> None:
     captured = capsys.readouterr()
     assert "Create, inspect, and control scheduled prompts for Vibe Remote." in captured.out
     assert "vibe task add --session-key 'slack::channel::C123'" in captured.out
-    assert "{add,list,show,pause,resume,remove}" in captured.out
+    assert "{add,list,show,pause,resume,run,remove}" in captured.out
     assert "rm (remove)" not in captured.out
     assert "\n    ls" not in captured.out
 
@@ -113,6 +118,31 @@ def test_task_add_help_includes_examples_and_threadless_guidance(capsys) -> None
     assert "Prefer a threadless session key by default." in captured.out
     assert "<platform>::channel::<channel_id>" in captured.out
     assert "vibe task add --session-key 'slack::channel::C123'" in captured.out
+
+
+def test_task_list_help_mentions_completed_one_shots_hidden_by_default(capsys) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["task", "list", "--help"])
+
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert "Completed one-shot tasks are hidden unless --all is used." in captured.out
+    assert "--all" in captured.out
+
+
+def test_hook_send_help_includes_examples_and_threadless_guidance(capsys) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["hook", "send", "--help"])
+
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert "`vibe hook send` queues one asynchronous turn" in captured.out
+    assert "<platform>::channel::<channel_id>" in captured.out
+    assert "vibe hook send --session-key 'slack::channel::C123'" in captured.out
 
 
 def test_task_add_parse_error_is_structured_json(capsys) -> None:
@@ -212,6 +242,119 @@ def test_task_show_missing_id_returns_guidance(tmp_path: Path) -> None:
     assert result == 1
     assert payload["code"] == "task_not_found"
     assert payload["help_command"] == "vibe task list"
+
+
+def test_task_run_missing_id_returns_guidance(tmp_path: Path) -> None:
+    store_path = tmp_path / "scheduled_tasks.json"
+
+    with patch("vibe.cli._task_store", return_value=cli.ScheduledTaskStore(store_path)):
+        result, payload = _capture_stderr_json(cli.cmd_task_run, "missing")
+
+    assert result == 1
+    assert payload["code"] == "task_not_found"
+    assert payload["help_command"] == "vibe task list"
+
+
+def test_task_list_hides_completed_one_shots_by_default(tmp_path: Path, capsys) -> None:
+    store_path = tmp_path / "scheduled_tasks.json"
+    store = cli.ScheduledTaskStore(store_path)
+    store.add_task(
+        session_key="slack::channel::C123",
+        prompt="recurring",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+    done = store.add_task(
+        session_key="slack::channel::C123",
+        prompt="one-shot",
+        schedule_type="at",
+        run_at="2026-03-31T09:00:00+08:00",
+        timezone_name="Asia/Shanghai",
+    )
+    store.mark_task_result(done.id, error=None)
+
+    with patch("vibe.cli._task_store", return_value=store):
+        result = cli.cmd_task_list()
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    ids = [item["id"] for item in payload["tasks"]]
+    assert done.id not in ids
+
+
+def test_task_list_all_includes_completed_one_shots(tmp_path: Path, capsys) -> None:
+    store_path = tmp_path / "scheduled_tasks.json"
+    store = cli.ScheduledTaskStore(store_path)
+    done = store.add_task(
+        session_key="slack::channel::C123",
+        prompt="one-shot",
+        schedule_type="at",
+        run_at="2026-03-31T09:00:00+08:00",
+        timezone_name="Asia/Shanghai",
+    )
+    store.mark_task_result(done.id, error=None)
+
+    with patch("vibe.cli._task_store", return_value=store):
+        result = cli.cmd_task_list(include_all=True)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    ids = [item["id"] for item in payload["tasks"]]
+    assert done.id in ids
+
+
+def test_task_run_enqueues_request(tmp_path: Path, capsys) -> None:
+    store_path = tmp_path / "scheduled_tasks.json"
+    request_root = tmp_path / "task_requests"
+    store = cli.ScheduledTaskStore(store_path)
+    task = store.add_task(
+        session_key="slack::channel::C123",
+        prompt="hello",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+
+    with (
+        patch("vibe.cli._task_store", return_value=store),
+        patch("vibe.cli._task_request_store", return_value=cli.TaskExecutionStore(request_root)),
+    ):
+        result = cli.cmd_task_run(task.id)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["task_id"] == task.id
+    assert (request_root / "pending" / f"{payload['execution_id']}.json").exists()
+
+
+def test_hook_send_rejects_invalid_session_key_with_hint() -> None:
+    args = _parse_hook_send(["--session-key", "slack::thread::123", "--prompt", "hello"])
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_hook_send, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_session_key"
+    assert payload["help_command"] == "vibe hook send --help"
+
+
+def test_hook_send_enqueues_request(tmp_path: Path, capsys) -> None:
+    args = _parse_hook_send(["--session-key", "slack::channel::C123", "--prompt", "hello"])
+    request_root = tmp_path / "task_requests"
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._task_request_store", return_value=cli.TaskExecutionStore(request_root)),
+    ):
+        result = cli.cmd_hook_send(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["session_key"] == "slack::channel::C123"
+    assert (request_root / "pending" / f"{payload['execution_id']}.json").exists()
 
 
 def test_task_remove_alias_parses_to_remove_command() -> None:
