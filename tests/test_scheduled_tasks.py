@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.scheduled_tasks import (
     ScheduledTaskService,
     ScheduledTaskStore,
+    TaskExecutionRequest,
     TaskExecutionStore,
     build_session_key_for_context,
     parse_session_key,
@@ -273,6 +274,30 @@ def test_request_store_constructor_does_not_requeue_processing_files(tmp_path: P
     assert (producer_view.processing_dir / f"{request.id}.json").exists()
 
 
+def test_request_store_lists_pending_in_created_order(tmp_path: Path) -> None:
+    store = TaskExecutionStore(tmp_path / "task_requests")
+    first = TaskExecutionRequest(
+        id="zzzz",
+        request_type="hook_send",
+        created_at="2026-03-31T01:00:00+00:00",
+        session_key="slack::channel::C123",
+        prompt="first",
+    )
+    second = TaskExecutionRequest(
+        id="aaaa",
+        request_type="hook_send",
+        created_at="2026-03-31T02:00:00+00:00",
+        session_key="slack::channel::C123",
+        prompt="second",
+    )
+    store.enqueue(second)
+    store.enqueue(first)
+
+    pending = store.list_pending()
+
+    assert [item.id for item in pending] == ["zzzz", "aaaa"]
+
+
 def test_recover_processing_drops_completed_requests(tmp_path: Path) -> None:
     root = tmp_path / "task_requests"
     store = TaskExecutionStore(root)
@@ -289,6 +314,46 @@ def test_recover_processing_drops_completed_requests(tmp_path: Path) -> None:
     assert (store.completed_dir / f"{request.id}.json").exists()
     assert not stale_processing.exists()
     assert not (store.pending_dir / f"{request.id}.json").exists()
+
+
+def test_drain_requests_requeues_cancelled_task_run(tmp_path: Path) -> None:
+    path = tmp_path / "scheduled_tasks.json"
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    store = ScheduledTaskStore(path)
+    task = store.add_task(
+        session_key="slack::channel::C123",
+        prompt="send digest",
+        schedule_type="at",
+        run_at="2026-03-31T09:00:00+08:00",
+        timezone_name="Asia/Shanghai",
+    )
+    request = request_store.enqueue_task_run(task.id)
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        raise asyncio.CancelledError()
+
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        message_handler=SimpleNamespace(handle_scheduled_message=_handle_scheduled_message),
+    )
+    service = ScheduledTaskService(controller=controller, store=store, request_store=request_store)
+
+    try:
+        asyncio.run(service._drain_requests())
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError("expected CancelledError")
+
+    reloaded = ScheduledTaskStore(path)
+    updated = reloaded.get_task(task.id)
+    assert updated is not None
+    assert updated.last_run_at is None
+    assert updated.enabled is True
+    assert (request_store.pending_dir / f"{request.id}.json").exists()
+    assert not (request_store.processing_dir / f"{request.id}.json").exists()
+    assert not (request_store.completed_dir / f"{request.id}.json").exists()
 
 
 def test_drain_requests_executes_hook_send(tmp_path: Path) -> None:

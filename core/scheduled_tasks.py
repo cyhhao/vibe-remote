@@ -341,7 +341,7 @@ class TaskExecutionStore:
     def list_pending(self) -> list[TaskExecutionRequest]:
         self._ensure_dirs()
         requests: list[TaskExecutionRequest] = []
-        for path in sorted(self.pending_dir.glob("*.json"), key=lambda item: item.name):
+        for path in self.pending_dir.glob("*.json"):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except Exception as exc:
@@ -350,7 +350,7 @@ class TaskExecutionStore:
             if not isinstance(payload, dict):
                 continue
             requests.append(TaskExecutionRequest.from_dict(payload))
-        return requests
+        return sorted(requests, key=lambda item: (item.created_at, item.id))
 
     def claim(self, request_id: str) -> Optional[TaskExecutionRequest]:
         pending_path = self._request_path(request_id, state="pending")
@@ -360,6 +360,16 @@ class TaskExecutionStore:
         pending_path.replace(processing_path)
         payload = json.loads(processing_path.read_text(encoding="utf-8"))
         return TaskExecutionRequest.from_dict(payload)
+
+    def requeue(self, request_id: str) -> None:
+        processing_path = self._request_path(request_id, state="processing")
+        pending_path = self._request_path(request_id, state="pending")
+        if not processing_path.exists():
+            return
+        if pending_path.exists():
+            processing_path.unlink(missing_ok=True)
+            return
+        processing_path.replace(pending_path)
 
     def complete(
         self,
@@ -520,6 +530,7 @@ class ScheduledTaskService:
             if request is None:
                 continue
             error: Optional[str] = None
+            should_complete = True
             task_id = request.task_id
             session_key = request.session_key
             try:
@@ -542,17 +553,22 @@ class ScheduledTaskService:
                     )
                 else:
                     raise ValueError(f"unknown task request type: {request.request_type}")
+            except asyncio.CancelledError:
+                self.request_store.requeue(request.id)
+                should_complete = False
+                raise
             except Exception as exc:
                 error = str(exc)
                 logger.error("Task execution request %s failed: %s", request.id, exc, exc_info=True)
             finally:
-                self.request_store.complete(
-                    request,
-                    ok=not error,
-                    error=error,
-                    task_id=task_id,
-                    session_key=session_key,
-                )
+                if should_complete:
+                    self.request_store.complete(
+                        request,
+                        ok=not error,
+                        error=error,
+                        task_id=task_id,
+                        session_key=session_key,
+                    )
 
     async def _execute_task(
         self,
@@ -570,13 +586,16 @@ class ScheduledTaskService:
                 task_id=task.id,
                 trigger_kind="scheduled",
             )
+        except asyncio.CancelledError:
+            self.reconcile_jobs()
+            raise
         except Exception as exc:
             error = str(exc)
             logger.error("Scheduled task %s failed: %s", task.id, exc, exc_info=True)
-        finally:
-            self.store.mark_task_result(task.id, error=error, disable_one_shot=disable_one_shot)
-            self.reconcile_jobs()
+        self.store.mark_task_result(task.id, error=error, disable_one_shot=disable_one_shot)
+        self.reconcile_jobs()
         return error
+
 
     async def _execute_request(
         self,
