@@ -128,6 +128,19 @@ def test_task_add_parse_error_is_structured_json(capsys) -> None:
     assert "--session-key SESSION_KEY" in payload["usage"]
 
 
+def test_task_remove_alias_parse_error_keeps_structured_guidance(capsys) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["task", "rm"])
+
+    assert exc.value.code == 2
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["code"] == "invalid_arguments"
+    assert payload["help_command"] == "vibe task remove --help"
+    assert "task_id" in payload["error"]
+
+
 def test_task_add_rejects_invalid_session_key_with_hint() -> None:
     args = _parse_task_add(
         [

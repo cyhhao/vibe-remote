@@ -132,13 +132,15 @@ def _task_add_examples_text() -> str:
 
 
 def _add_hidden_task_alias(task_subparsers, alias: str, parser) -> None:
-    task_subparsers.add_parser(
+    alias_parser = task_subparsers.add_parser(
         alias,
         help=argparse.SUPPRESS,
         parents=[parser],
         add_help=False,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    alias_parser.error_help_command = getattr(parser, "error_help_command", None)
+    alias_parser.error_hint = getattr(parser, "error_hint", None)
     task_subparsers._choices_actions = [  # type: ignore[attr-defined]
         action for action in task_subparsers._choices_actions if action.dest != alias  # type: ignore[attr-defined]
     ]
