@@ -57,9 +57,36 @@ def get_sessions_path() -> Path:
     return get_state_dir() / "sessions.json"
 
 
+def get_user_preferences_path() -> Path:
+    return get_state_dir() / "user_preferences.md"
+
+
+_USER_PREFERENCES_TEMPLATE = """# User Preferences
+
+Use this file for stable user-specific habits, preferences, and recurring rules.
+Keep it concise, factual, and deduplicated.
+Do not store secrets here unless the user explicitly asks.
+
+## Communication
+- Add stable communication preferences here.
+
+## Engineering Habits
+- Add stable workflow preferences here.
+
+## Project Rules
+- Add recurring project or repo rules here.
+
+## Avoid
+- Add stable things to avoid here.
+"""
+
+
 def ensure_data_dirs() -> None:
     get_config_dir().mkdir(parents=True, exist_ok=True)
     get_state_dir().mkdir(parents=True, exist_ok=True)
     get_logs_dir().mkdir(parents=True, exist_ok=True)
     get_runtime_dir().mkdir(parents=True, exist_ok=True)
     get_attachments_dir().mkdir(parents=True, exist_ok=True)
+    preferences_path = get_user_preferences_path()
+    if not preferences_path.exists():
+        preferences_path.write_text(_USER_PREFERENCES_TEMPLATE, encoding="utf-8")

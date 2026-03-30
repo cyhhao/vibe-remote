@@ -2,7 +2,7 @@
 name: use-vibe-remote
 slug: use-vibe-remote
 description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, scheduled tasks, and operational state.
-version: 0.1.3
+version: 0.1.4
 ---
 
 # Use Vibe Remote
@@ -43,6 +43,7 @@ Important paths:
 - `~/.vibe_remote/config/config.json`: global config
 - `~/.vibe_remote/state/settings.json`: per-channel and per-user overrides
 - `~/.vibe_remote/state/scheduled_tasks.json`: persisted scheduled tasks
+- `~/.vibe_remote/state/user_preferences.md`: stable user habits, preferences, and recurring rules
 - `~/.vibe_remote/state/sessions.json`: runtime session state
 - `~/.vibe_remote/logs/vibe_remote.log`: main application log
 - `~/.vibe_remote/runtime/status.json`: runtime status file

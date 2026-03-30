@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 from urllib.parse import unquote, urlparse
 
+from config import paths
 from modules.im import MessageContext
 
 logger = logging.getLogger(__name__)
@@ -213,6 +214,16 @@ Use that skill for configuration file locations, scope rules, routing behavior, 
 """
 
 
+_USER_PREFERENCES_PROMPT = """\
+
+## 5. User preference file
+A shared user preference file is available at `{preferences_path}`.
+When useful, you may read it to learn the user's stable habits, preferences, and recurring rules.
+You may also update it as you learn durable preferences from repeated interactions.
+Keep it short, factual, deduplicated, and free of secrets unless the user explicitly asks.
+"""
+
+
 def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform: Optional[str] = None) -> str:
     from core.scheduled_tasks import build_session_key_for_context
 
@@ -247,6 +258,7 @@ def build_reply_enhancements_prompt(
     if context is not None:
         prompt += _build_scheduled_tasks_prompt(context, fallback_platform=fallback_platform)
     prompt += _VIBE_SKILL_PROMPT
+    prompt += _USER_PREFERENCES_PROMPT.format(preferences_path=f"`{paths.get_user_preferences_path()}`")
     return prompt
 
 

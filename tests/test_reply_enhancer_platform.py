@@ -1,11 +1,13 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.message_dispatcher import ConsolidatedMessageDispatcher
 from core.reply_enhancer import build_reply_enhancements_prompt, process_reply
+from config import paths
 from modules.im import MessageContext
 
 
@@ -61,11 +63,14 @@ class _StubController:
 
 class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
     def test_prompt_can_exclude_quick_replies(self):
-        prompt = build_reply_enhancements_prompt(include_quick_replies=False)
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_reply_enhancements_prompt(include_quick_replies=False)
 
         self.assertIn("## 1. Send files", prompt)
         self.assertNotIn("## 2. Quick-reply buttons", prompt)
         self.assertIn("https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md", prompt)
+        self.assertIn("## 5. User preference file", prompt)
+        self.assertIn("`/tmp/user_preferences.md`", prompt)
 
     def test_prompt_includes_scheduled_task_usage_with_threadless_default_session_key(self):
         context = MessageContext(
@@ -76,7 +81,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             platform_specific={"is_dm": False},
         )
 
-        prompt = build_reply_enhancements_prompt(include_quick_replies=True, context=context)
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_reply_enhancements_prompt(include_quick_replies=True, context=context)
 
         self.assertIn("## 3. Scheduled tasks", prompt)
         self.assertIn("`vibe task add`", prompt)
@@ -85,6 +91,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("slack::channel::C1::thread::171717.123", prompt)
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
         self.assertIn("https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md", prompt)
+        self.assertIn("When useful, you may read it to learn the user's stable habits, preferences, and recurring rules.", prompt)
+        self.assertIn("Keep it short, factual, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
 
     def test_prompt_uses_fallback_platform_for_unannotated_context(self):
         context = MessageContext(
@@ -94,11 +102,12 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             platform_specific={"is_dm": False},
         )
 
-        prompt = build_reply_enhancements_prompt(
-            include_quick_replies=True,
-            context=context,
-            fallback_platform="slack",
-        )
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_reply_enhancements_prompt(
+                include_quick_replies=True,
+                context=context,
+                fallback_platform="slack",
+            )
 
         self.assertIn("Default session key: `slack::channel::C1`", prompt)
 
