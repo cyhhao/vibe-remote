@@ -207,7 +207,7 @@ Examples:
 _VIBE_SKILL_PROMPT = """\
 
 ## 4. Vibe Remote skill
-When the user asks you to configure, repair, or operate Vibe Remote itself, read `skills/use-vibe-remote/SKILL.md` in this repository before making changes.
+When the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes.
 Use that skill for configuration file locations, scope rules, routing behavior, scheduled-task operations, and troubleshooting steps.
 """
 
