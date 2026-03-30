@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -73,3 +74,17 @@ def test_service_rejects_unsupported_platform_at_runtime() -> None:
         assert "unsupported task platform" in str(exc)
     else:
         raise AssertionError("expected unsupported platform to raise ValueError")
+
+
+def test_build_context_assigns_unique_scheduled_message_ids() -> None:
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+    controller = SimpleNamespace(platform_settings_managers={"slack": settings_manager})
+    service = ScheduledTaskService(controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json")))
+    target = parse_session_key("slack::channel::C123")
+
+    first = asyncio.run(service._build_context(target, task_id="task-1"))
+    second = asyncio.run(service._build_context(target, task_id="task-1"))
+
+    assert first.message_id.startswith("scheduled:task-1:")
+    assert second.message_id.startswith("scheduled:task-1:")
+    assert first.message_id != second.message_id

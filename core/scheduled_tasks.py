@@ -330,7 +330,7 @@ class ScheduledTaskService:
         error: Optional[str] = None
         try:
             target = parse_session_key(task.session_key)
-            context = await self._build_context(target)
+            context = await self._build_context(target, task_id=task.id)
             await self.controller.message_handler.handle_scheduled_message(
                 context=context,
                 message=task.prompt,
@@ -343,7 +343,7 @@ class ScheduledTaskService:
             self.store.mark_task_result(task_id, error=error)
             self.reconcile_jobs()
 
-    async def _build_context(self, target: ParsedSessionKey) -> MessageContext:
+    async def _build_context(self, target: ParsedSessionKey, *, task_id: str) -> MessageContext:
         platform = target.platform
         self.validate_platform(platform)
         settings_manager = self.controller.platform_settings_managers[platform]
@@ -366,6 +366,7 @@ class ScheduledTaskService:
             channel_id=channel_id,
             platform=platform,
             thread_id=target.thread_id,
+            message_id=f"scheduled:{task_id}:{uuid4().hex}",
             platform_specific={
                 "platform": platform,
                 "is_dm": target.is_dm,

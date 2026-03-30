@@ -22,6 +22,7 @@ def _configured_v2(platforms: set[str]):
             app_secret="y" if "lark" in platforms else "",
         ),
         wechat=SimpleNamespace(enable="wechat" in platforms),
+        enabled_platforms=lambda: list(platforms),
     )
 
 
@@ -41,6 +42,30 @@ def test_task_add_rejects_unsupported_platform() -> None:
     )
 
     with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack", "discord"})):
+        result = cli.cmd_task_add(args)
+
+    assert result == 1
+
+
+def test_task_add_rejects_disabled_platform_even_with_credentials_present() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        [
+            "task",
+            "add",
+            "--session-key",
+            "discord::channel::C123",
+            "--cron",
+            "0 * * * *",
+            "--prompt",
+            "hello",
+        ]
+    )
+
+    config = _configured_v2({"slack"})
+    config.discord.bot_token = "configured-but-disabled"
+
+    with patch("vibe.cli._ensure_config", return_value=config):
         result = cli.cmd_task_add(args)
 
     assert result == 1

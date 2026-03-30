@@ -195,20 +195,10 @@ def _supported_task_platforms() -> set[str]:
         config = _ensure_config()
     except Exception:
         return set()
-
-    supported: set[str] = set()
-    if getattr(config.slack, "bot_token", "") and getattr(config.slack, "app_token", ""):
-        supported.add("slack")
-    discord_cfg = getattr(config, "discord", None)
-    if discord_cfg and getattr(discord_cfg, "bot_token", ""):
-        supported.add("discord")
-    lark_cfg = getattr(config, "lark", None)
-    if lark_cfg and getattr(lark_cfg, "app_id", "") and getattr(lark_cfg, "app_secret", ""):
-        supported.add("lark")
-    wechat_cfg = getattr(config, "wechat", None)
-    if wechat_cfg and getattr(wechat_cfg, "enable", False):
-        supported.add("wechat")
-    return supported
+    enabled = getattr(config, "enabled_platforms", None)
+    if callable(enabled):
+        return set(enabled())
+    return {getattr(config, "platform", "slack")}
 
 
 def cmd_task_add(args):
