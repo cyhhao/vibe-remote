@@ -48,7 +48,7 @@ class AppCompatConfig:
     wechat: Optional[WeChatConfig] = None
     codex: Optional[CodexCompatConfig] = None
     opencode: Optional[OpenCodeCompatConfig] = None
-    show_duration: bool = True
+    show_duration: bool = False
     include_user_info: bool = True
     reply_enhancements: bool = True
     default_backend: str = "opencode"

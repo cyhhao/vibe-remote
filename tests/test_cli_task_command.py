@@ -97,6 +97,9 @@ def test_task_help_describes_session_key_guidance(capsys) -> None:
     captured = capsys.readouterr()
     assert "Create, inspect, and control scheduled prompts for Vibe Remote." in captured.out
     assert "vibe task add --session-key 'slack::channel::C123'" in captured.out
+    assert "{add,list,show,pause,resume,remove}" in captured.out
+    assert "rm (remove)" not in captured.out
+    assert "\n    ls" not in captured.out
 
 
 def test_task_add_help_includes_examples_and_threadless_guidance(capsys) -> None:
@@ -123,6 +126,19 @@ def test_task_add_parse_error_is_structured_json(capsys) -> None:
     assert payload["code"] == "invalid_arguments"
     assert payload["help_command"] == "vibe task add --help"
     assert "--session-key SESSION_KEY" in payload["usage"]
+
+
+def test_task_remove_alias_parse_error_keeps_structured_guidance(capsys) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["task", "rm"])
+
+    assert exc.value.code == 2
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["code"] == "invalid_arguments"
+    assert payload["help_command"] == "vibe task remove --help"
+    assert "task_id" in payload["error"]
 
 
 def test_task_add_rejects_invalid_session_key_with_hint() -> None:
@@ -196,3 +212,21 @@ def test_task_show_missing_id_returns_guidance(tmp_path: Path) -> None:
     assert result == 1
     assert payload["code"] == "task_not_found"
     assert payload["help_command"] == "vibe task list"
+
+
+def test_task_remove_alias_parses_to_remove_command() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["task", "remove", "task-123"])
+
+    assert args.command == "task"
+    assert args.task_command == "remove"
+    assert args.task_id == "task-123"
+
+
+def test_task_hidden_aliases_still_parse() -> None:
+    parser = cli.build_parser()
+    list_args = parser.parse_args(["task", "ls"])
+    remove_args = parser.parse_args(["task", "rm", "task-123"])
+
+    assert list_args.task_command == "ls"
+    assert remove_args.task_command == "rm"

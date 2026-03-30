@@ -131,6 +131,21 @@ def _task_add_examples_text() -> str:
     )
 
 
+def _add_hidden_task_alias(task_subparsers, alias: str, parser) -> None:
+    alias_parser = task_subparsers.add_parser(
+        alias,
+        help=argparse.SUPPRESS,
+        parents=[parser],
+        add_help=False,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    alias_parser.error_help_command = getattr(parser, "error_help_command", None)
+    alias_parser.error_hint = getattr(parser, "error_hint", None)
+    task_subparsers._choices_actions = [  # type: ignore[attr-defined]
+        action for action in task_subparsers._choices_actions if action.dest != alias  # type: ignore[attr-defined]
+    ]
+
+
 def _write_json(path, payload):
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -479,7 +494,7 @@ def cmd_task_remove(task_id: str):
             TaskCliError(
                 f"task '{task_id}' not found",
                 code="task_not_found",
-                hint="Use 'vibe task list' to find a valid task ID before calling rm.",
+                hint="Use 'vibe task list' to find a valid task ID before calling remove.",
                 help_command="vibe task list",
                 details={"task_id": task_id},
             )
@@ -1025,7 +1040,10 @@ def build_parser():
         error_help_command="vibe task --help",
         error_hint="Run one of the task subcommands below. Use 'vibe task add --help' for task creation details.",
     )
-    task_subparsers = task_parser.add_subparsers(dest="task_command")
+    task_subparsers = task_parser.add_subparsers(
+        dest="task_command",
+        metavar="{add,list,show,pause,resume,remove}",
+    )
     task_subparsers.required = True
 
     task_add_parser = task_subparsers.add_parser(
@@ -1054,10 +1072,12 @@ def build_parser():
         "list",
         help="List scheduled tasks",
         description="List all stored scheduled tasks.",
-        epilog="Use the returned task IDs with 'vibe task show', 'vibe task pause', 'vibe task resume', or 'vibe task rm'.",
+        epilog="Use the returned task IDs with 'vibe task show', 'vibe task pause', 'vibe task resume', or 'vibe task remove'.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe task list --help",
     )
+    task_list_parser = task_subparsers.choices["list"]
+    _add_hidden_task_alias(task_subparsers, "ls", task_list_parser)
 
     task_show_parser = task_subparsers.add_parser(
         "show",
@@ -1090,14 +1110,15 @@ def build_parser():
     task_resume_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
 
     task_rm_parser = task_subparsers.add_parser(
-        "rm",
+        "remove",
         help="Remove a scheduled task",
         description="Delete one scheduled task permanently.",
         epilog="Find task IDs with: vibe task list",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        error_help_command="vibe task rm --help",
+        error_help_command="vibe task remove --help",
     )
     task_rm_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
+    _add_hidden_task_alias(task_subparsers, "rm", task_rm_parser)
     return parser
 
 
@@ -1123,7 +1144,7 @@ def main():
     if args.command == "task":
         if args.task_command == "add":
             sys.exit(cmd_task_add(args))
-        if args.task_command == "list":
+        if args.task_command in {"list", "ls"}:
             sys.exit(cmd_task_list())
         if args.task_command == "show":
             sys.exit(cmd_task_show(args.task_id))
@@ -1131,7 +1152,7 @@ def main():
             sys.exit(cmd_task_set_enabled(args.task_id, False))
         if args.task_command == "resume":
             sys.exit(cmd_task_set_enabled(args.task_id, True))
-        if args.task_command == "rm":
+        if args.task_command in {"remove", "rm"}:
             sys.exit(cmd_task_remove(args.task_id))
         parser.error("task command is required")
     sys.exit(cmd_vibe())

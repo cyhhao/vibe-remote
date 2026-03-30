@@ -100,7 +100,7 @@ const buildConfigPayload = (data: any) => {
   update: data.update,
   // Preserve ack_mode
   ack_mode: data.ack_mode,
-  show_duration: data.show_duration,
+  show_duration: data.show_duration ?? false,
   // Preserve language
   language: data.language,
   };
@@ -110,7 +110,7 @@ export const Wizard: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
   const [currentStep, setCurrentStep] = useState(0);
-  const [data, setData] = useState<any>({});
+  const [data, setData] = useState<any>({ show_duration: false });
   const [loaded, setLoaded] = useState(false);
 
   const steps = React.useMemo(() => {
