@@ -273,6 +273,24 @@ def test_request_store_constructor_does_not_requeue_processing_files(tmp_path: P
     assert (producer_view.processing_dir / f"{request.id}.json").exists()
 
 
+def test_recover_processing_drops_completed_requests(tmp_path: Path) -> None:
+    root = tmp_path / "task_requests"
+    store = TaskExecutionStore(root)
+    request = store.enqueue_hook_send(session_key="slack::channel::C123", prompt="hello")
+    claimed = store.claim(request.id)
+
+    assert claimed is not None
+    store.complete(claimed, ok=True, session_key="slack::channel::C123")
+    stale_processing = store.processing_dir / f"{request.id}.json"
+    stale_processing.write_text(json.dumps(claimed.to_dict(), indent=2), encoding="utf-8")
+
+    store.recover_processing()
+
+    assert (store.completed_dir / f"{request.id}.json").exists()
+    assert not stale_processing.exists()
+    assert not (store.pending_dir / f"{request.id}.json").exists()
+
+
 def test_drain_requests_executes_hook_send(tmp_path: Path) -> None:
     request_store = TaskExecutionStore(tmp_path / "task_requests")
     request = request_store.enqueue_hook_send(session_key="slack::channel::C123", prompt="ship it")

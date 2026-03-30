@@ -301,7 +301,11 @@ class TaskExecutionStore:
         self._ensure_dirs()
         for path in self.processing_dir.glob("*.json"):
             pending_path = self.pending_dir / path.name
+            completed_path = self.completed_dir / path.name
             if pending_path.exists():
+                path.unlink(missing_ok=True)
+                continue
+            if completed_path.exists():
                 path.unlink(missing_ok=True)
                 continue
             path.replace(pending_path)
