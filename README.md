@@ -60,9 +60,15 @@ That's it. Browser opens -> Follow the wizard -> Done.
 <details>
 <summary><b>Windows?</b></summary>
 
-```powershell
-irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
-```
+We recommend the WSL setup on Windows because it has the best compatibility.
+
+- Recommended: [Run Vibe Remote with WSL from Scratch](docs/WINDOWS_WSL.md)
+
+If you are new to WSL, this guide explains:
+- where to install WSL
+- which terminal window to use
+- where to run the Vibe Remote install command
+- how to launch Ubuntu and open the Web UI
 </details>
 
 ---

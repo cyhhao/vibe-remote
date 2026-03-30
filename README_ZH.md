@@ -60,9 +60,15 @@ curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.s
 <details>
 <summary><b>Windows？</b></summary>
 
-```powershell
-irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
-```
+Windows 下默认推荐使用 WSL 方案，因为它的兼容性最好。
+
+- 推荐阅读：[Windows 用户：从零开始用 WSL 运行 Vibe Remote](docs/WINDOWS_WSL_ZH.md)
+
+如果你完全没用过 WSL，这篇文档会讲清楚：
+- 去哪里安装 WSL
+- 应该打开哪个终端窗口
+- 在哪里执行 Vibe Remote 的安装命令
+- 如何启动 Ubuntu 并打开 Web UI
 </details>
 
 ---
