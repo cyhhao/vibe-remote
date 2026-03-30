@@ -323,7 +323,16 @@ def build_reasoning_effort_options(
 
 _CODEX_REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"]
 _CLAUDE_REASONING_EFFORTS = ["low", "medium", "high"]
-_CLAUDE_MAX_MODEL_MARKERS = ["claude-opus-4-6"]
+
+
+def _supports_claude_max_reasoning(target_model: Optional[str]) -> bool:
+    normalized_model = (target_model or "").strip().lower()
+    if not normalized_model:
+        return False
+    return (
+        normalized_model in {"opus", "opus[1m]"}
+        or normalized_model.startswith("claude-opus-4-6")
+    )
 
 
 def build_codex_reasoning_options() -> List[Dict[str, str]]:
@@ -351,9 +360,8 @@ def build_claude_reasoning_options(target_model: Optional[str]) -> List[Dict[str
     is only valid for Opus 4.6.
     """
 
-    normalized_model = (target_model or "").strip().lower()
     efforts = list(_CLAUDE_REASONING_EFFORTS)
-    if normalized_model and any(marker in normalized_model for marker in _CLAUDE_MAX_MODEL_MARKERS):
+    if _supports_claude_max_reasoning(target_model):
         efforts.append("max")
 
     options: List[Dict[str, str]] = [{"value": "__default__", "label": "(Default)"}]
