@@ -7,7 +7,12 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from apscheduler.triggers.cron import CronTrigger
+from tzlocal import get_localzone_name
 
 from config import paths
 from config.v2_config import (
@@ -19,6 +24,7 @@ from config.v2_config import (
     SlackConfig,
     V2Config,
 )
+from core.scheduled_tasks import ScheduledTaskStore, parse_session_key
 from vibe import __version__, api, runtime
 from vibe.upgrade import build_upgrade_plan, cache_running_vibe_path, get_latest_version_info, get_safe_cwd
 
@@ -141,6 +147,117 @@ def _render_status():
     status["running"] = running
     status["pid"] = int(pid) if pid and pid.isdigit() else None
     return json.dumps(status, indent=2)
+
+
+def _default_timezone_name() -> str:
+    try:
+        return get_localzone_name()
+    except Exception:
+        tz = datetime.now().astimezone().tzinfo
+        key = getattr(tz, "key", None)
+        if key:
+            return str(key)
+    return "UTC"
+
+
+def _resolve_task_prompt(args) -> str:
+    prompt = (getattr(args, "prompt", None) or "").strip()
+    prompt_file = getattr(args, "prompt_file", None)
+    if prompt and prompt_file:
+        raise ValueError("use either --prompt or --prompt-file")
+    if prompt:
+        return prompt
+    if prompt_file:
+        return Path(prompt_file).read_text(encoding="utf-8").strip()
+    raise ValueError("one of --prompt or --prompt-file is required")
+
+
+def _normalize_run_at(value: str, timezone_name: str) -> str:
+    dt = datetime.fromisoformat(value)
+    tz = ZoneInfo(timezone_name)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=tz)
+    else:
+        dt = dt.astimezone(tz)
+    return dt.isoformat()
+
+
+def _task_payload(task):
+    return task.to_dict()
+
+
+def _task_store() -> ScheduledTaskStore:
+    return ScheduledTaskStore()
+
+
+def cmd_task_add(args):
+    try:
+        parse_session_key(args.session_key)
+        prompt = _resolve_task_prompt(args)
+        timezone_name = args.timezone or _default_timezone_name()
+        ZoneInfo(timezone_name)
+        store = _task_store()
+
+        if args.cron:
+            CronTrigger.from_crontab(args.cron, timezone=ZoneInfo(timezone_name))
+            task = store.add_task(
+                session_key=args.session_key,
+                prompt=prompt,
+                schedule_type="cron",
+                cron=args.cron,
+                timezone_name=timezone_name,
+            )
+        else:
+            run_at = _normalize_run_at(args.at, timezone_name)
+            task = store.add_task(
+                session_key=args.session_key,
+                prompt=prompt,
+                schedule_type="at",
+                run_at=run_at,
+                timezone_name=timezone_name,
+            )
+        print(json.dumps({"ok": True, "task": _task_payload(task)}, indent=2))
+        return 0
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+        return 1
+
+
+def cmd_task_list():
+    store = _task_store()
+    print(json.dumps({"tasks": [_task_payload(task) for task in store.list_tasks()]}, indent=2))
+    return 0
+
+
+def cmd_task_show(task_id: str):
+    store = _task_store()
+    task = store.get_task(task_id)
+    if task is None:
+        print(json.dumps({"ok": False, "error": f"task '{task_id}' not found"}), file=sys.stderr)
+        return 1
+    print(json.dumps({"ok": True, "task": _task_payload(task)}, indent=2))
+    return 0
+
+
+def cmd_task_set_enabled(task_id: str, enabled: bool):
+    store = _task_store()
+    task = store.get_task(task_id)
+    if task is None:
+        print(json.dumps({"ok": False, "error": f"task '{task_id}' not found"}), file=sys.stderr)
+        return 1
+    updated = store.set_enabled(task_id, enabled)
+    print(json.dumps({"ok": True, "task": _task_payload(updated)}, indent=2))
+    return 0
+
+
+def cmd_task_remove(task_id: str):
+    store = _task_store()
+    removed = store.remove_task(task_id)
+    if not removed:
+        print(json.dumps({"ok": False, "error": f"task '{task_id}' not found"}), file=sys.stderr)
+        return 1
+    print(json.dumps({"ok": True, "removed_id": task_id}, indent=2))
+    return 0
 
 
 def _doctor():
@@ -669,6 +786,33 @@ def build_parser():
     subparsers.add_parser("version", help="Show version")
     subparsers.add_parser("check-update", help="Check for updates")
     subparsers.add_parser("upgrade", help="Upgrade to latest version")
+
+    task_parser = subparsers.add_parser("task", help="Manage scheduled tasks")
+    task_subparsers = task_parser.add_subparsers(dest="task_command")
+
+    task_add_parser = task_subparsers.add_parser("add", help="Create a scheduled task")
+    task_add_parser.add_argument("--session-key", required=True, help="Target session key")
+    schedule_group = task_add_parser.add_mutually_exclusive_group(required=True)
+    schedule_group.add_argument("--cron", help="Cron expression in crontab format")
+    schedule_group.add_argument("--at", help="One-shot timestamp in ISO 8601 format")
+    prompt_group = task_add_parser.add_mutually_exclusive_group(required=True)
+    prompt_group.add_argument("--prompt", help="Prompt text to send")
+    prompt_group.add_argument("--prompt-file", help="Read prompt text from a file")
+    task_add_parser.add_argument("--timezone", help="IANA timezone name")
+
+    task_subparsers.add_parser("list", help="List scheduled tasks")
+
+    task_show_parser = task_subparsers.add_parser("show", help="Show a scheduled task")
+    task_show_parser.add_argument("task_id")
+
+    task_pause_parser = task_subparsers.add_parser("pause", help="Pause a scheduled task")
+    task_pause_parser.add_argument("task_id")
+
+    task_resume_parser = task_subparsers.add_parser("resume", help="Resume a scheduled task")
+    task_resume_parser.add_argument("task_id")
+
+    task_rm_parser = task_subparsers.add_parser("rm", help="Remove a scheduled task")
+    task_rm_parser.add_argument("task_id")
     return parser
 
 
@@ -691,4 +835,18 @@ def main():
         sys.exit(cmd_check_update())
     if args.command == "upgrade":
         sys.exit(cmd_upgrade())
+    if args.command == "task":
+        if args.task_command == "add":
+            sys.exit(cmd_task_add(args))
+        if args.task_command == "list":
+            sys.exit(cmd_task_list())
+        if args.task_command == "show":
+            sys.exit(cmd_task_show(args.task_id))
+        if args.task_command == "pause":
+            sys.exit(cmd_task_set_enabled(args.task_id, False))
+        if args.task_command == "resume":
+            sys.exit(cmd_task_set_enabled(args.task_id, True))
+        if args.task_command == "rm":
+            sys.exit(cmd_task_remove(args.task_id))
+        parser.error("task command is required")
     sys.exit(cmd_vibe())

@@ -15,14 +15,37 @@ class _Config:
     platform: str = "discord"
 
 
+class _FakeSessions:
+    def __init__(self) -> None:
+        self.alias_calls = []
+        self.clear_calls = []
+        self.thread_marks = []
+
+    def alias_session_base(self, user_id, source_base_session_id, alias_base_session_id):
+        self.alias_calls.append((user_id, source_base_session_id, alias_base_session_id))
+        return True
+
+    def clear_session_base(self, user_id, base_session_id):
+        self.clear_calls.append((user_id, base_session_id))
+        return 1
+
+    def mark_thread_active(self, user_id, channel_id, thread_ts):
+        self.thread_marks.append((user_id, channel_id, thread_ts))
+
+
 class _Controller:
     def __init__(self, *, platform: str = "discord", dm_threads: bool = False) -> None:
         self.config = _Config()
         self.config.platform = platform
+        self.sessions = _FakeSessions()
         self.im_client = type(
             "IM",
             (),
-            {"formatter": None, "should_use_thread_for_dm_session": lambda self: dm_threads},
+            {
+                "formatter": None,
+                "should_use_thread_for_dm_session": lambda self: dm_threads,
+                "should_use_thread_for_reply": lambda self: platform in {"discord", "slack", "lark"},
+            },
         )()
         self.settings_manager = type("Settings", (), {"sessions": None})()
         self.session_manager = object()
@@ -105,3 +128,53 @@ def test_channel_session_base_id_keeps_thread_or_message_behavior() -> None:
     )
 
     assert handler.get_base_session_id(context) == "discord_msg-999"
+
+
+def test_scheduled_channel_session_uses_provisional_anchor_on_threaded_surfaces() -> None:
+    controller = _Controller(platform="slack", dm_threads=False)
+    handler = SessionHandler(controller)
+    context = MessageContext(
+        user_id="scheduled",
+        channel_id="C123",
+        platform="slack",
+        platform_specific={"is_dm": False, "turn_source": "scheduled"},
+    )
+
+    base_session_id = handler.get_base_session_id(context, source="scheduled")
+
+    assert base_session_id.startswith("slack_scheduled-")
+
+
+def test_scheduled_dm_session_reuses_flat_session_scope() -> None:
+    controller = _Controller(platform="discord", dm_threads=False)
+    handler = SessionHandler(controller)
+    context = MessageContext(
+        user_id="u-1",
+        channel_id="dm-123",
+        platform="discord",
+        platform_specific={"is_dm": True, "turn_source": "scheduled"},
+    )
+
+    assert handler.get_base_session_id(context, source="scheduled") == "discord_dm-123"
+
+
+def test_finalize_scheduled_delivery_aliases_provisional_base_and_marks_thread() -> None:
+    controller = _Controller(platform="slack", dm_threads=False)
+    handler = SessionHandler(controller)
+    context = MessageContext(
+        user_id="scheduled",
+        channel_id="C123",
+        platform="slack",
+        platform_specific={
+            "is_dm": False,
+            "turn_source": "scheduled",
+            "turn_base_session_id": "slack_scheduled-abc",
+            "scheduled_anchor_required": True,
+        },
+    )
+
+    handler.finalize_scheduled_delivery(context, "171717.123")
+
+    assert controller.sessions.alias_calls == [("slack::C123", "slack_scheduled-abc", "slack_171717.123")]
+    assert controller.sessions.clear_calls == [("slack::C123", "slack_scheduled-abc")]
+    assert controller.sessions.thread_marks == [("scheduled", "C123", "171717.123")]

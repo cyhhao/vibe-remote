@@ -146,6 +146,14 @@ class BaseIMClient(ABC):
         """
         return False
 
+    async def prepare_turn_context(self, context: MessageContext, source: str) -> MessageContext:
+        """Allow IM adapters to adjust reply topology for a turn source.
+
+        `source` is one of the higher-level inbound turn types such as
+        ``human`` or ``scheduled``.
+        """
+        return context
+
     @staticmethod
     def extract_command_action(text: str, allow_plain_bind: bool = False) -> str:
         """Extract command action name from slash command text.

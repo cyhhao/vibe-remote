@@ -96,10 +96,13 @@ class _StubIMClient:
         self.reactions = []
         self.sent_messages = []
         self.removed_keyboards = []
-        self.formatter = None
+        self.formatter = type("Formatter", (), {"format_error": staticmethod(lambda text: text)})()
 
     def should_use_thread_for_reply(self):
         return False
+
+    async def prepare_turn_context(self, context, source):
+        return context
 
     async def get_user_info(self, user_id):
         return {"display_name": f"user:{user_id}"}
@@ -181,8 +184,16 @@ class _StubController:
 
 class _StubSessionHandler:
     @staticmethod
-    def get_session_info(context):
+    def get_session_info(context, source="human"):
         return ("base-session", "/tmp", "base-session:/tmp")
+
+    @staticmethod
+    def should_allocate_scheduled_anchor(context, source="human"):
+        return False
+
+    @staticmethod
+    def alias_session_base(context, *, source_base_session_id, alias_base_session_id, clear_source=False):
+        return False
 
 
 class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
