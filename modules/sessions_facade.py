@@ -91,6 +91,84 @@ class SessionsFacade:
         agent_maps = self.sessions_store.state.session_mappings.get(user_key, {})
         return {agent: dict(mapping) for agent, mapping in agent_maps.items()}
 
+    @staticmethod
+    def _matches_base_prefix(mapping_key: str, base_session_id: str) -> bool:
+        return mapping_key == base_session_id or mapping_key.startswith(f"{base_session_id}:")
+
+    def has_any_agent_session_base(self, user_id: Union[int, str], base_session_id: str) -> bool:
+        user_key = self._normalize_user_id(user_id)
+        self.sessions_store._ensure_user_namespace(user_key)
+        agent_maps = self.sessions_store.state.session_mappings.get(user_key, {})
+        for agent_map in agent_maps.values():
+            for mapping_key in agent_map.keys():
+                if self._matches_base_prefix(mapping_key, base_session_id):
+                    return True
+        return False
+
+    def alias_session_base(
+        self,
+        user_id: Union[int, str],
+        source_base_session_id: str,
+        alias_base_session_id: str,
+    ) -> bool:
+        user_key = self._normalize_user_id(user_id)
+        self.sessions_store._ensure_user_namespace(user_key)
+        agent_maps = self.sessions_store.state.session_mappings.get(user_key, {})
+        changed = False
+
+        for agent_name, agent_map in agent_maps.items():
+            additions: Dict[str, str] = {}
+            for mapping_key, native_session_id in list(agent_map.items()):
+                if not self._matches_base_prefix(mapping_key, source_base_session_id):
+                    continue
+                suffix = mapping_key[len(source_base_session_id) :]
+                alias_key = f"{alias_base_session_id}{suffix}"
+                if alias_key in agent_map or alias_key in additions:
+                    continue
+                additions[alias_key] = native_session_id
+            if additions:
+                agent_map.update(additions)
+                changed = True
+                logger.info(
+                    "Aliased %s session base for %s: %s -> %s (%s keys)",
+                    agent_name,
+                    user_key,
+                    source_base_session_id,
+                    alias_base_session_id,
+                    len(additions),
+                )
+
+        if changed:
+            self.sessions_store.save()
+        return changed
+
+    def clear_session_base(self, user_id: Union[int, str], base_session_id: str) -> int:
+        user_key = self._normalize_user_id(user_id)
+        self.sessions_store._ensure_user_namespace(user_key)
+        agent_maps = self.sessions_store.state.session_mappings.get(user_key, {})
+        cleared = 0
+
+        for agent_name, agent_map in agent_maps.items():
+            keys_to_remove = [
+                mapping_key for mapping_key in list(agent_map.keys()) if self._matches_base_prefix(mapping_key, base_session_id)
+            ]
+            if not keys_to_remove:
+                continue
+            for mapping_key in keys_to_remove:
+                del agent_map[mapping_key]
+                cleared += 1
+            logger.info(
+                "Cleared %s session base for %s: %s (%s keys)",
+                agent_name,
+                user_key,
+                base_session_id,
+                len(keys_to_remove),
+            )
+
+        if cleared:
+            self.sessions_store.save()
+        return cleared
+
     def get_all_session_mappings(self) -> Dict[str, Dict[str, Dict[str, str]]]:
         """Return all persisted session mappings grouped by user and agent."""
         mappings = self.sessions_store.state.session_mappings

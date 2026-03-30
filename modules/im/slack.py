@@ -1252,10 +1252,11 @@ class SlackBot(BaseIMClient):
                     thread_ts = event.get("thread_ts")
                     # If we have settings_manager, check if thread is active
                     if self.settings_manager:
-                        thread_active = (
-                            self.sessions.is_thread_active(user_id, channel_id, thread_ts) if self.sessions else False
+                        thread_active = self.sessions.is_thread_active(user_id, channel_id, thread_ts) if self.sessions else False
+                        scheduled_thread_active = (
+                            self.sessions.is_thread_active("scheduled", channel_id, thread_ts) if self.sessions else False
                         )
-                        if not thread_active:
+                        if not thread_active and not scheduled_thread_active:
                             logger.debug(f"Ignoring message in inactive thread {thread_ts}: '{text}'")
                             return
                     else:

@@ -198,6 +198,92 @@ class DiscordBot(BaseIMClient):
 
         return await self._run_on_client_loop(_impl())
 
+    async def prepare_turn_context(self, context: MessageContext, source: str) -> MessageContext:
+        if source != "human" or context.thread_id:
+            return context
+        payload = context.platform_specific or {}
+        if payload.get("is_dm"):
+            return context
+        message = payload.get("message")
+        if message is None or getattr(message, "guild", None) is None:
+            return context
+
+        reply_anchor_message_id = self._get_reference_message_id(message)
+        reply_anchor_base_session_id = self._get_reply_anchor_base(context.channel_id, reply_anchor_message_id)
+        if reply_anchor_base_session_id:
+            async def _reply_impl() -> MessageContext:
+                channel = await self._fetch_channel(context.channel_id)
+                if channel is None or not hasattr(channel, "fetch_message"):
+                    return context
+                try:
+                    anchor_message = await channel.fetch_message(int(reply_anchor_message_id))
+                except Exception as err:
+                    logger.warning(
+                        "Failed to fetch Discord reply anchor %s: %s",
+                        reply_anchor_message_id,
+                        err,
+                    )
+                    return context
+
+                thread = getattr(anchor_message, "thread", None)
+                if thread is None:
+                    thread = await self._maybe_create_thread(anchor_message)
+                if thread is None:
+                    return context
+
+                next_payload = dict(context.platform_specific or {})
+                next_payload["reply_anchor_base_session_id"] = reply_anchor_base_session_id
+                next_payload["reply_anchor_message_id"] = reply_anchor_message_id
+                return MessageContext(
+                    user_id=context.user_id,
+                    channel_id=context.channel_id,
+                    platform=context.platform,
+                    thread_id=str(thread.id),
+                    message_id=context.message_id,
+                    platform_specific=next_payload,
+                    files=context.files,
+                )
+
+            return await self._run_on_client_loop(_reply_impl())
+
+        async def _impl() -> MessageContext:
+            thread = await self._maybe_create_thread(message)
+            if thread is None:
+                return context
+            return MessageContext(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                platform=context.platform,
+                thread_id=str(thread.id),
+                message_id=context.message_id,
+                platform_specific=context.platform_specific,
+                files=context.files,
+            )
+
+        return await self._run_on_client_loop(_impl())
+
+    def _is_thread_reply_allowed(self, author_id: str, channel_id: str, thread_id: str) -> bool:
+        if not self.settings_manager or not self.sessions:
+            return False
+        if self.sessions.is_thread_active(author_id, channel_id, thread_id):
+            return True
+        return self.sessions.is_thread_active("scheduled", channel_id, thread_id)
+
+    @staticmethod
+    def _get_reference_message_id(message: discord.Message) -> Optional[str]:
+        reference = getattr(message, "reference", None)
+        message_id = getattr(reference, "message_id", None) if reference is not None else None
+        return str(message_id) if message_id is not None else None
+
+    def _get_reply_anchor_base(self, channel_id: str, message_id: Optional[str]) -> Optional[str]:
+        if not self.sessions or not channel_id or not message_id:
+            return None
+        session_key = f"discord::{channel_id}"
+        base_session_id = f"discord_{message_id}"
+        if self.sessions.has_any_agent_session_base(session_key, base_session_id):
+            return base_session_id
+        return None
+
     def format_markdown(self, text: str) -> str:
         return text
 
@@ -803,6 +889,7 @@ class DiscordBot(BaseIMClient):
 
         # Determine if this is a DM
         is_dm = isinstance(channel, discord.DMChannel) or message.guild is None
+        referenced_anchor_base = None if is_dm else self._get_reply_anchor_base(channel_id, self._get_reference_message_id(message))
 
         auth_result = self.check_authorization(
             user_id=str(message.author.id),
@@ -827,17 +914,15 @@ class DiscordBot(BaseIMClient):
         if effective_require_mention and not is_dm:
             if isinstance(channel, discord.Thread):
                 if self.settings_manager:
-                    thread_active = (
-                        self.sessions.is_thread_active(str(message.author.id), channel_id, str(channel.id))
-                        if self.sessions
-                        else False
-                    )
+                    thread_active = self._is_thread_reply_allowed(str(message.author.id), channel_id, str(channel.id))
                     if not thread_active:
                         return
                 else:
                     return
             else:
-                if not message.mentions or (self.client.user and self.client.user not in message.mentions):
+                if referenced_anchor_base:
+                    pass
+                elif not message.mentions or (self.client.user and self.client.user not in message.mentions):
                     return
 
         # Strip bot mention from content
@@ -876,12 +961,6 @@ class DiscordBot(BaseIMClient):
                 )
                 await self.on_message_callback(context, "")
             return
-
-        # For non-thread guild messages, create a real thread
-        if not isinstance(channel, discord.Thread) and message.guild is not None:
-            thread = await self._maybe_create_thread(message)
-            if thread is not None:
-                thread_id = str(thread.id)
 
         context = MessageContext(
             user_id=str(message.author.id),

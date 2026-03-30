@@ -96,10 +96,13 @@ class _StubIMClient:
         self.reactions = []
         self.sent_messages = []
         self.removed_keyboards = []
-        self.formatter = None
+        self.formatter = type("Formatter", (), {"format_error": staticmethod(lambda text: text)})()
 
     def should_use_thread_for_reply(self):
         return False
+
+    async def prepare_turn_context(self, context, source):
+        return context
 
     async def get_user_info(self, user_id):
         return {"display_name": f"user:{user_id}"}
@@ -139,8 +142,11 @@ class _StubAgentService:
     def __init__(self):
         self.default_agent = "codex"
         self.requests = []
+        self.error = None
 
     async def handle_message(self, agent_name, request):
+        if self.error is not None:
+            raise self.error
         self.requests.append((agent_name, request))
 
 
@@ -180,9 +186,26 @@ class _StubController:
 
 
 class _StubSessionHandler:
+    def __init__(self):
+        self.alias_calls = []
+
     @staticmethod
-    def get_session_info(context):
+    def get_session_info(context, source="human"):
         return ("base-session", "/tmp", "base-session:/tmp")
+
+    @staticmethod
+    def should_allocate_scheduled_anchor(context, source="human"):
+        return False
+
+    def alias_session_base(self, context, *, source_base_session_id, alias_base_session_id, clear_source=False):
+        self.alias_calls.append(
+            {
+                "source_base_session_id": source_base_session_id,
+                "alias_base_session_id": alias_base_session_id,
+                "clear_source": clear_source,
+            }
+        )
+        return False
 
 
 class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
@@ -218,6 +241,33 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.ack_reaction_emoji, ":eyes:")
         self.assertEqual(controller.im_client.reactions, [("C1", "m1", ":eyes:")])
 
+    async def test_reply_anchor_alias_keeps_original_anchor_mapping(self):
+        controller = _StubController(platform="discord", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        session_handler = _StubSessionHandler()
+        handler.set_session_handler(session_handler)
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            thread_id="thread-1",
+            message_id="m1",
+            platform="discord",
+            platform_specific={"reply_anchor_base_session_id": "discord_anchor-1"},
+        )
+
+        await handler.handle_user_message(context, "hello")
+
+        self.assertEqual(
+            session_handler.alias_calls,
+            [
+                {
+                    "source_base_session_id": "discord_anchor-1",
+                    "alias_base_session_id": "base-session",
+                    "clear_source": False,
+                }
+            ],
+        )
+
     async def test_wechat_context_forces_typing_even_when_primary_platform_is_slack(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
         handler = MessageHandler(controller)
@@ -252,6 +302,23 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         result = await handler._prepend_user_info(context, "hello")
 
         self.assertEqual(result, "[WeChat User<wx-user>] hello")
+
+    async def test_scheduled_turn_returns_error_string_after_notifying_im(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        controller.agent_service.error = RuntimeError("boom")
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C1",
+            message_id="scheduled:task-1:abc",
+            platform="slack",
+        )
+
+        result = await handler.handle_scheduled_message(context, "hello")
+
+        self.assertEqual(result, "boom")
+        self.assertEqual(controller.im_client.sent_messages, [("C1", "Error: boom")])
 
     async def test_resume_session_callback_preserves_platform(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)

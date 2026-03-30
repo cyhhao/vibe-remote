@@ -144,7 +144,7 @@ class ConsolidatedMessageDispatcher:
         message_type: str,
         text: str,
         parse_mode: Optional[str] = "markdown",
-    ) -> None:
+    ) -> Optional[str]:
         """Centralized dispatch for agent messages.
 
         Message Types:
@@ -154,7 +154,7 @@ class ConsolidatedMessageDispatcher:
         - Notify Message: notifications, always sent immediately.
         """
         if not text or not text.strip():
-            return
+            return None
 
         settings_manager = self.controller.get_settings_manager_for_context(context)
         im_client = self._get_im_client(context)
@@ -165,13 +165,14 @@ class ConsolidatedMessageDispatcher:
         if canonical_type == "notify":
             target_context = self._get_target_context(context)
             try:
-                await im_client.send_message(target_context, text, parse_mode=parse_mode)
+                return await im_client.send_message(target_context, text, parse_mode=parse_mode)
             except Exception as err:
                 logger.error("Failed to send notify message: %s", err)
-            return
+            return None
 
         if canonical_type == "result":
             target_context = self._get_target_context(context)
+            primary_message_id: Optional[str] = None
 
             # --- Reply enhancements: extract file links & quick-reply buttons ---
             reply_enhancements_on = getattr(self.controller.config, "reply_enhancements", True)
@@ -185,7 +186,7 @@ class ConsolidatedMessageDispatcher:
             if len(display_text) <= self._get_result_max_chars(context):
                 if enhanced and enhanced.buttons and self._supports_quick_replies(context):
                     try:
-                        await self._send_with_quick_replies(
+                        primary_message_id = await self._send_with_quick_replies(
                             im_client,
                             target_context,
                             display_text,
@@ -195,18 +196,20 @@ class ConsolidatedMessageDispatcher:
                     except Exception as err:
                         logger.warning("Failed to send result with quick replies, falling back: %s", err)
                         try:
-                            await im_client.send_message(target_context, display_text, parse_mode=parse_mode)
+                            primary_message_id = await im_client.send_message(
+                                target_context, display_text, parse_mode=parse_mode
+                            )
                         except Exception as fallback_err:
                             logger.error("Failed to send fallback result message: %s", fallback_err)
                 else:
                     try:
-                        await im_client.send_message(target_context, display_text, parse_mode=parse_mode)
+                        primary_message_id = await im_client.send_message(target_context, display_text, parse_mode=parse_mode)
                     except Exception as err:
                         logger.error("Failed to send result message: %s", err)
             else:
                 summary = self._build_result_summary(display_text, self._get_result_max_chars(context))
                 try:
-                    await im_client.send_message(target_context, summary, parse_mode=parse_mode)
+                    primary_message_id = await im_client.send_message(target_context, summary, parse_mode=parse_mode)
                 except Exception as err:
                     logger.error("Failed to send result summary: %s", err)
 
@@ -234,6 +237,12 @@ class ConsolidatedMessageDispatcher:
             if enhanced and enhanced.files:
                 await self._upload_file_links(im_client, target_context, enhanced.files)
 
+            if primary_message_id:
+                try:
+                    self.controller.session_handler.finalize_scheduled_delivery(context, primary_message_id)
+                except Exception as err:
+                    logger.warning("Failed to finalize scheduled delivery anchor: %s", err)
+
             # Final result closes the current turn: clear consolidated
             # assistant/tool/system message state so the next user turn starts
             # a fresh log message instead of appending to the previous one.
@@ -243,7 +252,7 @@ class ConsolidatedMessageDispatcher:
                 self._consolidated_message_ids.pop(consolidated_key, None)
                 self._consolidated_message_buffers.pop(consolidated_key, None)
 
-            return
+            return primary_message_id
 
         if canonical_type not in {"system", "assistant", "toolcall"}:
             canonical_type = "assistant"
@@ -256,7 +265,7 @@ class ConsolidatedMessageDispatcher:
                 settings_key,
                 preview,
             )
-            return
+            return None
 
         consolidated_key = self._get_consolidated_message_key(context)
         lock = self._get_consolidated_message_lock(consolidated_key)
@@ -350,14 +359,16 @@ class ConsolidatedMessageDispatcher:
                     logger.warning(f"Failed to edit Log Message: {err}")
                     ok = False
                 if ok:
-                    return
+                    return existing_message_id
                 self._consolidated_message_ids.pop(consolidated_key, None)
 
             try:
                 new_id = await im_client.send_message(target_context, updated, parse_mode="markdown")
                 self._consolidated_message_ids[consolidated_key] = new_id
+                return new_id
             except Exception as err:
                 logger.error(f"Failed to send Log Message: {err}", exc_info=True)
+                return None
 
     # ------------------------------------------------------------------
     # Reply-enhancement helpers
@@ -370,7 +381,7 @@ class ConsolidatedMessageDispatcher:
         text: str,
         buttons,
         parse_mode,
-    ) -> None:
+    ) -> str:
         """Send a message with quick-reply buttons appended."""
         from modules.im.base import InlineButton, InlineKeyboard
 
@@ -382,7 +393,7 @@ class ConsolidatedMessageDispatcher:
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
         rows = [[button] for button in row] if platform == "lark" else [row]
         keyboard = InlineKeyboard(buttons=rows)
-        await im_client.send_message_with_buttons(
+        return await im_client.send_message_with_buttons(
             context,
             text,
             keyboard,
