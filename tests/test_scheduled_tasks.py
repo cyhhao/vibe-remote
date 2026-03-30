@@ -8,7 +8,13 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.scheduled_tasks import ScheduledTaskService, ScheduledTaskStore, parse_session_key
+from core.scheduled_tasks import (
+    ScheduledTaskService,
+    ScheduledTaskStore,
+    build_session_key_for_context,
+    parse_session_key,
+)
+from modules.im import MessageContext
 
 
 class _StubScheduler:
@@ -52,6 +58,34 @@ def test_parse_session_key_rejects_invalid_scope_type() -> None:
         assert "scope type" in str(exc)
     else:
         raise AssertionError("expected invalid scope type to raise ValueError")
+
+
+def test_build_session_key_for_context_defaults_to_threadless_scope() -> None:
+    context = MessageContext(
+        user_id="U123",
+        channel_id="C123",
+        platform="slack",
+        thread_id="171717.123",
+        platform_specific={"is_dm": False},
+    )
+
+    parsed = build_session_key_for_context(context)
+
+    assert parsed.to_key(include_thread=False) == "slack::channel::C123"
+    assert parsed.thread_id is None
+
+
+def test_build_session_key_for_context_uses_fallback_platform() -> None:
+    context = MessageContext(
+        user_id="U123",
+        channel_id="C123",
+        thread_id="171717.123",
+        platform_specific={"is_dm": False},
+    )
+
+    parsed = build_session_key_for_context(context, fallback_platform="slack")
+
+    assert parsed.to_key(include_thread=False) == "slack::channel::C123"
 
 
 def test_store_round_trip_persists_task(tmp_path: Path) -> None:

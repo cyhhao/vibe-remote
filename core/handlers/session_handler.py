@@ -382,7 +382,11 @@ class SessionHandler(BaseHandler):
 
             platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
 
-            reply_prompt = build_reply_enhancements_prompt(include_quick_replies=platform != "wechat")
+            reply_prompt = build_reply_enhancements_prompt(
+                include_quick_replies=platform != "wechat",
+                context=context,
+                fallback_platform=platform,
+            )
 
             if base_prompt:
                 final_system_prompt = f"{base_prompt}\n\n{reply_prompt}"

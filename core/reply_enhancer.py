@@ -16,8 +16,10 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from urllib.parse import unquote, urlparse
+
+from modules.im import MessageContext
 
 logger = logging.getLogger(__name__)
 
@@ -182,13 +184,60 @@ Rules:
 - Use at most 2-4 buttons, each no longer than 20 characters
 """
 
+_SCHEDULED_TASKS_PROMPT = """\
 
-def build_reply_enhancements_prompt(*, include_quick_replies: bool = True) -> str:
+## 3. Scheduled tasks
+You can create scheduled tasks with the `vibe task add` command.
+
+Current conversation targeting:
+- Default session key: `{session_key}`
+- Current thread ID: `{thread_id}`
+
+Rules:
+- The default session key intentionally does not include a thread ID.
+- Only append `::thread::<thread_id>` to `--session-key` when the user explicitly wants the scheduled task to keep replying in the current thread.
+- Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off tasks.
+- Use `--prompt "..."` or `--prompt-file <path>` to provide the task content.
+
+Examples:
+- Default scope: `vibe task add --session-key '{session_key}' --cron '0 * * * *' --prompt 'Send the hourly update.'`
+- Current thread only when needed: `vibe task add --session-key '{session_key_with_thread}' --cron '0 9 * * *' --prompt 'Post the daily summary in this thread.'`
+"""
+
+
+def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform: Optional[str] = None) -> str:
+    from core.scheduled_tasks import build_session_key_for_context
+
+    default_key = build_session_key_for_context(
+        context,
+        include_thread=False,
+        fallback_platform=fallback_platform,
+    ).to_key(include_thread=False)
+    thread_id = context.thread_id or "(none)"
+    if context.thread_id:
+        session_key_with_thread = f"{default_key}::thread::{context.thread_id}"
+    else:
+        session_key_with_thread = f"{default_key}::thread::<thread_id>"
+    return _SCHEDULED_TASKS_PROMPT.format(
+        session_key=default_key,
+        thread_id=thread_id,
+        session_key_with_thread=session_key_with_thread,
+    )
+
+
+def build_reply_enhancements_prompt(
+    *,
+    include_quick_replies: bool = True,
+    context: Optional[MessageContext] = None,
+    fallback_platform: Optional[str] = None,
+) -> str:
     """Build the reply-enhancement prompt for the current platform/backend."""
 
     prompt = _FILES_PROMPT
     if include_quick_replies:
         prompt += _QUICK_REPLIES_PROMPT
+    if context is not None:
+        prompt += _build_scheduled_tasks_prompt(context, fallback_platform=fallback_platform)
     return prompt
 
 

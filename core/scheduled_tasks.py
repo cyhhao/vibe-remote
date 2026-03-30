@@ -42,9 +42,9 @@ class ParsedSessionKey:
     def is_dm(self) -> bool:
         return self.scope_type == "user"
 
-    def to_key(self) -> str:
+    def to_key(self, *, include_thread: bool = True) -> str:
         base = f"{self.platform}::{self.scope_type}::{self.scope_id}"
-        if self.thread_id:
+        if include_thread and self.thread_id:
             return f"{base}::thread::{self.thread_id}"
         return base
 
@@ -72,6 +72,25 @@ def parse_session_key(value: str) -> ParsedSessionKey:
         scope_type=scope_type,
         scope_id=scope_id,
         thread_id=thread_id,
+    )
+
+
+def build_session_key_for_context(
+    context: MessageContext,
+    *,
+    include_thread: bool = False,
+    fallback_platform: Optional[str] = None,
+) -> ParsedSessionKey:
+    payload = context.platform_specific or {}
+    platform = context.platform or payload.get("platform") or fallback_platform or ""
+    is_dm = bool(payload.get("is_dm", False))
+    scope_type = "user" if is_dm else "channel"
+    scope_id = context.user_id if is_dm else context.channel_id
+    return ParsedSessionKey(
+        platform=platform,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        thread_id=context.thread_id if include_thread else None,
     )
 
 
