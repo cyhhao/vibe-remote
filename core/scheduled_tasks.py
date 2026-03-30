@@ -121,12 +121,14 @@ class ScheduledTaskStore:
     def load(self) -> None:
         if not self.path.exists():
             self._tasks = {}
+            self._mtime = 0
             return
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception as exc:
             logger.error("Failed to load scheduled tasks: %s", exc)
             self._tasks = {}
+            self._mtime = 0
             return
 
         raw_tasks = payload.get("tasks", []) if isinstance(payload, dict) else []
@@ -147,6 +149,9 @@ class ScheduledTaskStore:
             mtime = self.path.stat().st_mtime
         except FileNotFoundError:
             mtime = 0
+        if mtime == 0 and self._mtime != 0:
+            self.load()
+            return True
         if mtime <= self._mtime:
             return False
         self.load()
@@ -234,6 +239,10 @@ class ScheduledTaskService:
         self._reconcile_task: Optional[asyncio.Task] = None
         self._job_signatures: Dict[str, tuple[Any, ...]] = {}
         self._running = False
+
+    def validate_platform(self, platform: str) -> None:
+        if platform not in self.controller.platform_settings_managers:
+            raise ValueError(f"unsupported task platform: {platform}")
 
     def start(self) -> None:
         if self._running:
@@ -336,6 +345,7 @@ class ScheduledTaskService:
 
     async def _build_context(self, target: ParsedSessionKey) -> MessageContext:
         platform = target.platform
+        self.validate_platform(platform)
         settings_manager = self.controller.platform_settings_managers[platform]
 
         channel_id = target.scope_id

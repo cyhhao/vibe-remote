@@ -190,9 +190,34 @@ def _task_store() -> ScheduledTaskStore:
     return ScheduledTaskStore()
 
 
+def _supported_task_platforms() -> set[str]:
+    try:
+        config = _ensure_config()
+    except Exception:
+        return set()
+
+    supported: set[str] = set()
+    if getattr(config.slack, "bot_token", "") and getattr(config.slack, "app_token", ""):
+        supported.add("slack")
+    discord_cfg = getattr(config, "discord", None)
+    if discord_cfg and getattr(discord_cfg, "bot_token", ""):
+        supported.add("discord")
+    lark_cfg = getattr(config, "lark", None)
+    if lark_cfg and getattr(lark_cfg, "app_id", "") and getattr(lark_cfg, "app_secret", ""):
+        supported.add("lark")
+    wechat_cfg = getattr(config, "wechat", None)
+    if wechat_cfg and getattr(wechat_cfg, "enable", False):
+        supported.add("wechat")
+    return supported
+
+
 def cmd_task_add(args):
     try:
-        parse_session_key(args.session_key)
+        parsed = parse_session_key(args.session_key)
+        supported_platforms = _supported_task_platforms()
+        if parsed.platform not in supported_platforms:
+            supported_text = ", ".join(sorted(supported_platforms)) or "none"
+            raise ValueError(f"unsupported task platform: {parsed.platform} (configured: {supported_text})")
         prompt = _resolve_task_prompt(args)
         timezone_name = args.timezone or _default_timezone_name()
         ZoneInfo(timezone_name)
