@@ -2,8 +2,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -30,7 +32,7 @@ from vibe.opencode_config import (
 from vibe.upgrade import (
     build_upgrade_plan,
     get_latest_version_info,
-    get_restart_shell_command,
+    get_restart_command,
     get_running_vibe_path,
     get_safe_cwd,
 )
@@ -41,6 +43,49 @@ logger = logging.getLogger(__name__)
 # Cache per cwd: { cwd: { "data": ..., "updated_at": ... } }
 _OPENCODE_OPTIONS_CACHE: dict[str, dict] = {}
 _OPENCODE_OPTIONS_TTL_SECONDS = 30.0
+
+
+def _delayed_restart_helper_command() -> list[str]:
+    candidates: list[list[str]] = []
+    current = sys.executable
+
+    if current and os.path.isabs(current) and os.path.exists(current) and os.access(current, os.X_OK):
+        candidates.append([current])
+
+    if os.name == "nt":
+        candidates.extend((["py", "-3"], ["python"], ["python3"]))
+    else:
+        candidates.extend((["python3"], ["python"]))
+
+    for candidate in candidates:
+        binary = candidate[0]
+        if os.path.isabs(binary):
+            if os.path.exists(binary) and os.access(binary, os.X_OK):
+                return candidate
+            continue
+        resolved = shutil.which(binary)
+        if resolved:
+            return [resolved, *candidate[1:]]
+
+    raise FileNotFoundError("No stable Python launcher available for delayed restart helper")
+
+
+def _spawn_delayed_restart(command: list[str], cwd: str, delay_seconds: float = 2.0) -> None:
+    helper_code = (
+        "import subprocess, time\n"
+        f"time.sleep({delay_seconds!r})\n"
+        f"subprocess.Popen({command!r}, cwd={cwd!r}, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL, close_fds=True)\n"
+    )
+    helper_cmd = [*_delayed_restart_helper_command(), "-c", helper_code]
+    subprocess.Popen(
+        helper_cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        close_fds=True,
+        cwd=cwd,
+    )
 
 
 def _is_executable_file(path: Path) -> bool:
@@ -725,14 +770,9 @@ def do_upgrade(auto_restart: bool = True) -> dict:
         if result.returncode == 0:
             restarting = False
             if auto_restart:
-                restart_cmd = f"sleep 2 && {get_restart_shell_command(vibe_path=current_vibe_path)}"
-                subprocess.Popen(
-                    restart_cmd,
-                    shell=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                    cwd=safe_cwd,
+                _spawn_delayed_restart(
+                    get_restart_command(vibe_path=current_vibe_path),
+                    safe_cwd,
                 )
                 restarting = True
 
@@ -992,57 +1032,81 @@ def claude_agents(cwd: Optional[str] = None) -> dict:
 
 
 def claude_models() -> dict:
-    """Best-effort list of Claude Code model options.
+    """Best-effort merged list of Claude Code model options.
 
     Claude Code does not expose a stable `list models` CLI subcommand.
-    We derive suggestions from:
-    - Common aliases mentioned by `claude --help` (opus/sonnet/haiku)
-    - Common full model names (claude-opus-4, claude-sonnet-4, etc.)
-    - ~/.claude/settings.json `model`
-    - ~/.claude/settings.json `env` model variables (if present)
+    We merge suggestions from:
+    - Built-in known model ids and aliases
+    - The locally installed Claude CLI bundle (when available)
+    - ~/.claude/settings.json model/env values
     """
 
-    # Common full model names (latest versions)
-    options: list[str] = [
+    def _append_unique(options: list[str], seen: set[str], value: object) -> None:
+        if not isinstance(value, str):
+            return
+        model = value.strip()
+        if not model or model in seen:
+            return
+        seen.add(model)
+        options.append(model)
+
+    built_in_options = [
         "claude-opus-4-6",
         "claude-sonnet-4-6",
+        "claude-haiku-4-5",
         "claude-opus-4-5",
         "claude-sonnet-4-5",
-        "claude-haiku-4-5",
         "claude-opus-4",
         "claude-sonnet-4",
         "claude-haiku-4",
+        "opus",
+        "sonnet",
+        "haiku",
     ]
+
+    options: list[str] = []
+    seen: set[str] = set()
+
+    for model in built_in_options:
+        _append_unique(options, seen, model)
+
+    claude_path = resolve_cli_path("claude")
+    if claude_path:
+        cli_bundle_candidates = [
+            Path(claude_path).resolve(),
+            Path(claude_path).resolve().parent / "cli.js",
+        ]
+        cli_bundle_path = next((path for path in cli_bundle_candidates if path.exists() and path.is_file()), None)
+        if cli_bundle_path is not None:
+            try:
+                bundle_text = cli_bundle_path.read_text(encoding="utf-8", errors="ignore")
+                for match in re.findall(r"claude-(?:opus|sonnet|haiku)-\d+(?:-\d+)*(?:-\d{8})?", bundle_text):
+                    _append_unique(options, seen, match)
+            except Exception as exc:
+                logger.warning("Failed to inspect Claude CLI bundle: %s", exc, exc_info=True)
 
     settings_path = Path.home() / ".claude" / "settings.json"
     try:
         if settings_path.exists() and settings_path.is_file():
             data = json.loads(settings_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                model = data.get("model")
-                # Only add full model names (e.g., "claude-sonnet-4"), not aliases like "opus"
-                if isinstance(model, str) and model.strip() and model.strip().startswith("claude-"):
-                    options.append(model.strip())
+                _append_unique(options, seen, data.get("model"))
                 env = data.get("env")
                 if isinstance(env, dict):
                     for key in (
                         "ANTHROPIC_MODEL",
                         "ANTHROPIC_SMALL_FAST_MODEL",
                     ):
-                        value = env.get(key)
-                        # Only add full model names
-                        if isinstance(value, str) and value.strip() and value.strip().startswith("claude-"):
-                            options.append(value.strip())
+                        _append_unique(options, seen, env.get(key))
     except Exception as exc:
         logger.warning("Failed to read Claude settings.json: %s", exc, exc_info=True)
 
     from modules.agents.opencode.utils import build_claude_reasoning_options
 
-    uniq = sorted({x for x in options if x})
     reasoning_options = {"": build_claude_reasoning_options(None)}
-    for model in uniq:
+    for model in options:
         reasoning_options[model] = build_claude_reasoning_options(model)
-    return {"ok": True, "models": uniq, "reasoning_options": reasoning_options}
+    return {"ok": True, "models": options, "reasoning_options": reasoning_options}
 
 
 def install_agent(name: str) -> dict:
@@ -1171,25 +1235,68 @@ def install_agent(name: str) -> dict:
 
 
 def codex_models() -> dict:
-    """Best-effort list of Codex model options.
+    """Best-effort merged list of Codex model options.
 
     Codex CLI does not expose a stable `list models` command.
-    We derive suggestions from:
-    - Common OpenAI model names (gpt-5, etc.)
-    - ~/.codex/config.toml (if present)
+    We merge suggestions from:
+    - Built-in known model ids
+    - ~/.codex/models_cache.json (maintained by Codex CLI)
+    - ~/.codex/config.toml (user-selected model and migration hints)
     """
 
-    # Common OpenAI model names used with Codex
-    options: list[str] = [
-        # GPT series (newest first)
+    def _append_unique(options: list[str], seen: set[str], value: object) -> None:
+        if not isinstance(value, str):
+            return
+        model = value.strip()
+        if not model or model in seen:
+            return
+        seen.add(model)
+        options.append(model)
+
+    built_in_options: list[str] = [
         "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
         "gpt-5.3-codex",
+        "gpt-5.3-codex-spark",
         "gpt-5.2-codex",
         "gpt-5.2",
+        "gpt-5.1-codex-max",
+        "gpt-5.1-codex-mini",
         "gpt-5.1",
         "gpt-5",
     ]
-    config_path = Path.home() / ".codex" / "config.toml"
+
+    options: list[str] = []
+    seen: set[str] = set()
+    codex_home = Path.home() / ".codex"
+    models_cache_path = codex_home / "models_cache.json"
+    config_path = codex_home / "config.toml"
+
+    for model in built_in_options:
+        _append_unique(options, seen, model)
+
+    try:
+        if models_cache_path.exists() and models_cache_path.is_file():
+            cache_data = json.loads(models_cache_path.read_text(encoding="utf-8"))
+            models = cache_data.get("models")
+            if isinstance(models, list):
+                visible_models: list[tuple[int, int, str]] = []
+                for index, item in enumerate(models):
+                    if not isinstance(item, dict):
+                        continue
+                    slug = item.get("slug")
+                    if not isinstance(slug, str) or not slug.strip():
+                        continue
+                    priority = item.get("priority")
+                    if not isinstance(priority, int):
+                        priority = 10**9
+                    visible_models.append((priority, index, slug.strip()))
+
+                for _, _, slug in sorted(visible_models):
+                    _append_unique(options, seen, slug)
+    except Exception as exc:
+        logger.warning("Failed to read Codex models_cache.json: %s", exc, exc_info=True)
 
     try:
         if config_path.exists() and config_path.is_file():
@@ -1199,28 +1306,22 @@ def codex_models() -> dict:
                 tomllib = None
 
             if tomllib is None:
-                uniq = sorted({x for x in options if x})
-                return {"ok": True, "models": uniq}
+                return {"ok": True, "models": options}
 
             data = tomllib.loads(config_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                model = data.get("model")
-                if isinstance(model, str) and model.strip():
-                    options.append(model.strip())
+                _append_unique(options, seen, data.get("model"))
                 notice = data.get("notice")
                 if isinstance(notice, dict):
                     migrations = notice.get("model_migrations")
                     if isinstance(migrations, dict):
                         for k, v in migrations.items():
-                            if isinstance(k, str) and k.strip():
-                                options.append(k.strip())
-                            if isinstance(v, str) and v.strip():
-                                options.append(v.strip())
+                            _append_unique(options, seen, k)
+                            _append_unique(options, seen, v)
     except Exception as exc:
         logger.warning("Failed to read Codex config.toml: %s", exc, exc_info=True)
 
-    uniq = sorted({x for x in options if x})
-    return {"ok": True, "models": uniq}
+    return {"ok": True, "models": options}
 
 
 def _lark_api_base(domain: str = "feishu") -> str:

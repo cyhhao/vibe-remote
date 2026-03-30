@@ -60,9 +60,15 @@ That's it. Browser opens -> Follow the wizard -> Done.
 <details>
 <summary><b>Windows?</b></summary>
 
-```powershell
-irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | iex
-```
+We recommend the WSL setup on Windows because it has the best compatibility.
+
+- Recommended: [Run Vibe Remote with WSL from Scratch](docs/WINDOWS_WSL.md)
+
+If you are new to WSL, this guide explains:
+- where to install WSL
+- which terminal window to use
+- where to run the Vibe Remote install command
+- how to launch Ubuntu and open the Web UI
 </details>
 
 ---
@@ -73,6 +79,7 @@ irm https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.ps1 | ie
 |---------|----------|
 | Claude Code is amazing but needs a terminal | Slack/Discord/WeChat/Lark IS your terminal now |
 | Context-switching kills flow | Stay in one app |
+| Start on desktop, continue on phone | Resume the exact agent session from the current project in seconds |
 | Can't code from phone | Yes you can |
 | Multiple agents, multiple setups | One chat app, any agent |
 
@@ -136,6 +143,12 @@ Get notified the moment your AI finishes. Like assigning tasks to employees — 
 ### Thread = Session
 
 Each Slack/Discord/WeChat/Lark thread is an isolated workspace. Open 5 threads, run 5 parallel tasks. Context stays separate.
+
+### Resume Anywhere
+
+Laptop closed. Commute started. Production still needs you.
+
+Vibe Remote lets you reopen real agent sessions from your current working directory across Claude Code, OpenCode, and Codex. Pick the latest session, jump from desktop to mobile, and keep going without re-explaining the task, hunting for an old thread, or losing the thread of thought.
 
 ### Interactive Prompts
 

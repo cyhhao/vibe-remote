@@ -92,6 +92,8 @@
     "howItWorksPersistentDesc": "Send a new message while the agent is running — it will stop and start your new task. Or type `stop` to cancel.",
     "howItWorksCommandsLabel": "Thread = Session",
     "howItWorksCommandsDesc": "Each thread is an isolated session. Open multiple threads to run parallel tasks.",
+    "howItWorksResumeLabel": "Resume Anywhere",
+    "howItWorksResumeDesc": "Switch from desktop to mobile without losing momentum. Reopen recent Claude Code, OpenCode, or Codex sessions from this working directory and continue instantly.",
     "howItWorksWorkDirLabel": "File Attachments",
     "howItWorksWorkDirDesc": "Attach images or files to your message — the agent can read them directly.",
     "howItWorksSettingsLabel": "Flexible Settings",

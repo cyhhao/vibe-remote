@@ -180,6 +180,130 @@ def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
     assert calls[0][0] == [str(npm_path), "install", "-g", "@openai/codex"]
     assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == str(npm_path.parent)
 
+def test_claude_models_merge_builtin_cli_and_settings(monkeypatch, tmp_path):
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    (claude_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "model": "opus[1m]",
+                "env": {
+                    "ANTHROPIC_MODEL": "claude-sonnet-4-6",
+                    "ANTHROPIC_SMALL_FAST_MODEL": "claude-haiku-4-5-20251001",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cli_bundle = tmp_path / "claude-cli.js"
+    cli_bundle.write_text(
+        '\n'.join(
+            [
+                'const OPUS_ID = "claude-opus-4-6";',
+                'const SONNET_ID = "claude-sonnet-4-6";',
+                'const HAIKU_ID = "claude-haiku-4-5";',
+                'const PREV_SONNET_ID = "claude-sonnet-4-5";',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(api, "resolve_cli_path", lambda binary: str(cli_bundle) if binary == "claude" else None)
+
+    result = api.claude_models()
+
+    assert result["ok"] is True
+    assert result["models"][:4] == [
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5",
+        "claude-opus-4-5",
+    ]
+    assert "opus" in result["models"]
+    assert "sonnet" in result["models"]
+    assert "haiku" in result["models"]
+    assert "opus[1m]" in result["models"]
+    assert "claude-haiku-4-5-20251001" in result["models"]
+    assert result["models"].count("claude-sonnet-4-6") == 1
+    assert [item["value"] for item in result["reasoning_options"]["opus"]] == [
+        "__default__",
+        "low",
+        "medium",
+        "high",
+        "max",
+    ]
+
+
+def test_codex_models_prefers_cli_cache_and_filters_hidden_models(monkeypatch, tmp_path):
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    (codex_dir / "models_cache.json").write_text(
+        json.dumps(
+            {
+                "models": [
+                    {"slug": "gpt-5.1", "visibility": "hide", "priority": 9},
+                    {"slug": "gpt-5.3-codex-spark", "visibility": "list", "priority": 6},
+                    {"slug": "gpt-5.4-mini", "visibility": "list", "priority": 3},
+                    {"slug": "gpt-5.4", "visibility": "list", "priority": 1},
+                    {"slug": "gpt-5.1-codex-mini", "visibility": "list", "priority": 19},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (codex_dir / "config.toml").write_text(
+        '\n'.join(
+            [
+                'model = "gpt-5.1"',
+                "[notice.model_migrations]",
+                '"gpt-5.2" = "gpt-5.4"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.codex_models()
+
+    assert result["ok"] is True
+    assert result["models"][:3] == [
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+    ]
+    assert "gpt-5.3-codex-spark" in result["models"]
+    assert "gpt-5.1-codex-mini" in result["models"]
+    assert "gpt-5.1" in result["models"]
+    assert "gpt-5.2" in result["models"]
+    assert result["models"].count("gpt-5.4") == 1
+
+
+def test_codex_models_falls_back_when_cli_cache_missing(monkeypatch, tmp_path):
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    (codex_dir / "config.toml").write_text(
+        '\n'.join(
+            [
+                'model = "custom-codex-model"',
+                "[notice.model_migrations]",
+                '"legacy-codex" = "gpt-5.4"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.codex_models()
+
+    assert result["ok"] is True
+    assert result["models"][:3] == ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
+    assert "custom-codex-model" in result["models"]
+    assert "legacy-codex" in result["models"]
+    assert "gpt-5.1-codex-max" in result["models"]
+    assert "gpt-5.1-codex-mini" in result["models"]
 def test_setup_opencode_permission_preserves_existing_json_fields(monkeypatch, tmp_path):
     config_path = tmp_path / ".config" / "opencode" / "opencode.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)

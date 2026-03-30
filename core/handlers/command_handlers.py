@@ -367,6 +367,8 @@ class CommandHandlers(BaseHandler):
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
         platform_name = str(platform).capitalize()
 
+        is_dm = bool((context.platform_specific or {}).get("is_dm", False))
+
         # Get user and channel info
         try:
             user_info = await im_client.get_user_info(context.user_id)
@@ -374,16 +376,25 @@ class CommandHandlers(BaseHandler):
             logger.warning(f"Failed to get user info: {e}")
             user_info = {"id": context.user_id}
 
-        try:
-            channel_info = await im_client.get_channel_info(context.channel_id)
-        except Exception as e:
-            logger.warning(f"Failed to get channel info: {e}")
+        channel_info = None
+        if platform == "slack" and is_dm:
             channel_info = {
                 "id": context.channel_id,
-                "name": (
-                    self._t("command.start.directMessage") if context.channel_id.startswith("D") else context.channel_id
-                ),
+                "name": self._t("command.start.directMessage"),
             }
+        else:
+            try:
+                channel_info = await im_client.get_channel_info(context.channel_id)
+            except Exception as e:
+                logger.warning(f"Failed to get channel info: {e}")
+                channel_info = {
+                    "id": context.channel_id,
+                    "name": (
+                        self._t("command.start.directMessage")
+                        if context.channel_id.startswith("D")
+                        else context.channel_id
+                    ),
+                }
 
         agent_name = self.controller.resolve_agent_for_context(context)
         default_agent = getattr(self.controller.agent_service, "default_agent", None)
@@ -392,7 +403,6 @@ class CommandHandlers(BaseHandler):
         # Determine whether this conversation supports threads.
         # If it does, each new thread is already a fresh session, so the
         # "New Session" button/command is unnecessary.
-        is_dm = bool((context.platform_specific or {}).get("is_dm", False))
         supports_threads = (
             getattr(im_client, "should_use_thread_for_dm_session", lambda: False)()
             if is_dm

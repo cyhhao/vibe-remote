@@ -106,6 +106,27 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
 
+    async def test_find_opencode_serve_pids_windows_uses_netstat_and_command_lookup(self):
+        netstat_output = """
+  TCP    127.0.0.1:4096     0.0.0.0:0      LISTENING       1234
+  TCP    127.0.0.1:7777     0.0.0.0:0      LISTENING       7777
+"""
+
+        with patch.object(SERVER_MODULE.os, "name", "nt"):
+            with patch.object(
+                SERVER_MODULE.subprocess,
+                "run",
+                return_value=types.SimpleNamespace(stdout=netstat_output),
+            ):
+                with patch.object(
+                    SERVER_MODULE.runtime,
+                    "get_process_command",
+                    side_effect=lambda pid: "opencode serve --port=4096" if pid == 1234 else "python app.py",
+                ):
+                    pids = OpenCodeServerManager._find_opencode_serve_pids(4096)
+
+        self.assertEqual(pids, [1234])
+
 
 if __name__ == "__main__":
     unittest.main()

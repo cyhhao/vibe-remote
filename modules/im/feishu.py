@@ -1496,10 +1496,11 @@ class FeishuBot(BaseIMClient):
                         return
                 else:
                     if self.settings_manager:
-                        thread_active = (
-                            self.sessions.is_thread_active(user_id, chat_id, root_id) if self.sessions else False
+                        thread_active = self.sessions.is_thread_active(user_id, chat_id, root_id) if self.sessions else False
+                        scheduled_thread_active = (
+                            self.sessions.is_thread_active("scheduled", chat_id, root_id) if self.sessions else False
                         )
-                        if not thread_active:
+                        if not thread_active and not scheduled_thread_active:
                             logger.debug("Ignoring message in inactive thread %s", root_id)
                             return
                     else:

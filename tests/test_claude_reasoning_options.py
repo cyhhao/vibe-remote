@@ -39,6 +39,24 @@ def test_claude_reasoning_options_do_not_add_max_for_sonnet_46() -> None:
     assert [item["value"] for item in options] == ["__default__", "low", "medium", "high"]
 
 
+def test_claude_reasoning_options_add_max_for_opus_aliases() -> None:
+    assert [item["value"] for item in build_claude_reasoning_options("opus")] == [
+        "__default__",
+        "low",
+        "medium",
+        "high",
+        "max",
+    ]
+    assert [item["value"] for item in build_claude_reasoning_options("opus[1m]")] == [
+        "__default__",
+        "low",
+        "medium",
+        "high",
+        "max",
+    ]
+
+
 def test_normalize_claude_reasoning_effort_drops_invalid_max() -> None:
     assert normalize_claude_reasoning_effort("claude-sonnet-4-6", "max") is None
     assert normalize_claude_reasoning_effort("claude-opus-4-6", "max") == "max"
+    assert normalize_claude_reasoning_effort("opus", "max") == "max"

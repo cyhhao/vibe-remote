@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 class MessageHandler(BaseHandler):
     """Handles message routing and Claude communication"""
 
+    TURN_SOURCE_HUMAN = "human"
+    TURN_SOURCE_SCHEDULED = "scheduled"
+
     def __init__(self, controller):
         """Initialize with reference to main controller"""
         super().__init__(controller)
@@ -94,50 +97,94 @@ class MessageHandler(BaseHandler):
         return ack_reaction_message_id, ack_reaction_emoji, False, None
 
     async def handle_user_message(self, context: MessageContext, message: str):
-        """Process regular user messages and route to configured agent"""
+        """Process regular human-originated messages and route to configured agent."""
+        await self._handle_turn(context, message, source=self.TURN_SOURCE_HUMAN)
+
+    async def handle_scheduled_message(self, context: MessageContext, message: str, parsed_session_key=None):
+        """Process a scheduler-originated turn through the shared turn pipeline."""
+        if parsed_session_key is not None:
+            payload = dict(context.platform_specific or {})
+            payload["parsed_session_key"] = parsed_session_key
+            context.platform_specific = payload
+        return await self._handle_turn(context, message, source=self.TURN_SOURCE_SCHEDULED)
+
+    async def _prepare_turn_context(self, context: MessageContext, source: str) -> MessageContext:
+        payload = dict(context.platform_specific or {})
+        payload["turn_source"] = source
+        context.platform_specific = payload
+        prepared = await self._get_im_client(context).prepare_turn_context(context, source)
+        prepared_payload = dict(prepared.platform_specific or {})
+        prepared_payload["turn_source"] = source
+        prepared.platform_specific = prepared_payload
+        return prepared
+
+    async def _handle_turn(self, context: MessageContext, message: str, *, source: str) -> Optional[str]:
+        """Shared turn-processing pipeline used by both human and scheduled turns."""
         ack_reaction_message_id = None
         ack_reaction_emoji = None
         typing_indicator_active = False
         typing_indicator_task = None
         try:
+            is_human = source == self.TURN_SOURCE_HUMAN
+
             # Record user activity for auto-update idle detection
-            if hasattr(self.controller, "update_checker"):
+            if is_human and hasattr(self.controller, "update_checker"):
                 self.controller.update_checker.record_activity()
 
             # If message is empty AND no files attached (e.g., user just @mentioned bot without text),
             # trigger the /start command instead of sending empty message to agent
             has_files = bool(context.files)
             if (not message or not message.strip()) and not has_files:
-                await self.controller.command_handler.handle_start(context, "")
-                return
+                if is_human:
+                    await self.controller.command_handler.handle_start(context, "")
+                return None
 
-            # Deduplication: check if this message has already been processed
-            # This prevents duplicate processing when vibe-remote restarts and
-            # Slack resends events
-            message_ts = context.message_id
-            thread_ts = context.thread_id or context.message_id
-            if message_ts and thread_ts:
-                if self.sessions.is_message_already_processed(context.channel_id, thread_ts, message_ts):
-                    logger.info(
-                        f"Skipping already processed message: channel={context.channel_id}, "
-                        f"thread={thread_ts}, message={message_ts}"
-                    )
-                    return
-                # Record this message as processed immediately to prevent duplicates
-                # even if processing fails (we don't want to retry failed messages forever)
-                self.sessions.record_processed_message(context.channel_id, thread_ts, message_ts)
+            if is_human:
+                # Deduplication: check if this message has already been processed
+                # This prevents duplicate processing when vibe-remote restarts and
+                # Slack resends events
+                message_ts = context.message_id
+                thread_ts = context.thread_id or context.message_id
+                if message_ts and thread_ts:
+                    if self.sessions.is_message_already_processed(context.channel_id, thread_ts, message_ts):
+                        logger.info(
+                            f"Skipping already processed message: channel={context.channel_id}, "
+                            f"thread={thread_ts}, message={message_ts}"
+                        )
+                        return None
+                    # Record this message as processed immediately to prevent duplicates
+                    # even if processing fails (we don't want to retry failed messages forever)
+                    self.sessions.record_processed_message(context.channel_id, thread_ts, message_ts)
 
             # Skip automatic cleanup; receiver tasks are retained until shutdown
 
             # Allow "stop" shortcut inside Slack threads
-            if context.thread_id and message.strip().lower() in ["stop", "/stop"]:
+            if is_human and context.thread_id and message.strip().lower() in ["stop", "/stop"]:
                 if await self._handle_inline_stop(context):
-                    return
+                    return None
 
             if not self.session_handler:
                 raise RuntimeError("Session handler not initialized")
 
-            base_session_id, working_path, composite_key = self.session_handler.get_session_info(context)
+            context = await self._prepare_turn_context(context, source)
+
+            base_session_id, working_path, composite_key = self.session_handler.get_session_info(context, source=source)
+            payload = dict(context.platform_specific or {})
+            payload["turn_source"] = source
+            payload["turn_base_session_id"] = base_session_id
+            payload["scheduled_anchor_required"] = self.session_handler.should_allocate_scheduled_anchor(
+                context, source=source
+            )
+            context.platform_specific = payload
+
+            reply_anchor_base_session_id = payload.get("reply_anchor_base_session_id")
+            if reply_anchor_base_session_id and reply_anchor_base_session_id != base_session_id:
+                self.session_handler.alias_session_base(
+                    context,
+                    source_base_session_id=reply_anchor_base_session_id,
+                    alias_base_session_id=base_session_id,
+                    clear_source=False,
+                )
             settings_key = self._get_settings_key(context)
             session_key = self._get_session_key(context)
 
@@ -216,24 +263,25 @@ class MessageHandler(BaseHandler):
                 composite_key = f"{base_session_id}:{working_path}"
 
             ack_message_id = None
-            ack_mode = getattr(self.config, "ack_mode", "typing")
-            effective_ack_mode = "typing" if self._get_context_platform(context) == "wechat" else ack_mode
-            if effective_ack_mode == "message":
-                ack_context = self._get_target_context(context)
-                ack_text = self._get_ack_text(agent_name)
-                try:
-                    ack_message_id = await self._get_im_client(ack_context).send_message(ack_context, ack_text)
-                except Exception as ack_err:
-                    logger.debug(f"Failed to send ack message: {ack_err}")
-            else:
-                (
-                    ack_reaction_message_id,
-                    ack_reaction_emoji,
-                    typing_indicator_active,
-                    typing_indicator_task,
-                ) = await self._start_processing_indicator(context)
+            if is_human:
+                ack_mode = getattr(self.config, "ack_mode", "typing")
+                effective_ack_mode = "typing" if self._get_context_platform(context) == "wechat" else ack_mode
+                if effective_ack_mode == "message":
+                    ack_context = self._get_target_context(context)
+                    ack_text = self._get_ack_text(agent_name)
+                    try:
+                        ack_message_id = await self._get_im_client(ack_context).send_message(ack_context, ack_text)
+                    except Exception as ack_err:
+                        logger.debug(f"Failed to send ack message: {ack_err}")
+                else:
+                    (
+                        ack_reaction_message_id,
+                        ack_reaction_emoji,
+                        typing_indicator_active,
+                        typing_indicator_task,
+                    ) = await self._start_processing_indicator(context)
 
-            if subagent_name and context.message_id:
+            if is_human and subagent_name and context.message_id:
                 try:
                     reaction = ":robot_face:"
                     await self._get_im_client(context).add_reaction(
@@ -257,7 +305,7 @@ class MessageHandler(BaseHandler):
                     logger.info(f"Processed {len(processed_files)} file attachments for message")
 
             # Prepend user identity when include_user_info is enabled
-            if self.config.include_user_info:
+            if is_human and self.config.include_user_info:
                 message = await self._prepend_user_info(context, message)
 
             message = self._append_attachment_errors(message, attachment_errors)
@@ -287,9 +335,11 @@ class MessageHandler(BaseHandler):
                 await self._handle_missing_agent(context, agent_name)
                 # Clean up reaction on error
                 await self._remove_ack_reaction(context, request)
+                return f"agent '{agent_name}' is not available"
             finally:
                 if request.ack_message_id:
                     await self._delete_ack(context.channel_id, request)
+            return None
         except Exception as e:
             logger.error(f"Error processing user message: {e}", exc_info=True)
             # Clean up reaction on any exception
@@ -322,6 +372,7 @@ class MessageHandler(BaseHandler):
                 context,
                 self.formatter.format_error(self._t("error.processMessageFailed", error=str(e))),
             )
+            return str(e)
 
     @staticmethod
     def _sanitize_identity(value: str) -> str:

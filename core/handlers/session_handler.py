@@ -3,6 +3,7 @@
 import logging
 import os
 from typing import Optional, Dict, Any, Tuple
+from uuid import uuid4
 from modules.im import MessageContext
 from modules.claude_sdk_compat import ClaudeSDKClient, ClaudeAgentOptions
 from modules.agents.native_sessions.base import build_resume_preview
@@ -23,26 +24,14 @@ class SessionHandler(BaseHandler):
         self.receiver_tasks = controller.receiver_tasks
         self.stored_session_mappings = controller.stored_session_mappings
 
-    def get_base_session_id(self, context: MessageContext) -> str:
+    def get_base_session_id(self, context: MessageContext, source: str = "human") -> str:
         """Get base session ID based on platform and context (without path)"""
-        platform = (
-            context.platform
-            or (context.platform_specific or {}).get("platform")
-            or getattr(self.config, "platform", "slack")
-        )
+        platform = self._get_context_platform(context)
         is_dm = bool((context.platform_specific or {}).get("is_dm", False))
+        if self.should_allocate_scheduled_anchor(context, source=source):
+            return f"{platform}_scheduled-{uuid4().hex}"
         if is_dm:
-            use_dm_threads = False
-            getter = getattr(self.controller, "get_im_client_for_context", None)
-            if callable(getter):
-                try:
-                    im_client = getter(context)
-                except AttributeError:
-                    im_client = getattr(self.controller, "im_client", None)
-            else:
-                im_client = getattr(self.controller, "im_client", None)
-            if im_client and hasattr(im_client, "should_use_thread_for_dm_session"):
-                use_dm_threads = bool(im_client.should_use_thread_for_dm_session())
+            use_dm_threads = self._supports_threaded_session(context, is_dm=True)
 
             if use_dm_threads:
                 base_id = context.thread_id or context.message_id or context.channel_id or context.user_id
@@ -64,6 +53,87 @@ class SessionHandler(BaseHandler):
                     use_message_id = bool(im_client.should_use_message_id_for_channel_session(context))
                 base_id = context.message_id if use_message_id and context.message_id else context.channel_id
         return f"{platform}_{base_id}"
+
+    def _get_context_platform(self, context: MessageContext) -> str:
+        return (
+            context.platform
+            or (context.platform_specific or {}).get("platform")
+            or getattr(self.config, "platform", "slack")
+        )
+
+    def should_allocate_scheduled_anchor(self, context: MessageContext, source: str = "human") -> bool:
+        if source != "scheduled" or context.thread_id:
+            return False
+        is_dm = bool((context.platform_specific or {}).get("is_dm", False))
+        if not self._supports_threaded_session(context, is_dm=is_dm):
+            return False
+        if is_dm:
+            return True
+
+        im_client = self._get_im_client(context)
+        use_message_id = getattr(im_client, "should_use_message_id_for_channel_session", lambda _context=None: True)
+        return bool(use_message_id(context))
+
+    def build_message_anchor_base(self, context: MessageContext, message_id: str) -> str:
+        return f"{self._get_context_platform(context)}_{message_id}"
+
+    def alias_session_base(
+        self,
+        context: MessageContext,
+        *,
+        source_base_session_id: str,
+        alias_base_session_id: str,
+        clear_source: bool = False,
+    ) -> bool:
+        if not source_base_session_id or not alias_base_session_id:
+            return False
+        session_key = self._get_session_key(context)
+        changed = self.sessions.alias_session_base(
+            session_key,
+            source_base_session_id,
+            alias_base_session_id,
+        )
+        if changed and clear_source and source_base_session_id != alias_base_session_id:
+            self.sessions.clear_session_base(session_key, source_base_session_id)
+        return changed
+
+    def finalize_scheduled_delivery(self, context: MessageContext, sent_message_id: Optional[str]) -> None:
+        payload = context.platform_specific or {}
+        if payload.get("turn_source") != "scheduled":
+            return
+        if context.thread_id or not payload.get("scheduled_anchor_required"):
+            return
+        if not sent_message_id:
+            return
+
+        source_base_session_id = payload.get("turn_base_session_id") or ""
+        alias_base_session_id = self.build_message_anchor_base(context, sent_message_id)
+        self.alias_session_base(
+            context,
+            source_base_session_id=source_base_session_id,
+            alias_base_session_id=alias_base_session_id,
+            clear_source=True,
+        )
+
+        platform = self._get_context_platform(context)
+        if platform in {"slack", "lark"}:
+            self.sessions.mark_thread_active("scheduled", context.channel_id, sent_message_id)
+
+    def _supports_threaded_session(self, context: MessageContext, *, is_dm: bool) -> bool:
+        getter = getattr(self.controller, "get_im_client_for_context", None)
+        if callable(getter):
+            try:
+                im_client = getter(context)
+            except AttributeError:
+                im_client = getattr(self.controller, "im_client", None)
+        else:
+            im_client = getattr(self.controller, "im_client", None)
+
+        if im_client is None:
+            return False
+        if is_dm:
+            return bool(getattr(im_client, "should_use_thread_for_dm_session", lambda: False)())
+        return bool(getattr(im_client, "should_use_thread_for_reply", lambda: False)())
 
     def get_working_path(self, context: MessageContext) -> str:
         """Get working directory - delegate to controller's get_cwd"""
@@ -124,9 +194,9 @@ class SessionHandler(BaseHandler):
         logger.warning(f"Agent file not found for '{agent_name}' in {search_paths}")
         return None
 
-    def get_session_info(self, context: MessageContext) -> Tuple[str, str, str]:
+    def get_session_info(self, context: MessageContext, source: str = "human") -> Tuple[str, str, str]:
         """Get session info: base_session_id, working_path, and composite_key"""
-        base_session_id = self.get_base_session_id(context)
+        base_session_id = self.get_base_session_id(context, source=source)
         working_path = self.get_working_path(context)  # Pass context to get user's custom_cwd
         # Create composite key for internal storage
         composite_key = f"{base_session_id}:{working_path}"

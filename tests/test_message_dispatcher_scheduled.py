@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core.message_dispatcher import ConsolidatedMessageDispatcher
+from modules.im import MessageContext
+
+
+class _StubIMClient:
+    def should_use_thread_for_reply(self):
+        return False
+
+    async def send_message(self, context, text, parse_mode=None, reply_to=None):
+        return "bot-msg-1"
+
+    async def send_message_with_buttons(self, context, text, keyboard, parse_mode=None):
+        return "bot-msg-1"
+
+
+class _StubSettingsManager:
+    def _canonicalize_message_type(self, message_type):
+        return message_type
+
+    def is_message_type_hidden(self, settings_key, canonical_type):
+        return False
+
+
+class _StubSessionHandler:
+    def __init__(self):
+        self.calls = []
+
+    def finalize_scheduled_delivery(self, context, sent_message_id):
+        self.calls.append((context.channel_id, sent_message_id))
+
+
+class _StubController:
+    def __init__(self):
+        self.config = type("Config", (), {"platform": "slack", "reply_enhancements": False})()
+        self.session_handler = _StubSessionHandler()
+
+    def _get_settings_key(self, context):
+        return context.channel_id
+
+    def _get_session_key(self, context):
+        return f"slack::{context.channel_id}"
+
+    def get_settings_manager_for_context(self, context):
+        return _StubSettingsManager()
+
+    def get_im_client_for_context(self, context):
+        return _StubIMClient()
+
+
+class MessageDispatcherScheduledTests(unittest.IsolatedAsyncioTestCase):
+    async def test_result_message_finalizes_scheduled_delivery(self):
+        controller = _StubController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C123",
+            platform="slack",
+            platform_specific={
+                "turn_source": "scheduled",
+                "turn_base_session_id": "slack_scheduled-1",
+                "scheduled_anchor_required": True,
+            },
+        )
+
+        message_id = await dispatcher.emit_agent_message(context, "result", "hello")
+
+        self.assertEqual(message_id, "bot-msg-1")
+        self.assertEqual(controller.session_handler.calls, [("C123", "bot-msg-1")])
