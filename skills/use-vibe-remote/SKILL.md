@@ -2,7 +2,7 @@
 name: use-vibe-remote
 slug: use-vibe-remote
 description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, scheduled tasks, and operational state.
-version: 0.1.3
+version: 0.1.4
 ---
 
 # Use Vibe Remote
@@ -15,7 +15,8 @@ Typical requests include:
 - route one channel or DM user to OpenCode, Claude, or Codex
 - set a working directory for a channel or DM
 - choose a backend model, subagent, or reasoning level
-- create, inspect, pause, resume, or remove a scheduled task with `vibe task`
+- create, inspect, run, pause, resume, or remove a scheduled task with `vibe task`
+- queue a one-shot asynchronous hook with `vibe hook send`
 - show or hide intermediate message types
 - inspect logs, run doctor, restart services, or explain where Vibe Remote stores its state
 - decide whether a requested change belongs in Vibe Remote config or in the host backend's own config
@@ -43,6 +44,7 @@ Important paths:
 - `~/.vibe_remote/config/config.json`: global config
 - `~/.vibe_remote/state/settings.json`: per-channel and per-user overrides
 - `~/.vibe_remote/state/scheduled_tasks.json`: persisted scheduled tasks
+- `~/.vibe_remote/state/task_requests/`: queued task-run and hook-send requests plus completion receipts
 - `~/.vibe_remote/state/sessions.json`: runtime session state
 - `~/.vibe_remote/logs/vibe_remote.log`: main application log
 - `~/.vibe_remote/runtime/status.json`: runtime status file
@@ -257,6 +259,7 @@ Do not hand-edit this file during normal operations unless the user explicitly a
 - `vibe task add`
 - `vibe task list`
 - `vibe task show <id>`
+- `vibe task run <id>`
 - `vibe task pause <id>`
 - `vibe task resume <id>`
 - `vibe task remove <id>`
@@ -302,6 +305,8 @@ Preferred CLI shape:
 
 - recurring: `vibe task add --session-key '<key>' --cron '<expr>' --prompt '...'`
 - one-off: `vibe task add --session-key '<key>' --at '<ISO-8601>' --prompt '...'`
+- immediate rerun: `vibe task run <id>`
+- one-shot async hook: `vibe hook send --session-key '<key>' --prompt '...'`
 
 Session key format:
 
@@ -317,6 +322,8 @@ Operational guidance:
 
 - use `vibe task list` before editing or deleting an existing task
 - use `vibe task show <id>` to inspect the exact stored schedule and target
+- use `vibe task run <id>` when the user wants to trigger one stored task immediately without changing its schedule
+- use `vibe hook send` when the user wants one asynchronous turn without storing a task definition
 - if a scheduled task fails unexpectedly, inspect `last_error` first and then check `~/.vibe_remote/logs/vibe_remote.log`
 
 ## Backend Capability Matrix

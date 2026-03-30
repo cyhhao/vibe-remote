@@ -78,12 +78,14 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
 
         prompt = build_reply_enhancements_prompt(include_quick_replies=True, context=context)
 
-        self.assertIn("## 3. Scheduled tasks", prompt)
+        self.assertIn("## 3. Scheduled tasks and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
+        self.assertIn("`vibe task run <id>`", prompt)
+        self.assertIn("`vibe hook send --session-key ... --prompt ...`", prompt)
         self.assertIn("Default session key: `slack::channel::C1`", prompt)
         self.assertIn("Current thread ID: `171717.123`", prompt)
-        self.assertIn("slack::channel::C1::thread::171717.123", prompt)
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
+        self.assertIn("Run `vibe task add --help` or `vibe hook send --help` for the full command reference.", prompt)
         self.assertIn("https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md", prompt)
 
     def test_prompt_uses_fallback_platform_for_unannotated_context(self):

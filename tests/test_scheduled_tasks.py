@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.scheduled_tasks import (
     ScheduledTaskService,
     ScheduledTaskStore,
+    TaskExecutionStore,
     build_session_key_for_context,
     parse_session_key,
 )
@@ -161,12 +162,24 @@ def test_build_context_assigns_unique_scheduled_message_ids() -> None:
     service = ScheduledTaskService(controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json")))
     target = parse_session_key("slack::channel::C123")
 
-    first = asyncio.run(service._build_context(target, task_id="task-1"))
-    second = asyncio.run(service._build_context(target, task_id="task-1"))
+    first = asyncio.run(service._build_context(target, execution_id="exec-1", task_id="task-1"))
+    second = asyncio.run(service._build_context(target, execution_id="exec-2", task_id="task-1"))
 
     assert first.message_id.startswith("scheduled:task-1:")
     assert second.message_id.startswith("scheduled:task-1:")
     assert first.message_id != second.message_id
+
+
+def test_build_context_assigns_hook_message_id() -> None:
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+    controller = SimpleNamespace(platform_settings_managers={"slack": settings_manager})
+    service = ScheduledTaskService(controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json")))
+    target = parse_session_key("slack::channel::C123")
+
+    context = asyncio.run(service._build_context(target, execution_id="exec-hook", trigger_kind="hook"))
+
+    assert context.message_id == "hook:exec-hook"
+    assert context.platform_specific["task_trigger_kind"] == "hook"
 
 
 def test_run_task_records_scheduled_handler_error(tmp_path: Path) -> None:
@@ -223,6 +236,89 @@ def test_reconcile_jobs_skips_invalid_tasks_and_keeps_valid_jobs(tmp_path: Path)
 
     assert valid.id in service.scheduler.jobs
     assert invalid.id not in service.scheduler.jobs
+
+
+def test_request_store_enqueue_claim_and_complete(tmp_path: Path) -> None:
+    store = TaskExecutionStore(tmp_path / "task_requests")
+
+    request = store.enqueue_hook_send(session_key="slack::channel::C123", prompt="hello")
+    pending = store.list_pending()
+    claimed = store.claim(request.id)
+
+    assert [item.id for item in pending] == [request.id]
+    assert claimed is not None
+    assert claimed.request_type == "hook_send"
+
+    store.complete(claimed, ok=True, session_key="slack::channel::C123")
+    completed_path = store.completed_dir / f"{request.id}.json"
+    payload = json.loads(completed_path.read_text(encoding="utf-8"))
+
+    assert payload["ok"] is True
+    assert payload["session_key"] == "slack::channel::C123"
+    assert not (store.processing_dir / f"{request.id}.json").exists()
+
+
+def test_drain_requests_executes_hook_send(tmp_path: Path) -> None:
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    request = request_store.enqueue_hook_send(session_key="slack::channel::C123", prompt="ship it")
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+    calls = []
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        calls.append((context, message, parsed_session_key))
+        return None
+
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        message_handler=SimpleNamespace(handle_scheduled_message=_handle_scheduled_message),
+    )
+    service = ScheduledTaskService(
+        controller=controller,
+        store=ScheduledTaskStore(tmp_path / "scheduled_tasks.json"),
+        request_store=request_store,
+    )
+
+    asyncio.run(service._drain_requests())
+
+    assert len(calls) == 1
+    context, message, parsed = calls[0]
+    assert message == "ship it"
+    assert parsed.to_key() == "slack::channel::C123"
+    assert context.message_id == f"hook:{request.id}"
+    payload = json.loads((request_store.completed_dir / f"{request.id}.json").read_text(encoding="utf-8"))
+    assert payload["ok"] is True
+
+
+def test_run_task_request_does_not_disable_one_shot(tmp_path: Path) -> None:
+    path = tmp_path / "scheduled_tasks.json"
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    store = ScheduledTaskStore(path)
+    task = store.add_task(
+        session_key="slack::channel::C123",
+        prompt="send digest",
+        schedule_type="at",
+        run_at="2026-03-31T09:00:00+08:00",
+        timezone_name="Asia/Shanghai",
+    )
+    request_store.enqueue_task_run(task.id)
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+
+    async def _handle_scheduled_message(context, message, parsed_session_key=None):
+        return None
+
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        message_handler=SimpleNamespace(handle_scheduled_message=_handle_scheduled_message),
+    )
+    service = ScheduledTaskService(controller=controller, store=store, request_store=request_store)
+
+    asyncio.run(service._drain_requests())
+
+    reloaded = ScheduledTaskStore(path)
+    updated = reloaded.get_task(task.id)
+    assert updated is not None
+    assert updated.enabled is True
+    assert updated.last_run_at is not None
 
 
 def test_start_keeps_watcher_alive_after_initial_reconcile_failure(tmp_path: Path) -> None:
