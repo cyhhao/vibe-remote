@@ -414,6 +414,42 @@ def test_task_list_brief_returns_scheduling_focused_view(tmp_path: Path, capsys)
     assert entry["state"] == "active"
 
 
+def test_task_list_sorts_by_next_run_instant_across_timezones(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_path = tmp_path / "scheduled_tasks.json"
+    store = cli.ScheduledTaskStore(store_path)
+    later = store.add_task(
+        name="Later run",
+        session_key="slack::channel::C123",
+        prompt="later",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="UTC",
+    )
+    earlier = store.add_task(
+        name="Earlier run",
+        session_key="slack::channel::C123",
+        prompt="earlier",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+    next_runs = {
+        later.id: "2026-04-01T09:30:00+08:00",
+        earlier.id: "2026-04-01T01:00:00+00:00",
+    }
+    monkeypatch.setattr(cli, "_task_next_run_at", lambda task: next_runs[task.id])
+
+    with patch("vibe.cli._task_store", return_value=store):
+        result = cli.cmd_task_list(brief=True)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    ordered_ids = [item["id"] for item in payload["tasks"]]
+    assert ordered_ids == [earlier.id, later.id]
+
+
 def test_task_show_includes_derived_schedule_fields(tmp_path: Path, capsys) -> None:
     store_path = tmp_path / "scheduled_tasks.json"
     store = cli.ScheduledTaskStore(store_path)

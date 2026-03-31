@@ -7,7 +7,7 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent
 from typing import Optional
@@ -466,6 +466,21 @@ def _task_schedule_summary(task) -> str:
     return task.schedule_type
 
 
+def _task_next_run_sort_key(task):
+    next_run_at = _task_next_run_at(task)
+    if not next_run_at:
+        return (True, datetime.max.replace(tzinfo=timezone.utc))
+    try:
+        instant = datetime.fromisoformat(next_run_at)
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+        else:
+            instant = instant.astimezone(timezone.utc)
+    except ValueError:
+        return (True, datetime.max.replace(tzinfo=timezone.utc))
+    return (False, instant)
+
+
 def _task_payload(task, *, brief: bool = False):
     derived = {
         "display_name": _task_display_name(task),
@@ -500,8 +515,7 @@ def _sort_tasks_for_display(tasks):
     return sorted(
         tasks,
         key=lambda item: (
-            _task_next_run_at(item) is None,
-            _task_next_run_at(item) or "",
+            *_task_next_run_sort_key(item),
             item.created_at,
             item.id,
         ),
