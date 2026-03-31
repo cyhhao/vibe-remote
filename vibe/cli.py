@@ -25,7 +25,7 @@ from config.v2_config import (
     SlackConfig,
     V2Config,
 )
-from core.scheduled_tasks import ScheduledTaskStore, parse_session_key
+from core.scheduled_tasks import ScheduledTaskStore, TaskExecutionStore, parse_session_key
 from vibe import __version__, api, runtime
 from vibe.upgrade import build_upgrade_plan, cache_running_vibe_path, get_latest_version_info, get_safe_cwd
 
@@ -102,6 +102,7 @@ def _task_examples_text() -> str:
         """\
         Examples:
           vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
+          vibe task run 12ab34cd56ef
           vibe task add --session-key 'discord::user::123456789' --at '2026-03-31T09:00:00+08:00' --prompt-file briefing.md
           vibe task add --session-key 'lark::channel::oc_abc::thread::om_123' --cron '30 9 * * 1-5' --prompt 'Post the daily standup reminder in this thread.'
         """
@@ -127,6 +128,28 @@ def _task_add_examples_text() -> str:
           vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
           vibe task add --session-key 'discord::user::123456789' --at '2026-03-31T09:00:00+08:00' --prompt 'Send the release reminder.'
           vibe task add --session-key 'lark::channel::oc_abc::thread::om_123' --cron '30 9 * * 1-5' --timezone 'Asia/Shanghai' --prompt-file standup.txt
+        """
+    )
+
+
+def _hook_send_examples_text() -> str:
+    return dedent(
+        """\
+        Session key format:
+          <platform>::channel::<channel_id>
+          <platform>::user::<user_id>
+          <platform>::channel::<channel_id>::thread::<thread_id>
+          <platform>::user::<user_id>::thread::<thread_id>
+
+        Guidance:
+          `vibe hook send` queues one asynchronous turn without persisting a scheduled task.
+          Prefer a threadless session key by default.
+          Only append ::thread::<thread_id> when the hook must continue in one specific thread.
+
+        Examples:
+          vibe hook send --session-key 'slack::channel::C123' --prompt 'The export finished. Share the summary.'
+          vibe hook send --session-key 'discord::user::123456789' --prompt-file release-note.txt
+          vibe hook send --session-key 'lark::channel::oc_abc::thread::om_123' --prompt 'Post the benchmark result in this thread.'
         """
     )
 
@@ -275,7 +298,7 @@ def _default_timezone_name() -> str:
     return "UTC"
 
 
-def _resolve_task_prompt(args) -> str:
+def _resolve_prompt_input(args, *, help_command: str, example_command: str) -> str:
     prompt = (getattr(args, "prompt", None) or "").strip()
     prompt_file = getattr(args, "prompt_file", None)
     if prompt and prompt_file:
@@ -283,7 +306,7 @@ def _resolve_task_prompt(args) -> str:
             "use either --prompt or --prompt-file",
             code="conflicting_prompt_inputs",
             hint="Pass inline text with --prompt or load it from disk with --prompt-file, but not both.",
-            help_command="vibe task add --help",
+            help_command=help_command,
         )
     if prompt:
         return prompt
@@ -292,7 +315,7 @@ def _resolve_task_prompt(args) -> str:
             "prompt text cannot be empty",
             code="empty_prompt",
             hint="Provide non-empty text after --prompt, or use --prompt-file with a readable text file.",
-            help_command="vibe task add --help",
+            help_command=help_command,
         )
     if prompt_file:
         try:
@@ -302,8 +325,8 @@ def _resolve_task_prompt(args) -> str:
                 f"failed to read prompt file: {exc}",
                 code="prompt_file_read_failed",
                 hint="Use --prompt-file with a readable UTF-8 text file.",
-                example="vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt-file briefing.md",
-                help_command="vibe task add --help",
+                example=f"{example_command} --prompt-file briefing.md",
+                help_command=help_command,
                 details={"prompt_file": prompt_file},
             ) from exc
         if not content:
@@ -311,8 +334,8 @@ def _resolve_task_prompt(args) -> str:
                 "prompt file is empty",
                 code="empty_prompt",
                 hint="Put the prompt text in the file, or pass it directly with --prompt.",
-                example="vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'",
-                help_command="vibe task add --help",
+                example=f"{example_command} --prompt 'Share the hourly summary.'",
+                help_command=help_command,
                 details={"prompt_file": prompt_file},
             )
         return content
@@ -320,7 +343,7 @@ def _resolve_task_prompt(args) -> str:
         "one of --prompt or --prompt-file is required",
         code="missing_prompt",
         hint="Pass inline text with --prompt or load it from disk with --prompt-file.",
-        help_command="vibe task add --help",
+        help_command=help_command,
     )
 
 
@@ -342,6 +365,10 @@ def _task_store() -> ScheduledTaskStore:
     return ScheduledTaskStore()
 
 
+def _task_request_store() -> TaskExecutionStore:
+    return TaskExecutionStore()
+
+
 def _supported_task_platforms() -> set[str]:
     try:
         config = _ensure_config()
@@ -353,36 +380,53 @@ def _supported_task_platforms() -> set[str]:
     return {getattr(config, "platform", "slack")}
 
 
+def _is_completed_one_shot(task) -> bool:
+    return task.schedule_type == "at" and not task.enabled and bool(task.last_run_at)
+
+
+def _parse_validated_session_key(
+    session_key: str,
+    *,
+    help_command: str,
+) -> object:
+    try:
+        parsed = parse_session_key(session_key)
+    except ValueError as exc:
+        raise TaskCliError(
+            str(exc),
+            code="invalid_session_key",
+            hint="Use <platform>::<channel|user>::<id>[::thread::<thread_id>]. Prefer a threadless key unless the command must reply in one specific thread.",
+            example="slack::channel::C123",
+            help_command=help_command,
+            details={"session_key": session_key},
+        ) from exc
+
+    supported_platforms = _supported_task_platforms()
+    if parsed.platform not in supported_platforms:
+        supported_text = ", ".join(sorted(supported_platforms)) or "none"
+        raise TaskCliError(
+            f"unsupported task platform: {parsed.platform}",
+            code="unsupported_platform",
+            hint="Choose a platform that is enabled in Vibe Remote before sending the request.",
+            example="slack::channel::C123",
+            help_command=help_command,
+            details={
+                "requested_platform": parsed.platform,
+                "configured_platforms": sorted(supported_platforms),
+                "configured_platforms_text": supported_text,
+            },
+        )
+    return parsed
+
+
 def cmd_task_add(args):
     try:
-        try:
-            parsed = parse_session_key(args.session_key)
-        except ValueError as exc:
-            raise TaskCliError(
-                str(exc),
-                code="invalid_session_key",
-                hint="Use <platform>::<channel|user>::<id>[::thread::<thread_id>]. Prefer a threadless key unless the task must reply in one specific thread.",
-                example="slack::channel::C123",
-                help_command="vibe task add --help",
-                details={"session_key": args.session_key},
-            ) from exc
-
-        supported_platforms = _supported_task_platforms()
-        if parsed.platform not in supported_platforms:
-            supported_text = ", ".join(sorted(supported_platforms)) or "none"
-            raise TaskCliError(
-                f"unsupported task platform: {parsed.platform}",
-                code="unsupported_platform",
-                hint="Choose a platform that is enabled in Vibe Remote before creating the task.",
-                example="slack::channel::C123",
-                help_command="vibe task add --help",
-                details={
-                    "requested_platform": parsed.platform,
-                    "configured_platforms": sorted(supported_platforms),
-                    "configured_platforms_text": supported_text,
-                },
-            )
-        prompt = _resolve_task_prompt(args)
+        _parse_validated_session_key(args.session_key, help_command="vibe task add --help")
+        prompt = _resolve_prompt_input(
+            args,
+            help_command="vibe task add --help",
+            example_command="vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *'",
+        )
         timezone_name = args.timezone or _default_timezone_name()
         try:
             timezone = ZoneInfo(timezone_name)
@@ -442,9 +486,12 @@ def cmd_task_add(args):
         return 1
 
 
-def cmd_task_list():
+def cmd_task_list(*, include_all: bool = False):
     store = _task_store()
-    print(json.dumps({"tasks": [_task_payload(task) for task in store.list_tasks()]}, indent=2))
+    tasks = store.list_tasks()
+    if not include_all:
+        tasks = [task for task in tasks if not _is_completed_one_shot(task)]
+    print(json.dumps({"tasks": [_task_payload(task) for task in tasks]}, indent=2))
     return 0
 
 
@@ -502,6 +549,63 @@ def cmd_task_remove(task_id: str):
         return 1
     print(json.dumps({"ok": True, "removed_id": task_id}, indent=2))
     return 0
+
+
+def cmd_task_run(task_id: str):
+    store = _task_store()
+    task = store.get_task(task_id)
+    if task is None:
+        _print_task_error(
+            TaskCliError(
+                f"task '{task_id}' not found",
+                code="task_not_found",
+                hint="Use 'vibe task list' to find a valid task ID before calling run.",
+                help_command="vibe task list",
+                details={"task_id": task_id},
+            )
+        )
+        return 1
+    request = _task_request_store().enqueue_task_run(task.id)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "accepted": True,
+                "execution_id": request.id,
+                "request_type": request.request_type,
+                "task_id": task.id,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_hook_send(args):
+    try:
+        _parse_validated_session_key(args.session_key, help_command="vibe hook send --help")
+        prompt = _resolve_prompt_input(
+            args,
+            help_command="vibe hook send --help",
+            example_command="vibe hook send --session-key 'slack::channel::C123'",
+        )
+        request = _task_request_store().enqueue_hook_send(session_key=args.session_key, prompt=prompt)
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "accepted": True,
+                    "execution_id": request.id,
+                    "request_type": request.request_type,
+                    "session_key": args.session_key,
+                },
+                indent=2,
+            )
+        )
+        return 0
+    except Exception as exc:
+        _print_task_error(exc, help_command="vibe hook send --help")
+        return 1
 
 
 def _doctor():
@@ -1042,7 +1146,7 @@ def build_parser():
     )
     task_subparsers = task_parser.add_subparsers(
         dest="task_command",
-        metavar="{add,list,show,pause,resume,remove}",
+        metavar="{add,list,show,pause,resume,run,remove}",
     )
     task_subparsers.required = True
 
@@ -1071,12 +1175,17 @@ def build_parser():
     task_subparsers.add_parser(
         "list",
         help="List scheduled tasks",
-        description="List all stored scheduled tasks.",
-        epilog="Use the returned task IDs with 'vibe task show', 'vibe task pause', 'vibe task resume', or 'vibe task remove'.",
+        description="List stored scheduled tasks. Completed one-shot tasks are hidden unless --all is used.",
+        epilog="Use the returned task IDs with 'vibe task show', 'vibe task run', 'vibe task pause', 'vibe task resume', or 'vibe task remove'.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe task list --help",
     )
     task_list_parser = task_subparsers.choices["list"]
+    task_list_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Include completed one-shot tasks that are hidden by default",
+    )
     _add_hidden_task_alias(task_subparsers, "ls", task_list_parser)
 
     task_show_parser = task_subparsers.add_parser(
@@ -1109,6 +1218,16 @@ def build_parser():
     )
     task_resume_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
 
+    task_run_parser = task_subparsers.add_parser(
+        "run",
+        help="Run a scheduled task immediately",
+        description="Queue one immediate execution of an existing scheduled task.",
+        epilog="Find task IDs with: vibe task list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe task run --help",
+    )
+    task_run_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
+
     task_rm_parser = task_subparsers.add_parser(
         "remove",
         help="Remove a scheduled task",
@@ -1119,6 +1238,34 @@ def build_parser():
     )
     task_rm_parser.add_argument("task_id", help="Task ID from 'vibe task list'")
     _add_hidden_task_alias(task_subparsers, "rm", task_rm_parser)
+
+    hook_parser = subparsers.add_parser(
+        "hook",
+        help="Send one-shot async hooks",
+        description="Queue one-shot asynchronous turns without persisting scheduled tasks.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe hook --help",
+        error_hint="Run 'vibe hook send --help' for the async hook command shape.",
+    )
+    hook_subparsers = hook_parser.add_subparsers(dest="hook_command", metavar="{send}")
+    hook_subparsers.required = True
+    hook_send_parser = hook_subparsers.add_parser(
+        "send",
+        help="Queue one async hook message",
+        description="Queue one asynchronous turn for a session key without storing a scheduled task.",
+        epilog=_hook_send_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe hook send --help",
+        error_hint="Use --session-key together with exactly one prompt input flag.",
+    )
+    hook_send_parser.add_argument(
+        "--session-key",
+        required=True,
+        help="Target session key. Prefer a threadless key unless the hook must stay in one thread.",
+    )
+    hook_prompt_group = hook_send_parser.add_mutually_exclusive_group(required=True)
+    hook_prompt_group.add_argument("--prompt", help="Prompt text to send")
+    hook_prompt_group.add_argument("--prompt-file", help="Read prompt text from a UTF-8 text file")
     return parser
 
 
@@ -1145,14 +1292,20 @@ def main():
         if args.task_command == "add":
             sys.exit(cmd_task_add(args))
         if args.task_command in {"list", "ls"}:
-            sys.exit(cmd_task_list())
+            sys.exit(cmd_task_list(include_all=getattr(args, "all", False)))
         if args.task_command == "show":
             sys.exit(cmd_task_show(args.task_id))
         if args.task_command == "pause":
             sys.exit(cmd_task_set_enabled(args.task_id, False))
         if args.task_command == "resume":
             sys.exit(cmd_task_set_enabled(args.task_id, True))
+        if args.task_command == "run":
+            sys.exit(cmd_task_run(args.task_id))
         if args.task_command in {"remove", "rm"}:
             sys.exit(cmd_task_remove(args.task_id))
         parser.error("task command is required")
+    if args.command == "hook":
+        if args.hook_command == "send":
+            sys.exit(cmd_hook_send(args))
+        parser.error("hook command is required")
     sys.exit(cmd_vibe())

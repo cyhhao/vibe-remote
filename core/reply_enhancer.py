@@ -187,8 +187,9 @@ Rules:
 
 _SCHEDULED_TASKS_PROMPT = """\
 
-## 3. Scheduled tasks
-You can create scheduled tasks with the `vibe task add` command.
+## 3. Scheduled tasks and hooks
+Use `vibe task add` to store recurring or one-off tasks.
+Use `vibe hook send --session-key ... --prompt ...` for one-shot asynchronous sends without storing a task.
 
 Current conversation targeting:
 - Default session key: `{session_key}`
@@ -196,14 +197,11 @@ Current conversation targeting:
 
 Rules:
 - The default session key intentionally does not include a thread ID.
-- Only append `::thread::<thread_id>` to `--session-key` when the user explicitly wants the scheduled task to keep replying in the current thread.
-- Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off tasks.
+- Only append `::thread::<thread_id>` to `--session-key` when the user explicitly wants replies to stay in the current thread.
+- Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
 - If `--timezone` is omitted, the task uses the local system timezone at creation time.
-- Use `--prompt "..."` or `--prompt-file <path>` to provide the task content.
-
-Examples:
-- Default scope: `vibe task add --session-key '{session_key}' --cron '0 * * * *' --prompt 'Send the hourly update.'`
-- Current thread only when needed: `vibe task add --session-key '{session_key_with_thread}' --cron '0 9 * * *' --prompt 'Post the daily summary in this thread.'`
+- Use `--prompt "..."` or `--prompt-file <path>` for task and hook content.
+- Run `vibe task add --help` or `vibe hook send --help` for the full command reference.
 """
 
 _VIBE_SKILL_PROMPT = """\
@@ -234,14 +232,9 @@ def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform:
         fallback_platform=fallback_platform,
     ).to_key(include_thread=False)
     thread_id = context.thread_id or "(none)"
-    if context.thread_id:
-        session_key_with_thread = f"{default_key}::thread::{context.thread_id}"
-    else:
-        session_key_with_thread = f"{default_key}::thread::<thread_id>"
     return _SCHEDULED_TASKS_PROMPT.format(
         session_key=default_key,
         thread_id=thread_id,
-        session_key_with_thread=session_key_with_thread,
     )
 
 
