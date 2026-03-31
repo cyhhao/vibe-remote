@@ -66,11 +66,14 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
             prompt = build_reply_enhancements_prompt(include_quick_replies=False)
 
+        self.assertIn(
+            "If the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes.",
+            prompt,
+        )
         self.assertIn("## 1. Send files", prompt)
-        self.assertIn("Vibe Remote also supports optional reply enhancements you can use when helpful:", prompt)
+        self.assertIn("Vibe Remote provides optional capabilities:", prompt)
         self.assertNotIn("## 2. Quick-reply buttons", prompt)
-        self.assertIn("https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md", prompt)
-        self.assertIn("## 5. User preference file", prompt)
+        self.assertIn("## 4. User preference file", prompt)
         self.assertIn("`/tmp/user_preferences.md`", prompt)
         self.assertIn("`<platform>/<user_id>`", prompt)
 
@@ -94,7 +97,6 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Current thread ID: `171717.123`", prompt)
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
         self.assertIn("Run `vibe task add --help` or `vibe hook send --help` for the full command reference.", prompt)
-        self.assertIn("https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md", prompt)
         self.assertIn("When useful, you may read it to learn stable habits, preferences, and recurring rules.", prompt)
         self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
         self.assertIn("Only write to a shared section when a rule truly applies across users.", prompt)

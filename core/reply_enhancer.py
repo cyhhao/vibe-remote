@@ -159,7 +159,9 @@ _FILES_PROMPT = """\
 Vibe Remote is a middleware layer that connects AI agents to IM platforms such as Slack. \
 The user is interacting with you through an IM app via Vibe Remote forwarding.
 
-Vibe Remote also supports optional reply enhancements you can use when helpful:
+If the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes. Use it for configuration file locations, scope rules, routing behavior, scheduled-task operations, and troubleshooting steps.
+
+Vibe Remote provides optional capabilities:
 
 ## 1. Send files
 You can send a local file to the user by using a Markdown link with the `file://` protocol:
@@ -204,17 +206,10 @@ Rules:
 - Run `vibe task add --help` or `vibe hook send --help` for the full command reference.
 """
 
-_VIBE_SKILL_PROMPT = """\
-
-## 4. Vibe Remote skill
-When the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes.
-Use that skill for configuration file locations, scope rules, routing behavior, scheduled-task operations, and troubleshooting steps.
-"""
-
 
 _USER_PREFERENCES_PROMPT = """\
 
-## 5. User preference file
+## 4. User preference file
 A shared user preference file is available at `{preferences_path}`.
 When useful, you may read it to learn stable habits, preferences, and recurring rules.
 You may also update it, usually in the current user's section: `{user_section}`.
@@ -270,7 +265,6 @@ def build_reply_enhancements_prompt(
         prompt += _QUICK_REPLIES_PROMPT
     if context is not None:
         prompt += _build_scheduled_tasks_prompt(context, fallback_platform=fallback_platform)
-    prompt += _VIBE_SKILL_PROMPT
     prompt += _build_user_preferences_prompt(context, fallback_platform=fallback_platform)
     return prompt
 
