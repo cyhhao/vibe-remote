@@ -530,6 +530,30 @@ def test_task_update_modifies_existing_task_without_changing_id(tmp_path: Path, 
     assert payload["task"]["prompt"] == "updated"
 
 
+def test_task_update_replaces_post_to_with_deliver_key(tmp_path: Path, capsys) -> None:
+    store_path = tmp_path / "scheduled_tasks.json"
+    store = cli.ScheduledTaskStore(store_path)
+    task = store.add_task(
+        session_key="slack::channel::C123::thread::171717.123",
+        prompt="hello",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+        post_to="channel",
+    )
+    parser = cli.build_parser()
+    args = parser.parse_args(["task", "update", task.id, "--deliver-key", "slack::channel::C999"])
+
+    with patch("vibe.cli._task_store", return_value=store):
+        result = cli.cmd_task_update(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["task"]["id"] == task.id
+    assert payload["task"]["post_to"] is None
+    assert payload["task"]["deliver_key"] == "slack::channel::C999"
+
+
 def test_task_add_returns_reachability_warning_for_unbound_lark_dm(tmp_path: Path, capsys) -> None:
     parser = cli.build_parser()
     args = parser.parse_args(

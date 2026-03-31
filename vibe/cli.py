@@ -814,8 +814,17 @@ def cmd_task_update(args):
             post_to = None
             deliver_key = None
         else:
-            post_to = args.post_to if getattr(args, "post_to", None) is not None else task.post_to
-            deliver_key = args.deliver_key if getattr(args, "deliver_key", None) is not None else task.deliver_key
+            requested_post_to = getattr(args, "post_to", None)
+            requested_deliver_key = getattr(args, "deliver_key", None)
+            if requested_post_to is not None:
+                post_to = requested_post_to
+                deliver_key = None
+            elif requested_deliver_key is not None:
+                post_to = None
+                deliver_key = requested_deliver_key
+            else:
+                post_to = task.post_to
+                deliver_key = task.deliver_key
 
         session_target, delivery_target = _validate_delivery_args(
             session_key=session_key,
