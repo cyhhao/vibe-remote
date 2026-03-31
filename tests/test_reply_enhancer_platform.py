@@ -115,6 +115,23 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Default session key: `slack::channel::C1`", prompt)
         self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
 
+    def test_prompt_handles_missing_platform_specific(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform=None,
+            platform_specific=None,
+        )
+
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_reply_enhancements_prompt(
+                include_quick_replies=True,
+                context=context,
+                fallback_platform="slack",
+            )
+
+        self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
+
     def test_file_links_with_parentheses_are_preserved(self):
         enhanced = process_reply("![video](file:///Users/test/SaveTwitter.Net_GABV3XNWYAARAZz(gif).mp4)")
 

@@ -253,7 +253,8 @@ def _build_user_preferences_prompt(
     platform = fallback_platform
     user_id = "<user_id>"
     if context is not None:
-        platform = context.platform or context.platform_specific.get("platform") or fallback_platform
+        platform_specific = context.platform_specific or {}
+        platform = context.platform or platform_specific.get("platform") or fallback_platform
         user_id = context.user_id or "<user_id>"
     user_section = f"{platform or '<platform>'}/{user_id}"
     return _USER_PREFERENCES_PROMPT.format(
