@@ -185,6 +185,28 @@ def test_mark_task_result_skips_deleted_task_after_reload(tmp_path: Path) -> Non
     assert reloaded.get_task(task.id) is None
 
 
+def test_store_reload_uses_size_when_mtime_does_not_change(tmp_path: Path) -> None:
+    path = tmp_path / "scheduled_tasks.json"
+    writer = ScheduledTaskStore(path)
+    task = writer.add_task(
+        session_key="slack::channel::C123",
+        prompt="send digest",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+    before = path.stat()
+
+    remover = ScheduledTaskStore(path)
+    assert remover.remove_task(task.id) is True
+
+    after = path.stat()
+    writer._signature = (after.st_mtime_ns, before.st_size, after.st_ino)
+
+    assert writer.maybe_reload() is True
+    assert writer.get_task(task.id) is None
+
+
 def test_service_rejects_unsupported_platform_at_runtime() -> None:
     controller = SimpleNamespace(platform_settings_managers={"slack": object()})
     service = ScheduledTaskService(controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json")))
