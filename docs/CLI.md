@@ -117,6 +117,37 @@ vibe doctor
 - Agent CLI availability (Claude Code, OpenCode, Codex)
 - Runtime environment
 
+### `vibe task`
+
+Create, inspect, update, run, pause, resume, or remove scheduled tasks.
+
+```bash
+vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
+vibe task list --brief
+vibe task update <task-id> --cron '*/30 * * * *'
+vibe task run <task-id>
+vibe task remove <task-id>
+```
+
+Use `vibe task add --help` and `vibe task update --help` for the full command surface, including:
+
+- `--session-key` for session continuity
+- `--post-to channel` to publish into the parent channel while keeping thread context
+- `--deliver-key` for an explicit delivery target
+- `--cron` and `--at` scheduling
+- `--name`, `--timezone`, and prompt file support
+
+### `vibe hook send`
+
+Queue one asynchronous turn without storing a scheduled task definition.
+
+```bash
+vibe hook send --session-key 'slack::channel::C123' --prompt 'The export finished. Share the summary.'
+vibe hook send --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prompt 'Share the benchmark result in the channel.'
+```
+
+Use this when you want one delayed or background follow-up without persisting a task in `scheduled_tasks.json`.
+
 ### `vibe version`
 
 Show the installed version.
@@ -236,6 +267,9 @@ The web UI (`http://127.0.0.1:5123`) provides the same controls:
 |------|-------------|
 | `~/.vibe_remote/config/config.json` | Main configuration |
 | `~/.vibe_remote/state/settings.json` | Channel routing settings |
+| `~/.vibe_remote/state/scheduled_tasks.json` | Persisted scheduled task definitions |
+| `~/.vibe_remote/state/task_requests/` | Queued task run and hook execution requests |
+| `~/.vibe_remote/state/user_preferences.md` | Shared long-term user preference notes |
 | `~/.vibe_remote/logs/vibe_remote.log` | Application logs |
 | `~/.vibe_remote/logs/opencode_server.json` | OpenCode server PID file |
 
