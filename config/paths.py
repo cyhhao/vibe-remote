@@ -63,14 +63,14 @@ def get_user_preferences_path() -> Path:
 
 _USER_PREFERENCES_TEMPLATE = """# User Preferences
 
-Use this file for stable long-term habits, preferences, and recurring rules.
+Use this file for stable long-term preferences and recurring rules.
 Prefer user-specific notes under `## Users`.
-Only put rules under `## Shared` when they truly apply across users.
-Keep it concise, factual, and deduplicated.
-Do not store secrets here unless the user explicitly asks.
+Use `## Shared` only for rules that truly apply across users.
+Keep entries short, factual, deduplicated, and free of secrets unless the user explicitly asks.
+Prefer durable preferences over one-off requests.
 
 ## Shared
-- Add rules here only when they truly apply across users.
+- Add cross-user rules here only when they are broadly useful.
 
 ## Users
 ### platform/user_id
