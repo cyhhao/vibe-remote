@@ -29,7 +29,8 @@ from modules.agents.opencode.utils import (
     resolve_opencode_allowed_providers,
     resolve_opencode_provider_preferences,
 )
-from modules.agents.native_sessions import AgentNativeSessionService, NativeResumeSession
+from modules.agents.native_sessions.display import format_display_summary, format_display_time
+from modules.agents.native_sessions.types import NativeResumeSession
 
 logger = logging.getLogger(__name__)
 
@@ -2666,8 +2667,8 @@ class FeishuBot(BaseIMClient):
                 if item.agent not in allowed_agents:
                     continue
                 label = (
-                    f"{AgentNativeSessionService.format_display_summary(item)}"
-                    f" · {AgentNativeSessionService.format_display_time(item)}"
+                    f"{format_display_summary(item)}"
+                    f" · {format_display_time(item)}"
                 )
                 session_options.append(
                     {
