@@ -97,6 +97,7 @@ def build_session_key_for_context(
 @dataclass
 class ScheduledTask:
     id: str
+    name: Optional[str]
     session_key: str
     prompt: str
     schedule_type: str
@@ -118,6 +119,7 @@ class ScheduledTask:
     def from_dict(cls, payload: Dict[str, Any]) -> "ScheduledTask":
         return cls(
             id=str(payload.get("id") or uuid4().hex[:12]),
+            name=(str(payload["name"]).strip() if payload.get("name") is not None else None) or None,
             session_key=str(payload.get("session_key") or ""),
             prompt=str(payload.get("prompt") or ""),
             schedule_type=str(payload.get("schedule_type") or ""),
@@ -238,6 +240,7 @@ class ScheduledTaskStore:
     def add_task(
         self,
         *,
+        name: Optional[str] = None,
         session_key: str,
         prompt: str,
         schedule_type: str,
@@ -249,6 +252,7 @@ class ScheduledTaskStore:
     ) -> ScheduledTask:
         task = ScheduledTask(
             id=uuid4().hex[:12],
+            name=name,
             session_key=session_key,
             prompt=prompt,
             schedule_type=schedule_type,
@@ -270,6 +274,34 @@ class ScheduledTaskStore:
     def set_enabled(self, task_id: str, enabled: bool) -> ScheduledTask:
         task = self._tasks[task_id]
         task.enabled = enabled
+        task.updated_at = _utc_now_iso()
+        self._save()
+        return task
+
+    def update_task(
+        self,
+        task_id: str,
+        *,
+        name: Optional[str],
+        session_key: str,
+        prompt: str,
+        schedule_type: str,
+        post_to: Optional[str],
+        deliver_key: Optional[str],
+        cron: Optional[str],
+        run_at: Optional[str],
+        timezone_name: str,
+    ) -> ScheduledTask:
+        task = self._tasks[task_id]
+        task.name = name
+        task.session_key = session_key
+        task.prompt = prompt
+        task.schedule_type = schedule_type
+        task.post_to = post_to
+        task.deliver_key = deliver_key
+        task.cron = cron
+        task.run_at = run_at
+        task.timezone = timezone_name
         task.updated_at = _utc_now_iso()
         self._save()
         return task

@@ -2,7 +2,7 @@
 name: use-vibe-remote
 slug: use-vibe-remote
 description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, scheduled tasks, and operational state.
-version: 0.1.5
+version: 0.1.6
 ---
 
 # Use Vibe Remote
@@ -247,6 +247,7 @@ This file stores persisted scheduled task definitions created by `vibe task`.
 Each task includes:
 
 - `id`
+- `name`
 - `session_key`
 - `post_to`
 - `deliver_key`
@@ -261,7 +262,9 @@ Each task includes:
 Do not hand-edit this file during normal operations unless the user explicitly asks for low-level repair work. Prefer the CLI:
 
 - `vibe task add`
+- `vibe task update <id>`
 - `vibe task list`
+- `vibe task list --brief`
 - `vibe task list --all`
 - `vibe task show <id>`
 - `vibe task run <id>`
@@ -332,10 +335,13 @@ Default rule:
 Operational guidance:
 
 - use `vibe task list` before editing or deleting an existing task
+- use `vibe task update <id>` to keep the same task ID while changing name, schedule, prompt, or target
+- use `vibe task list --brief` when you need a scheduling-focused summary instead of the full stored payload
 - `vibe task list` hides completed one-shot tasks by default; use `vibe task list --all` when you need the full history
-- use `vibe task show <id>` to inspect the exact stored schedule and target
+- use `vibe task show <id>` to inspect both the stored fields and derived scheduling state such as `next_run_at`
 - use `vibe task run <id>` when the user wants to trigger one stored task immediately without changing its schedule
 - use `vibe hook send` when the user wants one asynchronous turn without storing a task definition
+- treat `warnings` from `vibe task add`, `vibe task update`, or `vibe hook send` as delivery-risk hints to fix proactively, not as fatal errors
 - if a scheduled task fails unexpectedly, inspect `last_error` first and then check `~/.vibe_remote/logs/vibe_remote.log`
 
 ## Backend Capability Matrix
