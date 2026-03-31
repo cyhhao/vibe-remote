@@ -67,6 +67,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             prompt = build_reply_enhancements_prompt(include_quick_replies=False)
 
         self.assertIn("## 1. Send files", prompt)
+        self.assertIn("Vibe Remote also supports optional reply enhancements you can use when helpful:", prompt)
         self.assertNotIn("## 2. Quick-reply buttons", prompt)
         self.assertIn("https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md", prompt)
         self.assertIn("## 5. User preference file", prompt)
@@ -88,6 +89,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("## 3. Scheduled tasks and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
         self.assertIn("`vibe hook send --session-key ... --prompt ...`", prompt)
+        self.assertIn("Use `vibe task add` for actions that should recur or remain saved.", prompt)
         self.assertIn("Default session key: `slack::channel::C1`", prompt)
         self.assertIn("Current thread ID: `171717.123`", prompt)
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
@@ -96,6 +98,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("When useful, you may read it to learn stable habits, preferences, and recurring rules.", prompt)
         self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
         self.assertIn("Only write to a shared section when a rule truly applies across users.", prompt)
+        self.assertIn("Prefer durable preferences over one-off requests.", prompt)
         self.assertIn("Keep it short, factual, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
 
     def test_prompt_uses_fallback_platform_for_unannotated_context(self):

@@ -159,7 +159,7 @@ _FILES_PROMPT = """\
 Vibe Remote is a middleware layer that connects AI agents to IM platforms such as Slack. \
 The user is interacting with you through an IM app via Vibe Remote forwarding.
 
-You have optional reply-enhancement capabilities:
+Vibe Remote also supports optional reply enhancements you can use when helpful:
 
 ## 1. Send files
 You can send a local file to the user by using a Markdown link with the `file://` protocol:
@@ -188,7 +188,7 @@ Rules:
 _SCHEDULED_TASKS_PROMPT = """\
 
 ## 3. Scheduled tasks and hooks
-Use `vibe task add` to store recurring or one-off tasks.
+Use `vibe task add` for actions that should recur or remain saved.
 Use `vibe hook send --session-key ... --prompt ...` for one-shot asynchronous sends without storing a task.
 
 Current conversation targeting:
@@ -219,6 +219,7 @@ A shared user preference file is available at `{preferences_path}`.
 When useful, you may read it to learn stable habits, preferences, and recurring rules.
 You may also update it, usually in the current user's section: `{user_section}`.
 Only write to a shared section when a rule truly applies across users.
+Prefer durable preferences over one-off requests.
 Keep it short, factual, deduplicated, and free of secrets unless the user explicitly asks.
 """
 
