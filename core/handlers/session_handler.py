@@ -245,7 +245,11 @@ class SessionHandler(BaseHandler):
         agent: str,
         session_id: str,
     ) -> str:
-        native_session_service = getattr(self.controller, "native_session_service", None)
+        service_getter = getattr(self.controller, "get_native_session_service", None)
+        if callable(service_getter):
+            native_session_service = service_getter()
+        else:
+            native_session_service = getattr(self.controller, "native_session_service", None)
         if native_session_service is None:
             return ""
         try:

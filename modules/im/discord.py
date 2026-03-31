@@ -30,7 +30,8 @@ from modules.agents.opencode.utils import (
     resolve_opencode_default_model,
     resolve_opencode_provider_preferences,
 )
-from modules.agents.native_sessions import AgentNativeSessionService, NativeResumeSession
+from modules.agents.native_sessions.display import format_display_summary, format_display_time
+from modules.agents.native_sessions.types import NativeResumeSession
 
 logger = logging.getLogger(__name__)
 
@@ -1231,12 +1232,12 @@ class DiscordBot(BaseIMClient):
 
         options = []
         for item in sessions:
-            label = AgentNativeSessionService.format_display_summary(item)
+            label = format_display_summary(item)
             options.append(
                 discord.SelectOption(
                     label=label[:100],
                     value=f"{item.agent}|{item.native_session_id}",
-                    description=AgentNativeSessionService.format_display_time(item)[:100],
+                    description=format_display_time(item)[:100],
                 )
             )
         if len(options) > 25:

@@ -13,7 +13,6 @@ from modules.im.formatters import SlackFormatter, DiscordFormatter
 from modules.agent_router import AgentRouter
 from modules.agents.service import AgentService
 from modules.claude_client import ClaudeClient
-from modules.agents.native_sessions import AgentNativeSessionService
 from modules.session_manager import SessionManager
 from modules.settings_manager import SettingsManager, MultiSettingsManager
 from core.handlers import (
@@ -98,7 +97,7 @@ class Controller:
         self.settings_manager = MultiSettingsManager(self.enabled_platforms, primary_platform=self.primary_platform)
         self.platform_settings_managers = self.settings_manager.managers
         self.sessions = self.settings_manager.sessions
-        self.native_session_service = AgentNativeSessionService()
+        self.native_session_service = None
 
         # Migrate legacy per-channel language into global config
         self._migrate_language_from_settings()
@@ -113,6 +112,13 @@ class Controller:
         # Inject settings_manager into IM client if supported
         for platform, client in self.im_clients.items():
             self._inject_runtime_dependencies(platform, client)
+
+    def get_native_session_service(self):
+        if self.native_session_service is None:
+            from modules.agents.native_sessions.service import AgentNativeSessionService
+
+            self.native_session_service = AgentNativeSessionService()
+        return self.native_session_service
 
     def _create_formatter(self, platform: str):
         if platform == "discord":

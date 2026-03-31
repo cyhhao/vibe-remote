@@ -5,7 +5,7 @@ import os
 import time
 from typing import Any, Optional
 from modules.agents import get_agent_display_name
-from modules.agents.native_sessions import NativeResumeSession
+from modules.agents.native_sessions.types import NativeResumeSession
 from modules.agents.base import AgentRequest
 from modules.im import MessageContext, InlineKeyboard, InlineButton
 
@@ -129,7 +129,11 @@ class CommandHandlers(BaseHandler):
         limit: int = 100,
     ) -> tuple[str, list[NativeResumeSession]]:
         working_path = self.controller.get_cwd(context)
-        native_session_service = getattr(self.controller, "native_session_service", None)
+        service_getter = getattr(self.controller, "get_native_session_service", None)
+        if callable(service_getter):
+            native_session_service = service_getter()
+        else:
+            native_session_service = getattr(self.controller, "native_session_service", None)
         if native_session_service is None:
             return working_path, []
         sessions = native_session_service.list_recent_sessions(working_path, limit=limit)
