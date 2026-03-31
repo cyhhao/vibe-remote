@@ -96,6 +96,8 @@
     "howItWorksResumeDesc": "从电脑切到手机也不断档。可直接恢复当前工作目录下最近的 Claude Code、OpenCode 或 Codex 会话，接着继续。",
     "howItWorksWorkDirLabel": "文件附件",
     "howItWorksWorkDirDesc": "直接在消息中附带图片或文件，Agent 可以读取。",
+    "howItWorksTasksLabel": "定时任务与 Hook",
+    "howItWorksTasksDesc": "可以让 Agent 安排周期性或一次性提示，也可以在长任务结束后异步补发一条消息。",
     "howItWorksSettingsLabel": "灵活设置",
     "howItWorksSettingsDesc": "通过 @bot 随时切换 Agent、模型、推理强度，或隐藏冗余消息类型。",
     "howItWorksFooter": "直接输入消息即可与 {agent} 对话，无需特殊命令！",
