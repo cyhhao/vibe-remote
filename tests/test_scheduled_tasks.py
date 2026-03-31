@@ -93,6 +93,7 @@ def test_build_session_key_for_context_uses_fallback_platform() -> None:
 def test_store_round_trip_persists_task(tmp_path: Path) -> None:
     store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
     task = store.add_task(
+        name="Digest",
         session_key="discord::channel::123",
         post_to="channel",
         deliver_key="discord::channel::456",
@@ -107,9 +108,44 @@ def test_store_round_trip_persists_task(tmp_path: Path) -> None:
 
     assert payload["tasks"][0]["id"] == task.id
     assert reloaded.get_task(task.id) is not None
+    assert reloaded.get_task(task.id).name == "Digest"
     assert reloaded.get_task(task.id).session_key == "discord::channel::123"
     assert reloaded.get_task(task.id).post_to == "channel"
     assert reloaded.get_task(task.id).deliver_key == "discord::channel::456"
+
+
+def test_update_task_preserves_id_and_overwrites_selected_fields(tmp_path: Path) -> None:
+    store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+    task = store.add_task(
+        session_key="slack::channel::C123",
+        prompt="hello",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+
+    updated = store.update_task(
+        task.id,
+        name="Morning summary",
+        session_key="slack::channel::C123::thread::171717.123",
+        prompt="updated",
+        schedule_type="at",
+        post_to="channel",
+        deliver_key=None,
+        cron=None,
+        run_at="2026-03-31T09:00:00+08:00",
+        timezone_name="UTC",
+    )
+
+    assert updated.id == task.id
+    assert updated.name == "Morning summary"
+    assert updated.session_key == "slack::channel::C123::thread::171717.123"
+    assert updated.prompt == "updated"
+    assert updated.schedule_type == "at"
+    assert updated.post_to == "channel"
+    assert updated.cron is None
+    assert updated.run_at == "2026-03-31T09:00:00+08:00"
+    assert updated.timezone == "UTC"
 
 
 def test_store_reload_detects_deleted_task_file(tmp_path: Path) -> None:
