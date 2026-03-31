@@ -27,6 +27,14 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _path_signature(path: Path) -> Optional[tuple[int, int, int]]:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+
+
 @dataclass(frozen=True)
 class ParsedSessionKey:
     platform: str
@@ -167,21 +175,21 @@ class TaskExecutionRequest:
 class ScheduledTaskStore:
     def __init__(self, path: Optional[Path] = None):
         self.path = path or (paths.get_state_dir() / "scheduled_tasks.json")
-        self._mtime: float = 0
+        self._signature: Optional[tuple[int, int, int]] = None
         self._tasks: Dict[str, ScheduledTask] = {}
         self.load()
 
     def load(self) -> None:
         if not self.path.exists():
             self._tasks = {}
-            self._mtime = 0
+            self._signature = None
             return
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception as exc:
             logger.error("Failed to load scheduled tasks: %s", exc)
             self._tasks = {}
-            self._mtime = 0
+            self._signature = None
             return
 
         raw_tasks = payload.get("tasks", []) if isinstance(payload, dict) else []
@@ -192,20 +200,11 @@ class ScheduledTaskStore:
             task = ScheduledTask.from_dict(item)
             tasks[task.id] = task
         self._tasks = tasks
-        try:
-            self._mtime = self.path.stat().st_mtime
-        except FileNotFoundError:
-            self._mtime = 0
+        self._signature = _path_signature(self.path)
 
     def maybe_reload(self) -> bool:
-        try:
-            mtime = self.path.stat().st_mtime
-        except FileNotFoundError:
-            mtime = 0
-        if mtime == 0 and self._mtime != 0:
-            self.load()
-            return True
-        if mtime <= self._mtime:
+        signature = _path_signature(self.path)
+        if signature == self._signature:
             return False
         self.load()
         return True
@@ -223,7 +222,7 @@ class ScheduledTaskStore:
             json.dump(payload, handle, indent=2)
             tmp_path = Path(handle.name)
         tmp_path.replace(self.path)
-        self._mtime = self.path.stat().st_mtime
+        self._signature = _path_signature(self.path)
 
     def list_tasks(self) -> list[ScheduledTask]:
         return sorted(self._tasks.values(), key=lambda item: (item.created_at, item.id))
