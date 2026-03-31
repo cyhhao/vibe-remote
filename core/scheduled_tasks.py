@@ -100,6 +100,8 @@ class ScheduledTask:
     session_key: str
     prompt: str
     schedule_type: str
+    post_to: Optional[str] = None
+    deliver_key: Optional[str] = None
     cron: Optional[str] = None
     run_at: Optional[str] = None
     timezone: str = "UTC"
@@ -119,6 +121,8 @@ class ScheduledTask:
             session_key=str(payload.get("session_key") or ""),
             prompt=str(payload.get("prompt") or ""),
             schedule_type=str(payload.get("schedule_type") or ""),
+            post_to=payload.get("post_to"),
+            deliver_key=payload.get("deliver_key"),
             cron=payload.get("cron"),
             run_at=payload.get("run_at"),
             timezone=str(payload.get("timezone") or "UTC"),
@@ -137,6 +141,8 @@ class TaskExecutionRequest:
     created_at: str = field(default_factory=_utc_now_iso)
     task_id: Optional[str] = None
     session_key: Optional[str] = None
+    post_to: Optional[str] = None
+    deliver_key: Optional[str] = None
     prompt: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -150,6 +156,8 @@ class TaskExecutionRequest:
             created_at=str(payload.get("created_at") or _utc_now_iso()),
             task_id=payload.get("task_id"),
             session_key=payload.get("session_key"),
+            post_to=payload.get("post_to"),
+            deliver_key=payload.get("deliver_key"),
             prompt=payload.get("prompt"),
         )
 
@@ -233,6 +241,8 @@ class ScheduledTaskStore:
         session_key: str,
         prompt: str,
         schedule_type: str,
+        post_to: Optional[str] = None,
+        deliver_key: Optional[str] = None,
         cron: Optional[str] = None,
         run_at: Optional[str] = None,
         timezone_name: str,
@@ -242,6 +252,8 @@ class ScheduledTaskStore:
             session_key=session_key,
             prompt=prompt,
             schedule_type=schedule_type,
+            post_to=post_to,
+            deliver_key=deliver_key,
             cron=cron,
             run_at=run_at,
             timezone=timezone_name,
@@ -328,12 +340,21 @@ class TaskExecutionStore:
     def enqueue_task_run(self, task_id: str) -> TaskExecutionRequest:
         return self.enqueue(TaskExecutionRequest(id=uuid4().hex[:12], request_type="task_run", task_id=task_id))
 
-    def enqueue_hook_send(self, *, session_key: str, prompt: str) -> TaskExecutionRequest:
+    def enqueue_hook_send(
+        self,
+        *,
+        session_key: str,
+        prompt: str,
+        post_to: Optional[str] = None,
+        deliver_key: Optional[str] = None,
+    ) -> TaskExecutionRequest:
         return self.enqueue(
             TaskExecutionRequest(
                 id=uuid4().hex[:12],
                 request_type="hook_send",
                 session_key=session_key,
+                post_to=post_to,
+                deliver_key=deliver_key,
                 prompt=prompt,
             )
         )
@@ -547,6 +568,8 @@ class ScheduledTaskService:
                         raise ValueError("hook request requires both session_key and prompt")
                     error = await self._execute_request(
                         session_key=request.session_key,
+                        post_to=request.post_to,
+                        deliver_key=request.deliver_key,
                         prompt=request.prompt,
                         execution_id=request.id,
                         trigger_kind="hook",
@@ -581,6 +604,8 @@ class ScheduledTaskService:
         try:
             error = await self._execute_request(
                 session_key=task.session_key,
+                post_to=task.post_to,
+                deliver_key=task.deliver_key,
                 prompt=task.prompt,
                 execution_id=execution_id,
                 task_id=task.id,
@@ -601,14 +626,22 @@ class ScheduledTaskService:
         self,
         *,
         session_key: str,
+        post_to: Optional[str],
+        deliver_key: Optional[str],
         prompt: str,
         execution_id: str,
         task_id: Optional[str] = None,
         trigger_kind: str,
     ) -> Optional[str]:
         target = parse_session_key(session_key)
+        delivery_target = self._resolve_delivery_target(
+            session_target=target,
+            post_to=post_to,
+            deliver_key=deliver_key,
+        )
         context = await self._build_context(
             target,
+            delivery_target=delivery_target,
             execution_id=execution_id,
             task_id=task_id,
             trigger_kind=trigger_kind,
@@ -623,12 +656,55 @@ class ScheduledTaskService:
         self,
         target: ParsedSessionKey,
         *,
+        delivery_target: Optional[ParsedSessionKey] = None,
         execution_id: str,
         task_id: Optional[str] = None,
         trigger_kind: str = "scheduled",
     ) -> MessageContext:
         platform = target.platform
         self.validate_platform(platform)
+        delivery_target = delivery_target or target
+        session_target_context = self._resolve_target_context(target)
+        delivery_target_context = self._resolve_target_context(delivery_target)
+        delivery_strategy = self._build_delivery_alias_strategy(
+            session_target=target,
+            delivery_target=delivery_target,
+            session_context=session_target_context,
+            delivery_context=delivery_target_context,
+        )
+
+        return MessageContext(
+            user_id=session_target_context["user_id"],
+            channel_id=session_target_context["channel_id"],
+            platform=platform,
+            thread_id=target.thread_id,
+            message_id=self._build_message_id(
+                execution_id=execution_id,
+                task_id=task_id,
+                trigger_kind=trigger_kind,
+            ),
+            platform_specific={
+                "platform": platform,
+                "is_dm": target.is_dm,
+                "turn_source": "scheduled",
+                "session_key_external": target.to_key(),
+                "delivery_key_external": delivery_target.to_key(),
+                "delivery_scope_session_key": delivery_target.session_scope,
+                "delivery_override": {
+                    "user_id": delivery_target_context["user_id"],
+                    "channel_id": delivery_target_context["channel_id"],
+                    "thread_id": delivery_target.thread_id,
+                    "platform": platform,
+                    "is_dm": delivery_target.is_dm,
+                },
+                "scheduled_delivery_alias": delivery_strategy,
+                "task_execution_id": execution_id,
+                "task_trigger_kind": trigger_kind,
+            },
+        )
+
+    def _resolve_target_context(self, target: ParsedSessionKey) -> Dict[str, Any]:
+        platform = target.platform
         settings_manager = self.controller.platform_settings_managers[platform]
 
         channel_id = target.scope_id
@@ -644,25 +720,95 @@ class ScheduledTaskService:
             elif bound_user and getattr(bound_user, "dm_chat_id", ""):
                 channel_id = bound_user.dm_chat_id
 
-        return MessageContext(
-            user_id=user_id,
-            channel_id=channel_id,
-            platform=platform,
-            thread_id=target.thread_id,
-            message_id=self._build_message_id(
-                execution_id=execution_id,
-                task_id=task_id,
-                trigger_kind=trigger_kind,
-            ),
-            platform_specific={
-                "platform": platform,
-                "is_dm": target.is_dm,
-                "turn_source": "scheduled",
-                "session_key_external": target.to_key(),
-                "task_execution_id": execution_id,
-                "task_trigger_kind": trigger_kind,
-            },
+        return {
+            "user_id": user_id,
+            "channel_id": channel_id,
+        }
+
+    def _resolve_delivery_target(
+        self,
+        *,
+        session_target: ParsedSessionKey,
+        post_to: Optional[str],
+        deliver_key: Optional[str],
+    ) -> ParsedSessionKey:
+        if deliver_key:
+            delivery_target = parse_session_key(deliver_key)
+            if delivery_target.platform != session_target.platform:
+                raise ValueError("--deliver-key must stay on the same platform as --session-key")
+            return delivery_target
+        if post_to == "channel":
+            return ParsedSessionKey(
+                platform=session_target.platform,
+                scope_type=session_target.scope_type,
+                scope_id=session_target.scope_id,
+                thread_id=None,
+            )
+        if post_to == "thread":
+            if not session_target.thread_id:
+                raise ValueError("--post-to thread requires a thread-bound --session-key or an explicit --deliver-key")
+            return session_target
+        return session_target
+
+    def _supports_threaded_delivery(self, target: ParsedSessionKey) -> bool:
+        getter = getattr(self.controller, "get_im_client_for_context", None)
+        context = MessageContext(
+            user_id=target.scope_id if target.is_dm else "scheduled",
+            channel_id=target.scope_id,
+            platform=target.platform,
+            platform_specific={"platform": target.platform, "is_dm": target.is_dm},
         )
+        if callable(getter):
+            im_client = getter(context)
+        else:
+            im_client = getattr(self.controller, "im_client", None)
+        if im_client is None:
+            return False
+        if target.is_dm:
+            return bool(getattr(im_client, "should_use_thread_for_dm_session", lambda: False)())
+        return bool(getattr(im_client, "should_use_thread_for_reply", lambda: False)())
+
+    def _build_delivery_alias_strategy(
+        self,
+        *,
+        session_target: ParsedSessionKey,
+        delivery_target: ParsedSessionKey,
+        session_context: Dict[str, Any],
+        delivery_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        source_session_key = session_target.session_scope
+        target_session_key = delivery_target.session_scope
+        same_scope = source_session_key == target_session_key
+        clear_provisional_source = session_target.thread_id is None and self._supports_threaded_delivery(session_target)
+
+        if delivery_target.thread_id:
+            alias_base = f"{delivery_target.platform}_{delivery_target.thread_id}"
+            if same_scope and alias_base == f"{session_target.platform}_{session_target.thread_id}":
+                return {"mode": "none"}
+            return {
+                "mode": "fixed_base",
+                "session_key": target_session_key,
+                "base_session_id": alias_base,
+                "clear_source": clear_provisional_source,
+            }
+
+        if self._supports_threaded_delivery(delivery_target):
+            return {
+                "mode": "sent_message",
+                "session_key": target_session_key,
+                "clear_source": clear_provisional_source,
+            }
+
+        delivery_base_id = delivery_context["channel_id"]
+        source_base_id = session_context["channel_id"]
+        if same_scope and session_target.thread_id is None and delivery_base_id == source_base_id:
+            return {"mode": "none"}
+        return {
+            "mode": "fixed_base",
+            "session_key": target_session_key,
+            "base_session_id": f"{delivery_target.platform}_{delivery_base_id}",
+            "clear_source": clear_provisional_source,
+        }
 
     @staticmethod
     def _build_message_id(*, execution_id: str, task_id: Optional[str], trigger_kind: str) -> str:

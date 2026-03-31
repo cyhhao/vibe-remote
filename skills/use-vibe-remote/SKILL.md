@@ -248,6 +248,8 @@ Each task includes:
 
 - `id`
 - `session_key`
+- `post_to`
+- `deliver_key`
 - `prompt`
 - `schedule_type`
 - `cron` or `run_at`
@@ -310,6 +312,12 @@ Preferred CLI shape:
 - one-off: `vibe task add --session-key '<key>' --at '<ISO-8601>' --prompt '...'`
 - immediate rerun: `vibe task run <id>`
 - one-shot async hook: `vibe hook send --session-key '<key>' --prompt '...'`
+
+Delivery controls:
+
+- use `--post-to channel` when the task should keep session context from a thread-bound `session_key` but publish to the parent channel
+- use `--deliver-key '<key>'` only when delivery must go to a different explicit target than `session_key`
+- do not combine `--post-to` and `--deliver-key` in the same command
 
 Session key format:
 

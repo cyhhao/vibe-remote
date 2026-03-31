@@ -94,6 +94,8 @@ def test_store_round_trip_persists_task(tmp_path: Path) -> None:
     store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
     task = store.add_task(
         session_key="discord::channel::123",
+        post_to="channel",
+        deliver_key="discord::channel::456",
         prompt="send digest",
         schedule_type="cron",
         cron="0 * * * *",
@@ -106,6 +108,8 @@ def test_store_round_trip_persists_task(tmp_path: Path) -> None:
     assert payload["tasks"][0]["id"] == task.id
     assert reloaded.get_task(task.id) is not None
     assert reloaded.get_task(task.id).session_key == "discord::channel::123"
+    assert reloaded.get_task(task.id).post_to == "channel"
+    assert reloaded.get_task(task.id).deliver_key == "discord::channel::456"
 
 
 def test_store_reload_detects_deleted_task_file(tmp_path: Path) -> None:
@@ -159,7 +163,13 @@ def test_service_rejects_unsupported_platform_at_runtime() -> None:
 
 def test_build_context_assigns_unique_scheduled_message_ids() -> None:
     settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
-    controller = SimpleNamespace(platform_settings_managers={"slack": settings_manager})
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        get_im_client_for_context=lambda _context: SimpleNamespace(
+            should_use_thread_for_reply=lambda: True,
+            should_use_thread_for_dm_session=lambda: False,
+        ),
+    )
     service = ScheduledTaskService(controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json")))
     target = parse_session_key("slack::channel::C123")
 
@@ -173,7 +183,13 @@ def test_build_context_assigns_unique_scheduled_message_ids() -> None:
 
 def test_build_context_assigns_hook_message_id() -> None:
     settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
-    controller = SimpleNamespace(platform_settings_managers={"slack": settings_manager})
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        get_im_client_for_context=lambda _context: SimpleNamespace(
+            should_use_thread_for_reply=lambda: True,
+            should_use_thread_for_dm_session=lambda: False,
+        ),
+    )
     service = ScheduledTaskService(controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json")))
     target = parse_session_key("slack::channel::C123")
 
@@ -181,6 +197,63 @@ def test_build_context_assigns_hook_message_id() -> None:
 
     assert context.message_id == "hook:exec-hook"
     assert context.platform_specific["task_trigger_kind"] == "hook"
+
+
+def test_build_context_separates_delivery_target_from_session_target() -> None:
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        get_im_client_for_context=lambda _context: SimpleNamespace(
+            should_use_thread_for_reply=lambda: True,
+            should_use_thread_for_dm_session=lambda: False,
+        ),
+    )
+    service = ScheduledTaskService(controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json")))
+    session_target = parse_session_key("slack::channel::C123::thread::171717.123")
+    delivery_target = parse_session_key("slack::channel::C123")
+
+    context = asyncio.run(
+        service._build_context(
+            session_target,
+            delivery_target=delivery_target,
+            execution_id="exec-1",
+            task_id="task-1",
+        )
+    )
+
+    assert context.thread_id == "171717.123"
+    assert context.platform_specific["delivery_override"]["thread_id"] is None
+    assert context.platform_specific["delivery_scope_session_key"] == "slack::C123"
+    assert context.platform_specific["scheduled_delivery_alias"]["mode"] == "sent_message"
+    assert context.platform_specific["scheduled_delivery_alias"]["clear_source"] is False
+
+
+def test_build_context_clears_provisional_anchor_for_cross_scope_delivery() -> None:
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        get_im_client_for_context=lambda _context: SimpleNamespace(
+            should_use_thread_for_reply=lambda: True,
+            should_use_thread_for_dm_session=lambda: False,
+        ),
+    )
+    service = ScheduledTaskService(controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json")))
+    session_target = parse_session_key("slack::channel::C123")
+    delivery_target = parse_session_key("slack::channel::C999")
+
+    context = asyncio.run(
+        service._build_context(
+            session_target,
+            delivery_target=delivery_target,
+            execution_id="exec-1",
+            task_id="task-1",
+        )
+    )
+
+    assert context.thread_id is None
+    assert context.platform_specific["delivery_override"]["channel_id"] == "C999"
+    assert context.platform_specific["scheduled_delivery_alias"]["mode"] == "sent_message"
+    assert context.platform_specific["scheduled_delivery_alias"]["clear_source"] is True
 
 
 def test_run_task_records_scheduled_handler_error(tmp_path: Path) -> None:
@@ -358,7 +431,11 @@ def test_drain_requests_requeues_cancelled_task_run(tmp_path: Path) -> None:
 
 def test_drain_requests_executes_hook_send(tmp_path: Path) -> None:
     request_store = TaskExecutionStore(tmp_path / "task_requests")
-    request = request_store.enqueue_hook_send(session_key="slack::channel::C123", prompt="ship it")
+    request = request_store.enqueue_hook_send(
+        session_key="slack::channel::C123::thread::171717.123",
+        post_to="channel",
+        prompt="ship it",
+    )
     settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
     calls = []
 
@@ -381,8 +458,10 @@ def test_drain_requests_executes_hook_send(tmp_path: Path) -> None:
     assert len(calls) == 1
     context, message, parsed = calls[0]
     assert message == "ship it"
-    assert parsed.to_key() == "slack::channel::C123"
+    assert parsed.to_key() == "slack::channel::C123::thread::171717.123"
     assert context.message_id == f"hook:{request.id}"
+    assert context.thread_id == "171717.123"
+    assert context.platform_specific["delivery_override"]["thread_id"] is None
     payload = json.loads((request_store.completed_dir / f"{request.id}.json").read_text(encoding="utf-8"))
     assert payload["ok"] is True
 

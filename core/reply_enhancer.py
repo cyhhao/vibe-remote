@@ -200,6 +200,7 @@ Current conversation targeting:
 Rules:
 - The default session key intentionally does not include a thread ID.
 - Only append `::thread::<thread_id>` to `--session-key` when the user explicitly wants replies to stay in the current thread.
+- Use `--post-to channel` when the task or hook should keep thread context but publish to the parent channel.
 - Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
 - If `--timezone` is omitted, the task uses the local system timezone at creation time.
 - Use `--prompt "..."` or `--prompt-file <path>` for task and hook content.

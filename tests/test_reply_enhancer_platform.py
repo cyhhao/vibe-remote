@@ -95,6 +95,10 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Use `vibe task add` for actions that should recur or remain saved.", prompt)
         self.assertIn("Default session key: `slack::channel::C1`", prompt)
         self.assertIn("Current thread ID: `171717.123`", prompt)
+        self.assertIn(
+            "Use `--post-to channel` when the task or hook should keep thread context but publish to the parent channel.",
+            prompt,
+        )
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
         self.assertIn("Run `vibe task add --help` or `vibe hook send --help` for the full command reference.", prompt)
         self.assertIn("A shared user context and preferences file is available at ", prompt)
