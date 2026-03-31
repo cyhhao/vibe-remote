@@ -73,7 +73,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("## 1. Send files", prompt)
         self.assertIn("Vibe Remote provides optional capabilities:", prompt)
         self.assertNotIn("## 2. Quick-reply buttons", prompt)
-        self.assertIn("## 4. User preference file", prompt)
+        self.assertIn("## 4. User Context and Preferences", prompt)
         self.assertIn("`/tmp/user_preferences.md`", prompt)
         self.assertIn("`<platform>/<user_id>`", prompt)
 
@@ -97,11 +97,14 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Current thread ID: `171717.123`", prompt)
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
         self.assertIn("Run `vibe task add --help` or `vibe hook send --help` for the full command reference.", prompt)
-        self.assertIn("When useful, you may read it to learn stable habits, preferences, and recurring rules.", prompt)
+        self.assertIn("A shared user context and preferences file is available at ", prompt)
+        self.assertIn("/tmp/user_preferences.md", prompt)
+        self.assertIn("From first principles, serving the user better means thinking proactively about how to make full use of the available context", prompt)
+        self.assertIn("Use this file proactively when it is helpful", prompt)
+        self.assertIn("You do not need to read it for every simple request; but if consulting it could improve personalization, efficiency, or continuity, prefer checking it early.", prompt)
         self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
-        self.assertIn("Only write to a shared section when a rule truly applies across users.", prompt)
-        self.assertIn("Prefer durable preferences over one-off requests.", prompt)
-        self.assertIn("Keep it short, factual, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
+        self.assertIn("Only record durable, factual, reusable information there.", prompt)
+        self.assertIn("Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
 
     def test_prompt_uses_fallback_platform_for_unannotated_context(self):
         context = MessageContext(

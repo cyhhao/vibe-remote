@@ -61,20 +61,18 @@ def get_user_preferences_path() -> Path:
     return get_state_dir() / "user_preferences.md"
 
 
-_USER_PREFERENCES_TEMPLATE = """# User Preferences
+_USER_PREFERENCES_TEMPLATE = """# User Context and Preferences
 
-Use this file for stable long-term preferences and recurring rules.
-Prefer user-specific notes under `## Users`.
-Use `## Shared` only for rules that truly apply across users.
-Keep entries short, factual, deduplicated, and free of secrets unless the user explicitly asks.
-Prefer durable preferences over one-off requests.
-
-## Shared
-- Add cross-user rules here only when they are broadly useful.
+Use this file for durable user context, stable preferences, and recurring working patterns.
+Prefer adding notes under `## Users`.
+Keep entries short, factual, reusable, deduplicated, and free of secrets unless the user explicitly asks.
 
 ## Users
 ### platform/user_id
-- Add stable preferences for this user here.
+- Add stable notes about how this user prefers to communicate, work, and make decisions.
+
+## Shared
+- Add cross-user notes here only when they are genuinely reusable.
 """
 
 

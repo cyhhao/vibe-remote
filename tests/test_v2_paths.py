@@ -21,8 +21,8 @@ def test_ensure_data_dirs(tmp_path, monkeypatch):
     preferences_path = tmp_path / ".vibe_remote" / "state" / "user_preferences.md"
     assert preferences_path.exists()
     text = preferences_path.read_text(encoding="utf-8")
-    assert "# User Preferences" in text
-    assert "Prefer user-specific notes under `## Users`." in text
+    assert "# User Context and Preferences" in text
+    assert "Prefer adding notes under `## Users`." in text
     assert "### platform/user_id" in text
-    assert "Prefer durable preferences over one-off requests." in text
+    assert "communicate, work, and make decisions." in text
     assert "free of secrets unless the user explicitly asks." in text
