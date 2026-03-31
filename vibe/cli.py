@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
@@ -104,6 +105,7 @@ def _task_examples_text() -> str:
           vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
           vibe task run 12ab34cd56ef
           vibe task add --session-key 'discord::user::123456789' --at '2026-03-31T09:00:00+08:00' --prompt-file briefing.md
+          vibe task add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --cron '*/5 * * * *' --prompt 'Tell a new joke each time.'
           vibe task add --session-key 'lark::channel::oc_abc::thread::om_123' --cron '30 9 * * 1-5' --prompt 'Post the daily standup reminder in this thread.'
         """
     )
@@ -121,11 +123,15 @@ def _task_add_examples_text() -> str:
         Guidance:
           Prefer a threadless session key by default.
           Only append ::thread::<thread_id> when the task must continue inside a specific thread.
+          Use --post-to channel when the task should keep thread context but publish to the parent channel.
+          Use --deliver-key only when delivery must go to a different explicit target.
           Use --cron for recurring jobs and --at for one-shot jobs.
           --timezone controls how --cron and naive --at timestamps are interpreted.
 
         Examples:
           vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
+          vibe task add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --cron '*/5 * * * *' --prompt 'Tell a new joke each time.'
+          vibe task add --session-key 'slack::channel::C123::thread::171717.123' --deliver-key 'slack::channel::C999' --cron '0 9 * * *' --prompt 'Post the daily summary in the announcements channel.'
           vibe task add --session-key 'discord::user::123456789' --at '2026-03-31T09:00:00+08:00' --prompt 'Send the release reminder.'
           vibe task add --session-key 'lark::channel::oc_abc::thread::om_123' --cron '30 9 * * 1-5' --timezone 'Asia/Shanghai' --prompt-file standup.txt
         """
@@ -145,9 +151,13 @@ def _hook_send_examples_text() -> str:
           `vibe hook send` queues one asynchronous turn without persisting a scheduled task.
           Prefer a threadless session key by default.
           Only append ::thread::<thread_id> when the hook must continue in one specific thread.
+          Use --post-to channel when the hook should keep thread context but publish to the parent channel.
+          Use --deliver-key only when delivery must go to a different explicit target.
 
         Examples:
           vibe hook send --session-key 'slack::channel::C123' --prompt 'The export finished. Share the summary.'
+          vibe hook send --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prompt 'Share the benchmark result in the channel.'
+          vibe hook send --session-key 'slack::channel::C123' --deliver-key 'slack::channel::C999' --prompt 'Post the deployment summary in announcements.'
           vibe hook send --session-key 'discord::user::123456789' --prompt-file release-note.txt
           vibe hook send --session-key 'lark::channel::oc_abc::thread::om_123' --prompt 'Post the benchmark result in this thread.'
         """
@@ -419,9 +429,55 @@ def _parse_validated_session_key(
     return parsed
 
 
+def _validate_delivery_args(
+    *,
+    session_key: str,
+    post_to: Optional[str],
+    deliver_key: Optional[str],
+    help_command: str,
+):
+    if post_to and deliver_key:
+        raise TaskCliError(
+            "use either --post-to or --deliver-key, not both",
+            code="conflicting_delivery_target",
+            hint="Use --post-to for the common thread/channel delivery choice, or --deliver-key for an explicit delivery target.",
+            help_command=help_command,
+        )
+
+    session_target = _parse_validated_session_key(session_key, help_command=help_command)
+    delivery_target = None
+    if deliver_key:
+        delivery_target = _parse_validated_session_key(deliver_key, help_command=help_command)
+        if delivery_target.platform != session_target.platform:
+            raise TaskCliError(
+                "--deliver-key must use the same platform as --session-key",
+                code="invalid_delivery_target",
+                hint="Keep session memory and delivery on the same IM platform. Change only the channel, user, or thread target.",
+                help_command=help_command,
+                details={
+                    "session_platform": session_target.platform,
+                    "delivery_platform": delivery_target.platform,
+                },
+            )
+    elif post_to == "thread" and not session_target.thread_id:
+        raise TaskCliError(
+            "--post-to thread requires a thread-bound --session-key or an explicit --deliver-key",
+            code="invalid_delivery_target",
+            hint="Append ::thread::<thread_id> to --session-key, or use --deliver-key with a thread target.",
+            help_command=help_command,
+            details={"session_key": session_key, "post_to": post_to},
+        )
+    return session_target, delivery_target
+
+
 def cmd_task_add(args):
     try:
-        _parse_validated_session_key(args.session_key, help_command="vibe task add --help")
+        _validate_delivery_args(
+            session_key=args.session_key,
+            post_to=getattr(args, "post_to", None),
+            deliver_key=getattr(args, "deliver_key", None),
+            help_command="vibe task add --help",
+        )
         prompt = _resolve_prompt_input(
             args,
             help_command="vibe task add --help",
@@ -455,6 +511,8 @@ def cmd_task_add(args):
                 ) from exc
             task = store.add_task(
                 session_key=args.session_key,
+                post_to=args.post_to,
+                deliver_key=args.deliver_key,
                 prompt=prompt,
                 schedule_type="cron",
                 cron=args.cron,
@@ -474,6 +532,8 @@ def cmd_task_add(args):
                 ) from exc
             task = store.add_task(
                 session_key=args.session_key,
+                post_to=args.post_to,
+                deliver_key=args.deliver_key,
                 prompt=prompt,
                 schedule_type="at",
                 run_at=run_at,
@@ -583,13 +643,23 @@ def cmd_task_run(task_id: str):
 
 def cmd_hook_send(args):
     try:
-        _parse_validated_session_key(args.session_key, help_command="vibe hook send --help")
+        _validate_delivery_args(
+            session_key=args.session_key,
+            post_to=getattr(args, "post_to", None),
+            deliver_key=getattr(args, "deliver_key", None),
+            help_command="vibe hook send --help",
+        )
         prompt = _resolve_prompt_input(
             args,
             help_command="vibe hook send --help",
             example_command="vibe hook send --session-key 'slack::channel::C123'",
         )
-        request = _task_request_store().enqueue_hook_send(session_key=args.session_key, prompt=prompt)
+        request = _task_request_store().enqueue_hook_send(
+            session_key=args.session_key,
+            post_to=args.post_to,
+            deliver_key=args.deliver_key,
+            prompt=prompt,
+        )
         print(
             json.dumps(
                 {
@@ -598,6 +668,8 @@ def cmd_hook_send(args):
                     "execution_id": request.id,
                     "request_type": request.request_type,
                     "session_key": args.session_key,
+                    "post_to": args.post_to,
+                    "deliver_key": args.deliver_key,
                 },
                 indent=2,
             )
@@ -1157,12 +1229,22 @@ def build_parser():
         epilog=_task_add_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe task add --help",
-        error_hint="Use --session-key together with exactly one schedule flag and one prompt input flag.",
+        error_hint="Use --session-key together with exactly one schedule flag and one prompt input flag. Add --post-to or --deliver-key only when delivery must differ from the session target.",
     )
     task_add_parser.add_argument(
         "--session-key",
         required=True,
         help="Target session key. Prefer a threadless key unless the task must stay in one thread.",
+    )
+    delivery_group = task_add_parser.add_mutually_exclusive_group()
+    delivery_group.add_argument(
+        "--post-to",
+        choices=("thread", "channel"),
+        help="Delivery location override. Omit to follow --session-key directly.",
+    )
+    delivery_group.add_argument(
+        "--deliver-key",
+        help="Explicit delivery target key. Use this only when messages must be delivered to a different target.",
     )
     schedule_group = task_add_parser.add_mutually_exclusive_group(required=True)
     schedule_group.add_argument("--cron", help="Recurring schedule in 5-field crontab format")
@@ -1256,12 +1338,22 @@ def build_parser():
         epilog=_hook_send_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe hook send --help",
-        error_hint="Use --session-key together with exactly one prompt input flag.",
+        error_hint="Use --session-key together with exactly one prompt input flag. Add --post-to or --deliver-key only when delivery must differ from the session target.",
     )
     hook_send_parser.add_argument(
         "--session-key",
         required=True,
         help="Target session key. Prefer a threadless key unless the hook must stay in one thread.",
+    )
+    hook_delivery_group = hook_send_parser.add_mutually_exclusive_group()
+    hook_delivery_group.add_argument(
+        "--post-to",
+        choices=("thread", "channel"),
+        help="Delivery location override. Omit to follow --session-key directly.",
+    )
+    hook_delivery_group.add_argument(
+        "--deliver-key",
+        help="Explicit delivery target key. Use this only when messages must be delivered to a different target.",
     )
     hook_prompt_group = hook_send_parser.add_mutually_exclusive_group(required=True)
     hook_prompt_group.add_argument("--prompt", help="Prompt text to send")

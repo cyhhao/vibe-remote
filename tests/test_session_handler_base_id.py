@@ -18,6 +18,7 @@ class _Config:
 class _FakeSessions:
     def __init__(self) -> None:
         self.alias_calls = []
+        self.cross_scope_alias_calls = []
         self.clear_calls = []
         self.thread_marks = []
 
@@ -28,6 +29,18 @@ class _FakeSessions:
     def clear_session_base(self, user_id, base_session_id):
         self.clear_calls.append((user_id, base_session_id))
         return 1
+
+    def alias_session_base_across_scopes(
+        self,
+        source_user_id,
+        target_user_id,
+        source_base_session_id,
+        alias_base_session_id,
+    ):
+        self.cross_scope_alias_calls.append(
+            (source_user_id, target_user_id, source_base_session_id, alias_base_session_id)
+        )
+        return True
 
     def mark_thread_active(self, user_id, channel_id, thread_ts):
         self.thread_marks.append((user_id, channel_id, thread_ts))
@@ -169,7 +182,12 @@ def test_finalize_scheduled_delivery_aliases_provisional_base_and_marks_thread()
             "is_dm": False,
             "turn_source": "scheduled",
             "turn_base_session_id": "slack_scheduled-abc",
-            "scheduled_anchor_required": True,
+            "delivery_override": {"channel_id": "C123"},
+            "scheduled_delivery_alias": {
+                "mode": "sent_message",
+                "session_key": "slack::C123",
+                "clear_source": True,
+            },
         },
     )
 
@@ -178,3 +196,34 @@ def test_finalize_scheduled_delivery_aliases_provisional_base_and_marks_thread()
     assert controller.sessions.alias_calls == [("slack::C123", "slack_scheduled-abc", "slack_171717.123")]
     assert controller.sessions.clear_calls == [("slack::C123", "slack_scheduled-abc")]
     assert controller.sessions.thread_marks == [("scheduled", "C123", "171717.123")]
+
+
+def test_finalize_scheduled_delivery_can_alias_into_delivery_scope() -> None:
+    controller = _Controller(platform="slack", dm_threads=False)
+    handler = SessionHandler(controller)
+    context = MessageContext(
+        user_id="scheduled",
+        channel_id="C123",
+        platform="slack",
+        thread_id="171717.123",
+        platform_specific={
+            "is_dm": False,
+            "turn_source": "scheduled",
+            "turn_base_session_id": "slack_171717.123",
+            "scheduled_delivery_alias": {
+                "mode": "sent_message",
+                "session_key": "slack::C999",
+                "clear_source": False,
+            },
+            "delivery_override": {"channel_id": "C999"},
+        },
+    )
+
+    handler.finalize_scheduled_delivery(context, "181818.456")
+
+    assert controller.sessions.alias_calls == []
+    assert controller.sessions.cross_scope_alias_calls == [
+        ("slack::C123", "slack::C999", "slack_171717.123", "slack_181818.456")
+    ]
+    assert controller.sessions.clear_calls == []
+    assert controller.sessions.thread_marks == [("scheduled", "C999", "181818.456")]

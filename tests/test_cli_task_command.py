@@ -116,6 +116,8 @@ def test_task_add_help_includes_examples_and_threadless_guidance(capsys) -> None
     assert exc.value.code == 0
     captured = capsys.readouterr()
     assert "Prefer a threadless session key by default." in captured.out
+    assert "--post-to" in captured.out
+    assert "--deliver-key" in captured.out
     assert "<platform>::channel::<channel_id>" in captured.out
     assert "vibe task add --session-key 'slack::channel::C123'" in captured.out
 
@@ -141,6 +143,8 @@ def test_hook_send_help_includes_examples_and_threadless_guidance(capsys) -> Non
     assert exc.value.code == 0
     captured = capsys.readouterr()
     assert "`vibe hook send` queues one asynchronous turn" in captured.out
+    assert "--post-to" in captured.out
+    assert "--deliver-key" in captured.out
     assert "<platform>::channel::<channel_id>" in captured.out
     assert "vibe hook send --session-key 'slack::channel::C123'" in captured.out
 
@@ -189,6 +193,80 @@ def test_task_add_rejects_invalid_session_key_with_hint() -> None:
     assert result == 1
     assert payload["code"] == "invalid_session_key"
     assert payload["example"] == "slack::channel::C123"
+
+
+def test_task_add_rejects_conflicting_delivery_target_flags(capsys) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(
+            [
+                "task",
+                "add",
+                "--session-key",
+                "slack::channel::C123",
+                "--post-to",
+                "channel",
+                "--deliver-key",
+                "slack::channel::C999",
+                "--cron",
+                "0 * * * *",
+                "--prompt",
+                "hello",
+            ]
+        )
+
+    assert exc.value.code == 2
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["code"] == "invalid_arguments"
+    assert "not allowed with argument --post-to" in payload["error"]
+    assert payload["help_command"] == "vibe task add --help"
+
+
+def test_task_add_rejects_post_to_thread_without_thread_session_key() -> None:
+    args = _parse_task_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--post-to",
+            "thread",
+            "--cron",
+            "0 * * * *",
+            "--prompt",
+            "hello",
+        ]
+    )
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_task_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_delivery_target"
+
+
+def test_task_add_rejects_cross_platform_deliver_key() -> None:
+    args = _parse_task_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--deliver-key",
+            "discord::channel::C999",
+            "--cron",
+            "0 * * * *",
+            "--prompt",
+            "hello",
+        ]
+    )
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack", "discord"})):
+        result, payload = _capture_stderr_json(cli.cmd_task_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_delivery_target"
+    assert payload["details"] == {
+        "session_platform": "slack",
+        "delivery_platform": "discord",
+    }
 
 
 def test_task_add_rejects_invalid_cron_with_example() -> None:
@@ -340,8 +418,66 @@ def test_hook_send_rejects_invalid_session_key_with_hint() -> None:
     assert payload["help_command"] == "vibe hook send --help"
 
 
+def test_hook_send_rejects_conflicting_delivery_target_flags(capsys) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(
+            [
+                "hook",
+                "send",
+                "--session-key",
+                "slack::channel::C123",
+                "--post-to",
+                "channel",
+                "--deliver-key",
+                "slack::channel::C999",
+                "--prompt",
+                "hello",
+            ]
+        )
+
+    assert exc.value.code == 2
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["code"] == "invalid_arguments"
+    assert "not allowed with argument --post-to" in payload["error"]
+    assert payload["help_command"] == "vibe hook send --help"
+
+
+def test_hook_send_rejects_cross_platform_deliver_key() -> None:
+    args = _parse_hook_send(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--deliver-key",
+            "discord::channel::C999",
+            "--prompt",
+            "hello",
+        ]
+    )
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack", "discord"})):
+        result, payload = _capture_stderr_json(cli.cmd_hook_send, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_delivery_target"
+    assert payload["details"] == {
+        "session_platform": "slack",
+        "delivery_platform": "discord",
+    }
+
+
 def test_hook_send_enqueues_request(tmp_path: Path, capsys) -> None:
-    args = _parse_hook_send(["--session-key", "slack::channel::C123", "--prompt", "hello"])
+    args = _parse_hook_send(
+        [
+            "--session-key",
+            "slack::channel::C123::thread::171717.123",
+            "--post-to",
+            "channel",
+            "--prompt",
+            "hello",
+        ]
+    )
     request_root = tmp_path / "task_requests"
 
     with (
@@ -353,7 +489,8 @@ def test_hook_send_enqueues_request(tmp_path: Path, capsys) -> None:
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
-    assert payload["session_key"] == "slack::channel::C123"
+    assert payload["session_key"] == "slack::channel::C123::thread::171717.123"
+    assert payload["post_to"] == "channel"
     assert (request_root / "pending" / f"{payload['execution_id']}.json").exists()
 
 
