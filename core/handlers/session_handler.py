@@ -84,9 +84,10 @@ class SessionHandler(BaseHandler):
                 source_base_session_id,
                 alias_base_session_id,
             )
-        if changed and clear_source and source_base_session_id != alias_base_session_id:
-            self.sessions.clear_session_base(resolved_source_key, source_base_session_id)
-        return changed
+        cleared = 0
+        if clear_source and source_base_session_id != alias_base_session_id:
+            cleared = self.sessions.clear_session_base(resolved_source_key, source_base_session_id)
+        return bool(changed or cleared)
 
     def finalize_scheduled_delivery(self, context: MessageContext, sent_message_id: Optional[str]) -> None:
         payload = context.platform_specific or {}
