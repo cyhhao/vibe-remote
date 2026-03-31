@@ -779,6 +779,7 @@ class ScheduledTaskService:
         source_session_key = session_target.session_scope
         target_session_key = delivery_target.session_scope
         same_scope = source_session_key == target_session_key
+        clear_provisional_source = session_target.thread_id is None and self._supports_threaded_delivery(session_target)
 
         if delivery_target.thread_id:
             alias_base = f"{delivery_target.platform}_{delivery_target.thread_id}"
@@ -788,15 +789,14 @@ class ScheduledTaskService:
                 "mode": "fixed_base",
                 "session_key": target_session_key,
                 "base_session_id": alias_base,
-                "clear_source": False,
+                "clear_source": clear_provisional_source,
             }
 
         if self._supports_threaded_delivery(delivery_target):
-            clear_source = same_scope and session_target.thread_id is None
             return {
                 "mode": "sent_message",
                 "session_key": target_session_key,
-                "clear_source": clear_source,
+                "clear_source": clear_provisional_source,
             }
 
         delivery_base_id = delivery_context["channel_id"]
@@ -807,7 +807,7 @@ class ScheduledTaskService:
             "mode": "fixed_base",
             "session_key": target_session_key,
             "base_session_id": f"{delivery_target.platform}_{delivery_base_id}",
-            "clear_source": False,
+            "clear_source": clear_provisional_source,
         }
 
     @staticmethod

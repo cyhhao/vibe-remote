@@ -228,6 +228,34 @@ def test_build_context_separates_delivery_target_from_session_target() -> None:
     assert context.platform_specific["scheduled_delivery_alias"]["clear_source"] is False
 
 
+def test_build_context_clears_provisional_anchor_for_cross_scope_delivery() -> None:
+    settings_manager = SimpleNamespace(get_store=lambda: SimpleNamespace(get_user=lambda *_args, **_kwargs: None))
+    controller = SimpleNamespace(
+        platform_settings_managers={"slack": settings_manager},
+        get_im_client_for_context=lambda _context: SimpleNamespace(
+            should_use_thread_for_reply=lambda: True,
+            should_use_thread_for_dm_session=lambda: False,
+        ),
+    )
+    service = ScheduledTaskService(controller=controller, store=ScheduledTaskStore(Path("/tmp/nonexistent-scheduled.json")))
+    session_target = parse_session_key("slack::channel::C123")
+    delivery_target = parse_session_key("slack::channel::C999")
+
+    context = asyncio.run(
+        service._build_context(
+            session_target,
+            delivery_target=delivery_target,
+            execution_id="exec-1",
+            task_id="task-1",
+        )
+    )
+
+    assert context.thread_id is None
+    assert context.platform_specific["delivery_override"]["channel_id"] == "C999"
+    assert context.platform_specific["scheduled_delivery_alias"]["mode"] == "sent_message"
+    assert context.platform_specific["scheduled_delivery_alias"]["clear_source"] is True
+
+
 def test_run_task_records_scheduled_handler_error(tmp_path: Path) -> None:
     path = tmp_path / "scheduled_tasks.json"
     store = ScheduledTaskStore(path)
