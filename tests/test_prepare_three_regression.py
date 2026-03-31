@@ -113,6 +113,7 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     opencode_config = json.loads(
         (tmp_path / "shared-home" / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")
     )
+    assert opencode_config["permission"] == "allow"
     assert opencode_config["provider"]["openai"]["options"]["baseURL"] == "https://ai-relay.example/v1"
 
 
