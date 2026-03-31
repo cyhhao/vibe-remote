@@ -209,13 +209,18 @@ Rules:
 
 _USER_PREFERENCES_PROMPT = """\
 
-## 4. User preference file
-A shared user preference file is available at `{preferences_path}`.
-When useful, you may read it to learn stable habits, preferences, and recurring rules.
+## 4. User Context and Preferences
+A shared user context and preferences file is available at `{preferences_path}`.
+
+From first principles, serving the user better means thinking proactively about how to make full use of the available context, reduce repetitive communication, and make judgments that better fit the user's habits. For example, the user may currently be receiving your messages through an IM channel, possibly on a mobile device or in a fragmented-attention context.
+
+Use this file proactively when it is helpful, especially when it can help you understand the user's stable habits, preferences, or working style, reduce repeated questions, and choose among multiple reasonable ways to proceed in a way that better fits the user.
+
+You do not need to read it for every simple request; but if consulting it could improve personalization, efficiency, or continuity, prefer checking it early.
+
 You may also update it, usually in the current user's section: `{user_section}`.
-Only write to a shared section when a rule truly applies across users.
-Prefer durable preferences over one-off requests.
-Keep it short, factual, deduplicated, and free of secrets unless the user explicitly asks.
+Only record durable, factual, reusable information there.
+Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.
 """
 
 
