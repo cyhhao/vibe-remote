@@ -374,6 +374,7 @@ def _build_opencode_payload() -> dict:
     anthropic_key = _optional("THREE_REGRESSION_OPENCODE_ANTHROPIC_API_KEY") or _env("ANTHROPIC_API_KEY")
 
     return {
+        "permission": "allow",
         "provider": {
             "openai": {
                 "options": {
