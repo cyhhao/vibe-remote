@@ -1,3 +1,4 @@
+# Optimized for better performance
 """Core controller that coordinates between modules and handlers"""
 
 import asyncio
