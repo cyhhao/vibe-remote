@@ -95,6 +95,27 @@ def test_build_message_context_records_discovered_chat(tmp_path, monkeypatch) ->
     DiscoveredChatsStore.reset_instance()
 
 
+def test_handle_message_ignores_foreign_bot_command() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    bot._bot_user = {"id": 1, "username": "vibe_remote_bot"}
+    bot.on_message_callback = AsyncMock()
+    bot.on_command_callbacks["start"] = AsyncMock()
+
+    asyncio.run(
+        bot._handle_message(
+            {
+                "message_id": 77,
+                "chat": {"id": -100123, "type": "supergroup", "title": "Core Forum"},
+                "from": {"id": 42},
+                "text": "/start@other_bot hello",
+            }
+        )
+    )
+
+    bot.on_command_callbacks["start"].assert_not_awaited()
+    bot.on_message_callback.assert_not_awaited()
+
+
 def test_pending_cwd_prompt_consumes_next_plain_message() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
     context = MessageContext(
@@ -285,3 +306,28 @@ def test_question_callback_finalizes_with_synthetic_modal_payload() -> None:
     forwarded = bot.on_callback_query_callback.await_args.args[1]
     assert forwarded.startswith("claude_question:modal:")
     assert '"Claude"' in forwarded
+
+
+def test_handle_callback_query_denies_unauthorized_protected_action() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    bot.check_authorization = lambda **kwargs: SimpleNamespace(allowed=False, denial="not_admin")
+    bot.build_auth_denial_text = lambda denial, channel_id=None: "Admin only"
+    bot.on_callback_query_callback = AsyncMock()
+
+    with patch.object(bot, "answer_callback", new=AsyncMock(return_value=True)) as answer_mock:
+        asyncio.run(
+            bot._handle_callback_query(
+                {
+                    "id": "cb-1",
+                    "data": "cmd_settings",
+                    "from": {"id": 42},
+                    "message": {
+                        "message_id": 99,
+                        "chat": {"id": -100123, "type": "supergroup", "title": "Core Forum"},
+                    },
+                }
+            )
+        )
+
+    answer_mock.assert_awaited_once_with("cb-1", "Admin only", show_alert=True)
+    bot.on_callback_query_callback.assert_not_awaited()

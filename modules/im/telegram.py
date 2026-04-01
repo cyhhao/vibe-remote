@@ -173,6 +173,8 @@ class TelegramBot(BaseIMClient):
 
         text = message.get("text") or message.get("caption") or ""
         text = self._normalize_command_text(text)
+        if self._is_command_for_other_bot(text):
+            return
 
         if await self._consume_cwd_prompt(context, text):
             return
@@ -336,6 +338,21 @@ class TelegramBot(BaseIMClient):
             "callback_query": payload,
         }
         callback_data = str(payload.get("data", ""))
+        auth_result = self.check_authorization(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            is_dm=bool(context.platform_specific.get("is_dm")),
+            action=self._resolve_callback_action(callback_data),
+            settings_manager=self.settings_manager,
+        )
+        if not auth_result.allowed:
+            denial_text = self.build_auth_denial_text(auth_result.denial, context.channel_id)
+            await self.answer_callback(
+                callback_id,
+                denial_text,
+                show_alert=bool(denial_text),
+            )
+            return
         if await self._handle_internal_callback(context, callback_data):
             await self.answer_callback(callback_id)
             return
@@ -436,11 +453,37 @@ class TelegramBot(BaseIMClient):
         if not stripped.startswith("/"):
             return stripped
         head, *tail = stripped.split(maxsplit=1)
-        if "@" in head and self._bot_user and self._bot_user.get("username"):
-            command, _, username = head.partition("@")
-            if username.lower() == str(self._bot_user.get("username")).lower():
-                head = command
+        command, username = self._split_command_target(head)
+        bot_username = str((self._bot_user or {}).get("username") or "")
+        if username and bot_username and username.lower() == bot_username.lower():
+            head = command
         return " ".join([head, *tail]).strip()
+
+    def _split_command_target(self, head: str) -> tuple[str, str]:
+        command, sep, username = str(head or "").partition("@")
+        if not sep:
+            return command, ""
+        return command, username
+
+    def _is_command_for_other_bot(self, text: str) -> bool:
+        stripped = (text or "").strip()
+        if not stripped.startswith("/"):
+            return False
+        head = stripped.split(maxsplit=1)[0]
+        _, username = self._split_command_target(head)
+        if not username:
+            return False
+        bot_username = str((self._bot_user or {}).get("username") or "")
+        return bool(bot_username) and username.lower() != bot_username.lower()
+
+    def _resolve_callback_action(self, callback_data: str) -> str:
+        if callback_data.startswith("tg_cwd:"):
+            return "cmd_change_cwd"
+        if callback_data.startswith("tg_route:"):
+            return "cmd_routing"
+        if callback_data.startswith("toggle_msg_") or callback_data in {"open_settings_modal", "info_msg_types"}:
+            return "cmd_settings"
+        return callback_data
 
     def _interaction_scope_key(self, context: MessageContext) -> str:
         payload = context.platform_specific or {}
@@ -482,7 +525,12 @@ class TelegramBot(BaseIMClient):
 
     def _is_explicitly_addressed(self, message: dict[str, Any], text: str) -> bool:
         if text.startswith("/"):
-            return True
+            head = text.split(maxsplit=1)[0]
+            _, username = self._split_command_target(head)
+            if not username:
+                return True
+            bot_username = str((self._bot_user or {}).get("username") or "")
+            return bool(bot_username) and username.lower() == bot_username.lower()
         reply_to = message.get("reply_to_message") or {}
         reply_from = reply_to.get("from") or {}
         if self._bot_user and str(reply_from.get("id")) == str(self._bot_user.get("id")):
