@@ -266,12 +266,10 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 request.working_path,
             )
 
-            # ActivePollInfo stores raw settings_key + separate platform field;
-            # request.session_key is the scoped session key (platform::raw_id),
-            # so strip the prefix before persisting.
-            raw_settings_key = request.session_key
-            if "::" in raw_settings_key:
-                raw_settings_key = raw_settings_key.split("::", 1)[1]
+            raw_session_scope_key = request.session_key
+            if "::" in raw_session_scope_key:
+                raw_session_scope_key = raw_session_scope_key.split("::", 1)[1]
+            raw_settings_key = self.controller._get_settings_key(request.context)
 
             self.sessions.add_active_poll(
                 opencode_session_id=session_id,
@@ -279,12 +277,14 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 channel_id=request.context.channel_id,
                 thread_id=request.context.thread_id,
                 settings_key=raw_settings_key,
+                session_scope_key=raw_session_scope_key,
                 working_path=request.working_path,
                 baseline_message_ids=list(baseline_message_ids),
                 ack_reaction_message_id=request.ack_reaction_message_id,
                 ack_reaction_emoji=request.ack_reaction_emoji,
                 user_id=request.context.user_id or "",
                 platform=request.context.platform or (request.context.platform_specific or {}).get("platform") or "",
+                is_dm=bool((request.context.platform_specific or {}).get("is_dm", False)),
             )
 
             final_text, should_emit = await self._poll_loop.run_prompt_poll(
@@ -468,7 +468,9 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 poll_info.base_session_id,
                 poll_info.opencode_session_id,
                 poll_info.working_path,
-                f"{poll_info.platform}::{poll_info.settings_key}" if poll_info.platform else poll_info.settings_key,
+                f"{poll_info.platform}::{poll_info.session_scope_key or poll_info.settings_key}"
+                if poll_info.platform
+                else (poll_info.session_scope_key or poll_info.settings_key),
             )
             restored_count += 1
 

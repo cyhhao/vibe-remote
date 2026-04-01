@@ -50,6 +50,37 @@ class SessionsFacade:
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         return agent_map.get(thread_id)
 
+    def get_agent_session_id_with_fallback(
+        self,
+        user_id: Union[int, str],
+        fallback_user_id: Union[int, str, None],
+        thread_id: str,
+        agent_name: str,
+    ) -> Optional[str]:
+        session_id = self.get_agent_session_id(user_id, thread_id, agent_name)
+        if session_id:
+            return session_id
+
+        if fallback_user_id is None:
+            return None
+
+        fallback_key = self._normalize_user_id(fallback_user_id)
+        primary_key = self._normalize_user_id(user_id)
+        if fallback_key == primary_key:
+            return None
+
+        legacy_id = self.get_agent_session_id(fallback_key, thread_id, agent_name)
+        if legacy_id:
+            self.set_agent_session_mapping(primary_key, agent_name, thread_id, legacy_id)
+            logger.info(
+                "Migrated %s session mapping from legacy scope %s to %s for %s",
+                agent_name,
+                fallback_key,
+                primary_key,
+                thread_id,
+            )
+        return legacy_id
+
     def clear_agent_session_mapping(
         self,
         user_id: Union[int, str],
@@ -289,12 +320,14 @@ class SessionsFacade:
         channel_id: str,
         thread_id: str,
         settings_key: str,
+        session_scope_key: str,
         working_path: str,
         baseline_message_ids: List[str],
         ack_reaction_message_id: Optional[str] = None,
         ack_reaction_emoji: Optional[str] = None,
         user_id: str = "",
         platform: str = "",
+        is_dm: bool = False,
     ) -> None:
         poll_info = ActivePollInfo(
             opencode_session_id=opencode_session_id,
@@ -302,6 +335,7 @@ class SessionsFacade:
             channel_id=channel_id,
             thread_id=thread_id,
             settings_key=settings_key,
+            session_scope_key=session_scope_key,
             working_path=working_path,
             baseline_message_ids=baseline_message_ids,
             seen_tool_calls=[],
@@ -311,6 +345,7 @@ class SessionsFacade:
             ack_reaction_emoji=ack_reaction_emoji,
             user_id=user_id,
             platform=platform,
+            is_dm=is_dm,
         )
         self.sessions_store.add_active_poll(poll_info)
         logger.debug("Added active poll: session=%s, thread=%s", opencode_session_id, thread_id)

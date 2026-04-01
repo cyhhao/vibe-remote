@@ -303,12 +303,28 @@ class CodexAgent(BaseAgent):
         request: AgentRequest,
     ) -> str:
         """Try to resume a persisted thread, fall back to creating a new one."""
+        payload = request.context.platform_specific or {}
+        legacy_session_key = None
+        if bool(payload.get("is_dm", False)) and request.context.user_id and request.context.channel_id:
+            if request.context.channel_id != request.context.user_id:
+                platform = request.context.platform or payload.get("platform") or self.controller.config.platform
+                legacy_session_key = f"{platform}::{request.context.user_id}"
+
         # Check if we have a persisted Codex thread_id from settings_manager
-        persisted = self.sessions.get_agent_session_id(
-            request.session_key,
-            request.base_session_id,
-            self.name,
-        )
+        get_with_fallback = getattr(self.sessions, "get_agent_session_id_with_fallback", None)
+        if callable(get_with_fallback):
+            persisted = get_with_fallback(
+                request.session_key,
+                legacy_session_key,
+                request.base_session_id,
+                self.name,
+            )
+        else:
+            persisted = self.sessions.get_agent_session_id(
+                request.session_key,
+                request.base_session_id,
+                self.name,
+            )
         if persisted:
             try:
                 resp = await transport.send_request(
@@ -339,7 +355,13 @@ class CodexAgent(BaseAgent):
         """Build input, configure overrides, and send turn/start to Codex."""
         input_items = self._build_input(request)
 
-        channel_settings = self.settings_manager.get_channel_settings(request.session_key)
+        request_context = getattr(request, "context", None)
+        controller = getattr(self, "controller", None)
+        if request_context is not None and controller is not None and hasattr(controller, "_get_settings_key"):
+            settings_key = controller._get_settings_key(request_context)
+        else:
+            settings_key = request.session_key
+        channel_settings = self.settings_manager.get_channel_settings(settings_key)
         routing = channel_settings.routing if channel_settings else None
         effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
         effective_effort = routing.codex_reasoning_effort if routing else None

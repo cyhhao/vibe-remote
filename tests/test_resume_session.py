@@ -103,8 +103,28 @@ class _StubController(Controller):
     def _get_settings_key(self, context: MessageContext) -> str:
         return context.user_id if (context.platform_specific or {}).get("is_dm") else context.channel_id
 
+    @staticmethod
+    def _resolve_session_scope_id(*, user_id: str, channel_id: str, is_dm: bool) -> str:
+        if is_dm and channel_id and channel_id != user_id:
+            return channel_id
+        return user_id if is_dm else channel_id
+
+    def _get_session_scope_id(self, context: MessageContext) -> str:
+        return self._resolve_session_scope_id(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            is_dm=bool((context.platform_specific or {}).get("is_dm")),
+        )
+
     def _get_session_key(self, context: MessageContext) -> str:
-        return f"{getattr(context, 'platform', None) or 'test'}::{self._get_settings_key(context)}"
+        return f"{getattr(context, 'platform', None) or 'test'}::{self._get_session_scope_id(context)}"
+
+    def _get_legacy_session_key(self, context: MessageContext):
+        settings_key = self._get_settings_key(context)
+        session_scope_id = self._get_session_scope_id(context)
+        if settings_key == session_scope_id:
+            return None
+        return f"{getattr(context, 'platform', None) or 'test'}::{settings_key}"
 
     def get_cwd(self, context: MessageContext) -> str:
         return "/Users/cyh/vibe-remote"
@@ -187,7 +207,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
             is_dm=True,
         )
 
-        self.assertEqual(settings.set_calls, [("discord::U999", "codex", "discord_DMCHAN", "sess_dm")])
+        self.assertEqual(settings.set_calls, [("discord::DMCHAN", "codex", "discord_DMCHAN", "sess_dm")])
         self.assertEqual(settings.mark_calls, [("U999", "DMCHAN", "T1")])
 
     async def test_handle_resume_session_submission_lark_dm_uses_thread_session_key(self):
@@ -206,7 +226,7 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
             is_dm=True,
         )
 
-        self.assertEqual(settings.set_calls, [("lark::U888", "claude", "lark_root_123", "sess_lark_dm")])
+        self.assertEqual(settings.set_calls, [("lark::DMCHAT", "claude", "lark_root_123", "sess_lark_dm")])
         self.assertEqual(settings.mark_calls, [("U888", "DMCHAT", "root_123")])
         self.assertEqual(len(im_client.messages), 2)
         self.assertIn("Reply to this message", im_client.messages[1][2])

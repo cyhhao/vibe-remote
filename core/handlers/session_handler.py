@@ -48,6 +48,25 @@ class SessionHandler(BaseHandler):
             or getattr(self.config, "platform", "slack")
         )
 
+    def _get_legacy_session_key(self, context: MessageContext) -> Optional[str]:
+        getter = getattr(self.controller, "_get_legacy_session_key", None)
+        if callable(getter):
+            return getter(context)
+        return None
+
+    def _get_agent_session_id_with_legacy_fallback(
+        self,
+        session_key: str,
+        legacy_session_key: Optional[str],
+        mapping_key: str,
+        *,
+        agent_name: str,
+    ) -> Optional[str]:
+        getter = getattr(self.sessions, "get_agent_session_id_with_fallback", None)
+        if callable(getter):
+            return getter(session_key, legacy_session_key, mapping_key, agent_name=agent_name)
+        return self.sessions.get_agent_session_id(session_key, mapping_key, agent_name=agent_name)
+
     def should_allocate_scheduled_anchor(self, context: MessageContext, source: str = "human") -> bool:
         if source != "scheduled" or context.thread_id:
             return False
@@ -300,7 +319,13 @@ class SessionHandler(BaseHandler):
 
         settings_key = self._get_settings_key(context)
         session_key = self._get_session_key(context)
-        stored_claude_session_id = self.sessions.get_claude_session_id(session_key, base_session_id)
+        legacy_session_key = self._get_legacy_session_key(context)
+        stored_claude_session_id = self._get_agent_session_id_with_legacy_fallback(
+            session_key,
+            legacy_session_key,
+            base_session_id,
+            agent_name="claude",
+        )
 
         # Read routing overrides via get_channel_routing which correctly
         # resolves DM users from the users store (not the stale channels store).
@@ -330,8 +355,9 @@ class SessionHandler(BaseHandler):
         if effective_agent:
             cached_base = f"{base_session_id}:{effective_agent}"
             cached_key = f"{cached_base}:{working_path}"
-            cached_session_id = self.sessions.get_agent_session_id(
+            cached_session_id = self._get_agent_session_id_with_legacy_fallback(
                 session_key,
+                legacy_session_key,
                 cached_base,
                 agent_name="claude",
             )

@@ -432,6 +432,26 @@ class Controller:
         is_dm = (context.platform_specific or {}).get("is_dm", False)
         return context.user_id if is_dm else context.channel_id
 
+    @staticmethod
+    def _resolve_session_scope_id(*, user_id: str, channel_id: str, is_dm: bool) -> str:
+        """Resolve the runtime session scope for a conversation.
+
+        DM authorization/settings are user-scoped, but runtime session state
+        must follow the actual chat surface when the platform exposes a
+        distinct DM channel/chat id.
+        """
+        if is_dm and channel_id and channel_id != user_id:
+            return channel_id
+        return user_id if is_dm else channel_id
+
+    def _get_session_scope_id(self, context: MessageContext) -> str:
+        payload = context.platform_specific or {}
+        return self._resolve_session_scope_id(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            is_dm=bool(payload.get("is_dm", False)),
+        )
+
     def _get_session_key(self, context: MessageContext) -> str:
         """Get a globally unique session-scope key.
 
@@ -441,7 +461,16 @@ class Controller:
         tracking never collide.
         """
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
-        return f"{platform}::{self._get_settings_key(context)}"
+        return f"{platform}::{self._get_session_scope_id(context)}"
+
+    def _get_legacy_session_key(self, context: MessageContext) -> Optional[str]:
+        """Return the pre-fix DM runtime scope when it differs from the current one."""
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.primary_platform
+        settings_key = self._get_settings_key(context)
+        session_scope_id = self._get_session_scope_id(context)
+        if settings_key == session_scope_id:
+            return None
+        return f"{platform}::{settings_key}"
 
     def get_im_client_for_context(self, context: Optional[MessageContext] = None) -> BaseIMClient:
         if context is None:

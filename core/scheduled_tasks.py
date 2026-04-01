@@ -716,17 +716,22 @@ class ScheduledTaskService:
             ),
             platform_specific={
                 "platform": platform,
-                "is_dm": target.is_dm,
+                "is_dm": session_target_context["is_dm"],
                 "turn_source": "scheduled",
                 "session_key_external": target.to_key(),
                 "delivery_key_external": delivery_target.to_key(),
-                "delivery_scope_session_key": delivery_target.session_scope,
+                "delivery_scope_session_key": self._build_runtime_session_key(
+                    platform=platform,
+                    user_id=delivery_target_context["user_id"],
+                    channel_id=delivery_target_context["channel_id"],
+                    is_dm=delivery_target_context["is_dm"],
+                ),
                 "delivery_override": {
                     "user_id": delivery_target_context["user_id"],
                     "channel_id": delivery_target_context["channel_id"],
                     "thread_id": delivery_target.thread_id,
                     "platform": platform,
-                    "is_dm": delivery_target.is_dm,
+                    "is_dm": delivery_target_context["is_dm"],
                 },
                 "scheduled_delivery_alias": delivery_strategy,
                 "task_execution_id": execution_id,
@@ -740,7 +745,9 @@ class ScheduledTaskService:
 
         channel_id = target.scope_id
         user_id = "scheduled"
+        is_dm = False
         if target.is_dm:
+            is_dm = True
             user_id = target.scope_id
             bound_user = settings_manager.get_store().get_user(target.scope_id, platform=platform)
             if platform == "lark":
@@ -754,7 +761,24 @@ class ScheduledTaskService:
         return {
             "user_id": user_id,
             "channel_id": channel_id,
+            "is_dm": is_dm,
         }
+
+    def _resolve_runtime_session_scope_id(self, *, user_id: str, channel_id: str, is_dm: bool) -> str:
+        resolver = getattr(self.controller, "_resolve_session_scope_id", None)
+        if callable(resolver):
+            return resolver(user_id=user_id, channel_id=channel_id, is_dm=is_dm)
+        if is_dm and channel_id and channel_id != user_id:
+            return channel_id
+        return user_id if is_dm else channel_id
+
+    def _build_runtime_session_key(self, *, platform: str, user_id: str, channel_id: str, is_dm: bool) -> str:
+        scope_id = self._resolve_runtime_session_scope_id(
+            user_id=user_id,
+            channel_id=channel_id,
+            is_dm=is_dm,
+        )
+        return f"{platform}::{scope_id}"
 
     def _resolve_delivery_target(
         self,
@@ -782,12 +806,13 @@ class ScheduledTaskService:
         return session_target
 
     def _supports_threaded_delivery(self, target: ParsedSessionKey) -> bool:
+        target_context = self._resolve_target_context(target)
         getter = getattr(self.controller, "get_im_client_for_context", None)
         context = MessageContext(
-            user_id=target.scope_id if target.is_dm else "scheduled",
-            channel_id=target.scope_id,
+            user_id=target_context["user_id"],
+            channel_id=target_context["channel_id"],
             platform=target.platform,
-            platform_specific={"platform": target.platform, "is_dm": target.is_dm},
+            platform_specific={"platform": target.platform, "is_dm": target_context["is_dm"]},
         )
         if callable(getter):
             im_client = getter(context)
@@ -795,7 +820,7 @@ class ScheduledTaskService:
             im_client = getattr(self.controller, "im_client", None)
         if im_client is None:
             return False
-        if target.is_dm:
+        if target_context["is_dm"]:
             return bool(getattr(im_client, "should_use_thread_for_dm_session", lambda: False)())
         return bool(getattr(im_client, "should_use_thread_for_reply", lambda: False)())
 
@@ -807,8 +832,18 @@ class ScheduledTaskService:
         session_context: Dict[str, Any],
         delivery_context: Dict[str, Any],
     ) -> Dict[str, Any]:
-        source_session_key = session_target.session_scope
-        target_session_key = delivery_target.session_scope
+        source_session_key = self._build_runtime_session_key(
+            platform=session_target.platform,
+            user_id=session_context["user_id"],
+            channel_id=session_context["channel_id"],
+            is_dm=session_context["is_dm"],
+        )
+        target_session_key = self._build_runtime_session_key(
+            platform=delivery_target.platform,
+            user_id=delivery_context["user_id"],
+            channel_id=delivery_context["channel_id"],
+            is_dm=delivery_context["is_dm"],
+        )
         same_scope = source_session_key == target_session_key
         clear_provisional_source = session_target.thread_id is None and self._supports_threaded_delivery(session_target)
 

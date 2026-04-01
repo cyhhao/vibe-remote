@@ -402,12 +402,17 @@ class OpenCodePollLoop:
                                     channel_id=poll_info.channel_id,
                                     platform=poll_info.platform or None,
                                     thread_id=poll_info.thread_id,
-                                    platform_specific={"platform": poll_info.platform} if poll_info.platform else None,
+                                    platform_specific={
+                                        "platform": poll_info.platform,
+                                        "is_dm": poll_info.is_dm,
+                                    }
+                                    if poll_info.platform
+                                    else {"is_dm": poll_info.is_dm},
                                 ),
                                 message="",
-                                session_key=f"{poll_info.platform}::{poll_info.settings_key}"
+                                session_key=f"{poll_info.platform}::{poll_info.session_scope_key or poll_info.settings_key}"
                                 if poll_info.platform
-                                else poll_info.settings_key,
+                                else (poll_info.session_scope_key or poll_info.settings_key),
                                 working_path=poll_info.working_path,
                                 base_session_id=poll_info.base_session_id,
                                 composite_session_id=poll_info.base_session_id,

@@ -18,6 +18,7 @@ class ActivePollInfo:
     channel_id: str
     thread_id: str
     settings_key: str
+    session_scope_key: str
     working_path: str
     baseline_message_ids: List[str] = field(default_factory=list)
     seen_tool_calls: List[str] = field(default_factory=list)
@@ -29,6 +30,7 @@ class ActivePollInfo:
     # User identity for restoring question UI context
     user_id: str = ""
     platform: str = ""
+    is_dm: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -37,6 +39,7 @@ class ActivePollInfo:
             "channel_id": self.channel_id,
             "thread_id": self.thread_id,
             "settings_key": self.settings_key,
+            "session_scope_key": self.session_scope_key,
             "working_path": self.working_path,
             "baseline_message_ids": self.baseline_message_ids,
             "seen_tool_calls": self.seen_tool_calls,
@@ -46,6 +49,7 @@ class ActivePollInfo:
             "ack_reaction_emoji": self.ack_reaction_emoji,
             "user_id": self.user_id,
             "platform": self.platform,
+            "is_dm": self.is_dm,
         }
 
     @classmethod
@@ -56,6 +60,7 @@ class ActivePollInfo:
             channel_id=data.get("channel_id", ""),
             thread_id=data.get("thread_id", ""),
             settings_key=data.get("settings_key", ""),
+            session_scope_key=data.get("session_scope_key", ""),
             working_path=data.get("working_path", ""),
             baseline_message_ids=data.get("baseline_message_ids", []),
             seen_tool_calls=data.get("seen_tool_calls", []),
@@ -65,6 +70,7 @@ class ActivePollInfo:
             ack_reaction_emoji=data.get("ack_reaction_emoji"),
             user_id=data.get("user_id", ""),
             platform=data.get("platform", ""),
+            is_dm=bool(data.get("is_dm", False)),
         )
 
 
@@ -126,6 +132,25 @@ class SessionsStore:
             # Backfill missing platform (when key was never scoped)
             if not data.get("platform"):
                 data["platform"] = default_platform
+                migrated = True
+            user_id = str(data.get("user_id") or "")
+            channel_id = str(data.get("channel_id") or "")
+            settings_key = str(data.get("settings_key") or "")
+            inferred_is_dm = bool(
+                user_id
+                and user_id != "scheduled"
+                and channel_id
+                and (channel_id == user_id or settings_key != channel_id)
+            )
+            if not isinstance(data.get("is_dm"), bool):
+                data["is_dm"] = inferred_is_dm
+                migrated = True
+            session_scope_key = str(data.get("session_scope_key") or "")
+            if not session_scope_key:
+                if inferred_is_dm and channel_id:
+                    data["session_scope_key"] = channel_id
+                else:
+                    data["session_scope_key"] = settings_key or channel_id or user_id
                 migrated = True
         if migrated:
             self.save()

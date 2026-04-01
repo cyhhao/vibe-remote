@@ -123,25 +123,49 @@ class OpenCodeSessionManager:
         """
 
         sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
+        payload = request.context.platform_specific or {}
+        legacy_session_key = None
+        if bool(payload.get("is_dm", False)) and request.context.user_id and request.context.channel_id:
+            if request.context.channel_id != request.context.user_id:
+                platform = request.context.platform or payload.get("platform") or ""
+                if platform:
+                    legacy_session_key = f"{platform}::{request.context.user_id}"
 
         # Include working_path in the mapping key so cwd changes create new sessions
         composite_session_key = f"{request.base_session_id}:{request.working_path}"
 
-        session_id = sessions.get_agent_session_id(
-            request.session_key,
-            composite_session_key,
-            agent_name=self._agent_name,
-        )
+        get_with_fallback = getattr(sessions, "get_agent_session_id_with_fallback", None)
+        if callable(get_with_fallback):
+            session_id = get_with_fallback(
+                request.session_key,
+                legacy_session_key,
+                composite_session_key,
+                agent_name=self._agent_name,
+            )
+        else:
+            session_id = sessions.get_agent_session_id(
+                request.session_key,
+                composite_session_key,
+                agent_name=self._agent_name,
+            )
 
         # Legacy fallback: migrate sessions stored under the old key format
         # (base_session_id only, without working_path) so existing users
         # don't lose session continuity on upgrade.
         if not session_id:
-            legacy_id = sessions.get_agent_session_id(
-                request.session_key,
-                request.base_session_id,
-                agent_name=self._agent_name,
-            )
+            if callable(get_with_fallback):
+                legacy_id = get_with_fallback(
+                    request.session_key,
+                    legacy_session_key,
+                    request.base_session_id,
+                    agent_name=self._agent_name,
+                )
+            else:
+                legacy_id = sessions.get_agent_session_id(
+                    request.session_key,
+                    request.base_session_id,
+                    agent_name=self._agent_name,
+                )
             if legacy_id:
                 if await server.get_session(legacy_id, request.working_path):
                     sessions.set_agent_session_mapping(
@@ -166,7 +190,6 @@ class OpenCodeSessionManager:
             try:
                 session_data = await server.create_session(
                     directory=request.working_path,
-                    title=f"vibe-remote:{request.base_session_id}",
                 )
                 session_id = session_data.get("id")
                 if session_id:
@@ -189,7 +212,6 @@ class OpenCodeSessionManager:
         try:
             session_data = await server.create_session(
                 directory=request.working_path,
-                title=f"vibe-remote:{request.base_session_id}",
             )
             new_session_id = session_data.get("id")
             if new_session_id:

@@ -90,6 +90,21 @@ def test_build_session_key_for_context_uses_fallback_platform() -> None:
     assert parsed.to_key(include_thread=False) == "slack::channel::C123"
 
 
+def test_build_session_key_for_dm_context_uses_user_scope() -> None:
+    context = MessageContext(
+        user_id="U123",
+        channel_id="D123",
+        platform="slack",
+        thread_id="171717.123",
+        platform_specific={"is_dm": True},
+    )
+
+    parsed = build_session_key_for_context(context)
+
+    assert parsed.to_key(include_thread=False) == "slack::user::U123"
+    assert parsed.thread_id is None
+
+
 def test_store_round_trip_persists_task(tmp_path: Path) -> None:
     store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
     task = store.add_task(
