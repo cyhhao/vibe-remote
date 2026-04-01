@@ -338,11 +338,14 @@ class TelegramBot(BaseIMClient):
             "callback_query": payload,
         }
         callback_data = str(payload.get("data", ""))
+        primary_action = self._resolve_callback_action(callback_data)
+
+        # Centralized auth gate for every Telegram button click before any dispatch.
         auth_result = self.check_authorization(
             user_id=context.user_id,
             channel_id=context.channel_id,
             is_dm=bool(context.platform_specific.get("is_dm")),
-            action=self._resolve_callback_action(callback_data),
+            action=primary_action,
             settings_manager=self.settings_manager,
         )
         if not auth_result.allowed:
@@ -1051,6 +1054,18 @@ class TelegramBot(BaseIMClient):
             text=f"❓ {self._t('common.submitted')}",
             keyboard=None,
         )
+        auth_result = self.check_authorization(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            is_dm=bool((context.platform_specific or {}).get("is_dm")),
+            action=state.callback_prefix,
+            settings_manager=self.settings_manager,
+        )
+        if not auth_result.allowed:
+            denial_text = self.build_auth_denial_text(auth_result.denial, context.channel_id)
+            if denial_text:
+                await self.send_message(context, denial_text)
+            return
         if self.on_callback_query_callback:
             synthetic_payload = f"{state.callback_prefix}:modal:{json.dumps(answers_payload, ensure_ascii=True)}"
             await self.on_callback_query_callback(context, synthetic_payload)
