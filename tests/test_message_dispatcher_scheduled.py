@@ -13,16 +13,21 @@ from modules.im import MessageContext
 class _StubIMClient:
     def __init__(self):
         self.sent = []
+        self._next_id = 1
 
     def should_use_thread_for_reply(self):
         return False
 
     async def send_message(self, context, text, parse_mode=None, reply_to=None):
         self.sent.append((context.channel_id, context.thread_id, text))
-        return "bot-msg-1"
+        message_id = f"bot-msg-{self._next_id}"
+        self._next_id += 1
+        return message_id
 
     async def send_message_with_buttons(self, context, text, keyboard, parse_mode=None):
-        return "bot-msg-1"
+        message_id = f"bot-msg-{self._next_id}"
+        self._next_id += 1
+        return message_id
 
 
 class _StubSettingsManager:
@@ -112,3 +117,25 @@ class MessageDispatcherScheduledTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message_id, "bot-msg-1")
         self.assertEqual(controller.im_client.sent, [("C123", None, "hello")])
         self.assertEqual(controller.session_handler.calls, [("C123", "171717.123", "bot-msg-1")])
+
+    async def test_discord_long_result_uses_first_chunk_as_scheduled_anchor(self):
+        controller = _StubController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C123",
+            platform="discord",
+            platform_specific={
+                "turn_source": "scheduled",
+                "turn_base_session_id": "discord_scheduled-1",
+                "scheduled_anchor_required": True,
+            },
+        )
+        long_text = "x" * 4200
+
+        message_id = await dispatcher.emit_agent_message(context, "result", long_text)
+
+        self.assertEqual(message_id, "bot-msg-1")
+        self.assertEqual(len(controller.im_client.sent), 3)
+        self.assertEqual("".join(text for _, _, text in controller.im_client.sent), long_text)
+        self.assertEqual(controller.session_handler.calls, [("C123", None, "bot-msg-1")])

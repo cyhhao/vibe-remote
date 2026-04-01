@@ -124,6 +124,11 @@ class ConsolidatedMessageDispatcher:
             return 1900
         return 30000
 
+    def _should_split_long_result(self, context: MessageContext) -> bool:
+        return (
+            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        ) == "discord"
+
     def _supports_quick_replies(self, context: MessageContext) -> bool:
         return (
             context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
@@ -141,6 +146,34 @@ class ConsolidatedMessageDispatcher:
         suffix = "\n\n…(truncated; see result.md for full output)"
         keep = max(0, max_chars - len(prefix) - len(suffix))
         return f"{prefix}{text[:keep]}{suffix}"
+
+    @staticmethod
+    def _find_result_split_index(text: str, max_chars: int) -> int:
+        minimum_boundary = max_chars // 2
+        for separator in ("\n\n", "\n", " "):
+            index = text.rfind(separator, 0, max_chars + 1)
+            if index >= minimum_boundary:
+                return index + len(separator)
+        return max_chars
+
+    def _split_result_text(self, text: str, max_chars: int) -> list[str]:
+        if len(text) <= max_chars:
+            return [text]
+
+        chunks: list[str] = []
+        remaining = text
+
+        while len(remaining) > max_chars:
+            split_at = self._find_result_split_index(remaining, max_chars)
+            if split_at <= 0:
+                split_at = max_chars
+            chunks.append(remaining[:split_at])
+            remaining = remaining[split_at:]
+
+        if remaining:
+            chunks.append(remaining)
+
+        return chunks
 
     def _truncate_consolidated(self, text: str, max_bytes: int) -> str:
         if self._get_text_byte_length(text) <= max_bytes:
@@ -219,6 +252,17 @@ class ConsolidatedMessageDispatcher:
                         primary_message_id = await im_client.send_message(target_context, display_text, parse_mode=parse_mode)
                     except Exception as err:
                         logger.error("Failed to send result message: %s", err)
+            elif self._should_split_long_result(context):
+                try:
+                    primary_message_id = await self._send_split_result_messages(
+                        im_client,
+                        target_context,
+                        display_text,
+                        enhanced.buttons if enhanced else [],
+                        parse_mode,
+                    )
+                except Exception as err:
+                    logger.error("Failed to send split result messages: %s", err)
             else:
                 summary = self._build_result_summary(display_text, self._get_result_max_chars(context))
                 try:
@@ -412,6 +456,41 @@ class ConsolidatedMessageDispatcher:
             keyboard,
             parse_mode=parse_mode,
         )
+
+    async def _send_split_result_messages(
+        self,
+        im_client,
+        context: MessageContext,
+        text: str,
+        buttons,
+        parse_mode,
+    ) -> Optional[str]:
+        chunks = self._split_result_text(text, self._get_result_max_chars(context))
+        first_message_id: Optional[str] = None
+
+        for index, chunk in enumerate(chunks):
+            is_last_chunk = index == len(chunks) - 1
+            message_id: Optional[str] = None
+
+            if is_last_chunk and buttons and self._supports_quick_replies(context):
+                try:
+                    message_id = await self._send_with_quick_replies(
+                        im_client,
+                        context,
+                        chunk,
+                        buttons,
+                        parse_mode,
+                    )
+                except Exception as err:
+                    logger.warning("Failed to send split result chunk with quick replies, falling back: %s", err)
+
+            if message_id is None:
+                message_id = await im_client.send_message(context, chunk, parse_mode=parse_mode)
+
+            if first_message_id is None:
+                first_message_id = message_id
+
+        return first_message_id
 
     async def _upload_file_links(
         self,
