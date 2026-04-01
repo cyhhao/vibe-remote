@@ -137,6 +137,23 @@ def test_pending_cwd_prompt_consumes_next_plain_message() -> None:
     assert bot._interaction_scope_key(context) not in bot._cwd_prompts
 
 
+def test_pending_cwd_prompt_bypasses_slash_command_with_args() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    context = MessageContext(
+        user_id="42",
+        channel_id="-100123",
+        thread_id="1",
+        platform="telegram",
+        platform_specific={"is_dm": False},
+    )
+    bot._cwd_prompts[bot._interaction_scope_key(context)] = SimpleNamespace(message_id="10", current_cwd="/tmp")
+
+    handled = asyncio.run(bot._consume_cwd_prompt(context, "/resume codex:abc"))
+
+    assert handled is False
+    assert bot._interaction_scope_key(context) in bot._cwd_prompts
+
+
 def test_resume_menu_uses_short_callback_ids() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
     context = MessageContext(

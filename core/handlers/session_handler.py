@@ -249,7 +249,13 @@ class SessionHandler(BaseHandler):
         im_client = self._get_im_client(context)
         if is_dm:
             return bool(getattr(im_client, "should_use_thread_for_dm_session", lambda: False)())
-        return bool(getattr(im_client, "should_use_thread_for_reply", lambda: False)())
+        uses_thread_replies = bool(getattr(im_client, "should_use_thread_for_reply", lambda: False)())
+        if not uses_thread_replies:
+            return False
+        uses_message_anchor = bool(
+            getattr(im_client, "should_use_message_id_for_channel_session", lambda _context=None: True)(context)
+        )
+        return uses_message_anchor
 
     def _build_resume_confirmation(
         self,
@@ -630,11 +636,12 @@ class SessionHandler(BaseHandler):
                 )
 
             mapped_thread = followup_context.thread_id or confirmation_ts
+            mapping_thread_id = mapped_thread if thread_capable else None
             mapping_context = MessageContext(
                 user_id=user_id,
                 channel_id=followup_context.channel_id,
                 platform=followup_context.platform,
-                thread_id=mapped_thread,
+                thread_id=mapping_thread_id,
                 message_id=confirmation_ts,
                 platform_specific={"is_dm": is_dm},
             )

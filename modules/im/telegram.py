@@ -521,18 +521,20 @@ class TelegramBot(BaseIMClient):
             await self.send_message(context, self._t("telegram.cwdPromptCanceled"))
             return True
         known_commands = {
-            "/start",
-            "/new",
-            "/clear",
-            "/resume",
-            "/settings",
-            "/routing",
-            "/cwd",
-            "/setcwd",
-            "/bind",
-            "/stop",
+            "start",
+            "new",
+            "clear",
+            "resume",
+            "settings",
+            "routing",
+            "cwd",
+            "setcwd",
+            "set_cwd",
+            "bind",
+            "stop",
         }
-        if stripped in known_commands:
+        parsed_command = self.parse_text_command(stripped, allow_plain_bind=True)
+        if parsed_command and parsed_command[0] in known_commands:
             return False
         self._cwd_prompts.pop(self._interaction_scope_key(context), None)
         if self._controller is None or not hasattr(self._controller, "command_handler"):
