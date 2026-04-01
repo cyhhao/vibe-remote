@@ -636,15 +636,24 @@ class SessionHandler(BaseHandler):
                 )
 
             mapped_thread = followup_context.thread_id or confirmation_ts
-            mapping_thread_id = mapped_thread if thread_capable else None
-            mapping_context = MessageContext(
-                user_id=user_id,
-                channel_id=followup_context.channel_id,
-                platform=followup_context.platform,
-                thread_id=mapping_thread_id,
-                message_id=confirmation_ts,
-                platform_specific={"is_dm": is_dm},
-            )
+            if thread_capable:
+                mapping_context = MessageContext(
+                    user_id=user_id,
+                    channel_id=followup_context.channel_id,
+                    platform=followup_context.platform,
+                    thread_id=mapped_thread,
+                    message_id=confirmation_ts,
+                    platform_specific={"is_dm": is_dm},
+                )
+            else:
+                mapping_context = MessageContext(
+                    user_id=user_id,
+                    channel_id=followup_context.channel_id,
+                    platform=followup_context.platform,
+                    thread_id=None,
+                    message_id=None,
+                    platform_specific={"is_dm": is_dm},
+                )
             base_session_id = self.get_base_session_id(mapping_context)
 
             # OpenCode session mappings use composite keys that include
