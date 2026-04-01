@@ -23,6 +23,7 @@ URL_RE = re.compile(r"https?://\S+")
 CODEX_DEVICE_CODE_RE = re.compile(r"\b[A-Z0-9]{4}(?:-[A-Z0-9]{4,})+\b")
 CLAUDE_CODE_PROMPT_RE = re.compile(r"paste code here|if prompted", re.IGNORECASE)
 OPENCODE_API_KEY_PROMPT_RE = re.compile(r"enteryourapikey", re.IGNORECASE)
+OPENCODE_CREDENTIAL_COUNT_RE = re.compile(r"\b(\d+)\s+credential(?:s)?\b", re.IGNORECASE)
 
 
 def classify_auth_error(backend: str, error_text: str) -> bool:
@@ -76,6 +77,42 @@ def sanitize_process_output(text: str) -> str:
     cleaned = ANSI_ESCAPE_RE.sub("", text)
     cleaned = CONTROL_CHAR_RE.sub("", cleaned)
     return cleaned.strip()
+
+
+def verify_opencode_auth_list_output(text: str, provider: str | None = None) -> bool:
+    """Return True when `opencode auth list` shows credentials for the target provider."""
+    normalized_lines = []
+    for line in sanitize_process_output(text).splitlines():
+        stripped = re.sub(r"^[^\w]+", "", line).strip()
+        if stripped:
+            normalized_lines.append(stripped.lower())
+
+    if provider:
+        provider_pattern = re.compile(rf"\b{re.escape(provider.lower())}\b")
+        negative_markers = (
+            "0 credential",
+            "no credential",
+            "not configured",
+            "logged out",
+            "unauthenticated",
+            "missing",
+        )
+        for line in normalized_lines:
+            if line.startswith("credentials "):
+                continue
+            if not provider_pattern.search(line):
+                continue
+            count_match = OPENCODE_CREDENTIAL_COUNT_RE.search(line)
+            if count_match:
+                return int(count_match.group(1)) > 0
+            return not any(marker in line for marker in negative_markers)
+        return False
+
+    normalized = "\n".join(line for line in normalized_lines if not line.startswith("credentials "))
+    count_matches = [int(match.group(1)) for match in OPENCODE_CREDENTIAL_COUNT_RE.finditer(normalized)]
+    if count_matches:
+        return any(count > 0 for count in count_matches)
+    return "credential" in normalized and "0 credentials" not in normalized and "no credentials" not in normalized
 
 
 @dataclass
@@ -525,7 +562,7 @@ class AgentAuthService:
         try:
             await flow.process.wait()
             await flow.reader_task
-            ok, detail = await self._verify_login(flow.backend)
+            ok, detail = await self._verify_login(flow)
             if ok:
                 if flow.backend == "opencode":
                     await self._refresh_opencode_server()
@@ -554,7 +591,8 @@ class AgentAuthService:
         finally:
             self._drop_flow(flow)
 
-    async def _verify_login(self, backend: str) -> tuple[bool, str]:
+    async def _verify_login(self, flow: AgentAuthFlow) -> tuple[bool, str]:
+        backend = flow.backend
         if backend == "codex":
             binary = self._get_cli_binary("codex")
             process = await asyncio.create_subprocess_exec(
@@ -579,8 +617,7 @@ class AgentAuthService:
             )
             stdout, _ = await process.communicate()
             text = stdout.decode("utf-8", errors="replace").strip()
-            normalized = text.lower()
-            return ("credentials" in normalized and "0 credentials" not in normalized, text)
+            return (verify_opencode_auth_list_output(text, flow.provider), text)
 
         binary = self._get_cli_binary("claude")
         process = await asyncio.create_subprocess_exec(

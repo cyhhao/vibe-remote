@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.agent_auth_service import AgentAuthFlow, AgentAuthService, classify_auth_error
+from core.agent_auth_service import (
+    AgentAuthFlow,
+    AgentAuthService,
+    classify_auth_error,
+    verify_opencode_auth_list_output,
+)
 from modules.im import MessageContext
 
 
@@ -252,6 +257,37 @@ class ClassifyAuthErrorTests(unittest.TestCase):
 
     def test_opencode_credential_error_requires_reset(self):
         self.assertTrue(classify_auth_error("opencode", "OpenCode error: missing provider credential"))
+
+
+class VerifyOpenCodeAuthListOutputTests(unittest.TestCase):
+    def test_target_provider_must_exist_in_output(self):
+        text = """
+        ┌ Credentials ~/.local/share/opencode/auth.json
+        │ anthropic 1 credential
+        └ 1 credentials
+        """
+
+        self.assertFalse(verify_opencode_auth_list_output(text, "openai"))
+
+    def test_target_provider_uses_its_own_credential_count(self):
+        text = """
+        ┌ Credentials ~/.local/share/opencode/auth.json
+        │ openai 0 credentials
+        │ anthropic 1 credential
+        └ 1 credentials
+        """
+
+        self.assertFalse(verify_opencode_auth_list_output(text, "openai"))
+        self.assertTrue(verify_opencode_auth_list_output(text, "anthropic"))
+
+    def test_provider_does_not_match_header_path(self):
+        text = """
+        ┌ Credentials ~/.local/share/opencode/auth.json
+        │ anthropic 1 credential
+        └ 1 credentials
+        """
+
+        self.assertFalse(verify_opencode_auth_list_output(text, "opencode"))
 
 
 if __name__ == "__main__":
