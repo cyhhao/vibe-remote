@@ -396,6 +396,46 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_start_turn_does_not_fall_back_to_primary_platform_when_context_manager_has_no_settings(self):
+        agent = object.__new__(CodexAgent)
+        agent.settings_manager = SimpleNamespace(
+            get_channel_settings=lambda settings_key: SimpleNamespace(
+                routing=SimpleNamespace(codex_model="wrong-model", codex_reasoning_effort="low")
+            )
+        )
+        context_manager = SimpleNamespace(get_channel_settings=lambda settings_key: None)
+        agent.controller = SimpleNamespace(
+            _get_settings_key=lambda context: "U123",
+            get_settings_manager_for_context=lambda context: context_manager,
+        )
+        agent.codex_config = SimpleNamespace(default_model="fallback-model")
+        agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
+        agent._turn_registry = SimpleNamespace(
+            begin_turn_start=Mock(),
+            get_bootstrapped_turn_id=Mock(return_value=None),
+            finalize_turn_start_response=Mock(return_value=SimpleNamespace()),
+        )
+        request = SimpleNamespace(
+            session_key="discord::D123",
+            base_session_id="session-1",
+            composite_session_id="discord:D1:T1",
+            context=SimpleNamespace(platform="discord", platform_specific={"is_dm": True}),
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"turn": {"id": "turn-1"}}))
+
+        await agent._start_turn(transport, request, "thread-1")
+
+        transport.send_request.assert_awaited_once_with(
+            "turn/start",
+            {
+                "threadId": "thread-1",
+                "input": [{"type": "text", "text": "hello"}],
+                "approvalPolicy": "never",
+                "sandboxPolicy": {"type": "dangerFullAccess"},
+                "model": "fallback-model",
+            },
+        )
+
 
 class CodexTransportCommandTests(unittest.IsolatedAsyncioTestCase):
     async def test_transport_always_starts_app_server_with_global_bypass_flag(self):

@@ -357,6 +357,7 @@ class CodexAgent(BaseAgent):
 
         request_context = getattr(request, "context", None)
         controller = getattr(self, "controller", None)
+        context_settings_manager = None
         channel_settings = None
         if request_context is not None and controller is not None and hasattr(controller, "_get_settings_key"):
             settings_key = controller._get_settings_key(request_context)
@@ -370,7 +371,7 @@ class CodexAgent(BaseAgent):
                     channel_settings = context_settings_manager.get_channel_settings(settings_key)
         else:
             settings_key = request.session_key
-        if channel_settings is None:
+        if channel_settings is None and context_settings_manager is None:
             channel_settings = self.settings_manager.get_channel_settings(settings_key)
         routing = channel_settings.routing if channel_settings else None
         effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
