@@ -1,0 +1,1421 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import tempfile
+import threading
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional
+
+from config.discovered_chats import DiscoveredChatsStore
+from config.v2_config import TelegramConfig
+from vibe.i18n import t as i18n_t
+from modules.agents.native_sessions import AgentNativeSessionService, NativeResumeSession
+
+from .base import BaseIMClient, FileAttachment, MessageContext, InlineButton, InlineKeyboard
+from .formatters import TelegramFormatter
+from . import telegram_api
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _TelegramCwdPrompt:
+    message_id: str
+    current_cwd: str
+
+
+@dataclass
+class _TelegramResumeSessionState:
+    message_id: str
+    options: list[tuple[str, str]]
+    is_dm: bool
+
+
+@dataclass
+class _TelegramRoutingState:
+    message_id: str
+    channel_id: str
+    user_id: str
+    is_dm: bool
+    registered_backends: list[str]
+    opencode_agents: list[Any]
+    opencode_models: dict[str, Any]
+    opencode_default_config: dict[str, Any]
+    claude_agents: list[Any]
+    claude_models: list[Any]
+    codex_models: list[Any]
+    backend: str
+    opencode_agent: Optional[str] = None
+    opencode_model: Optional[str] = None
+    opencode_reasoning_effort: Optional[str] = None
+    claude_agent: Optional[str] = None
+    claude_model: Optional[str] = None
+    claude_reasoning_effort: Optional[str] = None
+    codex_model: Optional[str] = None
+    codex_reasoning_effort: Optional[str] = None
+    picker_field: Optional[str] = None
+    picker_page: int = 0
+
+
+@dataclass
+class _TelegramQuestionState:
+    message_id: str
+    callback_prefix: str
+    questions: list[Any]
+    answers: list[list[str]]
+    index: int = 0
+
+
+class TelegramBot(BaseIMClient):
+    """Telegram adapter using Bot API long polling."""
+
+    def __init__(self, config: TelegramConfig):
+        super().__init__(config)
+        self.config = config
+        self.formatter = TelegramFormatter()
+        self.settings_manager = None
+        self.sessions = None
+        self._controller = None
+        self._stop_event = threading.Event()
+        self._offset: Optional[int] = None
+        self._bot_user: Optional[dict[str, Any]] = None
+        self._on_ready: Optional[Callable] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._cwd_prompts: dict[str, _TelegramCwdPrompt] = {}
+        self._resume_states: dict[str, _TelegramResumeSessionState] = {}
+        self._routing_states: dict[str, _TelegramRoutingState] = {}
+        self._question_states: dict[str, _TelegramQuestionState] = {}
+
+    def set_settings_manager(self, settings_manager):
+        self.settings_manager = settings_manager
+        self.sessions = getattr(settings_manager, "sessions", None)
+
+    def set_controller(self, controller):
+        self._controller = controller
+
+    def register_callbacks(
+        self,
+        on_message: Optional[Callable] = None,
+        on_command: Optional[Dict[str, Callable]] = None,
+        on_callback_query: Optional[Callable] = None,
+        **kwargs,
+    ):
+        super().register_callbacks(on_message, on_command, on_callback_query, **kwargs)
+        if "on_ready" in kwargs:
+            self._on_ready = kwargs["on_ready"]
+
+    def _t(self, key: str, **kwargs) -> str:
+        lang = "en"
+        if self._controller and hasattr(self._controller, "_get_lang"):
+            lang = self._controller._get_lang()
+        return i18n_t(key, lang, **kwargs)
+
+    def get_default_parse_mode(self) -> Optional[str]:
+        return None
+
+    def should_use_thread_for_reply(self) -> bool:
+        return True
+
+    def should_use_message_id_for_channel_session(self, context: Optional[MessageContext] = None) -> bool:
+        return False
+
+    def format_markdown(self, text: str) -> str:
+        return text
+
+    def register_handlers(self):
+        return None
+
+    def run(self):
+        if not self.config.bot_token:
+            raise ValueError("Telegram bot token is required")
+        self._stop_event.clear()
+        asyncio.run(self._run())
+
+    def stop(self):
+        self._stop_event.set()
+
+    async def shutdown(self) -> None:
+        self._stop_event.set()
+
+    async def _run(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._bot_user = (await telegram_api.get_me(self.config.bot_token)).get("result")
+        logger.info("Telegram bot connected as @%s", self._bot_user.get("username") if self._bot_user else "unknown")
+        if self._on_ready:
+            await self._on_ready()
+
+        while not self._stop_event.is_set():
+            try:
+                updates = await telegram_api.get_updates(self.config.bot_token, self._offset)
+                for update in updates.get("result", []):
+                    self._offset = int(update["update_id"]) + 1
+                    await self._handle_update(update)
+            except Exception as err:
+                logger.warning("Telegram poll loop error: %s", err, exc_info=True)
+                await asyncio.sleep(2)
+
+    async def _handle_update(self, update: dict[str, Any]) -> None:
+        if update.get("callback_query"):
+            await self._handle_callback_query(update["callback_query"])
+            return
+        message = update.get("message")
+        if message:
+            await self._handle_message(message)
+
+    async def _handle_message(self, message: dict[str, Any]) -> None:
+        context = self._build_message_context(message)
+        if context is None:
+            return
+
+        text = message.get("text") or message.get("caption") or ""
+        text = self._normalize_command_text(text)
+        if self._is_command_for_other_bot(text):
+            return
+
+        if await self._consume_cwd_prompt(context, text):
+            return
+
+        if self.config.require_mention and not context.platform_specific.get("is_dm", False):
+            if not self._is_explicitly_addressed(message, text):
+                return
+
+        denial = self.check_authorization(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            is_dm=bool(context.platform_specific.get("is_dm")),
+            text=text,
+            settings_manager=self.settings_manager,
+        )
+        if not denial.allowed:
+            denial_text = self.build_auth_denial_text(denial.denial, context.channel_id)
+            if denial_text:
+                await self.send_message(context, denial_text)
+            return
+
+        allow_plain_bind = self.should_allow_plain_bind(
+            user_id=context.user_id,
+            is_dm=bool(context.platform_specific.get("is_dm")),
+            settings_manager=self.settings_manager,
+        )
+        if await self.dispatch_text_command(context, text, allow_plain_bind=allow_plain_bind):
+            return
+
+        context = await self._maybe_route_to_forum_topic(context, message, text)
+
+        if self.on_message_callback:
+            await self.on_message_callback(context, text)
+
+    async def _maybe_route_to_forum_topic(
+        self,
+        context: MessageContext,
+        message: dict[str, Any],
+        text: str,
+    ) -> MessageContext:
+        if not self._should_auto_create_topic(context, message, text):
+            return context
+
+        try:
+            new_context = await self.start_new_topic_session(context, seed_text=text, message=message)
+            if new_context is not None:
+                return new_context
+        except Exception as err:
+            logger.warning("Telegram forum auto-topic failed, falling back to current topic: %s", err, exc_info=True)
+        return context
+
+    def _should_auto_create_topic(self, context: MessageContext, message: dict[str, Any], text: str) -> bool:
+        if not self.config.forum_auto_topic:
+            return False
+        if (context.platform_specific or {}).get("chat_type") != "supergroup":
+            return False
+        if not bool(message.get("is_topic_message")):
+            return False
+        if str(context.thread_id or "") != "1":
+            return False
+        if message.get("reply_to_message"):
+            return False
+        if text.startswith("/"):
+            return False
+        return True
+
+    def _derive_topic_title(self, text: str, message: dict[str, Any]) -> str:
+        first_line = ""
+        if text:
+            first_line = text.strip().splitlines()[0].strip()
+        if first_line.startswith("/"):
+            first_line = ""
+        if first_line:
+            if len(first_line) > 60:
+                return first_line[:57].rstrip() + "..."
+            return first_line
+        sender = (message.get("from") or {}).get("first_name") or "Session"
+        return f"{sender} {datetime.now().strftime('%m-%d %H:%M')}"
+
+    async def start_new_topic_session(
+        self,
+        context: MessageContext,
+        *,
+        seed_text: str = "",
+        message: Optional[dict[str, Any]] = None,
+    ) -> Optional[MessageContext]:
+        payload = context.platform_specific or {}
+        if payload.get("chat_type") != "supergroup":
+            return None
+        if not context.thread_id and not payload.get("is_topic_message"):
+            return None
+
+        topic_name = self._derive_topic_title(seed_text, message or {})
+        created = await telegram_api.create_forum_topic(self.config.bot_token, context.channel_id, topic_name)
+        topic = created.get("result") or {}
+        topic_id = topic.get("message_thread_id")
+        if topic_id is None:
+            raise RuntimeError("Telegram createForumTopic returned no message_thread_id")
+
+        topic_context = MessageContext(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            thread_id=str(topic_id),
+            message_id=context.message_id,
+            platform="telegram",
+            files=context.files,
+            platform_specific={
+                **payload,
+                "is_topic_message": True,
+                "auto_topic_created": True,
+                "topic_name": topic_name,
+            },
+        )
+
+        if str(context.thread_id or "") == "1":
+            try:
+                await self.send_message(
+                    context,
+                    self._t("telegram.autoTopicGeneralNotice", topic=topic_name),
+                    reply_to=context.message_id,
+                )
+            except Exception:
+                logger.debug("Failed to send Telegram General handoff notice", exc_info=True)
+
+        try:
+            intro = self._t("telegram.autoTopicIntro", topic=topic_name)
+            if seed_text:
+                intro = f"{intro}\n\n> {seed_text}"
+            await self.send_message(topic_context, intro)
+        except Exception:
+            logger.debug("Failed to send Telegram topic intro", exc_info=True)
+
+        return topic_context
+
+    async def _handle_callback_query(self, payload: dict[str, Any]) -> None:
+        message = payload.get("message") or {}
+        chat = message.get("chat") or {}
+        from_user = payload.get("from") or {}
+        if not chat or not from_user:
+            return
+        self._remember_discovered_chat(chat, message)
+        thread_id = message.get("message_thread_id")
+        context = MessageContext(
+            user_id=str(from_user.get("id")),
+            channel_id=str(chat.get("id")),
+            thread_id=str(thread_id) if thread_id is not None else None,
+            message_id=str(message.get("message_id")),
+            platform="telegram",
+            platform_specific={
+                "is_dm": chat.get("type") == "private",
+                "chat_type": chat.get("type"),
+                "chat_title": chat.get("title") or chat.get("username"),
+                "is_topic_message": bool(message.get("is_topic_message")),
+                "raw_message": message,
+            },
+        )
+        callback_id = str(payload.get("id"))
+        context.platform_specific = {
+            **(context.platform_specific or {}),
+            "callback_id": callback_id,
+            "callback_query": payload,
+        }
+        callback_data = str(payload.get("data", ""))
+        primary_action = self._resolve_callback_action(callback_data)
+        is_internal_callback = callback_data.startswith(("tg_cwd:", "tg_resume:", "tg_route:", "tg_question:"))
+        if is_internal_callback:
+            auth_result = self.check_authorization(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                is_dm=bool(context.platform_specific.get("is_dm")),
+                action=primary_action,
+                settings_manager=self.settings_manager,
+            )
+            if not auth_result.allowed:
+                denial_text = self.build_auth_denial_text(auth_result.denial, context.channel_id)
+                await self.answer_callback(
+                    callback_id,
+                    denial_text,
+                    show_alert=bool(denial_text),
+                )
+                return
+            if await self._handle_internal_callback(context, callback_data):
+                await self.answer_callback(callback_id)
+                return
+        if self.on_callback_query_callback:
+            auth_result = self.check_authorization(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                is_dm=bool(context.platform_specific.get("is_dm")),
+                action=primary_action,
+                settings_manager=self.settings_manager,
+            )
+            if not auth_result.allowed:
+                denial_text = self.build_auth_denial_text(auth_result.denial, context.channel_id)
+                await self.answer_callback(
+                    callback_id,
+                    denial_text,
+                    show_alert=bool(denial_text),
+                )
+                return
+            await self.on_callback_query_callback(context, callback_data)
+        await self.answer_callback(callback_id)
+
+    async def _handle_internal_callback(self, context: MessageContext, callback_data: str) -> bool:
+        if callback_data.startswith("tg_cwd:"):
+            await self._handle_cwd_callback(context, callback_data)
+            return True
+        if callback_data.startswith("tg_resume:"):
+            await self._handle_resume_callback(context, callback_data)
+            return True
+        if callback_data.startswith("tg_route:"):
+            await self._handle_routing_callback(context, callback_data)
+            return True
+        if callback_data.startswith("tg_question:"):
+            await self._handle_question_callback(context, callback_data)
+            return True
+        return False
+
+    def _build_message_context(self, message: dict[str, Any]) -> Optional[MessageContext]:
+        chat = message.get("chat") or {}
+        from_user = message.get("from") or {}
+        if not chat or not from_user:
+            return None
+        self._remember_discovered_chat(chat, message)
+
+        chat_id = str(chat.get("id"))
+        user_id = str(from_user.get("id"))
+        thread_id = message.get("message_thread_id")
+        files = self._extract_files(message)
+
+        return MessageContext(
+            user_id=user_id,
+            channel_id=chat_id,
+            thread_id=str(thread_id) if thread_id is not None else None,
+            message_id=str(message.get("message_id")),
+            files=files,
+            platform="telegram",
+            platform_specific={
+                "is_dm": chat.get("type") == "private",
+                "chat_type": chat.get("type"),
+                "chat_title": chat.get("title") or chat.get("username"),
+                "raw_message": message,
+            },
+        )
+
+    def _remember_discovered_chat(self, chat: dict[str, Any], message: Optional[dict[str, Any]] = None) -> None:
+        try:
+            parts = [str(chat.get("first_name") or "").strip(), str(chat.get("last_name") or "").strip()]
+            display_name = " ".join(part for part in parts if part).strip()
+            name = chat.get("title") or chat.get("username") or display_name or str(chat.get("id") or "")
+            chat_type = str(chat.get("type") or "")
+            is_topic_message = bool((message or {}).get("is_topic_message"))
+            is_forum = bool(chat.get("is_forum")) or is_topic_message
+            DiscoveredChatsStore.get_instance().remember_chat(
+                platform="telegram",
+                chat_id=str(chat.get("id")),
+                name=name,
+                username=str(chat.get("username") or ""),
+                chat_type=chat_type,
+                is_private=chat_type == "private",
+                is_forum=is_forum,
+                supports_topics=chat_type == "supergroup" and is_forum,
+            )
+        except Exception:
+            logger.debug("Failed to remember Telegram discovered chat", exc_info=True)
+
+    def _extract_files(self, message: dict[str, Any]) -> list[FileAttachment]:
+        files: list[FileAttachment] = []
+        document = message.get("document")
+        if document:
+            files.append(
+                FileAttachment(
+                    name=document.get("file_name") or "telegram-document",
+                    mimetype=document.get("mime_type") or "application/octet-stream",
+                    url=document.get("file_id"),
+                    size=document.get("file_size"),
+                )
+            )
+        photo = message.get("photo") or []
+        if photo:
+            best = photo[-1]
+            files.append(
+                FileAttachment(
+                    name="telegram-photo.jpg",
+                    mimetype="image/jpeg",
+                    url=best.get("file_id"),
+                    size=best.get("file_size"),
+                )
+            )
+        return files
+
+    def _normalize_command_text(self, text: str) -> str:
+        stripped = (text or "").strip()
+        if not stripped.startswith("/"):
+            return stripped
+        head, *tail = stripped.split(maxsplit=1)
+        command, username = self._split_command_target(head)
+        bot_username = str((self._bot_user or {}).get("username") or "")
+        if username and bot_username and username.lower() == bot_username.lower():
+            head = command
+        return " ".join([head, *tail]).strip()
+
+    def _split_command_target(self, head: str) -> tuple[str, str]:
+        command, sep, username = str(head or "").partition("@")
+        if not sep:
+            return command, ""
+        return command, username
+
+    def _is_command_for_other_bot(self, text: str) -> bool:
+        stripped = (text or "").strip()
+        if not stripped.startswith("/"):
+            return False
+        head = stripped.split(maxsplit=1)[0]
+        _, username = self._split_command_target(head)
+        if not username:
+            return False
+        bot_username = str((self._bot_user or {}).get("username") or "")
+        return bool(bot_username) and username.lower() != bot_username.lower()
+
+    def _resolve_callback_action(self, callback_data: str) -> str:
+        if callback_data.startswith("tg_cwd:"):
+            return "cmd_change_cwd"
+        if callback_data.startswith("tg_route:"):
+            return "cmd_routing"
+        if callback_data.startswith("toggle_msg_") or callback_data in {"open_settings_modal", "info_msg_types"}:
+            return "cmd_settings"
+        return callback_data
+
+    def _interaction_scope_key(self, context: MessageContext) -> str:
+        payload = context.platform_specific or {}
+        is_dm = bool(payload.get("is_dm"))
+        scope = context.user_id if is_dm else context.channel_id
+        return f"{scope}:{context.user_id}"
+
+    async def _consume_cwd_prompt(self, context: MessageContext, text: str) -> bool:
+        prompt = self._cwd_prompts.get(self._interaction_scope_key(context))
+        if prompt is None:
+            return False
+        stripped = text.strip()
+        if not stripped:
+            return False
+        if stripped == "/cancel":
+            self._cwd_prompts.pop(self._interaction_scope_key(context), None)
+            await self.send_message(context, self._t("telegram.cwdPromptCanceled"))
+            return True
+        known_commands = {
+            "start",
+            "new",
+            "clear",
+            "resume",
+            "settings",
+            "routing",
+            "cwd",
+            "setcwd",
+            "set_cwd",
+            "bind",
+            "stop",
+        }
+        parsed_command = self.parse_text_command(stripped, allow_plain_bind=True)
+        if parsed_command and parsed_command[0] in known_commands:
+            return False
+        self._cwd_prompts.pop(self._interaction_scope_key(context), None)
+        if self._controller is None or not hasattr(self._controller, "command_handler"):
+            await self.send_message(context, f"❌ {self._t('error.cwdChangeFailed')}")
+            return True
+        await self._controller.command_handler.handle_set_cwd(context, stripped)
+        return True
+
+    def _is_explicitly_addressed(self, message: dict[str, Any], text: str) -> bool:
+        if text.startswith("/"):
+            head = text.split(maxsplit=1)[0]
+            _, username = self._split_command_target(head)
+            if not username:
+                return True
+            bot_username = str((self._bot_user or {}).get("username") or "")
+            return bool(bot_username) and username.lower() == bot_username.lower()
+        reply_to = message.get("reply_to_message") or {}
+        reply_from = reply_to.get("from") or {}
+        if self._bot_user and str(reply_from.get("id")) == str(self._bot_user.get("id")):
+            return True
+        username = str((self._bot_user or {}).get("username") or "")
+        if not username:
+            return False
+        entities = message.get("entities") or []
+        for entity in entities:
+            if entity.get("type") != "mention":
+                continue
+            offset = int(entity.get("offset", 0))
+            length = int(entity.get("length", 0))
+            if text[offset : offset + length].lower() == f"@{username.lower()}":
+                return True
+        return False
+
+    def _build_payload(
+        self,
+        context: MessageContext,
+        text: Optional[str] = None,
+        keyboard: Optional[InlineKeyboard] = None,
+        *,
+        reply_to: Optional[str] = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"chat_id": context.channel_id}
+        if context.thread_id:
+            payload["message_thread_id"] = int(context.thread_id)
+        if text is not None:
+            payload["text"] = text
+        if reply_to:
+            payload["reply_parameters"] = {"message_id": int(reply_to)}
+        if keyboard is not None:
+            payload["reply_markup"] = {
+                "inline_keyboard": [
+                    [{"text": button.text, "callback_data": button.callback_data} for button in row]
+                    for row in keyboard.buttons
+                ]
+            }
+        return payload
+
+    async def send_message(
+        self, context: MessageContext, text: str, parse_mode: Optional[str] = None, reply_to: Optional[str] = None
+    ) -> str:
+        payload = self._build_payload(context, self.format_markdown(text), reply_to=reply_to)
+        result = await telegram_api.call_api(self.config.bot_token, "sendMessage", payload)
+        return str(result["result"]["message_id"])
+
+    async def send_message_with_buttons(
+        self, context: MessageContext, text: str, keyboard: InlineKeyboard, parse_mode: Optional[str] = None
+    ) -> str:
+        payload = self._build_payload(context, self.format_markdown(text), keyboard=keyboard)
+        result = await telegram_api.call_api(self.config.bot_token, "sendMessage", payload)
+        return str(result["result"]["message_id"])
+
+    async def upload_markdown(
+        self,
+        context: MessageContext,
+        title: str,
+        content: str,
+        filetype: str = "markdown",
+    ) -> str:
+        suffix = ".md" if filetype == "markdown" else f".{filetype.lstrip('.')}"
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=suffix, delete=False) as tmp:
+            tmp.write(content or "")
+            tmp_path = tmp.name
+        try:
+            return await self.upload_file_from_path(context, tmp_path, title=title)
+        finally:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+            except Exception:
+                logger.debug("Failed to clean up temporary markdown file", exc_info=True)
+
+    async def edit_message(
+        self,
+        context: MessageContext,
+        message_id: str,
+        text: Optional[str] = None,
+        keyboard: Optional[InlineKeyboard] = None,
+        parse_mode: Optional[str] = None,
+    ) -> bool:
+        payload = {
+            "chat_id": context.channel_id,
+            "message_id": int(message_id),
+        }
+        if keyboard is not None:
+            payload["reply_markup"] = {
+                "inline_keyboard": [
+                    [{"text": button.text, "callback_data": button.callback_data} for button in row]
+                    for row in keyboard.buttons
+                ]
+            }
+        elif text is None:
+            payload["reply_markup"] = {"inline_keyboard": []}
+        if text is not None:
+            payload["text"] = self.format_markdown(text)
+            if keyboard is None:
+                payload["reply_markup"] = {"inline_keyboard": []}
+            await telegram_api.call_api(self.config.bot_token, "editMessageText", payload)
+            return True
+        await telegram_api.call_api(self.config.bot_token, "editMessageReplyMarkup", payload)
+        return True
+
+    async def answer_callback(self, callback_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
+        payload = {"callback_query_id": callback_id, "show_alert": show_alert}
+        if text:
+            payload["text"] = text
+        await telegram_api.call_api(self.config.bot_token, "answerCallbackQuery", payload)
+        return True
+
+    async def get_user_info(self, user_id: str) -> Dict[str, Any]:
+        result = await telegram_api.call_api(self.config.bot_token, "getChat", {"chat_id": user_id})
+        chat = result["result"]
+        display_name = chat.get("first_name") or chat.get("username") or "Telegram User"
+        return {"id": user_id, "name": display_name, "display_name": display_name, "real_name": display_name}
+
+    async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
+        result = await telegram_api.call_api(self.config.bot_token, "getChat", {"chat_id": channel_id})
+        chat = result["result"]
+        name = chat.get("title") or chat.get("username") or channel_id
+        return {"id": channel_id, "name": name, "type": chat.get("type")}
+
+    async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
+        context = MessageContext(user_id=user_id, channel_id=user_id, platform="telegram", platform_specific={"is_dm": True})
+        return await self.send_message(context, text)
+
+    async def send_typing_indicator(self, context: MessageContext) -> bool:
+        payload = {"chat_id": context.channel_id, "action": "typing"}
+        if context.thread_id:
+            payload["message_thread_id"] = int(context.thread_id)
+        await telegram_api.call_api(self.config.bot_token, "sendChatAction", payload)
+        return True
+
+    async def clear_typing_indicator(self, context: MessageContext) -> bool:
+        return True
+
+    async def upload_file_from_path(
+        self,
+        context: MessageContext,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> str:
+        payload = self._build_payload(context)
+        if title:
+            payload["caption"] = title
+        result = await telegram_api.send_multipart_file(
+            self.config.bot_token,
+            "sendDocument",
+            payload,
+            file_path,
+            "document",
+        )
+        return str(result["result"]["message_id"])
+
+    async def upload_image_from_path(
+        self,
+        context: MessageContext,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> str:
+        payload = self._build_payload(context)
+        if title:
+            payload["caption"] = title
+        result = await telegram_api.send_multipart_file(
+            self.config.bot_token,
+            "sendPhoto",
+            payload,
+            file_path,
+            "photo",
+        )
+        return str(result["result"]["message_id"])
+
+    async def download_file(
+        self,
+        file_info: Dict[str, Any],
+        max_bytes: Optional[int] = None,
+        timeout_seconds: int = 30,
+    ) -> Optional[bytes]:
+        file_id = (
+            file_info.get("telegram_file_id")
+            or file_info.get("url")
+            or file_info.get("file_id")
+        )
+        if not file_id:
+            raise ValueError("Telegram file_id is required")
+        file_result = await telegram_api.get_file(self.config.bot_token, str(file_id))
+        file_path = file_result["result"]["file_path"]
+        content = await telegram_api.download_file(self.config.bot_token, file_path, timeout_seconds=timeout_seconds)
+        if max_bytes is not None and len(content) > max_bytes:
+            raise ValueError("Downloaded file exceeds max_bytes")
+        return content
+
+    async def open_change_cwd_modal(self, trigger_id: Any, current_cwd: str, channel_id: str = None):
+        context = trigger_id if isinstance(trigger_id, MessageContext) else None
+        if context is None:
+            raise ValueError("Telegram change-cwd flow requires a message context")
+        keyboard = InlineKeyboard(
+            buttons=[[InlineButton(text=f"✖️ {self._t('common.cancel')}", callback_data="tg_cwd:cancel")]]
+        )
+        text = "\n".join(
+            [
+                f"📂 {self._t('telegram.cwdPromptTitle')}",
+                "",
+                f"{self._t('modal.cwd.current')} `{current_cwd}`",
+                self._t("telegram.cwdPromptBody"),
+            ]
+        )
+        prompt_message_id = await self.send_message_with_buttons(context, text, keyboard)
+        self._cwd_prompts[self._interaction_scope_key(context)] = _TelegramCwdPrompt(
+            message_id=prompt_message_id,
+            current_cwd=current_cwd,
+        )
+
+    async def _handle_cwd_callback(self, context: MessageContext, callback_data: str) -> None:
+        scope_key = self._interaction_scope_key(context)
+        if callback_data == "tg_cwd:cancel":
+            self._cwd_prompts.pop(scope_key, None)
+            if context.message_id:
+                await self.edit_message(
+                    context,
+                    context.message_id,
+                    text=f"📂 {self._t('telegram.cwdPromptCanceled')}",
+                    keyboard=None,
+                )
+
+    async def open_resume_session_modal(
+        self,
+        trigger_id: Any,
+        sessions: list[NativeResumeSession],
+        channel_id: str,
+        thread_id: Optional[str],
+        host_message_ts: Optional[str],
+    ):
+        context = trigger_id if isinstance(trigger_id, MessageContext) else None
+        if context is None:
+            raise ValueError("Telegram resume flow requires a message context")
+
+        options: list[tuple[str, str]] = []
+        rows: list[list[InlineButton]] = []
+        summary_lines = [
+            f"⏮️ {self._t('telegram.resumeTitle')}",
+            self._t("telegram.resumeBody"),
+        ]
+        for item in list(sessions)[:12]:
+            idx = len(options)
+            options.append((item.agent, item.native_session_id))
+            label = AgentNativeSessionService.format_display_summary(item)
+            rows.append([InlineButton(text=label[:40], callback_data=f"tg_resume:{idx}")])
+            summary_lines.append(
+                f"{idx + 1}. {label} ({AgentNativeSessionService.format_display_time(item)})"
+            )
+            if len(options) >= 12:
+                break
+
+        rows.append([InlineButton(text=f"✖️ {self._t('common.cancel')}", callback_data="tg_resume:cancel")])
+        text = "\n".join(summary_lines)
+        if not options:
+            text += f"\n\nℹ️ {self._t('telegram.resumeNoStoredSessions')}"
+        message_id = await self.send_message_with_buttons(context, text, InlineKeyboard(buttons=rows))
+        self._resume_states[self._interaction_scope_key(context)] = _TelegramResumeSessionState(
+            message_id=message_id,
+            options=options,
+            is_dm=bool((context.platform_specific or {}).get("is_dm")),
+        )
+
+    async def _handle_resume_callback(self, context: MessageContext, callback_data: str) -> None:
+        scope_key = self._interaction_scope_key(context)
+        state = self._resume_states.get(scope_key)
+        if state is None or state.message_id != (context.message_id or ""):
+            return
+        if callback_data == "tg_resume:cancel":
+            self._resume_states.pop(scope_key, None)
+            await self.edit_message(
+                context,
+                state.message_id,
+                text=f"⏮️ {self._t('telegram.resumeCanceled')}",
+                keyboard=None,
+            )
+            return
+
+        try:
+            option_index = int(callback_data.split(":", 1)[1])
+        except Exception:
+            return
+        if option_index < 0 or option_index >= len(state.options):
+            return
+
+        agent, session_id = state.options[option_index]
+        self._resume_states.pop(scope_key, None)
+        if self._controller is None or not hasattr(self._controller, "session_handler"):
+            await self.send_message(context, f"❌ {self._t('error.resumeFailed')}")
+            return
+        await self.edit_message(
+            context,
+            state.message_id,
+            text=f"⏮️ {self._t('telegram.resumeSubmitting')}",
+            keyboard=None,
+        )
+        await self._controller.session_handler.handle_resume_session_submission(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            thread_id=context.thread_id,
+            agent=agent,
+            session_id=session_id,
+            is_dm=state.is_dm,
+            platform="telegram",
+        )
+
+    async def open_routing_modal(self, trigger_id: Any, channel_id: str, **kwargs):
+        context = trigger_id if isinstance(trigger_id, MessageContext) else None
+        if context is None:
+            raise ValueError("Telegram routing flow requires a message context")
+        current_routing = kwargs.get("current_routing")
+        current_backend = kwargs.get("current_backend") or "opencode"
+        state = _TelegramRoutingState(
+            message_id="",
+            channel_id=channel_id,
+            user_id=context.user_id,
+            is_dm=bool((context.platform_specific or {}).get("is_dm")),
+            registered_backends=list(kwargs.get("registered_backends") or []),
+            opencode_agents=list(kwargs.get("opencode_agents") or []),
+            opencode_models=dict(kwargs.get("opencode_models") or {}),
+            opencode_default_config=dict(kwargs.get("opencode_default_config") or {}),
+            claude_agents=list(kwargs.get("claude_agents") or []),
+            claude_models=list(kwargs.get("claude_models") or []),
+            codex_models=list(kwargs.get("codex_models") or []),
+            backend=(getattr(current_routing, "agent_backend", None) or current_backend or "opencode"),
+            opencode_agent=getattr(current_routing, "opencode_agent", None),
+            opencode_model=getattr(current_routing, "opencode_model", None),
+            opencode_reasoning_effort=getattr(current_routing, "opencode_reasoning_effort", None),
+            claude_agent=getattr(current_routing, "claude_agent", None),
+            claude_model=getattr(current_routing, "claude_model", None),
+            claude_reasoning_effort=getattr(current_routing, "claude_reasoning_effort", None),
+            codex_model=getattr(current_routing, "codex_model", None),
+            codex_reasoning_effort=getattr(current_routing, "codex_reasoning_effort", None),
+        )
+        text, keyboard = self._render_routing_state(state)
+        message_id = await self.send_message_with_buttons(context, text, keyboard)
+        state.message_id = message_id
+        self._routing_states[self._interaction_scope_key(context)] = state
+
+    async def open_question_modal(self, trigger_id: Any, context: MessageContext, pending: Any, callback_prefix: str):
+        target_context = trigger_id if isinstance(trigger_id, MessageContext) else context
+        if target_context is None or not isinstance(target_context, MessageContext):
+            raise ValueError("Telegram question flow requires a message context")
+
+        raw_questions = getattr(pending, "questions", None)
+        if raw_questions is None and isinstance(pending, dict):
+            raw_questions = pending.get("questions")
+        questions = list(raw_questions or [])
+        if not questions:
+            raise ValueError("Pending question has no questions")
+
+        state = _TelegramQuestionState(
+            message_id=str(target_context.message_id or ""),
+            callback_prefix=callback_prefix,
+            questions=questions,
+            answers=[[] for _ in questions],
+        )
+        self._question_states[self._interaction_scope_key(target_context)] = state
+        text, keyboard = self._render_question_state(target_context, state)
+        if state.message_id:
+            await self.edit_message(target_context, state.message_id, text=text, keyboard=keyboard)
+        else:
+            state.message_id = await self.send_message_with_buttons(target_context, text, keyboard)
+
+    async def open_opencode_question_modal(self, trigger_id: Any, context: MessageContext, pending: Any):
+        await self.open_question_modal(trigger_id, context, pending, callback_prefix="opencode_question")
+
+    def _get_backend_label(self, backend: str) -> str:
+        translated = self._t(f"backend.{backend}")
+        return translated if translated != f"backend.{backend}" else backend
+
+    def _option_label(self, value: Optional[str], default_label: Optional[str] = None) -> str:
+        if not value:
+            return self._t("common.default")
+        if value in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            translated = self._t(f"reasoning.{value}")
+            if translated != f"reasoning.{value}":
+                return translated
+        return default_label or value
+
+    def _routing_field_label(self, field: Optional[str]) -> str:
+        mapping = {
+            "backend": self._t("routing.label.backend"),
+            "opencode_agent": self._t("routing.label.agent"),
+            "opencode_model": self._t("routing.label.model"),
+            "opencode_reasoning_effort": self._t("routing.label.reasoningEffort"),
+            "claude_agent": self._t("routing.label.agent"),
+            "claude_model": self._t("routing.label.model"),
+            "claude_reasoning_effort": self._t("routing.label.reasoningEffort"),
+            "codex_model": self._t("routing.label.model"),
+            "codex_reasoning_effort": self._t("routing.label.reasoningEffort"),
+        }
+        return mapping.get(field or "", field or "")
+
+    def _question_definition(self, question: Any) -> tuple[str, str, list[tuple[str, str]], bool]:
+        if isinstance(question, dict):
+            header = str(question.get("header") or "").strip()
+            prompt = str(question.get("question") or "").strip()
+            options_raw = list(question.get("options") or [])
+            multiple = bool(question.get("multiple") or question.get("multiSelect"))
+        else:
+            header = str(getattr(question, "header", "") or "").strip()
+            prompt = str(getattr(question, "question", "") or "").strip()
+            options_raw = list(getattr(question, "options", []) or [])
+            multiple = bool(getattr(question, "multiple", False))
+
+        options: list[tuple[str, str]] = []
+        for option in options_raw:
+            if isinstance(option, dict):
+                label = str(option.get("label") or "").strip()
+                description = str(option.get("description") or "").strip()
+            else:
+                label = str(getattr(option, "label", "") or "").strip()
+                description = str(getattr(option, "description", "") or "").strip()
+            if label:
+                options.append((label, description))
+        return header, prompt, options, multiple
+
+    def _render_question_state(
+        self,
+        context: MessageContext,
+        state: _TelegramQuestionState,
+    ) -> tuple[str, InlineKeyboard]:
+        header, prompt, options, multiple = self._question_definition(state.questions[state.index])
+        current_answers = set(state.answers[state.index])
+        lines = []
+        title = header or f"Question {state.index + 1}"
+        lines.append(f"❓ {title}")
+        if prompt:
+            lines.append(prompt)
+        if len(state.questions) > 1:
+            lines.append(f"{state.index + 1}/{len(state.questions)}")
+        rows: list[list[InlineButton]] = []
+        for idx, (label, description) in enumerate(options, start=1):
+            prefix = "☑️ " if label in current_answers else ""
+            text = f"{prefix}{label}"
+            if description:
+                lines.append(f"{idx}. {label} - {description}")
+            rows.append(
+                [
+                    InlineButton(
+                        text=text[:40],
+                        callback_data=f"tg_question:{'toggle' if multiple else 'choose'}:{idx}",
+                    )
+                ]
+            )
+        footer_row: list[InlineButton] = []
+        if multiple:
+            action_label = self._t("common.submit") if state.index + 1 >= len(state.questions) else self._t("common.next")
+            footer_row.append(InlineButton(text=action_label, callback_data="tg_question:advance"))
+        footer_row.append(InlineButton(text=f"✖️ {self._t('common.cancel')}", callback_data="tg_question:cancel"))
+        rows.append(footer_row)
+        return "\n".join(lines), InlineKeyboard(buttons=rows)
+
+    async def _handle_question_callback(self, context: MessageContext, callback_data: str) -> None:
+        scope_key = self._interaction_scope_key(context)
+        state = self._question_states.get(scope_key)
+        if state is None or state.message_id != (context.message_id or ""):
+            return
+
+        _, action, *rest = callback_data.split(":")
+        header, prompt, options, multiple = self._question_definition(state.questions[state.index])
+        del header, prompt
+        if action == "cancel":
+            self._question_states.pop(scope_key, None)
+            await self.edit_message(
+                context,
+                state.message_id,
+                text=f"❓ {self._t('common.cancel')}",
+                keyboard=None,
+            )
+            return
+
+        if action in {"choose", "toggle"} and rest:
+            try:
+                option_idx = int(rest[0]) - 1
+            except Exception:
+                option_idx = -1
+            if 0 <= option_idx < len(options):
+                label = options[option_idx][0]
+                if action == "choose":
+                    state.answers[state.index] = [label]
+                    if state.index + 1 < len(state.questions):
+                        state.index += 1
+                    else:
+                        await self._finalize_question_state(context, scope_key, state)
+                        return
+                else:
+                    answers = state.answers[state.index]
+                    if label in answers:
+                        state.answers[state.index] = [value for value in answers if value != label]
+                    else:
+                        answers.append(label)
+        elif action == "advance":
+            if multiple and state.index + 1 < len(state.questions):
+                state.index += 1
+            else:
+                await self._finalize_question_state(context, scope_key, state)
+                return
+
+        text, keyboard = self._render_question_state(context, state)
+        await self.edit_message(context, state.message_id, text=text, keyboard=keyboard)
+
+    async def _finalize_question_state(
+        self,
+        context: MessageContext,
+        scope_key: str,
+        state: _TelegramQuestionState,
+    ) -> None:
+        self._question_states.pop(scope_key, None)
+        answers_payload = state.answers
+        await self.edit_message(
+            context,
+            state.message_id,
+            text=f"❓ {self._t('common.submitted')}",
+            keyboard=None,
+        )
+        auth_result = self.check_authorization(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            is_dm=bool((context.platform_specific or {}).get("is_dm")),
+            action=state.callback_prefix,
+            settings_manager=self.settings_manager,
+        )
+        if not auth_result.allowed:
+            denial_text = self.build_auth_denial_text(auth_result.denial, context.channel_id)
+            if denial_text:
+                await self.send_message(context, denial_text)
+            return
+        if self.on_callback_query_callback:
+            synthetic_payload = f"{state.callback_prefix}:modal:{json.dumps(answers_payload, ensure_ascii=True)}"
+            await self.on_callback_query_callback(context, synthetic_payload)
+
+    def _routing_summary_lines(self, state: _TelegramRoutingState) -> list[str]:
+        lines = [
+            f"🤖 {self._t('telegram.routingTitle')}",
+            "",
+            f"{self._t('routing.label.backend')}: {self._get_backend_label(state.backend)}",
+        ]
+        if state.backend == "opencode":
+            lines.append(
+                f"{self._t('routing.label.agent')}: {self._option_label(state.opencode_agent)}"
+            )
+            lines.append(
+                f"{self._t('routing.label.model')}: {self._option_label(state.opencode_model)}"
+            )
+            lines.append(
+                f"{self._t('routing.label.reasoningEffort')}: {self._option_label(state.opencode_reasoning_effort)}"
+            )
+        elif state.backend == "claude":
+            lines.append(
+                f"{self._t('routing.label.agent')}: {self._option_label(state.claude_agent)}"
+            )
+            lines.append(
+                f"{self._t('routing.label.model')}: {self._option_label(state.claude_model)}"
+            )
+            lines.append(
+                f"{self._t('routing.label.reasoningEffort')}: {self._option_label(state.claude_reasoning_effort)}"
+            )
+        elif state.backend == "codex":
+            lines.append(
+                f"{self._t('routing.label.model')}: {self._option_label(state.codex_model)}"
+            )
+            lines.append(
+                f"{self._t('routing.label.reasoningEffort')}: {self._option_label(state.codex_reasoning_effort)}"
+            )
+        return lines
+
+    def _routing_picker_options(self, state: _TelegramRoutingState) -> list[tuple[str, Optional[str]]]:
+        from modules.agents.opencode.utils import (
+            build_claude_reasoning_options,
+            build_codex_reasoning_options,
+            build_opencode_model_option_items,
+            build_reasoning_effort_options,
+            resolve_opencode_allowed_providers,
+            resolve_opencode_default_model,
+            resolve_opencode_provider_preferences,
+        )
+
+        field = state.picker_field
+        if field == "backend":
+            return [(self._get_backend_label(backend), backend) for backend in state.registered_backends]
+        if field == "opencode_agent":
+            names = []
+            for item in state.opencode_agents:
+                if isinstance(item, dict):
+                    name = str(item.get("name") or "").strip()
+                else:
+                    name = str(item).strip()
+                if name and name not in names:
+                    names.append(name)
+            return [(self._t("common.default"), None)] + [(name, name) for name in names]
+        if field == "opencode_model":
+            target_model = state.opencode_model
+            preferred = resolve_opencode_provider_preferences(state.opencode_default_config, target_model)
+            allowed = resolve_opencode_allowed_providers(state.opencode_default_config, state.opencode_models)
+            default_model = resolve_opencode_default_model(
+                state.opencode_default_config,
+                state.opencode_agents,
+                state.opencode_agent,
+            )
+            entries = build_opencode_model_option_items(
+                state.opencode_models,
+                max_total=24,
+                preferred_providers=preferred,
+                allowed_providers=allowed,
+            )
+            options = [(self._t("common.default"), None)]
+            if default_model:
+                options[0] = (f"{self._t('common.default')} - {default_model}", None)
+            options.extend((str(entry.get("label")), str(entry.get("value"))) for entry in entries if entry.get("value"))
+            return options
+        if field == "opencode_reasoning_effort":
+            target_model = state.opencode_model
+            return [
+                (
+                    self._option_label(None if entry.get("value") == "__default__" else str(entry.get("value"))),
+                    None if entry.get("value") == "__default__" else str(entry.get("value")),
+                )
+                for entry in build_reasoning_effort_options(state.opencode_models, target_model)
+                if entry.get("value")
+            ]
+        if field == "claude_agent":
+            names = []
+            for item in state.claude_agents:
+                if isinstance(item, dict):
+                    name = str(item.get("name") or "").strip()
+                else:
+                    name = str(item).strip()
+                if name and name not in names:
+                    names.append(name)
+            return [(self._t("common.default"), None)] + [(name, name) for name in names]
+        if field == "claude_model":
+            return [(self._t("common.default"), None)] + [(str(model), str(model)) for model in state.claude_models]
+        if field == "claude_reasoning_effort":
+            return [
+                (
+                    self._option_label(None if entry.get("value") == "__default__" else str(entry.get("value"))),
+                    None if entry.get("value") == "__default__" else str(entry.get("value")),
+                )
+                for entry in build_claude_reasoning_options(state.claude_model)
+                if entry.get("value")
+            ]
+        if field == "codex_model":
+            return [(self._t("common.default"), None)] + [(str(model), str(model)) for model in state.codex_models]
+        if field == "codex_reasoning_effort":
+            return [
+                (
+                    self._option_label(None if entry.get("value") == "__default__" else str(entry.get("value"))),
+                    None if entry.get("value") == "__default__" else str(entry.get("value")),
+                )
+                for entry in build_codex_reasoning_options()
+                if entry.get("value")
+            ]
+        return []
+
+    def _apply_routing_option(self, state: _TelegramRoutingState, value: Optional[str]) -> None:
+        field = state.picker_field
+        if not field:
+            return
+        setattr(state, field, value)
+        if field == "claude_model" and value is None:
+            state.claude_reasoning_effort = None
+        if field == "claude_model" and value is not None:
+            state.claude_reasoning_effort = None
+        state.picker_field = None
+        state.picker_page = 0
+
+    def _render_routing_state(self, state: _TelegramRoutingState) -> tuple[str, InlineKeyboard]:
+        if state.picker_field:
+            return self._render_routing_picker(state)
+
+        text = "\n".join(self._routing_summary_lines(state))
+        backend_row = [
+            InlineButton(text=self._get_backend_label(backend), callback_data="tg_route:field:backend")
+            for backend in state.registered_backends[:3]
+        ]
+        rows: list[list[InlineButton]] = []
+        if backend_row:
+            rows.append(backend_row)
+
+        if state.backend == "opencode":
+            rows.append(
+                [
+                    InlineButton(
+                        text=f"{self._t('routing.label.agent')}: {self._option_label(state.opencode_agent)}"[:40],
+                        callback_data="tg_route:field:opencode_agent",
+                    )
+                ]
+            )
+            rows.append(
+                [
+                    InlineButton(
+                        text=f"{self._t('routing.label.model')}: {self._option_label(state.opencode_model)}"[:40],
+                        callback_data="tg_route:field:opencode_model",
+                    )
+                ]
+            )
+            rows.append(
+                [
+                    InlineButton(
+                        text=f"{self._t('routing.label.reasoningEffort')}: {self._option_label(state.opencode_reasoning_effort)}"[
+                            :40
+                        ],
+                        callback_data="tg_route:field:opencode_reasoning_effort",
+                    )
+                ]
+            )
+        elif state.backend == "claude":
+            rows.append(
+                [
+                    InlineButton(
+                        text=f"{self._t('routing.label.agent')}: {self._option_label(state.claude_agent)}"[:40],
+                        callback_data="tg_route:field:claude_agent",
+                    )
+                ]
+            )
+            rows.append(
+                [
+                    InlineButton(
+                        text=f"{self._t('routing.label.model')}: {self._option_label(state.claude_model)}"[:40],
+                        callback_data="tg_route:field:claude_model",
+                    )
+                ]
+            )
+            rows.append(
+                [
+                    InlineButton(
+                        text=f"{self._t('routing.label.reasoningEffort')}: {self._option_label(state.claude_reasoning_effort)}"[
+                            :40
+                        ],
+                        callback_data="tg_route:field:claude_reasoning_effort",
+                    )
+                ]
+            )
+        elif state.backend == "codex":
+            rows.append(
+                [
+                    InlineButton(
+                        text=f"{self._t('routing.label.model')}: {self._option_label(state.codex_model)}"[:40],
+                        callback_data="tg_route:field:codex_model",
+                    )
+                ]
+            )
+            rows.append(
+                [
+                    InlineButton(
+                        text=f"{self._t('routing.label.reasoningEffort')}: {self._option_label(state.codex_reasoning_effort)}"[
+                            :40
+                        ],
+                        callback_data="tg_route:field:codex_reasoning_effort",
+                    )
+                ]
+            )
+
+        rows.append(
+            [
+                InlineButton(text=f"💾 {self._t('common.save')}", callback_data="tg_route:save"),
+                InlineButton(text=f"✖️ {self._t('common.cancel')}", callback_data="tg_route:cancel"),
+            ]
+        )
+        return text, InlineKeyboard(buttons=rows)
+
+    def _render_routing_picker(self, state: _TelegramRoutingState) -> tuple[str, InlineKeyboard]:
+        options = self._routing_picker_options(state)
+        page_size = 6
+        total_pages = max(1, (len(options) + page_size - 1) // page_size)
+        page = max(0, min(state.picker_page, total_pages - 1))
+        state.picker_page = page
+        page_options = options[page * page_size : (page + 1) * page_size]
+
+        lines = self._routing_summary_lines(state)
+        lines.extend(
+            [
+                "",
+                f"{self._t('telegram.routingChoosePrefix')} {self._routing_field_label(state.picker_field)}",
+            ]
+        )
+        rows = [
+            [InlineButton(text=(label or self._t("common.default"))[:40], callback_data=f"tg_route:option:{index}")]
+            for index, (label, _) in enumerate(page_options, start=page * page_size)
+        ]
+        nav_row: list[InlineButton] = []
+        if page > 0:
+            nav_row.append(InlineButton(text="◀️", callback_data="tg_route:page:prev"))
+        if page + 1 < total_pages:
+            nav_row.append(InlineButton(text="▶️", callback_data="tg_route:page:next"))
+        if nav_row:
+            rows.append(nav_row)
+        rows.append([InlineButton(text=f"↩️ {self._t('common.back')}", callback_data="tg_route:back")])
+        return "\n".join(lines), InlineKeyboard(buttons=rows)
+
+    async def _handle_routing_callback(self, context: MessageContext, callback_data: str) -> None:
+        scope_key = self._interaction_scope_key(context)
+        state = self._routing_states.get(scope_key)
+        if state is None or state.message_id != (context.message_id or ""):
+            return
+
+        parts = callback_data.split(":")
+        action = parts[1] if len(parts) > 1 else ""
+        if action == "cancel":
+            self._routing_states.pop(scope_key, None)
+            await self.edit_message(
+                context,
+                state.message_id,
+                text=f"🤖 {self._t('telegram.routingCanceled')}",
+                keyboard=None,
+            )
+            return
+        if action == "save":
+            self._routing_states.pop(scope_key, None)
+            if self._controller is None or not hasattr(self._controller, "settings_handler"):
+                await self.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
+                return
+            await self.edit_message(
+                context,
+                state.message_id,
+                text=f"🤖 {self._t('telegram.routingSaving')}",
+                keyboard=None,
+            )
+            await self._controller.settings_handler.handle_routing_update(
+                user_id=state.user_id,
+                channel_id=state.channel_id,
+                backend=state.backend,
+                opencode_agent=state.opencode_agent,
+                opencode_model=state.opencode_model,
+                opencode_reasoning_effort=state.opencode_reasoning_effort,
+                claude_agent=state.claude_agent,
+                claude_model=state.claude_model,
+                claude_reasoning_effort=state.claude_reasoning_effort,
+                codex_model=state.codex_model,
+                codex_reasoning_effort=state.codex_reasoning_effort,
+                is_dm=state.is_dm,
+                platform="telegram",
+            )
+            return
+        if action == "back":
+            state.picker_field = None
+            state.picker_page = 0
+        elif action == "page" and len(parts) > 2:
+            state.picker_page += -1 if parts[2] == "prev" else 1
+        elif action == "field" and len(parts) > 2:
+            field = parts[2]
+            if field == "backend":
+                state.picker_field = "backend"
+            else:
+                state.picker_field = field
+            state.picker_page = 0
+        elif action == "option" and len(parts) > 2:
+            try:
+                option_index = int(parts[2])
+            except Exception:
+                option_index = -1
+            options = self._routing_picker_options(state)
+            if 0 <= option_index < len(options):
+                _, value = options[option_index]
+                if state.picker_field == "backend" and value:
+                    state.backend = value
+                    state.picker_field = None
+                    state.picker_page = 0
+                else:
+                    self._apply_routing_option(state, value)
+
+        text, keyboard = self._render_routing_state(state)
+        await self.edit_message(context, state.message_id, text=text, keyboard=keyboard)

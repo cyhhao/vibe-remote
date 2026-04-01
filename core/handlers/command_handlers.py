@@ -410,11 +410,14 @@ class CommandHandlers(BaseHandler):
         supports_threads = (
             getattr(im_client, "should_use_thread_for_dm_session", lambda: False)()
             if is_dm
-            else getattr(im_client, "should_use_thread_for_reply", lambda: False)()
+            else (
+                getattr(im_client, "should_use_thread_for_reply", lambda: False)()
+                and getattr(im_client, "should_use_message_id_for_channel_session", lambda _context=None: True)(context)
+            )
         )
 
         # For non-interactive platforms, use traditional text message
-        if platform not in {"slack", "discord", "lark"}:
+        if platform not in {"slack", "discord", "lark", "telegram"}:
             user_name = self._resolve_user_display_name(user_info, self._t("command.start.userFallback"))
             show_channel = platform != "wechat"
             message_text = self._build_non_interactive_start_message(
@@ -429,7 +432,7 @@ class CommandHandlers(BaseHandler):
             await im_client.send_message(channel_context, message_text)
             return
 
-        # For Slack/Discord, create interactive buttons
+        # For Slack/Discord/Telegram, create interactive buttons
         user_name = self._resolve_user_display_name(user_info, "User")
 
         # Create interactive buttons for commands
@@ -475,6 +478,13 @@ class CommandHandlers(BaseHandler):
         """Handle /new command - reset active session state for a fresh start."""
         try:
             im_client = self._get_im_client(context)
+            platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
+            if platform == "telegram" and hasattr(im_client, "start_new_topic_session"):
+                topic_context = await im_client.start_new_topic_session(context)
+                if topic_context is not None:
+                    await im_client.send_message(topic_context, f"🆕 {self._t('command.new.started')}")
+                    logger.info("Started new Telegram topic session for user %s", context.user_id)
+                    return
             session_key = self._get_session_key(context)
             await self.controller.agent_service.clear_sessions(session_key)
             full_response = f"🆕 {self._t('command.new.started')}"
@@ -651,6 +661,22 @@ class CommandHandlers(BaseHandler):
                 f"📂 {self._t('command.cwd.changeInstructions')}",
             )
             return
+        if platform == "telegram":
+            if hasattr(im_client, "open_change_cwd_modal"):
+                try:
+                    current_cwd = self.controller.get_cwd(context)
+                    await im_client.run_on_client_loop(
+                        im_client.open_change_cwd_modal(context, current_cwd, context.channel_id)
+                    )
+                    return
+                except Exception as e:
+                    logger.error(f"Error opening Telegram change CWD flow: {e}")
+            channel_context = self._get_channel_context(context)
+            await im_client.send_message(
+                channel_context,
+                f"📂 {self._t('command.cwd.changeInstructions')}",
+            )
+            return
 
         if platform not in {"slack"}:
             channel_context = self._get_channel_context(context)
@@ -713,6 +739,28 @@ class CommandHandlers(BaseHandler):
                     logger.error(f"Error opening resume modal: {e}")
             channel_context = self._get_channel_context(context)
             await self._send_resume_menu_prompt(context)
+            return
+        if platform == "telegram":
+            if hasattr(im_client, "open_resume_session_modal"):
+                try:
+                    _, sessions = self._list_recent_native_sessions(context, limit=25)
+                    await im_client.run_on_client_loop(
+                        im_client.open_resume_session_modal(
+                            trigger_id=context,
+                            sessions=sessions,
+                            channel_id=context.channel_id,
+                            thread_id=context.thread_id or context.message_id or "",
+                            host_message_ts=context.message_id,
+                        )
+                    )
+                    return
+                except Exception as e:
+                    logger.error(f"Error opening Telegram resume flow: {e}")
+            channel_context = self._get_channel_context(context)
+            await im_client.send_message(
+                channel_context,
+                f"⏮️ {self._t('command.resume.clickButton')}",
+            )
             return
         if platform == "lark":
             if hasattr(im_client, "open_resume_session_modal"):

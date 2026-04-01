@@ -304,5 +304,21 @@
     "systemDefault": "(系统默认)",
     "en": "English",
     "zh": "中文"
+  },
+  "telegram": {
+    "autoTopicGeneralNotice": "已为这次请求创建新的 Topic：{topic}，请在那里继续。",
+    "autoTopicIntro": "已创建新的会话 Topic：{topic}",
+    "cwdPromptTitle": "更改工作目录",
+    "cwdPromptBody": "下一条消息直接发送新的路径即可。使用 `/cancel` 或下方按钮可取消。",
+    "cwdPromptCanceled": "已取消更改工作目录。",
+    "resumeTitle": "恢复已保存会话",
+    "resumeBody": "从下面选择一个已保存的会话。",
+    "resumeNoStoredSessions": "这个会话里暂时还没有可恢复的已保存会话。",
+    "resumeCanceled": "已取消恢复会话。",
+    "resumeSubmitting": "正在恢复所选会话...",
+    "routingTitle": "Agent 与模型设置",
+    "routingChoosePrefix": "请选择",
+    "routingSaving": "正在保存 Agent 路由设置...",
+    "routingCanceled": "已取消更新 Agent 路由设置。"
   }
 }

@@ -155,9 +155,12 @@ class OpenCodeQuestionHandler:
     async def open_question_modal(self, request: AgentRequest, pending: PendingQuestionPayload) -> None:
         trigger_id = None
         interaction = None
+        platform = getattr(request.context, "platform", None) or (request.context.platform_specific or {}).get("platform")
         if request.context.platform_specific:
             trigger_id = request.context.platform_specific.get("trigger_id")
             interaction = request.context.platform_specific.get("interaction")
+        if not trigger_id and not interaction and platform == "telegram":
+            trigger_id = request.context
         if not trigger_id and not interaction:
             await self._im_client.send_message(
                 request.context,

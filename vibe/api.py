@@ -22,6 +22,7 @@ from config.v2_settings import (
     _parse_routing,
     _routing_to_dict,
 )
+from config.discovered_chats import DiscoveredChatsStore
 from config.v2_sessions import SessionsStore
 from vibe.opencode_config import (
     get_opencode_config_paths,
@@ -299,6 +300,7 @@ def config_to_payload(config: V2Config) -> dict:
             "require_mention": config.slack.require_mention,
         },
         "discord": config.discord.__dict__ if config.discord else None,
+        "telegram": config.telegram.__dict__ if config.telegram else None,
         "lark": config.lark.__dict__ if config.lark else None,
         "wechat": config.wechat.__dict__ if config.wechat else None,
         "runtime": {
@@ -474,6 +476,41 @@ def discord_auth_test(bot_token: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def telegram_auth_test(bot_token: str) -> dict:
+    try:
+        return {"ok": True, "response": asyncio.run(_telegram_get_me(bot_token))}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def telegram_list_chats(include_private: bool = False) -> dict:
+    store = DiscoveredChatsStore.get_instance()
+    all_chats = store.list_chats("telegram", include_private=True)
+    chats = all_chats if include_private else [chat for chat in all_chats if not chat.is_private]
+    return {
+        "ok": True,
+        "channels": [
+            {
+                "id": chat.chat_id,
+                "name": chat.name or chat.username or chat.chat_id,
+                "username": chat.username,
+                "type": chat.chat_type,
+                "is_private": chat.is_private,
+                "is_forum": chat.is_forum,
+                "supports_topics": chat.supports_topics,
+                "last_seen_at": chat.last_seen_at,
+            }
+            for chat in chats
+        ],
+        "summary": {
+            "discovered_count": len(all_chats),
+            "visible_count": len(chats),
+            "hidden_private_count": sum(1 for chat in all_chats if chat.is_private) if not include_private else 0,
+            "forum_count": sum(1 for chat in chats if chat.supports_topics),
+        },
+    }
+
+
 def discord_list_guilds(bot_token: str) -> dict:
     try:
         data = _discord_api_get(bot_token, "users/@me/guilds")
@@ -520,6 +557,13 @@ def _discord_api_get(bot_token: str, path: str) -> dict:
     with urllib.request.urlopen(req, timeout=10) as resp:
         payload = resp.read().decode("utf-8")
         return json.loads(payload)
+
+
+async def _telegram_get_me(bot_token: str) -> dict:
+    from modules.im import telegram_api
+
+    result = await telegram_api.get_me(bot_token)
+    return result.get("result") or {}
 
 
 async def opencode_options_async(cwd: str) -> dict:

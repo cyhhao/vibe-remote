@@ -50,7 +50,13 @@ class _FakeSessions:
 
 
 class _Controller:
-    def __init__(self, *, platform: str = "discord", dm_threads: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        platform: str = "discord",
+        dm_threads: bool = False,
+        channel_message_sessions: bool = True,
+    ) -> None:
         self.config = _Config()
         self.config.platform = platform
         self.sessions = _FakeSessions()
@@ -60,6 +66,7 @@ class _Controller:
             {
                 "formatter": None,
                 "should_use_thread_for_dm_session": lambda self: dm_threads,
+                "should_use_message_id_for_channel_session": lambda self, context=None: channel_message_sessions,
                 "should_use_thread_for_reply": lambda self: platform in {"discord", "slack", "lark"},
             },
         )()
@@ -146,6 +153,19 @@ def test_channel_session_base_id_keeps_thread_or_message_behavior() -> None:
     assert handler.get_base_session_id(context) == "discord_msg-999"
 
 
+def test_telegram_plain_group_session_base_id_uses_stable_channel_id() -> None:
+    handler = SessionHandler(_Controller(platform="telegram", channel_message_sessions=False))
+    context = MessageContext(
+        user_id="u-1",
+        channel_id="-100123",
+        message_id="42",
+        platform="telegram",
+        platform_specific={"is_dm": False, "chat_type": "supergroup"},
+    )
+
+    assert handler.get_base_session_id(context) == "telegram_-100123"
+
+
 def test_scheduled_channel_session_uses_provisional_anchor_on_threaded_surfaces() -> None:
     controller = _Controller(platform="slack", dm_threads=False)
     handler = SessionHandler(controller)
@@ -159,6 +179,19 @@ def test_scheduled_channel_session_uses_provisional_anchor_on_threaded_surfaces(
     base_session_id = handler.get_base_session_id(context, source="scheduled")
 
     assert base_session_id.startswith("slack_scheduled-")
+
+
+def test_scheduled_telegram_group_session_reuses_channel_scope() -> None:
+    controller = _Controller(platform="telegram", dm_threads=False, channel_message_sessions=False)
+    handler = SessionHandler(controller)
+    context = MessageContext(
+        user_id="scheduled",
+        channel_id="-100123",
+        platform="telegram",
+        platform_specific={"is_dm": False, "chat_type": "supergroup", "turn_source": "scheduled"},
+    )
+
+    assert handler.get_base_session_id(context, source="scheduled") == "telegram_-100123"
 
 
 def test_scheduled_dm_session_reuses_flat_session_scope() -> None:

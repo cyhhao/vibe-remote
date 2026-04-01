@@ -52,9 +52,11 @@ class _StubIMClient:
     def __init__(self, user_info):
         self.user_info = user_info
         self.sent_messages = []
+        self.sent_contexts = []
         self.sent_button_messages = []
         self.channel_info_calls = []
         self.formatter = None
+        self.started_topic_context = None
 
     async def get_user_info(self, user_id):
         return self.user_info
@@ -64,12 +66,16 @@ class _StubIMClient:
         return {"id": channel_id, "name": channel_id}
 
     async def send_message(self, context, text, parse_mode=None):
+        self.sent_contexts.append(context)
         self.sent_messages.append((context.channel_id, text))
         return "T1"
 
     async def send_message_with_buttons(self, context, text, keyboard, parse_mode=None):
         self.sent_button_messages.append((context.channel_id, text, keyboard))
         return "T2"
+
+    async def start_new_topic_session(self, context):
+        return self.started_topic_context
 
 
 class _StubSettingsManager:
@@ -161,6 +167,33 @@ class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
             controller.im_client.sent_messages,
             [("wx-chat", "🆕 已开启新的会话。你下一条消息会从全新对话开始。")],
         )
+
+    async def test_telegram_new_command_creates_topic_session_when_supported(self):
+        controller = _StubController({"display_name": "Alex"})
+        setattr(controller.config, "platform", "telegram")
+        controller.agent_service.clear_sessions = _clear_sessions  # type: ignore[attr-defined]
+        handler = CommandHandlers(controller)
+        controller.im_client.started_topic_context = MessageContext(
+            user_id="42",
+            channel_id="-100123",
+            thread_id="99",
+            platform="telegram",
+        )
+        context = MessageContext(
+            user_id="42",
+            channel_id="-100123",
+            thread_id="1",
+            platform="telegram",
+            platform_specific={"platform": "telegram"},
+        )
+
+        await handler.handle_new(context)
+
+        self.assertEqual(
+            controller.im_client.sent_messages,
+            [("-100123", "🆕 已开启新的会话。你下一条消息会从全新对话开始。")],
+        )
+        self.assertEqual(controller.im_client.sent_contexts[0].thread_id, "99")
 
     async def test_slack_dm_start_skips_channel_info_lookup(self):
         controller = _StubController({"display_name": "Alex"})

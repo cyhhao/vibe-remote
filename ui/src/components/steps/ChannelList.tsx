@@ -55,6 +55,13 @@ interface ChannelConfig {
   require_mention?: boolean | null;  // null=use global default, true=require, false=don't require
 }
 
+interface TelegramDiscoverySummary {
+  discovered_count: number;
+  visible_count: number;
+  hidden_private_count: number;
+  forum_count: number;
+}
+
 export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onBack, isPage, forcedPlatform, wizardPlatforms }) => {
   const { t } = useTranslation();
   const api = useApi();
@@ -81,6 +88,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
   const [guilds, setGuilds] = useState<any[]>([]);
   const [selectedGuild, setSelectedGuild] = useState<string>(data.discord?.guild_allowlist?.[0] || '');
+  const [telegramSummary, setTelegramSummary] = useState<TelegramDiscoverySummary | null>(null);
   // Directory browser state — tracks which channel's cwd picker is open
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
 
@@ -150,6 +158,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     setWizardActivePlatform(newPlatform);
     setChannels([]);
     setBrowseAll(false);
+    setTelegramSummary(null);
   };
 
   useEffect(() => {
@@ -161,6 +170,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   }, [api, isPage, platform]);
   const botToken = platform === 'discord'
     ? (config.discord?.bot_token || data.discord?.bot_token || '')
+    : platform === 'telegram'
+      ? (config.telegram?.bot_token || data.telegram?.bot_token || '')
     : platform === 'lark'
       ? '' // Lark uses app_id + app_secret, not bot_token
       : (config.slack?.bot_token || config.slackBotToken || '');
@@ -206,6 +217,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         const result = await api.larkChats(larkAppId, larkAppSecret, larkDomain);
         if (result.ok) {
           setChannels(result.channels || []);
+        }
+      } else if (platform === 'telegram') {
+        const result = await api.telegramChats(false);
+        if (result.ok) {
+          setChannels(result.channels || []);
+          setTelegramSummary(result.summary || null);
         }
       } else if (platform === 'discord') {
         if (!selectedGuild) {
@@ -452,10 +469,37 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   // Sort channels: enabled channels first
   const sortedChannels = React.useMemo(() => {
-    return [...channels].sort((a, b) =>
-      Number(isChannelEnabled(b.id)) - Number(isChannelEnabled(a.id))
-    );
-  }, [channels, configs]);
+    return [...channels].sort((a, b) => {
+      const enabledDelta = Number(isChannelEnabled(b.id)) - Number(isChannelEnabled(a.id));
+      if (enabledDelta !== 0) return enabledDelta;
+
+      if (platform === 'telegram') {
+        const topicDelta = Number(Boolean(b.supports_topics)) - Number(Boolean(a.supports_topics));
+        if (topicDelta !== 0) return topicDelta;
+
+        const rank = (channel: any) => {
+          if (channel.supports_topics) return 3;
+          if (channel.type === 'supergroup') return 2;
+          if (channel.type === 'group') return 1;
+          return 0;
+        };
+        const rankDelta = rank(b) - rank(a);
+        if (rankDelta !== 0) return rankDelta;
+
+        const timeDelta = (Date.parse(b.last_seen_at || '') || 0) - (Date.parse(a.last_seen_at || '') || 0);
+        if (timeDelta !== 0) return timeDelta;
+      }
+
+      return String(a.name || a.id).localeCompare(String(b.name || b.id));
+    });
+  }, [channels, configs, platform]);
+
+  const formatTelegramLastSeen = (value?: string) => {
+    if (!value) return '';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return '';
+    return parsed.toLocaleString();
+  };
 
   const navigate = useNavigate();
 
@@ -548,7 +592,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           </div>
           <button
             onClick={async () => {
-              const key = platform as 'slack' | 'discord' | 'lark' | 'wechat';
+              const key = platform as 'slack' | 'discord' | 'telegram' | 'lark' | 'wechat';
               const current = !!(config as any)[key]?.require_mention;
               const updated = {
                 ...config,
@@ -584,7 +628,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('channelList.refreshList')}
             </button>
-            {!browseAll && platform !== 'lark' && (
+            {!browseAll && !['lark', 'telegram'].includes(platform) && (
               <button
                 onClick={() => loadChannels(true)}
                 disabled={loadingAll}
@@ -603,7 +647,13 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 {t('channelList.cantFindChannel')}
               </span>
               <span className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-text text-bg text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-64 whitespace-normal">
-                {platform === 'discord' ? t('channelList.discordInviteBotHint') : platform === 'lark' ? t('channelList.larkInviteBotHint') : t('channelList.inviteBotHint')}
+                {platform === 'discord'
+                  ? t('channelList.discordInviteBotHint')
+                  : platform === 'lark'
+                    ? t('channelList.larkInviteBotHint')
+                    : platform === 'telegram'
+                      ? t('channelList.telegramInviteBotHint')
+                      : t('channelList.inviteBotHint')}
               </span>
             </span>
             {channels.length === 0 && !loading && (
@@ -633,12 +683,31 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             <span className="text-xs text-muted">{t('channelList.accessPolicyHint')}</span>
           </div>
         )}
+        {platform === 'telegram' && (
+          <div className="rounded-lg border border-accent/20 bg-accent/5 p-3">
+            <div className="text-sm font-medium text-text">{t('channelList.telegramDiscoveryTitle')}</div>
+            <div className="mt-1 text-sm text-muted">{t('channelList.telegramDiscoveryInfo')}</div>
+            <div className="mt-2 text-xs text-muted">
+              {t('channelList.telegramDiscoveryStats', {
+                visible: telegramSummary?.visible_count || 0,
+                forum: telegramSummary?.forum_count || 0,
+                hidden: telegramSummary?.hidden_private_count || 0,
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto border border-border rounded-xl divide-y divide-border bg-panel shadow-sm">
         {!loading && channels.length === 0 && !botToken && platform !== 'lark' && (
           <div className="p-8 text-center text-muted">
             {t('channelList.addTokenFirst')}
+          </div>
+        )}
+        {!loading && channels.length === 0 && platform === 'telegram' && !!botToken && (
+          <div className="p-8 text-center">
+            <div className="text-sm font-medium text-text">{t('channelList.telegramDiscoveryEmptyTitle')}</div>
+            <div className="mt-2 text-sm text-muted">{t('channelList.telegramDiscoveryEmptyDesc')}</div>
           </div>
         )}
         {sortedChannels.map((channel) => {
@@ -678,6 +747,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                       <Hash size={14} className="text-muted" /> {channel.name}
                     </div>
                     <div className="text-xs text-muted font-mono">ID: {channel.id}</div>
+                    {platform === 'telegram' && (channel.username || channel.last_seen_at) && (
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
+                        {channel.username && <span>@{channel.username}</span>}
+                        {channel.last_seen_at && (
+                          <span>{t('channelList.telegramLastSeen', { time: formatTelegramLastSeen(channel.last_seen_at) })}</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <span
@@ -685,6 +762,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     'text-xs px-2 py-0.5 rounded-full border',
                     platform === 'discord'
                       ? 'bg-neutral-100 text-text border-border'
+                      : platform === 'telegram'
+                        ? channel.supports_topics
+                          ? 'bg-accent/10 text-accent border-accent/20'
+                          : channel.type === 'supergroup'
+                            ? 'bg-success/10 text-success border-success/20'
+                            : channel.is_private
+                              ? 'bg-warning/10 text-warning border-warning/20'
+                              : 'bg-neutral-100 text-text border-border'
                       : channel.is_private
                         ? 'bg-warning/10 text-warning border-warning/20'
                         : 'bg-success/10 text-success border-success/20'
@@ -692,6 +777,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 >
                   {platform === 'discord'
                     ? (channel.type === 5 ? t('channelList.discordNews') : t('channelList.discordText'))
+                    : platform === 'telegram'
+                      ? channel.supports_topics
+                        ? t('channelList.telegramForum')
+                        : channel.type === 'supergroup'
+                          ? t('channelList.telegramSupergroup')
+                          : channel.type === 'group'
+                            ? t('channelList.telegramGroup')
+                            : channel.is_private
+                              ? t('common.private')
+                              : t('channelList.telegramChat')
                     : channel.is_private ? t('common.private') : t('common.public')}
                 </span>
               </div>
@@ -751,6 +846,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                         <option value="">
                           {t('common.default')} ({platform === 'discord'
                             ? (config.discord?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))
+                            : platform === 'telegram'
+                              ? (config.telegram?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))
                             : platform === 'lark'
                               ? (config.lark?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))
                               : (config.slack?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))})

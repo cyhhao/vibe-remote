@@ -5,6 +5,7 @@ import logging
 from collections import Counter
 
 from .base import NativeSessionProvider
+from .display import format_display_summary, format_display_time
 from .providers import DEFAULT_PROVIDER_SPECS, NativeSessionProviderSpec
 from .types import NativeResumeSession
 
@@ -12,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 
 class AgentNativeSessionService:
+    format_display_summary = staticmethod(format_display_summary)
+    format_display_time = staticmethod(format_display_time)
+
     def __init__(
         self,
         providers: list[NativeSessionProvider] | None = None,

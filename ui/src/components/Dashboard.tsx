@@ -38,6 +38,7 @@ export const Dashboard: React.FC = () => {
                 reply_enhancements: newConfig.reply_enhancements,
                 slack: newConfig.slack,
                 discord: newConfig.discord,
+                telegram: newConfig.telegram,
                 lark: newConfig.lark,
                 wechat: newConfig.wechat,
                 agents: newConfig.agents,

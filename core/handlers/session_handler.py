@@ -38,7 +38,20 @@ class SessionHandler(BaseHandler):
             else:
                 base_id = context.channel_id or context.user_id
         else:
-            base_id = context.thread_id or context.message_id or context.channel_id
+            base_id = context.thread_id
+            if not base_id:
+                use_message_id = True
+                getter = getattr(self.controller, "get_im_client_for_context", None)
+                if callable(getter):
+                    try:
+                        im_client = getter(context)
+                    except AttributeError:
+                        im_client = getattr(self.controller, "im_client", None)
+                else:
+                    im_client = getattr(self.controller, "im_client", None)
+                if im_client and hasattr(im_client, "should_use_message_id_for_channel_session"):
+                    use_message_id = bool(im_client.should_use_message_id_for_channel_session(context))
+                base_id = context.message_id if use_message_id and context.message_id else context.channel_id
         return f"{platform}_{base_id}"
 
     def _get_context_platform(self, context: MessageContext) -> str:
@@ -52,7 +65,14 @@ class SessionHandler(BaseHandler):
         if source != "scheduled" or context.thread_id:
             return False
         is_dm = bool((context.platform_specific or {}).get("is_dm", False))
-        return self._supports_threaded_session(context, is_dm=is_dm)
+        if not self._supports_threaded_session(context, is_dm=is_dm):
+            return False
+        if is_dm:
+            return True
+
+        im_client = self._get_im_client(context)
+        use_message_id = getattr(im_client, "should_use_message_id_for_channel_session", lambda _context=None: True)
+        return bool(use_message_id(context))
 
     def build_message_anchor_base(self, context: MessageContext, message_id: str) -> str:
         return f"{self._get_context_platform(context)}_{message_id}"
@@ -229,7 +249,15 @@ class SessionHandler(BaseHandler):
         im_client = self._get_im_client(context)
         if is_dm:
             return bool(getattr(im_client, "should_use_thread_for_dm_session", lambda: False)())
-        return bool(getattr(im_client, "should_use_thread_for_reply", lambda: False)())
+        uses_thread_replies = bool(getattr(im_client, "should_use_thread_for_reply", lambda: False)())
+        if not uses_thread_replies:
+            return False
+        if context.thread_id:
+            return True
+        uses_message_anchor = bool(
+            getattr(im_client, "should_use_message_id_for_channel_session", lambda _context=None: True)(context)
+        )
+        return uses_message_anchor
 
     def _build_resume_confirmation(
         self,
@@ -610,14 +638,24 @@ class SessionHandler(BaseHandler):
                 )
 
             mapped_thread = followup_context.thread_id or confirmation_ts
-            mapping_context = MessageContext(
-                user_id=user_id,
-                channel_id=followup_context.channel_id,
-                platform=followup_context.platform,
-                thread_id=mapped_thread,
-                message_id=confirmation_ts,
-                platform_specific={"is_dm": is_dm},
-            )
+            if thread_capable:
+                mapping_context = MessageContext(
+                    user_id=user_id,
+                    channel_id=followup_context.channel_id,
+                    platform=followup_context.platform,
+                    thread_id=mapped_thread,
+                    message_id=confirmation_ts,
+                    platform_specific={"is_dm": is_dm},
+                )
+            else:
+                mapping_context = MessageContext(
+                    user_id=user_id,
+                    channel_id=followup_context.channel_id,
+                    platform=followup_context.platform,
+                    thread_id=None,
+                    message_id=None,
+                    platform_specific={"is_dm": is_dm},
+                )
             base_session_id = self.get_base_session_id(mapping_context)
 
             # OpenCode session mappings use composite keys that include

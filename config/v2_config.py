@@ -55,6 +55,23 @@ class DiscordConfig(BaseIMConfig):
 
 
 @dataclass
+class TelegramConfig(BaseIMConfig):
+    bot_token: str = ""
+    require_mention: bool = True
+    forum_auto_topic: bool = True
+    use_webhook: bool = False
+    webhook_url: Optional[str] = None
+    webhook_secret_token: Optional[str] = None
+    allowed_chat_ids: Optional[List[str]] = None
+    allowed_user_ids: Optional[List[str]] = None
+
+    def validate(self) -> None:
+        # Allow empty token for initial setup
+        if self.bot_token and ":" not in self.bot_token:
+            raise ValueError("Invalid Telegram bot token format")
+
+
+@dataclass
 class LarkConfig(BaseIMConfig):
     app_id: str = ""
     app_secret: str = ""
@@ -162,7 +179,7 @@ class PlatformsConfig:
     primary: str = "slack"
 
     def validate(self) -> None:
-        supported = {"slack", "discord", "lark", "wechat"}
+        supported = {"slack", "discord", "telegram", "lark", "wechat"}
         normalized: list[str] = []
         for platform in self.enabled:
             if platform not in supported:
@@ -172,7 +189,7 @@ class PlatformsConfig:
         if not normalized:
             raise ValueError("Config 'platforms.enabled' must contain at least one platform")
         if self.primary not in supported:
-            raise ValueError("Config 'platforms.primary' must be 'slack', 'discord', 'lark', or 'wechat'")
+            raise ValueError("Config 'platforms.primary' must be 'slack', 'discord', 'telegram', 'lark', or 'wechat'")
         if self.primary not in normalized:
             normalized.insert(0, self.primary)
         self.enabled = normalized
@@ -188,6 +205,7 @@ class V2Config:
     platform: str = "slack"
     platforms: PlatformsConfig = field(default_factory=PlatformsConfig)
     discord: Optional[DiscordConfig] = None
+    telegram: Optional[TelegramConfig] = None
     lark: Optional[LarkConfig] = None
     wechat: Optional[WeChatConfig] = None
     gateway: Optional[GatewayConfig] = None
@@ -219,8 +237,8 @@ class V2Config:
             raise ValueError("Config 'mode' must be 'self_host' or 'saas'")
 
         platform = payload.get("platform") or "slack"
-        if platform not in {"slack", "discord", "lark", "wechat"}:
-            raise ValueError("Config 'platform' must be 'slack', 'discord', 'lark', or 'wechat'")
+        if platform not in {"slack", "discord", "telegram", "lark", "wechat"}:
+            raise ValueError("Config 'platform' must be 'slack', 'discord', 'telegram', 'lark', or 'wechat'")
 
         platforms_payload = payload.get("platforms")
         if platforms_payload is not None and not isinstance(platforms_payload, dict):
@@ -260,6 +278,14 @@ class V2Config:
             discord = DiscordConfig(**_filter_dataclass_fields(DiscordConfig, discord_payload))
             discord.validate()
 
+        telegram_payload = payload.get("telegram")
+        if telegram_payload is not None and not isinstance(telegram_payload, dict):
+            raise ValueError("Config 'telegram' must be an object")
+        telegram = None
+        if telegram_payload is not None:
+            telegram = TelegramConfig(**_filter_dataclass_fields(TelegramConfig, telegram_payload))
+            telegram.validate()
+
         lark_payload = payload.get("lark")
         if lark_payload is not None and not isinstance(lark_payload, dict):
             raise ValueError("Config 'lark' must be an object")
@@ -284,6 +310,8 @@ class V2Config:
         for _ep in platforms.enabled:
             if _ep == "discord" and discord is None:
                 raise ValueError("Config 'discord' must be provided when discord is enabled")
+            if _ep == "telegram" and telegram is None:
+                raise ValueError("Config 'telegram' must be provided when telegram is enabled")
             if _ep == "lark" and lark is None:
                 raise ValueError("Config 'lark' must be provided when lark is enabled")
             if _ep == "wechat" and wechat is None:
@@ -368,6 +396,7 @@ class V2Config:
             version=payload.get("version", "v2"),
             slack=slack,
             discord=discord,
+            telegram=telegram,
             lark=lark,
             wechat=wechat,
             runtime=runtime,
@@ -397,6 +426,7 @@ class V2Config:
             "version": self.version,
             "slack": self.slack.__dict__,
             "discord": self.discord.__dict__ if self.discord else None,
+            "telegram": self.telegram.__dict__ if self.telegram else None,
             "lark": self.lark.__dict__ if self.lark else None,
             "wechat": self.wechat.__dict__ if self.wechat else None,
             "runtime": {

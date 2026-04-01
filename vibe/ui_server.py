@@ -437,6 +437,23 @@ def discord_channels():
     return jsonify(api.discord_list_channels(payload.get("bot_token", ""), payload.get("guild_id", "")))
 
 
+@app.route("/telegram/auth_test", methods=["POST"])
+def telegram_auth_test():
+    from vibe import api
+
+    payload = request.json or {}
+    result = api.telegram_auth_test(payload.get("bot_token", ""))
+    return jsonify(result)
+
+
+@app.route("/telegram/chats", methods=["POST"])
+def telegram_chats():
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.telegram_list_chats(include_private=payload.get("include_private", False)))
+
+
 @app.route("/lark/auth_test", methods=["POST"])
 def lark_auth_test():
     from vibe import api

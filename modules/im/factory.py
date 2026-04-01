@@ -40,6 +40,7 @@ class IMFactory:
         # Dynamic imports to avoid circular dependency
         from .slack import SlackBot
         from .discord import DiscordBot
+        from .telegram import TelegramBot
 
         enabled_platforms = list(getattr(config, "enabled_platforms", lambda: [getattr(config, "platform", "slack")])())
         clients: dict[str, BaseIMClient] = {}
@@ -55,6 +56,12 @@ class IMFactory:
                     raise ValueError("Discord configuration not found")
                 logger.info("Creating Discord client")
                 clients[platform] = DiscordBot(config.discord)
+                continue
+            if platform == "telegram":
+                if not getattr(config, "telegram", None):
+                    raise ValueError("Telegram configuration not found")
+                logger.info("Creating Telegram client")
+                clients[platform] = TelegramBot(config.telegram)
                 continue
             if platform == "lark":
                 from .feishu import FeishuBot
@@ -82,7 +89,7 @@ class IMFactory:
         Returns:
             List of supported platform names
         """
-        return ["slack", "discord", "lark", "wechat"]
+        return ["slack", "discord", "telegram", "lark", "wechat"]
 
     @staticmethod
     def validate_platform_config(config) -> None:
@@ -104,6 +111,11 @@ class IMFactory:
                 if config.discord is None:
                     raise ValueError("Missing configuration for platform: discord")
                 config.discord.validate()
+                continue
+            if platform == "telegram":
+                if getattr(config, "telegram", None) is None:
+                    raise ValueError("Missing configuration for platform: telegram")
+                config.telegram.validate()
                 continue
             if platform == "lark":
                 if config.lark is None:

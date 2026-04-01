@@ -146,6 +146,10 @@ class BaseIMClient(ABC):
         """
         return False
 
+    def should_use_message_id_for_channel_session(self, context: Optional[MessageContext] = None) -> bool:
+        """Whether non-thread channel messages should default to per-message sessions."""
+        return True
+
     async def prepare_turn_context(self, context: MessageContext, source: str) -> MessageContext:
         """Allow IM adapters to adjust reply topology for a turn source.
 

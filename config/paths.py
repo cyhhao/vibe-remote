@@ -57,6 +57,10 @@ def get_sessions_path() -> Path:
     return get_state_dir() / "sessions.json"
 
 
+def get_discovered_chats_path() -> Path:
+    return get_state_dir() / "discovered_chats.json"
+
+
 def get_user_preferences_path() -> Path:
     return get_state_dir() / "user_preferences.md"
 

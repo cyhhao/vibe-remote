@@ -244,6 +244,64 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(im_client.messages[1][1], "SUB123")
         self.assertIn("Reply in the subchannel", im_client.messages[1][2])
 
+    async def test_handle_resume_session_submission_telegram_group_keeps_channel_mapping(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="telegram"))
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
+        ctrl.im_client.should_use_message_id_for_channel_session = lambda context=None: False
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U777",
+            channel_id="-100123",
+            thread_id=None,
+            agent="codex",
+            session_id="sess_telegram_group",
+            host_message_ts="HOST1",
+            is_dm=False,
+            platform="telegram",
+        )
+
+        self.assertEqual(
+            settings.set_calls,
+            [("telegram::-100123", "codex", "telegram_-100123", "sess_telegram_group")],
+        )
+        self.assertEqual(settings.mark_calls, [("U777", "-100123", "T1")])
+        self.assertEqual(len(im_client.messages), 2)
+        self.assertEqual(im_client.messages[0][1], None)
+        self.assertEqual(im_client.messages[1][1], None)
+        self.assertIn("Send your next message directly", im_client.messages[1][2])
+
+    async def test_handle_resume_session_submission_telegram_forum_keeps_topic_mapping(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="telegram"))
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
+        ctrl.im_client.should_use_message_id_for_channel_session = lambda context=None: False
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U777",
+            channel_id="-100123",
+            thread_id="99",
+            agent="codex",
+            session_id="sess_telegram_topic",
+            host_message_ts="HOST1",
+            is_dm=False,
+            platform="telegram",
+        )
+
+        self.assertEqual(
+            settings.set_calls,
+            [("telegram::-100123", "codex", "telegram_99", "sess_telegram_topic")],
+        )
+        self.assertEqual(settings.mark_calls, [("U777", "-100123", "99")])
+        self.assertEqual(len(im_client.messages), 2)
+        self.assertEqual(im_client.messages[0][1], "99")
+        self.assertEqual(im_client.messages[1][1], "99")
+        self.assertIn("Reply in this thread", im_client.messages[1][2])
+
     async def test_command_handlers_handle_resume_opens_modal(self):
         settings = _StubSettingsManager()
         im_client = _StubIMClient()
@@ -351,6 +409,46 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("menu message", im_client.messages[0][2])
         self.assertEqual(ctrl.native_session_service.calls, [])
         ctrl.command_handler.handle_start.assert_awaited_once()
+
+    async def test_command_handlers_handle_resume_telegram_uses_native_sessions(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="telegram"))
+        ctrl.native_session_service = _StubNativeSessionService(
+            [
+                NativeResumeSession(
+                    agent="codex",
+                    agent_prefix="cx",
+                    native_session_id="session_telegram_123",
+                    working_path="/Users/cyh/vibe-remote",
+                    created_at=None,
+                    updated_at=None,
+                    sort_ts=100.0,
+                    last_agent_message="done",
+                    last_agent_tail="...done",
+                )
+            ]
+        )
+
+        ctx = MessageContext(
+            user_id="U1",
+            channel_id="TGCHAN",
+            thread_id="TOPIC1",
+            message_id="MSG1",
+            platform="telegram",
+            platform_specific={"is_dm": False},
+        )
+
+        await ctrl.command_handler.handle_resume(ctx)
+
+        self.assertEqual(im_client.messages, [])
+        self.assertEqual(len(im_client.resume_calls), 1)
+        trigger_id, sessions, channel_id, thread_id, host_ts = im_client.resume_calls[0]
+        self.assertEqual(trigger_id, ctx)
+        self.assertEqual((channel_id, thread_id, host_ts), ("TGCHAN", "TOPIC1", "MSG1"))
+        self.assertEqual([item.native_session_id for item in sessions], ["session_telegram_123"])
+        self.assertEqual(ctrl.native_session_service.calls, [("/Users/cyh/vibe-remote", 25)])
 
     async def test_command_handlers_handle_resume_wechat_lists_recent_sessions(self):
         settings = _StubSettingsManager()

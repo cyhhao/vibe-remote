@@ -7,6 +7,7 @@ def test_paths_are_under_home():
     assert paths.get_config_path().parent == paths.get_config_dir()
     assert paths.get_settings_path().parent == paths.get_state_dir()
     assert paths.get_sessions_path().parent == paths.get_state_dir()
+    assert paths.get_discovered_chats_path().parent == paths.get_state_dir()
     assert paths.get_user_preferences_path().parent == paths.get_state_dir()
 
 

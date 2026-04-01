@@ -367,6 +367,8 @@ class SettingsHandler(BaseHandler):
                 await self._handle_routing_slack(context)
             elif platform == "discord":
                 await self._handle_routing_discord(context)
+            elif platform == "telegram":
+                await self._handle_routing_telegram(context)
             elif platform == "lark":
                 await self._handle_routing_lark(context)
             else:
@@ -500,6 +502,21 @@ class SettingsHandler(BaseHandler):
             )
         except Exception as e:
             logger.error(f"Error opening routing modal: {e}", exc_info=True)
+            await im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
+
+    async def _handle_routing_telegram(self, context: MessageContext):
+        im_client = self._get_im_client(context)
+        routing_data = await self._gather_routing_modal_data(context)
+        try:
+            await im_client.run_on_client_loop(
+                im_client.open_routing_modal(
+                    trigger_id=context,
+                    channel_id=context.channel_id,
+                    **routing_data.as_kwargs(),
+                )
+            )
+        except Exception as e:
+            logger.error(f"Error opening Telegram routing flow: {e}", exc_info=True)
             await im_client.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
 
     async def _handle_routing_lark(self, context: MessageContext):

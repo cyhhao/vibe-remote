@@ -8,7 +8,7 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 import { VersionBadge } from './VersionBadge';
 import clsx from 'clsx';
 import logoImg from '../assets/logo.png';
-import { getEnabledPlatforms } from '../lib/platforms';
+import { getEnabledPlatforms, platformSupportsChannels } from '../lib/platforms';
 
 const NavItem = ({ to, icon: Icon, children }: { to: string; icon: any; children: React.ReactNode }) => (
   <NavLink
@@ -37,7 +37,7 @@ export const AppShell: React.FC = () => {
   }, []);
 
   const isRunning = status.state === 'running';
-  const hasChannelPlatforms = enabledPlatforms.some((platform) => platform !== 'wechat');
+  const hasChannelPlatforms = enabledPlatforms.some(platformSupportsChannels);
 
   if (location.pathname === '/setup') {
     return <Outlet />;
