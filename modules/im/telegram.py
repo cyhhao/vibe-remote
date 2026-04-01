@@ -339,27 +339,42 @@ class TelegramBot(BaseIMClient):
         }
         callback_data = str(payload.get("data", ""))
         primary_action = self._resolve_callback_action(callback_data)
-
-        # Centralized auth gate for every Telegram button click before any dispatch.
-        auth_result = self.check_authorization(
-            user_id=context.user_id,
-            channel_id=context.channel_id,
-            is_dm=bool(context.platform_specific.get("is_dm")),
-            action=primary_action,
-            settings_manager=self.settings_manager,
-        )
-        if not auth_result.allowed:
-            denial_text = self.build_auth_denial_text(auth_result.denial, context.channel_id)
-            await self.answer_callback(
-                callback_id,
-                denial_text,
-                show_alert=bool(denial_text),
+        is_internal_callback = callback_data.startswith(("tg_cwd:", "tg_resume:", "tg_route:", "tg_question:"))
+        if is_internal_callback:
+            auth_result = self.check_authorization(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                is_dm=bool(context.platform_specific.get("is_dm")),
+                action=primary_action,
+                settings_manager=self.settings_manager,
             )
-            return
-        if await self._handle_internal_callback(context, callback_data):
-            await self.answer_callback(callback_id)
-            return
+            if not auth_result.allowed:
+                denial_text = self.build_auth_denial_text(auth_result.denial, context.channel_id)
+                await self.answer_callback(
+                    callback_id,
+                    denial_text,
+                    show_alert=bool(denial_text),
+                )
+                return
+            if await self._handle_internal_callback(context, callback_data):
+                await self.answer_callback(callback_id)
+                return
         if self.on_callback_query_callback:
+            auth_result = self.check_authorization(
+                user_id=context.user_id,
+                channel_id=context.channel_id,
+                is_dm=bool(context.platform_specific.get("is_dm")),
+                action=primary_action,
+                settings_manager=self.settings_manager,
+            )
+            if not auth_result.allowed:
+                denial_text = self.build_auth_denial_text(auth_result.denial, context.channel_id)
+                await self.answer_callback(
+                    callback_id,
+                    denial_text,
+                    show_alert=bool(denial_text),
+                )
+                return
             await self.on_callback_query_callback(context, callback_data)
         await self.answer_callback(callback_id)
 
