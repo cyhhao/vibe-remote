@@ -144,6 +144,7 @@ class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/start - 显示欢迎消息", message)
         self.assertIn("/setcwd <路径> - 设置工作目录", message)
         self.assertIn("/resume - 恢复当前目录下最近的会话", message)
+        self.assertIn("/setup [claude|codex|opencode] - 修复后端登录/认证", message)
         self.assertIn("/new - 开启一个全新的会话", message)
         self.assertNotIn("User ID", message)
         self.assertNotIn("How it works", message)

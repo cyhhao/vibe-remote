@@ -67,6 +67,7 @@ class CommandHandlers(BaseHandler):
             self._t("command.start.commandCwd"),
             self._t("command.start.commandSetCwd"),
             self._t("command.start.commandResume"),
+            self._t("command.start.commandSetup"),
             self._t("command.start.commandStop", agent=agent_display_name),
         ]
         if not supports_threads:
@@ -762,6 +763,10 @@ class CommandHandlers(BaseHandler):
             logger.error(f"Error opening resume modal: {e}")
             channel_context = self._get_channel_context(context)
             await im_client.send_message(channel_context, f"❌ {self._t('error.resumeFailed')}")
+
+    async def handle_setup(self, context: MessageContext, args: str = ""):
+        """Start or continue backend OAuth setup via IM."""
+        await self.controller.agent_auth_service.handle_setup_command(context, args)
 
     async def handle_bind(self, context: MessageContext, args: str = ""):
         """Handle bind command - bind a user to this Vibe Remote instance via bind code.

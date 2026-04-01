@@ -77,7 +77,10 @@ class _StubTurnRegistry:
 class _StubAgent:
     def __init__(self):
         self._turn_registry = _StubTurnRegistry()
-        self.controller = SimpleNamespace(emit_agent_message=AsyncMock())
+        self.controller = SimpleNamespace(
+            emit_agent_message=AsyncMock(),
+            agent_auth_service=SimpleNamespace(maybe_emit_auth_recovery_message=AsyncMock(return_value=False)),
+        )
         self.emit_result_message = AsyncMock()
         self._remove_ack_reaction = AsyncMock()
 
@@ -115,6 +118,11 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
             request,
         )
 
+        agent.controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once_with(
+            request.context,
+            "codex",
+            "❌ Codex turn failed: unexpected status 401 Unauthorized:",
+        )
         agent.controller.emit_agent_message.assert_awaited_once_with(
             request.context,
             "notify",
@@ -152,6 +160,11 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
             request,
         )
 
+        agent.controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once_with(
+            request.context,
+            "codex",
+            "❌ Codex turn failed: fallback message",
+        )
         agent.controller.emit_agent_message.assert_awaited_once_with(
             request.context,
             "notify",
@@ -198,6 +211,24 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         await handler._on_error(
             {
                 "error": {"message": "interrupted turn failed"},
+                "willRetry": False,
+                "turnId": "turn-1",
+            },
+            request,
+        )
+
+        agent.controller.emit_agent_message.assert_not_awaited()
+
+    async def test_auth_recovery_message_suppresses_plain_notify(self):
+        agent = _StubAgent()
+        agent.controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        await handler._on_error(
+            {
+                "error": {"message": "unexpected status 401 Unauthorized:"},
                 "willRetry": False,
                 "turnId": "turn-1",
             },

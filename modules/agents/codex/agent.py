@@ -141,11 +141,18 @@ class CodexAgent(BaseAgent):
 
                 self._turn_registry.clear_pending_turn_start(request.base_session_id, request)
                 logger.error("Error in Codex handle_message: %s", e, exc_info=True)
-                await self.controller.emit_agent_message(
+                error_text = f"❌ Codex error: {e}"
+                handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                     request.context,
-                    "notify",
-                    f"❌ Codex error: {e}",
+                    "codex",
+                    error_text,
                 )
+                if not handled:
+                    await self.controller.emit_agent_message(
+                        request.context,
+                        "notify",
+                        error_text,
+                    )
                 await self._remove_ack_reaction(request)
 
     async def handle_stop(self, request: AgentRequest) -> bool:

@@ -1,4 +1,9 @@
 from types import SimpleNamespace
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from core.auth import check_auth
 
@@ -99,6 +104,24 @@ def test_admin_guard_denies_non_admin_for_protected_action():
         channel_id="C1",
         is_dm=False,
         action="cmd_settings",
+        store=store,
+    )
+
+    assert result.allowed is False
+    assert result.denial == "not_admin"
+
+
+def test_admin_guard_denies_non_admin_for_auth_setup_callback():
+    store = _Store()
+    store.settings.channels["C1"] = SimpleNamespace(enabled=True)
+    store._bound_users.add("U5")
+    store._admins.add("U-admin")
+
+    result = check_auth(
+        user_id="U5",
+        channel_id="C1",
+        is_dm=False,
+        action="auth_setup:codex",
         store=store,
     )
 

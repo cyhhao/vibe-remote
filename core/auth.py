@@ -19,6 +19,7 @@ ADMIN_PROTECTED_ACTIONS: frozenset = frozenset(
         "cmd_settings",
         "cmd_routing",
         "cmd_change_cwd",
+        "auth_setup",
         "vibe_update_now",
         # Feishu form submit button names
         "cwd_submit",
@@ -26,6 +27,7 @@ ADMIN_PROTECTED_ACTIONS: frozenset = frozenset(
         "routing_backend_select",
         "routing_submit",
         # Text commands (used with _admin_guard)
+        "setup",
         "set_cwd",
         "settings",
     }
@@ -44,6 +46,8 @@ def _is_admin_protected(action: str) -> bool:
         return True
     # Prefix match for actions with dynamic suffixes
     if action.startswith("vibe_update_now"):
+        return True
+    if action.startswith("auth_setup"):
         return True
     return False
 

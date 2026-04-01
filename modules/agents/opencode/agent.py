@@ -348,11 +348,18 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             if session_id:
                 self.sessions.remove_active_poll(session_id)
 
-            await self.controller.emit_agent_message(
+            message = f"OpenCode request failed: {error_text}"
+            handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                 request.context,
-                "notify",
-                f"OpenCode request failed: {error_text}",
+                "opencode",
+                message,
             )
+            if not handled:
+                await self.controller.emit_agent_message(
+                    request.context,
+                    "notify",
+                    message,
+                )
 
     async def handle_stop(self, request: AgentRequest) -> bool:
         task = self._active_requests.get(request.base_session_id)

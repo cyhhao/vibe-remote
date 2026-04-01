@@ -104,11 +104,18 @@ class CodexEventHandler:
                 error_msg = self._extract_error_message(error_obj)
 
             if should_emit_terminal_error and not already_notified:
-                await self._agent.controller.emit_agent_message(
+                message = f"❌ Codex turn failed: {error_msg}"
+                handled = await self._agent.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                     tracked_request.context,
-                    "notify",
-                    f"❌ Codex turn failed: {error_msg}",
+                    "codex",
+                    message,
                 )
+                if not handled:
+                    await self._agent.controller.emit_agent_message(
+                        tracked_request.context,
+                        "notify",
+                        message,
+                    )
             else:
                 logger.info("Suppressing inactive Codex turn failure for %s: %s", turn_id, error_msg)
 
@@ -255,21 +262,35 @@ class CodexEventHandler:
                 self._agent._turn_registry.should_emit_terminal_error(turn_id)
                 and not turn_state.terminal_error_notified
             ):
-                await self._agent.controller.emit_agent_message(
+                text = f"❌ Codex turn failed: {message}"
+                handled = await self._agent.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                     request.context,
-                    "notify",
-                    f"❌ Codex turn failed: {message}",
+                    "codex",
+                    text,
                 )
+                if not handled:
+                    await self._agent.controller.emit_agent_message(
+                        request.context,
+                        "notify",
+                        text,
+                    )
                 turn_state.terminal_error_notified = True
             else:
                 logger.info("Logging inactive Codex turn error for %s: %s", turn_id, message)
             return
 
-        await self._agent.controller.emit_agent_message(
+        text = f"❌ Codex error: {message}"
+        handled = await self._agent.controller.agent_auth_service.maybe_emit_auth_recovery_message(
             request.context,
-            "notify",
-            f"❌ Codex error: {message}",
+            "codex",
+            text,
         )
+        if not handled:
+            await self._agent.controller.emit_agent_message(
+                request.context,
+                "notify",
+                text,
+            )
 
     def _extract_error_message(self, error: Any) -> str:
         if isinstance(error, dict):

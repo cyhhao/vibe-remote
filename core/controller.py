@@ -21,6 +21,7 @@ from core.handlers import (
     SettingsHandler,
     MessageHandler,
 )
+from core.agent_auth_service import AgentAuthService
 from core.message_dispatcher import ConsolidatedMessageDispatcher
 from core.scheduled_tasks import ScheduledTaskService
 from core.update_checker import UpdateChecker
@@ -55,6 +56,7 @@ class Controller:
 
         # Initialize agents (depends on handlers/session handler)
         self._init_agents()
+        self.agent_auth_service = AgentAuthService(self)
 
         # Validate default_backend against registered agents
         self._validate_default_backend()
@@ -309,6 +311,7 @@ class Controller:
             "cwd": self._dispatch_to_controller_loop(self.command_handler.handle_cwd),
             "set_cwd": self._dispatch_to_controller_loop(self.command_handler.handle_set_cwd),
             "resume": self._dispatch_to_controller_loop(self.command_handler.handle_resume),
+            "setup": self._dispatch_to_controller_loop(self.command_handler.handle_setup),
             "settings": self._dispatch_to_controller_loop(self.settings_handler.handle_settings),
             "stop": self._dispatch_to_controller_loop(self.command_handler.handle_stop),
             "bind": self._dispatch_to_controller_loop(self.command_handler.handle_bind),

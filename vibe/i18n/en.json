@@ -189,6 +189,7 @@
       "commandCwd": "/cwd - Show current working directory",
       "commandSetCwd": "/setcwd <path> - Set working directory",
       "commandResume": "/resume - Restore a recent session for this working directory",
+      "commandSetup": "/setup [claude|codex|opencode] - Repair backend login/auth",
       "commandStop": "/stop - Interrupt {agent} execution",
       "commandNew": "/new - Start a fresh session",
       "quickActions": "Quick Actions:",
@@ -233,6 +234,27 @@
       "unknownCommand": "Unknown resume command.",
       "noMorePages": "There are no more sessions to show."
     },
+    "setup": {
+      "starting": "Starting {backend} setup...",
+      "unsupportedBackend": "Backend `{backend}` does not support setup yet.",
+      "codeUsage": "Usage: `/setup code <value>` or `/setup code <backend> <value>`",
+      "noActiveFlow": "There is no active setup flow for this channel.",
+      "notFlowOwner": "Only the user who started this setup flow can submit the follow-up code.",
+      "codeNotSupported": "This backend does not accept follow-up setup codes.",
+      "notAwaitingCode": "This setup flow is not waiting for a code right now.",
+      "codeSubmitted": "{backend} setup code submitted. Waiting for login confirmation...",
+      "resetPrompt": "{backend} looks logged out. Use the button below to restart OAuth setup.",
+      "manualFallback": "If inline buttons are unavailable, run `/setup {backend}`.",
+      "codexInstructions": "Codex setup started.\n\n1. Open this URL in your browser:\n{url}\n\n2. Enter this one-time code:\n`{code}`\n\nThe bot will keep waiting here and confirm when login finishes.",
+      "claudeInstructions": "Claude setup started.\n\nOpen this URL in your browser and finish the login flow:\n{url}\n\nIf Claude later asks for a pasted code, send `/setup code <value>` in this chat.",
+      "claudeCodePrompt": "Claude is waiting for a follow-up code. Send `/setup code <value>` in this chat.",
+      "opencodeDeviceInstructions": "OpenCode setup started.\n\n1. Open this URL in your browser:\n{url}\n\n2. Enter this one-time code:\n`{code}`\n\nThe bot will keep waiting here and confirm when authorization finishes.",
+      "opencodeInstructions": "OpenCode setup started for `{provider}`.\n\nOpen this page to create or retrieve a credential:\n{url}\n\nWhen OpenCode asks for the key, send `/setup code <value>` in this chat.",
+      "opencodeCodePrompt": "OpenCode is waiting for the `{provider}` API key. Send `/setup code <value>` in this chat.",
+      "success": "{backend} login is active again.",
+      "failed": "{backend} setup failed: {detail}",
+      "unknownFailure": "Unknown login failure."
+    },
     "stop": {
       "noActiveSession": "No active session to stop for this channel."
     }
@@ -246,7 +268,8 @@
     "resumeSession": "Resume Session",
     "agentSettings": "Agent Settings",
     "howItWorks": "Features",
-    "aboutMessageTypes": "About Message Types"
+    "aboutMessageTypes": "About Message Types",
+    "resetOAuth": "Reset OAuth"
   },
   "messageType": {
     "system": "System",

@@ -400,6 +400,35 @@ class OpenCodeServerManager:
         # Don't clear _process reference - just let it be garbage collected.
         self._process = None
 
+    async def restart_for_auth_refresh(self) -> None:
+        """Terminate the shared server so the next request reloads refreshed auth."""
+        async with self._get_lock():
+            if self._http_session:
+                await self._http_session.close()
+                self._http_session = None
+                self._http_session_loop = None
+
+            targets: list[int] = []
+            info = self._read_pid_file()
+            pid = info.get("pid") if isinstance(info, dict) else None
+            if isinstance(pid, int) and self._pid_exists(pid):
+                cmd = self._get_pid_command(pid)
+                if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                    targets.append(pid)
+
+            if not targets:
+                for candidate in self._find_opencode_serve_pids(self.port):
+                    cmd = self._get_pid_command(candidate)
+                    if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                        targets.append(candidate)
+
+            for target_pid in dict.fromkeys(targets):
+                await self._terminate_pid(target_pid, reason="auth refresh")
+
+            self._clear_pid_file()
+            self._process = None
+            self._base_url = None
+
     @classmethod
     def stop_instance_sync(cls) -> None:
         if cls._instance:
