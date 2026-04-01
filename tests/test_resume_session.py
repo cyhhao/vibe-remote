@@ -273,6 +273,35 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(im_client.messages[1][1], None)
         self.assertIn("Send your next message directly", im_client.messages[1][2])
 
+    async def test_handle_resume_session_submission_telegram_forum_keeps_topic_mapping(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig(platform="telegram"))
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
+        ctrl.im_client.should_use_message_id_for_channel_session = lambda context=None: False
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U777",
+            channel_id="-100123",
+            thread_id="99",
+            agent="codex",
+            session_id="sess_telegram_topic",
+            host_message_ts="HOST1",
+            is_dm=False,
+            platform="telegram",
+        )
+
+        self.assertEqual(
+            settings.set_calls,
+            [("telegram::-100123", "codex", "telegram_99", "sess_telegram_topic")],
+        )
+        self.assertEqual(settings.mark_calls, [("U777", "-100123", "99")])
+        self.assertEqual(len(im_client.messages), 2)
+        self.assertEqual(im_client.messages[0][1], "99")
+        self.assertEqual(im_client.messages[1][1], "99")
+        self.assertIn("Reply in this thread", im_client.messages[1][2])
+
     async def test_command_handlers_handle_resume_opens_modal(self):
         settings = _StubSettingsManager()
         im_client = _StubIMClient()

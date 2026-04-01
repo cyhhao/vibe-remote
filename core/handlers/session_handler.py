@@ -252,6 +252,8 @@ class SessionHandler(BaseHandler):
         uses_thread_replies = bool(getattr(im_client, "should_use_thread_for_reply", lambda: False)())
         if not uses_thread_replies:
             return False
+        if context.thread_id:
+            return True
         uses_message_anchor = bool(
             getattr(im_client, "should_use_message_id_for_channel_session", lambda _context=None: True)(context)
         )
