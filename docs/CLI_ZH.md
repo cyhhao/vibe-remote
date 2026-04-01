@@ -117,6 +117,37 @@ vibe doctor
 - Agent CLI 可用性（Claude Code、OpenCode、Codex）
 - 运行时环境
 
+### `vibe task`
+
+创建、查看、更新、立即执行、暂停、恢复或删除定时任务。
+
+```bash
+vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
+vibe task list --brief
+vibe task update <task-id> --cron '*/30 * * * *'
+vibe task run <task-id>
+vibe task remove <task-id>
+```
+
+更完整的参数说明请直接看 `vibe task add --help` 和 `vibe task update --help`。其中重点包括：
+
+- 用 `--session-key` 指定会话连续性
+- 用 `--post-to channel` 在保留 thread 上下文的同时把消息发到父频道
+- 用 `--deliver-key` 指定显式投递目标
+- 用 `--cron` / `--at` 控制定时方式
+- 以及 `--name`、`--timezone`、`--prompt-file` 等参数
+
+### `vibe hook send`
+
+队列化一次异步 turn，不会把任务定义持久化到 `scheduled_tasks.json`。
+
+```bash
+vibe hook send --session-key 'slack::channel::C123' --prompt 'The export finished. Share the summary.'
+vibe hook send --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prompt 'Share the benchmark result in the channel.'
+```
+
+适合“只异步补发一次消息，不想保存成定时任务”的场景。
+
 ### `vibe version`
 
 显示已安装的版本。
@@ -236,6 +267,9 @@ Web UI (`http://127.0.0.1:5123`) 提供相同的控制功能：
 |------|------|
 | `~/.vibe_remote/config/config.json` | 主配置文件 |
 | `~/.vibe_remote/state/settings.json` | 频道路由设置 |
+| `~/.vibe_remote/state/scheduled_tasks.json` | 持久化的定时任务定义 |
+| `~/.vibe_remote/state/task_requests/` | task run 与 hook 的请求队列 |
+| `~/.vibe_remote/state/user_preferences.md` | 共享的长期用户偏好笔记 |
 | `~/.vibe_remote/logs/vibe_remote.log` | 应用日志 |
 | `~/.vibe_remote/logs/opencode_server.json` | OpenCode 服务器 PID 文件 |
 

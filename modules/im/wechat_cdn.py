@@ -9,6 +9,7 @@ Ported from the TypeScript reference implementation.
 """
 
 import base64
+import html
 import hashlib
 import logging
 import os
@@ -143,15 +144,31 @@ def _build_cdn_download_url(cdn_base_url: str, encrypted_query_param: str) -> st
     return f"{cdn_base_url}/download?encrypted_query_param={quote(encrypted_query_param)}"
 
 
+def _resolve_cdn_upload_url(cdn_base_url: str, upload_resp: Dict[str, Any], filekey: str, label: str) -> str:
+    """Resolve a CDN upload URL from legacy or full-url getUploadUrl responses."""
+    upload_full_url = upload_resp.get("upload_full_url")
+    if upload_full_url:
+        return html.unescape(str(upload_full_url))
+
+    upload_param = upload_resp.get("upload_param")
+    if upload_param:
+        return _build_cdn_upload_url(cdn_base_url, str(upload_param), filekey)
+
+    logger.error(
+        "%s: getUploadUrl returned neither upload_param nor upload_full_url, resp=%s",
+        label,
+        upload_resp,
+    )
+    raise RuntimeError(f"{label}: getUploadUrl returned no upload target")
+
+
 # ---------------------------------------------------------------------------
 # CDN upload / download
 # ---------------------------------------------------------------------------
 
 
 async def upload_buffer_to_cdn(
-    cdn_base_url: str,
-    upload_param: str,
-    filekey: str,
+    upload_url: str,
     data: bytes,
     aes_key: bytes,
 ) -> str:
@@ -161,9 +178,7 @@ async def upload_buffer_to_cdn(
     times on server errors (5xx); client errors (4xx) abort immediately.
 
     Args:
-        cdn_base_url: Base URL of the CDN (e.g. ``https://cdn.example.com``).
-        upload_param: Encrypted query param from ``get_upload_url``.
-        filekey: File key for the upload.
+        upload_url: Fully resolved upload URL from ``get_upload_url``.
         data: Raw plaintext bytes to upload.
         aes_key: 16-byte AES key for encryption.
 
@@ -175,8 +190,7 @@ async def upload_buffer_to_cdn(
             the expected header.
     """
     ciphertext = aes_ecb_encrypt(data, aes_key)
-    url = _build_cdn_upload_url(cdn_base_url, upload_param, filekey)
-    logger.debug("CDN upload: POST url=%s ciphertext_size=%d", url[:80], len(ciphertext))
+    logger.debug("CDN upload: POST url=%s ciphertext_size=%d", upload_url[:80], len(ciphertext))
 
     download_param: Optional[str] = None
     last_error: Optional[Exception] = None
@@ -186,7 +200,7 @@ async def upload_buffer_to_cdn(
         for attempt in range(1, _UPLOAD_MAX_RETRIES + 1):
             try:
                 async with session.post(
-                    url,
+                    upload_url,
                     data=ciphertext,
                     headers={"Content-Type": "application/octet-stream"},
                 ) as resp:
@@ -374,19 +388,10 @@ async def _upload_media_to_cdn(
         },
     )
 
-    upload_param = upload_resp.get("upload_param")
-    if not upload_param:
-        logger.error(
-            "%s: getUploadUrl returned no upload_param, resp=%s",
-            label,
-            upload_resp,
-        )
-        raise RuntimeError(f"{label}: getUploadUrl returned no upload_param")
+    upload_url = _resolve_cdn_upload_url(cdn_base_url, upload_resp, filekey, label)
 
     download_param = await upload_buffer_to_cdn(
-        cdn_base_url=cdn_base_url,
-        upload_param=upload_param,
-        filekey=filekey,
+        upload_url=upload_url,
         data=plaintext,
         aes_key=aes_key,
     )

@@ -1,11 +1,13 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.message_dispatcher import ConsolidatedMessageDispatcher
 from core.reply_enhancer import build_reply_enhancements_prompt, process_reply
+from config import paths
 from modules.im import MessageContext
 
 
@@ -61,10 +63,87 @@ class _StubController:
 
 class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
     def test_prompt_can_exclude_quick_replies(self):
-        prompt = build_reply_enhancements_prompt(include_quick_replies=False)
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_reply_enhancements_prompt(include_quick_replies=False)
 
+        self.assertIn(
+            "If the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes.",
+            prompt,
+        )
         self.assertIn("## 1. Send files", prompt)
+        self.assertIn("Vibe Remote provides optional capabilities:", prompt)
         self.assertNotIn("## 2. Quick-reply buttons", prompt)
+        self.assertIn("## 4. User Context and Preferences", prompt)
+        self.assertIn("`/tmp/user_preferences.md`", prompt)
+        self.assertIn("`<platform>/<user_id>`", prompt)
+
+    def test_prompt_includes_scheduled_task_usage_with_threadless_default_session_key(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform="slack",
+            thread_id="171717.123",
+            platform_specific={"is_dm": False},
+        )
+
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_reply_enhancements_prompt(include_quick_replies=True, context=context)
+
+        self.assertIn("## 3. Scheduled tasks and hooks", prompt)
+        self.assertIn("`vibe task add`", prompt)
+        self.assertIn("`vibe hook send --session-key ... --prompt ...`", prompt)
+        self.assertIn("Use `vibe task add` for actions that should recur or remain saved.", prompt)
+        self.assertIn("Default session key: `slack::channel::C1`", prompt)
+        self.assertIn("Current thread ID: `171717.123`", prompt)
+        self.assertIn(
+            "Use `--post-to channel` when the task or hook should keep thread context but publish to the parent channel.",
+            prompt,
+        )
+        self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
+        self.assertIn("Run `vibe task add --help` or `vibe hook send --help` for the full command reference.", prompt)
+        self.assertIn("A shared user context and preferences file is available at ", prompt)
+        self.assertIn("/tmp/user_preferences.md", prompt)
+        self.assertIn("From first principles, serving the user better means thinking proactively about how to make full use of the available context", prompt)
+        self.assertIn("Use this file proactively when it is helpful", prompt)
+        self.assertIn("You do not need to read it for every simple request; but if consulting it could improve personalization, efficiency, or continuity, prefer checking it early.", prompt)
+        self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
+        self.assertIn("Only record durable, factual, reusable information there.", prompt)
+        self.assertIn("Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.", prompt)
+
+    def test_prompt_uses_fallback_platform_for_unannotated_context(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            thread_id="171717.123",
+            platform_specific={"is_dm": False},
+        )
+
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_reply_enhancements_prompt(
+                include_quick_replies=True,
+                context=context,
+                fallback_platform="slack",
+            )
+
+        self.assertIn("Default session key: `slack::channel::C1`", prompt)
+        self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
+
+    def test_prompt_handles_missing_platform_specific(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform=None,
+            platform_specific=None,
+        )
+
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_reply_enhancements_prompt(
+                include_quick_replies=True,
+                context=context,
+                fallback_platform="slack",
+            )
+
+        self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
 
     def test_file_links_with_parentheses_are_preserved(self):
         enhanced = process_reply("![video](file:///Users/test/SaveTwitter.Net_GABV3XNWYAARAZz(gif).mp4)")

@@ -98,6 +98,17 @@ def test_save_config_merges_partial_payload(monkeypatch, tmp_path):
     assert updated.runtime.default_cwd == "/tmp/workdir"
 
 
+def test_save_config_defaults_show_duration_to_false_for_new_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = _full_config_payload()
+    payload.pop("show_duration")
+
+    created = api.save_config(payload)
+
+    assert created.show_duration is False
+
+
 def test_save_config_accepts_typing_ack_mode(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 

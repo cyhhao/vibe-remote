@@ -16,8 +16,11 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from urllib.parse import unquote, urlparse
+
+from config import paths
+from modules.im import MessageContext
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +159,9 @@ _FILES_PROMPT = """\
 Vibe Remote is a middleware layer that connects AI agents to IM platforms such as Slack. \
 The user is interacting with you through an IM app via Vibe Remote forwarding.
 
-You have optional reply-enhancement capabilities:
+If the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes. Use it for configuration file locations, scope rules, routing behavior, scheduled-task operations, and troubleshooting steps.
+
+Vibe Remote provides optional capabilities:
 
 ## 1. Send files
 You can send a local file to the user by using a Markdown link with the `file://` protocol:
@@ -182,13 +187,91 @@ Rules:
 - Use at most 2-4 buttons, each no longer than 20 characters
 """
 
+_SCHEDULED_TASKS_PROMPT = """\
 
-def build_reply_enhancements_prompt(*, include_quick_replies: bool = True) -> str:
+## 3. Scheduled tasks and hooks
+Use `vibe task add` for actions that should recur or remain saved.
+Use `vibe hook send --session-key ... --prompt ...` for one-shot asynchronous sends without storing a task.
+
+Current conversation targeting:
+- Default session key: `{session_key}`
+- Current thread ID: `{thread_id}`
+
+Rules:
+- The default session key intentionally does not include a thread ID.
+- Only append `::thread::<thread_id>` to `--session-key` when the user explicitly wants replies to stay in the current thread.
+- Use `--post-to channel` when the task or hook should keep thread context but publish to the parent channel.
+- Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
+- If `--timezone` is omitted, the task uses the local system timezone at creation time.
+- Use `--prompt "..."` or `--prompt-file <path>` for task and hook content.
+- Run `vibe task add --help` or `vibe hook send --help` for the full command reference.
+"""
+
+
+_USER_PREFERENCES_PROMPT = """\
+
+## 4. User Context and Preferences
+A shared user context and preferences file is available at `{preferences_path}`.
+
+From first principles, serving the user better means thinking proactively about how to make full use of the available context, reduce repetitive communication, and make judgments that better fit the user's habits. For example, the user may currently be receiving your messages through an IM channel, possibly on a mobile device or in a fragmented-attention context.
+
+Use this file proactively when it is helpful, especially when it can help you understand the user's stable habits, preferences, or working style, reduce repeated questions, and choose among multiple reasonable ways to proceed in a way that better fits the user.
+
+You do not need to read it for every simple request; but if consulting it could improve personalization, efficiency, or continuity, prefer checking it early.
+
+You may also update it, usually in the current user's section: `{user_section}`.
+Only record durable, factual, reusable information there.
+Keep entries short, deduplicated, and free of secrets unless the user explicitly asks.
+"""
+
+
+def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform: Optional[str] = None) -> str:
+    from core.scheduled_tasks import build_session_key_for_context
+
+    default_key = build_session_key_for_context(
+        context,
+        include_thread=False,
+        fallback_platform=fallback_platform,
+    ).to_key(include_thread=False)
+    thread_id = context.thread_id or "(none)"
+    return _SCHEDULED_TASKS_PROMPT.format(
+        session_key=default_key,
+        thread_id=thread_id,
+    )
+
+
+def _build_user_preferences_prompt(
+    context: Optional[MessageContext],
+    *,
+    fallback_platform: Optional[str] = None,
+) -> str:
+    platform = fallback_platform
+    user_id = "<user_id>"
+    if context is not None:
+        platform_specific = context.platform_specific or {}
+        platform = context.platform or platform_specific.get("platform") or fallback_platform
+        user_id = context.user_id or "<user_id>"
+    user_section = f"{platform or '<platform>'}/{user_id}"
+    return _USER_PREFERENCES_PROMPT.format(
+        preferences_path=f"`{paths.get_user_preferences_path()}`",
+        user_section=user_section,
+    )
+
+
+def build_reply_enhancements_prompt(
+    *,
+    include_quick_replies: bool = True,
+    context: Optional[MessageContext] = None,
+    fallback_platform: Optional[str] = None,
+) -> str:
     """Build the reply-enhancement prompt for the current platform/backend."""
 
     prompt = _FILES_PROMPT
     if include_quick_replies:
         prompt += _QUICK_REPLIES_PROMPT
+    if context is not None:
+        prompt += _build_scheduled_tasks_prompt(context, fallback_platform=fallback_platform)
+    prompt += _build_user_preferences_prompt(context, fallback_platform=fallback_platform)
     return prompt
 
 

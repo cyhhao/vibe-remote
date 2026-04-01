@@ -1,25 +1,41 @@
 from __future__ import annotations
 
+import importlib
 import logging
 from collections import Counter
-from datetime import datetime
 
-from .base import NativeSessionProvider, build_tail_preview
-from .claude import ClaudeNativeSessionProvider
-from .codex import CodexNativeSessionProvider
-from .opencode import OpenCodeNativeSessionProvider
+from .base import NativeSessionProvider
+from .providers import DEFAULT_PROVIDER_SPECS, NativeSessionProviderSpec
 from .types import NativeResumeSession
 
 logger = logging.getLogger(__name__)
 
 
 class AgentNativeSessionService:
-    def __init__(self, providers: list[NativeSessionProvider] | None = None):
-        self.providers = providers or [
-            OpenCodeNativeSessionProvider(),
-            ClaudeNativeSessionProvider(),
-            CodexNativeSessionProvider(),
-        ]
+    def __init__(
+        self,
+        providers: list[NativeSessionProvider] | None = None,
+        provider_specs: tuple[NativeSessionProviderSpec, ...] = DEFAULT_PROVIDER_SPECS,
+    ):
+        self._providers = providers
+        self._provider_specs = provider_specs
+
+    @property
+    def providers(self) -> list[NativeSessionProvider]:
+        if self._providers is None:
+            self._providers = self._load_default_providers()
+        return self._providers
+
+    def _load_default_providers(self) -> list[NativeSessionProvider]:
+        providers: list[NativeSessionProvider] = []
+        for spec in self._provider_specs:
+            try:
+                module = importlib.import_module(spec.module_path)
+                provider_cls = getattr(module, spec.class_name)
+                providers.append(provider_cls())
+            except Exception as exc:
+                logger.warning("Failed to load %s native session provider: %s", spec.agent_name, exc)
+        return providers
 
     def list_recent_sessions(self, working_path: str, limit: int = 100) -> list[NativeResumeSession]:
         items: list[NativeResumeSession] = []
@@ -83,22 +99,6 @@ class AgentNativeSessionService:
 
         selected.sort(key=lambda item: (-item.sort_ts, item.agent_prefix, item.native_session_id))
         return selected
-
-    @staticmethod
-    def format_display_time(item: NativeResumeSession) -> str:
-        dt = item.updated_at or item.created_at
-        if not dt:
-            return "--"
-        now = datetime.now()
-        if dt.year == now.year:
-            return dt.strftime("%m-%d %H:%M")
-        return dt.strftime("%Y-%m-%d")
-
-    @staticmethod
-    def format_display_summary(item: NativeResumeSession) -> str:
-        tail = item.last_agent_tail or build_tail_preview(item.native_session_id)
-        suffix = tail.lstrip(".") or item.native_session_id[-10:]
-        return f"{item.agent_prefix}...{suffix}"
 
     def get_session(
         self,

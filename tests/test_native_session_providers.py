@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 import json
@@ -7,6 +10,7 @@ from modules.agents.native_sessions import claude as claude_module
 from modules.agents.native_sessions.claude import ClaudeNativeSessionProvider, encode_project_path
 from modules.agents.native_sessions import codex as codex_module
 from modules.agents.native_sessions.codex import CodexNativeSessionProvider
+from modules.agents.native_sessions import service as service_module
 from modules.agents.native_sessions.service import AgentNativeSessionService
 from modules.agents.native_sessions.types import NativeResumeSession
 
@@ -192,6 +196,74 @@ def test_native_session_service_preserves_agent_visibility_when_limited() -> Non
 
     assert len(items) == 5
     assert {item.agent for item in items} == {"opencode", "claude", "codex"}
+
+
+def test_native_session_service_loads_default_providers_lazily(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class _StubProvider:
+        agent_name = "claude"
+
+        def list_metadata(self, working_path: str) -> list[NativeResumeSession]:
+            return []
+
+        def hydrate_preview(self, item: NativeResumeSession) -> NativeResumeSession:
+            return item
+
+    def _fake_import_module(module_path: str):
+        calls.append(module_path)
+        return SimpleNamespace(ClaudeNativeSessionProvider=_StubProvider)
+
+    monkeypatch.setattr(service_module.importlib, "import_module", _fake_import_module)
+    service = AgentNativeSessionService(
+        provider_specs=(
+            service_module.NativeSessionProviderSpec(
+                agent_name="claude",
+                module_path="modules.agents.native_sessions.claude",
+                class_name="ClaudeNativeSessionProvider",
+            ),
+        )
+    )
+
+    assert calls == []
+
+    assert service.list_recent_sessions("/tmp/project", limit=5) == []
+    assert calls == ["modules.agents.native_sessions.claude"]
+
+
+def test_native_session_lightweight_imports_do_not_require_sqlite() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(repo_root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    script = """
+import importlib.abc
+
+class BlockSqlite(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname == "sqlite3" or fullname.startswith("sqlite3.") or fullname == "_sqlite3":
+            raise ImportError("blocked sqlite for test")
+        return None
+
+import sys
+sys.meta_path.insert(0, BlockSqlite())
+
+for module_name in [
+    "modules.agents.native_sessions",
+    "core.handlers.command_handlers",
+    "core.handlers.session_handler",
+]:
+    __import__(module_name)
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
 def test_build_tail_preview_strips_edge_symbols() -> None:

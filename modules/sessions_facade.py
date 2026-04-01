@@ -142,6 +142,50 @@ class SessionsFacade:
             self.sessions_store.save()
         return changed
 
+    def alias_session_base_across_scopes(
+        self,
+        source_user_id: Union[int, str],
+        target_user_id: Union[int, str],
+        source_base_session_id: str,
+        alias_base_session_id: str,
+    ) -> bool:
+        source_key = self._normalize_user_id(source_user_id)
+        target_key = self._normalize_user_id(target_user_id)
+        self.sessions_store._ensure_user_namespace(source_key)
+        self.sessions_store._ensure_user_namespace(target_key)
+
+        source_agent_maps = self.sessions_store.state.session_mappings.get(source_key, {})
+        target_agent_maps = self.sessions_store.state.session_mappings.get(target_key, {})
+        changed = False
+
+        for agent_name, source_agent_map in source_agent_maps.items():
+            target_agent_map = self.sessions_store.get_agent_map(target_key, agent_name)
+            additions: Dict[str, str] = {}
+            for mapping_key, native_session_id in list(source_agent_map.items()):
+                if not self._matches_base_prefix(mapping_key, source_base_session_id):
+                    continue
+                suffix = mapping_key[len(source_base_session_id) :]
+                alias_key = f"{alias_base_session_id}{suffix}"
+                if alias_key in target_agent_map or alias_key in additions:
+                    continue
+                additions[alias_key] = native_session_id
+            if additions:
+                target_agent_map.update(additions)
+                changed = True
+                logger.info(
+                    "Aliased %s session base across scopes: %s/%s -> %s/%s (%s keys)",
+                    agent_name,
+                    source_key,
+                    source_base_session_id,
+                    target_key,
+                    alias_base_session_id,
+                    len(additions),
+                )
+
+        if changed:
+            self.sessions_store.save()
+        return changed
+
     def clear_session_base(self, user_id: Union[int, str], base_session_id: str) -> int:
         user_key = self._normalize_user_id(user_id)
         self.sessions_store._ensure_user_namespace(user_key)

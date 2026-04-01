@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 from core.controller import Controller
 from core.handlers.command_handlers import CommandHandlers
 from core.handlers.session_handler import SessionHandler
-from modules.agents.native_sessions import NativeResumeSession
+from modules.agents.native_sessions.types import NativeResumeSession
 from modules.im import MessageContext
 from config.v2_config import SlackConfig
 

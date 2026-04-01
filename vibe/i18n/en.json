@@ -96,6 +96,8 @@
     "howItWorksResumeDesc": "Switch from desktop to mobile without losing momentum. Reopen recent Claude Code, OpenCode, or Codex sessions from this working directory and continue instantly.",
     "howItWorksWorkDirLabel": "File Attachments",
     "howItWorksWorkDirDesc": "Attach images or files to your message — the agent can read them directly.",
+    "howItWorksTasksLabel": "Scheduled Tasks & Hooks",
+    "howItWorksTasksDesc": "Ask the agent to schedule recurring or one-off prompts, or queue a single async follow-up after a long-running job.",
     "howItWorksSettingsLabel": "Flexible Settings",
     "howItWorksSettingsDesc": "Mention @bot to switch agents, models, reasoning effort, or hide verbose message types.",
     "howItWorksFooter": "Just type to chat with {agent}. No special commands needed!",

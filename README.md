@@ -156,6 +156,14 @@ When your agent needs input — file selection, confirmation, options — your c
 
 ![Interactive Prompts](assets/screenshots/question-en.jpg)
 
+### Scheduled Tasks & Async Hooks
+
+Ask your agent to schedule work for later, repeat a prompt on a cron, or queue a one-shot async follow-up after a long-running job.
+
+- Persist recurring or one-off prompts with `vibe task`
+- Queue a single async send with `vibe hook send`
+- Keep session context and delivery target separate when needed
+
 ---
 
 ## How It Works
@@ -224,6 +232,8 @@ vibe          # Start everything
 vibe status   # Check if running
 vibe stop     # Stop everything
 vibe doctor   # Diagnose issues
+vibe task     # Create and manage scheduled tasks
+vibe hook     # Queue one-shot async sends
 ```
 
 ---

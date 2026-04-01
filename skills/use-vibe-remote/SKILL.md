@@ -1,8 +1,8 @@
 ---
 name: use-vibe-remote
 slug: use-vibe-remote
-description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, and operational state.
-version: 0.1.0
+description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, scheduled tasks, and operational state.
+version: 0.1.6
 ---
 
 # Use Vibe Remote
@@ -15,6 +15,8 @@ Typical requests include:
 - route one channel or DM user to OpenCode, Claude, or Codex
 - set a working directory for a channel or DM
 - choose a backend model, subagent, or reasoning level
+- create, inspect, run, pause, resume, or remove a scheduled task with `vibe task`
+- queue a one-shot asynchronous hook with `vibe hook send`
 - show or hide intermediate message types
 - inspect logs, run doctor, restart services, or explain where Vibe Remote stores its state
 - decide whether a requested change belongs in Vibe Remote config or in the host backend's own config
@@ -41,6 +43,10 @@ Important paths:
 
 - `~/.vibe_remote/config/config.json`: global config
 - `~/.vibe_remote/state/settings.json`: per-channel and per-user overrides
+- `~/.vibe_remote/state/scheduled_tasks.json`: persisted scheduled tasks
+- `~/.vibe_remote/state/user_preferences.md`: shared long-term preference file; prefer user-specific notes under `platform/user_id` sections and keep shared rules truly cross-user
+- `~/.vibe_remote/state/task_requests/`: queued task-run and hook-send requests plus completion receipts
+- `~/.vibe_remote/state/user_preferences.md`: shared long-term preference file; prefer user-specific notes under `platform/user_id` sections and keep shared rules truly cross-user
 - `~/.vibe_remote/state/sessions.json`: runtime session state
 - `~/.vibe_remote/logs/vibe_remote.log`: main application log
 - `~/.vibe_remote/runtime/status.json`: runtime status file
@@ -103,7 +109,7 @@ Current top-level structure:
   "ui": {},
   "update": {},
   "ack_mode": "reaction",
-  "show_duration": true,
+  "show_duration": false,
   "include_user_info": true,
   "reply_enhancements": true,
   "language": "en"
@@ -234,6 +240,38 @@ This file stores transient-but-persisted runtime state:
 
 Do not edit it during normal config work. Prefer restart, doctor, or log inspection first.
 
+### `scheduled_tasks.json`
+
+This file stores persisted scheduled task definitions created by `vibe task`.
+
+Each task includes:
+
+- `id`
+- `name`
+- `session_key`
+- `post_to`
+- `deliver_key`
+- `prompt`
+- `schedule_type`
+- `cron` or `run_at`
+- `timezone`
+- `enabled`
+- `last_run_at`
+- `last_error`
+
+Do not hand-edit this file during normal operations unless the user explicitly asks for low-level repair work. Prefer the CLI:
+
+- `vibe task add`
+- `vibe task update <id>`
+- `vibe task list`
+- `vibe task list --brief`
+- `vibe task list --all`
+- `vibe task show <id>`
+- `vibe task run <id>`
+- `vibe task pause <id>`
+- `vibe task resume <id>`
+- `vibe task remove <id>`
+
 ## Scope and Precedence Rules
 
 Use these rules when deciding where to edit.
@@ -266,6 +304,45 @@ Working directory resolution is:
 - `null`: inherit platform default from `config.json`
 - `true`: require mention in that channel
 - `false`: do not require mention in that channel
+
+## Scheduled Tasks
+
+Use scheduled tasks when the user wants Vibe Remote to inject a prompt later or repeatedly into an existing chat scope.
+
+Preferred CLI shape:
+
+- recurring: `vibe task add --session-key '<key>' --cron '<expr>' --prompt '...'`
+- one-off: `vibe task add --session-key '<key>' --at '<ISO-8601>' --prompt '...'`
+- immediate rerun: `vibe task run <id>`
+- one-shot async hook: `vibe hook send --session-key '<key>' --prompt '...'`
+
+Delivery controls:
+
+- use `--post-to channel` when the task should keep session context from a thread-bound `session_key` but publish to the parent channel
+- use `--deliver-key '<key>'` only when delivery must go to a different explicit target than `session_key`
+- do not combine `--post-to` and `--deliver-key` in the same command
+
+Session key format:
+
+- channel scope: `<platform>::channel::<channel_id>`
+- DM scope: `<platform>::user::<user_id>`
+- exact thread target: append `::thread::<thread_id>` when the user explicitly wants the task bound to that thread
+
+Default rule:
+
+- prefer the threadless session key unless the user explicitly asks to keep replies in the current thread
+
+Operational guidance:
+
+- use `vibe task list` before editing or deleting an existing task
+- use `vibe task update <id>` to keep the same task ID while changing name, schedule, prompt, or target
+- use `vibe task list --brief` when you need a scheduling-focused summary instead of the full stored payload
+- `vibe task list` hides completed one-shot tasks by default; use `vibe task list --all` when you need the full history
+- use `vibe task show <id>` to inspect both the stored fields and derived scheduling state such as `next_run_at`
+- use `vibe task run <id>` when the user wants to trigger one stored task immediately without changing its schedule
+- use `vibe hook send` when the user wants one asynchronous turn without storing a task definition
+- treat `warnings` from `vibe task add`, `vibe task update`, or `vibe hook send` as delivery-risk hints to fix proactively, not as fatal errors
+- if a scheduled task fails unexpectedly, inspect `last_error` first and then check `~/.vibe_remote/logs/vibe_remote.log`
 
 ## Backend Capability Matrix
 

@@ -83,41 +83,67 @@ class SessionHandler(BaseHandler):
         *,
         source_base_session_id: str,
         alias_base_session_id: str,
+        target_session_key: Optional[str] = None,
+        source_session_key: Optional[str] = None,
         clear_source: bool = False,
     ) -> bool:
         if not source_base_session_id or not alias_base_session_id:
             return False
-        session_key = self._get_session_key(context)
-        changed = self.sessions.alias_session_base(
-            session_key,
-            source_base_session_id,
-            alias_base_session_id,
-        )
-        if changed and clear_source and source_base_session_id != alias_base_session_id:
-            self.sessions.clear_session_base(session_key, source_base_session_id)
-        return changed
+        resolved_source_key = source_session_key or self._get_session_key(context)
+        resolved_target_key = target_session_key or resolved_source_key
+        if resolved_target_key == resolved_source_key:
+            changed = self.sessions.alias_session_base(
+                resolved_target_key,
+                source_base_session_id,
+                alias_base_session_id,
+            )
+        else:
+            changed = self.sessions.alias_session_base_across_scopes(
+                resolved_source_key,
+                resolved_target_key,
+                source_base_session_id,
+                alias_base_session_id,
+            )
+        cleared = 0
+        if clear_source and source_base_session_id != alias_base_session_id:
+            cleared = self.sessions.clear_session_base(resolved_source_key, source_base_session_id)
+        return bool(changed or cleared)
 
     def finalize_scheduled_delivery(self, context: MessageContext, sent_message_id: Optional[str]) -> None:
         payload = context.platform_specific or {}
         if payload.get("turn_source") != "scheduled":
             return
-        if context.thread_id or not payload.get("scheduled_anchor_required"):
-            return
-        if not sent_message_id:
+        source_base_session_id = payload.get("turn_base_session_id") or ""
+        strategy = payload.get("scheduled_delivery_alias") or {}
+        mode = strategy.get("mode") or "none"
+        if not source_base_session_id or mode == "none":
             return
 
-        source_base_session_id = payload.get("turn_base_session_id") or ""
-        alias_base_session_id = self.build_message_anchor_base(context, sent_message_id)
+        alias_base_session_id: Optional[str] = None
+        if mode == "sent_message":
+            if not sent_message_id:
+                return
+            alias_base_session_id = self.build_message_anchor_base(context, sent_message_id)
+        elif mode == "fixed_base":
+            alias_base_session_id = strategy.get("base_session_id")
+        if not alias_base_session_id:
+            return
+
+        target_session_key = strategy.get("session_key") or self._get_session_key(context)
+        clear_source = bool(strategy.get("clear_source", False))
         self.alias_session_base(
             context,
             source_base_session_id=source_base_session_id,
             alias_base_session_id=alias_base_session_id,
-            clear_source=True,
+            target_session_key=target_session_key,
+            clear_source=clear_source,
         )
 
-        platform = self._get_context_platform(context)
-        if platform in {"slack", "lark"}:
-            self.sessions.mark_thread_active("scheduled", context.channel_id, sent_message_id)
+        if mode == "sent_message" and sent_message_id:
+            platform = self._get_context_platform(context)
+            if platform in {"slack", "lark"}:
+                delivery_channel_id = payload.get("delivery_override", {}).get("channel_id") or context.channel_id
+                self.sessions.mark_thread_active("scheduled", delivery_channel_id, sent_message_id)
 
     def _supports_threaded_session(self, context: MessageContext, *, is_dm: bool) -> bool:
         getter = getattr(self.controller, "get_im_client_for_context", None)
@@ -265,7 +291,11 @@ class SessionHandler(BaseHandler):
         agent: str,
         session_id: str,
     ) -> str:
-        native_session_service = getattr(self.controller, "native_session_service", None)
+        service_getter = getattr(self.controller, "get_native_session_service", None)
+        if callable(service_getter):
+            native_session_service = service_getter()
+        else:
+            native_session_service = getattr(self.controller, "native_session_service", None)
         if native_session_service is None:
             return ""
         try:
@@ -402,7 +432,11 @@ class SessionHandler(BaseHandler):
 
             platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
 
-            reply_prompt = build_reply_enhancements_prompt(include_quick_replies=platform != "wechat")
+            reply_prompt = build_reply_enhancements_prompt(
+                include_quick_replies=platform != "wechat",
+                context=context,
+                fallback_platform=platform,
+            )
 
             if base_prompt:
                 final_system_prompt = f"{base_prompt}\n\n{reply_prompt}"
