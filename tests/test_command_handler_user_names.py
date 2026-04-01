@@ -98,7 +98,17 @@ class _StubController:
         return context.user_id if context.channel_id.startswith("D") else context.channel_id
 
     def _get_session_key(self, context: MessageContext) -> str:
-        return f"{getattr(context, 'platform', None) or 'test'}::{self._get_settings_key(context)}"
+        platform = getattr(context, "platform", None) or self.config.platform or "slack"
+        is_dm = bool((context.platform_specific or {}).get("is_dm")) or context.channel_id.startswith("D")
+        scope_id = context.channel_id if is_dm and context.channel_id != context.user_id else self._get_settings_key(context)
+        return f"{platform}::{scope_id}"
+
+    def _get_legacy_session_key(self, context: MessageContext) -> str | None:
+        is_dm = bool((context.platform_specific or {}).get("is_dm")) or context.channel_id.startswith("D")
+        if not is_dm:
+            return None
+        platform = getattr(context, "platform", None) or self.config.platform or "slack"
+        return f"{platform}::{context.user_id}"
 
     def resolve_agent_for_context(self, context: MessageContext) -> str:
         return "codex"
@@ -161,6 +171,27 @@ class CommandHandlerUserNameTests(unittest.IsolatedAsyncioTestCase):
             controller.im_client.sent_messages,
             [("wx-chat", "🆕 已开启新的会话。你下一条消息会从全新对话开始。")],
         )
+
+    async def test_new_command_clears_dm_runtime_and_legacy_scopes(self):
+        controller = _StubController({"display_name": "Alex"})
+        clear_calls = []
+
+        async def _capture_clear(session_key):
+            clear_calls.append(session_key)
+            return {}
+
+        controller.agent_service.clear_sessions = _capture_clear  # type: ignore[attr-defined]
+        handler = CommandHandlers(controller)
+        context = MessageContext(
+            user_id="U0E0FM3QT",
+            channel_id="D123",
+            platform="slack",
+            platform_specific={"is_dm": True},
+        )
+
+        await handler.handle_new(context)
+
+        self.assertEqual(clear_calls, ["slack::D123", "slack::U0E0FM3QT"])
 
     async def test_slack_dm_start_skips_channel_info_lookup(self):
         controller = _StubController({"display_name": "Alex"})

@@ -66,6 +66,24 @@ def test_sessions_facade_falls_back_to_legacy_dm_scope_and_migrates() -> None:
     assert facade.get_agent_session_id("slack::D123", "slack_thread-1", "codex") == "thread-abc"
 
 
+def test_clearing_both_dm_scopes_prevents_legacy_session_revival() -> None:
+    store = SessionsStore(sessions_path=Path("/tmp/nonexistent-sessions-clear.json"))
+    facade = SessionsFacade(store)
+    facade.set_agent_session_mapping("slack::U123", "codex", "slack_thread-1", "thread-abc")
+
+    facade.clear_agent_sessions("slack::D123", "codex")
+    facade.clear_agent_sessions("slack::U123", "codex")
+
+    session_id = facade.get_agent_session_id_with_fallback(
+        "slack::D123",
+        "slack::U123",
+        "slack_thread-1",
+        "codex",
+    )
+
+    assert session_id is None
+
+
 def test_migrate_active_polls_backfills_dm_runtime_scope(tmp_path: Path) -> None:
     sessions_path = tmp_path / "sessions.json"
     sessions_path.write_text(

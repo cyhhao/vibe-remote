@@ -219,6 +219,37 @@ class SlackBot(BaseIMClient):
             pattern = rf"^\s*<@{re.escape(user_id)}>\s*"
         return re.sub(pattern, "", text, count=1).strip()
 
+    def _get_bound_dm_chat_id(self, user_id: str) -> Optional[str]:
+        """Return the bound DM chat id for a Slack user when available."""
+        if not self.settings_manager or not hasattr(self.settings_manager, "get_store"):
+            return None
+
+        try:
+            store = self.settings_manager.get_store()
+        except Exception:
+            logger.debug("Failed to load settings store for Slack DM validation", exc_info=True)
+            return None
+
+        if store is None:
+            return None
+
+        platform = getattr(self.settings_manager, "platform", None)
+        try:
+            bound_user = store.get_user(user_id, platform=platform)
+        except TypeError:
+            bound_user = store.get_user(user_id)
+        except Exception:
+            logger.debug("Failed to resolve bound Slack user for DM validation", exc_info=True)
+            return None
+
+        if bound_user is None:
+            return None
+
+        dm_chat_id = getattr(bound_user, "dm_chat_id", None)
+        if not isinstance(dm_chat_id, str) or not dm_chat_id:
+            return None
+        return dm_chat_id
+
     def _convert_markdown_to_slack_mrkdwn(self, text: str) -> str:
         """Convert standard markdown to Slack mrkdwn format using third-party library
 
@@ -1230,6 +1261,16 @@ class SlackBot(BaseIMClient):
             if not text and not file_attachments and not has_shared_content and not had_dm_mention_only:
                 logger.debug("Ignoring Slack message with empty text and no files")
                 return
+            if is_dm:
+                bound_dm_chat_id = self._get_bound_dm_chat_id(user_id)
+                if bound_dm_chat_id and channel_id != bound_dm_chat_id:
+                    logger.warning(
+                        "Dropping Slack DM event for bound user %s: channel %s does not match bound dm_chat_id %s",
+                        user_id,
+                        channel_id,
+                        bound_dm_chat_id,
+                    )
+                    return
 
             # Check if we require mention in channels (not DMs)
             # For threads: only respond if the bot is active in that thread

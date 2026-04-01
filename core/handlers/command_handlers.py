@@ -476,7 +476,13 @@ class CommandHandlers(BaseHandler):
         try:
             im_client = self._get_im_client(context)
             session_key = self._get_session_key(context)
+            legacy_session_key = None
+            legacy_getter = getattr(self.controller, "_get_legacy_session_key", None)
+            if callable(legacy_getter):
+                legacy_session_key = legacy_getter(context)
             await self.controller.agent_service.clear_sessions(session_key)
+            if legacy_session_key and legacy_session_key != session_key:
+                await self.controller.agent_service.clear_sessions(legacy_session_key)
             full_response = f"🆕 {self._t('command.new.started')}"
 
             channel_context = self._get_channel_context(context)

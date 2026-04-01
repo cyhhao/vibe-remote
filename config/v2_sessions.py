@@ -18,8 +18,8 @@ class ActivePollInfo:
     channel_id: str
     thread_id: str
     settings_key: str
-    session_scope_key: str
     working_path: str
+    session_scope_key: str = ""
     baseline_message_ids: List[str] = field(default_factory=list)
     seen_tool_calls: List[str] = field(default_factory=list)
     emitted_assistant_messages: List[str] = field(default_factory=list)
