@@ -424,6 +424,15 @@ class DiscordBot(BaseIMClient):
     def _clean_message_text(self, text: str) -> str:
         return (text or "").strip()
 
+    def _strip_bot_mention_text(self, text: str) -> str:
+        cleaned = text or ""
+        bot_user = getattr(self.client, "user", None)
+        if bot_user is not None:
+            bot_id = str(bot_user.id)
+            cleaned = cleaned.replace(f"<@{bot_id}>", " ")
+            cleaned = cleaned.replace(f"<@!{bot_id}>", " ")
+        return " ".join(cleaned.split())
+
     def _is_allowed_guild(self, guild_id: Optional[str]) -> bool:
         allow = set(self.config.guild_allowlist or [])
         deny = set(self.config.guild_denylist or [])
@@ -845,7 +854,7 @@ class DiscordBot(BaseIMClient):
         if message.guild is None:
             return None
         try:
-            snippet = (message.content or "").strip()
+            snippet = self._strip_bot_mention_text(message.content or "")
             if snippet:
                 snippet = snippet[:50]
             name = snippet or "vibe-remote session"
@@ -927,9 +936,7 @@ class DiscordBot(BaseIMClient):
                     return
 
         # Strip bot mention from content
-        if self.client.user:
-            bot_id = str(self.client.user.id)
-            content = content.replace(f"<@{bot_id}>", "").replace(f"<@!{bot_id}>", "").strip()
+        content = self._strip_bot_mention_text(content)
 
         allow_plain_bind = self.should_allow_plain_bind(
             user_id=str(message.author.id),

@@ -25,6 +25,14 @@ class _FakeChannel:
 
 
 class DiscordReplyAnchorTests(unittest.IsolatedAsyncioTestCase):
+    def test_strip_bot_mention_text_removes_bot_mention_markup(self):
+        bot = object.__new__(DiscordBot)
+        bot.client = SimpleNamespace(user=SimpleNamespace(id=1468628723526930525))
+
+        cleaned = DiscordBot._strip_bot_mention_text(bot, "<@1468628723526930525> 看下这个CLI 怎么用")
+
+        self.assertEqual(cleaned, "看下这个CLI 怎么用")
+
     async def test_prepare_turn_context_uses_reply_anchor_thread_when_known_session_exists(self):
         bot = object.__new__(DiscordBot)
         bot.sessions = _FakeSessions()
