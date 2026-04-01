@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -59,72 +60,86 @@ class DiscoveredChatsStore:
         self.storage_path = storage_path or paths.get_discovered_chats_path()
         self.state = DiscoveredChatsState()
         self._file_mtime: float = 0
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._load()
 
     def maybe_reload(self) -> None:
-        try:
-            mtime = self.storage_path.stat().st_mtime
-            if mtime > self._file_mtime:
-                self._load()
-        except FileNotFoundError:
-            pass
+        with self._lock:
+            try:
+                mtime = self.storage_path.stat().st_mtime
+                if mtime > self._file_mtime:
+                    self._load()
+            except FileNotFoundError:
+                pass
 
     def _load(self) -> None:
-        if not self.storage_path.exists():
-            return
-        try:
-            payload = json.loads(self.storage_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.error("Failed to load discovered chats: %s", exc)
-            return
-        if not isinstance(payload, dict):
-            logger.error("Failed to load discovered chats: invalid format")
-            return
+        with self._lock:
+            if not self.storage_path.exists():
+                return
+            try:
+                payload = json.loads(self.storage_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.error("Failed to load discovered chats: %s", exc)
+                return
+            if not isinstance(payload, dict):
+                logger.error("Failed to load discovered chats: invalid format")
+                return
 
-        platforms: Dict[str, Dict[str, DiscoveredChat]] = {}
-        raw_platforms = payload.get("platforms") or {}
-        if isinstance(raw_platforms, dict):
-            for platform, chats in raw_platforms.items():
-                if not isinstance(chats, dict):
-                    continue
-                platform_chats: Dict[str, DiscoveredChat] = {}
-                for chat_id, chat_payload in chats.items():
-                    if not isinstance(chat_payload, dict):
+            platforms: Dict[str, Dict[str, DiscoveredChat]] = {}
+            raw_platforms = payload.get("platforms") or {}
+            if isinstance(raw_platforms, dict):
+                for platform, chats in raw_platforms.items():
+                    if not isinstance(chats, dict):
                         continue
-                    platform_chats[str(chat_id)] = DiscoveredChat(
-                        chat_id=str(chat_id),
-                        platform=str(platform),
-                        name=chat_payload.get("name", ""),
-                        username=chat_payload.get("username", ""),
-                        chat_type=chat_payload.get("chat_type", ""),
-                        is_private=bool(chat_payload.get("is_private", False)),
-                        is_forum=bool(chat_payload.get("is_forum", False)),
-                        supports_topics=bool(chat_payload.get("supports_topics", False)),
-                        last_seen_at=chat_payload.get("last_seen_at", ""),
-                    )
-                platforms[str(platform)] = platform_chats
+                    platform_chats: Dict[str, DiscoveredChat] = {}
+                    for chat_id, chat_payload in chats.items():
+                        if not isinstance(chat_payload, dict):
+                            continue
+                        platform_chats[str(chat_id)] = DiscoveredChat(
+                            chat_id=str(chat_id),
+                            platform=str(platform),
+                            name=chat_payload.get("name", ""),
+                            username=chat_payload.get("username", ""),
+                            chat_type=chat_payload.get("chat_type", ""),
+                            is_private=bool(chat_payload.get("is_private", False)),
+                            is_forum=bool(chat_payload.get("is_forum", False)),
+                            supports_topics=bool(chat_payload.get("supports_topics", False)),
+                            last_seen_at=chat_payload.get("last_seen_at", ""),
+                        )
+                    platforms[str(platform)] = platform_chats
 
-        self.state = DiscoveredChatsState(chats=platforms)
-        try:
-            self._file_mtime = self.storage_path.stat().st_mtime
-        except FileNotFoundError:
-            self._file_mtime = 0
+            self.state = DiscoveredChatsState(chats=platforms)
+            try:
+                self._file_mtime = self.storage_path.stat().st_mtime
+            except FileNotFoundError:
+                self._file_mtime = 0
 
     def save(self) -> None:
-        paths.ensure_data_dirs()
-        payload = {
-            "schema_version": SCHEMA_VERSION,
-            "platforms": {
-                platform: {chat_id: asdict(chat) for chat_id, chat in chats.items()}
-                for platform, chats in self.state.chats.items()
-            },
-        }
-        self.storage_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        try:
-            self._file_mtime = self.storage_path.stat().st_mtime
-        except FileNotFoundError:
-            self._file_mtime = 0
+        with self._lock:
+            paths.ensure_data_dirs()
+            self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "schema_version": SCHEMA_VERSION,
+                "platforms": {
+                    platform: {chat_id: asdict(chat) for chat_id, chat in chats.items()}
+                    for platform, chats in self.state.chats.items()
+                },
+            }
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=self.storage_path.parent,
+                suffix=".tmp",
+                delete=False,
+                encoding="utf-8",
+            ) as handle:
+                json.dump(payload, handle, indent=2)
+                handle.write("\n")
+                tmp_path = Path(handle.name)
+            tmp_path.replace(self.storage_path)
+            try:
+                self._file_mtime = self.storage_path.stat().st_mtime
+            except FileNotFoundError:
+                self._file_mtime = 0
 
     def remember_chat(
         self,
@@ -162,16 +177,17 @@ class DiscoveredChatsStore:
             return existing
 
     def list_chats(self, platform: str, *, include_private: bool = True) -> list[DiscoveredChat]:
-        self.maybe_reload()
-        chats = list(self.state.chats.get(str(platform), {}).values())
-        if not include_private:
-            chats = [chat for chat in chats if not chat.is_private]
-        chats.sort(
-            key=lambda chat: (
-                chat.last_seen_at or "",
-                chat.name.lower() if chat.name else "",
-                chat.chat_id,
-            ),
-            reverse=True,
-        )
-        return chats
+        with self._lock:
+            self.maybe_reload()
+            chats = list(self.state.chats.get(str(platform), {}).values())
+            if not include_private:
+                chats = [chat for chat in chats if not chat.is_private]
+            chats.sort(
+                key=lambda chat: (
+                    chat.last_seen_at or "",
+                    chat.name.lower() if chat.name else "",
+                    chat.chat_id,
+                ),
+                reverse=True,
+            )
+            return chats
