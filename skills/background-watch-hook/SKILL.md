@@ -170,6 +170,7 @@ GitHub-specific notes:
 
 - `--catch-up` reports activity that already exists at startup
 - without `--catch-up`, the waiter snapshots current PR activity as the baseline
+- PR activity also includes the special case where `chatgpt-codex-connector[bot]` leaves a `+1` reaction on the PR body instead of posting a comment
 - authentication is preferred; unauthenticated polling is slower and more fragile
 
 ## Practical Advice

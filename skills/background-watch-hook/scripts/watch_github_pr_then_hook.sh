@@ -26,6 +26,7 @@ Options:
   --since-review-id <id>          Optional. Review cursor.
   --since-review-comment-id <id>  Optional. Review-comment cursor.
   --since-issue-comment-id <id>   Optional. PR conversation comment cursor.
+  --since-reaction-id <id>        Optional. PR-body reaction cursor.
   --log-file <path>               Optional. Background log file path.
   --foreground                    Optional. Run inline instead of detaching.
   --post-to <thread|channel>      Optional. Passed through to the wrapper.
@@ -51,6 +52,7 @@ allow_unauthenticated=0
 since_review_id=""
 since_review_comment_id=""
 since_issue_comment_id=""
+since_reaction_id=""
 log_file=""
 foreground=0
 post_to=""
@@ -130,6 +132,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --since-issue-comment-id)
       since_issue_comment_id="${2:-}"
+      shift 2
+      ;;
+    --since-reaction-id)
+      since_reaction_id="${2:-}"
       shift 2
       ;;
     --log-file)
@@ -252,6 +258,9 @@ if [[ "$forever" -eq 1 && "$foreground" -ne 1 ]]; then
   if [[ -n "$since_issue_comment_id" ]]; then
     child_args+=(--since-issue-comment-id "$since_issue_comment_id")
   fi
+  if [[ -n "$since_reaction_id" ]]; then
+    child_args+=(--since-reaction-id "$since_reaction_id")
+  fi
   if [[ -n "$post_to" ]]; then
     child_args+=(--post-to "$post_to")
   fi
@@ -316,6 +325,7 @@ if [[ "$forever" -eq 1 ]]; then
   current_since_review_id="$since_review_id"
   current_since_review_comment_id="$since_review_comment_id"
   current_since_issue_comment_id="$since_issue_comment_id"
+  current_since_reaction_id="$since_reaction_id"
   current_catch_up="$catch_up"
 
   while true; do
@@ -349,7 +359,7 @@ PY
         )"
         send_status_hook \
           "GitHub PR watch stopped after reaching its lifetime timeout." \
-          "Lifetime timeout reached after ${elapsed_seconds} second(s) for ${repo}#${pr}. Last cursors: review=${current_since_review_id:-0} review_comment=${current_since_review_comment_id:-0} issue_comment=${current_since_issue_comment_id:-0}."
+          "Lifetime timeout reached after ${elapsed_seconds} second(s) for ${repo}#${pr}. Last cursors: review=${current_since_review_id:-0} review_comment=${current_since_review_comment_id:-0} issue_comment=${current_since_issue_comment_id:-0} reaction=${current_since_reaction_id:-0}."
         exit 0
       fi
 
@@ -417,6 +427,9 @@ PY
     if [[ -n "$current_since_issue_comment_id" ]]; then
       cycle_waiter_args+=(--since-issue-comment-id "$current_since_issue_comment_id")
     fi
+    if [[ -n "$current_since_reaction_id" ]]; then
+      cycle_waiter_args+=(--since-reaction-id "$current_since_reaction_id")
+    fi
     if [[ "$current_catch_up" -eq 1 ]]; then
       cycle_waiter_args+=(--catch-up)
     fi
@@ -454,16 +467,17 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     payload = json.load(handle)
 print(
-    "%s\t%s\t%s"
+    "%s\t%s\t%s\t%s"
     % (
         payload["review_cursor"],
         payload["review_comment_cursor"],
         payload["issue_comment_cursor"],
+        payload.get("reaction_cursor", 0),
     )
 )
 PY
     )"
-    IFS=$'\t' read -r current_since_review_id current_since_review_comment_id current_since_issue_comment_id <<<"$cursor_values"
+    IFS=$'\t' read -r current_since_review_id current_since_review_comment_id current_since_issue_comment_id current_since_reaction_id <<<"$cursor_values"
     current_catch_up=0
   done
 fi
@@ -520,6 +534,9 @@ if [[ -n "$since_review_comment_id" ]]; then
 fi
 if [[ -n "$since_issue_comment_id" ]]; then
   waiter_args+=(--since-issue-comment-id "$since_issue_comment_id")
+fi
+if [[ -n "$since_reaction_id" ]]; then
+  waiter_args+=(--since-reaction-id "$since_reaction_id")
 fi
 
 "${wrapper_args[@]}" -- "${waiter_args[@]}"
