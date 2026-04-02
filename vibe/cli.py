@@ -225,7 +225,7 @@ def _watch_add_examples_text() -> str:
         Examples:
           vibe watch add --session-key 'slack::channel::C123' --shell 'python3 scripts/wait_for_export.py'
           vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The export finished.' -- bash -lc 'sleep 120; echo done'
-          vibe watch add --session-key 'slack::channel::C123' --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 1 --retry-delay 30 -- python3 scripts/wait_for_github_pr_activity.py --repo cyhhao/vibe-remote --pr 153
+          vibe watch add --session-key 'slack::channel::C123' --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 1 --retry-delay 30 -- uv run --no-project scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
         """
     )
 

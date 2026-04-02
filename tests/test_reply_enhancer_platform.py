@@ -87,7 +87,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`/tmp/user_preferences.md`", prompt)
         self.assertIn("`<platform>/<user_id>`", prompt)
 
-    def test_prompt_includes_scheduled_task_usage_with_threadless_default_session_key(self):
+    def test_prompt_includes_task_watch_and_hook_usage_with_threadless_default_session_key(self):
         context = MessageContext(
             user_id="U1",
             channel_id="C1",
@@ -99,19 +99,27 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
             prompt = build_reply_enhancements_prompt(include_quick_replies=True, context=context)
 
-        self.assertIn("## 3. Scheduled tasks and hooks", prompt)
+        self.assertIn("## 3. Scheduled tasks, watches, and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
         self.assertIn("`vibe hook send --session-key ... --prompt ...`", prompt)
         self.assertIn("`vibe watch add`", prompt)
-        self.assertIn("Use `vibe task add` for actions that should recur or remain saved.", prompt)
+        self.assertIn("Use `vibe task add` for saved work that should run later on a schedule or at one exact time.", prompt)
         self.assertIn(
-            "Use `vibe watch add` when a background waiter should stay managed by Vibe Remote until it emits a follow-up hook.",
+            "Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.",
             prompt,
         )
         self.assertIn("Default session key: `slack::channel::C1`", prompt)
         self.assertIn("Current thread ID: `171717.123`", prompt)
         self.assertIn(
-            "Use `--post-to channel` when the task or hook should keep thread context but publish to the parent channel.",
+            "Use `--post-to channel` when the task, watch, or hook should keep thread context but publish to the parent channel.",
+            prompt,
+        )
+        self.assertIn(
+            "Use `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, and `vibe watch remove` to manage background work after creation.",
+            prompt,
+        )
+        self.assertIn(
+            "Prefer `vibe watch add` over ad-hoc `nohup` or shell-detached jobs when the user wants a managed background task.",
             prompt,
         )
         self.assertIn(
@@ -120,7 +128,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
         self.assertIn(
-            "Run `vibe task add --help`, `vibe hook send --help`, or `vibe watch add --help` for the full command reference.",
+            "Run `vibe task add --help`, `vibe watch add --help`, or `vibe hook send --help` for the full command reference.",
             prompt,
         )
         self.assertIn("A shared user context and preferences file is available at ", prompt)
