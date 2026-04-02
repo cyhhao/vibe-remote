@@ -1378,6 +1378,7 @@ class DiscordBot(BaseIMClient):
         opencode_default_config: dict,
         claude_agents: list,
         claude_models: list,
+        codex_agents: list,
         codex_models: list,
     ):
         interaction = trigger_id if isinstance(trigger_id, discord.Interaction) else None
@@ -1435,6 +1436,7 @@ class DiscordBot(BaseIMClient):
                 self.claude_reasoning = (
                     getattr(current_routing, "claude_reasoning_effort", None) if current_routing else None
                 )
+                self.codex_agent = getattr(current_routing, "codex_agent", None) if current_routing else None
                 self.codex_model = getattr(current_routing, "codex_model", None) if current_routing else None
                 self.codex_reasoning = (
                     getattr(current_routing, "codex_reasoning_effort", None) if current_routing else None
@@ -1727,6 +1729,38 @@ class DiscordBot(BaseIMClient):
                     self.add_item(reasoning_select)
 
                 if self.selected_backend == "codex":
+                    codex_agent_names = _unique_agent_names(codex_agents)
+                    agent_options = [
+                        discord.SelectOption(
+                            label=_prefixed_label(
+                                "discord.labels.codexAgent",
+                                self.outer._t("common.default"),
+                            ),
+                            value="__default__",
+                            default=self.codex_agent in (None, "__default__"),
+                        )
+                    ]
+                    agent_options += [
+                        discord.SelectOption(label=a, value=a, default=a == self.codex_agent)
+                        for a in codex_agent_names
+                    ]
+                    if len(agent_options) > 25:
+                        agent_options = agent_options[:25]
+                    agent_select = discord.ui.Select(
+                        placeholder=self.outer._t("modal.routing.selectCodexAgent"),
+                        options=agent_options,
+                        min_values=1,
+                        max_values=1,
+                    )
+
+                    async def codex_agent_callback(select_interaction: discord.Interaction):
+                        if agent_select.values:
+                            self.codex_agent = agent_select.values[0]
+                        await select_interaction.response.defer()
+
+                    agent_select.callback = codex_agent_callback
+                    self.add_item(agent_select)
+
                     model_options = [
                         discord.SelectOption(
                             label=_prefixed_label("discord.labels.model", self.outer._t("common.default")),
@@ -1842,6 +1876,7 @@ class DiscordBot(BaseIMClient):
                             _normalize(self.claude_agent),
                             _normalize(self.claude_model),
                             _normalize(self.claude_reasoning),
+                            _normalize(self.codex_agent),
                             _normalize(self.codex_model),
                             _normalize(self.codex_reasoning),
                             notify_user=True,

@@ -355,25 +355,28 @@ Current Vibe Remote routing support is:
 | --- | --- | --- | --- | --- |
 | OpenCode | yes | yes | yes | yes |
 | Claude | yes | yes | yes | yes |
-| Codex | yes | no | yes | yes |
+| Codex | yes | yes | yes | yes |
 
 Behavior notes:
 
 - OpenCode subagents are selected through `routing.opencode_agent` or through prefix routing such as `reviewer: ...`.
 - Claude subagents are selected through `routing.claude_agent` or prefix routing.
+- Codex subagents are selected through `routing.codex_agent` or prefix routing.
 - Claude reasoning is selected through `routing.claude_reasoning_effort`; common values are `low`, `medium`, and `high`, and some models also allow `max`.
-- Codex subagents are not currently supported in Vibe Remote routing.
 - If a Claude reasoning value is invalid for the chosen model, Vibe Remote drops that override and falls back to the backend default.
 
 ## Subagent and Prefix Routing
 
 If the user asks for subagents, remember:
 
-- OpenCode and Claude support prefix-triggered subagent selection like `planner: draft a migration plan`
+- OpenCode, Claude, and Codex support prefix-triggered subagent selection like `planner: draft a migration plan`
 - when a subagent definition provides its own default model or reasoning setting, that subagent-level value overrides the channel default
 - Claude subagents are discovered from markdown files under:
   - `~/.claude/agents/`
   - project `.claude/agents/`
+- Codex custom agents are discovered from TOML files under:
+  - `~/.codex/agents/`
+  - project `.codex/agents/`
 - OpenCode subagent and model defaults come from the OpenCode runtime/config rather than only from Vibe Remote's own config
 
 ## Important Caveat: OpenCode Defaults
@@ -429,6 +432,7 @@ Example: enable a Slack channel and route it to Codex with GPT-5.4 high reasonin
             "opencode_reasoning_effort": null,
             "claude_agent": null,
             "claude_model": null,
+            "codex_agent": null,
             "codex_model": "gpt-5.4",
             "codex_reasoning_effort": "high"
           },
@@ -470,6 +474,7 @@ User intent:
 
 - enable Slack channel `C...`
 - backend `codex`
+- optional subagent `reviewer`
 - model `gpt-5.4`
 - reasoning `high`
 
@@ -479,6 +484,7 @@ Action:
 - target `scopes.channel.slack.<channel_id>`
 - set `enabled: true`
 - set `routing.agent_backend = "codex"`
+- set `routing.codex_agent = "reviewer"` if requested
 - set `routing.codex_model = "gpt-5.4"`
 - set `routing.codex_reasoning_effort = "high"`
 
@@ -643,14 +649,17 @@ Important locations:
 
 - `~/.codex/config.toml`: global Codex config
 - `.codex/config.toml`: project-local Codex config
+- `~/.codex/agents/`: global Codex custom agents
+- `.codex/agents/`: project-local Codex custom agents
 
 Relevant docs:
 
 - config basics: `https://developers.openai.com/codex/config-basic/`
 - config reference: `https://developers.openai.com/codex/config-reference/`
 - CLI overview: `https://developers.openai.com/codex/cli`
+- subagents: `https://developers.openai.com/codex/subagents`
 
-Inside Vibe Remote, Codex scope routing currently controls backend choice, model, and reasoning effort. It does not expose Codex subagent routing.
+Inside Vibe Remote, Codex scope routing currently controls backend choice, subagent, model, and reasoning effort.
 
 ## Safety Boundaries
 

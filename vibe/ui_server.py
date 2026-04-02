@@ -674,6 +674,21 @@ def claude_agents():
     return jsonify(api.claude_agents(cwd))
 
 
+@app.route("/codex/agents", methods=["GET"])
+def codex_agents():
+    from vibe import api
+
+    cwd = request.args.get("cwd")
+    if cwd:
+        expanded = Path(cwd).expanduser()
+        if not expanded.is_absolute():
+            cwd = str(get_working_dir() / cwd)
+        else:
+            cwd = str(expanded)
+
+    return jsonify(api.codex_agents(cwd))
+
+
 @app.route("/claude/models", methods=["GET"])
 def claude_models():
     from vibe import api
@@ -907,6 +922,7 @@ if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                         claude_agent=modal_values.get("claude_agent"),
                         claude_model=modal_values.get("claude_model"),
                         claude_reasoning_effort=modal_values.get("claude_reasoning_effort"),
+                        codex_agent=modal_values.get("codex_agent"),
                         codex_model=modal_values.get("codex_model"),
                         codex_reasoning_effort=modal_values.get("codex_reasoning_effort"),
                     )
@@ -948,6 +964,7 @@ if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
                         claude_agent=modal_values.get("claude_agent"),
                         claude_model=modal_values.get("claude_model"),
                         claude_reasoning_effort=modal_values.get("claude_reasoning_effort"),
+                        codex_agent=modal_values.get("codex_agent"),
                         codex_model=modal_values.get("codex_model"),
                         codex_reasoning_effort=modal_values.get("codex_reasoning_effort"),
                     )

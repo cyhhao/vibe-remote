@@ -78,6 +78,7 @@
       "backend": "后端",
       "opencodeAgent": "OpenCode Agent",
       "claudeAgent": "Claude Agent",
+      "codexAgent": "Codex Agent",
       "model": "模型",
       "reasoningEffort": "推理强度"
     }
@@ -168,6 +169,8 @@
       "claudeAgent": "Claude Agent",
       "selectClaudeAgent": "选择 Claude Agent",
       "codexSettings": "Codex 设置",
+      "codexAgent": "Codex Agent",
+      "selectCodexAgent": "选择 Codex Agent",
       "codexReasoningEffort": "推理强度",
       "tip": "选择“(默认)”以使用后端的配置默认值。"
     },

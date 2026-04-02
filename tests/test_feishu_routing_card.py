@@ -66,6 +66,7 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
             opencode_agent=None,
             opencode_model=None,
             opencode_reasoning_effort=None,
+            codex_agent=None,
             codex_model=None,
             codex_reasoning_effort=None,
         )
@@ -78,6 +79,7 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
             "opencode_agents": [],
             "opencode_models": {},
             "opencode_default_config": {},
+            "codex_agents": [],
             "codex_models": [],
         }
 
@@ -118,6 +120,7 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
             opencode_agent=None,
             opencode_model=None,
             opencode_reasoning_effort=None,
+            codex_agent=None,
             codex_model=None,
             codex_reasoning_effort=None,
         )
@@ -130,6 +133,7 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
             "opencode_agents": [],
             "opencode_models": {},
             "opencode_default_config": {},
+            "codex_agents": [],
             "codex_models": [],
         }
 

@@ -30,7 +30,7 @@
 |-------|:--------:|:-----:|:----------------:|
 | **OpenCode** | ✅ | ✅ | ✅ |
 | **Claude Code** | ✅ | ✅ | ❌ (无 CLI 参数) |
-| **Codex** | ❌ (暂不支持) | ✅ | ✅ |
+| **Codex** | ✅ | ✅ | ✅ |
 
 ---
 
@@ -57,9 +57,9 @@ class RoutingSettings:
     # 注：Claude 没有 reasoning_effort CLI 参数
     
     # Codex 特定 (新增)
+    codex_agent: Optional[str] = None
     codex_model: Optional[str] = None
     codex_reasoning_effort: Optional[str] = None
-    # 注：Codex 暂不支持 subagent
 ```
 
 ### 1.2 前端 ChannelConfig 类型扩展
@@ -81,6 +81,7 @@ interface ChannelConfig {
     claude_agent?: string | null;
     claude_model?: string | null;
     // Codex (新增)
+    codex_agent?: string | null;
     codex_model?: string | null;
     codex_reasoning_effort?: string | null;
   };
@@ -191,7 +192,6 @@ interface ChannelConfig {
           <option value="xhigh">Extra High</option>
         </select>
       </div>
-      {/* 注意：不显示 Agent - Codex 暂不支持 subagent */}
     </div>
   </div>
 )}
@@ -201,7 +201,7 @@ interface ChannelConfig {
 
 | 配置项 | OpenCode | Claude Code | Codex |
 |--------|:--------:|:-----------:|:-----:|
-| Agent/Subagent | ✅ 显示 | ✅ 显示 | ❌ 不显示 |
+| Agent/Subagent | ✅ 显示 | ✅ 显示 | ✅ 显示 |
 | Model | ✅ 显示 | ✅ 显示 | ✅ 显示 |
 | Reasoning Effort | ✅ 显示 | ❌ 不显示 | ✅ 显示 |
 
@@ -429,9 +429,9 @@ codex exec --model o3 -c model_reasoning_effort=high "your prompt"
    - Extended Thinking 只能通过 `~/.claude/settings.json` 配置
    - UI 中不显示该选项
 
-2. **Codex 暂不支持 Subagent**
-   - 官方 MCP Server 方式需要架构改动
-   - 后续可考虑支持
+2. **Codex 现已支持 Subagent**
+   - 通过 `routing.codex_agent` 和前缀路由选择
+   - 支持从 Codex agent 定义继承默认 model / reasoning
 
 3. **向后兼容**
    - 所有新字段使用 Optional 类型

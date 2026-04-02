@@ -20,6 +20,7 @@ class RoutingModalData:
     opencode_default_config: dict[str, Any]
     claude_agents: list[str]
     claude_models: list[str]
+    codex_agents: list[str]
     codex_models: list[str]
 
     def as_kwargs(self) -> dict[str, Any]:
@@ -32,6 +33,7 @@ class RoutingModalData:
             "opencode_default_config": self.opencode_default_config,
             "claude_agents": self.claude_agents,
             "claude_models": self.claude_models,
+            "codex_agents": self.codex_agents,
             "codex_models": self.codex_models,
         }
 
@@ -47,5 +49,6 @@ class RoutingModalSelection:
     selected_claude_agent: Optional[str] = None
     selected_claude_model: Optional[str] = None
     selected_claude_reasoning: Optional[str] = None
+    selected_codex_agent: Optional[str] = None
     selected_codex_model: Optional[str] = None
     selected_codex_reasoning: Optional[str] = None

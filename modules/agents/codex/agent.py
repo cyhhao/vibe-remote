@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from modules.agents.base import AgentRequest, BaseAgent
+from modules.agents.subagent_router import SubagentDefinition, load_codex_subagent
 from modules.agents.codex.event_handler import CodexEventHandler
 from modules.agents.codex.session import CodexSessionManager
 from modules.agents.codex.transport import CodexTransport
@@ -257,6 +259,8 @@ class CodexAgent(BaseAgent):
         request: AgentRequest,
     ) -> str:
         """Create a new Codex thread and return its threadId."""
+        _, _, _, agent_instructions = self._resolve_codex_agent_settings(request)
+
         params: Dict[str, Any] = {
             "cwd": request.working_path,
             "approvalPolicy": "never",
@@ -268,14 +272,23 @@ class CodexAgent(BaseAgent):
             or self.controller.config.platform
         )
 
+        instruction_parts: list[str] = []
+        if agent_instructions:
+            instruction_parts.append(agent_instructions)
+
         if getattr(self.controller.config, "reply_enhancements", True):
             from core.reply_enhancer import build_reply_enhancements_prompt
 
-            params["developerInstructions"] = build_reply_enhancements_prompt(
-                include_quick_replies=platform != "wechat",
-                context=request.context,
-                fallback_platform=platform,
+            instruction_parts.append(
+                build_reply_enhancements_prompt(
+                    include_quick_replies=platform != "wechat",
+                    context=request.context,
+                    fallback_platform=platform,
+                )
             )
+
+        if instruction_parts:
+            params["developerInstructions"] = "\n\n".join(part for part in instruction_parts if part)
 
         resp = await transport.send_request("thread/start", params)
         # thread/start returns Thread directly OR may nest under "thread"
@@ -296,6 +309,58 @@ class CodexAgent(BaseAgent):
             thread_id,
         )
         return thread_id
+
+    def _resolve_codex_agent_settings(
+        self,
+        request: AgentRequest,
+    ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+        request_context = getattr(request, "context", None)
+        controller = getattr(self, "controller", None)
+        routing = None
+        settings_key = request.session_key
+        used_context_settings_manager = False
+
+        if request_context is not None and controller is not None and hasattr(controller, "_get_settings_key"):
+            settings_key = controller._get_settings_key(request_context)
+            manager_getter = getattr(controller, "get_settings_manager_for_context", None)
+            if callable(manager_getter):
+                try:
+                    context_settings_manager = manager_getter(request_context)
+                except Exception:
+                    context_settings_manager = None
+                if context_settings_manager is not None:
+                    used_context_settings_manager = True
+                    channel_settings = context_settings_manager.get_channel_settings(settings_key)
+                    routing = channel_settings.routing if channel_settings else None
+
+        if routing is None and not used_context_settings_manager:
+            channel_settings = self.settings_manager.get_channel_settings(settings_key)
+            routing = channel_settings.routing if channel_settings else None
+
+        request_subagent = getattr(request, "subagent_name", None)
+        request_model = getattr(request, "subagent_model", None)
+        request_effort = getattr(request, "subagent_reasoning_effort", None)
+
+        effective_agent = request_subagent or (getattr(routing, "codex_agent", None) if routing else None)
+        explicit_model = request_model or (getattr(routing, "codex_model", None) if routing else None)
+        explicit_effort = request_effort or (
+            getattr(routing, "codex_reasoning_effort", None) if routing else None
+        )
+
+        agent_definition: Optional[SubagentDefinition] = None
+        if effective_agent:
+            try:
+                working_path = getattr(request, "working_path", None)
+                project_root = Path(working_path) if working_path else None
+                agent_definition = load_codex_subagent(effective_agent, project_root=project_root)
+            except Exception as exc:
+                logger.warning("Failed to load Codex subagent %s: %s", effective_agent, exc)
+
+        effective_model = explicit_model or (agent_definition.model if agent_definition else None) or self.codex_config.default_model
+        effective_effort = explicit_effort or (agent_definition.reasoning_effort if agent_definition else None)
+        developer_instructions = agent_definition.developer_instructions if agent_definition else None
+
+        return effective_agent, effective_model, effective_effort, developer_instructions
 
     async def _start_or_resume_thread(
         self,
@@ -338,11 +403,7 @@ class CodexAgent(BaseAgent):
     ) -> str:
         """Build input, configure overrides, and send turn/start to Codex."""
         input_items = self._build_input(request)
-
-        channel_settings = self.settings_manager.get_channel_settings(request.session_key)
-        routing = channel_settings.routing if channel_settings else None
-        effective_model = (routing.codex_model if routing else None) or self.codex_config.default_model
-        effective_effort = routing.codex_reasoning_effort if routing else None
+        _, effective_model, effective_effort, _ = self._resolve_codex_agent_settings(request)
 
         turn_params: Dict[str, Any] = {
             "threadId": thread_id,
