@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -39,9 +40,16 @@ def _get_token() -> str | None:
     return token or None
 
 
-def _min_interval_for_unauthenticated(requests_per_poll: int) -> float:
-    # Keep unauthenticated usage at or below GitHub's 60 requests/hour ceiling.
-    return float(max(requests_per_poll, 1) * 60)
+def _min_interval_for_unauthenticated(
+    requests_per_poll: int,
+    *,
+    bootstrap_requests: int = 0,
+) -> float:
+    # Keep unauthenticated usage at or below GitHub's 60 requests/hour ceiling,
+    # including the initial bootstrap fetch before the polling loop begins.
+    recurring_requests = max(requests_per_poll, 1)
+    hourly_budget = max(1, 60 - max(bootstrap_requests, 0))
+    return float(max(60, math.ceil((3600 * recurring_requests) / hourly_budget)))
 
 
 def _github_get(url: str, token: str | None) -> Any:
@@ -241,17 +249,24 @@ def main() -> int:
 
     if token is None:
         requests_per_poll = _requests_per_poll(state)
-        unauthenticated_min = _min_interval_for_unauthenticated(requests_per_poll)
+        bootstrap_requests = requests_per_poll
+        unauthenticated_min = _min_interval_for_unauthenticated(
+            requests_per_poll,
+            bootstrap_requests=bootstrap_requests,
+        )
         if effective_interval < unauthenticated_min:
             print(
                 (
                     "No GitHub token detected; clamping polling interval from %.1fs to %.1fs "
-                    "for %s request(s) per poll to avoid unauthenticated rate-limit lockout."
+                    "for %s request(s) per poll plus %s bootstrap request(s) to avoid "
+                    "unauthenticated rate-limit lockout."
                 )
-                % (effective_interval, unauthenticated_min, requests_per_poll),
+                % (effective_interval, unauthenticated_min, requests_per_poll, bootstrap_requests),
                 file=sys.stderr,
             )
             effective_interval = unauthenticated_min
+    else:
+        bootstrap_requests = 0
 
     review_cursor = (
         args.since_review_id
@@ -291,11 +306,15 @@ def main() -> int:
         return 0
 
     while True:
-        if args.timeout > 0 and (time.monotonic() - start) >= args.timeout:
-            print("Timed out while waiting for GitHub PR activity", file=sys.stderr)
-            return 124
+        sleep_seconds = effective_interval
+        if args.timeout > 0:
+            remaining_timeout = args.timeout - (time.monotonic() - start)
+            if remaining_timeout <= 0:
+                print("Timed out while waiting for GitHub PR activity", file=sys.stderr)
+                return 124
+            sleep_seconds = min(sleep_seconds, remaining_timeout)
 
-        time.sleep(effective_interval)
+        time.sleep(sleep_seconds)
 
         try:
             state = _fetch_state(args.repo, args.pr, token)
@@ -317,14 +336,17 @@ def main() -> int:
 
         if token is None:
             requests_per_poll = _requests_per_poll(state)
-            unauthenticated_min = _min_interval_for_unauthenticated(requests_per_poll)
+            unauthenticated_min = _min_interval_for_unauthenticated(
+                requests_per_poll,
+                bootstrap_requests=bootstrap_requests,
+            )
             if effective_interval < unauthenticated_min:
                 print(
                     (
                         "GitHub unauthenticated polling now needs %.1fs minimum for %s request(s) "
-                        "per poll; increasing interval."
+                        "per poll plus %s bootstrap request(s); increasing interval."
                     )
-                    % (unauthenticated_min, requests_per_poll),
+                    % (unauthenticated_min, requests_per_poll, bootstrap_requests),
                     file=sys.stderr,
                 )
                 effective_interval = unauthenticated_min

@@ -29,7 +29,7 @@ Options:
   --deliver-key <value>           Optional. Passed through to the wrapper.
   --hook-bin <value>              Optional. Passed through to the wrapper.
   --hook-cmd <value>              Optional. Passed through to the wrapper.
-  --timeout-exit-code <n>         Optional. Passed through to the wrapper.
+  --timeout-exit-code <n>         Optional. Must remain 124 for the bundled waiter.
   -h, --help                      Show this help.
 EOF
 }
@@ -147,6 +147,11 @@ done
 if [[ -z "$session_key" || -z "$repo" || -z "$pr" ]]; then
   echo "--session-key, --repo, and --pr are required" >&2
   usage >&2
+  exit 2
+fi
+
+if [[ -n "$timeout_exit_code" && "$timeout_exit_code" != "124" ]]; then
+  echo "--timeout-exit-code must remain 124 for the bundled GitHub waiter" >&2
   exit 2
 fi
 
