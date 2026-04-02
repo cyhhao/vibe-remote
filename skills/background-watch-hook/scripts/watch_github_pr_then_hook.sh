@@ -23,6 +23,8 @@ Options:
   --since-review-id <id>          Optional. Review cursor.
   --since-review-comment-id <id>  Optional. Review-comment cursor.
   --since-issue-comment-id <id>   Optional. PR conversation comment cursor.
+  --log-file <path>               Optional. Background log file path.
+  --foreground                    Optional. Run inline instead of detaching.
   --post-to <thread|channel>      Optional. Passed through to the wrapper.
   --deliver-key <value>           Optional. Passed through to the wrapper.
   --hook-bin <value>              Optional. Passed through to the wrapper.
@@ -44,6 +46,8 @@ allow_unauthenticated=0
 since_review_id=""
 since_review_comment_id=""
 since_issue_comment_id=""
+log_file=""
+foreground=0
 post_to=""
 deliver_key=""
 hook_bin=""
@@ -99,6 +103,14 @@ while [[ $# -gt 0 ]]; do
     --since-issue-comment-id)
       since_issue_comment_id="${2:-}"
       shift 2
+      ;;
+    --log-file)
+      log_file="${2:-}"
+      shift 2
+      ;;
+    --foreground)
+      foreground=1
+      shift
       ;;
     --post-to)
       post_to="${2:-}"
@@ -158,6 +170,12 @@ fi
 
 wrapper_args=("$WRAPPER" --session-key "$session_key" --prefix "$prefix")
 
+if [[ -n "$log_file" ]]; then
+  wrapper_args+=(--log-file "$log_file")
+fi
+if [[ "$foreground" -eq 1 ]]; then
+  wrapper_args+=(--foreground)
+fi
 if [[ -n "$post_to" ]]; then
   wrapper_args+=(--post-to "$post_to")
 fi

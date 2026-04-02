@@ -2,7 +2,7 @@
 name: background-watch-hook
 slug: background-watch-hook
 description: Run a blocking watcher in the background and send a `vibe hook` back to the current IM session when it finishes. Use for GitHub reviews, CI, file completion, log matches, and process-exit follow-ups.
-version: 0.1.0
+version: 0.2.0
 ---
 
 # Background Watch Hook
@@ -20,7 +20,7 @@ This is a reusable pattern, not a product feature. Do not build a new scheduler 
 The pattern has three parts:
 
 1. A blocking waiter command that exits only when the watched condition becomes true.
-2. A detached shell wrapper that runs the waiter asynchronously.
+2. An async wrapper that starts the waiter in the background and returns immediately.
 3. A `vibe hook send` call that fires only after the waiter exits successfully.
 
 The waiter prints its final event summary to `stdout`. The wrapper captures that output, builds a prompt file, and queues one hook back into the current session.
@@ -36,7 +36,7 @@ Use this pattern for any one-off "wait in the background, then come back here" t
 ## Hard Rules
 
 1. Do not use `watcher & && vibe hook send ...`. That runs the hook immediately after background launch, not after the watcher finishes.
-2. Put both the waiter and the hook inside the same detached shell.
+2. Let the wrapper own detaching. Do not make every caller hand-roll `nohup`.
 3. Keep waiter `stdout` clean. Final event summary goes to `stdout`; debug logs go to `stderr`.
 4. Prefer `--prompt-file` over inline `--prompt` for hook payloads.
 5. Use a timeout-aware waiter. Infinite waits are fine only when the user explicitly wants them.
@@ -44,7 +44,7 @@ Use this pattern for any one-off "wait in the background, then come back here" t
 ## Files In This Skill
 
 - `scripts/watch_then_hook.sh`
-  General wrapper. Runs a waiter command, captures `stdout`, then calls `vibe hook send`.
+  Main entrypoint. Starts a waiter in the background by default, captures `stdout`, then calls `vibe hook send`.
 - `scripts/watch_github_pr_then_hook.sh`
   Thin convenience wrapper for the common GitHub PR case. It forwards GitHub-specific flags to the bundled waiter and generic delivery flags to the main wrapper.
 - `scripts/wait_for_github_pr_activity.py`
@@ -74,6 +74,8 @@ The wrapper interface is:
 scripts/watch_then_hook.sh \
   --session-key "<session-key>" \
   [--prefix "<hook prefix>"] \
+  [--log-file "/tmp/watch.log"] \
+  [--foreground] \
   [--post-to channel] \
   [--deliver-key "<delivery-session-key>"] \
   [--hook-bin vibe] \
@@ -86,6 +88,10 @@ scripts/watch_then_hook.sh \
   Required. Delivery target for the follow-up hook.
 - `--prefix`
   Optional. Prepended to the waiter output inside the generated prompt file.
+- `--log-file`
+  Optional. Background log destination. If omitted, the wrapper picks a file under `/tmp/`.
+- `--foreground`
+  Optional. Run inline. Use this only when you explicitly want the low-level synchronous primitive for testing or composition.
 - `--post-to`
   Optional. Use only when the follow-up should post to the parent channel while keeping thread context.
 - `--deliver-key`
@@ -95,7 +101,7 @@ scripts/watch_then_hook.sh \
 - `--hook-cmd`
   Optional. Full hook command override. Useful when the local `vibe` on `PATH` is a stub and the real CLI should run through something like `uv run python -m vibe`.
 - `--timeout-exit-code`
-  Optional. The wrapper treats this exit code as a silent timeout.
+  Optional. The wrapper treats this exit code as a timeout and still sends a timeout hook summary.
 
 `--post-to` and `--deliver-key` are mutually exclusive. Fail fast if both are set.
 
@@ -104,16 +110,16 @@ scripts/watch_then_hook.sh \
 The core reusable move is still the generic wrapper. Start there:
 
 ```bash
-nohup bash -lc '
-  scripts/watch_then_hook.sh \
-    --session-key "slack::channel::C123::thread::171717.123" \
-    --prefix "The background condition was met. Inspect the result and continue the task." \
-    -- \
-    bash -lc 'sleep 120; echo "Waiter finished after 120 seconds."'
-' >/tmp/watch-pr-151.log 2>&1 &
+scripts/watch_then_hook.sh \
+  --session-key "slack::channel::C123::thread::171717.123" \
+  --prefix "The background condition was met. Inspect the result and continue the task." \
+  -- \
+  bash -lc 'sleep 120; echo "Waiter finished after 120 seconds."'
 ```
 
-That command returns immediately, leaves the watcher running, and sends the hook only after the waiter exits with success.
+That command returns immediately, leaves the watcher running in the background, and sends the hook only after the waiter exits with success.
+
+If you need the old low-level synchronous primitive, add `--foreground`.
 
 When running inside the Vibe Remote repo or worktree, the wrapper will auto-fallback to `uv run python -m vibe` if the `vibe` executable on `PATH` is not the real CLI.
 
@@ -146,9 +152,9 @@ The prefix should tell the next turn what to do with the watcher result. Good pr
 - `CI finished. Inspect the failure and propose the next fix.`
 - `The export completed. Summarize the result and share the artifact details.`
 
-### 4. Start the detached wrapper
+### 4. Start the wrapper
 
-Run `nohup bash -lc 'scripts/watch_then_hook.sh ...' >/tmp/<name>.log 2>&1 &`.
+Run `scripts/watch_then_hook.sh ...`. It detaches by default.
 
 ### 5. Tell the user what was started
 
@@ -191,37 +197,31 @@ The wrapper is the reusable part. Waiters should stay disposable and task-specif
 ### Delayed Follow-up
 
 ```bash
-nohup bash -lc '
-  scripts/watch_then_hook.sh \
-    --session-key "slack::channel::C123::thread::171717.123" \
-    --prefix "The delayed check completed. Continue from the waiter output below." \
-    -- \
-    bash -lc 'sleep 120; echo "Timer finished after 120 seconds."'
-' >/tmp/watch-delay.log 2>&1 &
+scripts/watch_then_hook.sh \
+  --session-key "slack::channel::C123::thread::171717.123" \
+  --prefix "The delayed check completed. Continue from the waiter output below." \
+  -- \
+  bash -lc 'sleep 120; echo "Timer finished after 120 seconds."'
 ```
 
 ### File Appears
 
 ```bash
-nohup bash -lc '
-  scripts/watch_then_hook.sh \
-    --session-key "slack::channel::C123::thread::171717.123" \
-    --prefix "The export file is ready. Inspect it and continue." \
-    -- \
-    bash -lc 'while [ ! -f /tmp/export.json ]; do sleep 10; done; echo "Detected /tmp/export.json"'
-' >/tmp/watch-file.log 2>&1 &
+scripts/watch_then_hook.sh \
+  --session-key "slack::channel::C123::thread::171717.123" \
+  --prefix "The export file is ready. Inspect it and continue." \
+  -- \
+  bash -lc 'while [ ! -f /tmp/export.json ]; do sleep 10; done; echo "Detected /tmp/export.json"'
 ```
 
 ### Log Pattern
 
 ```bash
-nohup bash -lc '
-  scripts/watch_then_hook.sh \
-    --session-key "slack::channel::C123::thread::171717.123" \
-    --prefix "The expected log pattern appeared. Inspect the event and continue." \
-    -- \
-    bash -lc 'tail -Fn0 /tmp/app.log | while read -r line; do case "$line" in *READY*) echo "$line"; break;; esac; done'
-' >/tmp/watch-log.log 2>&1 &
+scripts/watch_then_hook.sh \
+  --session-key "slack::channel::C123::thread::171717.123" \
+  --prefix "The expected log pattern appeared. Inspect the event and continue." \
+  -- \
+  bash -lc 'tail -Fn0 /tmp/app.log | while read -r line; do case "$line" in *READY*) echo "$line"; break;; esac; done'
 ```
 
 ## GitHub Example
@@ -230,34 +230,29 @@ nohup bash -lc '
 Its default timeout is 6 hours. Override it with `--timeout <seconds>` when the watch should end sooner or run longer.
 
 ```bash
-nohup bash -lc '
-  scripts/watch_github_pr_then_hook.sh \
-    --session-key "slack::channel::C123::thread::171717.123" \
-    --repo cyhhao/vibe-remote \
-    --pr 151 \
-    --prefix "PR review changed. Check the latest GitHub review results and continue the review loop." \
-    --interval 60 \
-    --timeout 14400
-' >/tmp/watch-pr-151.log 2>&1 &
+scripts/watch_github_pr_then_hook.sh \
+  --session-key "slack::channel::C123::thread::171717.123" \
+  --repo cyhhao/vibe-remote \
+  --pr 151 \
+  --prefix "PR review changed. Check the latest GitHub review results and continue the review loop." \
+  --interval 60 \
+  --timeout 14400
 ```
 
 To catch up on comments or reviews that already exist before the watcher starts, add `--catch-up`:
 
 ```bash
-nohup bash -lc '
-  scripts/watch_github_pr_then_hook.sh \
-    --session-key "slack::channel::C123::thread::171717.123" \
-    --repo cyhhao/vibe-remote \
-    --pr 151 \
-    --prefix "PR review already has activity. Pull the current review state and continue the thread." \
-    --catch-up
-' >/tmp/watch-pr-151-catch-up.log 2>&1 &
+scripts/watch_github_pr_then_hook.sh \
+  --session-key "slack::channel::C123::thread::171717.123" \
+  --repo cyhhao/vibe-remote \
+  --pr 151 \
+  --prefix "PR review already has activity. Pull the current review state and continue the thread." \
+  --catch-up
 ```
 
 If authentication is unavailable and a quick one-off best-effort watch is still acceptable, you may opt in explicitly:
 
 ```bash
-nohup bash -lc '
   scripts/watch_github_pr_then_hook.sh \
     --session-key "slack::channel::C123::thread::171717.123" \
     --repo cyhhao/vibe-remote \
@@ -265,7 +260,6 @@ nohup bash -lc '
     --prefix "Best-effort unauthenticated GitHub watch fired. Inspect the latest PR state." \
     --allow-unauthenticated \
     --interval 180
-' >/tmp/watch-pr-151-unauth.log 2>&1 &
 ```
 
 ## Failure Handling

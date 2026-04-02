@@ -11,16 +11,19 @@ Options:
   --prefix <value>           Optional. Text prepended before waiter stdout.
   --post-to <value>          Optional. Passed through to vibe hook send.
   --deliver-key <value>      Optional. Explicit delivery target key for vibe hook send.
+  --log-file <path>          Optional. Background log file path when detaching.
+  --foreground               Optional. Run inline instead of detaching.
   --hook-bin <value>         Optional. Hook CLI executable. Overrides auto-detection.
   --hook-cmd <value>         Optional. Full hook command prefix. Example: 'uv run python -m vibe'
-  --timeout-exit-code <n>    Optional. Silent exit code. Default: 124
+  --timeout-exit-code <n>    Optional. Exit code treated as timeout. Default: 124
   -h, --help                 Show this help.
 
 Behavior:
-  - Runs the waiter command synchronously.
+  - By default, detaches immediately and keeps the waiter running in the background.
+  - Use --foreground to run inline as a low-level primitive.
   - Captures waiter stdout to a temporary file.
   - If the waiter exits 0, builds a prompt file and runs vibe hook send.
-  - If the waiter exits with the timeout code, exits silently without sending a hook.
+  - If the waiter exits with the timeout code, still sends a timeout hook summary.
   - Any other non-zero exit is treated as failure and no hook is sent.
 EOF
 }
@@ -29,6 +32,8 @@ session_key=""
 prefix=""
 post_to=""
 deliver_key=""
+log_file=""
+foreground=0
 hook_bin="${VIBE_HOOK_BIN:-}"
 hook_cmd_override="${VIBE_HOOK_CMD:-}"
 timeout_exit_code=124
@@ -50,6 +55,14 @@ while [[ $# -gt 0 ]]; do
     --deliver-key)
       deliver_key="${2:-}"
       shift 2
+      ;;
+    --log-file)
+      log_file="${2:-}"
+      shift 2
+      ;;
+    --foreground)
+      foreground=1
+      shift
       ;;
     --hook-bin)
       hook_bin="${2:-}"
@@ -100,6 +113,8 @@ if [[ -n "$post_to" && -n "$deliver_key" ]]; then
   echo "--post-to and --deliver-key are mutually exclusive" >&2
   exit 2
 fi
+
+script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
 output_file="$(mktemp)"
 prompt_file="$(mktemp)"
@@ -180,6 +195,41 @@ _run_hook_command() {
 
   "$hook_cmd_prefix" "${hook_args[@]}"
 }
+
+if [[ "$foreground" -ne 1 ]]; then
+  hook_runner="$(_resolve_hook_command)"
+  if [[ -z "$log_file" ]]; then
+    log_file="/tmp/background-watch-hook-$(date +%Y%m%d%H%M%S)-$$.log"
+  fi
+
+  child_args=(
+    "$script_path"
+    --foreground
+    --session-key "$session_key"
+    --hook-cmd "$hook_runner"
+    --timeout-exit-code "$timeout_exit_code"
+  )
+
+  if [[ -n "$prefix" ]]; then
+    child_args+=(--prefix "$prefix")
+  fi
+  if [[ -n "$post_to" ]]; then
+    child_args+=(--post-to "$post_to")
+  fi
+  if [[ -n "$deliver_key" ]]; then
+    child_args+=(--deliver-key "$deliver_key")
+  fi
+
+  child_args+=(-- "$@")
+
+  nohup "${child_args[@]}" >"$log_file" 2>&1 </dev/null &
+  child_pid=$!
+
+  printf 'Started background watch.\n'
+  printf 'PID: %s\n' "$child_pid"
+  printf 'Log file: %s\n' "$log_file"
+  exit 0
+fi
 
 hook_runner="$(_resolve_hook_command)"
 started_at_epoch="$(date +%s)"
