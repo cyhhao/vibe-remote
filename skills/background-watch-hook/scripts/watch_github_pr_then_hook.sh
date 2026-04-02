@@ -404,14 +404,12 @@ PY
 
     if [[ "$cycle_status" -ne 0 ]]; then
       echo "Forever watch cycle failed with status $cycle_status; retrying in ${retry_delay_seconds}s." >&2
-      current_catch_up=0
       sleep "$retry_delay_seconds"
       continue
     fi
 
     if [[ ! -s "$cursor_file" ]]; then
       echo "No cursor output written; re-arming with existing cursors." >&2
-      current_catch_up=0
       continue
     fi
 
