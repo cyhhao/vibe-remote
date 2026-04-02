@@ -13,7 +13,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from math import ceil
 from typing import Any
 
 
@@ -140,7 +139,8 @@ def _fetch_state(repo: str, pr_number: int, token: str | None) -> dict[str, list
 def _requests_per_poll(state: dict[str, list[dict[str, Any]]]) -> int:
     requests = 0
     for key in ("reviews", "review_comments", "issue_comments"):
-        requests += max(1, ceil(len(state[key]) / 100))
+        item_count = len(state[key])
+        requests += max(1, (item_count // 100) + 1)
     return requests
 
 
