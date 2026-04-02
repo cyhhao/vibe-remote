@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from math import ceil
 from typing import Any
 
 
@@ -39,10 +40,9 @@ def _get_token() -> str | None:
     return token or None
 
 
-def _min_interval_for_unauthenticated() -> float:
-    # Each poll performs three API requests. Keep unauthenticated usage at or below
-    # GitHub's 60 requests/hour ceiling with a small safety margin.
-    return 180.0
+def _min_interval_for_unauthenticated(requests_per_poll: int) -> float:
+    # Keep unauthenticated usage at or below GitHub's 60 requests/hour ceiling.
+    return float(max(requests_per_poll, 1) * 60)
 
 
 def _github_get(url: str, token: str | None) -> Any:
@@ -137,6 +137,13 @@ def _fetch_state(repo: str, pr_number: int, token: str | None) -> dict[str, list
     }
 
 
+def _requests_per_poll(state: dict[str, list[dict[str, Any]]]) -> int:
+    requests = 0
+    for key in ("reviews", "review_comments", "issue_comments"):
+        requests += max(1, ceil(len(state[key]) / 100))
+    return requests
+
+
 def _render_activity(
     *,
     repo: str,
@@ -215,18 +222,6 @@ def main() -> int:
         return 2
 
     effective_interval = max(args.interval, 1.0)
-    if token is None:
-        unauthenticated_min = _min_interval_for_unauthenticated()
-        if effective_interval < unauthenticated_min:
-            print(
-                (
-                    "No GitHub token detected; clamping polling interval from %.1fs to %.1fs "
-                    "to avoid unauthenticated rate-limit lockout."
-                )
-                % (effective_interval, unauthenticated_min),
-                file=sys.stderr,
-            )
-            effective_interval = unauthenticated_min
 
     start = time.monotonic()
 
@@ -238,6 +233,20 @@ def main() -> int:
     except Exception as err:  # noqa: BLE001
         print(f"Failed to fetch initial PR state: {err}", file=sys.stderr)
         return 1
+
+    if token is None:
+        requests_per_poll = _requests_per_poll(state)
+        unauthenticated_min = _min_interval_for_unauthenticated(requests_per_poll)
+        if effective_interval < unauthenticated_min:
+            print(
+                (
+                    "No GitHub token detected; clamping polling interval from %.1fs to %.1fs "
+                    "for %s request(s) per poll to avoid unauthenticated rate-limit lockout."
+                )
+                % (effective_interval, unauthenticated_min, requests_per_poll),
+                file=sys.stderr,
+            )
+            effective_interval = unauthenticated_min
 
     review_cursor = (
         args.since_review_id
@@ -300,6 +309,20 @@ def main() -> int:
         except Exception as err:  # noqa: BLE001
             print(f"Polling failed: {err}", file=sys.stderr)
             continue
+
+        if token is None:
+            requests_per_poll = _requests_per_poll(state)
+            unauthenticated_min = _min_interval_for_unauthenticated(requests_per_poll)
+            if effective_interval < unauthenticated_min:
+                print(
+                    (
+                        "GitHub unauthenticated polling now needs %.1fs minimum for %s request(s) "
+                        "per poll; increasing interval."
+                    )
+                    % (unauthenticated_min, requests_per_poll),
+                    file=sys.stderr,
+                )
+                effective_interval = unauthenticated_min
 
         output, review_cursor, review_comment_cursor, issue_comment_cursor = _render_activity(
             repo=args.repo,

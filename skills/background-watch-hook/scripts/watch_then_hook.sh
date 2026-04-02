@@ -91,6 +91,11 @@ if [[ $# -eq 0 ]]; then
   exit 2
 fi
 
+if [[ -n "$post_to" && "$post_to" != "thread" && "$post_to" != "channel" ]]; then
+  echo "--post-to must be either 'thread' or 'channel'" >&2
+  exit 2
+fi
+
 if [[ -n "$post_to" && -n "$deliver_key" ]]; then
   echo "--post-to and --deliver-key are mutually exclusive" >&2
   exit 2
@@ -176,6 +181,8 @@ _run_hook_command() {
   "$hook_cmd_prefix" "${hook_args[@]}"
 }
 
+hook_runner="$(_resolve_hook_command)"
+
 set +e
 "$@" >"$output_file"
 waiter_status=$?
@@ -207,7 +214,6 @@ fi
   fi
 } >"$prompt_file"
 
-hook_runner="$(_resolve_hook_command)"
 hook_args=(hook send --session-key "$session_key" --prompt-file "$prompt_file")
 if [[ -n "$post_to" ]]; then
   hook_args+=(--post-to "$post_to")
