@@ -12,34 +12,49 @@ from modules.im import MessageContext
 
 
 def _load_message_handler_class():
+    originals = {}
+
+    def _set_module(name, module):
+        originals.setdefault(name, sys.modules.get(name))
+        sys.modules[name] = module
+
     agents_module = types.ModuleType("modules.agents")
     agents_module.__path__ = [str(ROOT / "modules" / "agents")]
     setattr(agents_module, "AgentRequest", type("AgentRequest", (), {}))
-    sys.modules["modules.agents"] = agents_module
+    _set_module("modules.agents", agents_module)
+
     agents_base_module = types.ModuleType("modules.agents.base")
     setattr(agents_base_module, "AgentRequest", type("AgentRequest", (), {}))
-    sys.modules["modules.agents.base"] = agents_base_module
+    _set_module("modules.agents.base", agents_base_module)
 
     core_pkg = types.ModuleType("core")
     core_pkg.__path__ = [str(ROOT / "core")]
-    sys.modules["core"] = core_pkg
+    _set_module("core", core_pkg)
 
     handlers_pkg = types.ModuleType("core.handlers")
     handlers_pkg.__path__ = [str(ROOT / "core" / "handlers")]
-    sys.modules["core.handlers"] = handlers_pkg
+    _set_module("core.handlers", handlers_pkg)
 
-    for module_name, relative_path in (
-        ("core.handlers.base", ROOT / "core" / "handlers" / "base.py"),
-        ("core.handlers.message_handler", ROOT / "core" / "handlers" / "message_handler.py"),
-    ):
-        spec = importlib.util.spec_from_file_location(module_name, relative_path)
-        assert spec is not None
-        assert spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
+    try:
+        for module_name, relative_path in (
+            ("core.handlers.base", ROOT / "core" / "handlers" / "base.py"),
+            ("core.handlers.message_handler", ROOT / "core" / "handlers" / "message_handler.py"),
+        ):
+            originals.setdefault(module_name, sys.modules.get(module_name))
+            spec = importlib.util.spec_from_file_location(module_name, relative_path)
+            assert spec is not None
+            assert spec.loader is not None
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
 
-    return sys.modules["core.handlers.message_handler"].MessageHandler
+        return sys.modules["core.handlers.message_handler"].MessageHandler
+    finally:
+        for module_name, original in reversed(list(originals.items())):
+            if original is None:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = original
 
 
 MessageHandler = _load_message_handler_class()

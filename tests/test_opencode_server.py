@@ -153,6 +153,26 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(manager._process)
         self.assertIsNone(manager._base_url)
 
+    async def test_restart_for_auth_refresh_defers_while_requests_are_active(self):
+        manager = OpenCodeServerManager(binary="opencode", port=4096)
+        fake_session = _FakeSession()
+        manager._http_session = fake_session
+        manager._http_session_loop = object()
+        manager._process = object()
+        manager._base_url = "http://127.0.0.1:4096"
+        manager._active_requests = 2
+        terminated = []
+        manager._terminate_pid = lambda pid, reason: terminated.append((pid, reason)) or _async_none()  # type: ignore[method-assign]
+        manager._clear_pid_file = lambda: terminated.append(("cleared", ""))  # type: ignore[method-assign]
+
+        await manager.restart_for_auth_refresh()
+
+        self.assertFalse(fake_session.closed)
+        self.assertEqual(terminated, [])
+        self.assertTrue(manager._auth_refresh_pending)
+        self.assertIsNotNone(manager._process)
+        self.assertEqual(manager._base_url, "http://127.0.0.1:4096")
+
 
 async def _async_none():
     return None
