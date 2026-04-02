@@ -62,7 +62,7 @@ class TelegramFormatter(BaseMarkdownFormatter):
         rendered = html.escape(rendered)
 
         rendered = self._LINK_RE.sub(
-            lambda m: f'<a href="{html.escape(m.group(2), quote=True)}">{m.group(1)}</a>',
+            lambda m: f'<a href="{m.group(2)}">{m.group(1)}</a>',
             rendered,
         )
         rendered = self._BOLD_RE.sub(r"<b>\1</b>", rendered)
