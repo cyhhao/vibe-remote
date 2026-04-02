@@ -74,6 +74,7 @@ The wrapper interface is:
 scripts/watch_then_hook.sh \
   --session-key "<session-key>" \
   [--prefix "<hook prefix>"] \
+  [--timeout 21600] \
   [--log-file "/tmp/watch.log"] \
   [--foreground] \
   [--post-to channel] \
@@ -88,6 +89,8 @@ scripts/watch_then_hook.sh \
   Required. Delivery target for the follow-up hook.
 - `--prefix`
   Optional. Prepended to the waiter output inside the generated prompt file.
+- `--timeout`
+  Optional. Overall wait timeout in seconds. Default is `21600` (6 hours). Use `0` for no timeout.
 - `--log-file`
   Optional. Background log destination. If omitted, the wrapper picks a file under `/tmp/`.
 - `--foreground`
@@ -120,6 +123,8 @@ scripts/watch_then_hook.sh \
 That command returns immediately, leaves the watcher running in the background, and sends the hook only after the waiter exits with success.
 
 If you need the old low-level synchronous primitive, add `--foreground`.
+
+If the waiter does not finish within the wrapper timeout, the wrapper still sends a hook with a timeout summary instead of failing silently.
 
 When running inside the Vibe Remote repo or worktree, the wrapper will auto-fallback to `uv run python -m vibe` if the `vibe` executable on `PATH` is not the real CLI.
 
@@ -170,6 +175,8 @@ Design waiters to follow this contract:
 
 - `exit 0`: event detected; final summary printed to `stdout`
 - `exit 124`: timeout; the wrapper sends a timeout hook with an error summary
+- wrapper timeout:
+  by default the wrapper itself times out the waiter after 6 hours and emits the same timeout hook path
 - any other non-zero exit: failure; wrapper should exit without sending a hook
 
 Good waiter output is compact and already useful to the next turn, for example:

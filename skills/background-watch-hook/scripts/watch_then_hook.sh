@@ -9,6 +9,7 @@ Usage:
 Options:
   --session-key <value>      Required. Target session key for vibe hook send.
   --prefix <value>           Optional. Text prepended before waiter stdout.
+  --timeout <seconds>        Optional. Overall waiter timeout. Default: 21600 (6 hours), 0 means forever.
   --post-to <value>          Optional. Passed through to vibe hook send.
   --deliver-key <value>      Optional. Explicit delivery target key for vibe hook send.
   --log-file <path>          Optional. Background log file path when detaching.
@@ -30,6 +31,7 @@ EOF
 
 session_key=""
 prefix=""
+timeout_seconds="21600"
 post_to=""
 deliver_key=""
 log_file=""
@@ -46,6 +48,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --prefix)
       prefix="${2:-}"
+      shift 2
+      ;;
+    --timeout)
+      timeout_seconds="${2:-21600}"
       shift 2
       ;;
     --post-to)
@@ -207,6 +213,7 @@ if [[ "$foreground" -ne 1 ]]; then
     --foreground
     --session-key "$session_key"
     --hook-cmd "$hook_runner"
+    --timeout "$timeout_seconds"
     --timeout-exit-code "$timeout_exit_code"
   )
 
@@ -236,8 +243,29 @@ started_at_epoch="$(date +%s)"
 timed_out=0
 
 set +e
-"$@" >"$output_file"
-waiter_status=$?
+if [[ "$timeout_seconds" == "0" ]]; then
+  "$@" >"$output_file"
+  waiter_status=$?
+else
+  python3 - "$output_file" "$timeout_seconds" "$timeout_exit_code" "$@" <<'PY'
+import subprocess
+import sys
+
+output_path = sys.argv[1]
+timeout_seconds = float(sys.argv[2])
+timeout_exit_code = int(sys.argv[3])
+command = sys.argv[4:]
+
+with open(output_path, "wb") as output_file:
+    try:
+        result = subprocess.run(command, stdout=output_file, timeout=timeout_seconds, check=False)
+    except subprocess.TimeoutExpired:
+        sys.exit(timeout_exit_code)
+
+sys.exit(result.returncode)
+PY
+  waiter_status=$?
+fi
 set -e
 
 if [[ "$waiter_status" -eq "$timeout_exit_code" ]]; then

@@ -170,6 +170,9 @@ fi
 
 wrapper_args=("$WRAPPER" --session-key "$session_key" --prefix "$prefix")
 
+if [[ -n "$timeout" ]]; then
+  wrapper_args+=(--timeout "$timeout")
+fi
 if [[ -n "$log_file" ]]; then
   wrapper_args+=(--log-file "$log_file")
 fi
