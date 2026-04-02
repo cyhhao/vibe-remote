@@ -213,7 +213,6 @@ _run_hook_command() {
 }
 
 if [[ "$foreground" -ne 1 ]]; then
-  hook_runner="$(_resolve_hook_command)"
   if [[ -z "$log_file" ]]; then
     log_file="/tmp/background-watch-hook-$(date +%Y%m%d%H%M%S)-$$.log"
   fi
@@ -222,10 +221,20 @@ if [[ "$foreground" -ne 1 ]]; then
     "$script_path"
     --foreground
     --session-key "$session_key"
-    --hook-cmd "$hook_runner"
     --timeout "$timeout_seconds"
     --timeout-exit-code "$timeout_exit_code"
   )
+
+  if [[ -n "$hook_cmd_override" ]]; then
+    _resolve_hook_command >/dev/null
+    child_args+=(--hook-cmd "$hook_cmd_override")
+  elif [[ -n "$hook_bin" ]]; then
+    _resolve_hook_command >/dev/null
+    child_args+=(--hook-bin "$hook_bin")
+  else
+    hook_runner="$(_resolve_hook_command)"
+    child_args+=(--hook-cmd "$hook_runner")
+  fi
 
   if [[ -n "$prefix" ]]; then
     child_args+=(--prefix "$prefix")

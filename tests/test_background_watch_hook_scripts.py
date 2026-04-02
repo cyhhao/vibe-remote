@@ -228,3 +228,80 @@ exit 124
     assert "--timeout-exit-code" in first_args
     assert "125" in first_args
     assert "retrying" not in result.stderr
+
+
+def test_detached_watch_preserves_explicit_hook_bin(tmp_path: Path) -> None:
+    source_script = (
+        Path(__file__).resolve().parents[1]
+        / "skills"
+        / "background-watch-hook"
+        / "scripts"
+        / "watch_then_hook.sh"
+    )
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+
+    watch_script = script_dir / "watch_then_hook.sh"
+    shutil.copy2(source_script, watch_script)
+    watch_script.chmod(watch_script.stat().st_mode | stat.S_IXUSR)
+
+    hook_calls = tmp_path / "hook-calls.jsonl"
+    fake_hook = tmp_path / "fake-hook"
+    fake_hook.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${{1:-}}" == "hook" && "${{2:-}}" == "send" && "${{3:-}}" == "--help" ]]; then
+  echo "custom help without codex phrase"
+  exit 0
+fi
+
+python3 - <<'PY' "{str(hook_calls)}" "$@"
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+args = sys.argv[2:]
+with path.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps({{"args": args}}) + "\\n")
+PY
+""",
+        encoding="utf-8",
+    )
+    fake_hook.chmod(fake_hook.stat().st_mode | stat.S_IXUSR)
+
+    log_file = tmp_path / "watch.log"
+    result = subprocess.run(
+        [
+            "bash",
+            str(watch_script),
+            "--session-key",
+            "slack::channel::C123",
+            "--hook-bin",
+            str(fake_hook),
+            "--log-file",
+            str(log_file),
+            "--",
+            "bash",
+            "-lc",
+            "echo waiter output",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env={**os.environ, "PATH": os.environ.get("PATH", "")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if hook_calls.exists():
+            break
+        time.sleep(0.05)
+
+    assert hook_calls.exists(), log_file.read_text(encoding="utf-8")
+    payload = json.loads(hook_calls.read_text(encoding="utf-8").splitlines()[-1])
+    assert payload["args"][:2] == ["hook", "send"]
