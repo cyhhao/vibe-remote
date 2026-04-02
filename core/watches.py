@@ -30,6 +30,12 @@ def _path_signature(path: Path) -> Optional[tuple[int, int, int]]:
     return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
 
+def _payload_float(payload: dict[str, Any], key: str, default: float) -> float:
+    if key not in payload or payload.get(key) is None:
+        return default
+    return float(payload[key])
+
+
 @dataclass
 class ManagedWatch:
     id: str
@@ -69,10 +75,10 @@ class ManagedWatch:
             prefix=(str(payload["prefix"]).strip() if payload.get("prefix") else None) or None,
             cwd=(str(payload["cwd"]).strip() if payload.get("cwd") else None) or None,
             mode=str(payload.get("mode") or "once"),
-            timeout_seconds=float(payload.get("timeout_seconds") or 21600.0),
-            lifetime_timeout_seconds=float(payload.get("lifetime_timeout_seconds") or 0.0),
+            timeout_seconds=_payload_float(payload, "timeout_seconds", 21600.0),
+            lifetime_timeout_seconds=_payload_float(payload, "lifetime_timeout_seconds", 0.0),
             retry_exit_codes=[int(code) for code in (payload.get("retry_exit_codes") or [1])],
-            retry_delay_seconds=float(payload.get("retry_delay_seconds") or 30.0),
+            retry_delay_seconds=_payload_float(payload, "retry_delay_seconds", 30.0),
             post_to=payload.get("post_to"),
             deliver_key=payload.get("deliver_key"),
             enabled=bool(payload.get("enabled", True)),
@@ -465,6 +471,10 @@ class ManagedWatchService:
             else:
                 stdout, stderr = await process.communicate()
             timed_out = False
+        except asyncio.CancelledError:
+            process.kill()
+            await process.communicate()
+            raise
         except asyncio.TimeoutError:
             process.kill()
             stdout, stderr = await process.communicate()
