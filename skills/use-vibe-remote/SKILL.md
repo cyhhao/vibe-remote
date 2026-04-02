@@ -1,8 +1,8 @@
 ---
 name: use-vibe-remote
 slug: use-vibe-remote
-description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, scheduled tasks, and operational state.
-version: 0.1.6
+description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, watches, scheduled tasks, and operational state.
+version: 0.1.7
 ---
 
 # Use Vibe Remote
@@ -15,6 +15,7 @@ Typical requests include:
 - route one channel or DM user to OpenCode, Claude, or Codex
 - set a working directory for a channel or DM
 - choose a backend model, subagent, or reasoning level
+- create, inspect, pause, resume, or remove a managed background watch with `vibe watch`
 - create, inspect, run, pause, resume, or remove a scheduled task with `vibe task`
 - queue a one-shot asynchronous hook with `vibe hook send`
 - show or hide intermediate message types
@@ -44,6 +45,7 @@ Important paths:
 - `~/.vibe_remote/config/config.json`: global config
 - `~/.vibe_remote/state/settings.json`: per-channel and per-user overrides
 - `~/.vibe_remote/state/scheduled_tasks.json`: persisted scheduled tasks
+- `~/.vibe_remote/state/watches.json`: persisted managed watches
 - `~/.vibe_remote/state/user_preferences.md`: shared long-term preference file; prefer user-specific notes under `platform/user_id` sections and keep shared rules truly cross-user
 - `~/.vibe_remote/state/task_requests/`: queued task-run and hook-send requests plus completion receipts
 - `~/.vibe_remote/state/user_preferences.md`: shared long-term preference file; prefer user-specific notes under `platform/user_id` sections and keep shared rules truly cross-user
@@ -51,6 +53,7 @@ Important paths:
 - `~/.vibe_remote/logs/vibe_remote.log`: main application log
 - `~/.vibe_remote/runtime/status.json`: runtime status file
 - `~/.vibe_remote/runtime/doctor.json`: latest doctor result
+- `~/.vibe_remote/runtime/watch_runtime.json`: live watch runtime state, including active PIDs
 - `~/.vibe_remote/attachments/`: attachment staging area
 
 ## Edit Workflow

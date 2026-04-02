@@ -102,15 +102,27 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("## 3. Scheduled tasks and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
         self.assertIn("`vibe hook send --session-key ... --prompt ...`", prompt)
+        self.assertIn("`vibe watch add`", prompt)
         self.assertIn("Use `vibe task add` for actions that should recur or remain saved.", prompt)
+        self.assertIn(
+            "Use `vibe watch add` when a background waiter should stay managed by Vibe Remote until it emits a follow-up hook.",
+            prompt,
+        )
         self.assertIn("Default session key: `slack::channel::C1`", prompt)
         self.assertIn("Current thread ID: `171717.123`", prompt)
         self.assertIn(
             "Use `--post-to channel` when the task or hook should keep thread context but publish to the parent channel.",
             prompt,
         )
+        self.assertIn(
+            "Use `--timeout <seconds>` on watches for per-cycle timeouts, and `--lifetime-timeout <seconds>` only when a forever watch also needs an overall lifetime cap.",
+            prompt,
+        )
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
-        self.assertIn("Run `vibe task add --help` or `vibe hook send --help` for the full command reference.", prompt)
+        self.assertIn(
+            "Run `vibe task add --help`, `vibe hook send --help`, or `vibe watch add --help` for the full command reference.",
+            prompt,
+        )
         self.assertIn("A shared user context and preferences file is available at ", prompt)
         self.assertIn("/tmp/user_preferences.md", prompt)
         self.assertIn("From first principles, serving the user better means thinking proactively about how to make full use of the available context", prompt)

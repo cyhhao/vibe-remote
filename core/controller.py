@@ -24,6 +24,7 @@ from core.handlers import (
 from core.message_dispatcher import ConsolidatedMessageDispatcher
 from core.scheduled_tasks import ScheduledTaskService
 from core.update_checker import UpdateChecker
+from core.watches import ManagedWatchService
 from vibe.i18n import get_supported_languages, t as i18n_t
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ class Controller:
         # Consolidated message dispatcher
         self.message_dispatcher = ConsolidatedMessageDispatcher(self)
         self.scheduled_task_service = ScheduledTaskService(self)
+        self.watch_service = ManagedWatchService(self)
 
         # Background task for cleanup
         self.cleanup_task: Optional[asyncio.Task] = None
@@ -389,6 +391,10 @@ class Controller:
             self.scheduled_task_service.start()
         except Exception as e:
             logger.error("Failed to start scheduled task service: %s", e, exc_info=True)
+        try:
+            self.watch_service.start()
+        except Exception as e:
+            logger.error("Failed to start watch service: %s", e, exc_info=True)
 
     # Utility methods used by handlers
 
@@ -590,6 +596,13 @@ class Controller:
                 future.result(timeout=5)
         except Exception as e:
             logger.debug(f"Scheduled task service cleanup skipped: {e}")
+        try:
+            loop = self._loop
+            if loop and not loop.is_closed():
+                future = asyncio.run_coroutine_threadsafe(self.watch_service.stop(), loop)
+                future.result(timeout=5)
+        except Exception as e:
+            logger.debug(f"Watch service cleanup skipped: {e}")
 
         # Cancel receiver tasks without awaiting (they may belong to other loops)
         try:
