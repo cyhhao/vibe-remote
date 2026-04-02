@@ -101,16 +101,15 @@ scripts/watch_then_hook.sh \
 
 ## Preferred Execution Pattern
 
-For GitHub PR review activity, prefer the thin convenience wrapper:
+The core reusable move is still the generic wrapper. Start there:
 
 ```bash
 nohup bash -lc '
-  scripts/watch_github_pr_then_hook.sh \
+  scripts/watch_then_hook.sh \
     --session-key "slack::channel::C123::thread::171717.123" \
-    --repo cyhhao/vibe-remote \
-    --pr 151 \
-    --prefix "GitHub PR #151 has new review activity. Fetch the latest review state, summarize unresolved items, and continue handling them if needed." \
-    --interval 45
+    --prefix "The background condition was met. Inspect the result and continue the task." \
+    -- \
+    bash -lc 'sleep 120; echo "Waiter finished after 120 seconds."'
 ' >/tmp/watch-pr-151.log 2>&1 &
 ```
 
@@ -118,7 +117,7 @@ That command returns immediately, leaves the watcher running, and sends the hook
 
 When running inside the Vibe Remote repo or worktree, the wrapper will auto-fallback to `uv run python -m vibe` if the `vibe` executable on `PATH` is not the real CLI.
 
-For non-GitHub cases, keep using `scripts/watch_then_hook.sh` directly.
+Use a thin convenience wrapper like `watch_github_pr_then_hook.sh` only when it materially shortens a common case.
 
 ## Generic Workflow
 
@@ -129,7 +128,7 @@ For other use cases, either:
 - write a new small waiter in the task workspace, or
 - reuse another existing blocking command that prints a final summary to `stdout`
 
-Use `scripts/watch_github_pr_then_hook.sh` for the normal GitHub PR path. Reach for `scripts/wait_for_github_pr_activity.py` directly only when you need the bare waiter behavior without the convenience wrapper.
+Use `scripts/wait_for_github_pr_activity.py` only when the thing being watched is GitHub PR review activity. Use `scripts/watch_github_pr_then_hook.sh` if you want that common path pre-wired.
 
 If the watcher should immediately surface activity that already exists at startup, add `--catch-up`. Without it, the included GitHub waiter snapshots current activity as the baseline and waits only for newer events.
 
@@ -149,7 +148,7 @@ The prefix should tell the next turn what to do with the watcher result. Good pr
 
 ### 4. Start the detached wrapper
 
-Run `nohup bash -lc 'scripts/watch_github_pr_then_hook.sh ...' >/tmp/<name>.log 2>&1 &` for GitHub PRs, or `watch_then_hook.sh` directly for other cases.
+Run `nohup bash -lc 'scripts/watch_then_hook.sh ...' >/tmp/<name>.log 2>&1 &`.
 
 ### 5. Tell the user what was started
 
@@ -187,9 +186,46 @@ Keep new waiters small and boring. A good waiter:
 
 The wrapper is the reusable part. Waiters should stay disposable and task-specific.
 
-## Included Example: GitHub PR Activity
+## Generic Examples
 
-`scripts/watch_github_pr_then_hook.sh` is the normal entry point for GitHub PR activity. It wraps `watch_then_hook.sh` plus `wait_for_github_pr_activity.py` into one command:
+### Delayed Follow-up
+
+```bash
+nohup bash -lc '
+  scripts/watch_then_hook.sh \
+    --session-key "slack::channel::C123::thread::171717.123" \
+    --prefix "The delayed check completed. Continue from the waiter output below." \
+    -- \
+    bash -lc 'sleep 120; echo "Timer finished after 120 seconds."'
+' >/tmp/watch-delay.log 2>&1 &
+```
+
+### File Appears
+
+```bash
+nohup bash -lc '
+  scripts/watch_then_hook.sh \
+    --session-key "slack::channel::C123::thread::171717.123" \
+    --prefix "The export file is ready. Inspect it and continue." \
+    -- \
+    bash -lc 'while [ ! -f /tmp/export.json ]; do sleep 10; done; echo "Detected /tmp/export.json"'
+' >/tmp/watch-file.log 2>&1 &
+```
+
+### Log Pattern
+
+```bash
+nohup bash -lc '
+  scripts/watch_then_hook.sh \
+    --session-key "slack::channel::C123::thread::171717.123" \
+    --prefix "The expected log pattern appeared. Inspect the event and continue." \
+    -- \
+    bash -lc 'tail -Fn0 /tmp/app.log | while read -r line; do case "$line" in *READY*) echo "$line"; break;; esac; done'
+' >/tmp/watch-log.log 2>&1 &
+```
+
+## GitHub Example
+`scripts/watch_github_pr_then_hook.sh` is a convenience wrapper for one specific waiter pair: `watch_then_hook.sh` plus `wait_for_github_pr_activity.py`.
 
 ```bash
 nohup bash -lc '
