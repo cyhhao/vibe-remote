@@ -525,6 +525,19 @@ class Controller:
             )
         return None, None, None
 
+    def get_codex_overrides(self, context: MessageContext) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Get Codex agent, model, and reasoning effort overrides for this channel."""
+        settings_key = self._get_settings_key(context)
+        settings_manager = self.get_settings_manager_for_context(context)
+        routing = settings_manager.get_channel_routing(settings_key)
+        if routing:
+            return (
+                routing.codex_agent,
+                routing.codex_model,
+                routing.codex_reasoning_effort,
+            )
+        return None, None, None
+
     async def emit_agent_message(
         self,
         context: MessageContext,

@@ -35,6 +35,7 @@ export type ApiContextType = {
   opencodeSetupPermission: () => Promise<{ ok: boolean; message: string; config_path: string }>;
   claudeAgents: (cwd?: string) => Promise<{ ok: boolean; agents?: { id: string; name: string; path: string; source?: string }[]; error?: string }>;
   claudeModels: () => Promise<{ ok: boolean; models?: string[]; reasoning_options?: Record<string, { value: string; label: string }[]>; error?: string }>;
+  codexAgents: (cwd?: string) => Promise<{ ok: boolean; agents?: { id: string; name: string; path: string; source?: string; description?: string }[]; error?: string }>;
   codexModels: () => Promise<{ ok: boolean; models?: string[]; error?: string }>;
   getLogs: (lines?: number, source?: string) => Promise<{ logs: LogEntry[]; total: number; source: string; sources: LogSource[] }>;
   getVersion: () => Promise<VersionInfo>;
@@ -173,6 +174,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     opencodeSetupPermission: () => postJson('/opencode/setup-permission', {}),
     claudeAgents: (cwd) => cwd ? getJson(`/claude/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/claude/agents'),
     claudeModels: () => getJson('/claude/models'),
+    codexAgents: (cwd) => cwd ? getJson(`/codex/agents?cwd=${encodeURIComponent(cwd)}`) : getJson('/codex/agents'),
     codexModels: () => getJson('/codex/models'),
     getLogs: (lines = 500, source) => postJson('/logs', source ? { lines, source } : { lines }),
     getVersion: () => getJson('/version'),

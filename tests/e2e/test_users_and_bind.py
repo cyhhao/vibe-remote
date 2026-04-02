@@ -215,3 +215,9 @@ class TestAgentModelsAPI:
         status, data = _get(f"{api_url}/codex/models")
         assert status == 200
         assert isinstance(data, dict)
+
+    def test_codex_agents_endpoint_exists(self, api_url):
+        """GET /codex/agents should return JSON."""
+        status, data = _get(f"{api_url}/codex/agents")
+        assert status == 200
+        assert isinstance(data, dict)

@@ -49,6 +49,7 @@ interface ChannelConfig {
     claude_agent?: string | null;
     claude_model?: string | null;
     claude_reasoning_effort?: string | null;
+    codex_agent?: string | null;
     codex_model?: string | null;
     codex_reasoning_effort?: string | null;
   };
@@ -82,6 +83,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [pagePlatform, setPagePlatform] = useState<string>(forcedPlatform || data.platform || 'slack');
   const [opencodeOptionsByCwd, setOpencodeOptionsByCwd] = useState<Record<string, any>>({});
   const [claudeAgentsByCwd, setClaudeAgentsByCwd] = useState<Record<string, { id: string; name: string; path: string; source?: string }[]>>({});
+  const [codexAgentsByCwd, setCodexAgentsByCwd] = useState<Record<string, { id: string; name: string; path: string; source?: string; description?: string }[]>>({});
   const [claudeModels, setClaudeModels] = useState<string[]>([]);
   const [claudeReasoningOptions, setClaudeReasoningOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [codexModels, setCodexModels] = useState<string[]>([]);
@@ -294,6 +296,17 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     }
   };
 
+  const loadCodexAgents = async (cwd: string) => {
+    try {
+      const result = await api.codexAgents(cwd);
+      if (result.ok) {
+        setCodexAgentsByCwd((prev) => ({ ...prev, [cwd]: result.agents || [] }));
+      }
+    } catch (e) {
+      console.error('Failed to load Codex agents:', e);
+    }
+  };
+
   useEffect(() => {
     if (platform === 'lark') {
       if (larkAppId && larkAppSecret) {
@@ -331,6 +344,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
     const neededOpenCodeCwds = new Set<string>();
     const neededClaudeCwds = new Set<string>();
+    const neededCodexCwds = new Set<string>();
 
     channels.forEach((channel) => {
       const raw = configs[channel.id];
@@ -343,6 +357,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       }
       if (backend === 'claude' && config.agents?.claude?.enabled) {
         neededClaudeCwds.add(effectiveCwd);
+      }
+      if (backend === 'codex' && config.agents?.codex?.enabled) {
+        neededCodexCwds.add(effectiveCwd);
       }
     });
 
@@ -357,7 +374,13 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         void loadClaudeAgents(cwd);
       }
     });
-  }, [channels, configs, config.runtime?.default_cwd, config.agents?.default_backend, config.agents?.opencode?.enabled, config.agents?.claude?.enabled]);
+
+    neededCodexCwds.forEach((cwd) => {
+      if (!codexAgentsByCwd[cwd]) {
+        void loadCodexAgents(cwd);
+      }
+    });
+  }, [channels, configs, config.runtime?.default_cwd, config.agents?.default_backend, config.agents?.opencode?.enabled, config.agents?.claude?.enabled, config.agents?.codex?.enabled]);
 
   useEffect(() => {
     if (!channels.length) return;
@@ -421,6 +444,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         claude_agent: null,
         claude_model: null,
         claude_reasoning_effort: null,
+        codex_agent: null,
         codex_model: null,
         codex_reasoning_effort: null,
       },
@@ -732,6 +756,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
           const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
           const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
+          const codexAgents = codexAgentsByCwd[effectiveCwd] || [];
           return (
             <div key={channel.id} className="p-4 hover:bg-neutral-50/50 transition-colors">
               <div className="flex items-center justify-between">
@@ -1063,7 +1088,24 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   {effectiveBackend === 'codex' && (
                     <div className="space-y-3">
                       <div className="text-xs font-medium text-muted uppercase">{t('channelList.codexSettings')}</div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-bg/50 p-3 rounded border border-border">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted">{t('channelList.agent')}</label>
+                          <select
+                            value={channelConfig.routing.codex_agent || ''}
+                            onChange={(e) =>
+                              updateConfig(channel.id, {
+                                routing: { ...channelConfig.routing, codex_agent: e.target.value || null },
+                              })
+                            }
+                            className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
+                          >
+                            <option value="">{t('common.default')}</option>
+                            {codexAgents.map((agent) => (
+                              <option key={agent.id} value={agent.id}>{agent.name}</option>
+                            ))}
+                          </select>
+                        </div>
                         <div className="space-y-1">
                           <label className="text-xs text-muted">{t('channelList.model')}</label>
                           <Combobox

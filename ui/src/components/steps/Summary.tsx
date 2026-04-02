@@ -470,6 +470,7 @@ const buildSettingsPayload = (data: any) => {
                 claude_agent: cfg.routing?.claude_agent || null,
                 claude_model: cfg.routing?.claude_model || null,
                 claude_reasoning_effort: cfg.routing?.claude_reasoning_effort || null,
+                codex_agent: cfg.routing?.codex_agent || null,
                 codex_model: cfg.routing?.codex_model || null,
                 codex_reasoning_effort: cfg.routing?.codex_reasoning_effort || null,
               },

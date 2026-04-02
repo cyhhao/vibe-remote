@@ -42,6 +42,7 @@ interface UserConfig {
     claude_agent?: string | null;
     claude_model?: string | null;
     claude_reasoning_effort?: string | null;
+    codex_agent?: string | null;
     codex_model?: string | null;
     codex_reasoning_effort?: string | null;
   };
@@ -308,6 +309,7 @@ export const UserList: React.FC = () => {
   const [config, setConfig] = useState<any>({});
   const [opencodeOptionsByCwd, setOpencodeOptionsByCwd] = useState<Record<string, any>>({});
   const [claudeAgentsByCwd, setClaudeAgentsByCwd] = useState<Record<string, any[]>>({});
+  const [codexAgentsByCwd, setCodexAgentsByCwd] = useState<Record<string, any[]>>({});
   const [claudeModels, setClaudeModels] = useState<string[]>([]);
   const [claudeReasoningOptions, setClaudeReasoningOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [codexModels, setCodexModels] = useState<string[]>([]);
@@ -350,6 +352,13 @@ export const UserList: React.FC = () => {
     } catch (e) { console.error('Failed to load Claude agents:', e); }
   };
 
+  const loadCodexAgents = async (cwd: string) => {
+    try {
+      const result = await api.codexAgents(cwd);
+      if (result.ok) setCodexAgentsByCwd((prev) => ({ ...prev, [cwd]: result.agents || [] }));
+    } catch (e) { console.error('Failed to load Codex agents:', e); }
+  };
+
   useEffect(() => {
     if (config.agents?.claude?.enabled) {
       api.claudeModels().then((r) => {
@@ -375,6 +384,7 @@ export const UserList: React.FC = () => {
       const backend = u.routing?.agent_backend || defaultBackend;
       if (backend === 'opencode' && config.agents?.opencode?.enabled && !opencodeOptionsByCwd[cwd]) loadOpenCodeOptions(cwd);
       if (backend === 'claude' && config.agents?.claude?.enabled && !claudeAgentsByCwd[cwd]) loadClaudeAgents(cwd);
+      if (backend === 'codex' && config.agents?.codex?.enabled && !codexAgentsByCwd[cwd]) loadCodexAgents(cwd);
     });
   }, [users, config]);
 
@@ -447,7 +457,15 @@ export const UserList: React.FC = () => {
     custom_cwd: '',
     routing: {
       agent_backend: null,
+      opencode_agent: null,
+      opencode_model: null,
+      opencode_reasoning_effort: null,
+      claude_agent: null,
+      claude_model: null,
       claude_reasoning_effort: null,
+      codex_agent: null,
+      codex_model: null,
+      codex_reasoning_effort: null,
     },
   });
 
@@ -533,6 +551,7 @@ export const UserList: React.FC = () => {
             const effectiveBackend = userConfig.routing?.agent_backend || config.agents?.default_backend || 'opencode';
             const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
             const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
+            const codexAgents = codexAgentsByCwd[effectiveCwd] || [];
             return (
               <div key={userId} className="p-4 hover:bg-neutral-50/50 transition-colors">
                 {/* User header row */}
@@ -765,7 +784,18 @@ export const UserList: React.FC = () => {
                     {effectiveBackend === 'codex' && (
                       <div className="space-y-3">
                         <div className="text-xs font-medium text-muted uppercase">{t('channelList.codexSettings')}</div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-bg/50 p-3 rounded border border-border">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
+                          <div className="space-y-1">
+                            <label className="text-xs text-muted">{t('channelList.agent')}</label>
+                            <select
+                              value={userConfig.routing.codex_agent || ''}
+                              onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, codex_agent: e.target.value || null } })}
+                              className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
+                            >
+                              <option value="">{t('common.default')}</option>
+                              {codexAgents.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                            </select>
+                          </div>
                           <div className="space-y-1">
                             <label className="text-xs text-muted">{t('channelList.model')}</label>
                             <Combobox
