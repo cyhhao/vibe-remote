@@ -209,7 +209,7 @@ exit 124
             "--timeout",
             "10",
             "--lifetime-timeout",
-            "0.2",
+            "2",
         ],
         cwd=tmp_path,
         capture_output=True,
