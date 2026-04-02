@@ -1898,33 +1898,33 @@ class FeishuBot(BaseIMClient):
     async def _handle_routing_form_submit(self, context: MessageContext, form_value: Dict[str, Any]):
         """Handle step 2 routing form submission (backend-specific options)."""
         # Backend is embedded in form as a disabled select or retrieved from cache
+        cache_key = f"{context.channel_id}:{context.user_id}"
+        cached = self._routing_cache.get(cache_key, {})
         backend = form_value.get("backend", "")
         if not backend:
             # Fallback: get from cache
-            cache_key = f"{context.channel_id}:{context.user_id}"
-            cached = self._routing_cache.get(cache_key, {})
             backend = cached.get("_selected_backend", "")
 
         if not backend:
             logger.warning("Routing form submitted with empty backend, ignoring")
             return
 
-        # Helper to normalise "__default__" to None
-        def _val(key: str):
-            v = form_value.get(key)
-            if v == "__default__" or not v:
-                return None
-            return v
+        draft_routing = cached.get("draft_routing") or self._routing_draft_from_current(cached.get("current_routing"))
 
-        opencode_agent = _val("opencode_agent")
-        opencode_model = _val("opencode_model")
-        opencode_reasoning = _val("opencode_reasoning")
-        claude_agent = _val("claude_agent")
-        claude_model = _val("claude_model")
-        claude_reasoning = _val("claude_reasoning")
-        codex_agent = _val("codex_agent")
-        codex_model = _val("codex_model")
-        codex_reasoning = _val("codex_reasoning")
+        def _val(form_key: str, routing_field: str) -> Optional[str]:
+            if form_key in form_value:
+                return self._normalize_routing_field_value(form_value.get(form_key))
+            return draft_routing.get(routing_field)
+
+        opencode_agent = _val("opencode_agent", "opencode_agent")
+        opencode_model = _val("opencode_model", "opencode_model")
+        opencode_reasoning = _val("opencode_reasoning", "opencode_reasoning_effort")
+        claude_agent = _val("claude_agent", "claude_agent")
+        claude_model = _val("claude_model", "claude_model")
+        claude_reasoning = _val("claude_reasoning", "claude_reasoning_effort")
+        codex_agent = _val("codex_agent", "codex_agent")
+        codex_model = _val("codex_model", "codex_model")
+        codex_reasoning = _val("codex_reasoning", "codex_reasoning_effort")
 
         if self._on_routing_update:
             await self._on_routing_update(
