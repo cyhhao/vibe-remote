@@ -73,8 +73,9 @@ scripts/watch_then_hook.sh \
   --session-key "<session-key>" \
   [--prefix "<hook prefix>"] \
   [--post-to channel] \
-  [--deliver-key "<dedupe-key>"] \
+  [--deliver-key "<delivery-session-key>"] \
   [--hook-bin vibe] \
+  [--hook-cmd "uv run python -m vibe"] \
   [--timeout-exit-code 124] \
   -- <waiter command ...>
 ```
@@ -86,11 +87,15 @@ scripts/watch_then_hook.sh \
 - `--post-to`
   Optional. Use only when the follow-up should post to the parent channel while keeping thread context.
 - `--deliver-key`
-  Optional. Pass through when the caller needs dedupe semantics.
+  Optional. Explicit delivery target key. Use this only when the follow-up should be delivered to a different target.
 - `--hook-bin`
-  Optional. Override only for testing or unusual environments.
+  Optional. Explicit hook executable override.
+- `--hook-cmd`
+  Optional. Full hook command override. Useful when the local `vibe` on `PATH` is a stub and the real CLI should run through something like `uv run python -m vibe`.
 - `--timeout-exit-code`
   Optional. The wrapper treats this exit code as a silent timeout.
+
+`--post-to` and `--deliver-key` are mutually exclusive. Fail fast if both are set.
 
 ## Preferred Execution Pattern
 
@@ -110,6 +115,8 @@ nohup bash -lc '
 ```
 
 That command returns immediately, leaves the watcher running, and sends the hook only after the waiter exits with success.
+
+When running inside the Vibe Remote repo or worktree, the wrapper will auto-fallback to `uv run python -m vibe` if the `vibe` executable on `PATH` is not the real CLI.
 
 ## Generic Workflow
 
