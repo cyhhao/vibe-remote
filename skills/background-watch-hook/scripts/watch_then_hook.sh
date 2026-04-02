@@ -131,8 +131,18 @@ trap cleanup EXIT
 
 _resolve_hook_command() {
   if [[ -n "$hook_cmd_override" ]]; then
-    printf '%s\n' "$hook_cmd_override"
-    return 0
+    local override_help=""
+    if [[ "$hook_cmd_override" == *" "* ]]; then
+      override_help="$(bash -lc "$hook_cmd_override hook send --help" 2>/dev/null || true)"
+    else
+      override_help="$("$hook_cmd_override" hook send --help 2>/dev/null || true)"
+    fi
+    if [[ "$override_help" == *"--session-key"* && "$override_help" == *"Queue one asynchronous turn"* ]]; then
+      printf '%s\n' "$hook_cmd_override"
+      return 0
+    fi
+    echo "Hook command override did not expose a working 'hook send' command: $hook_cmd_override" >&2
+    return 127
   fi
 
   if [[ -n "$hook_bin" ]]; then
