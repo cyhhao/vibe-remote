@@ -163,7 +163,7 @@ Report:
 Design waiters to follow this contract:
 
 - `exit 0`: event detected; final summary printed to `stdout`
-- `exit 124`: timeout; no hook should be sent
+- `exit 124`: timeout; the wrapper sends a timeout hook with an error summary
 - any other non-zero exit: failure; wrapper should exit without sending a hook
 
 Good waiter output is compact and already useful to the next turn, for example:
@@ -226,6 +226,8 @@ nohup bash -lc '
 
 ## GitHub Example
 `scripts/watch_github_pr_then_hook.sh` is a convenience wrapper for one specific waiter pair: `watch_then_hook.sh` plus `wait_for_github_pr_activity.py`.
+
+Its default timeout is 6 hours. Override it with `--timeout <seconds>` when the watch should end sooner or run longer.
 
 ```bash
 nohup bash -lc '

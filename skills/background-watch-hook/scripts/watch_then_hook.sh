@@ -182,6 +182,8 @@ _run_hook_command() {
 }
 
 hook_runner="$(_resolve_hook_command)"
+started_at_epoch="$(date +%s)"
+timed_out=0
 
 set +e
 "$@" >"$output_file"
@@ -189,10 +191,15 @@ waiter_status=$?
 set -e
 
 if [[ "$waiter_status" -eq "$timeout_exit_code" ]]; then
-  exit 0
+  timed_out=1
+  elapsed_seconds="$(( $(date +%s) - started_at_epoch ))"
+  {
+    printf 'Waiter timed out after %s second(s).\n' "$elapsed_seconds"
+    printf 'Timeout exit code: %s\n' "$timeout_exit_code"
+  } >"$output_file"
 fi
 
-if [[ "$waiter_status" -ne 0 ]]; then
+if [[ "$waiter_status" -ne 0 && "$timed_out" -ne 1 ]]; then
   echo "Waiter exited with status $waiter_status" >&2
   exit "$waiter_status"
 fi

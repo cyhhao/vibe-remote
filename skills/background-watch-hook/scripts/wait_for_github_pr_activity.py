@@ -192,7 +192,12 @@ def main() -> int:
     parser.add_argument("--repo", required=True, help="GitHub repo in owner/name form")
     parser.add_argument("--pr", required=True, type=int, help="Pull request number")
     parser.add_argument("--interval", type=float, default=45.0, help="Polling interval in seconds")
-    parser.add_argument("--timeout", type=float, default=0.0, help="Overall timeout in seconds; 0 means forever")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=21600.0,
+        help="Overall timeout in seconds; default 21600 (6 hours), 0 means forever",
+    )
     parser.add_argument("--since-review-id", type=int, default=None, help="Existing review cursor")
     parser.add_argument("--since-review-comment-id", type=int, default=None, help="Existing review comment cursor")
     parser.add_argument("--since-issue-comment-id", type=int, default=None, help="Existing PR conversation comment cursor")

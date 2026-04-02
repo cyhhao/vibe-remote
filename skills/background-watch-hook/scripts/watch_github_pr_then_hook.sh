@@ -16,7 +16,7 @@ Options:
   --pr <number>                   Required. Pull request number.
   --prefix <value>                Optional. Hook prefix. If omitted, a sensible default is used.
   --interval <seconds>            Optional. Polling interval passed to the waiter.
-  --timeout <seconds>             Optional. Overall waiter timeout.
+  --timeout <seconds>             Optional. Overall waiter timeout. Default: 21600 (6 hours).
   --event-limit <count>           Optional. Maximum rendered events.
   --catch-up                      Optional. Treat existing PR activity as pending immediately.
   --allow-unauthenticated         Optional. Allow throttled best-effort polling without GitHub auth.
@@ -150,6 +150,10 @@ fi
 
 if [[ -z "$prefix" ]]; then
   prefix="GitHub PR #$pr has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed."
+fi
+
+if [[ -z "$timeout" ]]; then
+  timeout="21600"
 fi
 
 wrapper_args=("$WRAPPER" --session-key "$session_key" --prefix "$prefix")
