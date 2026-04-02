@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import os
@@ -456,10 +457,24 @@ class AgentAuthService:
         backend: str,
     ) -> None:
         try:
-            while process.returncode is None:
-                chunk = await asyncio.to_thread(os.read, master_fd, 4096)
+            os.set_blocking(master_fd, False)
+            while True:
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except BlockingIOError:
+                    if process.returncode is not None:
+                        break
+                    await asyncio.sleep(0.05)
+                    continue
+                except OSError as err:
+                    if err.errno == errno.EIO:
+                        break
+                    raise
                 if not chunk:
-                    break
+                    if process.returncode is not None:
+                        break
+                    await asyncio.sleep(0.05)
+                    continue
                 await self._handle_process_text(context, backend, chunk.decode("utf-8", errors="replace"))
         finally:
             try:
@@ -650,11 +665,22 @@ class AgentAuthService:
         if backend_hint:
             return self._flows.get(f"{settings_key}:{backend_hint}")
 
-        for backend in ("claude", "codex", "opencode"):
-            flow = self._flows.get(f"{settings_key}:{backend}")
-            if flow is not None:
-                return flow
-        return None
+        candidates = [
+            flow
+            for flow in self._flows.values()
+            if flow.settings_key == settings_key and flow.initiator_user_id == context.user_id
+        ]
+        awaiting_candidates = [flow for flow in candidates if flow.awaiting_code]
+        if awaiting_candidates:
+            return awaiting_candidates[-1]
+
+        code_capable_candidates = [
+            flow for flow in candidates if flow.backend in {"claude", "opencode"} and flow.pty_master_fd is not None
+        ]
+        if code_capable_candidates:
+            return code_capable_candidates[-1]
+
+        return candidates[-1] if candidates else None
 
     async def _terminate_flow(self, flow: AgentAuthFlow) -> None:
         if flow.waiter_task and not flow.waiter_task.done():

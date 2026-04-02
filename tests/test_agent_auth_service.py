@@ -1,9 +1,10 @@
 import asyncio
+import os
 import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -246,6 +247,63 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         message = controller.im_client.sent_messages[0][1]
         self.assertIn("https://auth.openai.com/codex/device", message)
         self.assertIn("TRVY-E7DCU", message)
+
+    async def test_submit_code_prefers_same_user_flow_waiting_for_code(self):
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
+        codex_flow = AgentAuthFlow(
+            flow_id="flow-codex",
+            backend="codex",
+            settings_key="C1",
+            initiator_user_id="U1",
+            context=context,
+            process=SimpleNamespace(returncode=None),
+            reader_task=done_task,
+            waiter_task=done_task,
+        )
+        opencode_flow = AgentAuthFlow(
+            flow_id="flow-opencode",
+            backend="opencode",
+            settings_key="C1",
+            initiator_user_id="U1",
+            context=context,
+            process=SimpleNamespace(returncode=None),
+            reader_task=done_task,
+            waiter_task=done_task,
+            pty_master_fd=17,
+            awaiting_code=True,
+            provider="opencode",
+        )
+        service._flows[codex_flow.flow_key] = codex_flow
+        service._flows[opencode_flow.flow_key] = opencode_flow
+
+        with patch("core.agent_auth_service.os.write") as mock_write:
+            await service.submit_code(context, "secret-value")
+
+        mock_write.assert_called_once_with(17, b"secret-value\n")
+        self.assertFalse(opencode_flow.awaiting_code)
+        self.assertIn("opencode", controller.im_client.sent_messages[0][1].lower())
+
+    async def test_read_pty_output_exits_after_process_finishes_without_output(self):
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+        process = SimpleNamespace(returncode=None)
+        master_fd, slave_fd = os.openpty()
+
+        async def finish_process():
+            await asyncio.sleep(0.05)
+            process.returncode = 0
+            os.close(slave_fd)
+
+        finisher = asyncio.create_task(finish_process())
+        try:
+            await asyncio.wait_for(service._read_pty_output(process, master_fd, context, "claude"), timeout=0.5)
+        finally:
+            await finisher
 
 
 class ClassifyAuthErrorTests(unittest.TestCase):
