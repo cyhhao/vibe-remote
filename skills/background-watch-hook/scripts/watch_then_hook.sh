@@ -40,6 +40,21 @@ hook_bin="${VIBE_HOOK_BIN:-}"
 hook_cmd_override="${VIBE_HOOK_CMD:-}"
 timeout_exit_code=124
 
+normalize_nonnegative_number() {
+  python3 - "$1" <<'PY'
+import math
+import sys
+
+value = float(sys.argv[1])
+if not math.isfinite(value) or value < 0:
+    raise SystemExit(1)
+if value.is_integer():
+    print(int(value))
+else:
+    print(value)
+PY
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --session-key)
@@ -117,6 +132,11 @@ fi
 
 if [[ -n "$post_to" && -n "$deliver_key" ]]; then
   echo "--post-to and --deliver-key are mutually exclusive" >&2
+  exit 2
+fi
+
+if ! timeout_seconds="$(normalize_nonnegative_number "$timeout_seconds")"; then
+  echo "--timeout must be a finite number >= 0" >&2
   exit 2
 fi
 

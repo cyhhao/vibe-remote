@@ -59,6 +59,21 @@ hook_bin=""
 hook_cmd=""
 timeout_exit_code=""
 
+normalize_nonnegative_number() {
+  python3 - "$1" <<'PY'
+import math
+import sys
+
+value = float(sys.argv[1])
+if not math.isfinite(value) or value < 0:
+    raise SystemExit(1)
+if value.is_integer():
+    print(int(value))
+else:
+    print(value)
+PY
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --session-key)
@@ -168,6 +183,18 @@ if [[ -n "$timeout_exit_code" && "$timeout_exit_code" != "124" ]]; then
   exit 2
 fi
 
+if [[ -z "$timeout" ]]; then
+  timeout="21600"
+fi
+if ! timeout="$(normalize_nonnegative_number "$timeout")"; then
+  echo "--timeout must be a finite number >= 0" >&2
+  exit 2
+fi
+if ! lifetime_timeout="$(normalize_nonnegative_number "$lifetime_timeout")"; then
+  echo "--lifetime-timeout must be a finite number >= 0" >&2
+  exit 2
+fi
+
 if [[ "$forever" -ne 1 && "$lifetime_timeout" != "0" ]]; then
   echo "--lifetime-timeout requires --forever" >&2
   exit 2
@@ -181,10 +208,6 @@ fi
 if [[ ! -x "$WAITER" ]]; then
   echo "Waiter not found or not executable: $WAITER" >&2
   exit 127
-fi
-
-if [[ -z "$timeout" ]]; then
-  timeout="21600"
 fi
 
 if [[ -z "$prefix" ]]; then

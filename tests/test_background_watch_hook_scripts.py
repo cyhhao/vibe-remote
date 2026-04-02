@@ -307,6 +307,127 @@ PY
     assert payload["args"][:2] == ["hook", "send"]
 
 
+def test_watch_then_hook_treats_timeout_zero_point_zero_as_no_timeout(tmp_path: Path) -> None:
+    source_script = (
+        Path(__file__).resolve().parents[1]
+        / "skills"
+        / "background-watch-hook"
+        / "scripts"
+        / "watch_then_hook.sh"
+    )
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+
+    watch_script = script_dir / "watch_then_hook.sh"
+    shutil.copy2(source_script, watch_script)
+    watch_script.chmod(watch_script.stat().st_mode | stat.S_IXUSR)
+
+    hook_calls = tmp_path / "hook-calls.jsonl"
+    fake_hook = tmp_path / "fake-hook"
+    fake_hook.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${{1:-}}" == "hook" && "${{2:-}}" == "send" && "${{3:-}}" == "--help" ]]; then
+  echo "--session-key"
+  echo "Queue one asynchronous turn"
+  exit 0
+fi
+
+python3 - <<'PY' "{str(hook_calls)}" "$@"
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+args = sys.argv[2:]
+with path.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps({{"args": args}}) + "\\n")
+PY
+""",
+        encoding="utf-8",
+    )
+    fake_hook.chmod(fake_hook.stat().st_mode | stat.S_IXUSR)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(watch_script),
+            "--foreground",
+            "--session-key",
+            "slack::channel::C123",
+            "--hook-bin",
+            str(fake_hook),
+            "--timeout",
+            "0.0",
+            "--",
+            "bash",
+            "-lc",
+            "sleep 0.05; echo waiter output",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env={**os.environ, "PATH": os.environ.get("PATH", "")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(hook_calls.read_text(encoding="utf-8").splitlines()[-1])
+    assert payload["args"][:2] == ["hook", "send"]
+
+
+def test_forever_watch_accepts_lifetime_timeout_zero_point_zero_without_forever_error(tmp_path: Path) -> None:
+    source_script = (
+        Path(__file__).resolve().parents[1]
+        / "skills"
+        / "background-watch-hook"
+        / "scripts"
+        / "watch_github_pr_then_hook.sh"
+    )
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+
+    watch_script = script_dir / "watch_github_pr_then_hook.sh"
+    shutil.copy2(source_script, watch_script)
+    watch_script.chmod(watch_script.stat().st_mode | stat.S_IXUSR)
+
+    _make_executable(
+        script_dir / "watch_then_hook.sh",
+        "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n",
+    )
+    _make_executable(
+        script_dir / "wait_for_github_pr_activity.py",
+        "#!/usr/bin/env python3\nprint('done')\n",
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(watch_script),
+            "--foreground",
+            "--session-key",
+            "slack::channel::C123",
+            "--repo",
+            "cyhhao/vibe-remote",
+            "--pr",
+            "153",
+            "--lifetime-timeout",
+            "0.0",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env={**os.environ, "PATH": os.environ.get("PATH", "")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--lifetime-timeout requires --forever" not in result.stderr
+
+
 def test_forever_watch_exits_on_non_retryable_cycle_failure(tmp_path: Path) -> None:
     source_script = (
         Path(__file__).resolve().parents[1]
