@@ -144,3 +144,87 @@ exit 0
     assert second_call_file.exists(), stderr_output
     payload = json.loads(second_call_file.read_text(encoding="utf-8"))
     assert payload["saw_catch_up"] is True
+
+
+def test_forever_watch_suppresses_per_cycle_timeout_hooks(tmp_path: Path) -> None:
+    source_script = (
+        Path(__file__).resolve().parents[1]
+        / "skills"
+        / "background-watch-hook"
+        / "scripts"
+        / "watch_github_pr_then_hook.sh"
+    )
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+
+    watch_script = script_dir / "watch_github_pr_then_hook.sh"
+    shutil.copy2(source_script, watch_script)
+    watch_script.write_text(
+        watch_script.read_text(encoding="utf-8").replace("retry_delay_seconds=30", "retry_delay_seconds=0.1"),
+        encoding="utf-8",
+    )
+    watch_script.chmod(watch_script.stat().st_mode | stat.S_IXUSR)
+
+    calls_file = tmp_path / "calls.jsonl"
+
+    fake_wrapper = f"""#!/usr/bin/env bash
+set -euo pipefail
+
+calls_file={str(calls_file)!r}
+python3 - <<'PY' "$calls_file" "$@"
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+args = sys.argv[2:]
+with path.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps({{"args": args}}) + "\\n")
+PY
+
+if [[ "$*" == *"GitHub PR watch stopped after reaching its lifetime timeout."* ]]; then
+  exit 0
+fi
+
+exit 124
+"""
+    _make_executable(script_dir / "watch_then_hook.sh", fake_wrapper)
+    _make_executable(
+        script_dir / "wait_for_github_pr_activity.py",
+        "#!/usr/bin/env python3\nraise SystemExit('should not be executed directly in this test')\n",
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(watch_script),
+            "--foreground",
+            "--forever",
+            "--session-key",
+            "slack::channel::C123",
+            "--repo",
+            "cyhhao/vibe-remote",
+            "--pr",
+            "153",
+            "--timeout",
+            "10",
+            "--lifetime-timeout",
+            "0.2",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env={**os.environ, "PATH": os.environ.get("PATH", "")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    lines = [json.loads(line) for line in calls_file.read_text(encoding="utf-8").splitlines()]
+    assert len(lines) >= 2
+    first_args = lines[0]["args"]
+    assert "--timeout" in first_args
+    assert "0" in first_args
+    assert "--timeout-exit-code" in first_args
+    assert "125" in first_args
+    assert "retrying" not in result.stderr

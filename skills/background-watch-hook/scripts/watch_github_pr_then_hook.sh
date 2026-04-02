@@ -351,7 +351,8 @@ PY
       --foreground
       --session-key "$session_key"
       --prefix "$prefix"
-      --timeout "$cycle_timeout"
+      --timeout 0
+      --timeout-exit-code 125
     )
 
     if [[ -n "$post_to" ]]; then
@@ -401,6 +402,10 @@ PY
     "${cycle_wrapper_args[@]}" -- "${cycle_waiter_args[@]}"
     cycle_status=$?
     set -e
+
+    if [[ "$cycle_status" -eq 124 ]]; then
+      continue
+    fi
 
     if [[ "$cycle_status" -ne 0 ]]; then
       echo "Forever watch cycle failed with status $cycle_status; retrying in ${retry_delay_seconds}s." >&2
