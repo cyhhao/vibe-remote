@@ -407,6 +407,11 @@ PY
       continue
     fi
 
+    if [[ "$cycle_status" -ne 1 ]]; then
+      echo "Forever watch stopped on non-retryable cycle failure: $cycle_status" >&2
+      exit "$cycle_status"
+    fi
+
     if [[ "$cycle_status" -ne 0 ]]; then
       echo "Forever watch cycle failed with status $cycle_status; retrying in ${retry_delay_seconds}s." >&2
       sleep "$retry_delay_seconds"

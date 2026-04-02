@@ -305,3 +305,57 @@ PY
     assert hook_calls.exists(), log_file.read_text(encoding="utf-8")
     payload = json.loads(hook_calls.read_text(encoding="utf-8").splitlines()[-1])
     assert payload["args"][:2] == ["hook", "send"]
+
+
+def test_forever_watch_exits_on_non_retryable_cycle_failure(tmp_path: Path) -> None:
+    source_script = (
+        Path(__file__).resolve().parents[1]
+        / "skills"
+        / "background-watch-hook"
+        / "scripts"
+        / "watch_github_pr_then_hook.sh"
+    )
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir()
+
+    watch_script = script_dir / "watch_github_pr_then_hook.sh"
+    shutil.copy2(source_script, watch_script)
+    watch_script.write_text(
+        watch_script.read_text(encoding="utf-8").replace("retry_delay_seconds=30", "retry_delay_seconds=0.1"),
+        encoding="utf-8",
+    )
+    watch_script.chmod(watch_script.stat().st_mode | stat.S_IXUSR)
+
+    _make_executable(
+        script_dir / "watch_then_hook.sh",
+        "#!/usr/bin/env bash\nset -euo pipefail\nexit 2\n",
+    )
+    _make_executable(
+        script_dir / "wait_for_github_pr_activity.py",
+        "#!/usr/bin/env python3\nraise SystemExit('should not be executed directly in this test')\n",
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(watch_script),
+            "--foreground",
+            "--forever",
+            "--session-key",
+            "slack::channel::C123",
+            "--repo",
+            "cyhhao/vibe-remote",
+            "--pr",
+            "153",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env={**os.environ, "PATH": os.environ.get("PATH", "")},
+    )
+
+    assert result.returncode == 2
+    assert "non-retryable" in result.stderr
+    assert "retrying" not in result.stderr
