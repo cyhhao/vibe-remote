@@ -20,7 +20,7 @@ CURRENT_VIBE_EXECUTABLE_ENV = "VIBE_CURRENT_EXECUTABLE"
 UV_FALLBACK_BIN_DIRS = (".local/bin", ".cargo/bin")
 _VERSION_RE = re.compile(
     r"^\s*v?(?P<release>\d+(?:\.\d+)*)"
-    r"(?:(?P<stage>a|b|rc|dev)(?P<stage_num>\d+))?\s*$"
+    r"(?:(?:[.-])?(?P<stage>a|b|rc|dev)(?P<stage_num>\d+))?\s*$"
 )
 _STAGE_ORDER = {"dev": 0, "a": 1, "b": 2, "rc": 3, "final": 4}
 

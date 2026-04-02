@@ -60,7 +60,7 @@ jobs:
 
           if [[ "$TAG" == *-* ]]; then
             PRERELEASE="true"
-          elif [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*((a|b|rc|dev)[0-9]+)$ ]]; then
+          elif [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*(([.-])?(a|b|rc|dev)[0-9]+)$ ]]; then
             PRERELEASE="true"
           fi
 

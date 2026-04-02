@@ -171,10 +171,33 @@ def test_get_latest_version_info_allows_newer_prerelease_for_prerelease_current(
     assert info == {"current": "2.2.8rc1", "latest": "2.2.8rc2", "has_update": True, "error": None}
 
 
+def test_get_latest_version_info_allows_newer_dotted_dev_for_prerelease_current(monkeypatch, tmp_path):
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(
+        """
+        {
+          "info": {"version": "2.2.9.dev2"},
+          "releases": {
+            "2.2.8": [{}],
+            "2.2.9.dev1": [{}],
+            "2.2.9.dev2": [{}]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBE_UPDATE_METADATA_URL", metadata_path.as_uri())
+
+    info = get_latest_version_info("2.2.9.dev1")
+
+    assert info == {"current": "2.2.9.dev1", "latest": "2.2.9.dev2", "has_update": True, "error": None}
+
+
 def test_has_newer_version_handles_prerelease_without_packaging():
     assert has_newer_version("2.2.8rc2", "2.2.8rc1") is True
     assert has_newer_version("2.2.8", "2.2.8rc2") is True
     assert has_newer_version("2.2.8rc1", "2.2.8") is False
+    assert has_newer_version("2.2.9.dev2", "2.2.9.dev1") is True
 
 
 def test_get_running_vibe_path_prefers_cached_launcher(monkeypatch):
