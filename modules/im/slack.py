@@ -1852,6 +1852,12 @@ class SlackBot(BaseIMClient):
                 claude_reasoning = None
 
             # Extract Codex model (optional)
+            codex_agent_data = values.get("codex_agent_block", {}).get("codex_agent_select", {})
+            codex_agent = codex_agent_data.get("selected_option", {}).get("value")
+            if codex_agent == "__default__":
+                codex_agent = None
+
+            # Extract Codex model (optional)
             codex_model_data = values.get("codex_model_block", {}).get("codex_model_select", {})
             codex_model = codex_model_data.get("selected_option", {}).get("value")
             if codex_model == "__default__":
@@ -1884,6 +1890,7 @@ class SlackBot(BaseIMClient):
                     claude_agent,
                     claude_model,
                     claude_reasoning,
+                    codex_agent,
                     codex_model,
                     codex_reasoning,
                     is_dm=isinstance(channel_id, str) and channel_id.startswith("D"),
@@ -2611,6 +2618,7 @@ class SlackBot(BaseIMClient):
         opencode_default_config: dict,
         claude_agents: list = None,
         claude_models: list = None,
+        codex_agents: list = None,
         codex_models: list = None,
         selected_backend: object = _UNSET,
         selected_opencode_agent: object = _UNSET,
@@ -2619,6 +2627,7 @@ class SlackBot(BaseIMClient):
         selected_claude_agent: object = _UNSET,
         selected_claude_model: object = _UNSET,
         selected_claude_reasoning: object = _UNSET,
+        selected_codex_agent: object = _UNSET,
         selected_codex_model: object = _UNSET,
         selected_codex_reasoning: object = _UNSET,
     ) -> dict:
@@ -3030,9 +3039,15 @@ class SlackBot(BaseIMClient):
 
         # Codex-specific options (only if codex is selected)
         if effective_backend == "codex" and "codex" in registered_backends:
+            codex_agents = codex_agents or []
             codex_models = codex_models or []
 
             # Get current codex settings
+            if selected_codex_agent is _UNSET:
+                current_cx_agent = getattr(current_routing, "codex_agent", None) if current_routing else None
+            else:
+                current_cx_agent = selected_codex_agent
+
             if selected_codex_model is _UNSET:
                 current_cx_model = current_routing.codex_model if current_routing else None
             else:
@@ -3042,6 +3057,35 @@ class SlackBot(BaseIMClient):
                 current_cx_reasoning = current_routing.codex_reasoning_effort if current_routing else None
             else:
                 current_cx_reasoning = selected_codex_reasoning
+
+            cx_agent_options = [
+                {"text": {"type": "plain_text", "text": self._t("common.default")}, "value": "__default__"}
+            ]
+            for agent in codex_agents:
+                agent_id = agent.get("id", "")
+                agent_name = agent.get("name", agent_id)
+                if agent_id:
+                    cx_agent_options.append(
+                        {
+                            "text": {"type": "plain_text", "text": agent_name[:75]},
+                            "value": agent_id,
+                        }
+                    )
+
+            initial_cx_agent = cx_agent_options[0]
+            if current_cx_agent:
+                for opt in cx_agent_options:
+                    if opt["value"] == current_cx_agent:
+                        initial_cx_agent = opt
+                        break
+
+            cx_agent_select = {
+                "type": "static_select",
+                "action_id": "codex_agent_select",
+                "placeholder": {"type": "plain_text", "text": self._t("modal.routing.selectCodexAgent")},
+                "options": cx_agent_options,
+                "initial_option": initial_cx_agent,
+            }
 
             # Build model options
             cx_model_options = [
@@ -3135,6 +3179,13 @@ class SlackBot(BaseIMClient):
                             "type": "mrkdwn",
                             "text": f"*{self._t('modal.routing.codexSettings')}*",
                         },
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "codex_agent_block",
+                        "optional": True,
+                        "element": cx_agent_select,
+                        "label": {"type": "plain_text", "text": self._t("modal.routing.codexAgent")},
                     },
                     {
                         "type": "input",
@@ -3444,6 +3495,7 @@ class SlackBot(BaseIMClient):
         opencode_default_config: dict,
         claude_agents: list = None,
         claude_models: list = None,
+        codex_agents: list = None,
         codex_models: list = None,
     ):
         """Open a modal dialog for agent/model routing settings"""
@@ -3459,6 +3511,7 @@ class SlackBot(BaseIMClient):
             opencode_default_config=opencode_default_config,
             claude_agents=claude_agents,
             claude_models=claude_models,
+            codex_agents=codex_agents,
             codex_models=codex_models,
         )
 
@@ -3481,6 +3534,7 @@ class SlackBot(BaseIMClient):
         opencode_default_config: dict,
         claude_agents: list = None,
         claude_models: list = None,
+        codex_agents: list = None,
         codex_models: list = None,
         selected_backend: Optional[str] = None,
         selected_opencode_agent: Optional[str] = None,
@@ -3489,6 +3543,7 @@ class SlackBot(BaseIMClient):
         selected_claude_agent: Optional[str] = None,
         selected_claude_model: Optional[str] = None,
         selected_claude_reasoning: Optional[str] = None,
+        selected_codex_agent: Optional[str] = None,
         selected_codex_model: Optional[str] = None,
         selected_codex_reasoning: Optional[str] = None,
     ) -> None:
@@ -3505,6 +3560,7 @@ class SlackBot(BaseIMClient):
             opencode_default_config=opencode_default_config,
             claude_agents=claude_agents,
             claude_models=claude_models,
+            codex_agents=codex_agents,
             codex_models=codex_models,
             selected_backend=selected_backend,
             selected_opencode_agent=selected_opencode_agent,
@@ -3513,6 +3569,7 @@ class SlackBot(BaseIMClient):
             selected_claude_agent=selected_claude_agent,
             selected_claude_model=selected_claude_model,
             selected_claude_reasoning=selected_claude_reasoning,
+            selected_codex_agent=selected_codex_agent,
             selected_codex_model=selected_codex_model,
             selected_codex_reasoning=selected_codex_reasoning,
         )

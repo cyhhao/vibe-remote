@@ -86,9 +86,9 @@ class RoutingSettings:
     claude_model: Optional[str] = None
     claude_reasoning_effort: Optional[str] = None
     # Codex settings
+    codex_agent: Optional[str] = None
     codex_model: Optional[str] = None
     codex_reasoning_effort: Optional[str] = None
-    # Note: Codex subagent not supported yet
 
 
 @dataclass
@@ -144,6 +144,7 @@ def _parse_routing(payload: dict) -> RoutingSettings:
         claude_agent=payload.get("claude_agent"),
         claude_model=payload.get("claude_model"),
         claude_reasoning_effort=payload.get("claude_reasoning_effort"),
+        codex_agent=payload.get("codex_agent"),
         codex_model=payload.get("codex_model"),
         codex_reasoning_effort=payload.get("codex_reasoning_effort"),
     )
@@ -159,6 +160,7 @@ def _routing_to_dict(routing: RoutingSettings) -> dict:
         "claude_agent": routing.claude_agent,
         "claude_model": routing.claude_model,
         "claude_reasoning_effort": routing.claude_reasoning_effort,
+        "codex_agent": routing.codex_agent,
         "codex_model": routing.codex_model,
         "codex_reasoning_effort": routing.codex_reasoning_effort,
     }

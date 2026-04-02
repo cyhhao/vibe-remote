@@ -56,6 +56,7 @@ def parse_routing_modal_selection(
     claude_agent = _extract_selected_value(values, "claude_agent_block", "claude_agent_select")
     claude_model = _extract_selected_value(values, "claude_model_block", "claude_model_select")
     claude_reasoning = _extract_selected_value(values, "claude_reasoning_block", "claude_reasoning_select")
+    codex_agent = _extract_selected_value(values, "codex_agent_block", "codex_agent_select")
     codex_model = _extract_selected_value(values, "codex_model_block", "codex_model_select")
     codex_reasoning = _extract_prefixed_selected_value(values, "codex_reasoning_block", "codex_reasoning_select")
 
@@ -72,6 +73,8 @@ def parse_routing_modal_selection(
             claude_model = selected_value
         elif selected_action_id == "claude_reasoning_select":
             claude_reasoning = selected_value
+        elif selected_action_id == "codex_agent_select":
+            codex_agent = selected_value
         elif selected_action_id == "codex_model_select":
             codex_model = selected_value
         elif selected_action_id.startswith("codex_reasoning_select"):
@@ -85,6 +88,7 @@ def parse_routing_modal_selection(
         selected_claude_agent=_normalize_default(claude_agent),
         selected_claude_model=_normalize_default(claude_model),
         selected_claude_reasoning=_normalize_default(claude_reasoning),
+        selected_codex_agent=_normalize_default(codex_agent),
         selected_codex_model=_normalize_default(codex_model),
         selected_codex_reasoning=_normalize_default(codex_reasoning),
     )

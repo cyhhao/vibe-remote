@@ -19,13 +19,14 @@ def _install_opencode_utils_module() -> None:
         return
 
     repo_root = Path(__file__).resolve().parents[1]
-    agents_mod = types.ModuleType("modules.agents")
-    agents_mod.__path__ = [str(repo_root / "modules" / "agents")]
-    opencode_mod = types.ModuleType("modules.agents.opencode")
-    opencode_mod.__path__ = [str(repo_root / "modules" / "agents" / "opencode")]
-
-    sys.modules["modules.agents"] = agents_mod
-    sys.modules["modules.agents.opencode"] = opencode_mod
+    if "modules.agents" not in sys.modules:
+        agents_mod = types.ModuleType("modules.agents")
+        agents_mod.__path__ = [str(repo_root / "modules" / "agents")]
+        sys.modules["modules.agents"] = agents_mod
+    if "modules.agents.opencode" not in sys.modules:
+        opencode_mod = types.ModuleType("modules.agents.opencode")
+        opencode_mod.__path__ = [str(repo_root / "modules" / "agents" / "opencode")]
+        sys.modules["modules.agents.opencode"] = opencode_mod
 
     spec = importlib.util.spec_from_file_location(
         "modules.agents.opencode.utils",
@@ -66,6 +67,7 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
             opencode_agent=None,
             opencode_model=None,
             opencode_reasoning_effort=None,
+            codex_agent=None,
             codex_model=None,
             codex_reasoning_effort=None,
         )
@@ -78,6 +80,7 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
             "opencode_agents": [],
             "opencode_models": {},
             "opencode_default_config": {},
+            "codex_agents": [],
             "codex_models": [],
         }
 
@@ -118,6 +121,7 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
             opencode_agent=None,
             opencode_model=None,
             opencode_reasoning_effort=None,
+            codex_agent=None,
             codex_model=None,
             codex_reasoning_effort=None,
         )
@@ -130,6 +134,7 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
             "opencode_agents": [],
             "opencode_models": {},
             "opencode_default_config": {},
+            "codex_agents": [],
             "codex_models": [],
         }
 
@@ -164,6 +169,62 @@ class FeishuRoutingCardTests(unittest.IsolatedAsyncioTestCase):
         reasoning_select = self._find_select(latest_card, "claude_reasoning")
         reasoning_values = [option["value"] for option in reasoning_select["options"]]
         self.assertIn("max", reasoning_values)
+
+    async def test_routing_submit_preserves_cached_codex_agent_when_field_missing(self):
+        bot = self._make_bot()
+        bot._on_routing_update = AsyncMock()
+
+        current_routing = SimpleNamespace(
+            claude_agent=None,
+            claude_model=None,
+            claude_reasoning_effort=None,
+            opencode_agent=None,
+            opencode_model=None,
+            opencode_reasoning_effort=None,
+            codex_agent="reviewer",
+            codex_model="gpt-5.1",
+            codex_reasoning_effort="medium",
+        )
+        bot._routing_cache["chat:user"] = {
+            "current_routing": current_routing,
+            "draft_routing": bot._routing_draft_from_current(current_routing),
+            "_selected_backend": "codex",
+            "claude_agents": [],
+            "claude_models": [],
+            "opencode_agents": [],
+            "opencode_models": {},
+            "opencode_default_config": {},
+            "codex_agents": [],
+            "codex_models": ["gpt-5.1", "gpt-5.4"],
+        }
+
+        context = MessageContext(
+            user_id="user",
+            channel_id="chat",
+            platform="lark",
+            platform_specific={"is_dm": False},
+        )
+
+        await bot._handle_routing_form_submit(
+            context,
+            {
+                "backend": "codex",
+                "codex_model": "gpt-5.4",
+                "codex_reasoning": "high",
+            },
+        )
+
+        bot._on_routing_update.assert_awaited_once()
+        args = bot._on_routing_update.await_args.args
+        self.assertEqual(args[3], None)
+        self.assertEqual(args[4], None)
+        self.assertEqual(args[5], None)
+        self.assertEqual(args[6], None)
+        self.assertEqual(args[7], None)
+        self.assertEqual(args[8], None)
+        self.assertEqual(args[9], "reviewer")
+        self.assertEqual(args[10], "gpt-5.4")
+        self.assertEqual(args[11], "high")
 
     async def test_quick_reply_card_action_sets_lark_platform(self):
         bot = self._make_bot()

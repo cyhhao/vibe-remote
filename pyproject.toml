@@ -36,6 +36,7 @@ dependencies = [
     "markdown_to_mrkdwn>=0.2.0",
     "typing_extensions>=4.12.2",
     "PyYAML>=6.0",
+    "tomli>=2.0.1; python_version < '3.11'",
     "flask>=3.0.0",
     "lark-oapi>=1.4.0",
     "sentry-sdk>=2.0.0",
