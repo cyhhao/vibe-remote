@@ -17,7 +17,8 @@ Options:
   --pr <number>                   Required. Pull request number.
   --prefix <value>                Optional. Hook prefix. If omitted, a sensible default is used.
   --interval <seconds>            Optional. Polling interval passed to the waiter.
-  --timeout <seconds>             Optional. Overall waiter timeout. Default: 21600 (6 hours).
+  --timeout <seconds>             Optional. Per-cycle waiter timeout. Default: 21600 (6 hours).
+  --lifetime-timeout <seconds>    Optional. Overall lifetime for --forever. Default: 0 (run until killed).
   --forever                       Optional. Keep watching and re-arm after each detected event.
   --event-limit <count>           Optional. Maximum rendered events.
   --catch-up                      Optional. Treat existing PR activity as pending immediately.
@@ -42,7 +43,7 @@ pr=""
 prefix=""
 interval=""
 timeout=""
-timeout_set=0
+lifetime_timeout="0"
 forever=0
 event_limit=""
 catch_up=0
@@ -82,7 +83,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --timeout)
       timeout="${2:-}"
-      timeout_set=1
+      shift 2
+      ;;
+    --lifetime-timeout)
+      lifetime_timeout="${2:-}"
       shift 2
       ;;
     --forever)
@@ -164,6 +168,11 @@ if [[ -n "$timeout_exit_code" && "$timeout_exit_code" != "124" ]]; then
   exit 2
 fi
 
+if [[ "$forever" -ne 1 && "$lifetime_timeout" != "0" ]]; then
+  echo "--lifetime-timeout requires --forever" >&2
+  exit 2
+fi
+
 if [[ ! -x "$WRAPPER" ]]; then
   echo "Wrapper not found or not executable: $WRAPPER" >&2
   exit 127
@@ -174,13 +183,7 @@ if [[ ! -x "$WAITER" ]]; then
   exit 127
 fi
 
-if [[ "$forever" -eq 1 ]]; then
-  if [[ "$timeout_set" -eq 1 && "$timeout" != "0" ]]; then
-    echo "--forever watcher must use --timeout 0; omit --timeout or pass 0 explicitly" >&2
-    exit 2
-  fi
-  timeout="0"
-elif [[ -z "$timeout" ]]; then
+if [[ -z "$timeout" ]]; then
   timeout="21600"
 fi
 
@@ -202,6 +205,7 @@ if [[ "$forever" -eq 1 && "$foreground" -ne 1 ]]; then
     --pr "$pr"
     --prefix "$prefix"
     --timeout "$timeout"
+    --lifetime-timeout "$lifetime_timeout"
   )
 
   if [[ -n "$interval" ]]; then
@@ -248,9 +252,39 @@ if [[ "$forever" -eq 1 && "$foreground" -ne 1 ]]; then
   exit 0
 fi
 
+send_status_hook() {
+  local status_prefix="$1"
+  local status_message="$2"
+
+  local -a status_args=(
+    "$WRAPPER"
+    --foreground
+    --session-key "$session_key"
+    --prefix "$status_prefix"
+    --timeout 0
+  )
+
+  if [[ -n "$post_to" ]]; then
+    status_args+=(--post-to "$post_to")
+  fi
+  if [[ -n "$deliver_key" ]]; then
+    status_args+=(--deliver-key "$deliver_key")
+  fi
+  if [[ -n "$hook_bin" ]]; then
+    status_args+=(--hook-bin "$hook_bin")
+  fi
+  if [[ -n "$hook_cmd" ]]; then
+    status_args+=(--hook-cmd "$hook_cmd")
+  fi
+
+  status_args+=(-- python3 -c 'import sys; print(sys.argv[1])' "$status_message")
+  "${status_args[@]}"
+}
+
 if [[ "$forever" -eq 1 ]]; then
   cursor_file="$(mktemp)"
   retry_delay_seconds=30
+  lifetime_started_at="$(date +%s)"
   cleanup() {
     rm -f "$cursor_file"
   }
@@ -262,6 +296,54 @@ if [[ "$forever" -eq 1 ]]; then
   current_catch_up="$catch_up"
 
   while true; do
+    cycle_timeout="$timeout"
+    if [[ "$lifetime_timeout" != "0" ]]; then
+      lifetime_window="$(
+        python3 - "$lifetime_started_at" "$lifetime_timeout" <<'PY'
+import sys
+import time
+
+started_at = float(sys.argv[1])
+lifetime_timeout = float(sys.argv[2])
+remaining = lifetime_timeout - (time.time() - started_at)
+print(max(0.0, remaining))
+PY
+      )"
+
+      if python3 - "$lifetime_window" <<'PY'
+import sys
+
+raise SystemExit(0 if float(sys.argv[1]) <= 0 else 1)
+PY
+      then
+        elapsed_seconds="$(
+          python3 - "$lifetime_started_at" <<'PY'
+import sys
+import time
+
+print(int(max(0, time.time() - float(sys.argv[1]))))
+PY
+        )"
+        send_status_hook \
+          "GitHub PR watch stopped after reaching its lifetime timeout." \
+          "Lifetime timeout reached after ${elapsed_seconds} second(s) for ${repo}#${pr}. Last cursors: review=${current_since_review_id:-0} review_comment=${current_since_review_comment_id:-0} issue_comment=${current_since_issue_comment_id:-0}."
+        exit 0
+      fi
+
+      cycle_timeout="$(
+        python3 - "$timeout" "$lifetime_window" <<'PY'
+import sys
+
+cycle_timeout = float(sys.argv[1])
+remaining_lifetime = float(sys.argv[2])
+if cycle_timeout <= 0:
+    print(remaining_lifetime)
+else:
+    print(min(cycle_timeout, remaining_lifetime))
+PY
+      )"
+    fi
+
     rm -f "$cursor_file"
 
     cycle_wrapper_args=(
@@ -269,7 +351,7 @@ if [[ "$forever" -eq 1 ]]; then
       --foreground
       --session-key "$session_key"
       --prefix "$prefix"
-      --timeout "$timeout"
+      --timeout "$cycle_timeout"
     )
 
     if [[ -n "$post_to" ]]; then
@@ -289,7 +371,7 @@ if [[ "$forever" -eq 1 ]]; then
       "$WAITER"
       --repo "$repo"
       --pr "$pr"
-      --timeout "$timeout"
+      --timeout "$cycle_timeout"
       --cursor-output "$cursor_file"
     )
 
