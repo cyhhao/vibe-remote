@@ -20,7 +20,8 @@ CURRENT_VIBE_EXECUTABLE_ENV = "VIBE_CURRENT_EXECUTABLE"
 UV_FALLBACK_BIN_DIRS = (".local/bin", ".cargo/bin")
 _VERSION_RE = re.compile(
     r"^\s*v?(?P<release>\d+(?:\.\d+)*)"
-    r"(?:(?:[.-])?(?P<stage>a|b|rc|dev)(?P<stage_num>\d+))?\s*$"
+    r"(?:(?:[.-])?(?P<stage>a|b|rc|dev)(?P<stage_num>\d+))?"
+    r"(?:(?:[.-])?post(?P<post_num>\d+))?\s*$"
 )
 _STAGE_ORDER = {"dev": 0, "a": 1, "b": 2, "rc": 3, "final": 4}
 
@@ -179,7 +180,7 @@ def _normalize_release_parts(parts: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(normalized)
 
 
-def _parse_version(value: str) -> tuple[tuple[int, ...], int, int] | None:
+def _parse_version(value: str) -> tuple[tuple[int, ...], int, int, int, int] | None:
     match = _VERSION_RE.match(value)
     if not match:
         return None
@@ -187,7 +188,9 @@ def _parse_version(value: str) -> tuple[tuple[int, ...], int, int] | None:
     release = tuple(int(part) for part in match.group("release").split("."))
     stage = match.group("stage") or "final"
     stage_num = int(match.group("stage_num") or "0")
-    return (_normalize_release_parts(release), _STAGE_ORDER[stage], stage_num)
+    post_num = int(match.group("post_num") or "0")
+    has_post = 1 if match.group("post_num") else 0
+    return (_normalize_release_parts(release), _STAGE_ORDER[stage], stage_num, has_post, post_num)
 
 
 def _is_prerelease_version(value: str) -> bool:
