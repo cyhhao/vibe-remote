@@ -44,3 +44,32 @@ def test_dispatch_to_controller_loop_runs_callback_on_controller_loop():
     assert output == "HELLO"
     assert result["thread"] == "controller-loop"
     assert result["value"] == "hello"
+
+
+def test_cleanup_sync_stops_watch_service_on_stopped_loop() -> None:
+    controller = Controller.__new__(Controller)
+    loop = asyncio.new_event_loop()
+    controller._loop = loop
+    stopped: dict[str, bool] = {"watch": False, "tasks": False}
+
+    class _Stopper:
+        def __init__(self, key: str) -> None:
+            self.key = key
+
+        async def stop(self) -> None:
+            stopped[self.key] = True
+
+    controller.scheduled_task_service = _Stopper("tasks")
+    controller.watch_service = _Stopper("watch")
+    controller.update_checker = type("UpdateChecker", (), {"stop": lambda self: None})()
+    controller.receiver_tasks = {}
+    controller.im_client = None
+    controller._im_thread = None
+
+    try:
+        controller.cleanup_sync()
+    finally:
+        loop.close()
+
+    assert stopped["tasks"] is True
+    assert stopped["watch"] is True

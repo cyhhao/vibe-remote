@@ -24,6 +24,7 @@ from core.handlers import (
 from core.message_dispatcher import ConsolidatedMessageDispatcher
 from core.scheduled_tasks import ScheduledTaskService
 from core.update_checker import UpdateChecker
+from core.watches import ManagedWatchService
 from vibe.i18n import get_supported_languages, t as i18n_t
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ class Controller:
         # Consolidated message dispatcher
         self.message_dispatcher = ConsolidatedMessageDispatcher(self)
         self.scheduled_task_service = ScheduledTaskService(self)
+        self.watch_service = ManagedWatchService(self)
 
         # Background task for cleanup
         self.cleanup_task: Optional[asyncio.Task] = None
@@ -389,6 +391,10 @@ class Controller:
             self.scheduled_task_service.start()
         except Exception as e:
             logger.error("Failed to start scheduled task service: %s", e, exc_info=True)
+        try:
+            self.watch_service.start()
+        except Exception as e:
+            logger.error("Failed to start watch service: %s", e, exc_info=True)
 
     # Utility methods used by handlers
 
@@ -570,6 +576,19 @@ class Controller:
         """Best-effort synchronous cleanup without cross-loop awaits"""
         logger.info("Cleaning up controller resources (sync, best-effort)...")
 
+        def _stop_loop_coroutine(coro, label: str) -> None:
+            try:
+                loop = self._loop
+                if not loop or loop.is_closed():
+                    return
+                if loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(coro, loop)
+                    future.result(timeout=5)
+                    return
+                loop.run_until_complete(coro)
+            except Exception as e:
+                logger.debug(f"{label} cleanup skipped: {e}")
+
         # Stop update checker
         try:
             update_task = self.update_checker.stop()
@@ -583,13 +602,8 @@ class Controller:
         except Exception as e:
             logger.debug(f"Update checker cleanup skipped: {e}")
 
-        try:
-            loop = self._loop
-            if loop and not loop.is_closed():
-                future = asyncio.run_coroutine_threadsafe(self.scheduled_task_service.stop(), loop)
-                future.result(timeout=5)
-        except Exception as e:
-            logger.debug(f"Scheduled task service cleanup skipped: {e}")
+        _stop_loop_coroutine(self.scheduled_task_service.stop(), "Scheduled task service")
+        _stop_loop_coroutine(self.watch_service.stop(), "Watch service")
 
         # Cancel receiver tasks without awaiting (they may belong to other loops)
         try:

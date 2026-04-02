@@ -57,6 +57,14 @@ def get_sessions_path() -> Path:
     return get_state_dir() / "sessions.json"
 
 
+def get_watches_path() -> Path:
+    return get_state_dir() / "watches.json"
+
+
+def get_watch_runtime_path() -> Path:
+    return get_runtime_dir() / "watch_runtime.json"
+
+
 def get_discovered_chats_path() -> Path:
     return get_state_dir() / "discovered_chats.json"
 

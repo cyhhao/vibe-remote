@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -28,6 +29,7 @@ from config.v2_config import (
     V2Config,
 )
 from core.scheduled_tasks import ScheduledTaskStore, TaskExecutionStore, parse_session_key
+from core.watches import ManagedWatchStore, WatchRuntimeStateStore
 from vibe import __version__, api, runtime
 from vibe.upgrade import build_upgrade_plan, cache_running_vibe_path, get_latest_version_info, get_safe_cwd
 
@@ -184,6 +186,46 @@ def _hook_send_examples_text() -> str:
           vibe hook send --session-key 'slack::channel::C123' --deliver-key 'slack::channel::C999' --prompt 'Post the deployment summary in announcements.'
           vibe hook send --session-key 'discord::user::123456789' --prompt-file release-note.txt
           vibe hook send --session-key 'lark::channel::oc_abc::thread::om_123' --prompt 'Post the benchmark result in this thread.'
+        """
+    )
+
+
+def _watch_examples_text() -> str:
+    return dedent(
+        """\
+        Examples:
+          vibe watch add --session-key 'slack::channel::C123' --name 'Wait for export' --shell 'python3 scripts/wait_for_export.py'
+          vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The CI job finished.' -- python3 scripts/wait_for_ci.py --build 42
+          vibe watch add --session-key 'slack::channel::C123' --forever --retry-exit-code 1 --retry-delay 60 --shell 'bash scripts/wait_for_log_pattern.sh'
+          vibe watch list --brief
+          vibe watch show 12ab34cd56ef
+          vibe watch pause 12ab34cd56ef
+        """
+    )
+
+
+def _watch_add_examples_text() -> str:
+    return dedent(
+        """\
+        Session key format:
+          <platform>::channel::<channel_id>
+          <platform>::user::<user_id>
+          <platform>::channel::<channel_id>::thread::<thread_id>
+          <platform>::user::<user_id>::thread::<thread_id>
+
+        Guidance:
+          Use a watch when a script should wait in the background and send one hook only after a condition is met.
+          Prefer a threadless session key by default.
+          Only append ::thread::<thread_id> when follow-up must stay inside one specific thread.
+          Use --post-to channel when the watch should keep thread context but publish to the parent channel.
+          Use --deliver-key only when delivery must go to a different explicit target.
+          Pass either --shell '<command>' or a command after '--'.
+          --timeout applies to each cycle. --lifetime-timeout applies only to the whole forever watch lifetime.
+
+        Examples:
+          vibe watch add --session-key 'slack::channel::C123' --shell 'python3 scripts/wait_for_export.py'
+          vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The export finished.' -- bash -lc 'sleep 120; echo done'
+          vibe watch add --session-key 'slack::channel::C123' --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 1 --retry-delay 30 -- python3 scripts/wait_for_github_pr_activity.py --repo cyhhao/vibe-remote --pr 153
         """
     )
 
@@ -404,6 +446,20 @@ def _normalize_task_name(value: Optional[str], *, allow_none: bool = True) -> Op
     return normalized
 
 
+def _normalize_watch_name(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        raise TaskCliError(
+            "watch name cannot be empty",
+            code="empty_watch_name",
+            hint="Pass a short non-empty name, or omit --name.",
+            help_command="vibe watch add --help",
+        )
+    return normalized
+
+
 def _task_prompt_preview(prompt: str, *, max_chars: int = 72) -> str:
     compact = " ".join((prompt or "").split())
     if len(compact) <= max_chars:
@@ -530,6 +586,14 @@ def _task_request_store() -> TaskExecutionStore:
     return TaskExecutionStore()
 
 
+def _watch_store() -> ManagedWatchStore:
+    return ManagedWatchStore()
+
+
+def _watch_runtime_store() -> WatchRuntimeStateStore:
+    return WatchRuntimeStateStore()
+
+
 def _supported_task_platforms() -> set[str]:
     try:
         config = _ensure_config()
@@ -654,6 +718,83 @@ def _collect_target_warnings(*targets) -> list[dict]:
                 )
 
     return warnings
+
+
+def _resolve_watch_command(args, *, help_command: str) -> tuple[list[str], Optional[str]]:
+    shell_command = (getattr(args, "shell", None) or "").strip()
+    raw_command = list(getattr(args, "waiter_command", []) or [])
+    if raw_command and raw_command[0] == "--":
+        raw_command = raw_command[1:]
+
+    if shell_command and raw_command:
+        raise TaskCliError(
+            "use either --shell or a command after '--', not both",
+            code="conflicting_watch_command_inputs",
+            hint="Pass a shell string with --shell, or pass the executable and its args after '--'.",
+            help_command=help_command,
+        )
+    if shell_command:
+        return [], shell_command
+    if raw_command:
+        return raw_command, None
+    raise TaskCliError(
+        "one of --shell or a command after '--' is required",
+        code="missing_watch_command",
+        hint="Pass a shell command with --shell, or add the watcher executable and its args after '--'.",
+        help_command=help_command,
+    )
+
+
+def _watch_command_preview(watch, *, max_chars: int = 120) -> str:
+    preview = watch.shell_command or shlex.join(watch.command)
+    preview = preview.strip()
+    if len(preview) <= max_chars:
+        return preview
+    return preview[: max_chars - 1].rstrip() + "…"
+
+
+def _watch_display_name(watch) -> str:
+    return watch.name or _watch_command_preview(watch)
+
+
+def _watch_state(watch, runtime_entry: Optional[dict[str, object]]) -> str:
+    if runtime_entry and runtime_entry.get("running"):
+        return "running"
+    if watch.enabled and watch.mode == "forever":
+        return "armed"
+    if watch.enabled:
+        return "pending"
+    if watch.last_error:
+        return "failed"
+    if watch.last_event_at:
+        return "completed"
+    return "paused"
+
+
+def _watch_payload(watch, runtime_entry: Optional[dict[str, object]], *, brief: bool = False) -> dict:
+    derived = {
+        "display_name": _watch_display_name(watch),
+        "command_preview": _watch_command_preview(watch),
+        "state": _watch_state(watch, runtime_entry),
+        "runtime": runtime_entry or {},
+    }
+    if brief:
+        return {
+            "id": watch.id,
+            "name": watch.name,
+            "display_name": derived["display_name"],
+            "state": derived["state"],
+            "mode": watch.mode,
+            "session_key": watch.session_key,
+            "timeout_seconds": watch.timeout_seconds,
+            "lifetime_timeout_seconds": watch.lifetime_timeout_seconds,
+            "enabled": watch.enabled,
+            "last_event_at": watch.last_event_at,
+            "last_error": watch.last_error,
+        }
+    payload = watch.to_dict()
+    payload.update(derived)
+    return payload
 
 
 def cmd_task_add(args):
@@ -1047,6 +1188,158 @@ def cmd_hook_send(args):
     except Exception as exc:
         _print_task_error(exc, help_command="vibe hook send --help")
         return 1
+
+
+def cmd_watch_add(args):
+    try:
+        session_target, delivery_target = _validate_delivery_args(
+            session_key=args.session_key,
+            post_to=getattr(args, "post_to", None),
+            deliver_key=getattr(args, "deliver_key", None),
+            help_command="vibe watch add --help",
+        )
+        command, shell_command = _resolve_watch_command(args, help_command="vibe watch add --help")
+
+        if args.timeout < 0:
+            raise TaskCliError(
+                "--timeout must be >= 0",
+                code="invalid_watch_timeout",
+                hint="Use 0 for no per-cycle timeout, or a positive number of seconds.",
+                help_command="vibe watch add --help",
+                details={"timeout": args.timeout},
+            )
+        if args.retry_delay < 0:
+            raise TaskCliError(
+                "--retry-delay must be >= 0",
+                code="invalid_watch_retry_delay",
+                hint="Use 0 to retry immediately, or a positive number of seconds.",
+                help_command="vibe watch add --help",
+                details={"retry_delay": args.retry_delay},
+            )
+        if args.lifetime_timeout < 0:
+            raise TaskCliError(
+                "--lifetime-timeout must be >= 0",
+                code="invalid_watch_lifetime_timeout",
+                hint="Use 0 for no overall lifetime limit, or a positive number of seconds.",
+                help_command="vibe watch add --help",
+                details={"lifetime_timeout": args.lifetime_timeout},
+            )
+        if args.lifetime_timeout and not args.forever:
+            raise TaskCliError(
+                "--lifetime-timeout requires --forever",
+                code="invalid_watch_lifetime_timeout",
+                hint="Use --lifetime-timeout only on forever watches.",
+                help_command="vibe watch add --help",
+            )
+        cwd = args.cwd
+        if cwd:
+            resolved = Path(cwd).expanduser().resolve()
+            if not resolved.exists() or not resolved.is_dir():
+                raise TaskCliError(
+                    f"watch cwd does not exist: {cwd}",
+                    code="invalid_watch_cwd",
+                    hint="Point --cwd to an existing directory, or omit it to inherit the service working directory.",
+                    help_command="vibe watch add --help",
+                    details={"cwd": cwd},
+                )
+            cwd = str(resolved)
+
+        retry_exit_codes = sorted(set(args.retry_exit_code or [1]))
+        store = _watch_store()
+        watch = store.add_watch(
+            name=_normalize_watch_name(getattr(args, "name", None)),
+            session_key=args.session_key,
+            command=command,
+            shell_command=shell_command,
+            prefix=_normalize_task_name(getattr(args, "prefix", None)),
+            cwd=cwd,
+            mode="forever" if args.forever else "once",
+            timeout_seconds=float(args.timeout),
+            lifetime_timeout_seconds=float(args.lifetime_timeout),
+            retry_exit_codes=retry_exit_codes,
+            retry_delay_seconds=float(args.retry_delay),
+            post_to=args.post_to,
+            deliver_key=args.deliver_key,
+        )
+        warnings = _collect_target_warnings(session_target, delivery_target)
+        runtime_entry = _watch_runtime_store().load().get("watches", {}).get(watch.id)
+        print(json.dumps({"ok": True, "watch": _watch_payload(watch, runtime_entry), "warnings": warnings}, indent=2))
+        return 0
+    except Exception as exc:
+        _print_task_error(exc, help_command="vibe watch add --help")
+        return 1
+
+
+def cmd_watch_list(*, brief: bool = False):
+    store = _watch_store()
+    runtime_state = _watch_runtime_store().load().get("watches", {})
+    watches = store.list_watches()
+    watches.sort(key=lambda item: (item.enabled is False, item.created_at, item.id))
+    print(
+        json.dumps(
+            {"watches": [_watch_payload(watch, runtime_state.get(watch.id), brief=brief) for watch in watches]},
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_watch_show(watch_id: str):
+    store = _watch_store()
+    watch = store.get_watch(watch_id)
+    if watch is None:
+        _print_task_error(
+            TaskCliError(
+                f"watch '{watch_id}' not found",
+                code="watch_not_found",
+                hint="Use 'vibe watch list' to find a valid watch ID before calling show.",
+                help_command="vibe watch list",
+                details={"watch_id": watch_id},
+            )
+        )
+        return 1
+    runtime_entry = _watch_runtime_store().load().get("watches", {}).get(watch.id)
+    print(json.dumps({"ok": True, "watch": _watch_payload(watch, runtime_entry)}, indent=2))
+    return 0
+
+
+def cmd_watch_set_enabled(watch_id: str, enabled: bool):
+    store = _watch_store()
+    watch = store.get_watch(watch_id)
+    if watch is None:
+        action = "resume" if enabled else "pause"
+        _print_task_error(
+            TaskCliError(
+                f"watch '{watch_id}' not found",
+                code="watch_not_found",
+                hint=f"Use 'vibe watch list' to find a valid watch ID before calling {action}.",
+                help_command="vibe watch list",
+                details={"watch_id": watch_id},
+            )
+        )
+        return 1
+    updated = store.set_enabled(watch_id, enabled)
+    runtime_entry = _watch_runtime_store().load().get("watches", {}).get(updated.id)
+    print(json.dumps({"ok": True, "watch": _watch_payload(updated, runtime_entry)}, indent=2))
+    return 0
+
+
+def cmd_watch_remove(watch_id: str):
+    store = _watch_store()
+    removed = store.remove_watch(watch_id)
+    if not removed:
+        _print_task_error(
+            TaskCliError(
+                f"watch '{watch_id}' not found",
+                code="watch_not_found",
+                hint="Use 'vibe watch list' to find a valid watch ID before calling remove.",
+                help_command="vibe watch list",
+                details={"watch_id": watch_id},
+            )
+        )
+        return 1
+    print(json.dumps({"ok": True, "removed_id": watch_id}, indent=2))
+    return 0
 
 
 def _doctor():
@@ -1774,6 +2067,145 @@ def build_parser():
     hook_prompt_group = hook_send_parser.add_mutually_exclusive_group(required=True)
     hook_prompt_group.add_argument("--prompt", help="Prompt text to send")
     hook_prompt_group.add_argument("--prompt-file", help="Read prompt text from a UTF-8 text file")
+
+    watch_parser = subparsers.add_parser(
+        "watch",
+        help="Manage background watches",
+        description="Create, inspect, and control managed background watchers for Vibe Remote.",
+        epilog=_watch_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe watch --help",
+        error_hint="Run one of the watch subcommands below. Use 'vibe watch add --help' for watch creation details.",
+    )
+    watch_subparsers = watch_parser.add_subparsers(
+        dest="watch_command",
+        metavar="{add,list,show,pause,resume,remove}",
+    )
+    watch_subparsers.required = True
+
+    watch_add_parser = watch_subparsers.add_parser(
+        "add",
+        help="Create a managed background watch",
+        description="Create a managed background watch that runs a waiter command and sends a hook when it succeeds.",
+        epilog=_watch_add_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe watch add --help",
+        error_hint="Use --session-key and either --shell or a command after '--'. Add --forever only when the waiter should re-arm after each successful cycle.",
+    )
+    watch_add_parser.add_argument("--name", help="Optional human-friendly watch name")
+    watch_add_parser.add_argument(
+        "--session-key",
+        required=True,
+        help="Target session key. Prefer a threadless key unless the follow-up must stay in one thread.",
+    )
+    watch_delivery_group = watch_add_parser.add_mutually_exclusive_group()
+    watch_delivery_group.add_argument(
+        "--post-to",
+        choices=("thread", "channel"),
+        help="Delivery location override. Omit to follow --session-key directly.",
+    )
+    watch_delivery_group.add_argument(
+        "--deliver-key",
+        help="Explicit delivery target key. Use this only when messages must be delivered to a different target.",
+    )
+    watch_add_parser.add_argument("--prefix", help="Optional prompt prefix prepended before waiter stdout")
+    watch_add_parser.add_argument("--cwd", help="Working directory for the waiter process")
+    watch_add_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=21600,
+        help="Per-cycle timeout in seconds. Use 0 for no per-cycle timeout. Default: 21600",
+    )
+    watch_add_parser.add_argument(
+        "--forever",
+        action="store_true",
+        help="Keep re-arming the watch after each successful cycle instead of stopping after the first event.",
+    )
+    watch_add_parser.add_argument(
+        "--lifetime-timeout",
+        type=float,
+        default=0,
+        help="Overall forever-watch lifetime timeout in seconds. Use 0 for no lifetime limit. Requires --forever.",
+    )
+    watch_add_parser.add_argument(
+        "--retry-exit-code",
+        dest="retry_exit_code",
+        action="append",
+        type=int,
+        default=None,
+        help="Cycle exit code that should be retried in forever mode. Repeat to add more. Default: 1",
+    )
+    watch_add_parser.add_argument(
+        "--retry-delay",
+        type=float,
+        default=30,
+        help="Delay in seconds before retrying a retryable forever cycle failure. Default: 30",
+    )
+    watch_add_parser.add_argument(
+        "--shell",
+        help="Shell command to run as the waiter. Use this or pass a command after '--'.",
+    )
+    watch_add_parser.add_argument(
+        "waiter_command",
+        nargs=argparse.REMAINDER,
+        help="Waiter command to run after '--'. Example: vibe watch add ... -- python3 script.py --flag value",
+    )
+
+    watch_list_parser = watch_subparsers.add_parser(
+        "list",
+        help="List background watches",
+        description="List stored managed background watches.",
+        epilog="Use the returned watch IDs with 'vibe watch show', 'vibe watch pause', 'vibe watch resume', or 'vibe watch remove'.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe watch list --help",
+    )
+    watch_list_parser.add_argument(
+        "--brief",
+        action="store_true",
+        help="Show a compact watcher-focused view instead of the full stored watch payload",
+    )
+    _add_hidden_task_alias(watch_subparsers, "ls", watch_list_parser)
+
+    watch_show_parser = watch_subparsers.add_parser(
+        "show",
+        help="Show one background watch",
+        description="Show one managed background watch by ID.",
+        epilog="Find watch IDs with: vibe watch list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe watch show --help",
+    )
+    watch_show_parser.add_argument("watch_id", help="Watch ID from 'vibe watch list'")
+
+    watch_pause_parser = watch_subparsers.add_parser(
+        "pause",
+        help="Pause one background watch",
+        description="Disable one managed background watch without deleting it.",
+        epilog="Find watch IDs with: vibe watch list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe watch pause --help",
+    )
+    watch_pause_parser.add_argument("watch_id", help="Watch ID from 'vibe watch list'")
+
+    watch_resume_parser = watch_subparsers.add_parser(
+        "resume",
+        help="Resume one background watch",
+        description="Re-enable one paused managed background watch.",
+        epilog="Find watch IDs with: vibe watch list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe watch resume --help",
+    )
+    watch_resume_parser.add_argument("watch_id", help="Watch ID from 'vibe watch list'")
+
+    watch_remove_parser = watch_subparsers.add_parser(
+        "remove",
+        help="Remove one background watch",
+        description="Delete one managed background watch permanently.",
+        epilog="Find watch IDs with: vibe watch list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe watch remove --help",
+    )
+    watch_remove_parser.add_argument("watch_id", help="Watch ID from 'vibe watch list'")
+    _add_hidden_task_alias(watch_subparsers, "rm", watch_remove_parser)
     return parser
 
 
@@ -1818,4 +2250,18 @@ def main():
         if args.hook_command == "send":
             sys.exit(cmd_hook_send(args))
         parser.error("hook command is required")
+    if args.command == "watch":
+        if args.watch_command == "add":
+            sys.exit(cmd_watch_add(args))
+        if args.watch_command in {"list", "ls"}:
+            sys.exit(cmd_watch_list(brief=getattr(args, "brief", False)))
+        if args.watch_command == "show":
+            sys.exit(cmd_watch_show(args.watch_id))
+        if args.watch_command == "pause":
+            sys.exit(cmd_watch_set_enabled(args.watch_id, False))
+        if args.watch_command == "resume":
+            sys.exit(cmd_watch_set_enabled(args.watch_id, True))
+        if args.watch_command in {"remove", "rm"}:
+            sys.exit(cmd_watch_remove(args.watch_id))
+        parser.error("watch command is required")
     sys.exit(cmd_vibe())

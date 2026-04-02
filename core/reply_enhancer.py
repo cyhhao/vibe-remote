@@ -192,6 +192,7 @@ _SCHEDULED_TASKS_PROMPT = """\
 ## 3. Scheduled tasks and hooks
 Use `vibe task add` for actions that should recur or remain saved.
 Use `vibe hook send --session-key ... --prompt ...` for one-shot asynchronous sends without storing a task.
+Use `vibe watch add` when a background waiter should stay managed by Vibe Remote until it emits a follow-up hook.
 
 Current conversation targeting:
 - Default session key: `{session_key}`
@@ -202,9 +203,10 @@ Rules:
 - Only append `::thread::<thread_id>` to `--session-key` when the user explicitly wants replies to stay in the current thread.
 - Use `--post-to channel` when the task or hook should keep thread context but publish to the parent channel.
 - Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
+- Use `--timeout <seconds>` on watches for per-cycle timeouts, and `--lifetime-timeout <seconds>` only when a forever watch also needs an overall lifetime cap.
 - If `--timezone` is omitted, the task uses the local system timezone at creation time.
 - Use `--prompt "..."` or `--prompt-file <path>` for task and hook content.
-- Run `vibe task add --help` or `vibe hook send --help` for the full command reference.
+- Run `vibe task add --help`, `vibe hook send --help`, or `vibe watch add --help` for the full command reference.
 """
 
 
