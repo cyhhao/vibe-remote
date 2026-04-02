@@ -294,7 +294,7 @@ class ManagedWatchService:
         self._reconcile_task: Optional[asyncio.Task] = None
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._active_pids: dict[str, int] = {}
-        self._watch_started_at: dict[str, float] = {}
+        self._watch_started_at: dict[str, str] = {}
 
     def start(self) -> None:
         if self._running:
@@ -362,18 +362,14 @@ class ManagedWatchService:
             payload["watches"][watch_id] = {
                 "running": not task.done(),
                 "pid": self._active_pids.get(watch_id),
-                "started_at": datetime.fromtimestamp(
-                    self._watch_started_at.get(watch_id, 0.0), timezone.utc
-                ).isoformat()
-                if watch_id in self._watch_started_at
-                else None,
+                "started_at": self._watch_started_at.get(watch_id),
                 "updated_at": now,
             }
         self.runtime_store.write(payload)
 
     async def _run_watch(self, watch_id: str) -> None:
         lifetime_started = asyncio.get_running_loop().time()
-        self._watch_started_at[watch_id] = lifetime_started
+        self._watch_started_at[watch_id] = _utc_now_iso()
         self._write_runtime_state()
 
         while self._running:
@@ -410,7 +406,17 @@ class ManagedWatchService:
                 cycle_timeout = watch.timeout_seconds
 
             self.store.mark_cycle_start(watch.id)
-            result = await self._run_cycle(watch, timeout_seconds=cycle_timeout)
+            try:
+                result = await self._run_cycle(watch, timeout_seconds=cycle_timeout)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                result = _CycleResult(
+                    exit_code=1,
+                    stdout="",
+                    stderr=str(exc),
+                    timed_out=False,
+                )
 
             if result.exit_code == 0:
                 prompt = _build_prompt(watch.prefix, result.stdout)

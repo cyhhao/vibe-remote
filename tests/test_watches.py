@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -203,3 +204,88 @@ def test_managed_watch_service_stop_terminates_running_waiter(tmp_path: Path) ->
 
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_managed_watch_service_records_wall_clock_started_at(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    watch = store.add_watch(
+        name="Wait forever",
+        session_key="slack::channel::C123",
+        command=["python3", "-c", "import time; time.sleep(30)"],
+        shell_command=None,
+        prefix=None,
+        cwd=None,
+        mode="forever",
+        timeout_seconds=0,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[1],
+        retry_delay_seconds=0.01,
+        post_to=None,
+        deliver_key=None,
+    )
+    service = ManagedWatchService(
+        controller=SimpleNamespace(),
+        store=store,
+        request_store=request_store,
+        runtime_store=runtime_store,
+    )
+
+    async def _run() -> str:
+        service.start()
+        for _ in range(100):
+            started_at = runtime_store.load().get("watches", {}).get(watch.id, {}).get("started_at")
+            if started_at:
+                await service.stop()
+                return started_at
+            await asyncio.sleep(0.02)
+        await service.stop()
+        raise AssertionError("started_at was never written")
+
+    started_at = asyncio.run(_run())
+    assert datetime.fromisoformat(started_at).year >= 2024
+
+
+def test_managed_watch_service_turns_spawn_error_into_failed_cycle(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    watch = store.add_watch(
+        name="Broken waiter",
+        session_key="slack::channel::C123",
+        command=["/definitely/missing/waiter"],
+        shell_command=None,
+        prefix=None,
+        cwd=None,
+        mode="once",
+        timeout_seconds=5,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[1],
+        retry_delay_seconds=0.01,
+        post_to=None,
+        deliver_key=None,
+    )
+    service = ManagedWatchService(
+        controller=SimpleNamespace(),
+        store=store,
+        request_store=request_store,
+        runtime_store=runtime_store,
+    )
+
+    async def _run() -> None:
+        service.start()
+        for _ in range(100):
+            if watch.id not in service._active_tasks:
+                break
+            await asyncio.sleep(0.02)
+        await service.stop()
+
+    asyncio.run(_run())
+
+    saved = store.get_watch(watch.id)
+    assert saved is not None
+    assert saved.enabled is False
+    assert saved.last_exit_code == 1
+    assert saved.last_error
+    assert request_store.list_pending() == []
