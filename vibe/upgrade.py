@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -17,6 +18,12 @@ PACKAGE_NAME = "vibe-remote"
 DEFAULT_UPDATE_METADATA_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
 CURRENT_VIBE_EXECUTABLE_ENV = "VIBE_CURRENT_EXECUTABLE"
 UV_FALLBACK_BIN_DIRS = (".local/bin", ".cargo/bin")
+_VERSION_RE = re.compile(
+    r"^\s*v?(?P<release>\d+(?:\.\d+)*)"
+    r"(?:(?:[.-])?(?P<stage>a|b|rc|dev)(?P<stage_num>\d+))?"
+    r"(?:(?:[.-])?post(?P<post_num>\d+))?\s*$"
+)
+_STAGE_ORDER = {"dev": 0, "a": 1, "b": 2, "rc": 3, "final": 4}
 
 
 @dataclass(frozen=True)
@@ -166,6 +173,85 @@ def get_upgrade_package_spec() -> str:
     return os.environ.get("VIBE_UPGRADE_PACKAGE_SPEC", PACKAGE_NAME)
 
 
+def _normalize_release_parts(parts: tuple[int, ...]) -> tuple[int, ...]:
+    normalized = list(parts)
+    while len(normalized) > 1 and normalized[-1] == 0:
+        normalized.pop()
+    return tuple(normalized)
+
+
+def _parse_version(value: str) -> tuple[tuple[int, ...], int, int, int, int] | None:
+    match = _VERSION_RE.match(value)
+    if not match:
+        return None
+
+    release = tuple(int(part) for part in match.group("release").split("."))
+    stage = match.group("stage") or "final"
+    stage_num = int(match.group("stage_num") or "0")
+    post_num = int(match.group("post_num") or "0")
+    has_post = 1 if match.group("post_num") else 0
+    return (_normalize_release_parts(release), _STAGE_ORDER[stage], stage_num, has_post, post_num)
+
+
+def _is_prerelease_version(value: str) -> bool:
+    parsed = _parse_version(value)
+    if parsed is None:
+        return False
+    return parsed[1] < _STAGE_ORDER["final"]
+
+
+def _is_yanked_release(files: object) -> bool:
+    if not isinstance(files, list) or not files:
+        return False
+    yanked_flags = [bool(item.get("yanked")) for item in files if isinstance(item, dict)]
+    return bool(yanked_flags) and all(yanked_flags)
+
+
+def select_latest_update_version(metadata: Mapping[str, object], current_version: str) -> str:
+    allow_prereleases = _is_prerelease_version(current_version)
+    releases = metadata.get("releases")
+
+    candidates: list[tuple[object, str]] = []
+    if isinstance(releases, Mapping):
+        for version_str, files in releases.items():
+            if not isinstance(version_str, str):
+                continue
+            parsed = _parse_version(version_str)
+            if parsed is None:
+                continue
+            if not allow_prereleases and _is_prerelease_version(version_str):
+                continue
+            if _is_yanked_release(files):
+                continue
+            candidates.append((parsed, version_str))
+
+    if candidates:
+        candidates.sort(key=lambda item: item[0])
+        return candidates[-1][1]
+
+    latest = str((metadata.get("info") or {}).get("version") or "")
+    if latest and (allow_prereleases or not _is_prerelease_version(latest)):
+        return latest
+    return ""
+
+
+def has_newer_version(candidate: str, current: str) -> bool:
+    if not candidate or candidate == current:
+        return False
+
+    latest_parsed = _parse_version(candidate)
+    current_parsed = _parse_version(current)
+    if latest_parsed is not None and current_parsed is not None:
+        return latest_parsed > current_parsed
+
+    try:
+        current_parts = [int(x) for x in current.split(".")[:3] if x.isdigit()]
+        latest_parts = [int(x) for x in candidate.split(".")[:3] if x.isdigit()]
+        return latest_parts > current_parts
+    except (ValueError, AttributeError):
+        return candidate != current
+
+
 def get_latest_version_info(current_version: str) -> dict:
     result = {"current": current_version, "latest": None, "has_update": False, "error": None}
 
@@ -175,16 +261,11 @@ def get_latest_version_info(current_version: str) -> dict:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
-        latest = data.get("info", {}).get("version", "")
+        latest = select_latest_update_version(data, current_version)
         result["latest"] = latest
 
         if latest and latest != current_version:
-            try:
-                current_parts = [int(x) for x in current_version.split(".")[:3] if x.isdigit()]
-                latest_parts = [int(x) for x in latest.split(".")[:3] if x.isdigit()]
-                result["has_update"] = latest_parts > current_parts
-            except (ValueError, AttributeError):
-                result["has_update"] = latest != current_version
+            result["has_update"] = has_newer_version(latest, current_version)
     except Exception as e:
         result["error"] = str(e)
 

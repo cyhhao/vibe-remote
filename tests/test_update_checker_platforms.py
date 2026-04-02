@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config.v2_settings import SettingsStore, UserSettings
 from config.v2_config import UpdateConfig
+from core import update_checker
 from core.update_checker import UpdateChecker
 
 
@@ -55,3 +57,35 @@ def test_stop_returns_cancellable_task(monkeypatch, tmp_path):
         assert task.done()
 
     asyncio.run(run_test())
+
+
+class _FakeResponse:
+    def __init__(self, payload: bytes):
+        self._payload = payload
+
+    def read(self) -> bytes:
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def test_fetch_pypi_version_sync_ignores_prerelease_for_stable_current(monkeypatch):
+    payload = b"""
+    {
+      "info": {"version": "2.2.8rc1"},
+      "releases": {
+        "2.2.7": [{}],
+        "2.2.8rc1": [{}]
+      }
+    }
+    """
+
+    with patch.object(update_checker.urllib.request, "urlopen", return_value=_FakeResponse(payload)):
+        monkeypatch.setattr("vibe.__version__", "2.2.7", raising=False)
+        info = update_checker._fetch_pypi_version_sync()
+
+    assert info == {"current": "2.2.7", "latest": "2.2.7", "has_update": False, "error": None}

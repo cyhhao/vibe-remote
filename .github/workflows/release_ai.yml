@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v1.0.0)"
+        description: "Tag to release (e.g., v1.0.0 or v1.0.1rc1)"
         required: true
         type: string
       model:
@@ -50,6 +50,21 @@ jobs:
           fi
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Classify release type
+        id: release_type
+        shell: bash
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          PRERELEASE="false"
+
+          if [[ "$TAG" == *-* ]]; then
+            PRERELEASE="true"
+          elif [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*(([.-])?(a|b|rc|dev)[0-9]+)$ ]]; then
+            PRERELEASE="true"
+          fi
+
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
 
       - name: Compute previous tag
         id: prev
@@ -271,5 +286,5 @@ jobs:
           name: ${{ steps.tag.outputs.tag }}
           body_path: release.md
           draft: false
-          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
-          make_latest: ${{ github.event_name == 'push' }}
+          prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
+          make_latest: ${{ github.event_name == 'push' && steps.release_type.outputs.prerelease != 'true' }}

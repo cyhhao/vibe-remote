@@ -12,6 +12,7 @@ from vibe import api, cli
 from vibe.upgrade import (
     UpgradePlan,
     build_upgrade_plan,
+    has_newer_version,
     get_current_vibe_bin_dir,
     get_latest_version_info,
     get_restart_command,
@@ -125,6 +126,100 @@ def test_get_latest_version_info_uses_override_metadata_url(monkeypatch, tmp_pat
     info = get_latest_version_info("2.2.0")
 
     assert info == {"current": "2.2.0", "latest": "9999.0.0", "has_update": True, "error": None}
+
+
+def test_get_latest_version_info_ignores_prerelease_for_stable_current(monkeypatch, tmp_path):
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(
+        """
+        {
+          "info": {"version": "2.2.8rc1"},
+          "releases": {
+            "2.2.7": [{}],
+            "2.2.8rc1": [{}]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBE_UPDATE_METADATA_URL", metadata_path.as_uri())
+
+    info = get_latest_version_info("2.2.7")
+
+    assert info == {"current": "2.2.7", "latest": "2.2.7", "has_update": False, "error": None}
+
+
+def test_get_latest_version_info_allows_newer_prerelease_for_prerelease_current(monkeypatch, tmp_path):
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(
+        """
+        {
+          "info": {"version": "2.2.8rc2"},
+          "releases": {
+            "2.2.7": [{}],
+            "2.2.8rc1": [{}],
+            "2.2.8rc2": [{}]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBE_UPDATE_METADATA_URL", metadata_path.as_uri())
+
+    info = get_latest_version_info("2.2.8rc1")
+
+    assert info == {"current": "2.2.8rc1", "latest": "2.2.8rc2", "has_update": True, "error": None}
+
+
+def test_get_latest_version_info_allows_newer_dotted_dev_for_prerelease_current(monkeypatch, tmp_path):
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(
+        """
+        {
+          "info": {"version": "2.2.9.dev2"},
+          "releases": {
+            "2.2.8": [{}],
+            "2.2.9.dev1": [{}],
+            "2.2.9.dev2": [{}]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBE_UPDATE_METADATA_URL", metadata_path.as_uri())
+
+    info = get_latest_version_info("2.2.9.dev1")
+
+    assert info == {"current": "2.2.9.dev1", "latest": "2.2.9.dev2", "has_update": True, "error": None}
+
+
+def test_get_latest_version_info_detects_post_release_for_stable_current(monkeypatch, tmp_path):
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(
+        """
+        {
+          "info": {"version": "2.2.8.post1"},
+          "releases": {
+            "2.2.8": [{}],
+            "2.2.8.post1": [{}]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBE_UPDATE_METADATA_URL", metadata_path.as_uri())
+
+    info = get_latest_version_info("2.2.8")
+
+    assert info == {"current": "2.2.8", "latest": "2.2.8.post1", "has_update": True, "error": None}
+
+
+def test_has_newer_version_handles_prerelease_without_packaging():
+    assert has_newer_version("2.2.8rc2", "2.2.8rc1") is True
+    assert has_newer_version("2.2.8", "2.2.8rc2") is True
+    assert has_newer_version("2.2.8.post1", "2.2.8") is True
+    assert has_newer_version("2.2.8rc1", "2.2.8") is False
+    assert has_newer_version("2.2.9.dev2", "2.2.9.dev1") is True
 
 
 def test_get_running_vibe_path_prefers_cached_launcher(monkeypatch):
