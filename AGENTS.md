@@ -150,12 +150,8 @@ Source-of-truth rule:
 
 ### Review Loop for PRs
 
-After creating a PR:
-
-1. request review with the reviewer subagent if available
-2. fix critical issues and meaningful improvements
-3. push updates to the PR branch
-4. re-run review until there are no blocking issues or the user approves the remaining trade-offs
+- before opening a PR, run the reviewer subagent and fix significant issues first
+- after opening a PR, use the `background-watch-hook` skill to keep a review-fix loop running until Codex review passes
 
 ### Pre-Push Requirements
 
