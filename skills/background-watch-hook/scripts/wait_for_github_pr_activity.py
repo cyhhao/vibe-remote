@@ -39,6 +39,12 @@ def _get_token() -> str | None:
     return token or None
 
 
+def _min_interval_for_unauthenticated() -> float:
+    # Each poll performs three API requests. Keep unauthenticated usage at or below
+    # GitHub's 60 requests/hour ceiling with a small safety margin.
+    return 180.0
+
+
 def _github_get(url: str, token: str | None) -> Any:
     request = urllib.request.Request(url)
     request.add_header("Accept", "application/vnd.github+json")
@@ -189,9 +195,39 @@ def main() -> int:
         action="store_true",
         help="Treat current existing activity as pending when no explicit cursor is provided",
     )
+    parser.add_argument(
+        "--allow-unauthenticated",
+        action="store_true",
+        help="Allow polling without GitHub auth; the interval will be clamped to a safer minimum",
+    )
     args = parser.parse_args()
 
     token = _get_token()
+    if token is None and not args.allow_unauthenticated:
+        print(
+            (
+                "GitHub authentication is required for reliable polling. "
+                "Set GITHUB_TOKEN/GH_TOKEN, run 'gh auth login', or pass "
+                "--allow-unauthenticated for a throttled best-effort run."
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
+    effective_interval = max(args.interval, 1.0)
+    if token is None:
+        unauthenticated_min = _min_interval_for_unauthenticated()
+        if effective_interval < unauthenticated_min:
+            print(
+                (
+                    "No GitHub token detected; clamping polling interval from %.1fs to %.1fs "
+                    "to avoid unauthenticated rate-limit lockout."
+                )
+                % (effective_interval, unauthenticated_min),
+                file=sys.stderr,
+            )
+            effective_interval = unauthenticated_min
+
     start = time.monotonic()
 
     try:
@@ -245,11 +281,20 @@ def main() -> int:
             print("Timed out while waiting for GitHub PR activity", file=sys.stderr)
             return 124
 
-        time.sleep(max(args.interval, 1.0))
+        time.sleep(effective_interval)
 
         try:
             state = _fetch_state(args.repo, args.pr, token)
         except urllib.error.HTTPError as err:
+            if token is None and err.code in {403, 429}:
+                print(
+                    (
+                        "GitHub unauthenticated polling hit a rate limit. "
+                        "Authenticate with 'gh auth login' or GITHUB_TOKEN/GH_TOKEN."
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
             print(f"GitHub API error during polling: {err.code} {err.reason}", file=sys.stderr)
             continue
         except Exception as err:  # noqa: BLE001

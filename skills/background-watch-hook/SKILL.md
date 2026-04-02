@@ -131,6 +131,8 @@ Use `scripts/wait_for_github_pr_activity.py` only when the thing being watched i
 
 If the watcher should immediately surface activity that already exists at startup, add `--catch-up`. Without it, the included GitHub waiter snapshots current activity as the baseline and waits only for newer events.
 
+The included GitHub waiter expects GitHub authentication by default. It will use `GITHUB_TOKEN`, `GH_TOKEN`, or `gh auth token`. Only use `--allow-unauthenticated` for slower best-effort polling when authentication is not available.
+
 ### 2. Decide the session target
 
 Use the current thread when the user wants the result to continue in context.
@@ -214,6 +216,22 @@ nohup bash -lc '
       --pr 151 \
       --catch-up
 ' >/tmp/watch-pr-151-catch-up.log 2>&1 &
+```
+
+If authentication is unavailable and a quick one-off best-effort watch is still acceptable, you may opt in explicitly:
+
+```bash
+nohup bash -lc '
+  scripts/watch_then_hook.sh \
+    --session-key "slack::channel::C123::thread::171717.123" \
+    --prefix "Best-effort unauthenticated GitHub watch fired. Inspect the latest PR state." \
+    -- \
+    scripts/wait_for_github_pr_activity.py \
+      --repo cyhhao/vibe-remote \
+      --pr 151 \
+      --allow-unauthenticated \
+      --interval 180
+' >/tmp/watch-pr-151-unauth.log 2>&1 &
 ```
 
 ## Failure Handling
