@@ -32,7 +32,7 @@ Prefer `vibe watch` when the wait should be inspectable, pausable, resumable, or
 - `scripts/wait_for_github_pr_activity.py`
   Bundled waiter example for one common case: GitHub PR review activity.
 
-## Core Pattern
+## Use `vibe watch` First
 
 Use `vibe watch add` first. Most tasks only need:
 
@@ -59,6 +59,23 @@ Default behavior:
 - sends a follow-up after the waiter succeeds or times out
 
 Use `--forever` when the same waiter should re-arm after each detected event instead of exiting after one follow-up.
+
+## `vibe watch` Parameters To Remember
+
+- `--session-key`: where the follow-up should go
+- `--prefix`: what the next turn should do with the waiter result
+- `--name`: optional label for later management
+- `--forever`: re-arm after each detected event
+- `--timeout`: per-cycle timeout
+- `--lifetime-timeout`: whole-watch lifetime cap, mainly for forever watches
+
+Management commands:
+
+- `vibe watch list`
+- `vibe watch show <watch-id>`
+- `vibe watch pause <watch-id>`
+- `vibe watch resume <watch-id>`
+- `vibe watch remove <watch-id>`
 
 ## Waiter Contract
 
@@ -130,6 +147,15 @@ For `vibe watch add`:
 - `--lifetime-timeout` limits the whole long-running watch; default is `0` meaning run until killed
 
 This separation matters: a forever watch can still use a bounded timeout for each cycle.
+
+## Bundled Waiter Example
+
+This skill ships one bundled waiter:
+
+- `scripts/wait_for_github_pr_activity.py`
+  Waits for GitHub PR review activity, including reviews, inline review comments, PR conversation comments, and the special Codex `+1` reaction on the PR body.
+
+Use bundled waiters as examples or as ready-to-run building blocks. The main skill is still `vibe watch`; the waiter is only the thing that blocks until the condition is met.
 
 ## GitHub Example Waiter
 
