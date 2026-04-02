@@ -285,6 +285,7 @@ scripts/watch_github_pr_then_hook.sh \
 
 - it keeps the watcher process alive until you stop it
 - it advances its cursors after each detected event and waits for the next one
+- transient cycle failures are logged and retried instead of killing the watcher immediately
 - it must run with `--timeout 0`, so omit `--timeout` or pass `0` explicitly
 - always mention the lifecycle to the user and surface the PID/log path from the startup message
 

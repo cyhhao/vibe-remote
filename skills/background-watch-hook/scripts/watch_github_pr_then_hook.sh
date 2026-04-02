@@ -250,6 +250,7 @@ fi
 
 if [[ "$forever" -eq 1 ]]; then
   cursor_file="$(mktemp)"
+  retry_delay_seconds=30
   cleanup() {
     rm -f "$cursor_file"
   }
@@ -314,7 +315,17 @@ if [[ "$forever" -eq 1 ]]; then
       cycle_waiter_args+=(--catch-up)
     fi
 
+    set +e
     "${cycle_wrapper_args[@]}" -- "${cycle_waiter_args[@]}"
+    cycle_status=$?
+    set -e
+
+    if [[ "$cycle_status" -ne 0 ]]; then
+      echo "Forever watch cycle failed with status $cycle_status; retrying in ${retry_delay_seconds}s." >&2
+      current_catch_up=0
+      sleep "$retry_delay_seconds"
+      continue
+    fi
 
     if [[ ! -s "$cursor_file" ]]; then
       echo "No cursor output written; re-arming with existing cursors." >&2
