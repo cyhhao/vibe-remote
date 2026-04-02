@@ -10,9 +10,9 @@ def _load_module():
         / "skills"
         / "background-watch-hook"
         / "scripts"
-        / "wait_for_github_pr_activity.py"
+        / "wait_pr.py"
     )
-    spec = importlib.util.spec_from_file_location("wait_for_github_pr_activity", script_path)
+    spec = importlib.util.spec_from_file_location("wait_pr", script_path)
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None
     spec.loader.exec_module(module)

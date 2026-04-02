@@ -29,7 +29,7 @@ Prefer `vibe watch` when the wait should be inspectable, pausable, resumable, or
   Main entrypoint. Starts a managed background watch and sends a follow-up hook after the waiter succeeds or times out.
 - `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, `vibe watch remove`
   Use these to inspect and manage the watch after creation.
-- `scripts/wait_for_github_pr_activity.py`
+- `scripts/wait_pr.py`
   Bundled waiter example for one common case: GitHub PR review activity.
 
 ## Use `vibe watch` First
@@ -152,10 +152,11 @@ This separation matters: a forever watch can still use a bounded timeout for eac
 
 This skill ships one bundled waiter:
 
-- `scripts/wait_for_github_pr_activity.py`
+- `scripts/wait_pr.py`
   Waits for GitHub PR review activity, including reviews, inline review comments, PR conversation comments, and the special Codex `+1` reaction on the PR body.
 
 Use bundled waiters as examples or as ready-to-run building blocks. The main skill is still `vibe watch`; the waiter is only the thing that blocks until the condition is met.
+When running a bundled script through `uv`, prefer `uv run --no-project ...` so the script does not accidentally attach itself to an unrelated parent project.
 
 ## GitHub Example Waiter
 
@@ -169,7 +170,7 @@ vibe watch add \
   --name "Watch PR 151 reviews" \
   --prefix "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
   -- \
-  python3 skills/background-watch-hook/scripts/wait_for_github_pr_activity.py \
+  uv run --no-project scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
     --pr 151 \
     --interval 60
@@ -183,7 +184,7 @@ vibe watch add \
   --name "Catch up PR 151 reviews" \
   --prefix "PR #151 already has review activity. Fetch the latest review state and continue handling it if needed." \
   -- \
-  python3 skills/background-watch-hook/scripts/wait_for_github_pr_activity.py \
+  uv run --no-project scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
     --pr 151 \
     --catch-up
@@ -200,7 +201,7 @@ vibe watch add \
   --lifetime-timeout 86400 \
   --prefix "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
   -- \
-  python3 skills/background-watch-hook/scripts/wait_for_github_pr_activity.py \
+  uv run --no-project scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
     --pr 151 \
     --interval 60
