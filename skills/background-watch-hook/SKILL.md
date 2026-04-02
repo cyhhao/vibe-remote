@@ -45,6 +45,8 @@ Use this pattern for any one-off "wait in the background, then come back here" t
 
 - `scripts/watch_then_hook.sh`
   General wrapper. Runs a waiter command, captures `stdout`, then calls `vibe hook send`.
+- `scripts/watch_github_pr_then_hook.sh`
+  Thin convenience wrapper for the common GitHub PR case. It forwards GitHub-specific flags to the bundled waiter and generic delivery flags to the main wrapper.
 - `scripts/wait_for_github_pr_activity.py`
   Included example waiter. Polls a GitHub PR until new review activity appears, then prints a concise summary.
 
@@ -99,24 +101,24 @@ scripts/watch_then_hook.sh \
 
 ## Preferred Execution Pattern
 
-Run the wrapper itself in the background with `nohup bash -lc '...'`:
+For GitHub PR review activity, prefer the thin convenience wrapper:
 
 ```bash
 nohup bash -lc '
-  scripts/watch_then_hook.sh \
+  scripts/watch_github_pr_then_hook.sh \
     --session-key "slack::channel::C123::thread::171717.123" \
+    --repo cyhhao/vibe-remote \
+    --pr 151 \
     --prefix "GitHub PR #151 has new review activity. Fetch the latest review state, summarize unresolved items, and continue handling them if needed." \
-    -- \
-    scripts/wait_for_github_pr_activity.py \
-      --repo cyhhao/vibe-remote \
-      --pr 151 \
-      --interval 45
+    --interval 45
 ' >/tmp/watch-pr-151.log 2>&1 &
 ```
 
 That command returns immediately, leaves the watcher running, and sends the hook only after the waiter exits with success.
 
 When running inside the Vibe Remote repo or worktree, the wrapper will auto-fallback to `uv run python -m vibe` if the `vibe` executable on `PATH` is not the real CLI.
+
+For non-GitHub cases, keep using `scripts/watch_then_hook.sh` directly.
 
 ## Generic Workflow
 
@@ -127,7 +129,7 @@ For other use cases, either:
 - write a new small waiter in the task workspace, or
 - reuse another existing blocking command that prints a final summary to `stdout`
 
-Use `scripts/wait_for_github_pr_activity.py` only when the thing being watched is GitHub PR review activity.
+Use `scripts/watch_github_pr_then_hook.sh` for the normal GitHub PR path. Reach for `scripts/wait_for_github_pr_activity.py` directly only when you need the bare waiter behavior without the convenience wrapper.
 
 If the watcher should immediately surface activity that already exists at startup, add `--catch-up`. Without it, the included GitHub waiter snapshots current activity as the baseline and waits only for newer events.
 
@@ -147,7 +149,7 @@ The prefix should tell the next turn what to do with the watcher result. Good pr
 
 ### 4. Start the detached wrapper
 
-Run `nohup bash -lc 'scripts/watch_then_hook.sh ...' >/tmp/<name>.log 2>&1 &`.
+Run `nohup bash -lc 'scripts/watch_github_pr_then_hook.sh ...' >/tmp/<name>.log 2>&1 &` for GitHub PRs, or `watch_then_hook.sh` directly for other cases.
 
 ### 5. Tell the user what was started
 
@@ -187,19 +189,17 @@ The wrapper is the reusable part. Waiters should stay disposable and task-specif
 
 ## Included Example: GitHub PR Activity
 
-`scripts/wait_for_github_pr_activity.py` snapshots the current PR state on startup when no explicit cursor is provided, then blocks until something newer appears. Use it as:
+`scripts/watch_github_pr_then_hook.sh` is the normal entry point for GitHub PR activity. It wraps `watch_then_hook.sh` plus `wait_for_github_pr_activity.py` into one command:
 
 ```bash
 nohup bash -lc '
-  scripts/watch_then_hook.sh \
+  scripts/watch_github_pr_then_hook.sh \
     --session-key "slack::channel::C123::thread::171717.123" \
+    --repo cyhhao/vibe-remote \
+    --pr 151 \
     --prefix "PR review changed. Check the latest GitHub review results and continue the review loop." \
-    -- \
-    scripts/wait_for_github_pr_activity.py \
-      --repo cyhhao/vibe-remote \
-      --pr 151 \
-      --interval 60 \
-      --timeout 14400
+    --interval 60 \
+    --timeout 14400
 ' >/tmp/watch-pr-151.log 2>&1 &
 ```
 
@@ -207,14 +207,12 @@ To catch up on comments or reviews that already exist before the watcher starts,
 
 ```bash
 nohup bash -lc '
-  scripts/watch_then_hook.sh \
+  scripts/watch_github_pr_then_hook.sh \
     --session-key "slack::channel::C123::thread::171717.123" \
+    --repo cyhhao/vibe-remote \
+    --pr 151 \
     --prefix "PR review already has activity. Pull the current review state and continue the thread." \
-    -- \
-    scripts/wait_for_github_pr_activity.py \
-      --repo cyhhao/vibe-remote \
-      --pr 151 \
-      --catch-up
+    --catch-up
 ' >/tmp/watch-pr-151-catch-up.log 2>&1 &
 ```
 
@@ -222,15 +220,13 @@ If authentication is unavailable and a quick one-off best-effort watch is still 
 
 ```bash
 nohup bash -lc '
-  scripts/watch_then_hook.sh \
+  scripts/watch_github_pr_then_hook.sh \
     --session-key "slack::channel::C123::thread::171717.123" \
+    --repo cyhhao/vibe-remote \
+    --pr 151 \
     --prefix "Best-effort unauthenticated GitHub watch fired. Inspect the latest PR state." \
-    -- \
-    scripts/wait_for_github_pr_activity.py \
-      --repo cyhhao/vibe-remote \
-      --pr 151 \
-      --allow-unauthenticated \
-      --interval 180
+    --allow-unauthenticated \
+    --interval 180
 ' >/tmp/watch-pr-151-unauth.log 2>&1 &
 ```
 
