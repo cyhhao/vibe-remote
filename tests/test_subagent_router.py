@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import modules.agents.subagent_router as subagent_router
 from modules.agents.subagent_router import (
     list_codex_subagents,
     load_claude_subagent,
@@ -119,3 +120,36 @@ def test_load_codex_subagent_reads_global_agent_definition(tmp_path: Path):
     assert definition.reasoning_effort == "low"
     assert definition.source == "global"
     assert definition.path == agent_file
+
+
+def test_parse_codex_agent_definition_uses_fallback_toml_parser(tmp_path: Path, monkeypatch):
+    agent_file = tmp_path / "reviewer.toml"
+    agent_file.write_text(
+        '\n'.join(
+            [
+                'name = "reviewer"',
+                'description = "Checks risks"',
+                'developer_instructions = "Focus on regressions."',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class _FallbackParser:
+        @staticmethod
+        def loads(text: str):
+            assert 'name = "reviewer"' in text
+            return {
+                "name": "reviewer",
+                "description": "Checks risks",
+                "developer_instructions": "Focus on regressions.",
+            }
+
+    monkeypatch.setattr(subagent_router, "_toml_parser", _FallbackParser)
+
+    definition = subagent_router._parse_codex_agent_definition(agent_file, source="global")
+
+    assert definition
+    assert definition.name == "reviewer"
+    assert definition.description == "Checks risks"
+    assert definition.developer_instructions == "Focus on regressions."

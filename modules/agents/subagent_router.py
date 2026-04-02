@@ -8,9 +8,12 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 try:
-    import tomllib
-except Exception:  # pragma: no cover
-    tomllib = None
+    import tomllib as _toml_parser
+except ModuleNotFoundError:  # pragma: no cover
+    try:
+        import tomli as _toml_parser
+    except ModuleNotFoundError:  # pragma: no cover
+        _toml_parser = None
 
 import yaml
 
@@ -235,12 +238,12 @@ def _parse_claude_agent_definition(path: Path) -> Optional[SubagentDefinition]:
 
 
 def _parse_codex_agent_definition(path: Path, source: str) -> Optional[SubagentDefinition]:
-    if tomllib is None:
+    if _toml_parser is None:
         logger.debug("tomllib unavailable; cannot parse Codex subagent file %s", path)
         return None
 
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        data = _toml_parser.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
         logger.debug("Failed to parse Codex subagent definition %s: %s", path, e)
         return None
