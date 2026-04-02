@@ -576,6 +576,19 @@ class Controller:
         """Best-effort synchronous cleanup without cross-loop awaits"""
         logger.info("Cleaning up controller resources (sync, best-effort)...")
 
+        def _stop_loop_coroutine(coro, label: str) -> None:
+            try:
+                loop = self._loop
+                if not loop or loop.is_closed():
+                    return
+                if loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(coro, loop)
+                    future.result(timeout=5)
+                    return
+                loop.run_until_complete(coro)
+            except Exception as e:
+                logger.debug(f"{label} cleanup skipped: {e}")
+
         # Stop update checker
         try:
             update_task = self.update_checker.stop()
@@ -589,20 +602,8 @@ class Controller:
         except Exception as e:
             logger.debug(f"Update checker cleanup skipped: {e}")
 
-        try:
-            loop = self._loop
-            if loop and not loop.is_closed():
-                future = asyncio.run_coroutine_threadsafe(self.scheduled_task_service.stop(), loop)
-                future.result(timeout=5)
-        except Exception as e:
-            logger.debug(f"Scheduled task service cleanup skipped: {e}")
-        try:
-            loop = self._loop
-            if loop and not loop.is_closed():
-                future = asyncio.run_coroutine_threadsafe(self.watch_service.stop(), loop)
-                future.result(timeout=5)
-        except Exception as e:
-            logger.debug(f"Watch service cleanup skipped: {e}")
+        _stop_loop_coroutine(self.scheduled_task_service.stop(), "Scheduled task service")
+        _stop_loop_coroutine(self.watch_service.stop(), "Watch service")
 
         # Cancel receiver tasks without awaiting (they may belong to other loops)
         try:

@@ -205,6 +205,36 @@ def test_watch_add_creates_exec_watch_with_retry_codes(tmp_path: Path, capsys) -
     assert payload["watch"]["retry_exit_codes"] == [1, 75]
 
 
+def test_watch_add_persists_absolute_cwd(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--cwd",
+            str(workdir.relative_to(tmp_path)),
+            "--shell",
+            "echo done",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+    ):
+        result = cli.cmd_watch_add(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["watch"]["cwd"] == str(workdir.resolve())
+
+
 def test_watch_list_brief_includes_runtime_state(tmp_path: Path, capsys) -> None:
     store = ManagedWatchStore(tmp_path / "watches.json")
     runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")

@@ -1233,7 +1233,7 @@ def cmd_watch_add(args):
             )
         cwd = args.cwd
         if cwd:
-            resolved = Path(cwd).expanduser()
+            resolved = Path(cwd).expanduser().resolve()
             if not resolved.exists() or not resolved.is_dir():
                 raise TaskCliError(
                     f"watch cwd does not exist: {cwd}",
