@@ -287,4 +287,4 @@ jobs:
           body_path: release.md
           draft: false
           prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
-          make_latest: ${{ steps.release_type.outputs.prerelease != 'true' }}
+          make_latest: ${{ github.event_name == 'push' && steps.release_type.outputs.prerelease != 'true' }}

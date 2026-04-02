@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -17,6 +18,11 @@ PACKAGE_NAME = "vibe-remote"
 DEFAULT_UPDATE_METADATA_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
 CURRENT_VIBE_EXECUTABLE_ENV = "VIBE_CURRENT_EXECUTABLE"
 UV_FALLBACK_BIN_DIRS = (".local/bin", ".cargo/bin")
+_VERSION_RE = re.compile(
+    r"^\s*v?(?P<release>\d+(?:\.\d+)*)"
+    r"(?:(?P<stage>a|b|rc|dev)(?P<stage_num>\d+))?\s*$"
+)
+_STAGE_ORDER = {"dev": 0, "a": 1, "b": 2, "rc": 3, "final": 4}
 
 
 @dataclass(frozen=True)
@@ -166,20 +172,29 @@ def get_upgrade_package_spec() -> str:
     return os.environ.get("VIBE_UPGRADE_PACKAGE_SPEC", PACKAGE_NAME)
 
 
-def _parse_version(value: str):
-    try:
-        from packaging.version import Version
+def _normalize_release_parts(parts: tuple[int, ...]) -> tuple[int, ...]:
+    normalized = list(parts)
+    while len(normalized) > 1 and normalized[-1] == 0:
+        normalized.pop()
+    return tuple(normalized)
 
-        return Version(value)
-    except Exception:
+
+def _parse_version(value: str) -> tuple[tuple[int, ...], int, int] | None:
+    match = _VERSION_RE.match(value)
+    if not match:
         return None
+
+    release = tuple(int(part) for part in match.group("release").split("."))
+    stage = match.group("stage") or "final"
+    stage_num = int(match.group("stage_num") or "0")
+    return (_normalize_release_parts(release), _STAGE_ORDER[stage], stage_num)
 
 
 def _is_prerelease_version(value: str) -> bool:
     parsed = _parse_version(value)
     if parsed is None:
         return False
-    return bool(getattr(parsed, "is_prerelease", False) or getattr(parsed, "is_devrelease", False))
+    return parsed[1] < _STAGE_ORDER["final"]
 
 
 def _is_yanked_release(files: object) -> bool:

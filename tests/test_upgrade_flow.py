@@ -12,6 +12,7 @@ from vibe import api, cli
 from vibe.upgrade import (
     UpgradePlan,
     build_upgrade_plan,
+    has_newer_version,
     get_current_vibe_bin_dir,
     get_latest_version_info,
     get_restart_command,
@@ -168,6 +169,12 @@ def test_get_latest_version_info_allows_newer_prerelease_for_prerelease_current(
     info = get_latest_version_info("2.2.8rc1")
 
     assert info == {"current": "2.2.8rc1", "latest": "2.2.8rc2", "has_update": True, "error": None}
+
+
+def test_has_newer_version_handles_prerelease_without_packaging():
+    assert has_newer_version("2.2.8rc2", "2.2.8rc1") is True
+    assert has_newer_version("2.2.8", "2.2.8rc2") is True
+    assert has_newer_version("2.2.8rc1", "2.2.8") is False
 
 
 def test_get_running_vibe_path_prefers_cached_launcher(monkeypatch):
