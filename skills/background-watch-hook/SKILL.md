@@ -1,8 +1,8 @@
 ---
 name: background-watch-hook
 slug: background-watch-hook
-description: Start a background waiter that returns to the same conversation later. Use when the agent needs to wait for reviews, CI, files, logs, or process completion without blocking the current turn.
-version: 0.4.0
+description: Use `vibe watch` to run a background waiter that returns to the same conversation later. Best for reviews, CI, files, logs, and other wait-now-continue-later workflows.
+version: 0.5.0
 ---
 
 # Background Watch Hook
@@ -11,9 +11,9 @@ Use this skill when the job is "wait now, continue later in the same conversatio
 
 What it gives the agent:
 
-- the ability to stop manual polling
-- a reusable way to come back to the same channel or thread later
-- a small pattern that works for many external events, not just GitHub
+- a managed background task instead of manual polling
+- a clean way to come back to the same channel or thread later
+- a reusable pattern that works for reviews, CI, files, logs, and process completion
 
 Good trigger scenarios:
 
@@ -21,20 +21,20 @@ Good trigger scenarios:
 - CI, deployments, or exports need time to finish
 - a file, log line, or process exit should wake the agent up later
 
-Do not build a new scheduler or event system when this pattern is enough.
+Prefer `vibe watch` when the wait should be inspectable, pausable, resumable, or removable later.
 
 ## Main Tools
 
-- `scripts/watch_then_hook.sh`
-  Main entrypoint. Starts a waiter in the background by default, captures its final `stdout`, and sends one follow-up back to the target session.
-- `scripts/watch_github_pr_then_hook.sh`
-  Thin convenience wrapper for one common case: GitHub PR review activity.
+- `vibe watch add`
+  Main entrypoint. Starts a managed background watch and sends a follow-up hook after the waiter succeeds or times out.
+- `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, `vibe watch remove`
+  Use these to inspect and manage the watch after creation.
 - `scripts/wait_for_github_pr_activity.py`
-  Bundled waiter example used by the GitHub wrapper.
+  Bundled waiter example for one common case: GitHub PR review activity.
 
 ## Core Pattern
 
-Use the generic wrapper first. Most tasks only need:
+Use `vibe watch add` first. Most tasks only need:
 
 1. the target `session_key`
 2. a short action-oriented prefix
@@ -43,9 +43,10 @@ Use the generic wrapper first. Most tasks only need:
 Generic shape:
 
 ```bash
-scripts/watch_then_hook.sh \
+vibe watch add \
   --session-key "<session-key>" \
   --prefix "<what the next turn should do>" \
+  --name "<optional label>" \
   -- \
   <waiter command ...>
 ```
@@ -53,11 +54,11 @@ scripts/watch_then_hook.sh \
 Default behavior:
 
 - returns immediately
-- keeps the waiter in the background
-- sends a follow-up only after the waiter succeeds
-- sends a timeout follow-up if the waiter times out
+- keeps the waiter managed by Vibe Remote
+- lets the agent inspect or stop the watch later
+- sends a follow-up after the waiter succeeds or times out
 
-Add `--foreground` only when you explicitly want the low-level synchronous primitive.
+Use `--forever` when the same waiter should re-arm after each detected event instead of exiting after one follow-up.
 
 ## Waiter Contract
 
@@ -77,8 +78,9 @@ Keep the output split clean:
 Delay:
 
 ```bash
-scripts/watch_then_hook.sh \
+vibe watch add \
   --session-key "slack::channel::C123::thread::171717.123" \
+  --name "Delay callback" \
   --prefix "The delayed check completed. Continue from the result below." \
   -- \
   bash -lc 'sleep 120; echo "Timer finished after 120 seconds."'
@@ -87,8 +89,9 @@ scripts/watch_then_hook.sh \
 File appears:
 
 ```bash
-scripts/watch_then_hook.sh \
+vibe watch add \
   --session-key "slack::channel::C123::thread::171717.123" \
+  --name "Wait for export file" \
   --prefix "The export file is ready. Inspect it and continue." \
   -- \
   bash -lc 'while [ ! -f /tmp/export.json ]; do sleep 10; done; echo "Detected /tmp/export.json"'
@@ -97,9 +100,11 @@ scripts/watch_then_hook.sh \
 Log match:
 
 ```bash
-scripts/watch_then_hook.sh \
+vibe watch add \
   --session-key "slack::channel::C123::thread::171717.123" \
+  --name "Watch app log" \
   --prefix "The expected log pattern appeared. Inspect the event and continue." \
+  --forever \
   -- \
   bash -lc 'tail -Fn0 /tmp/app.log | while read -r line; do case "$line" in *READY*) echo "$line"; break;; esac; done'
 ```
@@ -116,54 +121,63 @@ If the current turn does not expose a usable target, ask instead of guessing.
 
 ## Timeout And Lifecycle
 
-For the generic wrapper:
+For `vibe watch add`:
 
-- `--timeout` is the waiter timeout
+- `--timeout` is the waiter timeout for one cycle
 - default is `21600` seconds
-- `0` means no timeout
-
-For the GitHub convenience wrapper:
-
-- `--timeout` is still the timeout for one waiter cycle
+- `0` means no per-cycle timeout
 - `--forever` means re-arm after each detected event
 - `--lifetime-timeout` limits the whole long-running watch; default is `0` meaning run until killed
 
-This separation matters: a forever watcher can still use a bounded timeout for each polling cycle.
+This separation matters: a forever watch can still use a bounded timeout for each cycle.
 
-## GitHub Convenience Wrapper
+## GitHub Example Waiter
 
-Use the GitHub wrapper only when the watched thing is PR review activity.
+Use the bundled GitHub waiter only when the watched thing is PR review activity.
 
 One-shot watch:
 
 ```bash
-scripts/watch_github_pr_then_hook.sh \
+vibe watch add \
   --session-key "slack::channel::C123::thread::171717.123" \
-  --repo cyhhao/vibe-remote \
-  --pr 151 \
-  --interval 60
+  --name "Watch PR 151 reviews" \
+  --prefix "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
+  -- \
+  python3 skills/background-watch-hook/scripts/wait_for_github_pr_activity.py \
+    --repo cyhhao/vibe-remote \
+    --pr 151 \
+    --interval 60
 ```
 
 Catch up on existing activity first:
 
 ```bash
-scripts/watch_github_pr_then_hook.sh \
+vibe watch add \
   --session-key "slack::channel::C123::thread::171717.123" \
-  --repo cyhhao/vibe-remote \
-  --pr 151 \
-  --catch-up
+  --name "Catch up PR 151 reviews" \
+  --prefix "PR #151 already has review activity. Fetch the latest review state and continue handling it if needed." \
+  -- \
+  python3 skills/background-watch-hook/scripts/wait_for_github_pr_activity.py \
+    --repo cyhhao/vibe-remote \
+    --pr 151 \
+    --catch-up
 ```
 
 Stay armed for future activity:
 
 ```bash
-scripts/watch_github_pr_then_hook.sh \
+vibe watch add \
   --session-key "slack::channel::C123::thread::171717.123" \
-  --repo cyhhao/vibe-remote \
-  --pr 151 \
+  --name "Monitor PR 151 reviews" \
   --forever \
   --timeout 21600 \
-  --lifetime-timeout 86400
+  --lifetime-timeout 86400 \
+  --prefix "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
+  -- \
+  python3 skills/background-watch-hook/scripts/wait_for_github_pr_activity.py \
+    --repo cyhhao/vibe-remote \
+    --pr 151 \
+    --interval 60
 ```
 
 GitHub-specific notes:
@@ -176,5 +190,6 @@ GitHub-specific notes:
 ## Practical Advice
 
 - Keep prefixes action-oriented. Tell the next turn what to do with the waiter result.
-- Prefer the generic wrapper in the skill body. Treat GitHub as just one example.
-- If the execution host reaps detached children, run `--foreground` inside a long-lived terminal session instead of relying on background detaching.
+- Prefer `vibe watch` over ad-hoc detached shells when the wait should survive the current turn cleanly.
+- Treat GitHub as just one example waiter, not the main point of the skill.
+- If a watch is no longer useful, remove it instead of leaving stale background work behind.
