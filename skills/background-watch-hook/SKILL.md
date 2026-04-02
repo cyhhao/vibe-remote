@@ -2,7 +2,7 @@
 name: background-watch-hook
 slug: background-watch-hook
 description: Run a blocking watcher in the background and send a `vibe hook` back to the current IM session when it finishes. Use for GitHub reviews, CI, file completion, log matches, and process-exit follow-ups.
-version: 0.2.0
+version: 0.3.0
 ---
 
 # Background Watch Hook
@@ -141,6 +141,8 @@ For other use cases, either:
 
 Use `scripts/wait_for_github_pr_activity.py` only when the thing being watched is GitHub PR review activity. Use `scripts/watch_github_pr_then_hook.sh` if you want that common path pre-wired.
 
+By default, the GitHub convenience wrapper is still one-shot: it waits for the next matching event, sends one hook, and exits. Use `--forever` only when you explicitly want a long-lived watcher that keeps re-arming itself after each detected event.
+
 If the watcher should immediately surface activity that already exists at startup, add `--catch-up`. Without it, the included GitHub waiter snapshots current activity as the baseline and waits only for newer events.
 
 The included GitHub waiter expects GitHub authentication by default. It will use `GITHUB_TOKEN`, `GH_TOKEN`, or `gh auth token`. Only use `--allow-unauthenticated` for slower best-effort polling when authentication is not available.
@@ -266,8 +268,25 @@ If authentication is unavailable and a quick one-off best-effort watch is still 
     --pr 151 \
     --prefix "Best-effort unauthenticated GitHub watch fired. Inspect the latest PR state." \
     --allow-unauthenticated \
-    --interval 180
+  --interval 180
 ```
+
+To keep watching a PR continuously instead of exiting after the next event, use `--forever`:
+
+```bash
+scripts/watch_github_pr_then_hook.sh \
+  --session-key "slack::channel::C123::thread::171717.123" \
+  --repo cyhhao/vibe-remote \
+  --pr 151 \
+  --forever
+```
+
+`--forever` is intentionally long-lived:
+
+- it keeps the watcher process alive until you stop it
+- it advances its cursors after each detected event and waits for the next one
+- it must run with `--timeout 0`, so omit `--timeout` or pass `0` explicitly
+- always mention the lifecycle to the user and surface the PID/log path from the startup message
 
 ## Failure Handling
 

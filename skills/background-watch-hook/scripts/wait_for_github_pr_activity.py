@@ -195,6 +195,25 @@ def _render_activity(
     )
 
 
+def _write_cursor_output(
+    path: str | None,
+    *,
+    review_cursor: int,
+    review_comment_cursor: int,
+    issue_comment_cursor: int,
+) -> None:
+    if not path:
+        return
+
+    payload = {
+        "review_cursor": review_cursor,
+        "review_comment_cursor": review_comment_cursor,
+        "issue_comment_cursor": issue_comment_cursor,
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True, help="GitHub repo in owner/name form")
@@ -209,6 +228,7 @@ def main() -> int:
     parser.add_argument("--since-review-id", type=int, default=None, help="Existing review cursor")
     parser.add_argument("--since-review-comment-id", type=int, default=None, help="Existing review comment cursor")
     parser.add_argument("--since-issue-comment-id", type=int, default=None, help="Existing PR conversation comment cursor")
+    parser.add_argument("--cursor-output", help=argparse.SUPPRESS)
     parser.add_argument("--event-limit", type=int, default=8, help="Maximum number of new events to include in stdout")
     parser.add_argument(
         "--catch-up",
@@ -302,6 +322,12 @@ def main() -> int:
         event_limit=args.event_limit,
     )
     if initial_output is not None:
+        _write_cursor_output(
+            args.cursor_output,
+            review_cursor=review_cursor,
+            review_comment_cursor=review_comment_cursor,
+            issue_comment_cursor=issue_comment_cursor,
+        )
         print(initial_output)
         return 0
 
@@ -363,6 +389,12 @@ def main() -> int:
         if output is None:
             continue
 
+        _write_cursor_output(
+            args.cursor_output,
+            review_cursor=review_cursor,
+            review_comment_cursor=review_comment_cursor,
+            issue_comment_cursor=issue_comment_cursor,
+        )
         print(output)
         return 0
 
