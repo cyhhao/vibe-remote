@@ -22,6 +22,7 @@ from config import paths
 from config.v2_config import UpdateConfig
 from config.v2_settings import _infer_channel_platform, _infer_user_platform, _split_scoped_key
 from modules.im import MessageContext
+from vibe.upgrade import has_newer_version, select_latest_update_version
 
 if TYPE_CHECKING:
     from core.controller import Controller
@@ -39,22 +40,6 @@ MIN_CHECK_INTERVAL_MINUTES = 1
 NOTIFICATION_GRACE_PERIOD_MINUTES = 10
 
 
-def _compare_versions(latest: str, current: str) -> bool:
-    """Compare versions using packaging.version for PEP440 compliance."""
-    try:
-        from packaging.version import Version
-
-        return Version(latest) > Version(current)
-    except Exception:
-        # Fallback: simple comparison if packaging not available or version invalid
-        try:
-            latest_parts = [int(x) for x in latest.split(".")[:3] if x.isdigit()]
-            current_parts = [int(x) for x in current.split(".")[:3] if x.isdigit()]
-            return latest_parts > current_parts
-        except (ValueError, AttributeError):
-            return latest != current
-
-
 def _fetch_pypi_version_sync() -> Dict[str, Any]:
     """Synchronous PyPI version fetch (to be run in thread)."""
     from vibe import __version__
@@ -67,11 +52,11 @@ def _fetch_pypi_version_sync() -> Dict[str, Any]:
         req = urllib.request.Request(url, headers={"User-Agent": "vibe-remote"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            latest = data.get("info", {}).get("version", "")
+            latest = select_latest_update_version(data, current)
             result["latest"] = latest
 
             if latest and latest != current:
-                result["has_update"] = _compare_versions(latest, current)
+                result["has_update"] = has_newer_version(latest, current)
     except Exception as e:
         result["error"] = str(e)
 

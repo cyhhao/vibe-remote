@@ -127,6 +127,49 @@ def test_get_latest_version_info_uses_override_metadata_url(monkeypatch, tmp_pat
     assert info == {"current": "2.2.0", "latest": "9999.0.0", "has_update": True, "error": None}
 
 
+def test_get_latest_version_info_ignores_prerelease_for_stable_current(monkeypatch, tmp_path):
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(
+        """
+        {
+          "info": {"version": "2.2.8rc1"},
+          "releases": {
+            "2.2.7": [{}],
+            "2.2.8rc1": [{}]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBE_UPDATE_METADATA_URL", metadata_path.as_uri())
+
+    info = get_latest_version_info("2.2.7")
+
+    assert info == {"current": "2.2.7", "latest": "2.2.7", "has_update": False, "error": None}
+
+
+def test_get_latest_version_info_allows_newer_prerelease_for_prerelease_current(monkeypatch, tmp_path):
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(
+        """
+        {
+          "info": {"version": "2.2.8rc2"},
+          "releases": {
+            "2.2.7": [{}],
+            "2.2.8rc1": [{}],
+            "2.2.8rc2": [{}]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBE_UPDATE_METADATA_URL", metadata_path.as_uri())
+
+    info = get_latest_version_info("2.2.8rc1")
+
+    assert info == {"current": "2.2.8rc1", "latest": "2.2.8rc2", "has_update": True, "error": None}
+
+
 def test_get_running_vibe_path_prefers_cached_launcher(monkeypatch):
     monkeypatch.setenv("VIBE_CURRENT_EXECUTABLE", "/custom/bin/vibe")
     monkeypatch.setattr("vibe.upgrade.os.path.exists", lambda path: True)

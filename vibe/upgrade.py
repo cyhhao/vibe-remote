@@ -166,6 +166,74 @@ def get_upgrade_package_spec() -> str:
     return os.environ.get("VIBE_UPGRADE_PACKAGE_SPEC", PACKAGE_NAME)
 
 
+def _parse_version(value: str):
+    try:
+        from packaging.version import Version
+
+        return Version(value)
+    except Exception:
+        return None
+
+
+def _is_prerelease_version(value: str) -> bool:
+    parsed = _parse_version(value)
+    if parsed is None:
+        return False
+    return bool(getattr(parsed, "is_prerelease", False) or getattr(parsed, "is_devrelease", False))
+
+
+def _is_yanked_release(files: object) -> bool:
+    if not isinstance(files, list) or not files:
+        return False
+    yanked_flags = [bool(item.get("yanked")) for item in files if isinstance(item, dict)]
+    return bool(yanked_flags) and all(yanked_flags)
+
+
+def select_latest_update_version(metadata: Mapping[str, object], current_version: str) -> str:
+    allow_prereleases = _is_prerelease_version(current_version)
+    releases = metadata.get("releases")
+
+    candidates: list[tuple[object, str]] = []
+    if isinstance(releases, Mapping):
+        for version_str, files in releases.items():
+            if not isinstance(version_str, str):
+                continue
+            parsed = _parse_version(version_str)
+            if parsed is None:
+                continue
+            if not allow_prereleases and _is_prerelease_version(version_str):
+                continue
+            if _is_yanked_release(files):
+                continue
+            candidates.append((parsed, version_str))
+
+    if candidates:
+        candidates.sort(key=lambda item: item[0])
+        return candidates[-1][1]
+
+    latest = str((metadata.get("info") or {}).get("version") or "")
+    if latest and (allow_prereleases or not _is_prerelease_version(latest)):
+        return latest
+    return ""
+
+
+def has_newer_version(candidate: str, current: str) -> bool:
+    if not candidate or candidate == current:
+        return False
+
+    latest_parsed = _parse_version(candidate)
+    current_parsed = _parse_version(current)
+    if latest_parsed is not None and current_parsed is not None:
+        return latest_parsed > current_parsed
+
+    try:
+        current_parts = [int(x) for x in current.split(".")[:3] if x.isdigit()]
+        latest_parts = [int(x) for x in candidate.split(".")[:3] if x.isdigit()]
+        return latest_parts > current_parts
+    except (ValueError, AttributeError):
+        return candidate != current
+
+
 def get_latest_version_info(current_version: str) -> dict:
     result = {"current": current_version, "latest": None, "has_update": False, "error": None}
 
@@ -175,16 +243,11 @@ def get_latest_version_info(current_version: str) -> dict:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
-        latest = data.get("info", {}).get("version", "")
+        latest = select_latest_update_version(data, current_version)
         result["latest"] = latest
 
         if latest and latest != current_version:
-            try:
-                current_parts = [int(x) for x in current_version.split(".")[:3] if x.isdigit()]
-                latest_parts = [int(x) for x in latest.split(".")[:3] if x.isdigit()]
-                result["has_update"] = latest_parts > current_parts
-            except (ValueError, AttributeError):
-                result["has_update"] = latest != current_version
+            result["has_update"] = has_newer_version(latest, current_version)
     except Exception as e:
         result["error"] = str(e)
 
