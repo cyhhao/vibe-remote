@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, Optional
 
 from config.discovered_chats import DiscoveredChatsStore
 from config.v2_config import TelegramConfig
-from vibe.i18n import t as i18n_t
+from vibe.i18n import get_supported_languages, t as i18n_t
 from modules.agents.native_sessions import AgentNativeSessionService, NativeResumeSession
 
 from .base import BaseIMClient, FileAttachment, MessageContext, InlineButton, InlineKeyboard
@@ -70,6 +70,16 @@ class _TelegramQuestionState:
     index: int = 0
 
 
+@dataclass
+class _TelegramSettingsState:
+    message_id: str
+    show_message_types: list[str]
+    current_require_mention: Optional[bool]
+    global_require_mention: bool
+    current_language: str
+    is_dm: bool
+
+
 class TelegramBot(BaseIMClient):
     """Telegram adapter using Bot API long polling."""
 
@@ -89,6 +99,7 @@ class TelegramBot(BaseIMClient):
         self._resume_states: dict[str, _TelegramResumeSessionState] = {}
         self._routing_states: dict[str, _TelegramRoutingState] = {}
         self._question_states: dict[str, _TelegramQuestionState] = {}
+        self._settings_states: dict[str, _TelegramSettingsState] = {}
 
     def set_settings_manager(self, settings_manager):
         self.settings_manager = settings_manager
@@ -115,7 +126,7 @@ class TelegramBot(BaseIMClient):
         return i18n_t(key, lang, **kwargs)
 
     def get_default_parse_mode(self) -> Optional[str]:
-        return None
+        return "HTML"
 
     def should_use_thread_for_reply(self) -> bool:
         return True
@@ -124,7 +135,7 @@ class TelegramBot(BaseIMClient):
         return False
 
     def format_markdown(self, text: str) -> str:
-        return text
+        return self.formatter.render(text)
 
     def register_handlers(self):
         return None
@@ -171,16 +182,30 @@ class TelegramBot(BaseIMClient):
         if context is None:
             return
 
-        text = message.get("text") or message.get("caption") or ""
-        text = self._normalize_command_text(text)
+        raw_text = message.get("text") or message.get("caption") or ""
+        text = self._normalize_command_text(raw_text)
         if self._is_command_for_other_bot(text):
             return
+
+        explicitly_addressed = self._is_explicitly_addressed(message, text)
+
+        effective_require_mention = self.config.require_mention
+        if self.settings_manager is not None and not context.platform_specific.get("is_dm", False):
+            try:
+                effective_require_mention = self.settings_manager.get_require_mention(
+                    context.channel_id,
+                    global_default=self.config.require_mention,
+                )
+            except Exception:
+                logger.debug("Failed to resolve Telegram effective require_mention", exc_info=True)
+
+        text = self._strip_leading_bot_mention(message, text)
 
         if await self._consume_cwd_prompt(context, text):
             return
 
-        if self.config.require_mention and not context.platform_specific.get("is_dm", False):
-            if not self._is_explicitly_addressed(message, text):
+        if effective_require_mention and not context.platform_specific.get("is_dm", False):
+            if not explicitly_addressed:
                 return
 
         denial = self.check_authorization(
@@ -226,14 +251,28 @@ class TelegramBot(BaseIMClient):
             logger.warning("Telegram forum auto-topic failed, falling back to current topic: %s", err, exc_info=True)
         return context
 
+    def _is_forum_chat(self, context: MessageContext, message: Optional[dict[str, Any]] = None) -> bool:
+        payload = context.platform_specific or {}
+        chat = (message or {}).get("chat") or {}
+        return (
+            bool(payload.get("is_forum"))
+            or bool(payload.get("is_topic_message"))
+            or bool((message or {}).get("is_topic_message"))
+            or bool(chat.get("is_forum"))
+        )
+
+    def _is_general_forum_context(self, context: MessageContext, message: dict[str, Any]) -> bool:
+        if not self._is_forum_chat(context, message):
+            return False
+        thread_id = str(context.thread_id or message.get("message_thread_id") or "").strip()
+        return thread_id in {"", "1"}
+
     def _should_auto_create_topic(self, context: MessageContext, message: dict[str, Any], text: str) -> bool:
         if not self.config.forum_auto_topic:
             return False
         if (context.platform_specific or {}).get("chat_type") != "supergroup":
             return False
-        if not bool(message.get("is_topic_message")):
-            return False
-        if str(context.thread_id or "") != "1":
+        if not self._is_general_forum_context(context, message):
             return False
         if message.get("reply_to_message"):
             return False
@@ -264,7 +303,7 @@ class TelegramBot(BaseIMClient):
         payload = context.platform_specific or {}
         if payload.get("chat_type") != "supergroup":
             return None
-        if not context.thread_id and not payload.get("is_topic_message"):
+        if not context.thread_id and not self._is_forum_chat(context, message):
             return None
 
         topic_name = self._derive_topic_title(seed_text, message or {})
@@ -284,12 +323,13 @@ class TelegramBot(BaseIMClient):
             platform_specific={
                 **payload,
                 "is_topic_message": True,
+                "is_forum": True,
                 "auto_topic_created": True,
                 "topic_name": topic_name,
             },
         )
 
-        if str(context.thread_id or "") == "1":
+        if self._is_general_forum_context(context, message or {}):
             try:
                 await self.send_message(
                     context,
@@ -298,14 +338,6 @@ class TelegramBot(BaseIMClient):
                 )
             except Exception:
                 logger.debug("Failed to send Telegram General handoff notice", exc_info=True)
-
-        try:
-            intro = self._t("telegram.autoTopicIntro", topic=topic_name)
-            if seed_text:
-                intro = f"{intro}\n\n> {seed_text}"
-            await self.send_message(topic_context, intro)
-        except Exception:
-            logger.debug("Failed to send Telegram topic intro", exc_info=True)
 
         return topic_context
 
@@ -339,7 +371,7 @@ class TelegramBot(BaseIMClient):
         }
         callback_data = str(payload.get("data", ""))
         primary_action = self._resolve_callback_action(callback_data)
-        is_internal_callback = callback_data.startswith(("tg_cwd:", "tg_resume:", "tg_route:", "tg_question:"))
+        is_internal_callback = callback_data.startswith(("tg_cwd:", "tg_resume:", "tg_route:", "tg_question:", "tg_settings:"))
         if is_internal_callback:
             auth_result = self.check_authorization(
                 user_id=context.user_id,
@@ -388,6 +420,9 @@ class TelegramBot(BaseIMClient):
         if callback_data.startswith("tg_route:"):
             await self._handle_routing_callback(context, callback_data)
             return True
+        if callback_data.startswith("tg_settings:"):
+            await self._handle_settings_callback(context, callback_data)
+            return True
         if callback_data.startswith("tg_question:"):
             await self._handle_question_callback(context, callback_data)
             return True
@@ -416,6 +451,8 @@ class TelegramBot(BaseIMClient):
                 "is_dm": chat.get("type") == "private",
                 "chat_type": chat.get("type"),
                 "chat_title": chat.get("title") or chat.get("username"),
+                "is_forum": bool(chat.get("is_forum")),
+                "is_topic_message": bool(message.get("is_topic_message")),
                 "raw_message": message,
             },
         )
@@ -494,11 +531,38 @@ class TelegramBot(BaseIMClient):
         bot_username = str((self._bot_user or {}).get("username") or "")
         return bool(bot_username) and username.lower() != bot_username.lower()
 
+    def _strip_leading_bot_mention(self, message: dict[str, Any], text: str) -> str:
+        stripped = (text or "").strip()
+        if not stripped or stripped.startswith("/"):
+            return stripped
+
+        username = str((self._bot_user or {}).get("username") or "")
+        if not username:
+            return stripped
+
+        entities = message.get("entities") or []
+        candidate = stripped
+        for entity in entities:
+            if entity.get("type") != "mention":
+                continue
+            offset = int(entity.get("offset", 0))
+            length = int(entity.get("length", 0))
+            if offset != 0 or length <= 0:
+                continue
+            mention_text = candidate[offset : offset + length]
+            if mention_text.lower() != f"@{username.lower()}":
+                continue
+            remainder = candidate[offset + length :].lstrip(" \t\r\n,:-")
+            return remainder.strip()
+        return stripped
+
     def _resolve_callback_action(self, callback_data: str) -> str:
         if callback_data.startswith("tg_cwd:"):
             return "cmd_change_cwd"
         if callback_data.startswith("tg_route:"):
             return "cmd_routing"
+        if callback_data.startswith("tg_settings:"):
+            return "cmd_settings"
         if callback_data.startswith("toggle_msg_") or callback_data in {"open_settings_modal", "info_msg_types"}:
             return "cmd_settings"
         return callback_data
@@ -518,7 +582,7 @@ class TelegramBot(BaseIMClient):
             return False
         if stripped == "/cancel":
             self._cwd_prompts.pop(self._interaction_scope_key(context), None)
-            await self.send_message(context, self._t("telegram.cwdPromptCanceled"))
+            await self._delete_interaction_message(context, prompt.message_id)
             return True
         known_commands = {
             "start",
@@ -537,6 +601,7 @@ class TelegramBot(BaseIMClient):
         if parsed_command and parsed_command[0] in known_commands:
             return False
         self._cwd_prompts.pop(self._interaction_scope_key(context), None)
+        await self._delete_interaction_message(context, prompt.message_id)
         if self._controller is None or not hasattr(self._controller, "command_handler"):
             await self.send_message(context, f"❌ {self._t('error.cwdChangeFailed')}")
             return True
@@ -575,12 +640,16 @@ class TelegramBot(BaseIMClient):
         keyboard: Optional[InlineKeyboard] = None,
         *,
         reply_to: Optional[str] = None,
+        parse_mode: Optional[str] = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"chat_id": context.channel_id}
         if context.thread_id:
             payload["message_thread_id"] = int(context.thread_id)
         if text is not None:
             payload["text"] = text
+        resolved_parse_mode = self._resolve_parse_mode(parse_mode)
+        if text is not None and resolved_parse_mode:
+            payload["parse_mode"] = resolved_parse_mode
         if reply_to:
             payload["reply_parameters"] = {"message_id": int(reply_to)}
         if keyboard is not None:
@@ -595,14 +664,24 @@ class TelegramBot(BaseIMClient):
     async def send_message(
         self, context: MessageContext, text: str, parse_mode: Optional[str] = None, reply_to: Optional[str] = None
     ) -> str:
-        payload = self._build_payload(context, self.format_markdown(text), reply_to=reply_to)
+        payload = self._build_payload(
+            context,
+            self.format_markdown(text),
+            reply_to=reply_to,
+            parse_mode=parse_mode,
+        )
         result = await telegram_api.call_api(self.config.bot_token, "sendMessage", payload)
         return str(result["result"]["message_id"])
 
     async def send_message_with_buttons(
         self, context: MessageContext, text: str, keyboard: InlineKeyboard, parse_mode: Optional[str] = None
     ) -> str:
-        payload = self._build_payload(context, self.format_markdown(text), keyboard=keyboard)
+        payload = self._build_payload(
+            context,
+            self.format_markdown(text),
+            keyboard=keyboard,
+            parse_mode=parse_mode,
+        )
         result = await telegram_api.call_api(self.config.bot_token, "sendMessage", payload)
         return str(result["result"]["message_id"])
 
@@ -648,12 +727,22 @@ class TelegramBot(BaseIMClient):
             payload["reply_markup"] = {"inline_keyboard": []}
         if text is not None:
             payload["text"] = self.format_markdown(text)
+            resolved_parse_mode = self._resolve_parse_mode(parse_mode)
+            if resolved_parse_mode:
+                payload["parse_mode"] = resolved_parse_mode
             if keyboard is None:
                 payload["reply_markup"] = {"inline_keyboard": []}
             await telegram_api.call_api(self.config.bot_token, "editMessageText", payload)
             return True
         await telegram_api.call_api(self.config.bot_token, "editMessageReplyMarkup", payload)
         return True
+
+    def _resolve_parse_mode(self, parse_mode: Optional[str]) -> Optional[str]:
+        if not parse_mode:
+            return self.get_default_parse_mode()
+        if parse_mode.lower() == "markdown":
+            return self.get_default_parse_mode()
+        return parse_mode
 
     async def answer_callback(self, callback_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
         payload = {"callback_query_id": callback_id, "show_alert": show_alert}
@@ -678,6 +767,43 @@ class TelegramBot(BaseIMClient):
         context = MessageContext(user_id=user_id, channel_id=user_id, platform="telegram", platform_specific={"is_dm": True})
         return await self.send_message(context, text)
 
+    def _normalize_reaction_emoji(self, emoji: str) -> Optional[str]:
+        normalized = (emoji or "").strip()
+        if not normalized:
+            return None
+        aliases = {
+            ":eyes:": "👀",
+            "eyes": "👀",
+            "eye": "👀",
+            "👀": "👀",
+            ":robot_face:": "🤖",
+            "robot_face": "🤖",
+            "robot": "🤖",
+            "🤖": "🤖",
+        }
+        return aliases.get(normalized, normalized)
+
+    async def add_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
+        normalized = self._normalize_reaction_emoji(emoji)
+        if not normalized or not message_id:
+            return False
+        try:
+            await telegram_api.set_message_reaction(self.config.bot_token, context.channel_id, message_id, normalized)
+            return True
+        except Exception as err:
+            logger.debug("Failed to add Telegram reaction: %s", err)
+            return False
+
+    async def remove_reaction(self, context: MessageContext, message_id: str, emoji: str) -> bool:
+        if not message_id or not self._normalize_reaction_emoji(emoji):
+            return False
+        try:
+            await telegram_api.clear_message_reaction(self.config.bot_token, context.channel_id, message_id)
+            return True
+        except Exception as err:
+            logger.debug("Failed to remove Telegram reaction: %s", err)
+            return False
+
     async def send_typing_indicator(self, context: MessageContext) -> bool:
         payload = {"chat_id": context.channel_id, "action": "typing"}
         if context.thread_id:
@@ -687,6 +813,20 @@ class TelegramBot(BaseIMClient):
 
     async def clear_typing_indicator(self, context: MessageContext) -> bool:
         return True
+
+    async def delete_message(self, context: MessageContext, message_id: str) -> bool:
+        if not message_id:
+            return False
+        await telegram_api.delete_message(self.config.bot_token, context.channel_id, message_id)
+        return True
+
+    async def _delete_interaction_message(self, context: MessageContext, message_id: str) -> None:
+        if not message_id:
+            return
+        try:
+            await self.delete_message(context, message_id)
+        except Exception:
+            logger.debug("Failed to delete Telegram interaction message %s", message_id, exc_info=True)
 
     async def upload_file_from_path(
         self,
@@ -768,14 +908,8 @@ class TelegramBot(BaseIMClient):
     async def _handle_cwd_callback(self, context: MessageContext, callback_data: str) -> None:
         scope_key = self._interaction_scope_key(context)
         if callback_data == "tg_cwd:cancel":
-            self._cwd_prompts.pop(scope_key, None)
-            if context.message_id:
-                await self.edit_message(
-                    context,
-                    context.message_id,
-                    text=f"📂 {self._t('telegram.cwdPromptCanceled')}",
-                    keyboard=None,
-                )
+            prompt = self._cwd_prompts.pop(scope_key, None)
+            await self._delete_interaction_message(context, (prompt.message_id if prompt else context.message_id or ""))
 
     async def open_resume_session_modal(
         self,
@@ -824,12 +958,7 @@ class TelegramBot(BaseIMClient):
             return
         if callback_data == "tg_resume:cancel":
             self._resume_states.pop(scope_key, None)
-            await self.edit_message(
-                context,
-                state.message_id,
-                text=f"⏮️ {self._t('telegram.resumeCanceled')}",
-                keyboard=None,
-            )
+            await self._delete_interaction_message(context, state.message_id)
             return
 
         try:
@@ -844,12 +973,7 @@ class TelegramBot(BaseIMClient):
         if self._controller is None or not hasattr(self._controller, "session_handler"):
             await self.send_message(context, f"❌ {self._t('error.resumeFailed')}")
             return
-        await self.edit_message(
-            context,
-            state.message_id,
-            text=f"⏮️ {self._t('telegram.resumeSubmitting')}",
-            keyboard=None,
-        )
+        await self._delete_interaction_message(context, state.message_id)
         await self._controller.session_handler.handle_resume_session_submission(
             user_id=context.user_id,
             channel_id=context.channel_id,
@@ -1019,12 +1143,7 @@ class TelegramBot(BaseIMClient):
         del header, prompt
         if action == "cancel":
             self._question_states.pop(scope_key, None)
-            await self.edit_message(
-                context,
-                state.message_id,
-                text=f"❓ {self._t('common.cancel')}",
-                keyboard=None,
-            )
+            await self._delete_interaction_message(context, state.message_id)
             return
 
         if action in {"choose", "toggle"} and rest:
@@ -1065,12 +1184,7 @@ class TelegramBot(BaseIMClient):
     ) -> None:
         self._question_states.pop(scope_key, None)
         answers_payload = state.answers
-        await self.edit_message(
-            context,
-            state.message_id,
-            text=f"❓ {self._t('common.submitted')}",
-            keyboard=None,
-        )
+        await self._delete_interaction_message(context, state.message_id)
         auth_result = self.check_authorization(
             user_id=context.user_id,
             channel_id=context.channel_id,
@@ -1228,7 +1342,12 @@ class TelegramBot(BaseIMClient):
 
         text = "\n".join(self._routing_summary_lines(state))
         backend_row = [
-            InlineButton(text=self._get_backend_label(backend), callback_data="tg_route:field:backend")
+            InlineButton(
+                text=(f"☑️ {self._get_backend_label(backend)}" if backend == state.backend else self._get_backend_label(backend))[
+                    :40
+                ],
+                callback_data=f"tg_route:backend:{backend}",
+            )
             for backend in state.registered_backends[:3]
         ]
         rows: list[list[InlineButton]] = []
@@ -1356,24 +1475,14 @@ class TelegramBot(BaseIMClient):
         action = parts[1] if len(parts) > 1 else ""
         if action == "cancel":
             self._routing_states.pop(scope_key, None)
-            await self.edit_message(
-                context,
-                state.message_id,
-                text=f"🤖 {self._t('telegram.routingCanceled')}",
-                keyboard=None,
-            )
+            await self._delete_interaction_message(context, state.message_id)
             return
         if action == "save":
             self._routing_states.pop(scope_key, None)
             if self._controller is None or not hasattr(self._controller, "settings_handler"):
                 await self.send_message(context, f"❌ {self._t('error.routingModalFailed')}")
                 return
-            await self.edit_message(
-                context,
-                state.message_id,
-                text=f"🤖 {self._t('telegram.routingSaving')}",
-                keyboard=None,
-            )
+            await self._delete_interaction_message(context, state.message_id)
             await self._controller.settings_handler.handle_routing_update(
                 user_id=state.user_id,
                 channel_id=state.channel_id,
@@ -1393,6 +1502,12 @@ class TelegramBot(BaseIMClient):
         if action == "back":
             state.picker_field = None
             state.picker_page = 0
+        elif action == "backend" and len(parts) > 2:
+            backend = parts[2]
+            if backend in state.registered_backends:
+                state.backend = backend
+                state.picker_field = None
+                state.picker_page = 0
         elif action == "page" and len(parts) > 2:
             state.picker_page += -1 if parts[2] == "prev" else 1
         elif action == "field" and len(parts) > 2:
@@ -1418,4 +1533,177 @@ class TelegramBot(BaseIMClient):
                     self._apply_routing_option(state, value)
 
         text, keyboard = self._render_routing_state(state)
+        await self.edit_message(context, state.message_id, text=text, keyboard=keyboard)
+
+    async def open_settings_modal(
+        self,
+        trigger_id: Any,
+        user_settings: Any,
+        message_types: list,
+        display_names: dict,
+        channel_id: str = None,
+        current_require_mention: object = None,
+        global_require_mention: bool = False,
+        current_language: str = None,
+        owner_user_id: Optional[str] = None,
+    ):
+        del display_names, owner_user_id
+        context = trigger_id if isinstance(trigger_id, MessageContext) else None
+        if context is None:
+            raise ValueError("Telegram settings flow requires a message context")
+
+        state = _TelegramSettingsState(
+            message_id="",
+            show_message_types=list(getattr(user_settings, "show_message_types", []) or []),
+            current_require_mention=current_require_mention,
+            global_require_mention=global_require_mention,
+            current_language=current_language or self._get_lang(),
+            is_dm=bool((context.platform_specific or {}).get("is_dm")),
+        )
+        text, keyboard = self._render_settings_state(state, list(message_types or []))
+        message_id = await self.send_message_with_buttons(context, text, keyboard)
+        state.message_id = message_id
+        self._settings_states[self._interaction_scope_key(context)] = state
+
+    def _settings_mention_label(self, value: Optional[bool], global_require_mention: bool) -> str:
+        if value is None:
+            default_status = (
+                self._t("modal.settings.mentionStatusOn")
+                if global_require_mention
+                else self._t("modal.settings.mentionStatusOff")
+            )
+            return f"{self._t('common.default')} ({default_status})"
+        return self._t("modal.settings.optionRequireMention") if value else self._t("modal.settings.optionDontRequireMention")
+
+    def _settings_message_type_label(self, msg_type: str) -> str:
+        display_names = {
+            "system": self._t("messageType.system"),
+            "assistant": self._t("messageType.assistant"),
+            "toolcall": self._t("messageType.toolcall"),
+        }
+        return display_names.get(msg_type, msg_type)
+
+    def _render_settings_state(
+        self,
+        state: _TelegramSettingsState,
+        message_types: list[str],
+    ) -> tuple[str, InlineKeyboard]:
+        selected = [self._settings_message_type_label(msg_type) for msg_type in state.show_message_types]
+        selected_text = ", ".join(selected) if selected else "-"
+        language_label = self._t(f"language.{state.current_language}")
+        if language_label == f"language.{state.current_language}":
+            language_label = state.current_language
+
+        lines = [
+            f"⚙️ {self._t('modal.settings.title')}",
+            "",
+            f"1. {self._t('modal.settings.showMessageTypes')}",
+            f"   当前: {selected_text}",
+            "",
+            f"2. {self._t('modal.settings.requireMention')}",
+            f"   当前: {self._settings_mention_label(state.current_require_mention, state.global_require_mention)}",
+            "",
+            f"3. {self._t('modal.settings.language')}",
+            f"   当前: {language_label}",
+        ]
+
+        rows: list[list[InlineButton]] = []
+        row: list[InlineButton] = []
+        for index, msg_type in enumerate(message_types):
+            is_shown = msg_type in state.show_message_types
+            checkbox = "☑️" if is_shown else "⬜"
+            row.append(
+                InlineButton(
+                    text=f"{checkbox} {self._settings_message_type_label(msg_type)}"[:40],
+                    callback_data=f"tg_settings:toggle:{msg_type}",
+                )
+            )
+            if len(row) == 2 or index == len(message_types) - 1:
+                rows.append(row)
+                row = []
+
+        mention_options = [
+            ("default", self._t("common.default"), state.current_require_mention is None),
+            ("on", self._t("modal.settings.optionRequireMention"), state.current_require_mention is True),
+            ("off", self._t("modal.settings.optionDontRequireMention"), state.current_require_mention is False),
+        ]
+        rows.append(
+            [
+                InlineButton(
+                    text=(f"☑️ {label}" if selected_option else label)[:40],
+                    callback_data=f"tg_settings:mention:{value}",
+                )
+                for value, label, selected_option in mention_options
+            ]
+        )
+        rows.append(
+            [
+                InlineButton(
+                    text=(f"☑️ {self._t(f'language.{lang}')}" if lang == state.current_language else self._t(f"language.{lang}"))[:40],
+                    callback_data=f"tg_settings:lang:{lang}",
+                )
+                for lang in get_supported_languages()
+            ]
+        )
+        rows.append([InlineButton(text=f"ℹ️ {self._t('button.aboutMessageTypes')}", callback_data="info_msg_types")])
+        rows.append(
+            [
+                InlineButton(text=f"💾 {self._t('common.save')}", callback_data="tg_settings:save"),
+                InlineButton(text=f"✖️ {self._t('common.cancel')}", callback_data="tg_settings:cancel"),
+            ]
+        )
+        return "\n".join(lines), InlineKeyboard(buttons=rows)
+
+    async def _handle_settings_callback(self, context: MessageContext, callback_data: str) -> None:
+        scope_key = self._interaction_scope_key(context)
+        state = self._settings_states.get(scope_key)
+        if state is None or state.message_id != (context.message_id or ""):
+            return
+
+        settings_manager = self.settings_manager
+        message_types = list(settings_manager.get_available_message_types()) if settings_manager else []
+        parts = callback_data.split(":")
+        action = parts[1] if len(parts) > 1 else ""
+
+        if action == "cancel":
+            self._settings_states.pop(scope_key, None)
+            await self._delete_interaction_message(context, state.message_id)
+            return
+
+        if action == "save":
+            self._settings_states.pop(scope_key, None)
+            if self._controller is None or not hasattr(self._controller, "settings_handler"):
+                await self.send_message(context, f"❌ {self._t('error.settingsFailed')}")
+                return
+            await self._delete_interaction_message(context, state.message_id)
+            await self._controller.settings_handler.handle_settings_update(
+                user_id=context.user_id,
+                show_message_types=state.show_message_types,
+                channel_id=context.channel_id,
+                require_mention=state.current_require_mention,
+                language=state.current_language,
+                notify_user=True,
+                is_dm=state.is_dm,
+                platform="telegram",
+            )
+            return
+
+        if action == "toggle" and len(parts) > 2:
+            msg_type = parts[2]
+            if msg_type in state.show_message_types:
+                state.show_message_types = [item for item in state.show_message_types if item != msg_type]
+            elif msg_type in message_types:
+                state.show_message_types.append(msg_type)
+        elif action == "mention" and len(parts) > 2:
+            value = parts[2]
+            if value == "default":
+                state.current_require_mention = None
+            elif value == "on":
+                state.current_require_mention = True
+            elif value == "off":
+                state.current_require_mention = False
+        elif action == "lang" and len(parts) > 2 and parts[2] in get_supported_languages():
+            state.current_language = parts[2]
+
+        text, keyboard = self._render_settings_state(state, message_types)
         await self.edit_message(context, state.message_id, text=text, keyboard=keyboard)

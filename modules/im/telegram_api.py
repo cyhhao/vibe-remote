@@ -68,6 +68,36 @@ async def get_file(bot_token: str, file_id: str) -> dict[str, Any]:
     return await call_api(bot_token, "getFile", {"file_id": file_id})
 
 
+async def delete_message(bot_token: str, chat_id: str, message_id: str) -> dict[str, Any]:
+    return await call_api(bot_token, "deleteMessage", {"chat_id": chat_id, "message_id": int(message_id)})
+
+
+async def set_message_reaction(
+    bot_token: str,
+    chat_id: str,
+    message_id: str,
+    emoji: str,
+    *,
+    is_big: bool = False,
+) -> dict[str, Any]:
+    payload = {
+        "chat_id": chat_id,
+        "message_id": int(message_id),
+        "reaction": [{"type": "emoji", "emoji": emoji}],
+        "is_big": is_big,
+    }
+    return await call_api(bot_token, "setMessageReaction", payload)
+
+
+async def clear_message_reaction(bot_token: str, chat_id: str, message_id: str) -> dict[str, Any]:
+    payload = {
+        "chat_id": chat_id,
+        "message_id": int(message_id),
+        "reaction": [],
+    }
+    return await call_api(bot_token, "setMessageReaction", payload)
+
+
 async def send_multipart_file(
     bot_token: str,
     method: str,

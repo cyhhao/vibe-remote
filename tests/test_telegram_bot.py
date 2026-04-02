@@ -23,6 +23,67 @@ def test_normalize_command_text_strips_bot_mention() -> None:
     assert bot._normalize_command_text("/start@vibe_remote_bot hello") == "/start hello"
 
 
+def test_strip_leading_bot_mention_returns_empty_for_mention_only() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    bot._bot_user = {"id": 1, "username": "vibe_remote_bot"}
+    message = {
+        "text": "@vibe_remote_bot",
+        "entities": [{"type": "mention", "offset": 0, "length": 16}],
+    }
+
+    assert bot._strip_leading_bot_mention(message, "@vibe_remote_bot") == ""
+
+
+def test_strip_leading_bot_mention_keeps_message_body() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    bot._bot_user = {"id": 1, "username": "vibe_remote_bot"}
+    message = {
+        "text": "@vibe_remote_bot hello there",
+        "entities": [{"type": "mention", "offset": 0, "length": 16}],
+    }
+
+    assert bot._strip_leading_bot_mention(message, "@vibe_remote_bot hello there") == "hello there"
+
+
+def test_group_message_uses_channel_require_mention_override() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token", require_mention=True))
+    bot._bot_user = {"id": 1, "username": "vibe_remote_bot"}
+    bot.settings_manager = SimpleNamespace(get_require_mention=lambda channel_id, global_default=False: False)
+    bot.on_message_callback = AsyncMock()
+
+    asyncio.run(
+        bot._handle_message(
+            {
+                "message_id": 77,
+                "chat": {"id": -100123, "type": "group", "title": "Core Group"},
+                "from": {"id": 42},
+                "text": "hello team",
+            }
+        )
+    )
+
+    bot.on_message_callback.assert_awaited_once()
+    assert bot.on_message_callback.await_args.args[1] == "hello team"
+
+
+def test_group_mention_only_falls_through_as_empty_message() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token", require_mention=True))
+    bot._bot_user = {"id": 1, "username": "vibe_remote_bot"}
+    bot.on_message_callback = AsyncMock()
+    message = {
+        "message_id": 77,
+        "chat": {"id": -100123, "type": "group", "title": "Core Group"},
+        "from": {"id": 42},
+        "text": "@vibe_remote_bot",
+        "entities": [{"type": "mention", "offset": 0, "length": 16}],
+    }
+
+    asyncio.run(bot._handle_message(message))
+
+    bot.on_message_callback.assert_awaited_once()
+    assert bot.on_message_callback.await_args.args[1] == ""
+
+
 def test_plain_group_sessions_are_channel_scoped() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
 
@@ -49,11 +110,13 @@ def test_forum_general_message_auto_creates_topic() -> None:
         "modules.im.telegram.telegram_api.create_forum_topic",
         new=AsyncMock(return_value={"result": {"message_thread_id": 88}}),
     ):
-        with patch.object(bot, "send_message", new=AsyncMock(return_value="1")):
+        with patch.object(bot, "send_message", new=AsyncMock(return_value="1")) as send_mock:
             topic_context = asyncio.run(bot.start_new_topic_session(context, seed_text="Investigate this bug", message=message))
 
     assert topic_context is not None
     assert topic_context.thread_id == "88"
+    send_mock.assert_awaited_once()
+    assert send_mock.await_args.args[0] == context
 
 
 def test_should_auto_create_topic_only_for_general_topic_messages() -> None:
@@ -70,6 +133,54 @@ def test_should_auto_create_topic_only_for_general_topic_messages() -> None:
     assert bot._should_auto_create_topic(context, {"is_topic_message": True}, "hello") is True
     assert bot._should_auto_create_topic(context, {"is_topic_message": True, "reply_to_message": {"message_id": 1}}, "hello") is False
     assert bot._should_auto_create_topic(context, {"is_topic_message": True}, "/start") is False
+
+
+def test_should_auto_create_topic_for_forum_general_without_thread_id() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token", forum_auto_topic=True))
+    context = MessageContext(
+        user_id="42",
+        channel_id="-100123",
+        thread_id=None,
+        message_id="77",
+        platform="telegram",
+        platform_specific={"chat_type": "supergroup", "is_forum": True, "is_topic_message": False},
+    )
+
+    message = {
+        "chat": {"id": -100123, "type": "supergroup", "title": "Core Forum", "is_forum": True},
+        "message_id": 77,
+    }
+
+    assert bot._should_auto_create_topic(context, message, "hello from general") is True
+
+
+def test_start_new_topic_session_allows_forum_context_without_thread_id() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token", forum_auto_topic=True))
+    context = MessageContext(
+        user_id="42",
+        channel_id="-100123",
+        thread_id=None,
+        message_id="77",
+        platform="telegram",
+        platform_specific={"chat_type": "supergroup", "is_forum": True, "is_topic_message": False},
+    )
+    message = {
+        "chat": {"id": -100123, "type": "supergroup", "title": "Core Forum", "is_forum": True},
+        "from": {"first_name": "Alex"},
+        "message_id": 77,
+    }
+
+    with patch(
+        "modules.im.telegram.telegram_api.create_forum_topic",
+        new=AsyncMock(return_value={"result": {"message_thread_id": 88}}),
+    ):
+        with patch.object(bot, "send_message", new=AsyncMock(return_value="1")) as send_mock:
+            topic_context = asyncio.run(bot.start_new_topic_session(context, seed_text="Investigate this bug", message=message))
+
+    assert topic_context is not None
+    assert topic_context.thread_id == "88"
+    send_mock.assert_awaited_once()
+    assert send_mock.await_args.args[0] == context
 
 
 def test_build_message_context_records_discovered_chat(tmp_path, monkeypatch) -> None:
@@ -130,10 +241,12 @@ def test_pending_cwd_prompt_consumes_next_plain_message() -> None:
         command_handler=SimpleNamespace(handle_set_cwd=AsyncMock()),
     )
 
-    handled = asyncio.run(bot._consume_cwd_prompt(context, "/repo/new"))
+    with patch.object(bot, "_delete_interaction_message", new=AsyncMock()) as delete_mock:
+        handled = asyncio.run(bot._consume_cwd_prompt(context, "/repo/new"))
 
     assert handled is True
     bot._controller.command_handler.handle_set_cwd.assert_awaited_once()
+    delete_mock.assert_awaited_once_with(context, "10")
     assert bot._interaction_scope_key(context) not in bot._cwd_prompts
 
 
@@ -152,6 +265,49 @@ def test_pending_cwd_prompt_bypasses_slash_command_with_args() -> None:
 
     assert handled is False
     assert bot._interaction_scope_key(context) in bot._cwd_prompts
+
+
+def test_send_message_uses_html_parse_mode() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    context = MessageContext(user_id="42", channel_id="-100123", platform="telegram")
+
+    with patch(
+        "modules.im.telegram.telegram_api.call_api",
+        new=AsyncMock(return_value={"result": {"message_id": 77}}),
+    ) as call_mock:
+        asyncio.run(bot.send_message(context, "Hello **world**"))
+
+    payload = call_mock.await_args.args[2]
+    assert payload["parse_mode"] == "HTML"
+    assert payload["text"] == "Hello <b>world</b>"
+
+
+def test_add_reaction_uses_telegram_message_reactions() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    context = MessageContext(user_id="42", channel_id="-100123", platform="telegram")
+
+    with patch(
+        "modules.im.telegram.telegram_api.set_message_reaction",
+        new=AsyncMock(return_value={"ok": True}),
+    ) as reaction_mock:
+        result = asyncio.run(bot.add_reaction(context, "77", ":eyes:"))
+
+    assert result is True
+    reaction_mock.assert_awaited_once_with("123456:test-token", "-100123", "77", "👀")
+
+
+def test_remove_reaction_clears_telegram_message_reactions() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    context = MessageContext(user_id="42", channel_id="-100123", platform="telegram")
+
+    with patch(
+        "modules.im.telegram.telegram_api.clear_message_reaction",
+        new=AsyncMock(return_value={"ok": True}),
+    ) as reaction_mock:
+        result = asyncio.run(bot.remove_reaction(context, "77", ":eyes:"))
+
+    assert result is True
+    reaction_mock.assert_awaited_once_with("123456:test-token", "-100123", "77")
 
 
 def test_resume_menu_uses_short_callback_ids() -> None:
@@ -251,10 +407,143 @@ def test_routing_callback_save_persists_selected_backend() -> None:
         settings_handler=SimpleNamespace(handle_routing_update=AsyncMock()),
     )
 
-    with patch.object(bot, "edit_message", new=AsyncMock(return_value=True)):
+    with patch.object(bot, "_delete_interaction_message", new=AsyncMock()) as delete_mock:
         asyncio.run(bot._handle_routing_callback(context, "tg_route:save"))
 
+    delete_mock.assert_awaited_once_with(context, "88")
     bot._controller.settings_handler.handle_routing_update.assert_awaited_once()
+
+
+def test_routing_state_marks_current_backend_in_first_row() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    state = SimpleNamespace(
+        registered_backends=["opencode", "claude", "codex"],
+        backend="claude",
+        opencode_agent=None,
+        opencode_model=None,
+        opencode_reasoning_effort=None,
+        claude_agent="reviewer",
+        claude_model="claude-sonnet-4-6",
+        claude_reasoning_effort="high",
+        codex_model=None,
+        codex_reasoning_effort=None,
+        picker_field=None,
+        picker_page=0,
+    )
+
+    _, keyboard = bot._render_routing_state(state)
+
+    assert [button.callback_data for button in keyboard.buttons[0]] == [
+        "tg_route:backend:opencode",
+        "tg_route:backend:claude",
+        "tg_route:backend:codex",
+    ]
+    assert keyboard.buttons[0][1].text.startswith("☑️ ")
+
+
+def test_routing_callback_backend_switches_without_nested_picker() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    context = MessageContext(
+        user_id="42",
+        channel_id="-100123",
+        message_id="88",
+        platform="telegram",
+        platform_specific={"is_dm": False},
+    )
+    bot._routing_states[bot._interaction_scope_key(context)] = SimpleNamespace(
+        message_id="88",
+        channel_id=context.channel_id,
+        user_id=context.user_id,
+        is_dm=False,
+        registered_backends=["opencode", "claude", "codex"],
+        backend="opencode",
+        opencode_agent=None,
+        opencode_model=None,
+        opencode_reasoning_effort=None,
+        claude_agent=None,
+        claude_model=None,
+        claude_reasoning_effort=None,
+        codex_model=None,
+        codex_reasoning_effort=None,
+        picker_field=None,
+        picker_page=0,
+    )
+
+    with patch.object(bot, "edit_message", new=AsyncMock(return_value=True)) as edit_mock:
+        asyncio.run(bot._handle_routing_callback(context, "tg_route:backend:claude"))
+
+    state = bot._routing_states[bot._interaction_scope_key(context)]
+    assert state.backend == "claude"
+    assert state.picker_field is None
+    edit_mock.assert_awaited_once()
+
+
+def test_open_settings_modal_includes_language_buttons() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    context = MessageContext(
+        user_id="42",
+        channel_id="-100123",
+        message_id="88",
+        platform="telegram",
+        platform_specific={"is_dm": False},
+    )
+    user_settings = SimpleNamespace(show_message_types=["assistant", "toolcall"])
+
+    with patch.object(bot, "send_message_with_buttons", new=AsyncMock(return_value="66")) as send_mock:
+        asyncio.run(
+            bot.open_settings_modal(
+                context,
+                user_settings=user_settings,
+                message_types=["assistant", "toolcall", "system"],
+                display_names={},
+                channel_id=context.channel_id,
+                current_require_mention=None,
+                global_require_mention=True,
+                current_language="en",
+            )
+        )
+
+    keyboard = send_mock.await_args.args[2]
+    language_row = keyboard.buttons[-3]
+    assert [button.callback_data for button in language_row] == ["tg_settings:lang:en", "tg_settings:lang:zh"]
+
+
+def test_settings_callback_save_updates_language_and_deletes_menu() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    context = MessageContext(
+        user_id="42",
+        channel_id="-100123",
+        message_id="66",
+        platform="telegram",
+        platform_specific={"is_dm": False},
+    )
+    bot.settings_manager = SimpleNamespace(get_available_message_types=lambda: ["assistant", "toolcall", "system"])
+    bot._settings_states[bot._interaction_scope_key(context)] = SimpleNamespace(
+        message_id="66",
+        show_message_types=["assistant"],
+        current_require_mention=None,
+        global_require_mention=True,
+        current_language="zh",
+        is_dm=False,
+    )
+    bot._controller = SimpleNamespace(
+        settings_handler=SimpleNamespace(handle_settings_update=AsyncMock()),
+    )
+
+    with patch.object(bot, "_delete_interaction_message", new=AsyncMock()) as delete_mock:
+        asyncio.run(bot._handle_settings_callback(context, "tg_settings:save"))
+
+    delete_mock.assert_awaited_once_with(context, "66")
+    bot._controller.settings_handler.handle_settings_update.assert_awaited_once_with(
+        user_id="42",
+        show_message_types=["assistant"],
+        channel_id="-100123",
+        require_mention=None,
+        language="zh",
+        notify_user=True,
+        is_dm=False,
+        platform="telegram",
+    )
 
 
 def test_open_question_modal_edits_message_with_telegram_buttons() -> None:
