@@ -37,11 +37,38 @@ setattr(_transport_module, "CodexTransport", object)
 _turn_state_module = types.ModuleType("modules.agents.codex.turn_state")
 setattr(_turn_state_module, "CodexTurnRegistry", object)
 
+_subagent_router_module = types.ModuleType("modules.agents.subagent_router")
+
+
+class _StubSubagentDefinition:
+    def __init__(
+        self,
+        name=None,
+        description=None,
+        developer_instructions=None,
+        model=None,
+        reasoning_effort=None,
+        path=None,
+        source=None,
+    ):
+        self.name = name
+        self.description = description
+        self.developer_instructions = developer_instructions
+        self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.path = path
+        self.source = source
+
+
+setattr(_subagent_router_module, "SubagentDefinition", _StubSubagentDefinition)
+setattr(_subagent_router_module, "load_codex_subagent", lambda *args, **kwargs: None)
+
 _STUBBED_MODULES = {
     "modules": _modules_pkg,
     "modules.agents": _agents_pkg,
     "modules.agents.codex": _codex_pkg,
     "modules.agents.base": _base_module,
+    "modules.agents.subagent_router": _subagent_router_module,
     "modules.agents.codex.event_handler": _event_handler_module,
     "modules.agents.codex.session": _session_module,
     "modules.agents.codex.transport": _transport_module,
@@ -298,6 +325,8 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_thread_requests_danger_full_access(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=False))
+        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
+        agent.codex_config = SimpleNamespace(default_model=None)
         agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
         agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
         request = SimpleNamespace(
@@ -305,6 +334,9 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             context=SimpleNamespace(platform="slack", platform_specific={}),
             base_session_id="session-1",
             session_key="channel-1",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
         )
 
         transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-1"}}))
@@ -318,6 +350,46 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
                 "cwd": "/tmp/work",
                 "approvalPolicy": "never",
                 "sandbox": "danger-full-access",
+            },
+        )
+
+    async def test_start_thread_includes_codex_agent_developer_instructions(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=False))
+        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(platform="slack", platform_specific={}),
+            base_session_id="session-1",
+            session_key="channel-1",
+            subagent_name="reviewer",
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-1"}}))
+
+        with patch.object(
+            _MODULE,
+            "load_codex_subagent",
+            return_value=SimpleNamespace(
+                developer_instructions="Focus on regressions.",
+                model="gpt-5.4-mini",
+                reasoning_effort="high",
+            ),
+        ) as load_subagent:
+            await agent._start_thread(transport, request)
+
+        load_subagent.assert_called_once_with("reviewer", project_root=Path("/tmp/work"))
+        transport.send_request.assert_awaited_once_with(
+            "thread/start",
+            {
+                "cwd": "/tmp/work",
+                "approvalPolicy": "never",
+                "sandbox": "danger-full-access",
+                "developerInstructions": "Focus on regressions.",
             },
         )
 
@@ -335,6 +407,9 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             session_key="channel-1",
             base_session_id="session-1",
             composite_session_id="slack:C1:T1",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
         )
         transport = SimpleNamespace(send_request=AsyncMock(return_value={"turn": {"id": "turn-1"}}))
 
@@ -379,6 +454,9 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             base_session_id="session-1",
             composite_session_id="discord:D1:T1",
             context=SimpleNamespace(platform="discord", platform_specific={"is_dm": True}),
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
         )
         transport = SimpleNamespace(send_request=AsyncMock(return_value={"turn": {"id": "turn-1"}}))
 
@@ -420,6 +498,10 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             base_session_id="session-1",
             composite_session_id="discord:D1:T1",
             context=SimpleNamespace(platform="discord", platform_specific={"is_dm": True}),
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+            working_path="/tmp/work",
         )
         transport = SimpleNamespace(send_request=AsyncMock(return_value={"turn": {"id": "turn-1"}}))
 
@@ -433,6 +515,59 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
                 "approvalPolicy": "never",
                 "sandboxPolicy": {"type": "dangerFullAccess"},
                 "model": "fallback-model",
+            },
+        )
+
+    async def test_start_turn_uses_codex_agent_defaults_when_routing_selects_agent(self):
+        agent = object.__new__(CodexAgent)
+        agent.settings_manager = SimpleNamespace(
+            get_channel_settings=lambda settings_key: SimpleNamespace(
+                routing=SimpleNamespace(
+                    codex_agent="reviewer",
+                    codex_model=None,
+                    codex_reasoning_effort=None,
+                )
+            )
+        )
+        agent.codex_config = SimpleNamespace(default_model="fallback-model")
+        agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
+        agent._turn_registry = SimpleNamespace(
+            begin_turn_start=Mock(),
+            get_bootstrapped_turn_id=Mock(return_value=None),
+            finalize_turn_start_response=Mock(return_value=SimpleNamespace()),
+        )
+        request = SimpleNamespace(
+            session_key="channel-1",
+            base_session_id="session-1",
+            composite_session_id="slack:C1:T1",
+            working_path="/tmp/work",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"turn": {"id": "turn-1"}}))
+
+        with patch.object(
+            _MODULE,
+            "load_codex_subagent",
+            return_value=SimpleNamespace(
+                developer_instructions="Focus on regressions.",
+                model="gpt-5.4",
+                reasoning_effort="high",
+            ),
+        ) as load_subagent:
+            await agent._start_turn(transport, request, "thread-1")
+
+        load_subagent.assert_called_once_with("reviewer", project_root=Path("/tmp/work"))
+        transport.send_request.assert_awaited_once_with(
+            "turn/start",
+            {
+                "threadId": "thread-1",
+                "input": [{"type": "text", "text": "hello"}],
+                "approvalPolicy": "never",
+                "sandboxPolicy": {"type": "dangerFullAccess"},
+                "model": "gpt-5.4",
+                "effort": "high",
             },
         )
 

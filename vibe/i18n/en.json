@@ -78,6 +78,7 @@
       "backend": "Backend",
       "opencodeAgent": "OpenCode agent",
       "claudeAgent": "Claude agent",
+      "codexAgent": "Codex agent",
       "model": "Model",
       "reasoningEffort": "Reasoning effort"
     }
@@ -168,6 +169,8 @@
       "claudeAgent": "Claude Agent",
       "selectClaudeAgent": "Select Claude agent",
       "codexSettings": "Codex Settings",
+      "codexAgent": "Codex Agent",
+      "selectCodexAgent": "Select Codex agent",
       "codexReasoningEffort": "Reasoning Effort",
       "tip": "Select (Default) to use the backend's configured defaults."
     },

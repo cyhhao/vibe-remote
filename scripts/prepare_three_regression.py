@@ -99,6 +99,7 @@ def _build_routing(name: str) -> dict:
         "opencode_reasoning_effort": _optional(f"{prefix}_OPENCODE_REASONING_EFFORT"),
         "claude_agent": _optional(f"{prefix}_CLAUDE_AGENT"),
         "claude_model": _optional(f"{prefix}_CLAUDE_MODEL"),
+        "codex_agent": _optional(f"{prefix}_CODEX_AGENT"),
         "codex_model": _optional(f"{prefix}_CODEX_MODEL"),
         "codex_reasoning_effort": _optional(f"{prefix}_CODEX_REASONING_EFFORT"),
     }

@@ -305,6 +305,59 @@ def test_codex_models_falls_back_when_cli_cache_missing(monkeypatch, tmp_path):
     assert "gpt-5.1-codex-mini" in result["models"]
 
 
+def test_codex_agents_merges_global_and_project(monkeypatch, tmp_path):
+    global_agent_dir = tmp_path / ".codex" / "agents"
+    global_agent_dir.mkdir(parents=True)
+    (global_agent_dir / "reviewer.toml").write_text(
+        '\n'.join(
+            [
+                'name = "reviewer"',
+                'description = "Global reviewer"',
+                'developer_instructions = "Review carefully."',
+                'model = "gpt-5.4-mini"',
+                'model_reasoning_effort = "medium"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    project_root = tmp_path / "repo"
+    project_agent_dir = project_root / ".codex" / "agents"
+    project_agent_dir.mkdir(parents=True)
+    (project_agent_dir / "reviewer.toml").write_text(
+        '\n'.join(
+            [
+                'name = "reviewer"',
+                'description = "Project reviewer"',
+                'developer_instructions = "Focus on local changes."',
+                'model = "gpt-5.4"',
+                'model_reasoning_effort = "high"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (project_agent_dir / "triage.toml").write_text(
+        '\n'.join(
+            [
+                'name = "triage"',
+                'description = "Project triage"',
+                'developer_instructions = "Classify issues first."',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+
+    result = api.codex_agents(str(project_root))
+
+    assert result["ok"] is True
+    assert [agent["id"] for agent in result["agents"]] == ["reviewer", "triage"]
+    assert result["agents"][0]["source"] == "project"
+    assert result["agents"][0]["description"] == "Project reviewer"
+    assert result["agents"][0]["path"] == str(project_agent_dir / "reviewer.toml")
+
+
 def test_setup_opencode_permission_preserves_existing_json_fields(monkeypatch, tmp_path):
     config_path = tmp_path / ".config" / "opencode" / "opencode.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)

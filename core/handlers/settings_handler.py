@@ -395,6 +395,7 @@ class SettingsHandler(BaseHandler):
         opencode_default_config = {}
         claude_agents = []
         claude_models = []
+        codex_agents = []
         codex_models = []
 
         if "opencode" in registered_backends:
@@ -427,11 +428,15 @@ class SettingsHandler(BaseHandler):
 
         if "codex" in registered_backends:
             try:
-                from vibe.api import codex_models as get_codex_models
+                from vibe.api import codex_agents as get_codex_agents, codex_models as get_codex_models
 
                 models_result = get_codex_models()
                 if models_result.get("ok"):
                     codex_models = models_result.get("models", [])
+                cwd = self.controller.get_cwd(context)
+                agents_result = get_codex_agents(cwd)
+                if agents_result.get("ok"):
+                    codex_agents = agents_result.get("agents", [])
             except Exception as e:
                 logger.warning(f"Failed to fetch Codex data: {e}")
 
@@ -444,6 +449,7 @@ class SettingsHandler(BaseHandler):
             opencode_default_config=opencode_default_config,
             claude_agents=claude_agents,
             claude_models=claude_models,
+            codex_agents=codex_agents,
             codex_models=codex_models,
         )
 
@@ -640,6 +646,7 @@ class SettingsHandler(BaseHandler):
                     opencode_default_config=routing_data.opencode_default_config,
                     claude_agents=routing_data.claude_agents,
                     claude_models=routing_data.claude_models,
+                    codex_agents=routing_data.codex_agents,
                     codex_models=routing_data.codex_models,
                     selected_backend=selected_backend,
                     selected_opencode_agent=selection.selected_opencode_agent,
@@ -648,6 +655,7 @@ class SettingsHandler(BaseHandler):
                     selected_claude_agent=selection.selected_claude_agent,
                     selected_claude_model=selection.selected_claude_model,
                     selected_claude_reasoning=selection.selected_claude_reasoning,
+                    selected_codex_agent=selection.selected_codex_agent,
                     selected_codex_model=selection.selected_codex_model,
                     selected_codex_reasoning=selection.selected_codex_reasoning,
                 )
@@ -665,6 +673,7 @@ class SettingsHandler(BaseHandler):
         claude_agent: Optional[str] = None,
         claude_model: Optional[str] = None,
         claude_reasoning_effort: Optional[str] = None,
+        codex_agent: Optional[str] = None,
         codex_model: Optional[str] = None,
         codex_reasoning_effort: Optional[str] = None,
         notify_user: bool = True,
@@ -711,6 +720,9 @@ class SettingsHandler(BaseHandler):
                 claude_reasoning_effort=normalized_claude_reasoning_effort
                 if backend == "claude"
                 else (existing_routing.claude_reasoning_effort if existing_routing else None),
+                codex_agent=codex_agent
+                if backend == "codex"
+                else (existing_routing.codex_agent if existing_routing else None),
                 codex_model=codex_model
                 if backend == "codex"
                 else (existing_routing.codex_model if existing_routing else None),
@@ -739,6 +751,8 @@ class SettingsHandler(BaseHandler):
                         f"{self._t('routing.label.reasoningEffort')}: **{normalized_claude_reasoning_effort}**"
                     )
             elif backend == "codex":
+                if codex_agent:
+                    parts.append(f"{self._t('routing.label.agent')}: **{codex_agent}**")
                 if codex_model:
                     parts.append(f"{self._t('routing.label.model')}: **{codex_model}**")
                 if codex_reasoning_effort:
@@ -756,7 +770,8 @@ class SettingsHandler(BaseHandler):
                 f"opencode_agent={opencode_agent}, opencode_model={opencode_model}, "
                 f"claude_agent={claude_agent}, claude_model={claude_model}, "
                 f"claude_reasoning_effort={normalized_claude_reasoning_effort}, "
-                f"codex_model={codex_model}"
+                f"codex_agent={codex_agent}, codex_model={codex_model}, "
+                f"codex_reasoning_effort={codex_reasoning_effort}"
             )
 
         except Exception as e:

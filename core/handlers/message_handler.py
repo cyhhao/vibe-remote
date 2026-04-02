@@ -198,7 +198,14 @@ class MessageHandler(BaseHandler):
             # Check for routing-based agent to maintain session key consistency
             # This ensures session IDs match between MessageHandler and SessionHandler
             routing = self._get_settings_manager(context).get_channel_routing(settings_key)
-            routing_agent = routing.claude_agent if routing else None
+            routing_agent = None
+            if routing:
+                if agent_name == "opencode":
+                    routing_agent = getattr(routing, "opencode_agent", None)
+                elif agent_name == "claude":
+                    routing_agent = getattr(routing, "claude_agent", None)
+                elif agent_name == "codex":
+                    routing_agent = getattr(routing, "codex_agent", None)
 
             matched_prefix = None
             subagent_message = None
@@ -206,8 +213,9 @@ class MessageHandler(BaseHandler):
             subagent_model = None
             subagent_reasoning_effort = None
 
-            if agent_name in ["opencode", "claude"]:
+            if agent_name in ["opencode", "claude", "codex"]:
                 from modules.agents.subagent_router import (
+                    load_codex_subagent,
                     load_claude_subagent,
                     normalize_subagent_name,
                     parse_subagent_prefix,
@@ -233,7 +241,7 @@ class MessageHandler(BaseHandler):
                                     subagent_name = match.get("name")
                         except Exception as err:
                             logger.warning(f"Failed to resolve OpenCode subagent: {err}")
-                    else:
+                    elif agent_name == "claude":
                         try:
                             from pathlib import Path
 
@@ -247,6 +255,20 @@ class MessageHandler(BaseHandler):
                                 subagent_reasoning_effort = subagent_def.reasoning_effort
                         except Exception as err:
                             logger.warning(f"Failed to resolve Claude subagent: {err}")
+                    else:
+                        try:
+                            from pathlib import Path
+
+                            subagent_def = load_codex_subagent(
+                                normalized,
+                                project_root=Path(working_path),
+                            )
+                            if subagent_def:
+                                subagent_name = subagent_def.name
+                                subagent_model = subagent_def.model
+                                subagent_reasoning_effort = subagent_def.reasoning_effort
+                        except Exception as err:
+                            logger.warning(f"Failed to resolve Codex subagent: {err}")
 
                     if subagent_name:
                         matched_prefix = parsed.name
@@ -254,10 +276,10 @@ class MessageHandler(BaseHandler):
 
             if subagent_name and subagent_message:
                 message = subagent_message
-                if agent_name == "claude":
+                if agent_name in {"claude", "codex"}:
                     base_session_id = f"{base_session_id}:{subagent_name}"
                     composite_key = f"{base_session_id}:{working_path}"
-            elif agent_name == "claude" and routing_agent and not subagent_name:
+            elif agent_name in {"claude", "codex"} and routing_agent and not subagent_name:
                 # Update session IDs for routing-based agent to match SessionHandler
                 base_session_id = f"{base_session_id}:{routing_agent}"
                 composite_key = f"{base_session_id}:{working_path}"

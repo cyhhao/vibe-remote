@@ -25,6 +25,8 @@ class _StubIMClient:
     def __init__(self):
         self.sent_messages = []
         self.sent_button_messages = []
+        self.uploaded_markdowns = []
+        self._next_id = 1
 
     @staticmethod
     def should_use_thread_for_reply() -> bool:
@@ -32,11 +34,19 @@ class _StubIMClient:
 
     async def send_message(self, context, text, parse_mode=None, reply_to=None):
         self.sent_messages.append((context.channel_id, text, parse_mode))
-        return "msg-1"
+        message_id = f"msg-{self._next_id}"
+        self._next_id += 1
+        return message_id
 
     async def send_message_with_buttons(self, context, text, keyboard, parse_mode=None):
         self.sent_button_messages.append((context.channel_id, text, parse_mode, keyboard))
-        return "btn-1"
+        message_id = f"btn-{self._next_id}"
+        self._next_id += 1
+        return message_id
+
+    async def upload_markdown(self, context, title, content, filetype="markdown"):
+        self.uploaded_markdowns.append((context.channel_id, title, content, filetype))
+        return "file-1"
 
 
 class _StubController:
@@ -198,6 +208,22 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(controller.im_client.sent_button_messages), 1)
         keyboard = controller.im_client.sent_button_messages[0][3]
         self.assertEqual([[button.text for button in row] for row in keyboard.buttons], [["继续"], ["提交PR"]])
+
+    async def test_discord_long_result_splits_into_multiple_messages_without_markdown_attachment(self):
+        controller = _StubController("discord")
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="discord")
+        long_text = " ".join(["Alpha"] * 320) + "\n\n" + " ".join(["Beta"] * 120)
+
+        message_id = await dispatcher.emit_agent_message(context, "result", long_text)
+
+        self.assertEqual(message_id, "msg-1")
+        self.assertGreater(len(controller.im_client.sent_messages), 1)
+        self.assertEqual(
+            "".join(text for _, text, _ in controller.im_client.sent_messages),
+            long_text,
+        )
+        self.assertEqual(controller.im_client.uploaded_markdowns, [])
 
 
 if __name__ == "__main__":

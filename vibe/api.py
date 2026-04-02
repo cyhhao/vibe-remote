@@ -35,6 +35,7 @@ from vibe.upgrade import (
     get_running_vibe_path,
     get_safe_cwd,
 )
+from modules.agents.subagent_router import list_codex_subagents
 
 
 logger = logging.getLogger(__name__)
@@ -984,6 +985,34 @@ def claude_agents(cwd: Optional[str] = None) -> dict:
         return {"ok": True, "agents": agents}
     except Exception as e:
         logger.error(f"Failed to scan Claude agents directory: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+def codex_agents(cwd: Optional[str] = None) -> dict:
+    """List available Codex custom agents (global + project)."""
+    try:
+        project_root: Optional[Path] = None
+        if cwd:
+            try:
+                project_root = Path(cwd).expanduser().resolve()
+            except Exception:
+                project_root = None
+
+        definitions = list_codex_subagents(project_root=project_root)
+        agents = [
+            {
+                "id": definition.name,
+                "name": definition.name,
+                "path": str(definition.path) if definition.path else "",
+                "source": definition.source,
+                "description": definition.description,
+            }
+            for definition in definitions.values()
+        ]
+        agents.sort(key=lambda item: (0 if item.get("source") == "project" else 1, item.get("id", "")))
+        return {"ok": True, "agents": agents}
+    except Exception as e:
+        logger.error("Failed to scan Codex agents directory: %s", e)
         return {"ok": False, "error": str(e)}
 
 
