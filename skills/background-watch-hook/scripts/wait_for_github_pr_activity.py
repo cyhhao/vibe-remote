@@ -131,6 +131,49 @@ def _fetch_state(repo: str, pr_number: int, token: str | None) -> dict[str, list
     }
 
 
+def _render_activity(
+    *,
+    repo: str,
+    pr_number: int,
+    state: dict[str, list[dict[str, Any]]],
+    review_cursor: int,
+    review_comment_cursor: int,
+    issue_comment_cursor: int,
+    event_limit: int,
+) -> tuple[str | None, int, int, int]:
+    new_reviews = _filter_new(state["reviews"], review_cursor)
+    new_review_comments = _filter_new(state["review_comments"], review_comment_cursor)
+    new_issue_comments = _filter_new(state["issue_comments"], issue_comment_cursor)
+
+    if not (new_reviews or new_review_comments or new_issue_comments):
+        return None, review_cursor, review_comment_cursor, issue_comment_cursor
+
+    next_review_cursor = max(review_cursor, _max_id(new_reviews))
+    next_review_comment_cursor = max(review_comment_cursor, _max_id(new_review_comments))
+    next_issue_comment_cursor = max(issue_comment_cursor, _max_id(new_issue_comments))
+
+    lines = [f"GitHub PR activity detected for {repo}#{pr_number}"]
+    rendered_events: list[str] = []
+    rendered_events.extend(_format_review(review) for review in new_reviews)
+    rendered_events.extend(_format_review_comment(comment) for comment in new_review_comments)
+    rendered_events.extend(_format_issue_comment(comment) for comment in new_issue_comments)
+
+    visible_limit = max(event_limit, 1)
+    for entry in rendered_events[:visible_limit]:
+        lines.append(entry)
+
+    total_events = len(rendered_events)
+    if total_events > visible_limit:
+        lines.append(f"- {total_events - visible_limit} additional event(s) omitted")
+
+    return (
+        "\n".join(lines),
+        next_review_cursor,
+        next_review_comment_cursor,
+        next_issue_comment_cursor,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True, help="GitHub repo in owner/name form")
@@ -141,6 +184,11 @@ def main() -> int:
     parser.add_argument("--since-review-comment-id", type=int, default=None, help="Existing review comment cursor")
     parser.add_argument("--since-issue-comment-id", type=int, default=None, help="Existing PR conversation comment cursor")
     parser.add_argument("--event-limit", type=int, default=8, help="Maximum number of new events to include in stdout")
+    parser.add_argument(
+        "--catch-up",
+        action="store_true",
+        help="Treat current existing activity as pending when no explicit cursor is provided",
+    )
     args = parser.parse_args()
 
     token = _get_token()
@@ -155,25 +203,42 @@ def main() -> int:
         print(f"Failed to fetch initial PR state: {err}", file=sys.stderr)
         return 1
 
-    review_cursor = args.since_review_id if args.since_review_id is not None else _max_id(state["reviews"])
+    review_cursor = (
+        args.since_review_id
+        if args.since_review_id is not None
+        else (0 if args.catch_up else _max_id(state["reviews"]))
+    )
     review_comment_cursor = (
         args.since_review_comment_id
         if args.since_review_comment_id is not None
-        else _max_id(state["review_comments"])
+        else (0 if args.catch_up else _max_id(state["review_comments"]))
     )
     issue_comment_cursor = (
         args.since_issue_comment_id
         if args.since_issue_comment_id is not None
-        else _max_id(state["issue_comments"])
+        else (0 if args.catch_up else _max_id(state["issue_comments"]))
     )
 
     print(
         (
-            "Watching GitHub PR %s#%s from cursors: review=%s review_comment=%s issue_comment=%s"
-            % (args.repo, args.pr, review_cursor, review_comment_cursor, issue_comment_cursor)
+            "Watching GitHub PR %s#%s from cursors: review=%s review_comment=%s issue_comment=%s catch_up=%s"
+            % (args.repo, args.pr, review_cursor, review_comment_cursor, issue_comment_cursor, args.catch_up)
         ),
         file=sys.stderr,
     )
+
+    initial_output, review_cursor, review_comment_cursor, issue_comment_cursor = _render_activity(
+        repo=args.repo,
+        pr_number=args.pr,
+        state=state,
+        review_cursor=review_cursor,
+        review_comment_cursor=review_comment_cursor,
+        issue_comment_cursor=issue_comment_cursor,
+        event_limit=args.event_limit,
+    )
+    if initial_output is not None:
+        print(initial_output)
+        return 0
 
     while True:
         if args.timeout > 0 and (time.monotonic() - start) >= args.timeout:
@@ -191,32 +256,19 @@ def main() -> int:
             print(f"Polling failed: {err}", file=sys.stderr)
             continue
 
-        new_reviews = _filter_new(state["reviews"], review_cursor)
-        new_review_comments = _filter_new(state["review_comments"], review_comment_cursor)
-        new_issue_comments = _filter_new(state["issue_comments"], issue_comment_cursor)
-
-        if not (new_reviews or new_review_comments or new_issue_comments):
+        output, review_cursor, review_comment_cursor, issue_comment_cursor = _render_activity(
+            repo=args.repo,
+            pr_number=args.pr,
+            state=state,
+            review_cursor=review_cursor,
+            review_comment_cursor=review_comment_cursor,
+            issue_comment_cursor=issue_comment_cursor,
+            event_limit=args.event_limit,
+        )
+        if output is None:
             continue
 
-        review_cursor = max(review_cursor, _max_id(new_reviews))
-        review_comment_cursor = max(review_comment_cursor, _max_id(new_review_comments))
-        issue_comment_cursor = max(issue_comment_cursor, _max_id(new_issue_comments))
-
-        lines = [f"GitHub PR activity detected for {args.repo}#{args.pr}"]
-        rendered_events: list[str] = []
-        rendered_events.extend(_format_review(review) for review in new_reviews)
-        rendered_events.extend(_format_review_comment(comment) for comment in new_review_comments)
-        rendered_events.extend(_format_issue_comment(comment) for comment in new_issue_comments)
-
-        visible_limit = max(args.event_limit, 1)
-        for entry in rendered_events[:visible_limit]:
-            lines.append(entry)
-
-        total_events = len(rendered_events)
-        if total_events > visible_limit:
-            lines.append(f"- {total_events - visible_limit} additional event(s) omitted")
-
-        print("\n".join(lines))
+        print(output)
         return 0
 
 

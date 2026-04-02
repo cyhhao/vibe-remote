@@ -122,6 +122,8 @@ For other use cases, either:
 
 Use `scripts/wait_for_github_pr_activity.py` only when the thing being watched is GitHub PR review activity.
 
+If the watcher should immediately surface activity that already exists at startup, add `--catch-up`. Without it, the included GitHub waiter snapshots current activity as the baseline and waits only for newer events.
+
 ### 2. Decide the session target
 
 Use the current thread when the user wants the result to continue in context.
@@ -190,6 +192,21 @@ nohup bash -lc '
       --interval 60 \
       --timeout 14400
 ' >/tmp/watch-pr-151.log 2>&1 &
+```
+
+To catch up on comments or reviews that already exist before the watcher starts, add `--catch-up`:
+
+```bash
+nohup bash -lc '
+  scripts/watch_then_hook.sh \
+    --session-key "slack::channel::C123::thread::171717.123" \
+    --prefix "PR review already has activity. Pull the current review state and continue the thread." \
+    -- \
+    scripts/wait_for_github_pr_activity.py \
+      --repo cyhhao/vibe-remote \
+      --pr 151 \
+      --catch-up
+' >/tmp/watch-pr-151-catch-up.log 2>&1 &
 ```
 
 ## Failure Handling
