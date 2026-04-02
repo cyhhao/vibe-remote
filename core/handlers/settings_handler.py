@@ -718,11 +718,10 @@ class SettingsHandler(BaseHandler):
                 claude_model,
                 claude_reasoning_effort,
             )
-            resolved_codex_agent = (
-                existing_routing.codex_agent
-                if backend == "codex" and codex_agent is _UNSET
-                else codex_agent
-            )
+            if backend == "codex" and codex_agent is _UNSET:
+                resolved_codex_agent = existing_routing.codex_agent if existing_routing else None
+            else:
+                resolved_codex_agent = codex_agent
 
             routing = RoutingSettings(
                 agent_backend=backend,

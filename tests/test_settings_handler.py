@@ -9,11 +9,11 @@ from core.handlers.settings_handler import SettingsHandler
 
 
 class _StubSettingsManager:
-    def __init__(self, routing: RoutingSettings):
+    def __init__(self, routing: RoutingSettings | None):
         self.routing = routing
         self.saved_routing: RoutingSettings | None = None
 
-    def get_channel_routing(self, settings_key: str) -> RoutingSettings:
+    def get_channel_routing(self, settings_key: str) -> RoutingSettings | None:
         assert settings_key == "telegram::-100123"
         return self.routing
 
@@ -100,3 +100,31 @@ def test_handle_routing_update_allows_explicit_codex_agent_clear() -> None:
     assert settings_manager.saved_routing.codex_agent is None
     assert settings_manager.saved_routing.codex_model == "gpt-5.4"
     assert settings_manager.saved_routing.codex_reasoning_effort == "high"
+
+
+def test_handle_routing_update_handles_first_codex_save_without_existing_routing() -> None:
+    settings_manager = _StubSettingsManager(None)
+    handler, send_message = _make_handler(settings_manager)
+
+    asyncio.run(
+        handler.handle_routing_update(
+            user_id="42",
+            channel_id="-100123",
+            backend="codex",
+            opencode_agent=None,
+            opencode_model=None,
+            claude_agent=None,
+            claude_model=None,
+            codex_model="gpt-5.4",
+            codex_reasoning_effort="high",
+            notify_user=False,
+            platform="telegram",
+        )
+    )
+
+    assert settings_manager.saved_routing is not None
+    assert settings_manager.saved_routing.agent_backend == "codex"
+    assert settings_manager.saved_routing.codex_agent is None
+    assert settings_manager.saved_routing.codex_model == "gpt-5.4"
+    assert settings_manager.saved_routing.codex_reasoning_effort == "high"
+    send_message.assert_not_awaited()
