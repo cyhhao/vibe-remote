@@ -11,6 +11,8 @@ from .base import BaseHandler
 
 logger = logging.getLogger(__name__)
 
+_UNSET = object()
+
 
 class SettingsHandler(BaseHandler):
     """Handles settings and configuration operations"""
@@ -690,7 +692,7 @@ class SettingsHandler(BaseHandler):
         claude_agent: Optional[str] = None,
         claude_model: Optional[str] = None,
         claude_reasoning_effort: Optional[str] = None,
-        codex_agent: Optional[str] = None,
+        codex_agent: object = _UNSET,
         codex_model: Optional[str] = None,
         codex_reasoning_effort: Optional[str] = None,
         notify_user: bool = True,
@@ -716,6 +718,11 @@ class SettingsHandler(BaseHandler):
                 claude_model,
                 claude_reasoning_effort,
             )
+            resolved_codex_agent = (
+                existing_routing.codex_agent
+                if backend == "codex" and codex_agent is _UNSET
+                else codex_agent
+            )
 
             routing = RoutingSettings(
                 agent_backend=backend,
@@ -737,7 +744,7 @@ class SettingsHandler(BaseHandler):
                 claude_reasoning_effort=normalized_claude_reasoning_effort
                 if backend == "claude"
                 else (existing_routing.claude_reasoning_effort if existing_routing else None),
-                codex_agent=codex_agent
+                codex_agent=resolved_codex_agent
                 if backend == "codex"
                 else (existing_routing.codex_agent if existing_routing else None),
                 codex_model=codex_model
@@ -768,8 +775,8 @@ class SettingsHandler(BaseHandler):
                         f"{self._t('routing.label.reasoningEffort')}: **{normalized_claude_reasoning_effort}**"
                     )
             elif backend == "codex":
-                if codex_agent:
-                    parts.append(f"{self._t('routing.label.agent')}: **{codex_agent}**")
+                if resolved_codex_agent:
+                    parts.append(f"{self._t('routing.label.agent')}: **{resolved_codex_agent}**")
                 if codex_model:
                     parts.append(f"{self._t('routing.label.model')}: **{codex_model}**")
                 if codex_reasoning_effort:
@@ -787,7 +794,7 @@ class SettingsHandler(BaseHandler):
                 f"opencode_agent={opencode_agent}, opencode_model={opencode_model}, "
                 f"claude_agent={claude_agent}, claude_model={claude_model}, "
                 f"claude_reasoning_effort={normalized_claude_reasoning_effort}, "
-                f"codex_agent={codex_agent}, codex_model={codex_model}, "
+                f"codex_agent={resolved_codex_agent}, codex_model={codex_model}, "
                 f"codex_reasoning_effort={codex_reasoning_effort}"
             )
 
