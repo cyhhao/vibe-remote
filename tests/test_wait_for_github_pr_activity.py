@@ -259,3 +259,64 @@ def test_main_uses_since_pr_cursor_for_initial_new_pr_fetch() -> None:
     assert rc == 0
     assert calls == [405]
     assert "pull_request #158" in stdout.getvalue()
+
+
+def test_main_reduces_unauthenticated_new_pr_interval_after_bootstrap() -> None:
+    module = _load_module()
+    fetch_calls: list[int | None] = []
+    sleep_calls: list[float] = []
+
+    def _fake_fetch_new_pr_state(repo, token, *, stop_after_id=None):
+        fetch_calls.append(stop_after_id)
+        if len(fetch_calls) == 1:
+            return ({"pull_requests": []}, 50)
+        if len(fetch_calls) == 2:
+            return ({"pull_requests": []}, 1)
+        return (
+            {
+                "pull_requests": [
+                    {
+                        "id": 410,
+                        "number": 158,
+                        "title": "New PR",
+                        "state": "open",
+                        "html_url": "https://github.com/example/repo/pull/158",
+                        "user": {"login": "cyhhao"},
+                    }
+                ]
+            },
+            1,
+        )
+
+    def _fake_min_interval(requests_per_poll, *, bootstrap_requests=0):
+        if bootstrap_requests:
+            return 3600.0
+        return 60.0
+
+    stdout = io.StringIO()
+    with (
+        patch.object(module, "_fetch_new_pr_state", side_effect=_fake_fetch_new_pr_state),
+        patch.object(module, "get_token", return_value=None),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch.object(module, "min_interval_for_unauthenticated", side_effect=_fake_min_interval),
+        patch.object(module.time, "sleep", side_effect=lambda seconds: sleep_calls.append(seconds)),
+        patch(
+            "sys.argv",
+            [
+                "wait_pr.py",
+                "--repo",
+                "cyhhao/vibe-remote",
+                "--new-prs",
+                "--allow-unauthenticated",
+                "--interval",
+                "1",
+            ],
+        ),
+        redirect_stdout(stdout),
+    ):
+        rc = module.main()
+
+    assert rc == 0
+    assert sleep_calls == [3600.0, 60.0]
+    assert fetch_calls == [None, None, None]
+    assert "pull_request #158" in stdout.getvalue()

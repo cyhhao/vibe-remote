@@ -243,3 +243,65 @@ def test_main_uses_since_raw_issue_cursor_for_initial_new_issue_fetch() -> None:
     assert rc == 0
     assert calls == [401]
     assert "issue #41" in stdout.getvalue()
+
+
+def test_main_reduces_unauthenticated_new_issue_interval_after_bootstrap() -> None:
+    module = _load_module()
+    fetch_calls: list[int | None] = []
+    sleep_calls: list[float] = []
+
+    def _fake_fetch_new_issue_state(repo, token, *, stop_after_id=None):
+        fetch_calls.append(stop_after_id)
+        if len(fetch_calls) == 1:
+            return ({"issues": [], "raw_issue_cursor": 0}, 50)
+        if len(fetch_calls) == 2:
+            return ({"issues": [], "raw_issue_cursor": 0}, 1)
+        return (
+            {
+                "issues": [
+                    {
+                        "id": 405,
+                        "number": 41,
+                        "title": "New issue",
+                        "state": "open",
+                        "html_url": "https://github.com/example/repo/issues/41",
+                        "user": {"login": "someone"},
+                    }
+                ],
+                "raw_issue_cursor": 406,
+            },
+            1,
+        )
+
+    def _fake_min_interval(requests_per_poll, *, bootstrap_requests=0):
+        if bootstrap_requests:
+            return 3600.0
+        return 60.0
+
+    stdout = io.StringIO()
+    with (
+        patch.object(module, "_fetch_new_issue_state", side_effect=_fake_fetch_new_issue_state),
+        patch.object(module, "get_token", return_value=None),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch.object(module, "min_interval_for_unauthenticated", side_effect=_fake_min_interval),
+        patch.object(module.time, "sleep", side_effect=lambda seconds: sleep_calls.append(seconds)),
+        patch(
+            "sys.argv",
+            [
+                "wait_issue.py",
+                "--repo",
+                "cyhhao/vibe-remote",
+                "--new-issues",
+                "--allow-unauthenticated",
+                "--interval",
+                "1",
+            ],
+        ),
+        redirect_stdout(stdout),
+    ):
+        rc = module.main()
+
+    assert rc == 0
+    assert sleep_calls == [3600.0, 60.0]
+    assert fetch_calls == [None, None, None]
+    assert "issue #41" in stdout.getvalue()

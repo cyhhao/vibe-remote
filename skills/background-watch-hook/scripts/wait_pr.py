@@ -314,7 +314,8 @@ def main() -> int:
         )
         return 2
 
-    effective_interval = max(args.interval, 1.0)
+    base_interval = max(args.interval, 1.0)
+    effective_interval = base_interval
 
     start = time.monotonic()
 
@@ -343,17 +344,18 @@ def main() -> int:
             requests_per_poll_count,
             bootstrap_requests=bootstrap_requests,
         )
-        if effective_interval < unauthenticated_min:
+        startup_interval = max(base_interval, unauthenticated_min)
+        if effective_interval < startup_interval:
             print(
                 (
                     "No GitHub token detected; clamping polling interval from %.1fs to %.1fs "
                     "for %s request(s) per poll plus %s bootstrap request(s) to avoid "
                     "unauthenticated rate-limit lockout."
                 )
-                % (effective_interval, unauthenticated_min, requests_per_poll_count, bootstrap_requests),
+                % (effective_interval, startup_interval, requests_per_poll_count, bootstrap_requests),
                 file=sys.stderr,
             )
-            effective_interval = unauthenticated_min
+            effective_interval = startup_interval
     else:
         bootstrap_requests = 0
 
@@ -471,20 +473,28 @@ def main() -> int:
             continue
 
         if token is None:
-            unauthenticated_min = min_interval_for_unauthenticated(
-                requests_per_poll_count,
-                bootstrap_requests=bootstrap_requests,
-            )
-            if effective_interval < unauthenticated_min:
-                print(
-                    (
-                        "GitHub unauthenticated polling now needs %.1fs minimum for %s request(s) "
-                        "per poll plus %s bootstrap request(s); increasing interval."
+            unauthenticated_min = min_interval_for_unauthenticated(requests_per_poll_count)
+            target_interval = max(base_interval, unauthenticated_min)
+            if target_interval != effective_interval:
+                if target_interval > effective_interval:
+                    print(
+                        (
+                            "GitHub unauthenticated polling now needs %.1fs minimum for %s request(s) "
+                            "per poll; increasing interval."
+                        )
+                        % (target_interval, requests_per_poll_count),
+                        file=sys.stderr,
                     )
-                    % (unauthenticated_min, requests_per_poll_count, bootstrap_requests),
-                    file=sys.stderr,
-                )
-                effective_interval = unauthenticated_min
+                else:
+                    print(
+                        (
+                            "GitHub unauthenticated polling now needs only %.1fs minimum for %s request(s) "
+                            "per poll; reducing interval."
+                        )
+                        % (target_interval, requests_per_poll_count),
+                        file=sys.stderr,
+                    )
+                effective_interval = target_interval
 
         if args.pr is not None:
             output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor = _render_activity(
