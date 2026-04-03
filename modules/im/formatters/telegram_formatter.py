@@ -16,7 +16,6 @@ from .base_formatter import BaseMarkdownFormatter
 class TelegramFormatter(BaseMarkdownFormatter):
     _CODE_BLOCK_RE = re.compile(r"```(?:([\w.+-]+)\n)?(.*?)```", re.DOTALL)
     _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
-    _LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
     _BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
     _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
     _STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL)
@@ -35,6 +34,56 @@ class TelegramFormatter(BaseMarkdownFormatter):
 
     def escape_special_chars(self, text: str) -> str:
         return text
+
+    @staticmethod
+    def _find_link_url_end(text: str, start: int) -> int | None:
+        depth = 0
+        for index in range(start, len(text)):
+            char = text[index]
+            if char.isspace():
+                return None
+            if char == "(":
+                depth += 1
+                continue
+            if char != ")":
+                continue
+            if depth == 0:
+                return index
+            depth -= 1
+        return None
+
+    def _render_links(self, text: str) -> str:
+        rendered_parts: list[str] = []
+        cursor = 0
+
+        while cursor < len(text):
+            start = text.find("[", cursor)
+            if start < 0:
+                rendered_parts.append(text[cursor:])
+                break
+
+            label_end = text.find("](", start)
+            if label_end < 0:
+                rendered_parts.append(text[cursor:])
+                break
+
+            url_start = label_end + 2
+            if not text.startswith(("http://", "https://"), url_start):
+                rendered_parts.append(text[cursor : start + 1])
+                cursor = start + 1
+                continue
+
+            url_end = self._find_link_url_end(text, url_start)
+            if url_end is None:
+                rendered_parts.append(text[cursor : start + 1])
+                cursor = start + 1
+                continue
+
+            rendered_parts.append(text[cursor:start])
+            rendered_parts.append(f'<a href="{text[url_start:url_end]}">{text[start + 1:label_end]}</a>')
+            cursor = url_end + 1
+
+        return "".join(rendered_parts)
 
     def render(self, text: str) -> str:
         if not text:
@@ -61,10 +110,7 @@ class TelegramFormatter(BaseMarkdownFormatter):
         rendered = self._INLINE_CODE_RE.sub(lambda m: stash(render_inline_code(m)), rendered)
         rendered = html.escape(rendered)
 
-        rendered = self._LINK_RE.sub(
-            lambda m: f'<a href="{m.group(2)}">{m.group(1)}</a>',
-            rendered,
-        )
+        rendered = self._render_links(rendered)
         rendered = self._BOLD_RE.sub(r"<b>\1</b>", rendered)
         rendered = self._STRIKE_RE.sub(r"<s>\1</s>", rendered)
         rendered = self._ITALIC_RE.sub(r"<i>\1</i>", rendered)

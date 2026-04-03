@@ -508,6 +508,24 @@ def test_open_settings_modal_includes_language_buttons() -> None:
     assert [button.callback_data for button in language_row] == ["tg_settings:lang:en", "tg_settings:lang:zh"]
 
 
+def test_render_settings_state_localizes_current_label() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    bot._controller = SimpleNamespace(_get_lang=lambda: "en")
+
+    text, _ = bot._render_settings_state(
+        SimpleNamespace(
+            show_message_types=["assistant"],
+            current_require_mention=None,
+            global_require_mention=True,
+            current_language="en",
+        ),
+        ["assistant", "toolcall"],
+    )
+
+    assert "Current:" in text
+    assert "当前:" not in text
+
+
 def test_settings_callback_save_updates_language_and_deletes_menu() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
     context = MessageContext(

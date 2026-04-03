@@ -115,6 +115,7 @@
       "showMessageTypes": "Show these message types:",
       "showMessageTypesPlaceholder": "Select message types to show",
       "tip": "You can show/hide message types at any time. Changes apply immediately to new messages.",
+      "current": "Current",
       "selectMentionBehavior": "Select @mention behavior",
       "optionDefault": "(Default) - {status}",
       "optionRequireMention": "Require @mention",

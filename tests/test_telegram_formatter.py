@@ -14,3 +14,11 @@ def test_render_preserves_html_escaped_link_query_params() -> None:
     rendered = formatter.render("[Docs](https://example.com?q=hello&lang=en)")
 
     assert rendered == '<a href="https://example.com?q=hello&amp;lang=en">Docs</a>'
+
+
+def test_render_preserves_parentheses_in_markdown_link_urls() -> None:
+    formatter = TelegramFormatter()
+
+    rendered = formatter.render("[Wiki](https://en.wikipedia.org/wiki/Function_(mathematics))")
+
+    assert rendered == '<a href="https://en.wikipedia.org/wiki/Function_(mathematics)">Wiki</a>'

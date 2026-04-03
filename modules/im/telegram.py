@@ -1598,13 +1598,13 @@ class TelegramBot(BaseIMClient):
             f"⚙️ {self._t('modal.settings.title')}",
             "",
             f"1. {self._t('modal.settings.showMessageTypes')}",
-            f"   当前: {selected_text}",
+            f"   {self._t('modal.settings.current')}: {selected_text}",
             "",
             f"2. {self._t('modal.settings.requireMention')}",
-            f"   当前: {self._settings_mention_label(state.current_require_mention, state.global_require_mention)}",
+            f"   {self._t('modal.settings.current')}: {self._settings_mention_label(state.current_require_mention, state.global_require_mention)}",
             "",
             f"3. {self._t('modal.settings.language')}",
-            f"   当前: {language_label}",
+            f"   {self._t('modal.settings.current')}: {language_label}",
         ]
 
         rows: list[list[InlineButton]] = []

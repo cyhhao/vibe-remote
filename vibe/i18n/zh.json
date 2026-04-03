@@ -115,6 +115,7 @@
       "showMessageTypes": "显示这些消息类型：",
       "showMessageTypesPlaceholder": "选择要显示的消息类型",
       "tip": "您可以随时显示/隐藏消息类型。更改会立即应用于新消息。",
+      "current": "当前",
       "selectMentionBehavior": "选择 @提及行为",
       "optionDefault": "(默认) - {status}",
       "optionRequireMention": "需要 @提及",
