@@ -267,12 +267,19 @@ class TelegramBot(BaseIMClient):
         thread_id = str(context.thread_id or message.get("message_thread_id") or "").strip()
         return thread_id in {"", "1"}
 
+    def _has_topic_seed_content(self, context: MessageContext, text: str) -> bool:
+        if (text or "").strip():
+            return True
+        return bool(getattr(context, "files", None))
+
     def _should_auto_create_topic(self, context: MessageContext, message: dict[str, Any], text: str) -> bool:
         if not self.config.forum_auto_topic:
             return False
         if (context.platform_specific or {}).get("chat_type") != "supergroup":
             return False
         if not self._is_general_forum_context(context, message):
+            return False
+        if not self._has_topic_seed_content(context, text):
             return False
         if message.get("reply_to_message"):
             return False

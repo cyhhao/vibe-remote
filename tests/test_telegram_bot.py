@@ -154,6 +154,43 @@ def test_should_auto_create_topic_for_forum_general_without_thread_id() -> None:
     assert bot._should_auto_create_topic(context, message, "hello from general") is True
 
 
+def test_should_not_auto_create_topic_for_empty_general_service_update() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token", forum_auto_topic=True))
+    context = MessageContext(
+        user_id="42",
+        channel_id="-100123",
+        thread_id=None,
+        message_id="77",
+        platform="telegram",
+        platform_specific={"chat_type": "supergroup", "is_forum": True, "is_topic_message": False},
+    )
+    message = {
+        "chat": {"id": -100123, "type": "supergroup", "title": "Core Forum", "is_forum": True},
+        "message_id": 77,
+        "pinned_message": {"message_id": 12},
+    }
+
+    assert bot._should_auto_create_topic(context, message, "") is False
+
+
+def test_should_auto_create_topic_for_general_photo_without_text() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token", forum_auto_topic=True))
+    message = {
+        "chat": {"id": -100123, "type": "supergroup", "title": "Core Forum", "is_forum": True},
+        "message_id": 77,
+        "photo": [{"file_id": "small"}, {"file_id": "large", "file_size": 42}],
+    }
+    context = bot._build_message_context(
+        {
+            **message,
+            "from": {"id": 42},
+        }
+    )
+
+    assert context is not None
+    assert bot._should_auto_create_topic(context, message, "") is True
+
+
 def test_start_new_topic_session_allows_forum_context_without_thread_id() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token", forum_auto_topic=True))
     context = MessageContext(
