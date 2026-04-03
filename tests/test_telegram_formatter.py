@@ -46,3 +46,11 @@ def test_render_preserves_literal_placeholder_like_text() -> None:
     rendered = formatter.render("literal @@TG0@@ and `code`")
 
     assert rendered == "literal @@TG0@@ and <code>code</code>"
+
+
+def test_render_preserves_valid_nested_emphasis_structure() -> None:
+    formatter = TelegramFormatter()
+
+    rendered = formatter.render("**bold *italic***")
+
+    assert rendered == "<b>bold <i>italic</i></b>"

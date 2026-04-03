@@ -17,9 +17,7 @@ from .base_formatter import BaseMarkdownFormatter
 class TelegramFormatter(BaseMarkdownFormatter):
     _CODE_BLOCK_RE = re.compile(r"```(?:([\w.+-]+)\n)?(.*?)```", re.DOTALL)
     _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
-    _BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
-    _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
-    _STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL)
+    _INLINE_TOKENS = (("**", "b"), ("~~", "s"), ("*", "i"))
 
     def format_bold(self, text: str) -> str:
         return f"**{text}**"
@@ -101,11 +99,39 @@ class TelegramFormatter(BaseMarkdownFormatter):
 
         return "".join(rendered_parts)
 
+    def _render_inline_segment(self, text: str, start: int = 0, stop_token: str | None = None) -> tuple[str, int, bool]:
+        rendered_parts: list[str] = []
+        index = start
+
+        while index < len(text):
+            if stop_token and text.startswith(stop_token, index):
+                return "".join(rendered_parts), index + len(stop_token), True
+
+            matched_token = False
+            for token, tag in self._INLINE_TOKENS:
+                if not text.startswith(token, index):
+                    continue
+                inner, next_index, closed = self._render_inline_segment(text, index + len(token), token)
+                if closed and inner:
+                    rendered_parts.append(f"<{tag}>{inner}</{tag}>")
+                    index = next_index
+                else:
+                    rendered_parts.append(token)
+                    index += len(token)
+                matched_token = True
+                break
+
+            if matched_token:
+                continue
+
+            rendered_parts.append(text[index])
+            index += 1
+
+        return "".join(rendered_parts), index, False
+
     def _apply_inline_formatting(self, text: str) -> str:
-        text = self._BOLD_RE.sub(r"<b>\1</b>", text)
-        text = self._STRIKE_RE.sub(r"<s>\1</s>", text)
-        text = self._ITALIC_RE.sub(r"<i>\1</i>", text)
-        return text
+        rendered, _, _ = self._render_inline_segment(text)
+        return rendered
 
     def render(self, text: str) -> str:
         if not text:
