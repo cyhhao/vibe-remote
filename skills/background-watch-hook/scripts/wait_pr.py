@@ -125,12 +125,14 @@ def _fetch_new_pr_state(
     token: str | None,
     *,
     stop_after_id: int | None = None,
+    max_pages: int | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], int]:
     encoded_repo = urllib.parse.quote(repo, safe="/")
     pull_requests, request_count = list_paginated_with_count(
         f"https://api.github.com/repos/{encoded_repo}/pulls?state=all&sort=created&direction=desc",
         token,
         stop_after_id=stop_after_id,
+        max_pages=max_pages,
     )
     return {"pull_requests": pull_requests}, request_count
 
@@ -324,12 +326,16 @@ def main() -> int:
             state, requests_per_poll_count = _fetch_state(args.repo, args.pr, token)
         else:
             initial_pr_stop_after_id = None
+            initial_pr_max_pages = None
             if args.since_pr_id is not None and not args.catch_up:
                 initial_pr_stop_after_id = args.since_pr_id
+            elif not args.catch_up:
+                initial_pr_max_pages = 1
             state, requests_per_poll_count = _fetch_new_pr_state(
                 args.repo,
                 token,
                 stop_after_id=initial_pr_stop_after_id,
+                max_pages=initial_pr_max_pages,
             )
     except urllib.error.HTTPError as err:
         print(f"GitHub API error: {err.code} {err.reason}", file=sys.stderr)

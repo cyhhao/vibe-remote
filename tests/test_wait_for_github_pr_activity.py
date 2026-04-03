@@ -198,9 +198,10 @@ def test_fetch_new_pr_state_stops_after_cursor() -> None:
         ]
     ]
 
-    def _fake_list_paginated_with_count(base_url, token, *, stop_after_id=None):
+    def _fake_list_paginated_with_count(base_url, token, *, stop_after_id=None, max_pages=None):
         assert "pulls?state=all" in base_url
         assert stop_after_id == 405
+        assert max_pages is None
         return responses[0], 1
 
     with patch.object(module, "list_paginated_with_count", side_effect=_fake_list_paginated_with_count):
@@ -218,8 +219,8 @@ def test_main_uses_since_pr_cursor_for_initial_new_pr_fetch() -> None:
     module = _load_module()
     calls: list[int | None] = []
 
-    def _fake_fetch_new_pr_state(repo, token, *, stop_after_id=None):
-        calls.append(stop_after_id)
+    def _fake_fetch_new_pr_state(repo, token, *, stop_after_id=None, max_pages=None):
+        calls.append((stop_after_id, max_pages))
         return (
             {
                 "pull_requests": [
@@ -257,7 +258,47 @@ def test_main_uses_since_pr_cursor_for_initial_new_pr_fetch() -> None:
         rc = module.main()
 
     assert rc == 0
-    assert calls == [405]
+    assert calls == [(405, None)]
+    assert "pull_request #158" in stdout.getvalue()
+
+
+def test_main_bootstraps_new_pr_watch_from_first_page_only() -> None:
+    module = _load_module()
+    calls: list[tuple[int | None, int | None]] = []
+
+    def _fake_fetch_new_pr_state(repo, token, *, stop_after_id=None, max_pages=None):
+        calls.append((stop_after_id, max_pages))
+        if len(calls) == 1:
+            return ({"pull_requests": []}, 1)
+        return (
+            {
+                "pull_requests": [
+                    {
+                        "id": 410,
+                        "number": 158,
+                        "title": "New PR",
+                        "state": "open",
+                        "html_url": "https://github.com/example/repo/pull/158",
+                        "user": {"login": "cyhhao"},
+                    }
+                ]
+            },
+            1,
+        )
+
+    stdout = io.StringIO()
+    with (
+        patch.object(module, "_fetch_new_pr_state", side_effect=_fake_fetch_new_pr_state),
+        patch.object(module, "get_token", return_value="token"),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch.object(module.time, "sleep", return_value=None),
+        patch("sys.argv", ["wait_pr.py", "--repo", "cyhhao/vibe-remote", "--new-prs", "--interval", "1"]),
+        redirect_stdout(stdout),
+    ):
+        rc = module.main()
+
+    assert rc == 0
+    assert calls == [(None, 1), (None, None)]
     assert "pull_request #158" in stdout.getvalue()
 
 
@@ -266,8 +307,8 @@ def test_main_reduces_unauthenticated_new_pr_interval_after_bootstrap() -> None:
     fetch_calls: list[int | None] = []
     sleep_calls: list[float] = []
 
-    def _fake_fetch_new_pr_state(repo, token, *, stop_after_id=None):
-        fetch_calls.append(stop_after_id)
+    def _fake_fetch_new_pr_state(repo, token, *, stop_after_id=None, max_pages=None):
+        fetch_calls.append((stop_after_id, max_pages))
         if len(fetch_calls) == 1:
             return ({"pull_requests": []}, 50)
         if len(fetch_calls) == 2:
@@ -318,5 +359,5 @@ def test_main_reduces_unauthenticated_new_pr_interval_after_bootstrap() -> None:
 
     assert rc == 0
     assert sleep_calls == [3600.0, 60.0]
-    assert fetch_calls == [None, None, None]
+    assert fetch_calls == [(None, 1), (None, None), (None, None)]
     assert "pull_request #158" in stdout.getvalue()

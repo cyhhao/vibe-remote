@@ -81,6 +81,7 @@ def list_paginated_with_count(
     token: str | None,
     *,
     stop_after_id: int | None = None,
+    max_pages: int | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     items: list[dict[str, Any]] = []
     page = 1
@@ -99,6 +100,8 @@ def list_paginated_with_count(
         if stop_after_id is not None and stop_after_id > 0:
             if any(isinstance(item.get("id"), int) and int(item["id"]) <= stop_after_id for item in page_items):
                 break
+        if max_pages is not None and page >= max_pages:
+            break
         if len(payload) < 100:
             break
         page += 1
