@@ -52,6 +52,7 @@ class OpenCodeServerManager:
         self._lock_loop: Optional[asyncio.AbstractEventLoop] = None
         self._pid_file = paths.get_logs_dir() / "opencode_server.json"
         self._active_requests = 0
+        self._active_run_sessions: set[str] = set()
         self._auth_refresh_pending = False
 
     def _get_lock(self) -> asyncio.Lock:
@@ -142,10 +143,21 @@ class OpenCodeServerManager:
         self._base_url = None
         self._auth_refresh_pending = False
 
+    def _has_active_run_sessions(self) -> bool:
+        return bool(self._active_run_sessions)
+
+    async def mark_run_active(self, session_id: str) -> None:
+        async with self._get_lock():
+            self._active_run_sessions.add(session_id)
+
+    async def mark_run_inactive(self, session_id: str) -> None:
+        async with self._get_lock():
+            self._active_run_sessions.discard(session_id)
+
     @asynccontextmanager
     async def _request_scope(self):
         async with self._get_lock():
-            if self._auth_refresh_pending and self._active_requests == 0:
+            if self._auth_refresh_pending and self._active_requests == 0 and not self._has_active_run_sessions():
                 await self._restart_for_auth_refresh_locked()
             self._active_requests += 1
         try:
@@ -318,7 +330,7 @@ class OpenCodeServerManager:
 
     async def ensure_running(self) -> str:
         async with self._get_lock():
-            if self._auth_refresh_pending and self._active_requests == 0:
+            if self._auth_refresh_pending and self._active_requests == 0 and not self._has_active_run_sessions():
                 await self._restart_for_auth_refresh_locked()
             await self._cleanup_orphaned_managed_server()
 
@@ -448,11 +460,12 @@ class OpenCodeServerManager:
     async def restart_for_auth_refresh(self) -> None:
         """Terminate the shared server so the next request reloads refreshed auth."""
         async with self._get_lock():
-            if self._active_requests > 0:
+            if self._active_requests > 0 or self._has_active_run_sessions():
                 self._auth_refresh_pending = True
                 logger.info(
-                    "Deferring OpenCode auth refresh restart until %s active request(s) finish",
+                    "Deferring OpenCode auth refresh restart until %s active request(s) and %s active run(s) finish",
                     self._active_requests,
+                    len(self._active_run_sessions),
                 )
                 return
             await self._restart_for_auth_refresh_locked()
