@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from unittest.mock import patch
 
 
 def _load_module():
@@ -184,3 +185,28 @@ def test_render_new_pull_requests_includes_new_prs() -> None:
     assert output is not None
     assert "pull_request #157" in output
     assert pr_cursor == 401
+
+
+def test_fetch_new_pr_state_stops_after_cursor() -> None:
+    module = _load_module()
+    responses = [
+        [
+            {"id": 410, "number": 2, "title": "Newest", "state": "open"},
+            {"id": 405, "number": 1, "title": "Known", "state": "open"},
+        ]
+    ]
+
+    def _fake_list_paginated_with_count(base_url, token, *, stop_after_id=None):
+        assert "pulls?state=all" in base_url
+        assert stop_after_id == 405
+        return responses[0], 1
+
+    with patch.object(module, "list_paginated_with_count", side_effect=_fake_list_paginated_with_count):
+        state, request_count = module._fetch_new_pr_state(
+            "cyhhao/vibe-remote",
+            token="token",
+            stop_after_id=405,
+        )
+
+    assert state["pull_requests"][0]["id"] == 410
+    assert request_count == 1

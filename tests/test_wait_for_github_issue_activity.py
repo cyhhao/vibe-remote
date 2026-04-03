@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from unittest.mock import patch
 
 
 def _load_module():
@@ -97,3 +98,38 @@ def test_render_issue_comments_ignores_self_authored_comment_but_advances_cursor
 
     assert output is None
     assert issue_comment_cursor == 302
+
+
+def test_fetch_new_issue_state_keeps_request_count_from_raw_issue_pages() -> None:
+    module = _load_module()
+    raw_items = [
+        {
+            "id": 401,
+            "number": 41,
+            "title": "PR disguised by /issues",
+            "state": "open",
+            "pull_request": {"url": "https://api.github.com/repos/example/repo/pulls/41"},
+        },
+        {
+            "id": 400,
+            "number": 40,
+            "title": "Real issue",
+            "state": "open",
+        },
+    ]
+
+    def _fake_list_paginated_with_count(base_url, token, *, stop_after_id=None):
+        assert "issues?state=all" in base_url
+        assert stop_after_id == 400
+        return raw_items, 3
+
+    with patch.object(module, "list_paginated_with_count", side_effect=_fake_list_paginated_with_count):
+        state, request_count = module._fetch_new_issue_state(
+            "cyhhao/vibe-remote",
+            token="token",
+            stop_after_id=400,
+        )
+
+    assert len(state["issues"]) == 1
+    assert state["issues"][0]["id"] == 400
+    assert request_count == 3

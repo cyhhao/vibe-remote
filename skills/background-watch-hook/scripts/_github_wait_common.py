@@ -72,21 +72,37 @@ def get_authenticated_login(token: str | None) -> str | None:
 
 
 def list_paginated(base_url: str, token: str | None) -> list[dict[str, Any]]:
+    items, _request_count = list_paginated_with_count(base_url, token)
+    return items
+
+
+def list_paginated_with_count(
+    base_url: str,
+    token: str | None,
+    *,
+    stop_after_id: int | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     items: list[dict[str, Any]] = []
     page = 1
+    request_count = 0
     while True:
         separator = "&" if "?" in base_url else "?"
         url = f"{base_url}{separator}per_page=100&page={page}"
         payload = github_get(url, token)
+        request_count += 1
         if not isinstance(payload, list):
             raise RuntimeError(f"Expected a JSON list from {url}")
         if not payload:
             break
-        items.extend(item for item in payload if isinstance(item, dict))
+        page_items = [item for item in payload if isinstance(item, dict)]
+        items.extend(page_items)
+        if stop_after_id is not None and stop_after_id > 0:
+            if any(isinstance(item.get("id"), int) and int(item["id"]) <= stop_after_id for item in page_items):
+                break
         if len(payload) < 100:
             break
         page += 1
-    return items
+    return items, request_count
 
 
 def squash(text: str | None, *, limit: int = 140) -> str:

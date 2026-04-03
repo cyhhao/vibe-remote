@@ -21,6 +21,7 @@ from _github_wait_common import (  # noqa: E402
     get_authenticated_login,
     get_token,
     list_paginated,
+    list_paginated_with_count,
     max_id,
     min_interval_for_unauthenticated,
     requests_per_poll,
@@ -90,36 +91,48 @@ def _format_pull_request(pr: dict[str, Any]) -> str:
     return f"- pull_request #{pr_number} by {author} ({state})\n  {title}\n  {url}"
 
 
-def _fetch_state(repo: str, pr_number: int, token: str | None) -> dict[str, list[dict[str, Any]]]:
+def _fetch_state(repo: str, pr_number: int, token: str | None) -> tuple[dict[str, list[dict[str, Any]]], int]:
     encoded_repo = urllib.parse.quote(repo, safe="/")
-    reviews = list_paginated(f"https://api.github.com/repos/{encoded_repo}/pulls/{pr_number}/reviews", token)
-    review_comments = list_paginated(
+    reviews, review_requests = list_paginated_with_count(
+        f"https://api.github.com/repos/{encoded_repo}/pulls/{pr_number}/reviews",
+        token,
+    )
+    review_comments, review_comment_requests = list_paginated_with_count(
         f"https://api.github.com/repos/{encoded_repo}/pulls/{pr_number}/comments",
         token,
     )
-    issue_comments = list_paginated(
+    issue_comments, issue_comment_requests = list_paginated_with_count(
         f"https://api.github.com/repos/{encoded_repo}/issues/{pr_number}/comments",
         token,
     )
-    reactions = list_paginated(
+    reactions, reaction_requests = list_paginated_with_count(
         f"https://api.github.com/repos/{encoded_repo}/issues/{pr_number}/reactions",
         token,
     )
-    return {
-        "reviews": reviews,
-        "review_comments": review_comments,
-        "issue_comments": issue_comments,
-        "reactions": reactions,
-    }
+    return (
+        {
+            "reviews": reviews,
+            "review_comments": review_comments,
+            "issue_comments": issue_comments,
+            "reactions": reactions,
+        },
+        review_requests + review_comment_requests + issue_comment_requests + reaction_requests,
+    )
 
 
-def _fetch_new_pr_state(repo: str, token: str | None) -> dict[str, list[dict[str, Any]]]:
+def _fetch_new_pr_state(
+    repo: str,
+    token: str | None,
+    *,
+    stop_after_id: int | None = None,
+) -> tuple[dict[str, list[dict[str, Any]]], int]:
     encoded_repo = urllib.parse.quote(repo, safe="/")
-    pull_requests = list_paginated(
+    pull_requests, request_count = list_paginated_with_count(
         f"https://api.github.com/repos/{encoded_repo}/pulls?state=all&sort=created&direction=desc",
         token,
+        stop_after_id=stop_after_id,
     )
-    return {"pull_requests": pull_requests}
+    return {"pull_requests": pull_requests}, request_count
 
 
 def _render_activity(
@@ -307,9 +320,9 @@ def main() -> int:
 
     try:
         if args.pr is not None:
-            state = _fetch_state(args.repo, args.pr, token)
+            state, requests_per_poll_count = _fetch_state(args.repo, args.pr, token)
         else:
-            state = _fetch_new_pr_state(args.repo, token)
+            state, requests_per_poll_count = _fetch_new_pr_state(args.repo, token)
     except urllib.error.HTTPError as err:
         print(f"GitHub API error: {err.code} {err.reason}", file=sys.stderr)
         return 1
@@ -318,7 +331,6 @@ def main() -> int:
         return 1
 
     if token is None:
-        requests_per_poll_count = requests_per_poll(*state.values())
         bootstrap_requests = requests_per_poll_count
         unauthenticated_min = min_interval_for_unauthenticated(
             requests_per_poll_count,
@@ -428,9 +440,13 @@ def main() -> int:
 
         try:
             if args.pr is not None:
-                state = _fetch_state(args.repo, args.pr, token)
+                state, requests_per_poll_count = _fetch_state(args.repo, args.pr, token)
             else:
-                state = _fetch_new_pr_state(args.repo, token)
+                state, requests_per_poll_count = _fetch_new_pr_state(
+                    args.repo,
+                    token,
+                    stop_after_id=pr_cursor if pr_cursor > 0 else None,
+                )
         except urllib.error.HTTPError as err:
             if token is None and err.code in {403, 429}:
                 print(
@@ -448,7 +464,6 @@ def main() -> int:
             continue
 
         if token is None:
-            requests_per_poll_count = requests_per_poll(*state.values())
             unauthenticated_min = min_interval_for_unauthenticated(
                 requests_per_poll_count,
                 bootstrap_requests=bootstrap_requests,

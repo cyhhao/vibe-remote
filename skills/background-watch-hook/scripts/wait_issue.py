@@ -20,7 +20,7 @@ from _github_wait_common import (  # noqa: E402
     filter_new,
     get_authenticated_login,
     get_token,
-    list_paginated,
+    list_paginated_with_count,
     max_id,
     min_interval_for_unauthenticated,
     requests_per_poll,
@@ -56,23 +56,33 @@ def _is_self_authored_comment(comment: dict[str, Any], viewer_login: str | None)
     return str(author).casefold() == viewer_login.casefold()
 
 
-def _fetch_new_issue_state(repo: str, token: str | None) -> dict[str, list[dict[str, Any]]]:
+def _fetch_new_issue_state(
+    repo: str,
+    token: str | None,
+    *,
+    stop_after_id: int | None = None,
+) -> tuple[dict[str, list[dict[str, Any]]], int]:
     encoded_repo = urllib.parse.quote(repo, safe="/")
-    raw_issues = list_paginated(
+    raw_issues, request_count = list_paginated_with_count(
         f"https://api.github.com/repos/{encoded_repo}/issues?state=all&sort=created&direction=desc",
         token,
+        stop_after_id=stop_after_id,
     )
     issues = [item for item in raw_issues if not _is_pull_request_issue(item)]
-    return {"issues": issues}
+    return {"issues": issues}, request_count
 
 
-def _fetch_issue_comment_state(repo: str, issue_number: int, token: str | None) -> dict[str, list[dict[str, Any]]]:
+def _fetch_issue_comment_state(
+    repo: str,
+    issue_number: int,
+    token: str | None,
+) -> tuple[dict[str, list[dict[str, Any]]], int]:
     encoded_repo = urllib.parse.quote(repo, safe="/")
-    comments = list_paginated(
+    comments, request_count = list_paginated_with_count(
         f"https://api.github.com/repos/{encoded_repo}/issues/{issue_number}/comments",
         token,
     )
-    return {"issue_comments": comments}
+    return {"issue_comments": comments}, request_count
 
 
 def _render_new_issues(
@@ -196,9 +206,9 @@ def main() -> int:
 
     try:
         if args.issue is not None:
-            state = _fetch_issue_comment_state(args.repo, args.issue, token)
+            state, requests_per_poll_count = _fetch_issue_comment_state(args.repo, args.issue, token)
         else:
-            state = _fetch_new_issue_state(args.repo, token)
+            state, requests_per_poll_count = _fetch_new_issue_state(args.repo, token)
     except urllib.error.HTTPError as err:
         print(f"GitHub API error: {err.code} {err.reason}", file=sys.stderr)
         return 1
@@ -207,7 +217,6 @@ def main() -> int:
         return 1
 
     if token is None:
-        requests_per_poll_count = requests_per_poll(*state.values())
         bootstrap_requests = requests_per_poll_count
         unauthenticated_min = min_interval_for_unauthenticated(
             requests_per_poll_count,
@@ -283,9 +292,13 @@ def main() -> int:
 
         try:
             if args.issue is not None:
-                state = _fetch_issue_comment_state(args.repo, args.issue, token)
+                state, requests_per_poll_count = _fetch_issue_comment_state(args.repo, args.issue, token)
             else:
-                state = _fetch_new_issue_state(args.repo, token)
+                state, requests_per_poll_count = _fetch_new_issue_state(
+                    args.repo,
+                    token,
+                    stop_after_id=issue_cursor if issue_cursor > 0 else None,
+                )
         except urllib.error.HTTPError as err:
             if token is None and err.code in {403, 429}:
                 print(
@@ -303,7 +316,6 @@ def main() -> int:
             continue
 
         if token is None:
-            requests_per_poll_count = requests_per_poll(*state.values())
             unauthenticated_min = min_interval_for_unauthenticated(
                 requests_per_poll_count,
                 bootstrap_requests=bootstrap_requests,
