@@ -235,6 +235,8 @@ def main() -> int:
             initial_raw_issue_max_pages = None
             if args.since_raw_issue_id is not None and not args.catch_up:
                 initial_raw_issue_stop_after_id = args.since_raw_issue_id
+            elif args.since_issue_id is not None and not args.catch_up:
+                initial_raw_issue_stop_after_id = args.since_issue_id
             elif not args.catch_up:
                 initial_raw_issue_max_pages = 1
             state, requests_per_poll_count = _fetch_new_issue_state(
