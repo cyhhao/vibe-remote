@@ -76,11 +76,14 @@ def _fetch_issue_comment_state(
     repo: str,
     issue_number: int,
     token: str | None,
+    *,
+    stop_after_id: int | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], int]:
     encoded_repo = urllib.parse.quote(repo, safe="/")
     comments, request_count = list_paginated_with_count(
         f"https://api.github.com/repos/{encoded_repo}/issues/{issue_number}/comments",
         token,
+        stop_after_id=stop_after_id,
     )
     return {"issue_comments": comments}, request_count
 
@@ -216,7 +219,15 @@ def main() -> int:
 
     try:
         if args.issue is not None:
-            state, requests_per_poll_count = _fetch_issue_comment_state(args.repo, args.issue, token)
+            initial_issue_comment_stop_after_id = None
+            if args.since_issue_comment_id is not None and not args.catch_up:
+                initial_issue_comment_stop_after_id = args.since_issue_comment_id
+            state, requests_per_poll_count = _fetch_issue_comment_state(
+                args.repo,
+                args.issue,
+                token,
+                stop_after_id=initial_issue_comment_stop_after_id,
+            )
         else:
             initial_raw_issue_stop_after_id = None
             if args.since_raw_issue_id is not None and not args.catch_up:
@@ -323,7 +334,12 @@ def main() -> int:
 
         try:
             if args.issue is not None:
-                state, requests_per_poll_count = _fetch_issue_comment_state(args.repo, args.issue, token)
+                state, requests_per_poll_count = _fetch_issue_comment_state(
+                    args.repo,
+                    args.issue,
+                    token,
+                    stop_after_id=issue_comment_cursor if issue_comment_cursor > 0 else None,
+                )
             else:
                 state, requests_per_poll_count = _fetch_new_issue_state(
                     args.repo,

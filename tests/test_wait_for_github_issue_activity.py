@@ -102,6 +102,40 @@ def test_render_issue_comments_ignores_self_authored_comment_but_advances_cursor
     assert issue_comment_cursor == 302
 
 
+def test_fetch_issue_comment_state_stops_after_cursor() -> None:
+    module = _load_module()
+    comments = [
+        {
+            "id": 305,
+            "body": "Newest",
+            "html_url": "https://github.com/example/repo/issues/24#issuecomment-305",
+            "user": {"login": "reviewer"},
+        },
+        {
+            "id": 302,
+            "body": "Known",
+            "html_url": "https://github.com/example/repo/issues/24#issuecomment-302",
+            "user": {"login": "reviewer"},
+        },
+    ]
+
+    def _fake_list_paginated_with_count(base_url, token, *, stop_after_id=None):
+        assert "issues/24/comments" in base_url
+        assert stop_after_id == 302
+        return comments, 2
+
+    with patch.object(module, "list_paginated_with_count", side_effect=_fake_list_paginated_with_count):
+        state, request_count = module._fetch_issue_comment_state(
+            "cyhhao/vibe-remote",
+            24,
+            token="token",
+            stop_after_id=302,
+        )
+
+    assert state["issue_comments"][0]["id"] == 305
+    assert request_count == 2
+
+
 def test_fetch_new_issue_state_tracks_raw_cursor_and_request_count() -> None:
     module = _load_module()
     raw_items = [
@@ -243,6 +277,52 @@ def test_main_uses_since_raw_issue_cursor_for_initial_new_issue_fetch() -> None:
     assert rc == 0
     assert calls == [401]
     assert "issue #41" in stdout.getvalue()
+
+
+def test_main_uses_since_issue_comment_cursor_for_initial_issue_fetch() -> None:
+    module = _load_module()
+    calls: list[int | None] = []
+
+    def _fake_fetch_issue_comment_state(repo, issue_number, token, *, stop_after_id=None):
+        calls.append(stop_after_id)
+        return (
+            {
+                "issue_comments": [
+                    {
+                        "id": 305,
+                        "body": "New comment",
+                        "html_url": "https://github.com/example/repo/issues/24#issuecomment-305",
+                        "user": {"login": "reviewer"},
+                    }
+                ]
+            },
+            1,
+        )
+
+    stdout = io.StringIO()
+    with (
+        patch.object(module, "_fetch_issue_comment_state", side_effect=_fake_fetch_issue_comment_state),
+        patch.object(module, "get_token", return_value="token"),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch(
+            "sys.argv",
+            [
+                "wait_issue.py",
+                "--repo",
+                "cyhhao/vibe-remote",
+                "--issue",
+                "24",
+                "--since-issue-comment-id",
+                "302",
+            ],
+        ),
+        redirect_stdout(stdout),
+    ):
+        rc = module.main()
+
+    assert rc == 0
+    assert calls == [302]
+    assert "issue_comment #305" in stdout.getvalue()
 
 
 def test_main_reduces_unauthenticated_new_issue_interval_after_bootstrap() -> None:
