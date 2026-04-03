@@ -87,7 +87,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`/tmp/user_preferences.md`", prompt)
         self.assertIn("`<platform>/<user_id>`", prompt)
 
-    def test_prompt_includes_task_watch_and_hook_usage_with_threadless_default_session_key(self):
+    def test_prompt_includes_task_watch_and_hook_usage_with_thread_default_session_key(self):
         context = MessageContext(
             user_id="U1",
             channel_id="C1",
@@ -108,10 +108,11 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             "Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.",
             prompt,
         )
-        self.assertIn("Default session key: `slack::channel::C1`", prompt)
+        self.assertIn("Default session key: `slack::channel::C1::thread::171717.123`", prompt)
+        self.assertIn("Channel-level session key: `slack::channel::C1`", prompt)
         self.assertIn("Current thread ID: `171717.123`", prompt)
         self.assertIn(
-            "Use `--post-to channel` when the task, watch, or hook should keep thread context but publish to the parent channel.",
+            "`--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.",
             prompt,
         )
         self.assertIn(
@@ -155,7 +156,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
                 fallback_platform="slack",
             )
 
-        self.assertIn("Default session key: `slack::channel::C1`", prompt)
+        self.assertIn("Default session key: `slack::channel::C1::thread::171717.123`", prompt)
+        self.assertIn("Channel-level session key: `slack::channel::C1`", prompt)
         self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
 
     def test_prompt_handles_missing_platform_specific(self):

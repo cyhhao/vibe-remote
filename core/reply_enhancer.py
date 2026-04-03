@@ -195,13 +195,15 @@ Use `vibe watch add` for managed background waiters that should keep running unt
 Use `vibe hook send --session-key ... --prompt ...` for one-shot asynchronous sends without saving a task or watch.
 
 Current conversation targeting:
-- Default session key: `{session_key}`
+- Default session key: `{default_session_key}`
+- Channel-level session key: `{channel_session_key}`
 - Current thread ID: `{thread_id}`
 
 Rules:
-- The default session key intentionally does not include a thread ID.
-- Only append `::thread::<thread_id>` to `--session-key` when the user explicitly wants replies to stay in the current thread.
-- Use `--post-to channel` when the task, watch, or hook should keep thread context but publish to the parent channel.
+- `session_key` controls the conversation scope that Vibe Remote will continue using.
+- The default session key should usually stay at the current thread scope when a thread exists.
+- Use the channel-level session key when the work should continue outside the current thread and create or reuse a channel-scoped conversation.
+- `--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.
 - Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
 - Use `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, and `vibe watch remove` to manage background work after creation.
 - Prefer `vibe watch add` over ad-hoc `nohup` or shell-detached jobs when the user wants a managed background task.
@@ -229,17 +231,38 @@ Keep entries short, deduplicated, and free of secrets unless the user explicitly
 """
 
 
-def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform: Optional[str] = None) -> str:
-    from core.scheduled_tasks import build_session_key_for_context
+def _build_prompt_session_key(
+    context: MessageContext,
+    *,
+    include_thread: bool,
+    fallback_platform: Optional[str] = None,
+) -> str:
+    platform_specific = context.platform_specific or {}
+    platform = context.platform or platform_specific.get("platform") or fallback_platform or "<platform>"
+    is_dm = bool(platform_specific.get("is_dm", False))
+    scope_type = "user" if is_dm else "channel"
+    scope_id = context.user_id if is_dm else context.channel_id
+    base = f"{platform}::{scope_type}::{scope_id}"
+    if include_thread and context.thread_id:
+        return f"{base}::thread::{context.thread_id}"
+    return base
 
-    default_key = build_session_key_for_context(
+
+def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform: Optional[str] = None) -> str:
+    default_key = _build_prompt_session_key(
+        context,
+        include_thread=True,
+        fallback_platform=fallback_platform,
+    )
+    channel_key = _build_prompt_session_key(
         context,
         include_thread=False,
         fallback_platform=fallback_platform,
-    ).to_key(include_thread=False)
+    )
     thread_id = context.thread_id or "(none)"
     return _SCHEDULED_TASKS_PROMPT.format(
-        session_key=default_key,
+        default_session_key=default_key,
+        channel_session_key=channel_key,
         thread_id=thread_id,
     )
 
