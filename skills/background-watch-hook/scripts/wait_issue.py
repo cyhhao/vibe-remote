@@ -69,7 +69,7 @@ def _fetch_new_issue_state(
         stop_after_id=stop_after_id,
     )
     issues = [item for item in raw_issues if not _is_pull_request_issue(item)]
-    return {"issues": issues}, request_count
+    return {"issues": issues, "raw_issue_cursor": max_id(raw_issues)}, request_count
 
 
 def _fetch_issue_comment_state(
@@ -141,13 +141,21 @@ def _render_issue_comments(
     return "\n".join(lines), next_issue_comment_cursor
 
 
-def _write_cursor_output(path: str | None, *, issue_cursor: int | None = None, issue_comment_cursor: int | None = None) -> None:
+def _write_cursor_output(
+    path: str | None,
+    *,
+    issue_cursor: int | None = None,
+    raw_issue_cursor: int | None = None,
+    issue_comment_cursor: int | None = None,
+) -> None:
     if not path:
         return
 
     payload: dict[str, int] = {}
     if issue_cursor is not None:
         payload["issue_cursor"] = issue_cursor
+    if raw_issue_cursor is not None:
+        payload["raw_issue_cursor"] = raw_issue_cursor
     if issue_comment_cursor is not None:
         payload["issue_comment_cursor"] = issue_comment_cursor
     with open(path, "w", encoding="utf-8") as handle:
@@ -168,6 +176,7 @@ def main() -> int:
         help="Overall timeout in seconds; default 21600 (6 hours), 0 means forever",
     )
     parser.add_argument("--since-issue-id", type=int, default=None, help="Existing repository issue cursor")
+    parser.add_argument("--since-raw-issue-id", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--since-issue-comment-id", type=int, default=None, help="Existing issue comment cursor")
     parser.add_argument("--cursor-output", help=argparse.SUPPRESS)
     parser.add_argument("--event-limit", type=int, default=8, help="Maximum number of new events to include in stdout")
@@ -264,8 +273,16 @@ def main() -> int:
             return 0
     else:
         issue_cursor = args.since_issue_id if args.since_issue_id is not None else (0 if args.catch_up else max_id(state["issues"]))
+        raw_issue_cursor = (
+            args.since_raw_issue_id
+            if args.since_raw_issue_id is not None
+            else (0 if args.catch_up else state["raw_issue_cursor"])
+        )
         print(
-            f"Watching GitHub new issues in {args.repo} from cursor: issue={issue_cursor} catch_up={args.catch_up}",
+            (
+                f"Watching GitHub new issues in {args.repo} from cursor: issue={issue_cursor} "
+                f"raw_issue={raw_issue_cursor} catch_up={args.catch_up}"
+            ),
             file=sys.stderr,
         )
         initial_output, issue_cursor = _render_new_issues(
@@ -274,8 +291,13 @@ def main() -> int:
             issue_cursor=issue_cursor,
             event_limit=args.event_limit,
         )
+        raw_issue_cursor = max(raw_issue_cursor, state["raw_issue_cursor"])
         if initial_output is not None:
-            _write_cursor_output(args.cursor_output, issue_cursor=issue_cursor)
+            _write_cursor_output(
+                args.cursor_output,
+                issue_cursor=issue_cursor,
+                raw_issue_cursor=raw_issue_cursor,
+            )
             print(initial_output)
             return 0
 
@@ -297,7 +319,7 @@ def main() -> int:
                 state, requests_per_poll_count = _fetch_new_issue_state(
                     args.repo,
                     token,
-                    stop_after_id=issue_cursor if issue_cursor > 0 else None,
+                    stop_after_id=raw_issue_cursor if raw_issue_cursor > 0 else None,
                 )
         except urllib.error.HTTPError as err:
             if token is None and err.code in {403, 429}:
@@ -345,6 +367,7 @@ def main() -> int:
                 continue
             _write_cursor_output(args.cursor_output, issue_comment_cursor=issue_comment_cursor)
         else:
+            raw_issue_cursor = max(raw_issue_cursor, state["raw_issue_cursor"])
             output, issue_cursor = _render_new_issues(
                 repo=args.repo,
                 state=state,
@@ -353,7 +376,11 @@ def main() -> int:
             )
             if output is None:
                 continue
-            _write_cursor_output(args.cursor_output, issue_cursor=issue_cursor)
+            _write_cursor_output(
+                args.cursor_output,
+                issue_cursor=issue_cursor,
+                raw_issue_cursor=raw_issue_cursor,
+            )
 
         print(output)
         return 0

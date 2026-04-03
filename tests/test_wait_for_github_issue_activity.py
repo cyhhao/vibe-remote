@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import importlib.util
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -100,7 +102,7 @@ def test_render_issue_comments_ignores_self_authored_comment_but_advances_cursor
     assert issue_comment_cursor == 302
 
 
-def test_fetch_new_issue_state_keeps_request_count_from_raw_issue_pages() -> None:
+def test_fetch_new_issue_state_tracks_raw_cursor_and_request_count() -> None:
     module = _load_module()
     raw_items = [
         {
@@ -120,16 +122,74 @@ def test_fetch_new_issue_state_keeps_request_count_from_raw_issue_pages() -> Non
 
     def _fake_list_paginated_with_count(base_url, token, *, stop_after_id=None):
         assert "issues?state=all" in base_url
-        assert stop_after_id == 400
+        assert stop_after_id == 401
         return raw_items, 3
 
     with patch.object(module, "list_paginated_with_count", side_effect=_fake_list_paginated_with_count):
         state, request_count = module._fetch_new_issue_state(
             "cyhhao/vibe-remote",
             token="token",
-            stop_after_id=400,
+            stop_after_id=401,
         )
 
     assert len(state["issues"]) == 1
     assert state["issues"][0]["id"] == 400
+    assert state["raw_issue_cursor"] == 401
     assert request_count == 3
+
+
+def test_main_uses_raw_issue_cursor_for_new_issue_paging() -> None:
+    module = _load_module()
+    calls: list[int | None] = []
+
+    def _fake_fetch_new_issue_state(repo, token, *, stop_after_id=None):
+        calls.append(stop_after_id)
+        if len(calls) == 1:
+            return (
+                {
+                    "issues": [
+                        {
+                            "id": 400,
+                            "number": 40,
+                            "title": "Existing issue",
+                            "state": "open",
+                            "html_url": "https://github.com/example/repo/issues/40",
+                            "user": {"login": "someone"},
+                        }
+                    ],
+                    "raw_issue_cursor": 401,
+                },
+                2,
+            )
+        assert stop_after_id == 401
+        return (
+            {
+                "issues": [
+                    {
+                        "id": 405,
+                        "number": 41,
+                        "title": "New issue",
+                        "state": "open",
+                        "html_url": "https://github.com/example/repo/issues/41",
+                        "user": {"login": "someone"},
+                    }
+                ],
+                "raw_issue_cursor": 406,
+            },
+            1,
+        )
+
+    stdout = io.StringIO()
+    with (
+        patch.object(module, "_fetch_new_issue_state", side_effect=_fake_fetch_new_issue_state),
+        patch.object(module, "get_token", return_value="token"),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch.object(module.time, "sleep", return_value=None),
+        patch("sys.argv", ["wait_issue.py", "--repo", "cyhhao/vibe-remote", "--new-issues", "--interval", "1"]),
+        redirect_stdout(stdout),
+    ):
+        rc = module.main()
+
+    assert rc == 0
+    assert calls == [None, 401]
+    assert "issue #41" in stdout.getvalue()
