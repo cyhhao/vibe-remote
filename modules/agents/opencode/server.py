@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import logging
 import os
@@ -50,6 +51,9 @@ class OpenCodeServerManager:
         self._lock: Optional[asyncio.Lock] = None
         self._lock_loop: Optional[asyncio.AbstractEventLoop] = None
         self._pid_file = paths.get_logs_dir() / "opencode_server.json"
+        self._active_requests = 0
+        self._active_run_sessions: set[str] = set()
+        self._auth_refresh_pending = False
 
     def _get_lock(self) -> asyncio.Lock:
         """Get or create an asyncio.Lock bound to the current event loop."""
@@ -107,6 +111,60 @@ class OpenCodeServerManager:
             self._http_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=total_timeout))
             self._http_session_loop = current_loop
         return self._http_session
+
+    async def _close_http_session_locked(self) -> None:
+        if self._http_session:
+            await self._http_session.close()
+            self._http_session = None
+            self._http_session_loop = None
+
+    async def _restart_for_auth_refresh_locked(self) -> None:
+        await self._close_http_session_locked()
+
+        targets: list[int] = []
+        info = self._read_pid_file()
+        pid = info.get("pid") if isinstance(info, dict) else None
+        if isinstance(pid, int) and self._pid_exists(pid):
+            cmd = self._get_pid_command(pid)
+            if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                targets.append(pid)
+
+        if not targets:
+            for candidate in self._find_opencode_serve_pids(self.port):
+                cmd = self._get_pid_command(candidate)
+                if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                    targets.append(candidate)
+
+        for target_pid in dict.fromkeys(targets):
+            await self._terminate_pid(target_pid, reason="auth refresh")
+
+        self._clear_pid_file()
+        self._process = None
+        self._base_url = None
+        self._auth_refresh_pending = False
+
+    def _has_active_run_sessions(self) -> bool:
+        return bool(self._active_run_sessions)
+
+    async def mark_run_active(self, session_id: str) -> None:
+        async with self._get_lock():
+            self._active_run_sessions.add(session_id)
+
+    async def mark_run_inactive(self, session_id: str) -> None:
+        async with self._get_lock():
+            self._active_run_sessions.discard(session_id)
+
+    @asynccontextmanager
+    async def _request_scope(self):
+        async with self._get_lock():
+            if self._auth_refresh_pending and self._active_requests == 0 and not self._has_active_run_sessions():
+                await self._restart_for_auth_refresh_locked()
+            self._active_requests += 1
+        try:
+            yield
+        finally:
+            async with self._get_lock():
+                self._active_requests = max(0, self._active_requests - 1)
 
     def _read_pid_file(self) -> Optional[Dict[str, Any]]:
         try:
@@ -272,6 +330,8 @@ class OpenCodeServerManager:
 
     async def ensure_running(self) -> str:
         async with self._get_lock():
+            if self._auth_refresh_pending and self._active_requests == 0 and not self._has_active_run_sessions():
+                await self._restart_for_auth_refresh_locked()
             await self._cleanup_orphaned_managed_server()
 
             if await self._is_healthy():
@@ -367,10 +427,7 @@ class OpenCodeServerManager:
 
     async def stop(self) -> None:
         async with self._get_lock():
-            if self._http_session:
-                await self._http_session.close()
-                self._http_session = None
-                self._http_session_loop = None
+            await self._close_http_session_locked()
 
             # Don't terminate OpenCode server on vibe-remote shutdown.
             # Let it continue running so the next vibe-remote instance can adopt it.
@@ -400,6 +457,19 @@ class OpenCodeServerManager:
         # Don't clear _process reference - just let it be garbage collected.
         self._process = None
 
+    async def restart_for_auth_refresh(self) -> None:
+        """Terminate the shared server so the next request reloads refreshed auth."""
+        async with self._get_lock():
+            if self._active_requests > 0 or self._has_active_run_sessions():
+                self._auth_refresh_pending = True
+                logger.info(
+                    "Deferring OpenCode auth refresh restart until %s active request(s) and %s active run(s) finish",
+                    self._active_requests,
+                    len(self._active_run_sessions),
+                )
+                return
+            await self._restart_for_auth_refresh_locked()
+
     @classmethod
     def stop_instance_sync(cls) -> None:
         if cls._instance:
@@ -411,20 +481,21 @@ class OpenCodeServerManager:
         logger.info("OpenCode server left running for next vibe-remote instance to adopt")
 
     async def create_session(self, directory: str, title: Optional[str] = None) -> Dict[str, Any]:
-        session = await self._get_http_session()
-        body: Dict[str, Any] = {}
-        if title:
-            body["title"] = title
+        async with self._request_scope():
+            session = await self._get_http_session()
+            body: Dict[str, Any] = {}
+            if title:
+                body["title"] = title
 
-        async with session.post(
-            f"{self.base_url}/session",
-            json=body,
-            headers={"x-opencode-directory": directory},
-        ) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                raise RuntimeError(f"Failed to create session: {resp.status} {text}")
-            return await resp.json()
+            async with session.post(
+                f"{self.base_url}/session",
+                json=body,
+                headers={"x-opencode-directory": directory},
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise RuntimeError(f"Failed to create session: {resp.status} {text}")
+                return await resp.json()
 
     async def send_message(
         self,
@@ -435,27 +506,28 @@ class OpenCodeServerManager:
         model: Optional[Dict[str, str]] = None,
         reasoning_effort: Optional[str] = None,
     ) -> Dict[str, Any]:
-        session = await self._get_http_session()
+        async with self._request_scope():
+            session = await self._get_http_session()
 
-        body: Dict[str, Any] = {
-            "parts": [{"type": "text", "text": text}],
-        }
-        if agent:
-            body["agent"] = agent
-        if model:
-            body["model"] = model
-        if reasoning_effort:
-            body["variant"] = reasoning_effort
+            body: Dict[str, Any] = {
+                "parts": [{"type": "text", "text": text}],
+            }
+            if agent:
+                body["agent"] = agent
+            if model:
+                body["model"] = model
+            if reasoning_effort:
+                body["variant"] = reasoning_effort
 
-        async with session.post(
-            f"{self.base_url}/session/{session_id}/message",
-            json=body,
-            headers={"x-opencode-directory": directory},
-        ) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                raise RuntimeError(f"Failed to send message: {resp.status} {error_text}")
-            return await resp.json()
+            async with session.post(
+                f"{self.base_url}/session/{session_id}/message",
+                json=body,
+                headers={"x-opencode-directory": directory},
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise RuntimeError(f"Failed to send message: {resp.status} {error_text}")
+                return await resp.json()
 
     async def prompt_async(
         self,
@@ -470,106 +542,113 @@ class OpenCodeServerManager:
     ) -> None:
         """Start a prompt asynchronously without holding the HTTP request open."""
 
-        session = await self._get_http_session()
+        async with self._request_scope():
+            session = await self._get_http_session()
 
-        body: Dict[str, Any] = {
-            "parts": [{"type": "text", "text": text}],
-        }
-        if agent:
-            body["agent"] = agent
-        if model:
-            body["model"] = model
-        if reasoning_effort:
-            body["variant"] = reasoning_effort
-        if system:
-            body["system"] = system
-        if tools:
-            body["tools"] = tools
+            body: Dict[str, Any] = {
+                "parts": [{"type": "text", "text": text}],
+            }
+            if agent:
+                body["agent"] = agent
+            if model:
+                body["model"] = model
+            if reasoning_effort:
+                body["variant"] = reasoning_effort
+            if system:
+                body["system"] = system
+            if tools:
+                body["tools"] = tools
 
-        async with session.post(
-            f"{self.base_url}/session/{session_id}/prompt_async",
-            json=body,
-            headers={"x-opencode-directory": directory},
-        ) as resp:
-            # OpenCode returns 204 when accepted.
-            if resp.status not in (200, 204):
-                error_text = await resp.text()
-                raise RuntimeError(f"Failed to start async prompt: {resp.status} {error_text}")
+            async with session.post(
+                f"{self.base_url}/session/{session_id}/prompt_async",
+                json=body,
+                headers={"x-opencode-directory": directory},
+            ) as resp:
+                # OpenCode returns 204 when accepted.
+                if resp.status not in (200, 204):
+                    error_text = await resp.text()
+                    raise RuntimeError(f"Failed to start async prompt: {resp.status} {error_text}")
 
     async def list_messages(self, session_id: str, directory: str) -> List[Dict[str, Any]]:
-        session = await self._get_http_session()
-        async with session.get(
-            f"{self.base_url}/session/{session_id}/message",
-            headers={"x-opencode-directory": directory},
-        ) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                raise RuntimeError(f"Failed to list messages: {resp.status} {error_text}")
-            return await resp.json()
+        async with self._request_scope():
+            session = await self._get_http_session()
+            async with session.get(
+                f"{self.base_url}/session/{session_id}/message",
+                headers={"x-opencode-directory": directory},
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise RuntimeError(f"Failed to list messages: {resp.status} {error_text}")
+                return await resp.json()
 
     async def get_message(self, session_id: str, message_id: str, directory: str) -> Dict[str, Any]:
-        session = await self._get_http_session()
-        async with session.get(
-            f"{self.base_url}/session/{session_id}/message/{message_id}",
-            headers={"x-opencode-directory": directory},
-        ) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                raise RuntimeError(f"Failed to get message: {resp.status} {error_text}")
-            return await resp.json()
+        async with self._request_scope():
+            session = await self._get_http_session()
+            async with session.get(
+                f"{self.base_url}/session/{session_id}/message/{message_id}",
+                headers={"x-opencode-directory": directory},
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise RuntimeError(f"Failed to get message: {resp.status} {error_text}")
+                return await resp.json()
 
     async def list_questions(self, directory: Optional[str] = None) -> List[Dict[str, Any]]:
-        session = await self._get_http_session()
-        params = {"directory": directory} if directory else None
-        async with session.get(
-            f"{self.base_url}/question",
-            params=params,
-        ) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                raise RuntimeError(f"Failed to list questions: {resp.status} {error_text}")
-            data = await resp.json()
-            return data if isinstance(data, list) else []
+        async with self._request_scope():
+            session = await self._get_http_session()
+            params = {"directory": directory} if directory else None
+            async with session.get(
+                f"{self.base_url}/question",
+                params=params,
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise RuntimeError(f"Failed to list questions: {resp.status} {error_text}")
+                data = await resp.json()
+                return data if isinstance(data, list) else []
 
     async def reply_question(self, question_id: str, directory: str, answers: List[List[str]]) -> bool:
-        session = await self._get_http_session()
-        async with session.post(
-            f"{self.base_url}/question/{question_id}/reply",
-            params={"directory": directory},
-            json={"answers": answers},
-        ) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                raise RuntimeError(f"Failed to reply question: {resp.status} {error_text}")
-            data = await resp.json()
-            return bool(data)
+        async with self._request_scope():
+            session = await self._get_http_session()
+            async with session.post(
+                f"{self.base_url}/question/{question_id}/reply",
+                params={"directory": directory},
+                json={"answers": answers},
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise RuntimeError(f"Failed to reply question: {resp.status} {error_text}")
+                data = await resp.json()
+                return bool(data)
 
     async def abort_session(self, session_id: str, directory: str) -> bool:
-        session = await self._get_http_session()
+        async with self._request_scope():
+            session = await self._get_http_session()
 
-        try:
-            async with session.post(
-                f"{self.base_url}/session/{session_id}/abort",
-                headers={"x-opencode-directory": directory},
-            ) as resp:
-                return resp.status == 200
-        except Exception as e:
-            logger.warning(f"Failed to abort session {session_id}: {e}")
-            return False
+            try:
+                async with session.post(
+                    f"{self.base_url}/session/{session_id}/abort",
+                    headers={"x-opencode-directory": directory},
+                ) as resp:
+                    return resp.status == 200
+            except Exception as e:
+                logger.warning(f"Failed to abort session {session_id}: {e}")
+                return False
 
     async def get_session(self, session_id: str, directory: str) -> Optional[Dict[str, Any]]:
-        session = await self._get_http_session()
-        try:
-            async with session.get(
-                f"{self.base_url}/session/{session_id}",
-                headers={"x-opencode-directory": directory},
-            ) as resp:
-                if resp.status == 200:
-                    return await resp.json()
+        async with self._request_scope():
+            session = await self._get_http_session()
+            try:
+                async with session.get(
+                    f"{self.base_url}/session/{session_id}",
+                    headers={"x-opencode-directory": directory},
+                ) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    return None
+            except Exception as e:
+                logger.debug(f"Failed to get session {session_id}: {e}")
                 return None
-        except Exception as e:
-            logger.debug(f"Failed to get session {session_id}: {e}")
-            return None
 
     async def get_available_agents(self, directory: str) -> List[Dict[str, Any]]:
         """Fetch available agents from OpenCode server.
@@ -578,20 +657,21 @@ class OpenCodeServerManager:
             List of agent dicts with 'name', 'mode', 'native', etc.
         """
 
-        session = await self._get_http_session()
-        try:
-            async with session.get(
-                f"{self.base_url}/agent",
-                headers={"x-opencode-directory": directory},
-            ) as resp:
-                if resp.status == 200:
-                    agents = await resp.json()
-                    # Filter to primary agents (build, plan), exclude hidden/subagent
-                    return [a for a in agents if a.get("mode") == "primary" and not a.get("hidden", False)]
+        async with self._request_scope():
+            session = await self._get_http_session()
+            try:
+                async with session.get(
+                    f"{self.base_url}/agent",
+                    headers={"x-opencode-directory": directory},
+                ) as resp:
+                    if resp.status == 200:
+                        agents = await resp.json()
+                        # Filter to primary agents (build, plan), exclude hidden/subagent
+                        return [a for a in agents if a.get("mode") == "primary" and not a.get("hidden", False)]
+                    return []
+            except Exception as e:
+                logger.warning(f"Failed to get available agents: {e}")
                 return []
-        except Exception as e:
-            logger.warning(f"Failed to get available agents: {e}")
-            return []
 
     async def get_available_models(self, directory: str) -> Dict[str, Any]:
         """Fetch available models from OpenCode server.
@@ -600,18 +680,19 @@ class OpenCodeServerManager:
             Dict with 'providers' list and 'default' dict mapping provider to default model.
         """
 
-        session = await self._get_http_session()
-        try:
-            async with session.get(
-                f"{self.base_url}/config/providers",
-                headers={"x-opencode-directory": directory},
-            ) as resp:
-                if resp.status == 200:
-                    return await resp.json()
+        async with self._request_scope():
+            session = await self._get_http_session()
+            try:
+                async with session.get(
+                    f"{self.base_url}/config/providers",
+                    headers={"x-opencode-directory": directory},
+                ) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    return {"providers": [], "default": {}}
+            except Exception as e:
+                logger.warning(f"Failed to get available models: {e}")
                 return {"providers": [], "default": {}}
-        except Exception as e:
-            logger.warning(f"Failed to get available models: {e}")
-            return {"providers": [], "default": {}}
 
     async def get_default_config(self, directory: str) -> Dict[str, Any]:
         """Fetch current default config from OpenCode server.
@@ -620,18 +701,19 @@ class OpenCodeServerManager:
             Config dict including 'model' (current default), 'agent' configs, etc.
         """
 
-        session = await self._get_http_session()
-        try:
-            async with session.get(
-                f"{self.base_url}/config",
-                headers={"x-opencode-directory": directory},
-            ) as resp:
-                if resp.status == 200:
-                    return await resp.json()
+        async with self._request_scope():
+            session = await self._get_http_session()
+            try:
+                async with session.get(
+                    f"{self.base_url}/config",
+                    headers={"x-opencode-directory": directory},
+                ) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    return {}
+            except Exception as e:
+                logger.warning(f"Failed to get default config: {e}")
                 return {}
-        except Exception as e:
-            logger.warning(f"Failed to get default config: {e}")
-            return {}
 
     def _load_opencode_user_config(self) -> Optional[Dict[str, Any]]:
         """Load and cache opencode.json config file.

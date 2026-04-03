@@ -96,7 +96,13 @@ class ClaudeAgent(BaseAgent):
             await self._remove_specific_pending_reaction(request.composite_session_id, context, request)
             self._remove_pending_request(request.composite_session_id, request)
             await self._remove_ack_reaction(request)
-            await self.session_handler.handle_session_error(request.composite_session_id, context, e)
+            handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
+                context,
+                "claude",
+                f"❌ Claude error: {e}",
+            )
+            if not handled:
+                await self.session_handler.handle_session_error(request.composite_session_id, context, e)
         finally:
             await self._delete_ack(context, request)
 

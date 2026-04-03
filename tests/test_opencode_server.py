@@ -52,10 +52,14 @@ class _FakeResponse:
 class _FakeSession:
     def __init__(self):
         self.posts = []
+        self.closed = False
 
     def post(self, url, json=None, headers=None):
         self.posts.append({"url": url, "json": json, "headers": headers})
         return _FakeResponse()
+
+    async def close(self):
+        self.closed = True
 
 
 class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
@@ -126,6 +130,86 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
                     pids = OpenCodeServerManager._find_opencode_serve_pids(4096)
 
         self.assertEqual(pids, [1234])
+
+    async def test_restart_for_auth_refresh_stops_known_server_and_clears_state(self):
+        manager = OpenCodeServerManager(binary="opencode", port=4096)
+        fake_session = _FakeSession()
+        manager._http_session = fake_session
+        manager._http_session_loop = object()
+        manager._process = object()
+        manager._base_url = "http://127.0.0.1:4096"
+        manager._read_pid_file = lambda: {"pid": 321}  # type: ignore[method-assign]
+        manager._pid_exists = lambda pid: pid == 321  # type: ignore[method-assign]
+        manager._get_pid_command = lambda pid: "opencode serve --port=4096"  # type: ignore[method-assign]
+        terminated = []
+        manager._terminate_pid = lambda pid, reason: terminated.append((pid, reason)) or _async_none()  # type: ignore[method-assign]
+        manager._clear_pid_file = lambda: terminated.append(("cleared", ""))  # type: ignore[method-assign]
+
+        await manager.restart_for_auth_refresh()
+
+        self.assertTrue(fake_session.closed)
+        self.assertIn((321, "auth refresh"), terminated)
+        self.assertIn(("cleared", ""), terminated)
+        self.assertIsNone(manager._process)
+        self.assertIsNone(manager._base_url)
+
+    async def test_restart_for_auth_refresh_defers_while_requests_are_active(self):
+        manager = OpenCodeServerManager(binary="opencode", port=4096)
+        fake_session = _FakeSession()
+        manager._http_session = fake_session
+        manager._http_session_loop = object()
+        manager._process = object()
+        manager._base_url = "http://127.0.0.1:4096"
+        manager._active_requests = 2
+        terminated = []
+        manager._terminate_pid = lambda pid, reason: terminated.append((pid, reason)) or _async_none()  # type: ignore[method-assign]
+        manager._clear_pid_file = lambda: terminated.append(("cleared", ""))  # type: ignore[method-assign]
+
+        await manager.restart_for_auth_refresh()
+
+        self.assertFalse(fake_session.closed)
+        self.assertEqual(terminated, [])
+        self.assertTrue(manager._auth_refresh_pending)
+        self.assertIsNotNone(manager._process)
+        self.assertEqual(manager._base_url, "http://127.0.0.1:4096")
+
+    async def test_restart_for_auth_refresh_defers_while_runs_are_active(self):
+        manager = OpenCodeServerManager(binary="opencode", port=4096)
+        fake_session = _FakeSession()
+        manager._http_session = fake_session
+        manager._http_session_loop = object()
+        manager._process = object()
+        manager._base_url = "http://127.0.0.1:4096"
+        manager._active_run_sessions.add("sess-1")
+        terminated = []
+        manager._terminate_pid = lambda pid, reason: terminated.append((pid, reason)) or _async_none()  # type: ignore[method-assign]
+        manager._clear_pid_file = lambda: terminated.append(("cleared", ""))  # type: ignore[method-assign]
+
+        await manager.restart_for_auth_refresh()
+
+        self.assertFalse(fake_session.closed)
+        self.assertEqual(terminated, [])
+        self.assertTrue(manager._auth_refresh_pending)
+        self.assertIsNotNone(manager._process)
+        self.assertEqual(manager._base_url, "http://127.0.0.1:4096")
+
+    async def test_request_scope_does_not_restart_pending_auth_refresh_while_run_active(self):
+        manager = OpenCodeServerManager(binary="opencode", port=4096)
+        manager._auth_refresh_pending = True
+        manager._active_run_sessions.add("sess-1")
+        restarted = []
+        manager._restart_for_auth_refresh_locked = lambda: restarted.append(True) or _async_none()  # type: ignore[method-assign]
+
+        async with manager._request_scope():
+            self.assertEqual(manager._active_requests, 1)
+
+        self.assertEqual(restarted, [])
+        self.assertEqual(manager._active_requests, 0)
+        self.assertTrue(manager._auth_refresh_pending)
+
+
+async def _async_none():
+    return None
 
 
 if __name__ == "__main__":

@@ -261,11 +261,18 @@ class OpenCodePollLoop:
                                     retry_err,
                                 )
 
-                        await self._agent.controller.emit_agent_message(
+                        message = f"OpenCode error: {error_name} - {error_msg[:500]}"
+                        handled = await self._agent.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                             request.context,
-                            "notify",
-                            f"OpenCode error: {error_name} - {error_msg[:500]}",
+                            "opencode",
+                            message,
                         )
+                        if not handled:
+                            await self._agent.controller.emit_agent_message(
+                                request.context,
+                                "notify",
+                                message,
+                            )
                         final_text = None
                         break
 
@@ -487,11 +494,18 @@ class OpenCodePollLoop:
                                     last_error_message_id = last_info.get("id")
                                 error_retry_count += 1
                                 if error_retry_count > error_retry_limit:
-                                    await self._agent.controller.emit_agent_message(
+                                    message = f"OpenCode error: {error_text}"
+                                    handled = await self._agent.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                                         context,
-                                        "notify",
-                                        f"OpenCode error: {error_text}",
+                                        "opencode",
+                                        message,
                                     )
+                                    if not handled:
+                                        await self._agent.controller.emit_agent_message(
+                                            context,
+                                            "notify",
+                                            message,
+                                        )
                                     self._agent.sessions.remove_active_poll(session_id)
                                     await _remove_ack_reaction()
                                     return
@@ -559,8 +573,15 @@ class OpenCodePollLoop:
             self._agent.sessions.remove_active_poll(session_id)
             await _remove_ack_reaction()
 
-            await self._agent.controller.emit_agent_message(
+            message = f"Restored OpenCode session failed: {error_text}"
+            handled = await self._agent.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                 context,
-                "notify",
-                f"Restored OpenCode session failed: {error_text}",
+                "opencode",
+                message,
             )
+            if not handled:
+                await self._agent.controller.emit_agent_message(
+                    context,
+                    "notify",
+                    message,
+                )

@@ -197,6 +197,11 @@ Ask your agent to schedule work for later, repeat a prompt on a cron, or queue a
 
 **Pro tip:** Each thread = isolated session. Start multiple threads for parallel tasks.
 
+Detailed references:
+
+- [Full Command Reference](docs/COMMANDS.md)
+- [CLI Reference](docs/CLI.md)
+
 ---
 
 ## Instant Agent Switching
@@ -235,6 +240,11 @@ vibe doctor   # Diagnose issues
 vibe task     # Create and manage scheduled tasks
 vibe hook     # Queue one-shot async sends
 ```
+
+Detailed references:
+
+- [Full Command Reference](docs/COMMANDS.md)
+- [CLI Reference](docs/CLI.md)
 
 ---
 

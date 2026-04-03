@@ -140,6 +140,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 self._session_manager.pop_request_session(request.base_session_id)
 
     async def _process_message(self, request: AgentRequest) -> None:
+        run_registered = False
         try:
             server = await self._get_server()
             await server.ensure_running()
@@ -258,6 +259,8 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 system=reply_system,
                 tools=request_tools,
             )
+            await server.mark_run_active(session_id)
+            run_registered = True
 
             logger.info(
                 "Starting OpenCode poll loop for %s (thread=%s, cwd=%s)",
@@ -348,11 +351,21 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             if session_id:
                 self.sessions.remove_active_poll(session_id)
 
-            await self.controller.emit_agent_message(
+            message = f"OpenCode request failed: {error_text}"
+            handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                 request.context,
-                "notify",
-                f"OpenCode request failed: {error_text}",
+                "opencode",
+                message,
             )
+            if not handled:
+                await self.controller.emit_agent_message(
+                    request.context,
+                    "notify",
+                    message,
+                )
+        finally:
+            if run_registered:
+                await server.mark_run_inactive(session_id)
 
     async def handle_stop(self, request: AgentRequest) -> bool:
         task = self._active_requests.get(request.base_session_id)
@@ -462,7 +475,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 f"(thread={poll_info.base_session_id}, cwd={poll_info.working_path})"
             )
 
-            task = asyncio.create_task(self._poll_loop.run_restored_poll_loop(poll_info))
+            task = asyncio.create_task(self._run_restored_poll_loop_with_tracking(poll_info))
             self._active_requests[poll_info.base_session_id] = task
             self._session_manager.set_request_session(
                 poll_info.base_session_id,
@@ -481,6 +494,18 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             logger.info(f"Removed {len(stale_poll_ids)} stale active poll(s)")
 
         return restored_count
+
+    async def _run_restored_poll_loop_with_tracking(self, poll_info) -> None:
+        server = await self._get_server()
+        await server.mark_run_active(poll_info.opencode_session_id)
+        current_task = asyncio.current_task()
+        try:
+            await self._poll_loop.run_restored_poll_loop(poll_info)
+        finally:
+            await server.mark_run_inactive(poll_info.opencode_session_id)
+            if self._active_requests.get(poll_info.base_session_id) is current_task:
+                self._active_requests.pop(poll_info.base_session_id, None)
+                self._session_manager.pop_request_session(poll_info.base_session_id)
 
     def _prepare_message_with_files(self, request: AgentRequest) -> str:
         """Prepare message with file attachment information.

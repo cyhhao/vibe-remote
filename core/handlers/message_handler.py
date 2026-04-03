@@ -458,6 +458,9 @@ class MessageHandler(BaseHandler):
             elif callback_data == "cmd_resume":
                 await command_handlers.handle_resume(context)
 
+            elif callback_data.startswith("auth_setup:"):
+                await self.controller.agent_auth_service.handle_setup_callback(context, callback_data)
+
             elif callback_data == "cmd_settings":
                 await settings_handler.handle_settings(context)
 

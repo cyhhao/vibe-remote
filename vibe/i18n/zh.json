@@ -193,6 +193,7 @@
       "commandCwd": "/cwd - 显示当前工作目录",
       "commandSetCwd": "/setcwd <路径> - 设置工作目录",
       "commandResume": "/resume - 恢复当前目录下最近的会话",
+      "commandSetup": "/setup [claude|codex|opencode] - 修复后端登录/认证",
       "commandStop": "/stop - 中断 {agent} 当前执行",
       "commandNew": "/new - 开启一个全新的会话",
       "quickActions": "快捷操作：",
@@ -237,6 +238,27 @@
       "unknownCommand": "未识别的恢复命令。",
       "noMorePages": "已经没有更多会话了。"
     },
+    "setup": {
+      "starting": "正在启动 {backend} 的登录修复流程...",
+      "unsupportedBackend": "后端 `{backend}` 暂不支持 setup。",
+      "codeUsage": "用法：`/setup code <value>` 或 `/setup code <backend> <value>`",
+      "noActiveFlow": "当前频道没有正在进行的 setup 流程。",
+      "notFlowOwner": "只有发起这次 setup 的用户才能提交后续验证码。",
+      "codeNotSupported": "这个后端不支持提交后续验证码。",
+      "notAwaitingCode": "当前 setup 流程此时并不在等待验证码。",
+      "codeSubmitted": "已提交 {backend} 的验证码，正在等待登录确认...",
+      "resetPrompt": "{backend} 看起来已经掉线了。请点击下面的按钮重新发起 OAuth 登录。",
+      "manualFallback": "如果当前平台不支持按钮，请执行 `/setup {backend}`。",
+      "codexInstructions": "Codex 登录修复已开始。\n\n1. 在浏览器打开这个地址：\n{url}\n\n2. 输入这个一次性验证码：\n`{code}`\n\nBot 会继续等待，并在登录完成后回消息确认。",
+      "claudeInstructions": "Claude 登录修复已开始。\n\n请在浏览器打开下面的地址并完成登录：\n{url}\n\n如果 Claude 后续要求粘贴验证码，请在当前聊天里发送 `/setup code <value>`。",
+      "claudeCodePrompt": "Claude 正在等待后续验证码。请在当前聊天里发送 `/setup code <value>`。",
+      "opencodeDeviceInstructions": "OpenCode 认证修复已开始。\n\n1. 请在浏览器打开这个地址：\n{url}\n\n2. 输入这个一次性验证码：\n`{code}`\n\nBot 会继续等待，并在授权完成后回消息确认。",
+      "opencodeInstructions": "OpenCode 的 `{provider}` 认证修复已开始。\n\n请打开下面这个页面创建或获取凭据：\n{url}\n\n当 OpenCode 提示输入 key 时，请在当前聊天里发送 `/setup code <value>`。",
+      "opencodeCodePrompt": "OpenCode 正在等待 `{provider}` 的 API key。请在当前聊天里发送 `/setup code <value>`。",
+      "success": "{backend} 已重新登录，可继续使用。",
+      "failed": "{backend} 登录修复失败：{detail}",
+      "unknownFailure": "未知登录失败。"
+    },
     "stop": {
       "noActiveSession": "此频道没有要停止的活动会话。"
     }
@@ -250,7 +272,8 @@
     "resumeSession": "恢复会话",
     "agentSettings": "Agent 设置",
     "howItWorks": "特色功能",
-    "aboutMessageTypes": "关于消息类型"
+    "aboutMessageTypes": "关于消息类型",
+    "resetOAuth": "重置 OAuth"
   },
   "messageType": {
     "system": "系统",
