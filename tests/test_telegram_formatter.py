@@ -22,3 +22,11 @@ def test_render_preserves_parentheses_in_markdown_link_urls() -> None:
     rendered = formatter.render("[Wiki](https://en.wikipedia.org/wiki/Function_(mathematics))")
 
     assert rendered == '<a href="https://en.wikipedia.org/wiki/Function_(mathematics)">Wiki</a>'
+
+
+def test_render_does_not_join_plain_brackets_with_later_link() -> None:
+    formatter = TelegramFormatter()
+
+    rendered = formatter.render("test [x] and [Docs](https://a.com)")
+
+    assert rendered == 'test [x] and <a href="https://a.com">Docs</a>'

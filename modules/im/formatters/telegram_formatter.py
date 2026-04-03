@@ -52,6 +52,18 @@ class TelegramFormatter(BaseMarkdownFormatter):
             depth -= 1
         return None
 
+    @staticmethod
+    def _find_link_label_end(text: str, start: int) -> int | None:
+        for index in range(start + 1, len(text)):
+            char = text[index]
+            if char == "[":
+                return None
+            if char == "]" and index + 1 < len(text) and text[index + 1] == "(":
+                return index
+            if char == "]":
+                return None
+        return None
+
     def _render_links(self, text: str) -> str:
         rendered_parts: list[str] = []
         cursor = 0
@@ -62,10 +74,11 @@ class TelegramFormatter(BaseMarkdownFormatter):
                 rendered_parts.append(text[cursor:])
                 break
 
-            label_end = text.find("](", start)
-            if label_end < 0:
-                rendered_parts.append(text[cursor:])
-                break
+            label_end = self._find_link_label_end(text, start)
+            if label_end is None:
+                rendered_parts.append(text[cursor : start + 1])
+                cursor = start + 1
+                continue
 
             url_start = label_end + 2
             if not text.startswith(("http://", "https://"), url_start):

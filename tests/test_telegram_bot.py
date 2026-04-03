@@ -478,6 +478,71 @@ def test_routing_callback_backend_switches_without_nested_picker() -> None:
     edit_mock.assert_awaited_once()
 
 
+def test_routing_state_keeps_backend_picker_entry_for_extra_backends() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    state = SimpleNamespace(
+        registered_backends=["opencode", "claude", "codex", "extra"],
+        backend="extra",
+        opencode_agent=None,
+        opencode_model=None,
+        opencode_reasoning_effort=None,
+        claude_agent=None,
+        claude_model=None,
+        claude_reasoning_effort=None,
+        codex_model=None,
+        codex_reasoning_effort=None,
+        picker_field=None,
+        picker_page=0,
+    )
+
+    _, keyboard = bot._render_routing_state(state)
+
+    assert [button.callback_data for button in keyboard.buttons[0]] == [
+        "tg_route:backend:opencode",
+        "tg_route:backend:claude",
+        "tg_route:backend:codex",
+    ]
+    assert keyboard.buttons[1][0].callback_data == "tg_route:field:backend"
+
+
+def test_routing_callback_backend_picker_can_select_extra_backend() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    context = MessageContext(
+        user_id="42",
+        channel_id="-100123",
+        message_id="88",
+        platform="telegram",
+        platform_specific={"is_dm": False},
+    )
+    bot._routing_states[bot._interaction_scope_key(context)] = SimpleNamespace(
+        message_id="88",
+        channel_id=context.channel_id,
+        user_id=context.user_id,
+        is_dm=False,
+        registered_backends=["opencode", "claude", "codex", "extra"],
+        backend="opencode",
+        opencode_agent=None,
+        opencode_model=None,
+        opencode_reasoning_effort=None,
+        claude_agent=None,
+        claude_model=None,
+        claude_reasoning_effort=None,
+        codex_model=None,
+        codex_reasoning_effort=None,
+        picker_field=None,
+        picker_page=0,
+    )
+
+    with patch.object(bot, "edit_message", new=AsyncMock(return_value=True)) as edit_mock:
+        asyncio.run(bot._handle_routing_callback(context, "tg_route:field:backend"))
+        asyncio.run(bot._handle_routing_callback(context, "tg_route:option:3"))
+
+    state = bot._routing_states[bot._interaction_scope_key(context)]
+    assert state.backend == "extra"
+    assert state.picker_field is None
+    assert edit_mock.await_count == 2
+
+
 def test_open_settings_modal_includes_language_buttons() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
     context = MessageContext(

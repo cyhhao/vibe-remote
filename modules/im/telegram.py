@@ -1353,6 +1353,15 @@ class TelegramBot(BaseIMClient):
         rows: list[list[InlineButton]] = []
         if backend_row:
             rows.append(backend_row)
+        if len(state.registered_backends) > 3:
+            rows.append(
+                [
+                    InlineButton(
+                        text=f"… {self._t('routing.label.backend')}"[:40],
+                        callback_data="tg_route:field:backend",
+                    )
+                ]
+            )
 
         if state.backend == "opencode":
             rows.append(
