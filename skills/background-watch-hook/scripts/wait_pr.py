@@ -20,6 +20,7 @@ from _github_wait_common import (  # noqa: E402
     filter_new,
     get_authenticated_login,
     get_token,
+    github_get,
     list_paginated,
     list_paginated_with_count,
     max_id,
@@ -82,6 +83,43 @@ def _format_reaction(reaction: dict[str, Any]) -> str:
     )
 
 
+def _current_pr_status(pr: dict[str, Any] | None) -> str:
+    if not isinstance(pr, dict):
+        return "unknown"
+    if pr.get("merged_at"):
+        return "merged"
+    if pr.get("draft") is True:
+        return "draft"
+    state = str(pr.get("state") or "").lower()
+    if state in {"open", "closed"}:
+        return state
+    return state or "unknown"
+
+
+def _describe_pr_status_change(previous_status: str, current_status: str) -> str:
+    if previous_status == "draft" and current_status == "open":
+        return "Pull request is ready for review."
+    if previous_status == "open" and current_status == "draft":
+        return "Pull request was converted to draft."
+    if current_status == "merged":
+        return "Pull request was merged."
+    if current_status == "closed":
+        return "Pull request was closed without merge."
+    if current_status == "open":
+        return "Pull request was reopened."
+    return f"Pull request status changed from {previous_status} to {current_status}."
+
+
+def _format_pr_status_event(pr: dict[str, Any], previous_status: str, current_status: str) -> str:
+    pr_number = pr.get("number")
+    url = pr.get("html_url") or ""
+    return (
+        f"- pr_status #{pr_number} {previous_status} -> {current_status}\n"
+        f"  {_describe_pr_status_change(previous_status, current_status)}\n"
+        f"  {url}"
+    )
+
+
 def _format_pull_request(pr: dict[str, Any]) -> str:
     pr_number = pr.get("number")
     author = ((pr.get("user") or {}).get("login")) or "unknown"
@@ -93,6 +131,10 @@ def _format_pull_request(pr: dict[str, Any]) -> str:
 
 def _fetch_state(repo: str, pr_number: int, token: str | None) -> tuple[dict[str, list[dict[str, Any]]], int]:
     encoded_repo = urllib.parse.quote(repo, safe="/")
+    pull_request = github_get(
+        f"https://api.github.com/repos/{encoded_repo}/pulls/{pr_number}",
+        token,
+    )
     reviews, review_requests = list_paginated_with_count(
         f"https://api.github.com/repos/{encoded_repo}/pulls/{pr_number}/reviews",
         token,
@@ -111,12 +153,13 @@ def _fetch_state(repo: str, pr_number: int, token: str | None) -> tuple[dict[str
     )
     return (
         {
+            "pull_request": pull_request,
             "reviews": reviews,
             "review_comments": review_comments,
             "issue_comments": issue_comments,
             "reactions": reactions,
         },
-        review_requests + review_comment_requests + issue_comment_requests + reaction_requests,
+        1 + review_requests + review_comment_requests + issue_comment_requests + reaction_requests,
     )
 
 
@@ -146,10 +189,12 @@ def _render_activity(
     review_comment_cursor: int,
     issue_comment_cursor: int,
     reaction_cursor: int,
+    pr_status: str,
     event_limit: int,
     viewer_login: str | None = None,
     ignore_self_comments: bool = True,
-) -> tuple[str | None, int, int, int, int]:
+) -> tuple[str | None, int, int, int, int, str]:
+    current_pr_status = _current_pr_status(state.get("pull_request"))
     new_reviews = filter_new(state["reviews"], review_cursor)
     new_review_comments = filter_new(state["review_comments"], review_comment_cursor)
     new_issue_comments = filter_new(state["issue_comments"], issue_comment_cursor)
@@ -168,16 +213,20 @@ def _render_activity(
         for reaction in filter_new(state["reactions"], reaction_cursor)
         if _is_codex_pass_reaction(reaction)
     ]
+    has_pr_status_event = current_pr_status != pr_status
 
-    if not (new_reviews or new_review_comments or new_issue_comments or new_reactions):
-        return None, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor
+    if not (new_reviews or new_review_comments or new_issue_comments or new_reactions or has_pr_status_event):
+        return None, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status
 
     next_review_cursor = max(review_cursor, max_id(new_reviews))
     next_review_comment_cursor = max(review_comment_cursor, max_id(new_review_comments))
     next_issue_comment_cursor = max(issue_comment_cursor, max_id(new_issue_comments))
     next_reaction_cursor = max(reaction_cursor, max_id(state["reactions"]))
+    next_pr_status = current_pr_status
 
     rendered_events: list[str] = []
+    if has_pr_status_event and isinstance(state.get("pull_request"), dict):
+        rendered_events.append(_format_pr_status_event(state["pull_request"], pr_status, current_pr_status))
     rendered_events.extend(_format_review(review) for review in new_reviews)
     rendered_events.extend(_format_review_comment(comment) for comment in visible_review_comments)
     rendered_events.extend(_format_issue_comment(comment) for comment in visible_issue_comments)
@@ -190,6 +239,7 @@ def _render_activity(
             next_review_comment_cursor,
             next_issue_comment_cursor,
             next_reaction_cursor,
+            next_pr_status,
         )
 
     lines = [f"GitHub PR activity detected for {repo}#{pr_number}"]
@@ -208,6 +258,7 @@ def _render_activity(
         next_review_comment_cursor,
         next_issue_comment_cursor,
         next_reaction_cursor,
+        next_pr_status,
     )
 
 
@@ -244,6 +295,7 @@ def _write_cursor_output(
     review_comment_cursor: int,
     issue_comment_cursor: int,
     reaction_cursor: int,
+    pr_status: str,
 ) -> None:
     if not path:
         return
@@ -253,6 +305,7 @@ def _write_cursor_output(
         "review_comment_cursor": review_comment_cursor,
         "issue_comment_cursor": issue_comment_cursor,
         "reaction_cursor": reaction_cursor,
+        "pr_status": pr_status,
     }
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle)
@@ -283,6 +336,7 @@ def main() -> int:
     parser.add_argument("--since-review-comment-id", type=int, default=None, help="Existing review comment cursor")
     parser.add_argument("--since-issue-comment-id", type=int, default=None, help="Existing PR conversation comment cursor")
     parser.add_argument("--since-reaction-id", type=int, default=None, help="Existing PR-body reaction cursor")
+    parser.add_argument("--since-pr-status", help=argparse.SUPPRESS)
     parser.add_argument("--since-pr-id", type=int, default=None, help="Existing repository pull request cursor")
     parser.add_argument("--cursor-output", help=argparse.SUPPRESS)
     parser.add_argument("--event-limit", type=int, default=8, help="Maximum number of new events to include in stdout")
@@ -386,10 +440,11 @@ def main() -> int:
             if args.since_reaction_id is not None
             else (0 if args.catch_up else max_id(state["reactions"]))
         )
+        pr_status = args.since_pr_status or _current_pr_status(state.get("pull_request"))
 
         print(
             (
-                "Watching GitHub PR %s#%s from cursors: review=%s review_comment=%s issue_comment=%s reaction=%s catch_up=%s"
+                "Watching GitHub PR %s#%s from cursors: review=%s review_comment=%s issue_comment=%s reaction=%s pr_status=%s catch_up=%s"
                 % (
                     args.repo,
                     args.pr,
@@ -397,13 +452,14 @@ def main() -> int:
                     review_comment_cursor,
                     issue_comment_cursor,
                     reaction_cursor,
+                    pr_status,
                     args.catch_up,
                 )
             ),
             file=sys.stderr,
         )
 
-        initial_output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor = _render_activity(
+        initial_output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = _render_activity(
             repo=args.repo,
             pr_number=args.pr,
             state=state,
@@ -411,6 +467,7 @@ def main() -> int:
             review_comment_cursor=review_comment_cursor,
             issue_comment_cursor=issue_comment_cursor,
             reaction_cursor=reaction_cursor,
+            pr_status=pr_status,
             event_limit=args.event_limit,
             viewer_login=viewer_login,
             ignore_self_comments=not args.include_self_comments,
@@ -422,6 +479,7 @@ def main() -> int:
                 review_comment_cursor=review_comment_cursor,
                 issue_comment_cursor=issue_comment_cursor,
                 reaction_cursor=reaction_cursor,
+                pr_status=pr_status,
             )
             print(initial_output)
             return 0
@@ -503,7 +561,7 @@ def main() -> int:
                 effective_interval = target_interval
 
         if args.pr is not None:
-            output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor = _render_activity(
+            output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = _render_activity(
                 repo=args.repo,
                 pr_number=args.pr,
                 state=state,
@@ -511,6 +569,7 @@ def main() -> int:
                 review_comment_cursor=review_comment_cursor,
                 issue_comment_cursor=issue_comment_cursor,
                 reaction_cursor=reaction_cursor,
+                pr_status=pr_status,
                 event_limit=args.event_limit,
                 viewer_login=viewer_login,
                 ignore_self_comments=not args.include_self_comments,
@@ -524,6 +583,7 @@ def main() -> int:
                 review_comment_cursor=review_comment_cursor,
                 issue_comment_cursor=issue_comment_cursor,
                 reaction_cursor=reaction_cursor,
+                pr_status=pr_status,
             )
         else:
             output, pr_cursor = _render_new_pull_requests(

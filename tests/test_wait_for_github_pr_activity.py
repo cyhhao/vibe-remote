@@ -25,6 +25,7 @@ def _load_module():
 def test_render_activity_includes_codex_pr_body_reaction() -> None:
     module = _load_module()
     state = {
+        "pull_request": {"number": 153, "state": "open", "draft": False},
         "reviews": [],
         "review_comments": [],
         "issue_comments": [],
@@ -38,7 +39,7 @@ def test_render_activity_includes_codex_pr_body_reaction() -> None:
         ],
     }
 
-    output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor = module._render_activity(
+    output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = module._render_activity(
         repo="cyhhao/vibe-remote",
         pr_number=153,
         state=state,
@@ -46,6 +47,7 @@ def test_render_activity_includes_codex_pr_body_reaction() -> None:
         review_comment_cursor=0,
         issue_comment_cursor=0,
         reaction_cursor=0,
+        pr_status="open",
         event_limit=8,
     )
 
@@ -56,11 +58,13 @@ def test_render_activity_includes_codex_pr_body_reaction() -> None:
     assert review_cursor == 0
     assert review_comment_cursor == 0
     assert issue_comment_cursor == 0
+    assert pr_status == "open"
 
 
 def test_render_activity_ignores_non_codex_or_non_plus_one_reactions() -> None:
     module = _load_module()
     state = {
+        "pull_request": {"number": 153, "state": "open", "draft": False},
         "reviews": [],
         "review_comments": [],
         "issue_comments": [],
@@ -88,6 +92,7 @@ def test_render_activity_ignores_non_codex_or_non_plus_one_reactions() -> None:
         review_comment_cursor=0,
         issue_comment_cursor=0,
         reaction_cursor=0,
+        pr_status="open",
         event_limit=8,
     )
 
@@ -97,6 +102,7 @@ def test_render_activity_ignores_non_codex_or_non_plus_one_reactions() -> None:
 def test_render_activity_ignores_self_authored_issue_comment_but_advances_cursor() -> None:
     module = _load_module()
     state = {
+        "pull_request": {"number": 153, "state": "open", "draft": False},
         "reviews": [],
         "review_comments": [],
         "issue_comments": [
@@ -110,7 +116,7 @@ def test_render_activity_ignores_self_authored_issue_comment_but_advances_cursor
         "reactions": [],
     }
 
-    output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor = module._render_activity(
+    output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = module._render_activity(
         repo="cyhhao/vibe-remote",
         pr_number=153,
         state=state,
@@ -118,6 +124,7 @@ def test_render_activity_ignores_self_authored_issue_comment_but_advances_cursor
         review_comment_cursor=0,
         issue_comment_cursor=0,
         reaction_cursor=0,
+        pr_status="open",
         event_limit=8,
         viewer_login="someone",
     )
@@ -127,11 +134,13 @@ def test_render_activity_ignores_self_authored_issue_comment_but_advances_cursor
     assert review_comment_cursor == 0
     assert issue_comment_cursor == 126
     assert reaction_cursor == 0
+    assert pr_status == "open"
 
 
 def test_render_activity_includes_self_authored_comment_when_disabled() -> None:
     module = _load_module()
     state = {
+        "pull_request": {"number": 153, "state": "open", "draft": False},
         "reviews": [],
         "review_comments": [],
         "issue_comments": [
@@ -153,6 +162,7 @@ def test_render_activity_includes_self_authored_comment_when_disabled() -> None:
         review_comment_cursor=0,
         issue_comment_cursor=0,
         reaction_cursor=0,
+        pr_status="open",
         event_limit=8,
         viewer_login="someone",
         ignore_self_comments=False,
@@ -160,6 +170,178 @@ def test_render_activity_includes_self_authored_comment_when_disabled() -> None:
 
     assert output is not None
     assert "issue_comment #127" in output
+
+
+def test_render_activity_includes_pr_status_change() -> None:
+    module = _load_module()
+    state = {
+        "pull_request": {
+            "number": 153,
+            "state": "closed",
+            "draft": False,
+            "merged_at": "2026-04-03T12:45:56Z",
+            "html_url": "https://github.com/example/repo/pull/153",
+        },
+        "reviews": [],
+        "review_comments": [],
+        "issue_comments": [],
+        "reactions": [],
+    }
+
+    output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = module._render_activity(
+        repo="cyhhao/vibe-remote",
+        pr_number=153,
+        state=state,
+        review_cursor=0,
+        review_comment_cursor=0,
+        issue_comment_cursor=0,
+        reaction_cursor=0,
+        pr_status="open",
+        event_limit=8,
+    )
+
+    assert output is not None
+    assert "pr_status #153 open -> merged" in output
+    assert "Pull request was merged." in output
+    assert review_cursor == 0
+    assert review_comment_cursor == 0
+    assert issue_comment_cursor == 0
+    assert reaction_cursor == 0
+    assert pr_status == "merged"
+
+
+def test_render_activity_reports_open_to_draft_transition() -> None:
+    module = _load_module()
+    state = {
+        "pull_request": {
+            "number": 153,
+            "state": "open",
+            "draft": True,
+            "html_url": "https://github.com/example/repo/pull/153",
+        },
+        "reviews": [],
+        "review_comments": [],
+        "issue_comments": [],
+        "reactions": [],
+    }
+
+    output, *_rest, pr_status = module._render_activity(
+        repo="cyhhao/vibe-remote",
+        pr_number=153,
+        state=state,
+        review_cursor=0,
+        review_comment_cursor=0,
+        issue_comment_cursor=0,
+        reaction_cursor=0,
+        pr_status="open",
+        event_limit=8,
+    )
+
+    assert output is not None
+    assert "pr_status #153 open -> draft" in output
+    assert "Pull request was converted to draft." in output
+    assert pr_status == "draft"
+
+
+def test_render_activity_reports_draft_to_open_transition() -> None:
+    module = _load_module()
+    state = {
+        "pull_request": {
+            "number": 153,
+            "state": "open",
+            "draft": False,
+            "html_url": "https://github.com/example/repo/pull/153",
+        },
+        "reviews": [],
+        "review_comments": [],
+        "issue_comments": [],
+        "reactions": [],
+    }
+
+    output, *_rest, pr_status = module._render_activity(
+        repo="cyhhao/vibe-remote",
+        pr_number=153,
+        state=state,
+        review_cursor=0,
+        review_comment_cursor=0,
+        issue_comment_cursor=0,
+        reaction_cursor=0,
+        pr_status="draft",
+        event_limit=8,
+    )
+
+    assert output is not None
+    assert "pr_status #153 draft -> open" in output
+    assert "Pull request is ready for review." in output
+    assert pr_status == "open"
+
+
+def test_render_activity_reports_closed_to_open_transition() -> None:
+    module = _load_module()
+    state = {
+        "pull_request": {
+            "number": 153,
+            "state": "open",
+            "draft": False,
+            "html_url": "https://github.com/example/repo/pull/153",
+        },
+        "reviews": [],
+        "review_comments": [],
+        "issue_comments": [],
+        "reactions": [],
+    }
+
+    output, *_rest, pr_status = module._render_activity(
+        repo="cyhhao/vibe-remote",
+        pr_number=153,
+        state=state,
+        review_cursor=0,
+        review_comment_cursor=0,
+        issue_comment_cursor=0,
+        reaction_cursor=0,
+        pr_status="closed",
+        event_limit=8,
+    )
+
+    assert output is not None
+    assert "pr_status #153 closed -> open" in output
+    assert "Pull request was reopened." in output
+    assert pr_status == "open"
+
+
+def test_render_activity_skips_unchanged_pr_status() -> None:
+    module = _load_module()
+    state = {
+        "pull_request": {
+            "number": 153,
+            "state": "open",
+            "draft": False,
+            "html_url": "https://github.com/example/repo/pull/153",
+        },
+        "reviews": [],
+        "review_comments": [],
+        "issue_comments": [],
+        "reactions": [],
+    }
+
+    output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = module._render_activity(
+        repo="cyhhao/vibe-remote",
+        pr_number=153,
+        state=state,
+        review_cursor=0,
+        review_comment_cursor=0,
+        issue_comment_cursor=0,
+        reaction_cursor=0,
+        pr_status="open",
+        event_limit=8,
+    )
+
+    assert output is None
+    assert review_cursor == 0
+    assert review_comment_cursor == 0
+    assert issue_comment_cursor == 0
+    assert reaction_cursor == 0
+    assert pr_status == "open"
 
 
 def test_render_new_pull_requests_includes_new_prs() -> None:
@@ -300,6 +482,62 @@ def test_main_bootstraps_new_pr_watch_from_first_page_only() -> None:
     assert rc == 0
     assert calls == [(None, 1), (None, None)]
     assert "pull_request #158" in stdout.getvalue()
+
+
+def test_main_detects_pr_status_change_during_polling() -> None:
+    module = _load_module()
+    fetch_calls = 0
+
+    def _fake_fetch_state(repo, pr_number, token):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        if fetch_calls == 1:
+            return (
+                {
+                    "pull_request": {
+                        "number": 153,
+                        "state": "open",
+                        "draft": False,
+                        "html_url": "https://github.com/example/repo/pull/153",
+                    },
+                    "reviews": [],
+                    "review_comments": [],
+                    "issue_comments": [],
+                    "reactions": [],
+                },
+                1,
+            )
+        return (
+            {
+                "pull_request": {
+                    "number": 153,
+                    "state": "closed",
+                    "draft": False,
+                    "merged_at": "2026-04-03T12:45:56Z",
+                    "html_url": "https://github.com/example/repo/pull/153",
+                },
+                "reviews": [],
+                "review_comments": [],
+                "issue_comments": [],
+                "reactions": [],
+            },
+            1,
+        )
+
+    stdout = io.StringIO()
+    with (
+        patch.object(module, "_fetch_state", side_effect=_fake_fetch_state),
+        patch.object(module, "get_token", return_value="token"),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch.object(module.time, "sleep", return_value=None),
+        patch("sys.argv", ["wait_pr.py", "--repo", "cyhhao/vibe-remote", "--pr", "153", "--interval", "1"]),
+        redirect_stdout(stdout),
+    ):
+        rc = module.main()
+
+    assert rc == 0
+    assert fetch_calls == 2
+    assert "pr_status #153 open -> merged" in stdout.getvalue()
 
 
 def test_main_reduces_unauthenticated_new_pr_interval_after_bootstrap() -> None:
