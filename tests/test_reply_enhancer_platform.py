@@ -87,7 +87,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`/tmp/user_preferences.md`", prompt)
         self.assertIn("`<platform>/<user_id>`", prompt)
 
-    def test_prompt_includes_task_watch_and_hook_usage_with_threadless_default_session_key(self):
+    def test_prompt_includes_task_watch_and_hook_usage_with_thread_default_session_key(self):
         context = MessageContext(
             user_id="U1",
             channel_id="C1",
@@ -108,10 +108,14 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             "Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.",
             prompt,
         )
-        self.assertIn("Default session key: `slack::channel::C1`", prompt)
-        self.assertIn("Current thread ID: `171717.123`", prompt)
+        self.assertIn("Default session key: `slack::channel::C1::thread::171717.123`", prompt)
+        self.assertIn("Channel-level session key: `slack::channel::C1`", prompt)
         self.assertIn(
-            "Use `--post-to channel` when the task, watch, or hook should keep thread context but publish to the parent channel.",
+            "When you do not want to keep the current session and instead want to start or reuse a higher-level session, usually use the higher-level session key.",
+            prompt,
+        )
+        self.assertIn(
+            "`--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.",
             prompt,
         )
         self.assertIn(
@@ -122,13 +126,13 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             "Prefer `vibe watch add` over ad-hoc `nohup` or shell-detached jobs when the user wants a managed background task.",
             prompt,
         )
-        self.assertIn(
-            "Use `--timeout <seconds>` on watches for per-cycle timeouts, and `--lifetime-timeout <seconds>` only when a forever watch also needs an overall lifetime cap.",
-            prompt,
-        )
         self.assertIn("If `--timezone` is omitted, the task uses the local system timezone at creation time.", prompt)
         self.assertIn(
-            "Run `vibe task add --help`, `vibe watch add --help`, or `vibe hook send --help` for the full command reference.",
+            "Use `--prompt \"...\"` or `--prompt-file <path>` for task and hook content. Use `--prefix \"...\"` on watches for the follow-up instruction that is prepended before waiter stdout; when both exist, Vibe Remote joins them with a blank line.",
+            prompt,
+        )
+        self.assertIn(
+            "If this is your first time using these commands, read `vibe task add --help`, `vibe watch add --help`, or `vibe hook send --help` before creating anything.",
             prompt,
         )
         self.assertIn("A shared user context and preferences file is available at ", prompt)
@@ -155,7 +159,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
                 fallback_platform="slack",
             )
 
-        self.assertIn("Default session key: `slack::channel::C1`", prompt)
+        self.assertIn("Default session key: `slack::channel::C1::thread::171717.123`", prompt)
+        self.assertIn("Channel-level session key: `slack::channel::C1`", prompt)
         self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
 
     def test_prompt_handles_missing_platform_specific(self):

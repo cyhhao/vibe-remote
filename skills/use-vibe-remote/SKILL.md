@@ -2,7 +2,7 @@
 name: use-vibe-remote
 slug: use-vibe-remote
 description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, watches, scheduled tasks, and operational state.
-version: 0.1.7
+version: 0.1.8
 ---
 
 # Use Vibe Remote
@@ -321,9 +321,16 @@ Preferred CLI shape:
 
 Delivery controls:
 
-- use `--post-to channel` when the task should keep session context from a thread-bound `session_key` but publish to the parent channel
+- `session_key` controls which session Vibe Remote continues using
+- when you want to keep the current session, keep using the current `session_key`
+- when you do not want to keep the current thread session and instead want to start or reuse the higher-level session, switch to the higher-level key
+- example: `slack::channel::C123::thread::171717.123` keeps the current thread session, while `slack::channel::C123` creates or reuses the channel-scoped session
+- use `--post-to channel` when the task or hook should keep the session chosen by `session_key` but publish to the parent channel
 - use `--deliver-key '<key>'` only when delivery must go to a different explicit target than `session_key`
 - do not combine `--post-to` and `--deliver-key` in the same command
+- `vibe task add` stores the text from `--prompt` or `--prompt-file` and injects it each time the task runs
+- `vibe hook send` queues the text from `--prompt` or `--prompt-file` once without storing a task
+- `vibe watch add` uses `--prefix` as follow-up instruction text; on a successful cycle Vibe Remote prepends it before waiter stdout, joined with a blank line when both exist
 
 Session key format:
 
@@ -333,11 +340,13 @@ Session key format:
 
 Default rule:
 
-- prefer the threadless session key unless the user explicitly asks to keep replies in the current thread
+- default to the current session key when the follow-up should continue the same conversation
+- switch to a higher-level key only when the user wants a new higher-level session instead of continuing the current one
 
 Operational guidance:
 
 - use `vibe task list` before editing or deleting an existing task
+- if this is the first time using `vibe task add`, `vibe watch add`, or `vibe hook send`, read the matching `--help` output first because it explains both parameter syntax and runtime effects
 - use `vibe task update <id>` to keep the same task ID while changing name, schedule, prompt, or target
 - use `vibe task list --brief` when you need a scheduling-focused summary instead of the full stored payload
 - `vibe task list` hides completed one-shot tasks by default; use `vibe task list --all` when you need the full history

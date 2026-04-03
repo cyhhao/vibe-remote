@@ -68,6 +68,8 @@ def test_watch_add_help_mentions_shell_and_lifetime_timeout(capsys) -> None:
     assert "Pass either --shell '<command>' or a command after '--'." in captured.out
     assert "--lifetime-timeout" in captured.out
     assert "vibe watch add --session-key 'slack::channel::C123'" in captured.out
+    assert "`--prefix` becomes the instruction text of the follow-up hook." in captured.out
+    assert "If this is your first time using this command, read this whole help entry before creating a watch." in captured.out
 
 
 def test_watch_add_parser_keeps_top_level_command_name() -> None:
