@@ -120,7 +120,7 @@ def test_fetch_issue_comment_state_stops_after_cursor() -> None:
     ]
 
     def _fake_list_paginated_with_count(base_url, token, *, stop_after_id=None):
-        assert "issues/24/comments" in base_url
+        assert "issues/24/comments?sort=created&direction=desc" in base_url
         assert stop_after_id == 302
         return comments, 2
 

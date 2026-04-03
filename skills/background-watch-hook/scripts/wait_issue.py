@@ -81,7 +81,7 @@ def _fetch_issue_comment_state(
 ) -> tuple[dict[str, list[dict[str, Any]]], int]:
     encoded_repo = urllib.parse.quote(repo, safe="/")
     comments, request_count = list_paginated_with_count(
-        f"https://api.github.com/repos/{encoded_repo}/issues/{issue_number}/comments",
+        f"https://api.github.com/repos/{encoded_repo}/issues/{issue_number}/comments?sort=created&direction=desc",
         token,
         stop_after_id=stop_after_id,
     )
