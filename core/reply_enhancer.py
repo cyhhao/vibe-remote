@@ -197,20 +197,17 @@ Use `vibe hook send --session-key ... --prompt ...` for one-shot asynchronous se
 Current conversation targeting:
 - Default session key: `{default_session_key}`
 - Channel-level session key: `{channel_session_key}`
-- Current thread ID: `{thread_id}`
 
 Rules:
 - `session_key` controls the conversation scope that Vibe Remote will continue using.
-- The default session key should usually stay at the current thread scope when a thread exists.
-- Use the channel-level session key when the work should continue outside the current thread and create or reuse a channel-scoped conversation.
+- When you do not want to keep the current session and instead want to start or reuse a higher-level session, usually use the higher-level session key. For example, if the default key is `slack::channel::C123::thread::171717.123`, then `slack::channel::C123` creates or reuses the channel-scoped session.
 - `--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.
 - Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
 - Use `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, and `vibe watch remove` to manage background work after creation.
 - Prefer `vibe watch add` over ad-hoc `nohup` or shell-detached jobs when the user wants a managed background task.
-- Use `--timeout <seconds>` on watches for per-cycle timeouts, and `--lifetime-timeout <seconds>` only when a forever watch also needs an overall lifetime cap.
 - If `--timezone` is omitted, the task uses the local system timezone at creation time.
-- Use `--prompt "..."` or `--prompt-file <path>` for task and hook content.
-- Run `vibe task add --help`, `vibe watch add --help`, or `vibe hook send --help` for the full command reference.
+- Use `--prompt "..."` or `--prompt-file <path>` for task and hook content. Use `--prefix "..."` on watches for the follow-up instruction that is prepended before waiter stdout; when both exist, Vibe Remote joins them with a blank line.
+- If this is your first time using these commands, read `vibe task add --help`, `vibe watch add --help`, or `vibe hook send --help` before creating anything. The help text and relevant skills explain not just the argument syntax but also runtime effects such as how follow-up messages are built and how tasks or watches are stored and managed.
 """
 
 
@@ -259,11 +256,9 @@ def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform:
         include_thread=False,
         fallback_platform=fallback_platform,
     )
-    thread_id = context.thread_id or "(none)"
     return _SCHEDULED_TASKS_PROMPT.format(
         default_session_key=default_key,
         channel_session_key=channel_key,
-        thread_id=thread_id,
     )
 
 

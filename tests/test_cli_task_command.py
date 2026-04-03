@@ -115,11 +115,26 @@ def test_task_add_help_includes_examples_and_threadless_guidance(capsys) -> None
 
     assert exc.value.code == 0
     captured = capsys.readouterr()
-    assert "Prefer a threadless session key by default." in captured.out
+    assert "If this is your first time using this command, read this whole help entry before creating a task." in captured.out
+    assert "`--session-key` chooses which session Vibe Remote will continue using when the task runs." in captured.out
     assert "--post-to" in captured.out
     assert "--deliver-key" in captured.out
+
+
+def test_hook_send_help_describes_runtime_effects(capsys) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["hook", "send", "--help"])
+
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert "If this is your first time using this command, read this whole help entry before queuing a hook." in captured.out
+    assert "`vibe hook send` queues one asynchronous turn without persisting a scheduled task." in captured.out
+    assert "`--post-to channel` changes where the message is posted, not which session is continued." in captured.out
+    assert "`--prompt` and `--prompt-file` provide the one-shot async content that will be queued immediately." in captured.out
     assert "<platform>::channel::<channel_id>" in captured.out
-    assert "vibe task add --session-key 'slack::channel::C123'" in captured.out
+    assert "vibe hook send --session-key 'slack::channel::C123'" in captured.out
 
 
 def test_task_list_help_mentions_completed_one_shots_hidden_by_default(capsys) -> None:

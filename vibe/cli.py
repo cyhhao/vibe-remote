@@ -125,10 +125,15 @@ def _task_add_examples_text() -> str:
           <platform>::user::<user_id>::thread::<thread_id>
 
         Guidance:
-          Prefer a threadless session key by default.
-          Only append ::thread::<thread_id> when the task must continue inside a specific thread.
-          Use --post-to channel when the task should keep thread context but publish to the parent channel.
+          If this is your first time using this command, read this whole help entry before creating a task.
+          `--session-key` chooses which session Vibe Remote will continue using when the task runs.
+          Keep the current session key when future runs should stay in the same session.
+          When you want to leave the current thread session and start or reuse the higher-level session instead, use the higher-level key. Example:
+            slack::channel::C123::thread::171717.123  -> keep the current thread session
+            slack::channel::C123                      -> create or reuse the channel-scoped session
+          `--post-to channel` changes where the message is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
+          `--prompt` and `--prompt-file` provide the stored task content that will be injected each time the task runs.
           Use --cron for recurring jobs and --at for one-shot jobs.
           --timezone controls how --cron and naive --at timestamps are interpreted.
 
@@ -174,11 +179,16 @@ def _hook_send_examples_text() -> str:
           <platform>::user::<user_id>::thread::<thread_id>
 
         Guidance:
+          If this is your first time using this command, read this whole help entry before queuing a hook.
           `vibe hook send` queues one asynchronous turn without persisting a scheduled task.
-          Prefer a threadless session key by default.
-          Only append ::thread::<thread_id> when the hook must continue in one specific thread.
-          Use --post-to channel when the hook should keep thread context but publish to the parent channel.
+          `--session-key` chooses which session Vibe Remote will continue using for that one async turn.
+          Keep the current session key when the hook should continue in the same session.
+          When you want to leave the current thread session and start or reuse the higher-level session instead, use the higher-level key. Example:
+            slack::channel::C123::thread::171717.123  -> keep the current thread session
+            slack::channel::C123                      -> create or reuse the channel-scoped session
+          `--post-to channel` changes where the message is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
+          `--prompt` and `--prompt-file` provide the one-shot async content that will be queued immediately.
 
         Examples:
           vibe hook send --session-key 'slack::channel::C123' --prompt 'The export finished. Share the summary.'
@@ -214,11 +224,16 @@ def _watch_add_examples_text() -> str:
           <platform>::user::<user_id>::thread::<thread_id>
 
         Guidance:
+          If this is your first time using this command, read this whole help entry before creating a watch.
           Use a watch when a script should wait in the background and send one hook only after a condition is met.
-          Prefer a threadless session key by default.
-          Only append ::thread::<thread_id> when follow-up must stay inside one specific thread.
-          Use --post-to channel when the watch should keep thread context but publish to the parent channel.
+          `--session-key` chooses which session Vibe Remote will continue using for follow-up messages from the watch.
+          Keep the current session key when follow-up should continue in the same session.
+          When you want to leave the current thread session and start or reuse the higher-level session instead, use the higher-level key. Example:
+            slack::channel::C123::thread::171717.123  -> keep the current thread session
+            slack::channel::C123                      -> create or reuse the channel-scoped session
+          `--post-to channel` changes where the follow-up is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
+          `--prefix` becomes the instruction text of the follow-up hook. On a successful cycle, Vibe Remote prepends `--prefix` before waiter stdout and joins them with a blank line when both exist.
           Pass either --shell '<command>' or a command after '--'.
           --timeout applies to each cycle. --lifetime-timeout applies only to the whole forever watch lifetime.
 
@@ -1900,24 +1915,24 @@ def build_parser():
     task_add_parser.add_argument(
         "--session-key",
         required=True,
-        help="Target session key. Prefer a threadless key unless the task must stay in one thread.",
+        help="Conversation session key to continue when the task runs.",
     )
     delivery_group = task_add_parser.add_mutually_exclusive_group()
     delivery_group.add_argument(
         "--post-to",
         choices=("thread", "channel"),
-        help="Delivery location override. Omit to follow --session-key directly.",
+        help="Delivery location override. This changes where the message is posted, not which session is continued.",
     )
     delivery_group.add_argument(
         "--deliver-key",
-        help="Explicit delivery target key. Use this only when messages must be delivered to a different target.",
+        help="Explicit delivery target key. Use this only when delivery must go to a different target than the continued session.",
     )
     schedule_group = task_add_parser.add_mutually_exclusive_group(required=True)
     schedule_group.add_argument("--cron", help="Recurring schedule in 5-field crontab format")
     schedule_group.add_argument("--at", help="One-shot timestamp in ISO 8601 format")
     prompt_group = task_add_parser.add_mutually_exclusive_group(required=True)
-    prompt_group.add_argument("--prompt", help="Prompt text to send")
-    prompt_group.add_argument("--prompt-file", help="Read prompt text from a UTF-8 text file")
+    prompt_group.add_argument("--prompt", help="Stored task content to inject each time the task runs")
+    prompt_group.add_argument("--prompt-file", help="Read stored task content from a UTF-8 text file")
     task_add_parser.add_argument("--timezone", help="IANA timezone name used for --cron and naive --at values")
 
     task_update_parser = task_subparsers.add_parser(
@@ -2052,21 +2067,21 @@ def build_parser():
     hook_send_parser.add_argument(
         "--session-key",
         required=True,
-        help="Target session key. Prefer a threadless key unless the hook must stay in one thread.",
+        help="Conversation session key to continue for this one-shot async turn.",
     )
     hook_delivery_group = hook_send_parser.add_mutually_exclusive_group()
     hook_delivery_group.add_argument(
         "--post-to",
         choices=("thread", "channel"),
-        help="Delivery location override. Omit to follow --session-key directly.",
+        help="Delivery location override. This changes where the message is posted, not which session is continued.",
     )
     hook_delivery_group.add_argument(
         "--deliver-key",
-        help="Explicit delivery target key. Use this only when messages must be delivered to a different target.",
+        help="Explicit delivery target key. Use this only when delivery must go to a different target than the continued session.",
     )
     hook_prompt_group = hook_send_parser.add_mutually_exclusive_group(required=True)
-    hook_prompt_group.add_argument("--prompt", help="Prompt text to send")
-    hook_prompt_group.add_argument("--prompt-file", help="Read prompt text from a UTF-8 text file")
+    hook_prompt_group.add_argument("--prompt", help="One-shot async content to queue immediately")
+    hook_prompt_group.add_argument("--prompt-file", help="Read one-shot async content from a UTF-8 text file")
 
     watch_parser = subparsers.add_parser(
         "watch",
@@ -2096,19 +2111,22 @@ def build_parser():
     watch_add_parser.add_argument(
         "--session-key",
         required=True,
-        help="Target session key. Prefer a threadless key unless the follow-up must stay in one thread.",
+        help="Conversation session key to continue for follow-up messages from this watch.",
     )
     watch_delivery_group = watch_add_parser.add_mutually_exclusive_group()
     watch_delivery_group.add_argument(
         "--post-to",
         choices=("thread", "channel"),
-        help="Delivery location override. Omit to follow --session-key directly.",
+        help="Delivery location override. This changes where the follow-up is posted, not which session is continued.",
     )
     watch_delivery_group.add_argument(
         "--deliver-key",
-        help="Explicit delivery target key. Use this only when messages must be delivered to a different target.",
+        help="Explicit delivery target key. Use this only when delivery must go to a different target than the continued session.",
     )
-    watch_add_parser.add_argument("--prefix", help="Optional prompt prefix prepended before waiter stdout")
+    watch_add_parser.add_argument(
+        "--prefix",
+        help="Optional follow-up instruction text prepended before waiter stdout, joined with a blank line when both exist.",
+    )
     watch_add_parser.add_argument("--cwd", help="Working directory for the waiter process")
     watch_add_parser.add_argument(
         "--timeout",

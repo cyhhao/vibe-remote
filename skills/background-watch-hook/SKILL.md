@@ -2,7 +2,7 @@
 name: background-watch-hook
 slug: background-watch-hook
 description: Use `vibe watch` to run a background waiter that returns to the same conversation later. Best for reviews, CI, files, logs, and other wait-now-continue-later workflows.
-version: 0.6.0
+version: 0.6.1
 ---
 
 # Background Watch Hook
@@ -63,7 +63,7 @@ Use `--forever` when the same waiter should re-arm after each detected event ins
 ## `vibe watch` Parameters To Remember
 
 - `--session-key`: where the follow-up should go
-- `--prefix`: what the next turn should do with the waiter result
+- `--prefix`: the instruction text prepended before waiter stdout in the follow-up; when both exist they are joined with a blank line
 - `--name`: optional label for later management
 - `--forever`: re-arm after each detected event
 - `--timeout`: per-cycle timeout
@@ -130,9 +130,11 @@ vibe watch add \
 
 Use the current Vibe Remote context:
 
-- current channel if the follow-up can return there
-- current thread if the follow-up must stay in thread context
-- `--post-to channel` only when the user wants to keep thread context but publish in the parent channel
+- `session_key` controls which session Vibe Remote will continue using
+- keep the current session key when the follow-up should continue the same session
+- when you do not want to keep the current thread session and instead want to start or reuse the higher-level session, use the higher-level key
+- example: `slack::channel::C123::thread::171717.123` keeps the current thread session, while `slack::channel::C123` creates or reuses the channel-scoped session
+- `--post-to channel` only when the follow-up should keep the session chosen by `session_key` but publish in the parent channel
 
 If the current turn does not expose a usable target, ask instead of guessing.
 
@@ -241,6 +243,7 @@ uv run --no-project scripts/wait_issue.py --repo cyhhao/vibe-remote --issue 157 
 ## Practical Advice
 
 - Keep prefixes action-oriented. Tell the next turn what to do with the waiter result.
+- If this is the first time using `vibe watch add`, read `vibe watch add --help` first; the help text explains both argument syntax and runtime behavior such as how `--prefix` and waiter stdout become the follow-up message.
 - Prefer `vibe watch` over ad-hoc detached shells when the wait should survive the current turn cleanly.
 - Treat GitHub as just one example waiter, not the main point of the skill.
 - If a watch is no longer useful, remove it instead of leaving stale background work behind.
