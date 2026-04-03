@@ -76,6 +76,8 @@ class SettingsHandler(BaseHandler):
                 await self._handle_settings_slack(context)
             elif platform == "discord":
                 await self._handle_settings_discord(context)
+            elif platform == "telegram":
+                await self._handle_settings_telegram(context)
             elif platform == "lark":
                 await self._handle_settings_lark(context)
             else:
@@ -202,6 +204,34 @@ class SettingsHandler(BaseHandler):
                     message_types,
                     display_names,
                     context.channel_id,
+                    current_require_mention=current_require_mention,
+                    global_require_mention=global_require_mention,
+                    current_language=current_language,
+                    owner_user_id=context.user_id,
+                )
+            )
+            return
+        await self._handle_settings_traditional(context)
+
+    async def _handle_settings_telegram(self, context: MessageContext):
+        im_client = self._get_im_client(context)
+        settings_key = self._get_settings_key(context)
+        settings_manager = self._get_settings_manager(context)
+        user_settings = settings_manager.get_user_settings(settings_key)
+        message_types = settings_manager.get_available_message_types()
+        display_names = self._message_type_display_names()
+        current_require_mention = settings_manager.get_require_mention_override(settings_key)
+        global_require_mention = self.config.telegram.require_mention if self.config.telegram else True
+        current_language = self.config.language
+
+        if hasattr(im_client, "open_settings_modal"):
+            await im_client.run_on_client_loop(
+                im_client.open_settings_modal(
+                    trigger_id=context,
+                    user_settings=user_settings,
+                    message_types=message_types,
+                    display_names=display_names,
+                    channel_id=context.channel_id,
                     current_require_mention=current_require_mention,
                     global_require_mention=global_require_mention,
                     current_language=current_language,

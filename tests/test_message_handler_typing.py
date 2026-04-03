@@ -287,6 +287,20 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controller.im_client.reactions, [])
         self.assertGreaterEqual(len(controller.im_client.typing_calls), 1)
 
+    async def test_telegram_reaction_mode_matches_global_ack_strategy(self):
+        controller = _StubController(platform="telegram", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(user_id="tg-user", channel_id="tg-chat", message_id="m1", platform="telegram")
+
+        await handler.handle_user_message(context, "hello")
+
+        _, request = controller.agent_service.requests[0]
+        self.assertFalse(request.typing_indicator_active)
+        self.assertEqual(request.ack_reaction_message_id, "m1")
+        self.assertEqual(request.ack_reaction_emoji, ":eyes:")
+        self.assertEqual(controller.im_client.reactions, [("tg-chat", "m1", ":eyes:")])
+
     async def test_platform_specific_client_is_used_for_user_info(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
         handler = MessageHandler(controller)
