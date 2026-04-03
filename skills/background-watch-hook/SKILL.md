@@ -155,7 +155,7 @@ This separation matters: a forever watch can still use a bounded timeout for eac
 This skill ships bundled GitHub waiters:
 
 - `scripts/wait_pr.py`
-  Waits for GitHub PR review activity, including reviews, inline review comments, PR conversation comments, and the special Codex `+1` reaction on the PR body. It can also wait for newly opened PRs in a repository.
+  Waits for GitHub PR review activity, including reviews, inline review comments, PR conversation comments, PR status transitions such as `draft -> open`, `open -> merged`, or `open -> closed`, and the special Codex `+1` reaction on the PR body. It can also wait for newly opened PRs in a repository.
 - `scripts/wait_issue.py`
   Waits for GitHub issue activity, either newly opened issues in a repository or new comments on a single issue.
 
@@ -216,6 +216,7 @@ GitHub-specific notes:
 - `--catch-up` reports activity that already exists at startup
 - without `--catch-up`, the waiter snapshots current PR activity as the baseline
 - PR activity also includes the special case where `chatgpt-codex-connector[bot]` leaves a `+1` reaction on the PR body instead of posting a comment
+- PR activity also includes lifecycle changes on the PR itself, for example draft/ready, closed, reopened, or merged transitions
 - self-authored comments are ignored by default when the current authenticated GitHub user can be resolved; pass `--include-self-comments` to keep them
 - authentication is preferred; unauthenticated polling is slower and more fragile
 
