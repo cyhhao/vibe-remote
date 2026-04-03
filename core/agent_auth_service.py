@@ -388,6 +388,9 @@ class AgentAuthService:
                 stdout=slave_fd,
                 stderr=slave_fd,
             )
+        except Exception:
+            os.close(master_fd)
+            raise
         finally:
             os.close(slave_fd)
         return process, master_fd
@@ -421,6 +424,9 @@ class AgentAuthService:
                 stdout=slave_fd,
                 stderr=slave_fd,
             )
+        except Exception:
+            os.close(master_fd)
+            raise
         finally:
             os.close(slave_fd)
         return process, master_fd, provider
@@ -685,8 +691,16 @@ class AgentAuthService:
     async def _terminate_flow(self, flow: AgentAuthFlow) -> None:
         if flow.waiter_task and not flow.waiter_task.done():
             flow.waiter_task.cancel()
+            try:
+                await flow.waiter_task
+            except asyncio.CancelledError:
+                pass
         if flow.reader_task and not flow.reader_task.done():
             flow.reader_task.cancel()
+            try:
+                await flow.reader_task
+            except asyncio.CancelledError:
+                pass
         if flow.process.returncode is None:
             flow.process.terminate()
             try:
@@ -697,5 +711,6 @@ class AgentAuthService:
         self._drop_flow(flow)
 
     def _drop_flow(self, flow: AgentAuthFlow) -> None:
-        self._flows.pop(flow.flow_key, None)
+        if self._flows.get(flow.flow_key) is flow:
+            self._flows.pop(flow.flow_key, None)
         self._flows_by_id.pop(flow.flow_id, None)

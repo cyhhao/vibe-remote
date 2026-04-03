@@ -287,6 +287,77 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(opencode_flow.awaiting_code)
         self.assertIn("opencode", controller.im_client.sent_messages[0][1].lower())
 
+    async def test_drop_flow_preserves_replacement_flow_with_same_key(self):
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
+
+        existing_flow = AgentAuthFlow(
+            flow_id="flow-old",
+            backend="claude",
+            settings_key="C1",
+            initiator_user_id="U1",
+            context=context,
+            process=SimpleNamespace(returncode=None),
+            reader_task=done_task,
+            waiter_task=done_task,
+            pty_master_fd=10,
+        )
+        replacement_flow = AgentAuthFlow(
+            flow_id="flow-new",
+            backend="claude",
+            settings_key="C1",
+            initiator_user_id="U1",
+            context=context,
+            process=SimpleNamespace(returncode=None),
+            reader_task=done_task,
+            waiter_task=done_task,
+            pty_master_fd=11,
+        )
+        service._flows[existing_flow.flow_key] = replacement_flow
+        service._flows_by_id[existing_flow.flow_id] = existing_flow
+        service._flows_by_id[replacement_flow.flow_id] = replacement_flow
+
+        service._drop_flow(existing_flow)
+
+        self.assertIs(service._flows[existing_flow.flow_key], replacement_flow)
+        self.assertNotIn(existing_flow.flow_id, service._flows_by_id)
+        self.assertIs(service._flows_by_id[replacement_flow.flow_id], replacement_flow)
+
+    async def test_start_claude_process_closes_master_fd_on_spawn_failure(self):
+        controller = _StubController()
+        service = AgentAuthService(controller)
+
+        with (
+            patch("core.agent_auth_service.os.openpty", return_value=(101, 202)),
+            patch("core.agent_auth_service.os.close") as mock_close,
+            patch("core.agent_auth_service.asyncio.create_subprocess_exec", side_effect=RuntimeError("boom")),
+        ):
+            with self.assertRaises(RuntimeError):
+                await service._start_claude_process(force_reset=False)
+
+        mock_close.assert_any_call(101)
+        mock_close.assert_any_call(202)
+
+    async def test_start_opencode_process_closes_master_fd_on_spawn_failure(self):
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+        service._resolve_opencode_provider = AsyncMock(return_value="openai")
+
+        with (
+            patch("core.agent_auth_service.os.openpty", return_value=(303, 404)),
+            patch("core.agent_auth_service.os.close") as mock_close,
+            patch("core.agent_auth_service.asyncio.create_subprocess_exec", side_effect=RuntimeError("boom")),
+        ):
+            with self.assertRaises(RuntimeError):
+                await service._start_opencode_process(context, force_reset=False)
+
+        mock_close.assert_any_call(303)
+        mock_close.assert_any_call(404)
+
     async def test_read_pty_output_exits_after_process_finishes_without_output(self):
         controller = _StubController()
         service = AgentAuthService(controller)
