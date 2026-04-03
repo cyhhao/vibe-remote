@@ -193,3 +193,53 @@ def test_main_uses_raw_issue_cursor_for_new_issue_paging() -> None:
     assert rc == 0
     assert calls == [None, 401]
     assert "issue #41" in stdout.getvalue()
+
+
+def test_main_uses_since_raw_issue_cursor_for_initial_new_issue_fetch() -> None:
+    module = _load_module()
+    calls: list[int | None] = []
+
+    def _fake_fetch_new_issue_state(repo, token, *, stop_after_id=None):
+        calls.append(stop_after_id)
+        return (
+            {
+                "issues": [
+                    {
+                        "id": 405,
+                        "number": 41,
+                        "title": "New issue",
+                        "state": "open",
+                        "html_url": "https://github.com/example/repo/issues/41",
+                        "user": {"login": "someone"},
+                    }
+                ],
+                "raw_issue_cursor": 406,
+            },
+            1,
+        )
+
+    stdout = io.StringIO()
+    with (
+        patch.object(module, "_fetch_new_issue_state", side_effect=_fake_fetch_new_issue_state),
+        patch.object(module, "get_token", return_value="token"),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch(
+            "sys.argv",
+            [
+                "wait_issue.py",
+                "--repo",
+                "cyhhao/vibe-remote",
+                "--new-issues",
+                "--since-issue-id",
+                "400",
+                "--since-raw-issue-id",
+                "401",
+            ],
+        ),
+        redirect_stdout(stdout),
+    ):
+        rc = module.main()
+
+    assert rc == 0
+    assert calls == [401]
+    assert "issue #41" in stdout.getvalue()

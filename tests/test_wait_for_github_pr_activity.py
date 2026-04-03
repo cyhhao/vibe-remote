@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import importlib.util
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -210,3 +212,50 @@ def test_fetch_new_pr_state_stops_after_cursor() -> None:
 
     assert state["pull_requests"][0]["id"] == 410
     assert request_count == 1
+
+
+def test_main_uses_since_pr_cursor_for_initial_new_pr_fetch() -> None:
+    module = _load_module()
+    calls: list[int | None] = []
+
+    def _fake_fetch_new_pr_state(repo, token, *, stop_after_id=None):
+        calls.append(stop_after_id)
+        return (
+            {
+                "pull_requests": [
+                    {
+                        "id": 410,
+                        "number": 158,
+                        "title": "New PR",
+                        "state": "open",
+                        "html_url": "https://github.com/example/repo/pull/158",
+                        "user": {"login": "cyhhao"},
+                    }
+                ]
+            },
+            1,
+        )
+
+    stdout = io.StringIO()
+    with (
+        patch.object(module, "_fetch_new_pr_state", side_effect=_fake_fetch_new_pr_state),
+        patch.object(module, "get_token", return_value="token"),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch(
+            "sys.argv",
+            [
+                "wait_pr.py",
+                "--repo",
+                "cyhhao/vibe-remote",
+                "--new-prs",
+                "--since-pr-id",
+                "405",
+            ],
+        ),
+        redirect_stdout(stdout),
+    ):
+        rc = module.main()
+
+    assert rc == 0
+    assert calls == [405]
+    assert "pull_request #158" in stdout.getvalue()

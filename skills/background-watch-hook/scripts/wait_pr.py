@@ -322,7 +322,14 @@ def main() -> int:
         if args.pr is not None:
             state, requests_per_poll_count = _fetch_state(args.repo, args.pr, token)
         else:
-            state, requests_per_poll_count = _fetch_new_pr_state(args.repo, token)
+            initial_pr_stop_after_id = None
+            if args.since_pr_id is not None and not args.catch_up:
+                initial_pr_stop_after_id = args.since_pr_id
+            state, requests_per_poll_count = _fetch_new_pr_state(
+                args.repo,
+                token,
+                stop_after_id=initial_pr_stop_after_id,
+            )
     except urllib.error.HTTPError as err:
         print(f"GitHub API error: {err.code} {err.reason}", file=sys.stderr)
         return 1
