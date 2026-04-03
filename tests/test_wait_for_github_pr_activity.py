@@ -137,6 +137,45 @@ def test_render_activity_ignores_self_authored_issue_comment_but_advances_cursor
     assert pr_status == "open"
 
 
+def test_render_activity_ignores_self_authored_review_but_advances_cursor() -> None:
+    module = _load_module()
+    state = {
+        "pull_request": {"number": 153, "state": "open", "draft": False},
+        "reviews": [
+            {
+                "id": 125,
+                "state": "COMMENTED",
+                "body": "Looks good",
+                "html_url": "https://github.com/example/repo/pull/1#pullrequestreview-125",
+                "user": {"login": "someone"},
+            }
+        ],
+        "review_comments": [],
+        "issue_comments": [],
+        "reactions": [],
+    }
+
+    output, review_cursor, review_comment_cursor, issue_comment_cursor, reaction_cursor, pr_status = module._render_activity(
+        repo="cyhhao/vibe-remote",
+        pr_number=153,
+        state=state,
+        review_cursor=0,
+        review_comment_cursor=0,
+        issue_comment_cursor=0,
+        reaction_cursor=0,
+        pr_status="open",
+        event_limit=8,
+        viewer_login="someone",
+    )
+
+    assert output is None
+    assert review_cursor == 125
+    assert review_comment_cursor == 0
+    assert issue_comment_cursor == 0
+    assert reaction_cursor == 0
+    assert pr_status == "open"
+
+
 def test_render_activity_includes_self_authored_comment_when_disabled() -> None:
     module = _load_module()
     state = {
@@ -170,6 +209,42 @@ def test_render_activity_includes_self_authored_comment_when_disabled() -> None:
 
     assert output is not None
     assert "issue_comment #127" in output
+
+
+def test_render_activity_includes_self_authored_review_when_disabled() -> None:
+    module = _load_module()
+    state = {
+        "pull_request": {"number": 153, "state": "open", "draft": False},
+        "reviews": [
+            {
+                "id": 128,
+                "state": "COMMENTED",
+                "body": "Looks good",
+                "html_url": "https://github.com/example/repo/pull/1#pullrequestreview-128",
+                "user": {"login": "someone"},
+            }
+        ],
+        "review_comments": [],
+        "issue_comments": [],
+        "reactions": [],
+    }
+
+    output, *_rest = module._render_activity(
+        repo="cyhhao/vibe-remote",
+        pr_number=153,
+        state=state,
+        review_cursor=0,
+        review_comment_cursor=0,
+        issue_comment_cursor=0,
+        reaction_cursor=0,
+        pr_status="open",
+        event_limit=8,
+        viewer_login="someone",
+        ignore_self_comments=False,
+    )
+
+    assert output is not None
+    assert "review #128" in output
 
 
 def test_render_activity_includes_pr_status_change() -> None:

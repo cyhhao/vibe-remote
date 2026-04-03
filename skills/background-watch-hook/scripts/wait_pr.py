@@ -200,6 +200,11 @@ def _render_activity(
     new_reviews = filter_new(state["reviews"], review_cursor)
     new_review_comments = filter_new(state["review_comments"], review_comment_cursor)
     new_issue_comments = filter_new(state["issue_comments"], issue_comment_cursor)
+    visible_reviews = (
+        [review for review in new_reviews if not _is_self_authored_comment(review, viewer_login)]
+        if ignore_self_comments
+        else new_reviews
+    )
     visible_review_comments = (
         [comment for comment in new_review_comments if not _is_self_authored_comment(comment, viewer_login)]
         if ignore_self_comments
@@ -229,7 +234,7 @@ def _render_activity(
     rendered_events: list[str] = []
     if has_pr_status_event and isinstance(state.get("pull_request"), dict):
         rendered_events.append(_format_pr_status_event(state["pull_request"], pr_status, current_pr_status))
-    rendered_events.extend(_format_review(review) for review in new_reviews)
+    rendered_events.extend(_format_review(review) for review in visible_reviews)
     rendered_events.extend(_format_review_comment(comment) for comment in visible_review_comments)
     rendered_events.extend(_format_issue_comment(comment) for comment in visible_issue_comments)
     rendered_events.extend(_format_reaction(reaction) for reaction in new_reactions)
@@ -345,7 +350,7 @@ def main() -> int:
     parser.add_argument(
         "--include-self-comments",
         action="store_true",
-        help="Include comments authored by the current authenticated GitHub user",
+        help="Include reviews and comments authored by the current authenticated GitHub user",
     )
     parser.add_argument(
         "--catch-up",
