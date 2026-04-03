@@ -224,4 +224,5 @@ Testing guidance:
 
 - tags follow the latest version number +1 (for example `v1.0.1` -> `v1.0.2`)
 - GitHub-only pre-releases should use the `gh-vX.Y.ZrcN` format (for example `gh-v2.2.8rc2`) so they stay distinct from PyPI-triggering `v*` tags
+- GitHub-only pre-releases must include installable artifacts (at minimum a wheel built with `ui/dist`) in the GitHub release assets
 - releases are published automatically by workflow after tagging/push
