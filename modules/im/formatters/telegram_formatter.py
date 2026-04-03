@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import re
+import uuid
 
 from .base_formatter import BaseMarkdownFormatter
 
@@ -71,32 +72,40 @@ class TelegramFormatter(BaseMarkdownFormatter):
         while cursor < len(text):
             start = text.find("[", cursor)
             if start < 0:
-                rendered_parts.append(text[cursor:])
+                rendered_parts.append(self._apply_inline_formatting(text[cursor:]))
                 break
 
             label_end = self._find_link_label_end(text, start)
             if label_end is None:
-                rendered_parts.append(text[cursor : start + 1])
+                rendered_parts.append(self._apply_inline_formatting(text[cursor : start + 1]))
                 cursor = start + 1
                 continue
 
             url_start = label_end + 2
             if not text.startswith(("http://", "https://"), url_start):
-                rendered_parts.append(text[cursor : start + 1])
+                rendered_parts.append(self._apply_inline_formatting(text[cursor : start + 1]))
                 cursor = start + 1
                 continue
 
             url_end = self._find_link_url_end(text, url_start)
             if url_end is None:
-                rendered_parts.append(text[cursor : start + 1])
+                rendered_parts.append(self._apply_inline_formatting(text[cursor : start + 1]))
                 cursor = start + 1
                 continue
 
-            rendered_parts.append(text[cursor:start])
-            rendered_parts.append(f'<a href="{text[url_start:url_end]}">{text[start + 1:label_end]}</a>')
+            rendered_parts.append(self._apply_inline_formatting(text[cursor:start]))
+            rendered_parts.append(
+                f'<a href="{text[url_start:url_end]}">{self._apply_inline_formatting(text[start + 1:label_end])}</a>'
+            )
             cursor = url_end + 1
 
         return "".join(rendered_parts)
+
+    def _apply_inline_formatting(self, text: str) -> str:
+        text = self._BOLD_RE.sub(r"<b>\1</b>", text)
+        text = self._STRIKE_RE.sub(r"<s>\1</s>", text)
+        text = self._ITALIC_RE.sub(r"<i>\1</i>", text)
+        return text
 
     def render(self, text: str) -> str:
         if not text:
@@ -105,7 +114,7 @@ class TelegramFormatter(BaseMarkdownFormatter):
         placeholders: dict[str, str] = {}
 
         def stash(replacement: str) -> str:
-            token = f"@@TG{len(placeholders)}@@"
+            token = f"\uE000TG{uuid.uuid4().hex}\uE001"
             placeholders[token] = replacement
             return token
 
@@ -124,9 +133,6 @@ class TelegramFormatter(BaseMarkdownFormatter):
         rendered = html.escape(rendered)
 
         rendered = self._render_links(rendered)
-        rendered = self._BOLD_RE.sub(r"<b>\1</b>", rendered)
-        rendered = self._STRIKE_RE.sub(r"<s>\1</s>", rendered)
-        rendered = self._ITALIC_RE.sub(r"<i>\1</i>", rendered)
 
         for token, replacement in placeholders.items():
             rendered = rendered.replace(token, replacement)

@@ -30,3 +30,19 @@ def test_render_does_not_join_plain_brackets_with_later_link() -> None:
     rendered = formatter.render("test [x] and [Docs](https://a.com)")
 
     assert rendered == 'test [x] and <a href="https://a.com">Docs</a>'
+
+
+def test_render_preserves_markdown_metacharacters_inside_link_href() -> None:
+    formatter = TelegramFormatter()
+
+    rendered = formatter.render("[x](https://a.com?q=a*b*)")
+
+    assert rendered == '<a href="https://a.com?q=a*b*">x</a>'
+
+
+def test_render_preserves_literal_placeholder_like_text() -> None:
+    formatter = TelegramFormatter()
+
+    rendered = formatter.render("literal @@TG0@@ and `code`")
+
+    assert rendered == "literal @@TG0@@ and <code>code</code>"
