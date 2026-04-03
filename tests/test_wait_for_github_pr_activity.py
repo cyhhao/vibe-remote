@@ -309,6 +309,39 @@ def test_render_activity_reports_closed_to_open_transition() -> None:
     assert pr_status == "open"
 
 
+def test_render_activity_prioritizes_closed_over_draft() -> None:
+    module = _load_module()
+    state = {
+        "pull_request": {
+            "number": 153,
+            "state": "closed",
+            "draft": True,
+            "html_url": "https://github.com/example/repo/pull/153",
+        },
+        "reviews": [],
+        "review_comments": [],
+        "issue_comments": [],
+        "reactions": [],
+    }
+
+    output, *_rest, pr_status = module._render_activity(
+        repo="cyhhao/vibe-remote",
+        pr_number=153,
+        state=state,
+        review_cursor=0,
+        review_comment_cursor=0,
+        issue_comment_cursor=0,
+        reaction_cursor=0,
+        pr_status="open",
+        event_limit=8,
+    )
+
+    assert output is not None
+    assert "pr_status #153 open -> closed" in output
+    assert "Pull request was closed without merge." in output
+    assert pr_status == "closed"
+
+
 def test_render_activity_skips_unchanged_pr_status() -> None:
     module = _load_module()
     state = {

@@ -88,10 +88,12 @@ def _current_pr_status(pr: dict[str, Any] | None) -> str:
         return "unknown"
     if pr.get("merged_at"):
         return "merged"
+    state = str(pr.get("state") or "").lower()
+    if state == "closed":
+        return "closed"
     if pr.get("draft") is True:
         return "draft"
-    state = str(pr.get("state") or "").lower()
-    if state in {"open", "closed"}:
+    if state == "open":
         return state
     return state or "unknown"
 
