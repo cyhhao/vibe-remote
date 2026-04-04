@@ -558,7 +558,8 @@ class AgentAuthService:
     ) -> Optional[str]:
         im_client = self._get_im_client(context)
         if hasattr(im_client, "send_message_with_buttons"):
-            return await im_client.send_message_with_buttons(context, text, keyboard)
+            button_text = text if not fallback_text else f"{text}\n\n{fallback_text}"
+            return await im_client.send_message_with_buttons(context, button_text, keyboard)
         fallback = fallback_text or text
         return await im_client.send_message(context, fallback)
 

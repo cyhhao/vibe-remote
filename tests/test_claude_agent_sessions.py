@@ -196,7 +196,6 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         controller._get_session_key = lambda context: "telegram::user::U1"
         controller.emit_agent_message = AsyncMock()
         agent = ClaudeAgent(controller)
-        agent._clear_pending_reactions = AsyncMock()
         agent._remove_ack_reaction = AsyncMock()
         agent._extract_text_blocks = lambda message, context: (
             'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error",'
@@ -207,9 +206,10 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         current_task = asyncio.current_task()
         controller.receiver_tasks[composite_key] = current_task
         controller.claude_sessions[composite_key] = _StubClient()
-        pending_request = SimpleNamespace()
-        agent._pending_requests[composite_key] = [pending_request]
-        agent._pending_reactions[composite_key] = [("m1", ":eyes:")]
+        pending_request_1 = SimpleNamespace()
+        pending_request_2 = SimpleNamespace()
+        agent._pending_requests[composite_key] = [pending_request_1, pending_request_2]
+        agent._pending_reactions[composite_key] = [("m1", ":eyes:"), ("m2", ":eyes:")]
 
         assistant_message = type(
             "AssistantMessage",
@@ -232,7 +232,9 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
 
         controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once()
         controller.session_handler.cleanup_session.assert_not_awaited()
-        agent._remove_ack_reaction.assert_awaited_once_with(pending_request)
+        self.assertEqual(agent._remove_ack_reaction.await_count, 2)
+        self.assertEqual(agent._remove_ack_reaction.await_args_list[0].args, (pending_request_1,))
+        self.assertEqual(agent._remove_ack_reaction.await_args_list[1].args, (pending_request_2,))
         self.assertNotIn(composite_key, controller.receiver_tasks)
         self.assertNotIn(composite_key, controller.claude_sessions)
         self.assertNotIn(composite_key, agent._pending_requests)
@@ -244,7 +246,6 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         controller._get_session_key = lambda context: "telegram::user::U1"
         controller.emit_agent_message = AsyncMock()
         agent = ClaudeAgent(controller)
-        agent._clear_pending_reactions = AsyncMock()
         agent._remove_ack_reaction = AsyncMock()
         context = SimpleNamespace()
         composite_key = "session-1:/tmp/work"

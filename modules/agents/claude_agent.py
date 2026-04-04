@@ -330,7 +330,7 @@ class ClaudeAgent(BaseAgent):
                             "error" if auth_failure_assistant else "",
                             auth_failure_text if auth_failure_assistant else assistant_text,
                         ):
-                            await self._cleanup_auth_failure_request(composite_key)
+                            await self._clear_pending_reactions(composite_key, context)
                             self._last_assistant_text.pop(composite_key, None)
                             self._pending_assistant_message.pop(composite_key, None)
                             continue
@@ -396,7 +396,7 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             formatted_message,
                         ):
-                            await self._cleanup_auth_failure_request(composite_key)
+                            await self._clear_pending_reactions(composite_key, context)
                             continue
                         if formatted_message and formatted_message.strip():
                             await self.controller.emit_agent_message(
@@ -423,7 +423,7 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             result_text,
                         ):
-                            await self._cleanup_auth_failure_request(composite_key)
+                            await self._clear_pending_reactions(composite_key, context)
                             self._last_assistant_text.pop(composite_key, None)
                             self._pending_assistant_message.pop(composite_key, None)
                             continue
@@ -584,12 +584,6 @@ class ClaudeAgent(BaseAgent):
         if requests:
             for request in requests:
                 await self._remove_ack_reaction(request)
-
-    async def _cleanup_auth_failure_request(self, composite_key: str) -> None:
-        pending_request = self._pop_pending_request(composite_key)
-        self._discard_pending_reaction(composite_key)
-        if pending_request is not None:
-            await self._remove_ack_reaction(pending_request)
 
     def get_relative_path(self, abs_path: str, context: Optional[MessageContext] = None) -> str:
         """Convert absolute path to relative path from working directory."""

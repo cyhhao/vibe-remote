@@ -197,6 +197,8 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(controller.im_client.sent_button_messages), 1)
         _, text, keyboard = controller.im_client.sent_button_messages[0]
         self.assertIn("sign-in source", text.lower())
+        self.assertIn("/setup claude claudeai", text)
+        self.assertIn("/setup claude console", text)
         self.assertEqual(keyboard.buttons[0][0].callback_data, "auth_setup:claude:claudeai")
         self.assertEqual(keyboard.buttons[0][1].callback_data, "auth_setup:claude:console")
 
