@@ -31,6 +31,13 @@ Reviewers should ask:
 4. If the bug was flow-level, where is the scenario coverage?
 5. What remains intentionally manual?
 
+PR authors should include in the PR body:
+
+- changed capability
+- affected scenario IDs
+- evidence layers updated
+- residual manual checks
+
 ## CI Workflow
 
 Projects adopting this standard should evolve toward:

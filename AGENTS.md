@@ -151,6 +151,8 @@ Source-of-truth rule:
 ### Review Loop for PRs
 
 - before opening a PR, run the reviewer subagent and fix significant issues first
+- PR descriptions must name the changed capability and list the affected scenario IDs when a scenario catalog exists
+- PR descriptions must state which evidence layers were updated: unit, contract, scenario, and residual manual checks
 - after opening a PR, use the `background-watch-hook` skill to keep a review-fix loop running until Codex review passes
 - by default, create the review watch immediately after the PR is opened; do not wait for the user to remind you unless they explicitly say not to keep a watch
 
@@ -203,6 +205,7 @@ Testing guidance:
 - use pytest-style tests (`test_<feature>.py`) colocated or under `tests/`
 - for IM integrations, stub/mock platform clients and validate outbound payload/schema behavior
 - for reusable capability-first testing guidance, use `standards/scenario-testing/AGENTS.md` as the entrypoint; project-specific scenario coverage should follow that standard
+- when a scenario catalog exists, make the scenario ID visible in the automated test and in the PR description
 - for multi-step auth/setup flows, add or update a closed-loop scenario harness case under `tests/test_agent_auth_setup_scenarios.py`; keep provider-specific parsing and heuristics in focused unit tests
 - for UI changes, run `npm run build` in `ui/`
 - for cross-platform or user-facing verification, use the Docker regression workflow
