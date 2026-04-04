@@ -4,6 +4,7 @@ import { useStatus } from '../context/StatusContext';
 import { Play, Square, RotateCw, Activity, Terminal, CheckCircle, MessageSquare, Server, Settings, Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getEnabledPlatforms, getPrimaryPlatform } from '../lib/platforms';
+import { apiFetch } from '../lib/apiFetch';
 
 export const Dashboard: React.FC = () => {
     const { t } = useTranslation();
@@ -43,7 +44,7 @@ export const Dashboard: React.FC = () => {
                 wechat: newConfig.wechat,
                 agents: newConfig.agents,
             };
-            await fetch('/config', {
+            await apiFetch('/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(patch),
@@ -67,13 +68,13 @@ export const Dashboard: React.FC = () => {
                 ui: { ...(config.ui || {}), ...uiPayload },
             };
             // Save config first
-            await fetch('/config', {
+            await apiFetch('/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(configPayload),
             });
             // Restart UI service
-            await fetch('/ui/reload', {
+            await apiFetch('/ui/reload', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ host: uiPayload.setup_host, port: uiPayload.setup_port }),
@@ -101,7 +102,7 @@ export const Dashboard: React.FC = () => {
             const configPayload = {
                 runtime: runtimePayload,
             };
-            await fetch('/config', {
+            await apiFetch('/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(configPayload),
@@ -124,7 +125,7 @@ export const Dashboard: React.FC = () => {
                     const nextConfig = await res.json();
                     setConfig(nextConfig);
                 }
-                const doctorRes = await fetch('/doctor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                const doctorRes = await apiFetch('/doctor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
                 if (doctorRes.ok) {
                     setDoctor(await doctorRes.json());
                 }

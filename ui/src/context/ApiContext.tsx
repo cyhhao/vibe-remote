@@ -1,5 +1,6 @@
 import React, { createContext, useContext } from 'react';
 import { useToast } from './ToastContext';
+import { apiFetch } from '../lib/apiFetch';
 
 export type ApiContextType = {
   getConfig: () => Promise<any>;
@@ -121,7 +122,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const getJson = async (path: string) => {
-    const res = await fetch(path);
+    const res = await apiFetch(path);
     if (!res.ok) {
       await handleApiError(res, path);
     }
@@ -129,7 +130,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const postJson = async (path: string, payload: any) => {
-    const res = await fetch(path, {
+    const res = await apiFetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -148,10 +149,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getUsers: (platform) => getJson(platform ? `/api/users?platform=${encodeURIComponent(platform)}` : '/api/users'),
     saveUsers: (payload, platform) => postJson('/api/users', platform ? { ...payload, platform } : payload),
     toggleAdmin: (userId, isAdmin, platform) => postJson(`/api/users/${encodeURIComponent(userId)}/admin`, platform ? { is_admin: isAdmin, platform } : { is_admin: isAdmin }),
-    removeUser: (userId, platform) => fetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
+    removeUser: (userId, platform) => apiFetch(platform ? `/api/users/${encodeURIComponent(userId)}?platform=${encodeURIComponent(platform)}` : `/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }).then(r => r.json()),
     getBindCodes: () => getJson('/api/bind-codes'),
     createBindCode: (type, expiresAt) => postJson('/api/bind-codes', { type, expires_at: expiresAt }),
-    deleteBindCode: (code) => fetch(`/api/bind-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),
+    deleteBindCode: (code) => apiFetch(`/api/bind-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),
     getFirstBindCode: () => getJson('/api/setup/first-bind-code'),
     detectCli: (binary) => getJson(`/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => postJson(`/agent/${encodeURIComponent(name)}/install`, {}),
