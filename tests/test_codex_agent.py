@@ -255,6 +255,35 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0][0], "send")
         self.assertEqual(events[1][0], "clear")
 
+    async def test_refresh_auth_state_stops_transports_and_invalidates_threads(self):
+        agent = object.__new__(CodexAgent)
+        stop_calls = []
+
+        async def stop_a():
+            stop_calls.append("a")
+
+        async def stop_b():
+            stop_calls.append("b")
+
+        invalidated = []
+        cleared_sessions = []
+        agent._transports = {
+            "/tmp/a": SimpleNamespace(stop=stop_a),
+            "/tmp/b": SimpleNamespace(stop=stop_b),
+        }
+        agent._session_mgr = SimpleNamespace(
+            all_base_sessions=lambda: ["session-1", "session-2"],
+            invalidate_thread=lambda base_session_id: invalidated.append(base_session_id),
+        )
+        agent._turn_registry = SimpleNamespace(clear_session=lambda base_session_id: cleared_sessions.append(base_session_id))
+
+        await agent.refresh_auth_state()
+
+        self.assertEqual(stop_calls, ["a", "b"])
+        self.assertEqual(agent._transports, {})
+        self.assertEqual(invalidated, ["session-1", "session-2"])
+        self.assertEqual(cleared_sessions, ["session-1", "session-2"])
+
 
 class _HandleMessageTurnRegistry:
     def __init__(self, active_turn: str | None):

@@ -4,7 +4,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -52,11 +52,16 @@ class _FakeResponse:
 class _FakeSession:
     def __init__(self):
         self.posts = []
+        self.puts = []
         self.closed = False
 
     def post(self, url, json=None, headers=None):
         self.posts.append({"url": url, "json": json, "headers": headers})
         return _FakeResponse()
+
+    def put(self, url, json=None, headers=None):
+        self.puts.append({"url": url, "json": json, "headers": headers})
+        return _FakeResponse(status=200)
 
     async def close(self):
         self.closed = True
@@ -153,6 +158,26 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(manager._process)
         self.assertIsNone(manager._base_url)
 
+    async def test_restart_for_auth_refresh_trusts_pid_file_when_command_lookup_unavailable(self):
+        manager = OpenCodeServerManager(binary="opencode", port=4096)
+        fake_session = _FakeSession()
+        manager._http_session = fake_session
+        manager._http_session_loop = object()
+        manager._process = object()
+        manager._base_url = "http://127.0.0.1:4096"
+        manager._read_pid_file = lambda: {"pid": 654, "port": 4096}  # type: ignore[method-assign]
+        manager._pid_exists = lambda pid: pid == 654  # type: ignore[method-assign]
+        manager._get_pid_command = lambda pid: None  # type: ignore[method-assign]
+        terminated = []
+        manager._terminate_pid = lambda pid, reason: terminated.append((pid, reason)) or _async_none()  # type: ignore[method-assign]
+        manager._clear_pid_file = lambda: terminated.append(("cleared", ""))  # type: ignore[method-assign]
+
+        await manager.restart_for_auth_refresh()
+
+        self.assertTrue(fake_session.closed)
+        self.assertIn((654, "auth refresh"), terminated)
+        self.assertIn(("cleared", ""), terminated)
+
     async def test_restart_for_auth_refresh_defers_while_requests_are_active(self):
         manager = OpenCodeServerManager(binary="opencode", port=4096)
         fake_session = _FakeSession()
@@ -206,6 +231,31 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restarted, [])
         self.assertEqual(manager._active_requests, 0)
         self.assertTrue(manager._auth_refresh_pending)
+
+    async def test_set_api_key_auth_uses_official_auth_endpoint(self):
+        manager = OpenCodeServerManager(binary="opencode", port=4096)
+        fake_session = _FakeSession()
+
+        async def _fake_get_http_session():
+            return fake_session
+
+        manager._get_http_session = _fake_get_http_session  # type: ignore[method-assign]
+        manager.ensure_running = AsyncMock()  # type: ignore[method-assign]
+        manager._base_url = "http://127.0.0.1:4096"
+
+        await manager.set_api_key_auth("opencode", "sk-test-key")
+
+        manager.ensure_running.assert_awaited_once()
+        self.assertEqual(
+            fake_session.puts,
+            [
+                {
+                    "url": "http://127.0.0.1:4096/auth/opencode",
+                    "json": {"type": "api", "key": "sk-test-key"},
+                    "headers": None,
+                }
+            ],
+        )
 
 
 async def _async_none():

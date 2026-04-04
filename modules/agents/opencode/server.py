@@ -128,6 +128,12 @@ class OpenCodeServerManager:
             cmd = self._get_pid_command(pid)
             if cmd and self._is_opencode_serve_cmd(cmd, self.port):
                 targets.append(pid)
+            elif isinstance(info, dict) and info.get("port") == self.port:
+                logger.info(
+                    "Trusting OpenCode pid file for pid=%s because command lookup is unavailable",
+                    pid,
+                )
+                targets.append(pid)
 
         if not targets:
             for candidate in self._find_opencode_serve_pids(self.port):
@@ -324,8 +330,15 @@ class OpenCodeServerManager:
             return
 
         cmd = self._get_pid_command(pid)
-        if cmd and self._is_opencode_serve_cmd(cmd, self.port) and self._pid_exists(pid):
-            await self._terminate_pid(pid, reason="orphaned and unhealthy")
+        if self._pid_exists(pid):
+            if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                await self._terminate_pid(pid, reason="orphaned and unhealthy")
+            elif cmd is None:
+                logger.info(
+                    "Trusting OpenCode pid file for orphan cleanup pid=%s because command lookup is unavailable",
+                    pid,
+                )
+                await self._terminate_pid(pid, reason="orphaned and unhealthy")
         self._clear_pid_file()
 
     async def ensure_running(self) -> str:
@@ -714,6 +727,21 @@ class OpenCodeServerManager:
             except Exception as e:
                 logger.warning(f"Failed to get default config: {e}")
                 return {}
+
+    async def set_api_key_auth(self, provider_id: str, api_key: str) -> None:
+        """Persist provider API auth via OpenCode's own auth endpoint."""
+
+        await self.ensure_running()
+
+        async with self._request_scope():
+            session = await self._get_http_session()
+            async with session.put(
+                f"{self.base_url}/auth/{provider_id}",
+                json={"type": "api", "key": api_key},
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise RuntimeError(f"Failed to set OpenCode auth: {resp.status} {error_text}")
 
     def _load_opencode_user_config(self) -> Optional[Dict[str, Any]]:
         """Load and cache opencode.json config file.

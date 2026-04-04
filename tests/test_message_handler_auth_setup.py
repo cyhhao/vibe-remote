@@ -134,6 +134,21 @@ class MessageHandlerAuthSetupTests(unittest.IsolatedAsyncioTestCase):
 
         controller.agent_auth_service.handle_setup_callback.assert_awaited_once_with(context, "auth_setup:auto")
 
+    async def test_plain_claude_callback_value_is_consumed_before_agent_routing(self):
+        controller = _StubController()
+        controller.agent_auth_service.maybe_consume_setup_reply = AsyncMock(return_value=True)
+
+        handler = MessageHandler(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack", message_id="m1")
+
+        result = await handler.handle_user_message(context, "auth-code#oauth-state")
+
+        self.assertIsNone(result)
+        controller.agent_auth_service.maybe_consume_setup_reply.assert_awaited_once_with(
+            context,
+            "auth-code#oauth-state",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

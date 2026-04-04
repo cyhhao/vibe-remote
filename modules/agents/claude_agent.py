@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Callable, Optional
 
+from core.agent_auth_service import classify_auth_error
 from modules.claude_sdk_compat import TextBlock, ToolUseBlock
 
 from modules.agents.base import AgentRequest, BaseAgent
@@ -162,6 +163,38 @@ class ClaudeAgent(BaseAgent):
 
         return len(sessions_to_clear) or len(session_bases_to_clear)
 
+    async def refresh_auth_state(self) -> None:
+        """Reconnect Claude runtime so future requests load fresh auth."""
+        session_ids = set(self.claude_sessions.keys()) | set(self.receiver_tasks.keys())
+
+        for composite_id in session_ids:
+            receiver_task = self.receiver_tasks.pop(composite_id, None)
+            if receiver_task is not None and not receiver_task.done():
+                receiver_task.cancel()
+                try:
+                    await receiver_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    logger.warning("Error stopping Claude receiver %s during auth refresh: %s", composite_id, exc)
+
+            client = self.claude_sessions.pop(composite_id, None)
+            if client is not None:
+                try:
+                    if hasattr(client, "disconnect"):
+                        await client.disconnect()
+                    elif hasattr(client, "close"):
+                        await client.close()
+                except Exception as exc:
+                    logger.warning("Error disconnecting Claude session %s during auth refresh: %s", composite_id, exc)
+
+            self._last_assistant_text.pop(composite_id, None)
+            self._pending_assistant_message.pop(composite_id, None)
+            self._pending_reactions.pop(composite_id, None)
+            self._pending_requests.pop(composite_id, None)
+
+        logger.info("Refreshed Claude auth state across %d runtime session(s)", len(session_ids))
+
     async def handle_stop(self, request: AgentRequest) -> bool:
         composite_key = request.composite_session_id
         if composite_key not in self.claude_sessions:
@@ -250,6 +283,19 @@ class ClaudeAgent(BaseAgent):
                                     text_parts.append(text)
 
                         assistant_text = self._extract_text_blocks(message, context)
+                        if await self._handle_auth_failure_result(
+                            context,
+                            composite_key,
+                            "error" if self._is_auth_failure_assistant_message(message) else "",
+                            assistant_text,
+                        ):
+                            pending_request = self._pop_pending_request(composite_key)
+                            self._discard_pending_reaction(composite_key)
+                            if pending_request:
+                                await self._remove_ack_reaction(pending_request)
+                            self._last_assistant_text.pop(composite_key, None)
+                            self._pending_assistant_message.pop(composite_key, None)
+                            continue
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
@@ -306,6 +352,13 @@ class ClaudeAgent(BaseAgent):
                             get_relative_path=lambda path: self.get_relative_path(path, context),
                             formatter=formatter,
                         )
+                        if await self._handle_auth_failure_result(
+                            context,
+                            composite_key,
+                            getattr(message, "subtype", "") or "",
+                            formatted_message,
+                        ):
+                            continue
                         if formatted_message and formatted_message.strip():
                             await self.controller.emit_agent_message(
                                 context,
@@ -324,6 +377,20 @@ class ClaudeAgent(BaseAgent):
                             fallback = self._last_assistant_text.get(composite_key)
                             if fallback:
                                 result_text = fallback
+
+                        if await self._handle_auth_failure_result(
+                            context,
+                            composite_key,
+                            getattr(message, "subtype", "") or "",
+                            result_text,
+                        ):
+                            pending_request = self._pop_pending_request(composite_key)
+                            self._discard_pending_reaction(composite_key)
+                            if pending_request:
+                                await self._remove_ack_reaction(pending_request)
+                            self._last_assistant_text.pop(composite_key, None)
+                            self._pending_assistant_message.pop(composite_key, None)
+                            continue
 
                         # NOTE: The pending assistant message is intentionally
                         # NOT emitted here.  ResultMessage.result already
@@ -371,7 +438,13 @@ class ClaudeAgent(BaseAgent):
             # Clean up all pending reactions for this session on error —
             # the receiver is dead and won't process any more results.
             await self._clear_pending_reactions(composite_key, context)
-            await self.session_handler.handle_session_error(composite_key, context, e)
+            handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
+                context,
+                "claude",
+                f"❌ Claude error: {e}",
+            )
+            if not handled:
+                await self.session_handler.handle_session_error(composite_key, context, e)
         # NOTE: no `finally` cleanup of pending reactions here.
         # When the receiver ends normally (stream exhausted after a result),
         # new messages may have already queued their reactions via
@@ -528,6 +601,39 @@ class ClaudeAgent(BaseAgent):
                 if text:
                     parts.append(self._get_formatter(context).escape_special_chars(text))
         return "\n\n".join(parts).strip()
+
+    async def _handle_auth_failure_result(
+        self,
+        context: MessageContext,
+        composite_key: str,
+        subtype: str,
+        text: Optional[str],
+    ) -> bool:
+        if not text or not text.strip():
+            return False
+
+        normalized_subtype = (subtype or "").strip().lower()
+        if normalized_subtype and normalized_subtype not in {"error", "failed"}:
+            return False
+
+        if not classify_auth_error("claude", text):
+            return False
+
+        handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
+            context,
+            "claude",
+            f"❌ Claude error: {text}",
+        )
+        if handled:
+            await self.session_handler.cleanup_session(composite_key)
+        return handled
+
+    def _is_auth_failure_assistant_message(self, message) -> bool:
+        if not getattr(message, "isApiErrorMessage", False):
+            return False
+
+        error_kind = (getattr(message, "error", "") or "").strip().lower()
+        return error_kind == "authentication_failed"
 
     def _detect_message_type(self, message) -> Optional[str]:
         """Infer message type name from Claude SDK class."""
