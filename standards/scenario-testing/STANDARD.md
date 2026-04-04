@@ -126,6 +126,8 @@ Recommended layering:
   - fake transport/client
   - fake process / completion handle
   - base scenario harness
+  - step runner
+  - shared expectation helpers
 - capability-specific harness
   - auth setup
   - attachment delivery

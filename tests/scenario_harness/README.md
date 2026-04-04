@@ -12,6 +12,15 @@ Rules:
 Current contents:
 
 - `core.py`
-  Generic scenario-harness primitives: event probe, fake IM client, base controller, fake process, base harness
+  Generic scenario-harness primitives: event probe, fake IM client, base controller, fake process, base harness, runner, expectation helpers
 - `auth_setup.py`
   Auth/setup-specific harness built on top of the generic layer
+
+Recommended layering:
+
+1. `core.py`
+   The reusable layer every capability can share.
+2. `<capability>.py`
+   Capability-specific harness or fixtures.
+3. `tests/test_<capability>_scenarios.py`
+   The scenario transcript itself.

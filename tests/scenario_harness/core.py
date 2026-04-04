@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -114,3 +115,54 @@ class BaseScenarioHarness:
 
     def rendered_texts(self) -> list[str]:
         return self.controller.im_probe.rendered_texts()
+
+
+@dataclass
+class ScenarioStep:
+    """One named scenario action executed against a harness."""
+
+    name: str
+    action: object
+
+
+class ScenarioRunner:
+    """Run a sequence of named async steps against one harness instance."""
+
+    def __init__(self, harness: BaseScenarioHarness):
+        self.harness = harness
+        self.history: list[str] = []
+
+    async def run(self, *steps: ScenarioStep):
+        for step in steps:
+            self.history.append(step.name)
+            result = step.action(self.harness)
+            if asyncio.iscoroutine(result):
+                await result
+
+
+class ScenarioExpect:
+    """Common assertions for scenario tests."""
+
+    @staticmethod
+    def text_contains(
+        harness: BaseScenarioHarness,
+        needle: str,
+        *,
+        index: int | None = None,
+        case_sensitive: bool = False,
+    ):
+        texts = harness.rendered_texts()
+        haystack = texts[index] if index is not None else "\n".join(texts)
+        expected = needle
+        if not case_sensitive:
+            haystack = haystack.lower()
+            expected = needle.lower()
+        assert expected in haystack, f"Expected to find {needle!r} in scenario output, got: {haystack!r}"
+
+    @staticmethod
+    def flow_missing(harness, flow_key: str):
+        assert flow_key not in harness.service._flows, f"Expected flow {flow_key} to be removed"
+
+    @staticmethod
+    def step_history(runner: ScenarioRunner, expected: list[str]):
+        assert runner.history == expected, f"Expected step history {expected!r}, got {runner.history!r}"
