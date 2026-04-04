@@ -41,9 +41,11 @@ Each capability owns:
 ## Package Layout
 
 - `AGENTS.md`
-  Entry instructions for future agents or subagents working on this standard.
+  Entry instructions for a future testing-owner agent or a human owner adopting this standard.
 - `STANDARD.md`
   The testing model and terminology.
+- `ADOPTION.md`
+  The onboarding workflow for introducing this standard into a new project.
 - `WORKFLOW.md`
   The recommended development and review process.
 - `templates/`
@@ -53,15 +55,18 @@ Each capability owns:
 
 ## How To Adopt It In A Project
 
-1. Define capabilities in user-visible terms.
-2. Create a scenario catalog with stable IDs.
-3. Build a lightweight harness layer with reusable fakes and probes.
-4. Map the project's existing tests into:
+1. Understand the product and summarize its core capabilities in user-visible terms.
+2. Build a capability map and prioritize the high-risk flows.
+3. Create scenario catalogs with stable IDs.
+4. Define the harness boundary and decide what is fake, contract, and smoke/manual.
+5. Build a lightweight harness layer with reusable fakes and probes.
+6. Map the project's existing tests into:
    - unit
    - contract
    - scenario
    - smoke/manual
-5. Make scenario coverage part of feature and bug-fix delivery.
+7. Maintain a dependency observation log so real-world behavior keeps updating the harness.
+8. Make scenario coverage part of feature and bug-fix delivery.
 
 ## Why It Is Package-Shaped
 
@@ -70,5 +75,5 @@ This directory is structured so it can later be moved into its own repository wi
 The intended future is:
 
 - a standalone repo for the standard
-- a dedicated subagent that helps teams apply it
+- a dedicated testing-owner agent that helps teams apply it
 - one or more project adapters or examples layered on top

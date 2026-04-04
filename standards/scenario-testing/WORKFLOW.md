@@ -1,5 +1,19 @@
 # Workflow
 
+## Project Adoption Workflow
+
+When bringing this standard into a new project, do not start with individual tests.
+
+Start with `ADOPTION.md`, then establish:
+
+1. a product and capability summary
+2. a capability map
+3. at least one scenario catalog with stable IDs
+4. a harness boundary inventory
+5. a dependency observation log
+
+Only after that baseline exists should feature and bug-fix workflows rely on scenario coverage as a delivery rule.
+
 ## Feature Workflow
 
 When adding a feature:
@@ -10,6 +24,7 @@ When adding a feature:
 4. Implement the smallest relevant unit and contract tests.
 5. Add or update at least one closed-loop scenario.
 6. Record any residual manual checks.
+7. Update the dependency observation log if the change was driven by real-world behavior not previously modeled.
 
 ## Bug Fix Workflow
 
@@ -19,7 +34,8 @@ When fixing a bug:
 2. Map the bug to an existing scenario ID, or create a new regression scenario ID.
 3. Add the narrow unit/contract test if the root cause is local.
 4. Add or update the scenario test that proves the user journey now closes.
-5. Document why the previous test layers did not catch it.
+5. Record whether the fix required updating an observed fake, contract fixture, or dependency assumption.
+6. Document why the previous test layers did not catch it.
 
 ## Review Workflow
 
@@ -30,6 +46,8 @@ Reviewers should ask:
 3. Does the PR update the right layer of evidence?
 4. If the bug was flow-level, where is the scenario coverage?
 5. What remains intentionally manual?
+6. Did the change reveal a dependency behavior the harness did not previously model?
+7. If so, where was that knowledge recorded?
 
 PR authors should include in the PR body:
 
@@ -48,6 +66,20 @@ Projects adopting this standard should evolve toward:
 
 CI does not need to run all scenario suites at once on day one.
 It does need a path toward capability-aware regression gates.
+
+## Reality Feedback Workflow
+
+When manual regression, smoke validation, or production behavior disagrees with the current harness:
+
+1. capture the observation in the dependency observation log
+2. identify affected capability and scenario IDs
+3. decide whether the change belongs in:
+   - a fake
+   - a contract fixture
+   - the scenario catalog
+   - the manual runbook
+4. update the relevant automated evidence
+5. keep the fake aligned with observed behavior for high-risk paths
 
 ## Change Management
 

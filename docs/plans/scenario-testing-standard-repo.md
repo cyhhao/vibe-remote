@@ -7,7 +7,7 @@
 This is the right short-term shape for proving the model, but it is not the right long-term shape if we want:
 
 - cross-project reuse
-- a dedicated subagent focused on testing-system design
+- a dedicated testing-owner agent focused on testing-system design
 - stable templates and conventions that are not tied to Vibe Remote release cadence
 - a shared standard that other repositories can adopt without inheriting Vibe Remote-specific assumptions
 
@@ -83,6 +83,7 @@ scenario-testing-standard/
 ├── templates/
 │   ├── capability-spec.md
 │   ├── scenario-catalog.md
+│   ├── dependency-observation.md
 │   ├── harness-design.md
 │   └── pr-checklist.md
 ├── examples/
@@ -223,6 +224,6 @@ The right long-term shape is:
 
 - a standalone `scenario-testing-standard` repository
 - docs-first, template-first
-- subagent-ready but not subagent-only
+- testing-owner-agent-ready but not agent-only
 - examples from Vibe Remote, but not owned by Vibe Remote
 - optional reference harness primitives only after repeated reuse proves the need

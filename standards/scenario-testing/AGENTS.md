@@ -35,10 +35,12 @@ The goal is to add a reusable middle layer that answers:
   Overview and intended reuse model.
 - `STANDARD.md`
   The core methodology and testing pyramid.
+- `ADOPTION.md`
+  The onboarding workflow for a testing-owner agent adopting this standard in a new project.
 - `WORKFLOW.md`
   The day-to-day workflow for feature work, bug fixes, reviews, and CI.
 - `templates/`
-  Reusable templates for capability specs, scenario catalogs, and PR checklists.
+  Reusable templates for capability specs, scenario catalogs, dependency observations, and PR checklists.
 - `examples/`
   Concrete project mappings. These explain how one repo applies the standard without redefining the standard itself.
 
@@ -46,11 +48,21 @@ The goal is to add a reusable middle layer that answers:
 
 For a project adopting this standard, the normal outputs are:
 
+- a product and capability summary
+- a capability map
 - a capability spec
 - a scenario catalog with stable IDs
+- a harness boundary inventory
 - a reusable scenario harness layer
+- a dependency observation log
 - project-specific reference scenarios
 - PR/CI rules that enforce the standard
+
+## Starting Rule
+
+When adopting this standard in a new repository, start with `ADOPTION.md` before changing tests.
+
+Use `WORKFLOW.md` only after the adoption baseline exists.
 
 ## Non-Goals
 

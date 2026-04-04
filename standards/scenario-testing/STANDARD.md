@@ -119,6 +119,15 @@ Examples:
 - fake persistence store
 - probes for sent messages, state transitions, refresh hooks
 
+Treat fakes as assets with explicit maturity:
+
+- `ideal fake`
+  - bootstraps expected behavior quickly
+- `contract fake`
+  - models documented or wire-level dependency guarantees
+- `observed fake`
+  - models verified runtime behavior discovered through reproductions, incidents, or manual regression
+
 Recommended layering:
 
 - generic core primitives
@@ -177,6 +186,8 @@ Good harnesses:
 - capture transcripts and terminal outputs
 - are cheap to extend
 
+High-risk capabilities should evolve away from purely ideal fakes over time.
+
 ### Avoid
 
 - giant one-off mocks per test
@@ -184,7 +195,20 @@ Good harnesses:
 - harnesses that mirror the production implementation too closely
 - full E2E infrastructure when a service-boundary scenario would do
 
-## 6. Delivery Standard
+## 6. Reality Feedback Rule
+
+Scenario harnesses must absorb verified reality, not only idealized assumptions.
+
+When runtime behavior disproves the current fake or scenario model:
+
+1. record the observation
+2. classify it as product rule, dependency contract, code bug, or fake gap
+3. update the harness, contract fixtures, or scenario catalog as needed
+4. preserve it as regression coverage where the capability risk justifies it
+
+This is how scenario tests become more trustworthy over time instead of drifting away from real behavior.
+
+## 7. Delivery Standard
 
 Every feature or bug fix that changes a capability must update the relevant testing evidence.
 
