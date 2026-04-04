@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import logging
 import mimetypes
@@ -7,6 +8,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from flask import Flask, request, jsonify, send_file, Response
 
@@ -113,6 +115,54 @@ def _serialize_log_entries(entries: list[dict[str, Any]]) -> list[dict[str, str]
         }
         for entry in entries
     ]
+
+
+def _trusted_ui_hosts() -> set[str]:
+    hosts = {"localhost", "127.0.0.1", "::1"}
+
+    try:
+        from vibe import api
+
+        config = api.load_config()
+    except Exception as exc:
+        logger.warning("Failed to load UI config for install endpoint trust check: %s", exc)
+        return hosts
+
+    if isinstance(config, dict):
+        setup_host = (config.get("ui") or {}).get("setup_host")
+    else:
+        setup_host = getattr(getattr(config, "ui", None), "setup_host", None)
+    if not setup_host:
+        return hosts
+
+    parsed = urlparse(setup_host if "://" in setup_host else f"http://{setup_host}")
+    candidate = parsed.hostname or setup_host
+    if not candidate:
+        return hosts
+
+    try:
+        ip = ipaddress.ip_address(candidate)
+    except ValueError:
+        hosts.add(candidate)
+        return hosts
+
+    if not ip.is_unspecified:
+        hosts.add(str(ip))
+    return hosts
+
+
+def _is_private_or_loopback_host(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    if hostname in {"localhost", "127.0.0.1", "::1"}:
+        return True
+
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+
+    return ip.is_loopback or ip.is_private
 
 
 def _read_log_entries(log_path: Path, source_key: str, lines: int) -> tuple[list[dict[str, Any]], int]:
@@ -707,26 +757,25 @@ def codex_models():
 def agent_install(name):
     """Install an agent CLI tool (opencode, claude, codex).
 
-    Security: Only allow requests from localhost to prevent CSRF/RCE attacks.
+    Security: Only allow same-origin requests from the configured private setup host
+    or localhost. This keeps the endpoint unavailable to arbitrary web pages while
+    still working behind Docker/macOS port-forwarding where remote_addr is unstable.
     """
-    from urllib.parse import urlparse
-
-    # Security: Only allow local requests
-    remote_addr = request.remote_addr or ""
-    if remote_addr not in {"127.0.0.1", "::1"}:
-        return jsonify({"ok": False, "message": "Forbidden: local access only"}), 403
-
     # Security: Require Origin or Referer header for CSRF protection
     origin = request.headers.get("Origin")
     referer = request.headers.get("Referer")
     if not origin and not referer:
         return jsonify({"ok": False, "message": "Forbidden: missing origin header"}), 403
 
-    # Validate Origin/Referer is from localhost
+    # Validate Origin/Referer is from a trusted setup host.
     check_header = origin or referer
     parsed = urlparse(check_header)
-    if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+    trusted_hosts = _trusted_ui_hosts()
+    if parsed.hostname not in trusted_hosts:
         return jsonify({"ok": False, "message": "Forbidden: invalid origin"}), 403
+
+    if not _is_private_or_loopback_host(parsed.hostname):
+        return jsonify({"ok": False, "message": "Forbidden: local access only"}), 403
 
     # Security: Allowlist validation
     allowed_agents = {"opencode", "claude", "codex"}
