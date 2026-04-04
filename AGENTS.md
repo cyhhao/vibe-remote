@@ -152,6 +152,7 @@ Source-of-truth rule:
 
 - before opening a PR, run the reviewer subagent and fix significant issues first
 - after opening a PR, use the `background-watch-hook` skill to keep a review-fix loop running until Codex review passes
+- by default, create the review watch immediately after the PR is opened; do not wait for the user to remind you unless they explicitly say not to keep a watch
 
 ### Pre-Push Requirements
 
