@@ -1,0 +1,17 @@
+version: 1
+canonical: true
+shared_harness: tests/scenario_harness
+navigation:
+  - Read this file first.
+  - Open the target capability's catalog.yaml.
+  - Open the same capability's observations.yaml.
+  - Read the listed scenario tests before changing code.
+capabilities:
+  - id: example_capability
+    name: Example capability
+    catalog: tests/scenarios/example_capability/catalog.yaml
+    observations: tests/scenarios/example_capability/observations.yaml
+    scenario_tests:
+      - tests/scenarios/example_capability/test_example_capability_scenarios.py
+    unit_or_contract_tests: []
+    human_docs: []

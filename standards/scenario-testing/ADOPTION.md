@@ -21,6 +21,7 @@ Its job is to:
 
 An adoption pass should normally leave behind:
 
+- a deterministic scenario asset layout rooted at `tests/scenarios/`
 - a capability map
 - at least one capability spec
 - at least one scenario catalog with stable IDs
@@ -72,6 +73,7 @@ Examples of poor starting points:
 Primary output:
 
 - a capability map with rough priority and risk
+- a project-level `tests/scenarios/INDEX.yaml`
 
 ## Phase 3: Build The Scenario Catalog
 
@@ -95,7 +97,7 @@ Scenario definitions should use:
 
 Primary output:
 
-- a scenario catalog with stable IDs
+- a scenario catalog with stable IDs, stored in a fixed capability directory such as `tests/scenarios/<capability>/catalog.yaml`
 
 ## Phase 4: Define The Boundary Model
 
@@ -162,6 +164,7 @@ Examples:
 Primary output:
 
 - an updated dependency observation log plus changed tests and scenarios
+- with the observation stored beside the capability, for example `tests/scenarios/<capability>/observations.yaml`
 
 ## Fake Maturity Model
 
@@ -204,6 +207,7 @@ Adoption is complete enough to be useful when:
 
 - the project has a capability map
 - at least one high-risk capability has a scenario catalog
+- the project has a deterministic `tests/scenarios/` entry structure
 - at least one reusable harness layer exists
 - reality feedback can be recorded and replayed into tests
 - PR authors can point to scenario IDs and evidence layers

@@ -1,0 +1,32 @@
+version: 1
+capability:
+  id: message_delivery
+  name: scheduled result delivery
+  canonical_tests:
+    - tests/scenarios/message_delivery/test_message_delivery_scenarios.py
+  shared_harness:
+    - tests/scenario_harness/core.py
+    - tests/scenario_harness/message_delivery.py
+status_legend:
+  covered: scenario coverage exists
+  partial: unit or contract coverage exists but the closed loop is incomplete
+  manual: currently validated only by human regression
+  gap: not covered yet
+scenarios:
+  - id: MESSAGE-DELIVERY-001
+    name: Scheduled result finalizes its delivery anchor
+    status: covered
+    kind: happy_path
+    layer: scenario
+    test: tests/scenarios/message_delivery/test_message_delivery_scenarios.py::test_scheduled_result_delivery_scenario_finalizes_anchor
+  - id: MESSAGE-DELIVERY-002
+    name: Delivery override sends to the parent target but finalizes the source thread
+    status: covered
+    kind: happy_path
+    layer: scenario
+    test: tests/scenarios/message_delivery/test_message_delivery_scenarios.py::test_scheduled_result_delivery_override_scenario_uses_parent_channel_target
+next_priority:
+  - MESSAGE-DELIVERY-101
+  - MESSAGE-DELIVERY-102
+  - MESSAGE-DELIVERY-201
+  - MESSAGE-DELIVERY-202

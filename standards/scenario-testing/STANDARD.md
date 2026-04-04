@@ -146,6 +146,15 @@ Recommended layering:
 
 Each capability must maintain a scenario catalog.
 
+Projects should also maintain a project-level capability index.
+
+Recommended canonical files:
+
+- `tests/scenarios/INDEX.yaml`
+- `tests/scenarios/<capability>/catalog.yaml`
+- `tests/scenarios/<capability>/observations.yaml`
+- `tests/scenarios/<capability>/test_*.py`
+
 Scenario IDs should be stable and human-usable:
 
 - `AUTH-SETUP-001`
@@ -207,6 +216,12 @@ When runtime behavior disproves the current fake or scenario model:
 4. preserve it as regression coverage where the capability risk justifies it
 
 This is how scenario tests become more trustworthy over time instead of drifting away from real behavior.
+
+Reality feedback should live next to the capability it changes.
+
+Preferred location:
+
+- `tests/scenarios/<capability>/observations.yaml`
 
 ## 7. Delivery Standard
 

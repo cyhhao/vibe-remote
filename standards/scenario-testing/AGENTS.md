@@ -44,6 +44,27 @@ The goal is to add a reusable middle layer that answers:
 - `examples/`
   Concrete project mappings. These explain how one repo applies the standard without redefining the standard itself.
 
+## Deterministic Navigation Rule
+
+Assume the next agent starts from zero memory and only has this file as its prompt.
+
+That agent must be able to find the project's scenario assets through fixed locations, not through guesswork.
+
+Preferred project layout:
+
+- `tests/scenarios/INDEX.yaml`
+  Project capability index. Read this first.
+- `tests/scenarios/<capability>/catalog.yaml`
+  Canonical scenario IDs and coverage state for that capability.
+- `tests/scenarios/<capability>/observations.yaml`
+  Historical dependency observations and reality-feedback notes for that capability.
+- `tests/scenarios/<capability>/test_*.py`
+  Executable scenario evidence.
+- `tests/scenario_harness/`
+  Shared harness primitives.
+
+Human-facing docs may still exist elsewhere, but the project should make one location canonical for scenario metadata.
+
 ## Expected Outputs
 
 For a project adopting this standard, the normal outputs are:
@@ -63,6 +84,14 @@ For a project adopting this standard, the normal outputs are:
 When adopting this standard in a new repository, start with `ADOPTION.md` before changing tests.
 
 Use `WORKFLOW.md` only after the adoption baseline exists.
+
+When working inside an already-adopted repository:
+
+1. read the project's `tests/scenarios/INDEX.yaml`
+2. open the target capability's `catalog.yaml`
+3. open the same capability's `observations.yaml`
+4. read the listed scenario test files
+5. only then change production code, harness primitives, or docs
 
 ## Non-Goals
 

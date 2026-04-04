@@ -8,9 +8,10 @@ Start with `ADOPTION.md`, then establish:
 
 1. a product and capability summary
 2. a capability map
-3. at least one scenario catalog with stable IDs
-4. a harness boundary inventory
-5. a dependency observation log
+3. a deterministic `tests/scenarios/INDEX.yaml`
+4. at least one scenario catalog with stable IDs
+5. a harness boundary inventory
+6. a dependency observation log
 
 Only after that baseline exists should feature and bug-fix workflows rely on scenario coverage as a delivery rule.
 
@@ -20,22 +21,24 @@ When adding a feature:
 
 1. Identify the capability being introduced or changed.
 2. Update or create the capability spec.
-3. Update or create the scenario catalog.
-4. Implement the smallest relevant unit and contract tests.
-5. Add or update at least one closed-loop scenario.
-6. Record any residual manual checks.
-7. Update the dependency observation log if the change was driven by real-world behavior not previously modeled.
+3. Update or create the capability entry under `tests/scenarios/`.
+4. Update or create the scenario catalog.
+5. Implement the smallest relevant unit and contract tests.
+6. Add or update at least one closed-loop scenario.
+7. Record any residual manual checks.
+8. Update the dependency observation log if the change was driven by real-world behavior not previously modeled.
 
 ## Bug Fix Workflow
 
 When fixing a bug:
 
 1. Identify the capability that failed.
-2. Map the bug to an existing scenario ID, or create a new regression scenario ID.
-3. Add the narrow unit/contract test if the root cause is local.
-4. Add or update the scenario test that proves the user journey now closes.
-5. Record whether the fix required updating an observed fake, contract fixture, or dependency assumption.
-6. Document why the previous test layers did not catch it.
+2. Open the capability's `catalog.yaml` and `observations.yaml`.
+3. Map the bug to an existing scenario ID, or create a new regression scenario ID.
+4. Add the narrow unit/contract test if the root cause is local.
+5. Add or update the scenario test that proves the user journey now closes.
+6. Record whether the fix required updating an observed fake, contract fixture, or dependency assumption.
+7. Document why the previous test layers did not catch it.
 
 ## Review Workflow
 
@@ -99,7 +102,9 @@ Do not hide scenario knowledge only in PR comments or issue threads.
 
 By the time a change is merged, the durable artifacts should live in:
 
+- the project capability index
 - the capability spec
 - the scenario catalog
+- the dependency observation log
 - the scenario tests
 - the PR/testing checklist

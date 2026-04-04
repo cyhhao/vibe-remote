@@ -24,5 +24,5 @@ Recommended layering:
    The reusable layer every capability can share.
 2. `<capability>.py`
    Capability-specific harness or fixtures.
-3. `tests/test_<capability>_scenarios.py`
+3. `tests/scenarios/<capability>/test_<capability>_scenarios.py`
    The scenario transcript itself.

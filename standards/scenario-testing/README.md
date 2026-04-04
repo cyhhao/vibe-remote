@@ -53,6 +53,23 @@ Each capability owns:
 - `examples/`
   Project-specific mappings and reference implementations.
 
+## Canonical Project Layout
+
+Projects adopting this standard should give agents one deterministic place to look for scenario assets.
+
+Recommended layout:
+
+- `tests/scenarios/INDEX.yaml`
+- `tests/scenarios/<capability>/catalog.yaml`
+- `tests/scenarios/<capability>/observations.yaml`
+- `tests/scenarios/<capability>/test_*.py`
+- `tests/scenario_harness/`
+
+This is intentionally different from long-form docs:
+
+- structured files under `tests/scenarios/` are the canonical source of truth
+- explanatory docs can exist elsewhere, but they should point back to the canonical files
+
 ## How To Adopt It In A Project
 
 1. Understand the product and summarize its core capabilities in user-visible terms.

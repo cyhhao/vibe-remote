@@ -26,14 +26,16 @@ It is exactly the kind of cross-cutting flow that can pass unit tests while stil
 - `AUTH-SETUP-002` Claude manual callback happy path
 - `AUTH-SETUP-003` OpenCode direct key happy path
 - `AUTH-SETUP-101` plain chat must not be consumed as setup input
-- `AUTH-SETUP-201` expired auth recovery must emit the reset path
-- `AUTH-SETUP-901` setup starts but never emits terminal completion
+- `AUTH-SETUP-202` failed verification must emit the reset path
+- `AUTH-SETUP-901` Codex success must refresh runtime before the next turn
 
 ## Current Project Mapping
 
 Reference implementation currently lives in:
 
-- `tests/test_agent_auth_setup_scenarios.py`
+- `tests/scenarios/auth_setup/catalog.yaml`
+- `tests/scenarios/auth_setup/observations.yaml`
+- `tests/scenarios/auth_setup/test_auth_setup_scenarios.py`
 - `docs/regression/AUTH_SETUP_SCENARIOS.md`
 
 These are project artifacts, not the reusable standard package itself.

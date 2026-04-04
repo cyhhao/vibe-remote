@@ -1,0 +1,139 @@
+version: 1
+capability:
+  id: auth_setup
+  name: IM-driven backend auth recovery
+  canonical_tests:
+    - tests/scenarios/auth_setup/test_auth_setup_scenarios.py
+    - tests/test_claude_agent_sessions.py
+  shared_harness:
+    - tests/scenario_harness/core.py
+    - tests/scenario_harness/auth_setup.py
+status_legend:
+  covered: scenario coverage exists
+  partial: unit or contract coverage exists but the closed loop is incomplete
+  manual: currently validated only by human regression
+  gap: not covered yet
+scenarios:
+  - id: AUTH-SETUP-001
+    name: Codex device auth happy path
+    status: covered
+    kind: happy_path
+    layer: scenario
+    backend: codex
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_codex_device_auth_scenario_reaches_terminal_success
+  - id: AUTH-SETUP-002
+    name: Claude manual callback happy path
+    status: covered
+    kind: happy_path
+    layer: scenario
+    backend: claude
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_claude_manual_callback_scenario_accepts_plain_reply_and_completes
+  - id: AUTH-SETUP-003
+    name: OpenCode direct key happy path
+    status: covered
+    kind: happy_path
+    layer: scenario
+    backend: opencode
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_opencode_direct_key_scenario_installs_key_and_refreshes_runtime
+  - id: AUTH-SETUP-101
+    name: OpenCode plain chat is ignored while waiting for a credential
+    status: covered
+    kind: negative_path
+    layer: scenario
+    backend: opencode
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_opencode_waiting_key_scenario_ignores_plain_chat
+  - id: AUTH-SETUP-102
+    name: Malformed Claude callback keeps the flow recoverable
+    status: covered
+    kind: negative_path
+    layer: scenario
+    backend: claude
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_claude_malformed_callback_keeps_flow_active_and_instructs_retry
+  - id: AUTH-SETUP-103
+    name: Wrong user cannot submit into another user's active flow
+    status: covered
+    kind: negative_path
+    layer: scenario
+    backend: shared
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_claude_wrong_user_cannot_submit_callback_into_active_flow
+  - id: AUTH-SETUP-104
+    name: Invalid OpenCode credential reply stays recoverable until a valid retry
+    status: covered
+    kind: negative_path
+    layer: scenario
+    backend: opencode
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_opencode_invalid_reply_keeps_flow_recoverable_until_valid_retry
+  - id: AUTH-SETUP-105
+    name: Plain callback submission and command fallback do not double-consume the same flow
+    status: covered
+    kind: negative_path
+    layer: scenario
+    backend: claude
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_callback_submission_and_fallback_command_do_not_double_consume_claude_flow
+  - id: AUTH-SETUP-201
+    name: Re-entering setup replaces the active flow
+    status: covered
+    kind: retry
+    layer: scenario
+    backend: codex
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_codex_reentry_scenario_replaces_existing_flow
+  - id: AUTH-SETUP-202
+    name: Failed verification emits the reset path
+    status: covered
+    kind: retry
+    layer: scenario
+    backend: codex
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_codex_failure_scenario_emits_reset_path
+  - id: AUTH-SETUP-203
+    name: Setup timeout emits a recoverable terminal state
+    status: covered
+    kind: timeout
+    layer: scenario
+    backend: shared
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_claude_timeout_emits_recoverable_terminal_state
+  - id: AUTH-SETUP-204
+    name: Successful setup refreshes runtime before the next user turn
+    status: covered
+    kind: readiness
+    layer: scenario
+    backend: shared
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_successful_setup_refreshes_runtime_before_the_next_turn
+  - id: AUTH-SETUP-205
+    name: Concurrent backend flows do not steal each other's replies
+    status: covered
+    kind: concurrency
+    layer: scenario
+    backend: shared
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_concurrent_setup_flows_route_replies_to_the_matching_backend
+  - id: AUTH-SETUP-206
+    name: Terminal teardown leaves the next setup attempt clean
+    status: covered
+    kind: teardown
+    layer: scenario
+    backend: shared
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_timed_out_flow_allows_clean_restart_without_stale_state
+  - id: AUTH-SETUP-207
+    name: Recoverable failure leaves the next attempt free of stale runtime state
+    status: covered
+    kind: teardown
+    layer: scenario
+    backend: codex
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_failed_codex_setup_does_not_leave_stale_runtime_for_next_attempt
+  - id: AUTH-SETUP-901
+    name: Codex setup success refreshes runtime before the next turn
+    status: covered
+    kind: historical_regression
+    layer: scenario
+    backend: codex
+    test: tests/scenarios/auth_setup/test_auth_setup_scenarios.py::test_codex_successful_setup_refreshes_runtime_before_the_next_turn
+  - id: AUTH-SETUP-902
+    name: Claude assistant auth-failure event triggers recovery without the deprecated API-error flag
+    status: covered
+    kind: historical_regression
+    layer: scenario_backed_runtime
+    backend: claude
+    test: tests/test_claude_agent_sessions.py::test_assistant_auth_error_without_is_api_error_flag_still_triggers_recovery
+next_priority:
+  - AUTH-SETUP-106
+  - AUTH-SETUP-208
+  - AUTH-SETUP-301

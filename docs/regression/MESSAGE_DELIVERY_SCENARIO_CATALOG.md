@@ -1,36 +1,23 @@
 # Message Delivery Scenario Catalog
 
+This file is now a human-facing index.
+
+The canonical scenario metadata for this capability lives in:
+
+- `tests/scenarios/message_delivery/catalog.yaml`
+- `tests/scenarios/message_delivery/observations.yaml`
+- `tests/scenarios/message_delivery/test_message_delivery_scenarios.py`
+
 ## Capability
 
 `scheduled result delivery`
 
-## Scenarios
+## Covered Scenario Bands
 
-### `MESSAGE-DELIVERY-001 Scheduled result finalizes its delivery anchor`
-
-- Type: happy path
-- Layer: scenario
-- Given:
-  A scheduled turn emits a normal result into its target channel.
-- When:
-  The dispatcher sends the result.
-- Then:
-  The sent message becomes the finalized scheduled anchor.
-- Current test:
-  `tests/test_message_delivery_scenarios.py::test_scheduled_result_delivery_scenario_finalizes_anchor`
-
-### `MESSAGE-DELIVERY-002 Delivery override sends to the parent target but finalizes the source thread`
-
-- Type: happy path
-- Layer: scenario
-- Given:
-  A scheduled result is configured to deliver into the parent channel from a thread-scoped source context.
-- When:
-  The dispatcher sends the result.
-- Then:
-  The message is delivered to the override target while finalizing the original source-thread anchor metadata.
-- Current test:
-  `tests/test_message_delivery_scenarios.py::test_scheduled_result_delivery_override_scenario_uses_parent_channel_target`
+- `MESSAGE-DELIVERY-001`
+  Scheduled result finalizes its delivery anchor
+- `MESSAGE-DELIVERY-002`
+  Delivery override sends to the parent target but finalizes the source thread
 
 ## Next High-Priority Gaps
 
