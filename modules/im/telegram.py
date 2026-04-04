@@ -96,6 +96,7 @@ class TelegramBot(BaseIMClient):
         self._on_ready: Optional[Callable] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._update_tasks: set[asyncio.Task[Any]] = set()
+        self._update_scope_locks: dict[str, asyncio.Lock] = {}
         self._cwd_prompts: dict[str, _TelegramCwdPrompt] = {}
         self._resume_states: dict[str, _TelegramResumeSessionState] = {}
         self._routing_states: dict[str, _TelegramRoutingState] = {}
@@ -174,9 +175,21 @@ class TelegramBot(BaseIMClient):
             await self._drain_update_tasks()
 
     def _spawn_update_task(self, update: dict[str, Any]) -> None:
-        task = asyncio.create_task(self._handle_update(update))
+        scope_key = self._extract_update_scope_key(update)
+        if scope_key:
+            task = asyncio.create_task(self._handle_scoped_update(update, scope_key))
+        else:
+            task = asyncio.create_task(self._handle_update(update))
         self._update_tasks.add(task)
         task.add_done_callback(self._handle_update_task_done)
+
+    async def _handle_scoped_update(self, update: dict[str, Any], scope_key: str) -> None:
+        lock = self._update_scope_locks.get(scope_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._update_scope_locks[scope_key] = lock
+        async with lock:
+            await self._handle_update(update)
 
     def _handle_update_task_done(self, task: asyncio.Task[Any]) -> None:
         self._update_tasks.discard(task)
@@ -192,6 +205,45 @@ class TelegramBot(BaseIMClient):
             return
         pending = tuple(self._update_tasks)
         await asyncio.gather(*pending, return_exceptions=True)
+
+    def _extract_update_scope_key(self, update: dict[str, Any]) -> Optional[str]:
+        callback_query = update.get("callback_query") or {}
+        if callback_query:
+            message = callback_query.get("message") or {}
+            chat = message.get("chat") or {}
+            from_user = callback_query.get("from") or {}
+            return self._raw_interaction_scope_key(chat=chat, from_user=from_user)
+
+        message = update.get("message") or {}
+        if message:
+            chat = message.get("chat") or {}
+            from_user = message.get("from") or {}
+            return self._raw_interaction_scope_key(chat=chat, from_user=from_user)
+
+        return None
+
+    def _raw_interaction_scope_key(self, *, chat: dict[str, Any], from_user: dict[str, Any]) -> Optional[str]:
+        chat_id = str(chat.get("id") or "").strip()
+        user_id = str(from_user.get("id") or "").strip()
+        if not chat_id or not user_id:
+            return None
+        is_dm = chat.get("type") == "private"
+        scope = user_id if is_dm else chat_id
+        return f"{scope}:{user_id}"
+
+    def _spawn_message_callback_task(self, context: MessageContext, text: str) -> None:
+        if not self.on_message_callback:
+            return
+        task = asyncio.create_task(self.on_message_callback(context, text))
+        task.add_done_callback(self._handle_message_callback_task_done)
+
+    def _handle_message_callback_task_done(self, task: asyncio.Task[Any]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("Telegram message callback task failed")
 
     async def _handle_update(self, update: dict[str, Any]) -> None:
         if update.get("callback_query"):
@@ -255,8 +307,7 @@ class TelegramBot(BaseIMClient):
 
         context = await self._maybe_route_to_forum_topic(context, message, text)
 
-        if self.on_message_callback:
-            await self.on_message_callback(context, text)
+        self._spawn_message_callback_task(context, text)
 
     async def _maybe_route_to_forum_topic(
         self,

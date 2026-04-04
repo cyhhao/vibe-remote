@@ -296,6 +296,53 @@ def test_run_dispatches_telegram_updates_concurrently() -> None:
     assert started == [1, 2]
 
 
+def test_spawn_update_task_keeps_same_scope_updates_ordered() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    started: list[int] = []
+    release_first = asyncio.Event()
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+
+    async def fake_handle(update: dict[str, int]) -> None:
+        started.append(update["update_id"])
+        if update["update_id"] == 1:
+            first_started.set()
+            await release_first.wait()
+        else:
+            second_started.set()
+
+    async def scenario() -> None:
+        with patch.object(bot, "_handle_update", new=fake_handle):
+            bot._spawn_update_task(
+                {
+                    "update_id": 1,
+                    "message": {
+                        "chat": {"id": -100123, "type": "supergroup"},
+                        "from": {"id": 42},
+                    },
+                }
+            )
+            await first_started.wait()
+            bot._spawn_update_task(
+                {
+                    "update_id": 2,
+                    "message": {
+                        "chat": {"id": -100123, "type": "supergroup"},
+                        "from": {"id": 42},
+                    },
+                }
+            )
+            await asyncio.sleep(0)
+            assert not second_started.is_set()
+            release_first.set()
+            await bot._drain_update_tasks()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=0.2))
+
+    assert second_started.is_set()
+    assert started == [1, 2]
+
+
 def test_pending_cwd_prompt_consumes_next_plain_message() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
     context = MessageContext(
