@@ -202,6 +202,7 @@ Testing guidance:
 
 - use pytest-style tests (`test_<feature>.py`) colocated or under `tests/`
 - for IM integrations, stub/mock platform clients and validate outbound payload/schema behavior
+- for reusable capability-first testing guidance, use `standards/scenario-testing/AGENTS.md` as the entrypoint; project-specific scenario coverage should follow that standard
 - for multi-step auth/setup flows, add or update a closed-loop scenario harness case under `tests/test_agent_auth_setup_scenarios.py`; keep provider-specific parsing and heuristics in focused unit tests
 - for UI changes, run `npm run build` in `ui/`
 - for cross-platform or user-facing verification, use the Docker regression workflow
