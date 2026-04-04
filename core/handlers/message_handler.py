@@ -139,13 +139,6 @@ class MessageHandler(BaseHandler):
                     await self.controller.command_handler.handle_start(context, "")
                 return None
 
-            if is_human and not has_files:
-                maybe_consume_setup_reply = getattr(self.controller.agent_auth_service, "maybe_consume_setup_reply", None)
-                if callable(maybe_consume_setup_reply):
-                    consumed = await maybe_consume_setup_reply(context, message)
-                    if consumed:
-                        return None
-
             if is_human:
                 # Deduplication: check if this message has already been processed
                 # This prevents duplicate processing when vibe-remote restarts and
@@ -162,6 +155,13 @@ class MessageHandler(BaseHandler):
                     # Record this message as processed immediately to prevent duplicates
                     # even if processing fails (we don't want to retry failed messages forever)
                     self.sessions.record_processed_message(context.channel_id, thread_ts, message_ts)
+
+            if is_human and not has_files:
+                maybe_consume_setup_reply = getattr(self.controller.agent_auth_service, "maybe_consume_setup_reply", None)
+                if callable(maybe_consume_setup_reply):
+                    consumed = await maybe_consume_setup_reply(context, message)
+                    if consumed:
+                        return None
 
             # Skip automatic cleanup; receiver tasks are retained until shutdown
 

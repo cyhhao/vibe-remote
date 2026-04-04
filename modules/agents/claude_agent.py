@@ -195,6 +195,43 @@ class ClaudeAgent(BaseAgent):
 
         logger.info("Refreshed Claude auth state across %d runtime session(s)", len(session_ids))
 
+    async def _cleanup_runtime_session(
+        self,
+        composite_key: str,
+        *,
+        current_receiver_task: asyncio.Task | None = None,
+    ) -> None:
+        """Drop Claude runtime state without canceling the current receiver task."""
+
+        receiver_task = self.receiver_tasks.pop(composite_key, None)
+        if (
+            receiver_task is not None
+            and receiver_task is not current_receiver_task
+            and not receiver_task.done()
+        ):
+            receiver_task.cancel()
+            try:
+                await receiver_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Error stopping Claude receiver %s during cleanup: %s", composite_key, exc)
+
+        client = self.claude_sessions.pop(composite_key, None)
+        if client is not None:
+            try:
+                if hasattr(client, "disconnect"):
+                    await client.disconnect()
+                elif hasattr(client, "close"):
+                    await client.close()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Error disconnecting Claude session %s during cleanup: %s", composite_key, exc)
+
+        self._last_assistant_text.pop(composite_key, None)
+        self._pending_assistant_message.pop(composite_key, None)
+        self._pending_reactions.pop(composite_key, None)
+        self._pending_requests.pop(composite_key, None)
+
     async def handle_stop(self, request: AgentRequest) -> bool:
         composite_key = request.composite_session_id
         if composite_key not in self.claude_sessions:
@@ -625,7 +662,7 @@ class ClaudeAgent(BaseAgent):
             f"❌ Claude error: {text}",
         )
         if handled:
-            await self.session_handler.cleanup_session(composite_key)
+            await self._cleanup_runtime_session(composite_key, current_receiver_task=asyncio.current_task())
         return handled
 
     def _is_auth_failure_assistant_message(self, message) -> bool:

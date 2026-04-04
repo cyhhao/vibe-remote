@@ -502,6 +502,12 @@ class AgentAuthService:
         if not message or message.lstrip().startswith("/"):
             return False
 
+        flow = self._find_flow_for_submission(context, "claude")
+        if flow is not None and flow.backend == "claude" and flow.initiator_user_id == context.user_id:
+            if self._allows_proactive_code_submission(flow) and self._parse_claude_callback_code(message) is not None:
+                await self.submit_code(context, message, backend_hint="claude")
+                return True
+
         opencode_flow = self._find_flow_for_submission(context, "opencode")
         if (
             opencode_flow is not None
@@ -512,16 +518,7 @@ class AgentAuthService:
             await self.submit_code(context, message.strip(), backend_hint="opencode")
             return True
 
-        flow = self._find_flow_for_submission(context, "claude")
-        if flow is None or flow.backend != "claude" or flow.initiator_user_id != context.user_id:
-            return False
-        if not self._allows_proactive_code_submission(flow):
-            return False
-        if self._parse_claude_callback_code(message) is None:
-            return False
-
-        await self.submit_code(context, message, backend_hint="claude")
-        return True
+        return False
 
     async def maybe_emit_auth_recovery_message(self, context: MessageContext, backend: str, error_text: str) -> bool:
         """Emit a reset-oauth button when the backend error is auth-related."""
@@ -1017,12 +1014,6 @@ class AgentAuthService:
         return f"OpenCode auth verification failed with exit code {returncode}."
 
     async def _install_opencode_api_key(self, provider: str, api_key: str) -> None:
-        await asyncio.to_thread(
-            remove_opencode_provider_api_key,
-            provider,
-            logger_instance=logger,
-        )
-
         agent_service = getattr(self.controller, "agent_service", None)
         opencode_agent = getattr(agent_service, "agents", {}).get("opencode") if agent_service else None
         if not opencode_agent or not hasattr(opencode_agent, "_get_server"):
@@ -1033,6 +1024,14 @@ class AgentAuthService:
         if not callable(setter):
             raise RuntimeError("OpenCode server does not support non-interactive auth setup.")
         await setter(provider, api_key)
+        try:
+            await asyncio.to_thread(
+                remove_opencode_provider_api_key,
+                provider,
+                logger_instance=logger,
+            )
+        except Exception as err:  # noqa: BLE001
+            logger.warning("Failed to clean legacy OpenCode provider config for %s: %s", provider, err)
 
     async def _refresh_opencode_server(self) -> None:
         agent_service = getattr(self.controller, "agent_service", None)

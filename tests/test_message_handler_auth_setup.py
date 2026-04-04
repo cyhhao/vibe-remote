@@ -61,10 +61,14 @@ MessageHandler = _load_message_handler_class()
 
 
 class _StubSessions:
+    def __init__(self):
+        self.recorded = []
+
     def is_message_already_processed(self, channel_id, thread_ts, message_ts):
         return False
 
     def record_processed_message(self, channel_id, thread_ts, message_ts):
+        self.recorded.append((channel_id, thread_ts, message_ts))
         return None
 
 
@@ -148,6 +152,7 @@ class MessageHandlerAuthSetupTests(unittest.IsolatedAsyncioTestCase):
             context,
             "auth-code#oauth-state",
         )
+        self.assertEqual(controller.settings_manager.sessions.recorded, [("C1", "m1", "m1")])
 
 
 if __name__ == "__main__":

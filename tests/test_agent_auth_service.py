@@ -429,7 +429,12 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_install_opencode_api_key_uses_server_auth_endpoint(self):
         controller = _StubController()
         service = AgentAuthService(controller)
-        server = SimpleNamespace(set_api_key_auth=AsyncMock())
+        order = []
+
+        async def set_api_key_auth(provider, api_key):
+            order.append(("set", provider, api_key))
+
+        server = SimpleNamespace(set_api_key_auth=AsyncMock(side_effect=set_api_key_auth))
         controller.agent_service = SimpleNamespace(
             agents={"opencode": SimpleNamespace(_get_server=AsyncMock(return_value=server))}
         )
@@ -438,6 +443,7 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
 
         async def fake_to_thread(func, *args, **kwargs):
             cleanup_calls.append((func, args, kwargs))
+            order.append(("cleanup", args[0]))
             return func(*args, **kwargs)
 
         with patch("core.agent_auth_service.asyncio.to_thread", side_effect=fake_to_thread):
@@ -448,6 +454,7 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args, ("opencode",))
         self.assertEqual(kwargs, {"logger_instance": unittest.mock.ANY})
         server.set_api_key_auth.assert_awaited_once_with("opencode", "sk-opencode-secret")
+        self.assertEqual(order, [("set", "opencode", "sk-opencode-secret"), ("cleanup", "opencode")])
 
     async def test_submit_code_allows_proactive_claude_code_submission(self):
         controller = _StubController()
@@ -521,6 +528,45 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
             login_prompt_sent=True,
         )
         service._flows[flow.flow_key] = flow
+        service.submit_code = AsyncMock()
+
+        consumed = await service.maybe_consume_setup_reply(context, "auth-code#oauth-state")
+
+        self.assertTrue(consumed)
+        service.submit_code.assert_awaited_once_with(context, "auth-code#oauth-state", backend_hint="claude")
+
+    async def test_maybe_consume_setup_reply_prefers_claude_callback_over_opencode_waiting_key(self):
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
+        claude_flow = AgentAuthFlow(
+            flow_id="flow-claude-priority",
+            backend="claude",
+            settings_key="C1",
+            initiator_user_id="U1",
+            context=context,
+            process=None,
+            reader_task=done_task,
+            waiter_task=done_task,
+            claude_client=SimpleNamespace(),
+            login_prompt_sent=True,
+        )
+        opencode_flow = AgentAuthFlow(
+            flow_id="flow-opencode-priority",
+            backend="opencode",
+            settings_key="C1",
+            initiator_user_id="U1",
+            context=context,
+            process=None,
+            reader_task=done_task,
+            waiter_task=done_task,
+            provider="opencode",
+            awaiting_code=True,
+        )
+        service._flows[claude_flow.flow_key] = claude_flow
+        service._flows[opencode_flow.flow_key] = opencode_flow
         service.submit_code = AsyncMock()
 
         consumed = await service.maybe_consume_setup_reply(context, "auth-code#oauth-state")

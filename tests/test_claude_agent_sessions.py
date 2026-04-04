@@ -155,6 +155,10 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         agent._clear_pending_reactions = AsyncMock()
         agent.emit_result_message = AsyncMock()
         context = SimpleNamespace()
+        composite_key = "session-1:/tmp/work"
+        current_task = asyncio.current_task()
+        controller.receiver_tasks[composite_key] = current_task
+        controller.claude_sessions[composite_key] = _StubClient()
 
         ResultMessage = type("ResultMessage", (), {})
         init_message = type(
@@ -181,7 +185,9 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         await agent._receive_messages(_Client(), "session-1", "/tmp/work", context)
 
         controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once()
-        controller.session_handler.cleanup_session.assert_awaited_once_with("session-1:/tmp/work")
+        controller.session_handler.cleanup_session.assert_not_awaited()
+        self.assertNotIn(composite_key, controller.receiver_tasks)
+        self.assertNotIn(composite_key, controller.claude_sessions)
         agent.emit_result_message.assert_not_awaited()
 
     async def test_assistant_auth_error_prefers_oauth_recovery_message(self):
@@ -196,6 +202,10 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
             '"message":"Invalid bearer token"}}'
         )
         context = SimpleNamespace()
+        composite_key = "session-1:/tmp/work"
+        current_task = asyncio.current_task()
+        controller.receiver_tasks[composite_key] = current_task
+        controller.claude_sessions[composite_key] = _StubClient()
 
         assistant_message = type(
             "AssistantMessage",
@@ -217,7 +227,9 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         await agent._receive_messages(_Client(), "session-1", "/tmp/work", context)
 
         controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once()
-        controller.session_handler.cleanup_session.assert_awaited_once_with("session-1:/tmp/work")
+        controller.session_handler.cleanup_session.assert_not_awaited()
+        self.assertNotIn(composite_key, controller.receiver_tasks)
+        self.assertNotIn(composite_key, controller.claude_sessions)
 
 
 if __name__ == "__main__":
