@@ -95,6 +95,7 @@ class TelegramBot(BaseIMClient):
         self._bot_user: Optional[dict[str, Any]] = None
         self._on_ready: Optional[Callable] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._update_tasks: set[asyncio.Task[Any]] = set()
         self._cwd_prompts: dict[str, _TelegramCwdPrompt] = {}
         self._resume_states: dict[str, _TelegramResumeSessionState] = {}
         self._routing_states: dict[str, _TelegramRoutingState] = {}
@@ -154,20 +155,43 @@ class TelegramBot(BaseIMClient):
 
     async def _run(self) -> None:
         self._loop = asyncio.get_running_loop()
-        self._bot_user = (await telegram_api.get_me(self.config.bot_token)).get("result")
-        logger.info("Telegram bot connected as @%s", self._bot_user.get("username") if self._bot_user else "unknown")
-        if self._on_ready:
-            await self._on_ready()
+        try:
+            self._bot_user = (await telegram_api.get_me(self.config.bot_token)).get("result")
+            logger.info("Telegram bot connected as @%s", self._bot_user.get("username") if self._bot_user else "unknown")
+            if self._on_ready:
+                await self._on_ready()
 
-        while not self._stop_event.is_set():
-            try:
-                updates = await telegram_api.get_updates(self.config.bot_token, self._offset)
-                for update in updates.get("result", []):
-                    self._offset = int(update["update_id"]) + 1
-                    await self._handle_update(update)
-            except Exception as err:
-                logger.warning("Telegram poll loop error: %s", err, exc_info=True)
-                await asyncio.sleep(2)
+            while not self._stop_event.is_set():
+                try:
+                    updates = await telegram_api.get_updates(self.config.bot_token, self._offset)
+                    for update in updates.get("result", []):
+                        self._offset = int(update["update_id"]) + 1
+                        self._spawn_update_task(update)
+                except Exception as err:
+                    logger.warning("Telegram poll loop error: %s", err, exc_info=True)
+                    await asyncio.sleep(2)
+        finally:
+            await self._drain_update_tasks()
+
+    def _spawn_update_task(self, update: dict[str, Any]) -> None:
+        task = asyncio.create_task(self._handle_update(update))
+        self._update_tasks.add(task)
+        task.add_done_callback(self._handle_update_task_done)
+
+    def _handle_update_task_done(self, task: asyncio.Task[Any]) -> None:
+        self._update_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("Telegram update task failed")
+
+    async def _drain_update_tasks(self) -> None:
+        if not self._update_tasks:
+            return
+        pending = tuple(self._update_tasks)
+        await asyncio.gather(*pending, return_exceptions=True)
 
     async def _handle_update(self, update: dict[str, Any]) -> None:
         if update.get("callback_query"):

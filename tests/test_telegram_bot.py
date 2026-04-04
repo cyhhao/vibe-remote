@@ -264,6 +264,38 @@ def test_handle_message_ignores_foreign_bot_command() -> None:
     bot.on_message_callback.assert_not_awaited()
 
 
+def test_run_dispatches_telegram_updates_concurrently() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    started: list[int] = []
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+    poll_calls = 0
+
+    async def fake_get_updates(_token: str, _offset=None):
+        nonlocal poll_calls
+        poll_calls += 1
+        if poll_calls == 1:
+            return {"result": [{"update_id": 1}, {"update_id": 2}]}
+        await asyncio.sleep(0)
+        return {"result": []}
+
+    async def fake_handle(update: dict[str, int]) -> None:
+        started.append(update["update_id"])
+        if update["update_id"] == 2:
+            second_started.set()
+            release_first.set()
+            bot.stop()
+        await release_first.wait()
+
+    with patch("modules.im.telegram.telegram_api.get_me", new=AsyncMock(return_value={"result": {"username": "bot"}})):
+        with patch("modules.im.telegram.telegram_api.get_updates", new=AsyncMock(side_effect=fake_get_updates)):
+            with patch.object(bot, "_handle_update", new=fake_handle):
+                asyncio.run(asyncio.wait_for(bot._run(), timeout=0.2))
+
+    assert second_started.is_set()
+    assert started == [1, 2]
+
+
 def test_pending_cwd_prompt_consumes_next_plain_message() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
     context = MessageContext(
