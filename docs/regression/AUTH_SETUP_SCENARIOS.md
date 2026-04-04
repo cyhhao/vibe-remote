@@ -57,6 +57,7 @@ Reference implementation currently lives in:
 - `tests/scenario_harness/`
 - `tests/test_agent_auth_setup_scenarios.py`
 - `docs/regression/AUTH_SETUP_SCENARIOS.md`
+- `docs/regression/AUTH_SETUP_SCENARIO_CATALOG.md`
 
 ## Current Scenario Matrix
 
@@ -67,22 +68,51 @@ Reference implementation currently lives in:
   - verify login
   - refresh runtime
   - emit success
+  - prove the next user turn sees refreshed runtime instead of stale auth state
 - Claude manual callback:
   - start control-channel auth
   - emit manual URL
   - accept plain `authorizationCode#state` reply
+  - treat plain reply and `/setup code ...` fallback as one logical submission, not two
+  - reject malformed callback values while keeping the flow recoverable
   - wait for completion
+  - time out into a recoverable terminal state if completion never arrives
   - verify login
   - refresh runtime
   - emit success
+  - reject wrong-user callback submission without stealing the flow
+  - treat assistant auth-failure runtime events as OAuth recovery, even without deprecated metadata flags
 - OpenCode direct key:
   - start setup
   - emit auth URL
   - accept plain credential reply
+  - reject invalid-looking replies without killing the flow
+  - allow a later valid retry to complete the flow
   - install key
   - refresh runtime
   - clear stale sessions
   - emit success
+  - prove the next user turn sees refreshed runtime and cleared sessions
+- Shared multi-flow routing:
+  - keep Claude and OpenCode flows active in one channel
+  - route callback-shaped input to Claude
+  - route credential-shaped input to OpenCode
+  - avoid cross-flow stealing
+- Shared teardown and restart:
+  - let a flow timeout into a recoverable terminal state
+  - start setup again immediately
+  - prove the new attempt gets a fresh flow and fresh instructions
+  - prove a failed attempt does not leak stale runtime state into the next retry
+
+The detailed capability matrix now lives in:
+
+- `docs/regression/AUTH_SETUP_SCENARIO_CATALOG.md`
+
+Use the catalog when deciding:
+
+- which backend/path needs the next scenario
+- whether a new bug is already covered by an existing scenario ID
+- whether the gap is scenario-worthy or should stay unit/contract/manual
 
 ## What Stays in Unit Tests
 

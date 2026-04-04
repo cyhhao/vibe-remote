@@ -821,6 +821,7 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         service._send_claude_control_request.assert_awaited_once_with(
             flow.claude_client,
             {"subtype": "claude_oauth_wait_for_completion"},
+            timeout=service.setup_timeout_seconds,
         )
         service._refresh_backend_runtime.assert_awaited_once_with("claude")
         service._disconnect_claude_client.assert_awaited_once_with(flow.claude_client)

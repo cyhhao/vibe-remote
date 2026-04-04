@@ -261,6 +261,7 @@
       "opencodeInstructions": "OpenCode setup started for `{provider}`.\n\nOpen this page to create or retrieve a credential:\n{url}\n\nWhen you get the key, reply with it directly in this chat.",
       "opencodeCodePrompt": "OpenCode is waiting for the `{provider}` API key. Reply with the key directly in this chat.",
       "opencodeCodeRetryPrompt": "OpenCode is still waiting for the `{provider}` API key. The previous value may not have been accepted. Reply with the key directly in this chat.",
+      "timedOut": "{backend} setup timed out. Start setup again to retry.",
       "success": "{backend} login is active again.",
       "failed": "{backend} setup failed: {detail}",
       "unknownFailure": "Unknown login failure."

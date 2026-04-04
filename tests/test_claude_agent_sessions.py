@@ -281,6 +281,7 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(composite_key, controller.claude_sessions)
 
     async def test_assistant_auth_error_without_is_api_error_flag_still_triggers_recovery(self):
+        """Scenario: AUTH-SETUP-902"""
         controller = _StubController()
         controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
         controller._get_session_key = lambda context: "telegram::user::U1"

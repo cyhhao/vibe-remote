@@ -116,6 +116,12 @@ class BaseScenarioHarness:
         self.controller = controller or ScenarioControllerBase()
         self.context = MessageContext(user_id=user_id, channel_id=channel_id)
 
+    def make_context(self, *, user_id: str | None = None, channel_id: str | None = None) -> MessageContext:
+        return MessageContext(
+            user_id=user_id or self.context.user_id,
+            channel_id=channel_id or self.context.channel_id,
+        )
+
     @property
     def events(self):
         return self.controller.im_probe.events

@@ -154,6 +154,7 @@ class AgentAuthService:
         self._flows: dict[str, AgentAuthFlow] = {}
         self._flows_by_id: dict[str, AgentAuthFlow] = {}
         self._flow_lock = asyncio.Lock()
+        self.setup_timeout_seconds = 900.0
 
     def _t(self, key: str, **kwargs) -> str:
         lang = getattr(self.controller, "_get_lang", lambda: getattr(self.controller.config, "language", "en"))()
@@ -885,7 +886,7 @@ class AgentAuthService:
     async def _wait_for_completion(self, flow: AgentAuthFlow) -> None:
         try:
             assert flow.process is not None
-            await flow.process.wait()
+            await asyncio.wait_for(flow.process.wait(), timeout=self.setup_timeout_seconds)
             await flow.reader_task
             ok, detail = await self._verify_login(flow)
             if ok:
@@ -902,6 +903,14 @@ class AgentAuthService:
                     button_text=self._t("button.resetOAuth"),
                     callback_data=f"auth_setup:{flow.backend}",
                 )
+        except asyncio.TimeoutError:
+            await self._terminate_process_for_timeout(flow)
+            await self._send_message_with_button(
+                flow.context,
+                f"❌ {self._t('command.setup.failed', backend=flow.backend, detail=self._t('command.setup.timedOut', backend=flow.backend))}",
+                button_text=self._t("button.resetOAuth"),
+                callback_data=f"auth_setup:{flow.backend}",
+            )
         except asyncio.CancelledError:
             raise
         except Exception as err:  # noqa: BLE001
@@ -920,9 +929,13 @@ class AgentAuthService:
             if flow.claude_client is None:
                 raise RuntimeError("Claude auth flow is missing its SDK client")
 
-            await self._send_claude_control_request(
-                flow.claude_client,
-                {"subtype": "claude_oauth_wait_for_completion"},
+            await asyncio.wait_for(
+                self._send_claude_control_request(
+                    flow.claude_client,
+                    {"subtype": "claude_oauth_wait_for_completion"},
+                    timeout=self.setup_timeout_seconds,
+                ),
+                timeout=self.setup_timeout_seconds,
             )
             ok, detail = await self._verify_login(flow)
             if ok:
@@ -939,6 +952,13 @@ class AgentAuthService:
                     button_text=self._t("button.resetOAuth"),
                     callback_data=f"auth_setup:{flow.backend}",
                 )
+        except asyncio.TimeoutError:
+            await self._send_message_with_button(
+                flow.context,
+                f"❌ {self._t('command.setup.failed', backend=flow.backend, detail=self._t('command.setup.timedOut', backend=flow.backend))}",
+                button_text=self._t("button.resetOAuth"),
+                callback_data=f"auth_setup:{flow.backend}",
+            )
         except asyncio.CancelledError:
             raise
         except Exception as err:  # noqa: BLE001
@@ -1165,6 +1185,21 @@ class AgentAuthService:
         if flow.claude_client is not None:
             await self._disconnect_claude_client(flow.claude_client)
         self._drop_flow(flow)
+
+    async def _terminate_process_for_timeout(self, flow: AgentAuthFlow) -> None:
+        if flow.reader_task and not flow.reader_task.done():
+            flow.reader_task.cancel()
+            try:
+                await flow.reader_task
+            except asyncio.CancelledError:
+                pass
+        if flow.process is not None and flow.process.returncode is None:
+            flow.process.terminate()
+            try:
+                await asyncio.wait_for(flow.process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                flow.process.kill()
+                await flow.process.wait()
 
     def _drop_flow(self, flow: AgentAuthFlow) -> None:
         if self._flows.get(flow.flow_key) is flow:
