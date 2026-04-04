@@ -1108,10 +1108,14 @@ class AgentAuthService:
         if URL_RE.search(candidate):
             return False
 
+        alnum_count = sum(ch.isalnum() for ch in candidate)
         has_digit = any(ch.isdigit() for ch in candidate)
         has_upper = any(ch.isupper() for ch in candidate)
         has_lower = any(ch.islower() for ch in candidate)
         separator_count = sum(candidate.count(ch) for ch in ("-", "_", ".", ":", "="))
+
+        if alnum_count < 8:
+            return False
 
         if candidate.startswith("sk-"):
             return True

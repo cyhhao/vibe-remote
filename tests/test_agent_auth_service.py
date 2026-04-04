@@ -684,6 +684,33 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(consumed)
         service.submit_code.assert_not_awaited()
 
+    async def test_maybe_consume_setup_reply_ignores_separator_only_opencode_text(self):
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
+        flow = AgentAuthFlow(
+            flow_id="flow-opencode-separator-ignore",
+            backend="opencode",
+            settings_key="C1",
+            initiator_user_id="U1",
+            context=context,
+            process=SimpleNamespace(returncode=None),
+            reader_task=done_task,
+            waiter_task=done_task,
+            pty_master_fd=11,
+            awaiting_code=True,
+            provider="opencode",
+        )
+        service._flows[flow.flow_key] = flow
+        service.submit_code = AsyncMock()
+
+        consumed = await service.maybe_consume_setup_reply(context, "--------------------")
+
+        self.assertFalse(consumed)
+        service.submit_code.assert_not_awaited()
+
     async def test_maybe_consume_setup_reply_ignores_plain_text_without_callback_shape(self):
         controller = _StubController()
         service = AgentAuthService(controller)
