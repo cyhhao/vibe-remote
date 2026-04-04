@@ -1,9 +1,10 @@
 import asyncio
-import ipaddress
+import hmac
 import json
 import logging
 import mimetypes
 import re
+import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,9 @@ LEVEL_HINT_PATTERN = re.compile(r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b")
 TRACEBACK_EXCEPTION_PATTERN = re.compile(
     r"^[A-Za-z_][\w.]*(?:Error|Exception|Warning|Exit|Interrupt|Failure|Fault|Group)(?:[:(]|$)"
 )
+CSRF_COOKIE_NAME = "vibe_csrf_token"
+CSRF_HEADER_NAME = "X-Vibe-CSRF-Token"
+MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 LOG_SOURCES = (
     ("service", "vibe_remote.log", lambda: paths.get_logs_dir() / "vibe_remote.log"),
     ("service_stdout", "service_stdout.log", lambda: paths.get_runtime_dir() / "service_stdout.log"),
@@ -117,52 +121,67 @@ def _serialize_log_entries(entries: list[dict[str, Any]]) -> list[dict[str, str]
     ]
 
 
-def _trusted_ui_hosts() -> set[str]:
-    hosts = {"localhost", "127.0.0.1", "::1"}
-
-    try:
-        from vibe import api
-
-        config = api.load_config()
-    except Exception as exc:
-        logger.warning("Failed to load UI config for install endpoint trust check: %s", exc)
-        return hosts
-
-    if isinstance(config, dict):
-        setup_host = (config.get("ui") or {}).get("setup_host")
-    else:
-        setup_host = getattr(getattr(config, "ui", None), "setup_host", None)
-    if not setup_host:
-        return hosts
-
-    parsed = urlparse(setup_host if "://" in setup_host else f"http://{setup_host}")
-    candidate = parsed.hostname or setup_host
-    if not candidate:
-        return hosts
-
-    try:
-        ip = ipaddress.ip_address(candidate)
-    except ValueError:
-        hosts.add(candidate)
-        return hosts
-
-    if not ip.is_unspecified:
-        hosts.add(str(ip))
-    return hosts
+def _new_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
 
 
-def _is_private_or_loopback_host(hostname: str | None) -> bool:
-    if not hostname:
-        return False
-    if hostname in {"localhost", "127.0.0.1", "::1"}:
-        return True
+def _request_origin(value: str | None) -> str | None:
+    if not value:
+        return None
 
-    try:
-        ip = ipaddress.ip_address(hostname)
-    except ValueError:
-        return False
+    parsed = urlparse(value)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
 
-    return ip.is_loopback or ip.is_private
+
+def _current_origin() -> str:
+    parsed = urlparse(request.host_url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _ensure_csrf_cookie(response: Response) -> Response:
+    if response.headers.getlist("Set-Cookie"):
+        for cookie_header in response.headers.getlist("Set-Cookie"):
+            if cookie_header.startswith(f"{CSRF_COOKIE_NAME}="):
+                return response
+
+    token = request.cookies.get(CSRF_COOKIE_NAME)
+    if not token:
+        response.set_cookie(
+            CSRF_COOKIE_NAME,
+            _new_csrf_token(),
+            httponly=False,
+            secure=request.is_secure,
+            samesite="Strict",
+            path="/",
+        )
+    return response
+
+
+@app.before_request
+def protect_mutating_ui_requests():
+    if request.method not in MUTATING_METHODS:
+        return None
+
+    source = _request_origin(request.headers.get("Origin")) or _request_origin(request.headers.get("Referer"))
+    if not source:
+        return jsonify({"ok": False, "message": "Forbidden: missing origin header"}), 403
+
+    if source != _current_origin():
+        return jsonify({"ok": False, "message": "Forbidden: invalid origin"}), 403
+
+    csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME, "")
+    csrf_header = request.headers.get(CSRF_HEADER_NAME, "")
+    if not csrf_cookie or not csrf_header or not hmac.compare_digest(csrf_cookie, csrf_header):
+        return jsonify({"ok": False, "message": "Forbidden: invalid csrf token"}), 403
+
+    return None
+
+
+@app.after_request
+def add_csrf_cookie(response: Response) -> Response:
+    return _ensure_csrf_cookie(response)
 
 
 def _read_log_entries(log_path: Path, source_key: str, lines: int) -> tuple[list[dict[str, Any]], int]:
@@ -306,6 +325,21 @@ def settings_get():
     from vibe import api
 
     return jsonify(api.get_settings(request.args.get("platform") or None))
+
+
+@app.route("/api/csrf-token", methods=["GET"])
+def csrf_token_get():
+    token = request.cookies.get(CSRF_COOKIE_NAME) or _new_csrf_token()
+    response = jsonify({"ok": True, "csrf_token": token})
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        token,
+        httponly=False,
+        secure=request.is_secure,
+        samesite="Strict",
+        path="/",
+    )
+    return response
 
 
 @app.route("/cli/detect")
@@ -755,28 +789,7 @@ def codex_models():
 
 @app.route("/agent/<name>/install", methods=["POST"])
 def agent_install(name):
-    """Install an agent CLI tool (opencode, claude, codex).
-
-    Security: Only allow same-origin requests from the configured private setup host
-    or localhost. This keeps the endpoint unavailable to arbitrary web pages while
-    still working behind Docker/macOS port-forwarding where remote_addr is unstable.
-    """
-    # Security: Require Origin or Referer header for CSRF protection
-    origin = request.headers.get("Origin")
-    referer = request.headers.get("Referer")
-    if not origin and not referer:
-        return jsonify({"ok": False, "message": "Forbidden: missing origin header"}), 403
-
-    # Validate Origin/Referer is from a trusted setup host.
-    check_header = origin or referer
-    parsed = urlparse(check_header)
-    trusted_hosts = _trusted_ui_hosts()
-    if parsed.hostname not in trusted_hosts:
-        return jsonify({"ok": False, "message": "Forbidden: invalid origin"}), 403
-
-    if not _is_private_or_loopback_host(parsed.hostname):
-        return jsonify({"ok": False, "message": "Forbidden: local access only"}), 403
-
+    """Install an agent CLI tool (opencode, claude, codex)."""
     # Security: Allowlist validation
     allowed_agents = {"opencode", "claude", "codex"}
     if name not in allowed_agents:

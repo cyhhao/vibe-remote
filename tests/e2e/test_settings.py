@@ -1,19 +1,10 @@
 """E2E tests: Settings API endpoints."""
 
-import json
-import urllib.request
+from tests.e2e.http import JsonHttpClient
 
 
-def _get(url, timeout=5):
-    resp = urllib.request.urlopen(url, timeout=timeout)
-    return resp.status, json.loads(resp.read())
-
-
-def _post(url, body=None, timeout=5):
-    data = json.dumps(body or {}).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    resp = urllib.request.urlopen(req, timeout=timeout)
-    return resp.status, json.loads(resp.read())
+def _client(api_url: str) -> JsonHttpClient:
+    return JsonHttpClient(api_url)
 
 
 class TestSettingsAPI:
@@ -21,12 +12,13 @@ class TestSettingsAPI:
 
     def test_get_settings_returns_json(self, api_url):
         """GET /settings should return current settings."""
-        status, data = _get(f"{api_url}/settings")
+        status, data = _client(api_url).get_json("/settings")
         assert status == 200
         assert isinstance(data, dict)
 
     def test_post_settings_roundtrip(self, api_url):
         """POST /settings should persist and return updated settings."""
+        client = _client(api_url)
         # Save settings with a channel config
         payload = {
             "channels": {
@@ -36,11 +28,11 @@ class TestSettingsAPI:
                 }
             }
         }
-        status, data = _post(f"{api_url}/settings", payload)
+        status, data = client.post_json("/settings", payload)
         assert status == 200
 
         # Verify the channel persisted
-        status, data = _get(f"{api_url}/settings")
+        status, data = client.get_json("/settings")
         assert status == 200
         channels = data.get("channels", {})
         assert "C_TEST_E2E" in channels
@@ -52,7 +44,7 @@ class TestLogsAPI:
 
     def test_logs_returns_structure(self, api_url):
         """POST /logs should return log lines and total count."""
-        status, data = _post(f"{api_url}/logs", {"lines": 10})
+        status, data = _client(api_url).post_json("/logs", {"lines": 10})
         assert status == 200
         assert "source" in data
         assert "logs" in data

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { apiFetch } from '../lib/apiFetch';
 
 interface RuntimeStatus {
   last_action?: string;
@@ -44,7 +45,7 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const control = async (action: string, payload: any = {}) => {
     try {
-      const res = await fetch('/control', {
+      const res = await apiFetch('/control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, ...payload }),
