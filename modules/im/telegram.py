@@ -84,6 +84,7 @@ class TelegramBot(BaseIMClient):
     """Telegram adapter using Bot API long polling."""
 
     _MAX_IN_FLIGHT_UPDATE_TASKS = 100
+    _MAX_IN_FLIGHT_MESSAGE_CALLBACK_TASKS = 100
 
     def __init__(self, config: TelegramConfig):
         super().__init__(config)
@@ -194,8 +195,6 @@ class TelegramBot(BaseIMClient):
             self._update_scope_locks[scope_key] = lock
         async with lock:
             await self._handle_update(update)
-        if not lock.locked() and self._update_scope_locks.get(scope_key) is lock:
-            self._update_scope_locks.pop(scope_key, None)
 
     def _handle_update_task_done(self, task: asyncio.Task[Any]) -> None:
         self._update_tasks.discard(task)
@@ -210,6 +209,13 @@ class TelegramBot(BaseIMClient):
         if len(self._update_tasks) < self._MAX_IN_FLIGHT_UPDATE_TASKS:
             return
         pending = tuple(self._update_tasks)
+        if pending:
+            await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+
+    async def _wait_for_message_callback_capacity(self) -> None:
+        if len(self._message_callback_tasks) < self._MAX_IN_FLIGHT_MESSAGE_CALLBACK_TASKS:
+            return
+        pending = tuple(self._message_callback_tasks)
         if pending:
             await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
 
@@ -248,9 +254,10 @@ class TelegramBot(BaseIMClient):
         scope = user_id if is_dm else chat_id
         return f"{scope}:{user_id}"
 
-    def _spawn_message_callback_task(self, context: MessageContext, text: str) -> None:
+    async def _spawn_message_callback_task(self, context: MessageContext, text: str) -> None:
         if not self.on_message_callback:
             return
+        await self._wait_for_message_callback_capacity()
         task = asyncio.create_task(self.on_message_callback(context, text))
         self._message_callback_tasks.add(task)
         task.add_done_callback(self._handle_message_callback_task_done)
@@ -326,7 +333,7 @@ class TelegramBot(BaseIMClient):
 
         context = await self._maybe_route_to_forum_topic(context, message, text)
 
-        self._spawn_message_callback_task(context, text)
+        await self._spawn_message_callback_task(context, text)
 
     async def _maybe_route_to_forum_topic(
         self,

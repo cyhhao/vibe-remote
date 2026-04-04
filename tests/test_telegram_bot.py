@@ -381,12 +381,39 @@ def test_drain_background_tasks_waits_for_message_callbacks() -> None:
     async def scenario() -> None:
         bot.on_message_callback = callback
         context = MessageContext(user_id="42", channel_id="-100123", platform="telegram")
-        bot._spawn_message_callback_task(context, "hello")
+        await bot._spawn_message_callback_task(context, "hello")
         await bot._drain_background_tasks()
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=0.2))
 
     assert finished.is_set()
+
+
+def test_spawn_message_callback_task_waits_for_capacity() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    bot._MAX_IN_FLIGHT_MESSAGE_CALLBACK_TASKS = 1
+    release = asyncio.Event()
+    blocker = asyncio.Event()
+
+    async def running_callback(_context, _text: str) -> None:
+        blocker.set()
+        await release.wait()
+
+    async def scenario() -> None:
+        bot.on_message_callback = running_callback
+        context = MessageContext(user_id="42", channel_id="-100123", platform="telegram")
+        await bot._spawn_message_callback_task(context, "first")
+        await blocker.wait()
+
+        waiter = asyncio.create_task(bot._spawn_message_callback_task(context, "second"))
+        await asyncio.sleep(0)
+        assert not waiter.done()
+
+        release.set()
+        await waiter
+        await bot._drain_background_tasks()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=0.2))
 
 
 def test_pending_cwd_prompt_consumes_next_plain_message() -> None:
