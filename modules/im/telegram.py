@@ -83,6 +83,8 @@ class _TelegramSettingsState:
 class TelegramBot(BaseIMClient):
     """Telegram adapter using Bot API long polling."""
 
+    _MAX_IN_FLIGHT_UPDATE_TASKS = 100
+
     def __init__(self, config: TelegramConfig):
         super().__init__(config)
         self.config = config
@@ -96,6 +98,7 @@ class TelegramBot(BaseIMClient):
         self._on_ready: Optional[Callable] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._update_tasks: set[asyncio.Task[Any]] = set()
+        self._message_callback_tasks: set[asyncio.Task[Any]] = set()
         self._update_scope_locks: dict[str, asyncio.Lock] = {}
         self._cwd_prompts: dict[str, _TelegramCwdPrompt] = {}
         self._resume_states: dict[str, _TelegramResumeSessionState] = {}
@@ -166,13 +169,14 @@ class TelegramBot(BaseIMClient):
                 try:
                     updates = await telegram_api.get_updates(self.config.bot_token, self._offset)
                     for update in updates.get("result", []):
+                        await self._wait_for_update_capacity()
                         self._offset = int(update["update_id"]) + 1
                         self._spawn_update_task(update)
                 except Exception as err:
                     logger.warning("Telegram poll loop error: %s", err, exc_info=True)
                     await asyncio.sleep(2)
         finally:
-            await self._drain_update_tasks()
+            await self._drain_background_tasks()
 
     def _spawn_update_task(self, update: dict[str, Any]) -> None:
         scope_key = self._extract_update_scope_key(update)
@@ -190,6 +194,8 @@ class TelegramBot(BaseIMClient):
             self._update_scope_locks[scope_key] = lock
         async with lock:
             await self._handle_update(update)
+        if not lock.locked() and self._update_scope_locks.get(scope_key) is lock:
+            self._update_scope_locks.pop(scope_key, None)
 
     def _handle_update_task_done(self, task: asyncio.Task[Any]) -> None:
         self._update_tasks.discard(task)
@@ -200,11 +206,22 @@ class TelegramBot(BaseIMClient):
         except Exception:
             logger.exception("Telegram update task failed")
 
-    async def _drain_update_tasks(self) -> None:
-        if not self._update_tasks:
+    async def _wait_for_update_capacity(self) -> None:
+        if len(self._update_tasks) < self._MAX_IN_FLIGHT_UPDATE_TASKS:
             return
         pending = tuple(self._update_tasks)
+        if pending:
+            await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+
+    async def _drain_task_set(self, tasks: set[asyncio.Task[Any]]) -> None:
+        if not tasks:
+            return
+        pending = tuple(tasks)
         await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _drain_background_tasks(self) -> None:
+        await self._drain_task_set(self._update_tasks)
+        await self._drain_task_set(self._message_callback_tasks)
 
     def _extract_update_scope_key(self, update: dict[str, Any]) -> Optional[str]:
         callback_query = update.get("callback_query") or {}
@@ -235,9 +252,11 @@ class TelegramBot(BaseIMClient):
         if not self.on_message_callback:
             return
         task = asyncio.create_task(self.on_message_callback(context, text))
+        self._message_callback_tasks.add(task)
         task.add_done_callback(self._handle_message_callback_task_done)
 
     def _handle_message_callback_task_done(self, task: asyncio.Task[Any]) -> None:
+        self._message_callback_tasks.discard(task)
         try:
             task.result()
         except asyncio.CancelledError:
