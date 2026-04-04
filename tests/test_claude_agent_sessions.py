@@ -231,6 +231,22 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(composite_key, controller.receiver_tasks)
         self.assertNotIn(composite_key, controller.claude_sessions)
 
+    async def test_handle_auth_failure_result_requires_explicit_error_subtype(self):
+        controller = _StubController()
+        controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
+        agent = ClaudeAgent(controller)
+        context = SimpleNamespace()
+
+        handled = await agent._handle_auth_failure_result(
+            context,
+            "session-1:/tmp/work",
+            "",
+            "Let's talk about oauth login after this task finishes.",
+        )
+
+        self.assertFalse(handled)
+        controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

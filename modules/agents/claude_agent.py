@@ -650,7 +650,7 @@ class ClaudeAgent(BaseAgent):
             return False
 
         normalized_subtype = (subtype or "").strip().lower()
-        if normalized_subtype and normalized_subtype not in {"error", "failed"}:
+        if normalized_subtype not in {"error", "failed"}:
             return False
 
         if not classify_auth_error("claude", text):

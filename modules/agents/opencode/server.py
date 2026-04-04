@@ -128,10 +128,11 @@ class OpenCodeServerManager:
             cmd = self._get_pid_command(pid)
             if cmd and self._is_opencode_serve_cmd(cmd, self.port):
                 targets.append(pid)
-            elif isinstance(info, dict) and info.get("port") == self.port:
+            elif isinstance(info, dict) and info.get("port") == self.port and self._pid_owns_listening_port(pid, self.port):
                 logger.info(
-                    "Trusting OpenCode pid file for pid=%s because command lookup is unavailable",
+                    "Trusting OpenCode pid file for pid=%s because it still owns port %s",
                     pid,
+                    self.port,
                 )
                 targets.append(pid)
 
@@ -222,6 +223,53 @@ class OpenCodeServerManager:
         if not command:
             return False
         return "opencode" in command and " serve" in command and f"--port={port}" in command
+
+    @staticmethod
+    def _pid_owns_listening_port(pid: int, port: int) -> bool:
+        if os.name == "nt" or pid <= 0:
+            return False
+
+        proc_fd_dir = f"/proc/{pid}/fd"
+        try:
+            fd_entries = os.listdir(proc_fd_dir)
+        except OSError:
+            return False
+
+        inodes: set[str] = set()
+        for entry in fd_entries:
+            try:
+                target = os.readlink(f"{proc_fd_dir}/{entry}")
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target.endswith("]"):
+                inodes.add(target[8:-1])
+
+        if not inodes:
+            return False
+
+        for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+            try:
+                with open(table, encoding="utf-8") as handle:
+                    next(handle, None)
+                    for raw_line in handle:
+                        parts = raw_line.split()
+                        if len(parts) < 10:
+                            continue
+                        local_address = parts[1]
+                        state = parts[3]
+                        inode = parts[9]
+                        if state != "0A" or inode not in inodes:
+                            continue
+                        _, _, port_hex = local_address.rpartition(":")
+                        try:
+                            if int(port_hex, 16) == port:
+                                return True
+                        except ValueError:
+                            continue
+            except OSError:
+                continue
+
+        return False
 
     def _is_port_available(self) -> bool:
         try:
@@ -333,10 +381,11 @@ class OpenCodeServerManager:
         if self._pid_exists(pid):
             if cmd and self._is_opencode_serve_cmd(cmd, self.port):
                 await self._terminate_pid(pid, reason="orphaned and unhealthy")
-            elif cmd is None:
+            elif cmd is None and self._pid_owns_listening_port(pid, self.port):
                 logger.info(
-                    "Trusting OpenCode pid file for orphan cleanup pid=%s because command lookup is unavailable",
+                    "Trusting OpenCode pid file for orphan cleanup pid=%s because it still owns port %s",
                     pid,
+                    self.port,
                 )
                 await self._terminate_pid(pid, reason="orphaned and unhealthy")
         self._clear_pid_file()

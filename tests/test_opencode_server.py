@@ -168,6 +168,7 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
         manager._read_pid_file = lambda: {"pid": 654, "port": 4096}  # type: ignore[method-assign]
         manager._pid_exists = lambda pid: pid == 654  # type: ignore[method-assign]
         manager._get_pid_command = lambda pid: None  # type: ignore[method-assign]
+        manager._pid_owns_listening_port = lambda pid, port: pid == 654 and port == 4096  # type: ignore[method-assign]
         terminated = []
         manager._terminate_pid = lambda pid, reason: terminated.append((pid, reason)) or _async_none()  # type: ignore[method-assign]
         manager._clear_pid_file = lambda: terminated.append(("cleared", ""))  # type: ignore[method-assign]
@@ -177,6 +178,28 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(fake_session.closed)
         self.assertIn((654, "auth refresh"), terminated)
         self.assertIn(("cleared", ""), terminated)
+
+    async def test_restart_for_auth_refresh_does_not_trust_pid_file_without_port_ownership(self):
+        manager = OpenCodeServerManager(binary="opencode", port=4096)
+        fake_session = _FakeSession()
+        manager._http_session = fake_session
+        manager._http_session_loop = object()
+        manager._process = object()
+        manager._base_url = "http://127.0.0.1:4096"
+        manager._read_pid_file = lambda: {"pid": 654, "port": 4096}  # type: ignore[method-assign]
+        manager._pid_exists = lambda pid: pid == 654  # type: ignore[method-assign]
+        manager._get_pid_command = lambda pid: None  # type: ignore[method-assign]
+        manager._pid_owns_listening_port = lambda pid, port: False  # type: ignore[method-assign]
+        manager._find_opencode_serve_pids = lambda port: []  # type: ignore[method-assign]
+        terminated = []
+        manager._terminate_pid = lambda pid, reason: terminated.append((pid, reason)) or _async_none()  # type: ignore[method-assign]
+        manager._clear_pid_file = lambda: terminated.append(("cleared", ""))  # type: ignore[method-assign]
+
+        await manager.restart_for_auth_refresh()
+
+        self.assertTrue(fake_session.closed)
+        self.assertNotIn((654, "auth refresh"), terminated)
+        self.assertEqual(terminated, [("cleared", "")])
 
     async def test_restart_for_auth_refresh_defers_while_requests_are_active(self):
         manager = OpenCodeServerManager(binary="opencode", port=4096)
