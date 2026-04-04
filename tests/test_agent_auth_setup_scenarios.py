@@ -12,6 +12,72 @@ from tests.scenario_harness.core import ScenarioExpect, ScenarioRunner, Scenario
 
 
 class AgentAuthSetupScenarioTests(unittest.IsolatedAsyncioTestCase):
+    async def test_codex_failure_scenario_emits_reset_path(self):
+        harness = AuthSetupScenarioHarness()
+        fake_process = FakeProcess()
+        runner = ScenarioRunner(harness)
+        harness.service._start_codex_process = AsyncMock(return_value=fake_process)
+        harness.service._read_codex_output = AsyncMock(return_value=None)
+        harness.service._verify_login = AsyncMock(return_value=(False, "not logged in"))
+        harness.service._refresh_backend_runtime = AsyncMock()
+
+        await runner.run(
+            ScenarioStep(
+                "start_setup",
+                lambda h: h.service.start_setup(h.context, backend="codex", force_reset=True),
+            ),
+            ScenarioStep(
+                "emit_device_url",
+                lambda h: h.service._handle_process_text(
+                    h.context,
+                    "codex",
+                    "Open this URL to authenticate: https://auth.openai.com/codex/device",
+                ),
+            ),
+        )
+
+        fake_process.finish(0)
+        await harness.flow("codex").waiter_task
+
+        harness.service._refresh_backend_runtime.assert_not_awaited()
+        ScenarioExpect.step_history(runner, ["start_setup", "emit_device_url"])
+        ScenarioExpect.text_contains(harness, "failed")
+        ScenarioExpect.text_contains(harness, "not logged in")
+        ScenarioExpect.button_callback_contains(harness, "auth_setup:codex")
+        ScenarioExpect.flow_missing(harness, "C1:codex")
+
+    async def test_codex_reentry_scenario_replaces_existing_flow(self):
+        harness = AuthSetupScenarioHarness()
+        first_process = FakeProcess()
+        second_process = FakeProcess()
+        runner = ScenarioRunner(harness)
+        harness.service._start_codex_process = AsyncMock(side_effect=[first_process, second_process])
+        harness.service._read_codex_output = AsyncMock(return_value=None)
+
+        await runner.run(
+            ScenarioStep(
+                "start_first_setup",
+                lambda h: h.service.start_setup(h.context, backend="codex", force_reset=True),
+            ),
+        )
+        first_flow = harness.flow("codex")
+        self.assertFalse(first_flow.waiter_task.done())
+
+        await runner.run(
+            ScenarioStep(
+                "start_second_setup",
+                lambda h: h.service.start_setup(h.context, backend="codex", force_reset=True),
+            ),
+        )
+
+        second_flow = harness.flow("codex")
+        self.assertIsNot(first_flow, second_flow)
+        self.assertTrue(first_flow.waiter_task.cancelled())
+        self.assertGreaterEqual(first_process.terminate_calls, 1)
+        ScenarioExpect.step_history(runner, ["start_first_setup", "start_second_setup"])
+        ScenarioExpect.text_contains(harness, "starting codex", index=0)
+        ScenarioExpect.text_contains(harness, "starting codex", index=1)
+
     async def test_codex_device_auth_scenario_reaches_terminal_success(self):
         harness = AuthSetupScenarioHarness()
         fake_process = FakeProcess()
@@ -152,6 +218,32 @@ class AgentAuthSetupScenarioTests(unittest.IsolatedAsyncioTestCase):
         ScenarioExpect.text_contains(harness, "https://opencode.ai/auth", index=1)
         ScenarioExpect.text_contains(harness, "opencode login is active again")
         ScenarioExpect.flow_missing(harness, "C1:opencode")
+
+    async def test_opencode_waiting_key_scenario_ignores_plain_chat(self):
+        harness = AuthSetupScenarioHarness()
+        runner = ScenarioRunner(harness)
+        harness.service._resolve_opencode_provider = AsyncMock(return_value="opencode")
+        harness.service._install_opencode_api_key = AsyncMock()
+        harness.service._refresh_backend_runtime = AsyncMock()
+        harness.service._clear_backend_sessions_for_context = AsyncMock()
+
+        await runner.run(
+            ScenarioStep(
+                "start_setup",
+                lambda h: h.service.start_setup(h.context, backend="opencode", force_reset=True),
+            ),
+        )
+        flow = harness.flow("opencode")
+        self.assertTrue(flow.awaiting_code)
+        before_count = len(harness.rendered_texts())
+
+        consumed = await harness.service.maybe_consume_setup_reply(harness.context, "hello world")
+
+        self.assertFalse(consumed)
+        self.assertTrue(flow.awaiting_code)
+        self.assertEqual(len(harness.rendered_texts()), before_count)
+        harness.service._install_opencode_api_key.assert_not_awaited()
+        ScenarioExpect.step_history(runner, ["start_setup"])
 
 
 if __name__ == "__main__":

@@ -89,6 +89,8 @@ class FakeProcess:
         self.returncode = None
         self.stdout = SimpleNamespace(readline=AsyncMock(return_value=b""))
         self._done = asyncio.Event()
+        self.terminate_calls = 0
+        self.kill_calls = 0
 
     async def wait(self):
         await self._done.wait()
@@ -99,9 +101,11 @@ class FakeProcess:
         self._done.set()
 
     def terminate(self):
+        self.terminate_calls += 1
         self.finish(-15)
 
     def kill(self):
+        self.kill_calls += 1
         self.finish(-9)
 
 
@@ -169,3 +173,16 @@ class ScenarioExpect:
     @staticmethod
     def step_history(runner: ScenarioRunner, expected: list[str]):
         assert runner.history == expected, f"Expected step history {expected!r}, got {runner.history!r}"
+
+    @staticmethod
+    def button_callback_contains(harness: BaseScenarioHarness, needle: str):
+        buttons = harness.controller.im_probe.matching("buttons")
+        assert buttons, "Expected at least one button event"
+        callbacks = []
+        for _, _, keyboard in buttons:
+            for row in getattr(keyboard, "buttons", []):
+                for button in row:
+                    callbacks.append(getattr(button, "callback_data", ""))
+        assert any(needle in callback for callback in callbacks), (
+            f"Expected one button callback to contain {needle!r}, got {callbacks!r}"
+        )
