@@ -197,6 +197,7 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         controller.emit_agent_message = AsyncMock()
         agent = ClaudeAgent(controller)
         agent._clear_pending_reactions = AsyncMock()
+        agent._remove_ack_reaction = AsyncMock()
         agent._extract_text_blocks = lambda message, context: (
             'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error",'
             '"message":"Invalid bearer token"}}'
@@ -206,6 +207,9 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         current_task = asyncio.current_task()
         controller.receiver_tasks[composite_key] = current_task
         controller.claude_sessions[composite_key] = _StubClient()
+        pending_request = SimpleNamespace()
+        agent._pending_requests[composite_key] = [pending_request]
+        agent._pending_reactions[composite_key] = [("m1", ":eyes:")]
 
         assistant_message = type(
             "AssistantMessage",
@@ -228,8 +232,11 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
 
         controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once()
         controller.session_handler.cleanup_session.assert_not_awaited()
+        agent._remove_ack_reaction.assert_awaited_once_with(pending_request)
         self.assertNotIn(composite_key, controller.receiver_tasks)
         self.assertNotIn(composite_key, controller.claude_sessions)
+        self.assertNotIn(composite_key, agent._pending_requests)
+        self.assertNotIn(composite_key, agent._pending_reactions)
 
     async def test_handle_auth_failure_result_requires_explicit_error_subtype(self):
         controller = _StubController()

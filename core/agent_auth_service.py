@@ -27,6 +27,7 @@ URL_RE = re.compile(r"https?://\S+")
 CODEX_DEVICE_CODE_RE = re.compile(r"\b[A-Z0-9]{4}(?:-[A-Z0-9]{4,})+\b")
 OPENCODE_API_KEY_PROMPT_RE = re.compile(r"enteryourapikey", re.IGNORECASE)
 OPENCODE_CREDENTIAL_COUNT_RE = re.compile(r"\b(\d+)\s+credential(?:s)?\b", re.IGNORECASE)
+OPENCODE_DIRECT_API_KEY_RE = re.compile(r"^sk-[A-Za-z0-9][A-Za-z0-9._-]{8,}$")
 CLAUDE_LOGIN_METHODS = {"claudeai", "console"}
 OPENCODE_DIRECT_SETUP_URLS = {"opencode": "https://opencode.ai/auth"}
 
@@ -514,6 +515,7 @@ class AgentAuthService:
             and opencode_flow.backend == "opencode"
             and opencode_flow.initiator_user_id == context.user_id
             and opencode_flow.awaiting_code
+            and self._looks_like_direct_opencode_api_key(message)
         ):
             await self.submit_code(context, message.strip(), backend_hint="opencode")
             return True
@@ -1098,6 +1100,9 @@ class AgentAuthService:
         if separator != "#" or not authorization_code or not state:
             return None
         return authorization_code, state
+
+    def _looks_like_direct_opencode_api_key(self, text: str) -> bool:
+        return OPENCODE_DIRECT_API_KEY_RE.fullmatch(text.strip()) is not None
 
     def _normalize_claude_login_method(self, value: str | None) -> str | None:
         if value is None:

@@ -200,6 +200,7 @@ class ClaudeAgent(BaseAgent):
         composite_key: str,
         *,
         current_receiver_task: asyncio.Task | None = None,
+        preserve_pending_request_state: bool = False,
     ) -> None:
         """Drop Claude runtime state without canceling the current receiver task."""
 
@@ -229,8 +230,9 @@ class ClaudeAgent(BaseAgent):
 
         self._last_assistant_text.pop(composite_key, None)
         self._pending_assistant_message.pop(composite_key, None)
-        self._pending_reactions.pop(composite_key, None)
-        self._pending_requests.pop(composite_key, None)
+        if not preserve_pending_request_state:
+            self._pending_reactions.pop(composite_key, None)
+            self._pending_requests.pop(composite_key, None)
 
     async def handle_stop(self, request: AgentRequest) -> bool:
         composite_key = request.composite_session_id
@@ -326,10 +328,7 @@ class ClaudeAgent(BaseAgent):
                             "error" if self._is_auth_failure_assistant_message(message) else "",
                             assistant_text,
                         ):
-                            pending_request = self._pop_pending_request(composite_key)
-                            self._discard_pending_reaction(composite_key)
-                            if pending_request:
-                                await self._remove_ack_reaction(pending_request)
+                            await self._cleanup_auth_failure_request(composite_key)
                             self._last_assistant_text.pop(composite_key, None)
                             self._pending_assistant_message.pop(composite_key, None)
                             continue
@@ -395,6 +394,7 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             formatted_message,
                         ):
+                            await self._cleanup_auth_failure_request(composite_key)
                             continue
                         if formatted_message and formatted_message.strip():
                             await self.controller.emit_agent_message(
@@ -421,10 +421,7 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             result_text,
                         ):
-                            pending_request = self._pop_pending_request(composite_key)
-                            self._discard_pending_reaction(composite_key)
-                            if pending_request:
-                                await self._remove_ack_reaction(pending_request)
+                            await self._cleanup_auth_failure_request(composite_key)
                             self._last_assistant_text.pop(composite_key, None)
                             self._pending_assistant_message.pop(composite_key, None)
                             continue
@@ -586,6 +583,12 @@ class ClaudeAgent(BaseAgent):
             for request in requests:
                 await self._remove_ack_reaction(request)
 
+    async def _cleanup_auth_failure_request(self, composite_key: str) -> None:
+        pending_request = self._pop_pending_request(composite_key)
+        self._discard_pending_reaction(composite_key)
+        if pending_request is not None:
+            await self._remove_ack_reaction(pending_request)
+
     def get_relative_path(self, abs_path: str, context: Optional[MessageContext] = None) -> str:
         """Convert absolute path to relative path from working directory."""
         try:
@@ -662,7 +665,11 @@ class ClaudeAgent(BaseAgent):
             f"❌ Claude error: {text}",
         )
         if handled:
-            await self._cleanup_runtime_session(composite_key, current_receiver_task=asyncio.current_task())
+            await self._cleanup_runtime_session(
+                composite_key,
+                current_receiver_task=asyncio.current_task(),
+                preserve_pending_request_state=True,
+            )
         return handled
 
     def _is_auth_failure_assistant_message(self, message) -> bool:
