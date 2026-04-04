@@ -52,12 +52,22 @@ ENTRYPOINT ["/docker-entrypoint.sh"]
 # ============================================================
 FROM base AS integration
 
-# Install Node.js runtime (needed by opencode and claude CLIs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Reuse the Node runtime from the UI builder stage.
+# This avoids the NodeSource Debian 13 arm64 binary that currently segfaults
+# inside the regression container before Codex can even start.
+COPY --from=ui-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=ui-builder /usr/local/bin/npm /usr/local/bin/npm
+COPY --from=ui-builder /usr/local/bin/npx /usr/local/bin/npx
+COPY --from=ui-builder /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=ui-builder /usr/local/include/node /usr/local/include/node
+COPY --from=ui-builder /usr/local/share/man/man1/node.1 /usr/local/share/man/man1/node.1
+COPY --from=ui-builder /usr/local/share/doc/node /usr/local/share/doc/node
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Install agent CLIs (failures are non-fatal: not all may be needed)
 RUN npm install -g @anthropic-ai/claude-code 2>/dev/null || echo "WARN: claude-code install failed (optional)"
