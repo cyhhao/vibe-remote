@@ -1,6 +1,6 @@
 """E2E tests: API endpoints."""
 
-from tests.e2e.http import JsonHttpClient
+from tests.e2e.json_http_client import JsonHttpClient
 
 
 def _client(api_url: str) -> JsonHttpClient:
