@@ -28,8 +28,9 @@ The preferred pattern is:
 
 1. keep production code changes small
 2. add a focused scenario test under `tests/test_agent_auth_setup_scenarios.py`
-3. use fake process / fake control client / fake IM client transcripts
-4. drive the real public service methods (`start_setup`, `maybe_consume_setup_reply`, `submit_code`) whenever practical
+3. reuse shared test primitives from `tests/scenario_harness/` before creating new one-off fakes
+4. use fake process / fake control client / fake IM client transcripts
+5. drive the real public service methods (`start_setup`, `maybe_consume_setup_reply`, `submit_code`) whenever practical
 
 If a new helper is only needed by one scenario, keep it local to the test file.
 
@@ -48,6 +49,14 @@ When changing auth/setup behavior, add or update at least one closed-loop scenar
 6. a terminal user-visible message is emitted
 
 For any backend-specific auth flow, the default target is one happy-path scenario plus unit tests for branchy edge cases.
+
+## Current Project Mapping
+
+Reference implementation currently lives in:
+
+- `tests/scenario_harness/`
+- `tests/test_agent_auth_setup_scenarios.py`
+- `docs/regression/AUTH_SETUP_SCENARIOS.md`
 
 ## Current Scenario Matrix
 
