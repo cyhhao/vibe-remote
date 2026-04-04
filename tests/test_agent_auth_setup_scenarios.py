@@ -13,6 +13,7 @@ from tests.scenario_harness.core import ScenarioExpect, ScenarioRunner, Scenario
 
 class AgentAuthSetupScenarioTests(unittest.IsolatedAsyncioTestCase):
     async def test_codex_failure_scenario_emits_reset_path(self):
+        """Scenario: AUTH-SETUP-202"""
         harness = AuthSetupScenarioHarness()
         fake_process = FakeProcess()
         runner = ScenarioRunner(harness)
@@ -47,6 +48,7 @@ class AgentAuthSetupScenarioTests(unittest.IsolatedAsyncioTestCase):
         ScenarioExpect.flow_missing(harness, "C1:codex")
 
     async def test_codex_reentry_scenario_replaces_existing_flow(self):
+        """Scenario: AUTH-SETUP-201"""
         harness = AuthSetupScenarioHarness()
         first_process = FakeProcess()
         second_process = FakeProcess()
@@ -79,6 +81,7 @@ class AgentAuthSetupScenarioTests(unittest.IsolatedAsyncioTestCase):
         ScenarioExpect.text_contains(harness, "starting codex", index=1)
 
     async def test_codex_device_auth_scenario_reaches_terminal_success(self):
+        """Scenario: AUTH-SETUP-001"""
         harness = AuthSetupScenarioHarness()
         fake_process = FakeProcess()
         runner = ScenarioRunner(harness)
@@ -124,6 +127,7 @@ class AgentAuthSetupScenarioTests(unittest.IsolatedAsyncioTestCase):
         ScenarioExpect.flow_missing(harness, "C1:codex")
 
     async def test_claude_manual_callback_scenario_accepts_plain_reply_and_completes(self):
+        """Scenario: AUTH-SETUP-002"""
         harness = AuthSetupScenarioHarness()
         fake_client = object()
         completion_released = asyncio.Event()
@@ -183,6 +187,7 @@ class AgentAuthSetupScenarioTests(unittest.IsolatedAsyncioTestCase):
         ScenarioExpect.flow_missing(harness, "C1:claude")
 
     async def test_opencode_direct_key_scenario_installs_key_and_refreshes_runtime(self):
+        """Scenario: AUTH-SETUP-003"""
         harness = AuthSetupScenarioHarness()
         runner = ScenarioRunner(harness)
         harness.service._resolve_opencode_provider = AsyncMock(return_value="opencode")
@@ -220,6 +225,7 @@ class AgentAuthSetupScenarioTests(unittest.IsolatedAsyncioTestCase):
         ScenarioExpect.flow_missing(harness, "C1:opencode")
 
     async def test_opencode_waiting_key_scenario_ignores_plain_chat(self):
+        """Scenario: AUTH-SETUP-101"""
         harness = AuthSetupScenarioHarness()
         runner = ScenarioRunner(harness)
         harness.service._resolve_opencode_provider = AsyncMock(return_value="opencode")

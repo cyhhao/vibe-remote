@@ -13,6 +13,7 @@ from tests.scenario_harness.message_delivery import MessageDeliveryHarness
 
 class MessageDeliveryScenarioTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduled_result_delivery_scenario_finalizes_anchor(self):
+        """Scenario: MESSAGE-DELIVERY-001"""
         harness = MessageDeliveryHarness(platform="slack")
         harness.context.platform_specific = {
             "turn_source": "scheduled",
@@ -30,6 +31,7 @@ class MessageDeliveryScenarioTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(harness.finalized_calls, [("C123", None, "msg-1")])
 
     async def test_scheduled_result_delivery_override_scenario_uses_parent_channel_target(self):
+        """Scenario: MESSAGE-DELIVERY-002"""
         harness = MessageDeliveryHarness(platform="slack", thread_id="171717.123")
         harness.context.platform_specific = {
             "turn_source": "scheduled",

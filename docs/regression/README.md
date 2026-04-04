@@ -8,6 +8,7 @@ It complements the existing automated `E2E` flow instead of replacing it:
 
 - `E2E testing` keeps using scripts and pytest for automatable scenarios.
 - multi-step auth/setup journeys should add a focused scenario harness case; see `AUTH_SETUP_SCENARIOS.md`
+- capability scenario IDs and current catalog coverage live next to regression docs, for example `AUTH_SETUP_SCENARIO_CATALOG.md` and `MESSAGE_DELIVERY_SCENARIO_CATALOG.md`
 - `Regression testing` is for human-triggered checks on real IM platforms.
 
 ## Setup

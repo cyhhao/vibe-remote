@@ -158,6 +158,12 @@ Each scenario entry should describe:
 - automation layer
 - current test owner
 
+Every scenario-backed automated test should expose the scenario ID in a searchable form, preferably:
+
+- test docstring
+- test metadata/decorator
+- or a nearby scenario mapping constant
+
 ## 5. Harness Design Rules
 
 ### Preferred Design
