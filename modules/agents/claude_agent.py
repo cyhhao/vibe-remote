@@ -321,12 +321,14 @@ class ClaudeAgent(BaseAgent):
                                 if text:
                                     text_parts.append(text)
 
+                        auth_failure_assistant = self._is_auth_failure_assistant_message(message)
                         assistant_text = self._extract_text_blocks(message, context)
+                        auth_failure_text = assistant_text or "OAuth authentication failed."
                         if await self._handle_auth_failure_result(
                             context,
                             composite_key,
-                            "error" if self._is_auth_failure_assistant_message(message) else "",
-                            assistant_text,
+                            "error" if auth_failure_assistant else "",
+                            auth_failure_text if auth_failure_assistant else assistant_text,
                         ):
                             await self._cleanup_auth_failure_request(composite_key)
                             self._last_assistant_text.pop(composite_key, None)
