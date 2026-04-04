@@ -36,7 +36,6 @@ Reference implementation currently lives in:
 - `tests/scenarios/auth_setup/catalog.yaml`
 - `tests/scenarios/auth_setup/observations.yaml`
 - `tests/scenarios/auth_setup/test_auth_setup_scenarios.py`
-- `docs/regression/AUTH_SETUP_SCENARIOS.md`
 
 These are project artifacts, not the reusable standard package itself.
 

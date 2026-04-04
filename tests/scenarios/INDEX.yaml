@@ -18,8 +18,6 @@ capabilities:
       - tests/test_claude_agent_sessions.py
     unit_or_contract_tests:
       - tests/test_agent_auth_service.py
-    human_docs:
-      - docs/regression/AUTH_SETUP_SCENARIOS.md
   - id: message_delivery
     name: scheduled result delivery
     status: active
@@ -29,5 +27,3 @@ capabilities:
       - tests/scenarios/message_delivery/test_message_delivery_scenarios.py
     unit_or_contract_tests:
       - tests/test_message_dispatcher_scheduled.py
-    human_docs:
-      - docs/regression/README.md
