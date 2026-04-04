@@ -61,10 +61,14 @@ MessageHandler = _load_message_handler_class()
 
 
 class _StubSessions:
+    def __init__(self):
+        self.recorded = []
+
     def is_message_already_processed(self, channel_id, thread_ts, message_ts):
         return False
 
     def record_processed_message(self, channel_id, thread_ts, message_ts):
+        self.recorded.append((channel_id, thread_ts, message_ts))
         return None
 
 
@@ -133,6 +137,22 @@ class MessageHandlerAuthSetupTests(unittest.IsolatedAsyncioTestCase):
         await handler.handle_callback_query(context, "auth_setup:auto")
 
         controller.agent_auth_service.handle_setup_callback.assert_awaited_once_with(context, "auth_setup:auto")
+
+    async def test_plain_claude_callback_value_is_consumed_before_agent_routing(self):
+        controller = _StubController()
+        controller.agent_auth_service.maybe_consume_setup_reply = AsyncMock(return_value=True)
+
+        handler = MessageHandler(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack", message_id="m1")
+
+        result = await handler.handle_user_message(context, "auth-code#oauth-state")
+
+        self.assertIsNone(result)
+        controller.agent_auth_service.maybe_consume_setup_reply.assert_awaited_once_with(
+            context,
+            "auth-code#oauth-state",
+        )
+        self.assertEqual(controller.settings_manager.sessions.recorded, [("C1", "m1", "m1")])
 
 
 if __name__ == "__main__":

@@ -205,6 +205,23 @@ class CodexAgent(BaseAgent):
 
         return count
 
+    async def refresh_auth_state(self) -> None:
+        """Drop app-server runtime state so future turns pick up fresh auth."""
+        transports = list(self._transports.values())
+        self._transports.clear()
+
+        for transport in transports:
+            try:
+                await transport.stop()
+            except Exception as exc:
+                logger.warning("Failed to stop Codex transport during auth refresh: %s", exc)
+
+        for base_session_id in self._session_mgr.all_base_sessions():
+            self._session_mgr.invalidate_thread(base_session_id)
+            self._turn_registry.clear_session(base_session_id)
+
+        logger.info("Refreshed Codex auth state across %d transport(s)", len(transports))
+
     # ------------------------------------------------------------------
     # Transport management
     # ------------------------------------------------------------------

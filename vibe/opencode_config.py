@@ -401,3 +401,81 @@ def load_first_opencode_user_config(
             continue
 
     return result
+
+
+def upsert_opencode_provider_api_key(
+    provider_id: str,
+    api_key: str,
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Path:
+    active_logger = logger_instance or logger
+    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
+
+    if probe.path is not None and probe.config is not None:
+        config = probe.config
+        target_path = probe.path
+    elif probe.existing_paths:
+        raise ValueError("Existing OpenCode config could not be parsed")
+    else:
+        config = {}
+        target_path = get_opencode_config_paths(home)[0]
+
+    provider_map = config.setdefault("provider", {})
+    if not isinstance(provider_map, dict):
+        raise ValueError("OpenCode config field 'provider' is not an object")
+
+    provider_config = provider_map.setdefault(provider_id, {})
+    if not isinstance(provider_config, dict):
+        raise ValueError(f"OpenCode provider '{provider_id}' config is not an object")
+
+    options = provider_config.setdefault("options", {})
+    if not isinstance(options, dict):
+        raise ValueError(f"OpenCode provider '{provider_id}' options are not an object")
+
+    options["apiKey"] = api_key
+    if "$schema" not in config:
+        config["$schema"] = "https://opencode.ai/config.json"
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return target_path
+
+
+def remove_opencode_provider_api_key(
+    provider_id: str,
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Optional[Path]:
+    active_logger = logger_instance or logger
+    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
+
+    if probe.path is None or probe.config is None:
+        return None
+
+    config = probe.config
+    provider_map = config.get("provider")
+    if not isinstance(provider_map, dict):
+        return probe.path
+
+    provider_config = provider_map.get(provider_id)
+    if not isinstance(provider_config, dict):
+        return probe.path
+
+    options = provider_config.get("options")
+    if isinstance(options, dict):
+        options.pop("apiKey", None)
+        if not options:
+            provider_config.pop("options", None)
+
+    if not provider_config:
+        provider_map.pop(provider_id, None)
+
+    if not provider_map:
+        config.pop("provider", None)
+
+    probe.path.parent.mkdir(parents=True, exist_ok=True)
+    probe.path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return probe.path

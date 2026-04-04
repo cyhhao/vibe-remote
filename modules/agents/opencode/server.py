@@ -128,6 +128,13 @@ class OpenCodeServerManager:
             cmd = self._get_pid_command(pid)
             if cmd and self._is_opencode_serve_cmd(cmd, self.port):
                 targets.append(pid)
+            elif isinstance(info, dict) and info.get("port") == self.port and self._pid_owns_listening_port(pid, self.port):
+                logger.info(
+                    "Trusting OpenCode pid file for pid=%s because it still owns port %s",
+                    pid,
+                    self.port,
+                )
+                targets.append(pid)
 
         if not targets:
             for candidate in self._find_opencode_serve_pids(self.port):
@@ -216,6 +223,53 @@ class OpenCodeServerManager:
         if not command:
             return False
         return "opencode" in command and " serve" in command and f"--port={port}" in command
+
+    @staticmethod
+    def _pid_owns_listening_port(pid: int, port: int) -> bool:
+        if os.name == "nt" or pid <= 0:
+            return False
+
+        proc_fd_dir = f"/proc/{pid}/fd"
+        try:
+            fd_entries = os.listdir(proc_fd_dir)
+        except OSError:
+            return False
+
+        inodes: set[str] = set()
+        for entry in fd_entries:
+            try:
+                target = os.readlink(f"{proc_fd_dir}/{entry}")
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target.endswith("]"):
+                inodes.add(target[8:-1])
+
+        if not inodes:
+            return False
+
+        for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+            try:
+                with open(table, encoding="utf-8") as handle:
+                    next(handle, None)
+                    for raw_line in handle:
+                        parts = raw_line.split()
+                        if len(parts) < 10:
+                            continue
+                        local_address = parts[1]
+                        state = parts[3]
+                        inode = parts[9]
+                        if state != "0A" or inode not in inodes:
+                            continue
+                        _, _, port_hex = local_address.rpartition(":")
+                        try:
+                            if int(port_hex, 16) == port:
+                                return True
+                        except ValueError:
+                            continue
+            except OSError:
+                continue
+
+        return False
 
     def _is_port_available(self) -> bool:
         try:
@@ -324,8 +378,16 @@ class OpenCodeServerManager:
             return
 
         cmd = self._get_pid_command(pid)
-        if cmd and self._is_opencode_serve_cmd(cmd, self.port) and self._pid_exists(pid):
-            await self._terminate_pid(pid, reason="orphaned and unhealthy")
+        if self._pid_exists(pid):
+            if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                await self._terminate_pid(pid, reason="orphaned and unhealthy")
+            elif cmd is None and self._pid_owns_listening_port(pid, self.port):
+                logger.info(
+                    "Trusting OpenCode pid file for orphan cleanup pid=%s because it still owns port %s",
+                    pid,
+                    self.port,
+                )
+                await self._terminate_pid(pid, reason="orphaned and unhealthy")
         self._clear_pid_file()
 
     async def ensure_running(self) -> str:
@@ -714,6 +776,21 @@ class OpenCodeServerManager:
             except Exception as e:
                 logger.warning(f"Failed to get default config: {e}")
                 return {}
+
+    async def set_api_key_auth(self, provider_id: str, api_key: str) -> None:
+        """Persist provider API auth via OpenCode's own auth endpoint."""
+
+        await self.ensure_running()
+
+        async with self._request_scope():
+            session = await self._get_http_session()
+            async with session.put(
+                f"{self.base_url}/auth/{provider_id}",
+                json={"type": "api", "key": api_key},
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise RuntimeError(f"Failed to set OpenCode auth: {resp.status} {error_text}")
 
     def _load_opencode_user_config(self) -> Optional[Dict[str, Any]]:
         """Load and cache opencode.json config file.
