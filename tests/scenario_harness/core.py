@@ -36,6 +36,9 @@ class ScenarioIMClient:
         self.probe.record("buttons", text, keyboard)
         return f"btn-{len(self.probe.events)}"
 
+    def should_use_thread_for_reply(self):
+        return False
+
     def rendered_texts(self) -> list[str]:
         return self.probe.rendered_texts()
 
