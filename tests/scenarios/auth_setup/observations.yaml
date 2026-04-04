@@ -1,0 +1,23 @@
+version: 1
+capability: auth_setup
+observations:
+  - id: OBS-AUTH-001
+    source: manual_regression
+    related_scenarios:
+      - AUTH-SETUP-901
+    summary: Codex OAuth completion was not enough to make the next turn usable.
+    previous_assumption: Successful OAuth immediately left Codex ready for the next user turn.
+    observed_behavior: Codex still needed the setup completion waiter and runtime refresh to finish before the next turn.
+    required_updates:
+      - restore the setup completion waiter
+      - lock the behavior with a post-success readiness scenario
+  - id: OBS-AUTH-002
+    source: manual_regression
+    related_scenarios:
+      - AUTH-SETUP-902
+    summary: Claude auth failures arrived as assistant events without the deprecated API-error marker.
+    previous_assumption: Claude auth-recovery detection could rely on the older API-error flag.
+    observed_behavior: Recovery must trigger from the explicit authentication failure subtype even when the older marker is absent.
+    required_updates:
+      - update the Claude auth-failure detector
+      - keep a regression test in the runtime-specific suite

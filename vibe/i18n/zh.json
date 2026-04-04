@@ -261,6 +261,7 @@
       "opencodeInstructions": "OpenCode 的 `{provider}` 认证修复已开始。\n\n请打开下面这个页面创建或获取凭据：\n{url}\n\n拿到 key 之后，直接在当前聊天里回复即可。",
       "opencodeCodePrompt": "OpenCode 正在等待 `{provider}` 的 API key。请直接在当前聊天里回复 key。",
       "opencodeCodeRetryPrompt": "OpenCode 仍在等待 `{provider}` 的 API key，上一条值可能没有被接受。请直接在当前聊天里回复 key。",
+      "timedOut": "{backend} 登录修复已超时，请重新发起 setup 再试一次。",
       "success": "{backend} 已重新登录，可继续使用。",
       "failed": "{backend} 登录修复失败：{detail}",
       "unknownFailure": "未知登录失败。"

@@ -7,7 +7,21 @@ The container state is persistent by default. Changes you make through the UI or
 It complements the existing automated `E2E` flow instead of replacing it:
 
 - `E2E testing` keeps using scripts and pytest for automatable scenarios.
+- capability scenario metadata now lives under `tests/scenarios/`
+- multi-step auth/setup journeys should add or update `tests/scenarios/auth_setup/catalog.yaml` and `tests/scenarios/auth_setup/test_auth_setup_scenarios.py`
+- `docs/regression/` is now a human-facing entry layer, not the canonical source of truth for scenario metadata
 - `Regression testing` is for human-triggered checks on real IM platforms.
+
+## Scenario Metadata Navigation
+
+Start here only if you are doing manual regression or need the human-readable index.
+
+For deterministic scenario metadata, read:
+
+1. `tests/scenarios/INDEX.yaml`
+2. `tests/scenarios/<capability>/catalog.yaml`
+3. `tests/scenarios/<capability>/observations.yaml`
+4. `tests/scenarios/<capability>/test_*.py`
 
 ## Setup
 

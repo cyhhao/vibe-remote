@@ -166,6 +166,22 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("T74L-XU61D", text)
         self.assertIn("https://auth.openai.com/codex/device", text)
 
+    async def test_start_setup_starts_codex_waiter(self):
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+        process = SimpleNamespace(stdout=object(), returncode=None)
+        service._start_codex_process = AsyncMock(return_value=process)
+        service._read_codex_output = AsyncMock()
+        service._wait_for_completion = AsyncMock()
+
+        await service.start_setup(context, backend="codex", force_reset=True)
+        await asyncio.sleep(0)
+
+        service._start_codex_process.assert_awaited_once_with(force_reset=True)
+        service._read_codex_output.assert_awaited_once_with(process, context, "codex")
+        service._wait_for_completion.assert_awaited_once()
+
     async def test_start_setup_starts_claude_control_flow_and_emits_manual_url(self):
         controller = _StubController()
         service = AgentAuthService(controller)
@@ -805,6 +821,7 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         service._send_claude_control_request.assert_awaited_once_with(
             flow.claude_client,
             {"subtype": "claude_oauth_wait_for_completion"},
+            timeout=service.setup_timeout_seconds,
         )
         service._refresh_backend_runtime.assert_awaited_once_with("claude")
         service._disconnect_claude_client.assert_awaited_once_with(flow.claude_client)

@@ -1,0 +1,29 @@
+version: 1
+canonical: true
+shared_harness: tests/scenario_harness
+navigation:
+  - Read this file first.
+  - Pick the target capability.
+  - Read that capability's catalog.yaml.
+  - Read that capability's observations.yaml.
+  - Read the listed scenario test files before changing production code.
+capabilities:
+  - id: auth_setup
+    name: IM-driven backend auth recovery
+    status: active
+    catalog: tests/scenarios/auth_setup/catalog.yaml
+    observations: tests/scenarios/auth_setup/observations.yaml
+    scenario_tests:
+      - tests/scenarios/auth_setup/test_auth_setup_scenarios.py
+      - tests/test_claude_agent_sessions.py
+    unit_or_contract_tests:
+      - tests/test_agent_auth_service.py
+  - id: message_delivery
+    name: scheduled result delivery
+    status: active
+    catalog: tests/scenarios/message_delivery/catalog.yaml
+    observations: tests/scenarios/message_delivery/observations.yaml
+    scenario_tests:
+      - tests/scenarios/message_delivery/test_message_delivery_scenarios.py
+    unit_or_contract_tests:
+      - tests/test_message_dispatcher_scheduled.py

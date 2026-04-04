@@ -1,0 +1,28 @@
+version: 1
+capability:
+  id: example_capability
+  name: Example capability
+  canonical_tests:
+    - tests/scenarios/example_capability/test_example_capability_scenarios.py
+  shared_harness:
+    - tests/scenario_harness/core.py
+status_legend:
+  covered: scenario coverage exists
+  partial: unit or contract coverage exists but the closed loop is incomplete
+  manual: currently validated only by human regression
+  gap: not covered yet
+scenarios:
+  - id: EXAMPLE-001
+    name: Happy path
+    status: covered
+    kind: happy_path
+    layer: scenario
+    test: tests/scenarios/example_capability/test_example_capability_scenarios.py::test_happy_path
+  - id: EXAMPLE-101
+    name: Negative path
+    status: gap
+    kind: negative_path
+    layer: scenario
+    test: tests/scenarios/example_capability/test_example_capability_scenarios.py::test_negative_path
+next_priority:
+  - EXAMPLE-101

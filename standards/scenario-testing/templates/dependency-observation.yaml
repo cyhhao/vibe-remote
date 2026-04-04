@@ -1,0 +1,14 @@
+version: 1
+capability: example_capability
+observations:
+  - id: OBS-EXAMPLE-001
+    source: manual_regression
+    related_scenarios:
+      - EXAMPLE-101
+    summary: Short description of what reality contradicted.
+    previous_assumption: What the harness or team assumed before observing the behavior.
+    observed_behavior: What the dependency or platform actually did.
+    required_updates:
+      - catalog update
+      - fake or contract update
+      - regression coverage

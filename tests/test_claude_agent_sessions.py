@@ -280,6 +280,46 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(composite_key, controller.receiver_tasks)
         self.assertNotIn(composite_key, controller.claude_sessions)
 
+    async def test_assistant_auth_error_without_is_api_error_flag_still_triggers_recovery(self):
+        """Scenario: AUTH-SETUP-902"""
+        controller = _StubController()
+        controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
+        controller._get_session_key = lambda context: "telegram::user::U1"
+        controller.emit_agent_message = AsyncMock()
+        agent = ClaudeAgent(controller)
+        agent._remove_ack_reaction = AsyncMock()
+        agent._extract_text_blocks = lambda message, context: (
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error",'
+            '"message":"Invalid bearer token"}}'
+        )
+        context = SimpleNamespace()
+        composite_key = "session-1:/tmp/work"
+        current_task = asyncio.current_task()
+        controller.receiver_tasks[composite_key] = current_task
+        controller.claude_sessions[composite_key] = _StubClient()
+
+        assistant_message = type(
+            "AssistantMessage",
+            (),
+            {
+                "content": [],
+                "error": "authentication_failed",
+            },
+        )()
+
+        class _Client:
+            def receive_messages(self):
+                async def _iterate():
+                    yield assistant_message
+
+                return _iterate()
+
+        await agent._receive_messages(_Client(), "session-1", "/tmp/work", context)
+
+        controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once()
+        self.assertNotIn(composite_key, controller.receiver_tasks)
+        self.assertNotIn(composite_key, controller.claude_sessions)
+
     async def test_handle_auth_failure_result_requires_explicit_error_subtype(self):
         controller = _StubController()
         controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)

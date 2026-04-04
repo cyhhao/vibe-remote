@@ -669,9 +669,6 @@ class ClaudeAgent(BaseAgent):
         return handled
 
     def _is_auth_failure_assistant_message(self, message) -> bool:
-        if not getattr(message, "isApiErrorMessage", False):
-            return False
-
         error_kind = (getattr(message, "error", "") or "").strip().lower()
         return error_kind == "authentication_failed"
 
