@@ -424,6 +424,7 @@ class AgentAuthService:
             self._flows_by_id[flow.flow_id] = flow
             if resolved_backend == "codex":
                 flow.reader_task = asyncio.create_task(self._read_codex_output(process, context, resolved_backend))
+                flow.waiter_task = asyncio.create_task(self._wait_for_completion(flow))
             elif resolved_backend == "claude":
                 flow.waiter_task = asyncio.create_task(self._wait_for_claude_completion(flow))
                 await self._send_message(
