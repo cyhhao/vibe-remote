@@ -11,5 +11,7 @@ Rules:
 
 Current contents:
 
+- `core.py`
+  Generic scenario-harness primitives: event probe, fake IM client, base controller, fake process, base harness
 - `auth_setup.py`
-  Shared harness primitives for IM-driven auth/setup scenarios
+  Auth/setup-specific harness built on top of the generic layer

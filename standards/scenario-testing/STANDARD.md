@@ -119,6 +119,18 @@ Examples:
 - fake persistence store
 - probes for sent messages, state transitions, refresh hooks
 
+Recommended layering:
+
+- generic core primitives
+  - event probe
+  - fake transport/client
+  - fake process / completion handle
+  - base scenario harness
+- capability-specific harness
+  - auth setup
+  - attachment delivery
+  - scheduled follow-up delivery
+
 ## 4. Scenario Catalog Rules
 
 Each capability must maintain a scenario catalog.
