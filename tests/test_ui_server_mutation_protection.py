@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from http.cookies import SimpleCookie
 
-from vibe.ui_server import app
+from vibe.ui_server import app, protect_mutating_ui_requests
 
 from tests.ui_server_test_helpers import csrf_headers
 
@@ -50,3 +50,35 @@ def test_config_post_rejects_missing_csrf_token():
 
     assert response.status_code == 403
     assert response.get_json()["message"] == "Forbidden: invalid csrf token"
+
+
+def test_config_post_allows_forwarded_origin():
+    client = app.test_client()
+    headers = csrf_headers(client, "http://internal:15131")
+    headers["Origin"] = "https://vibe.example"
+    headers["X-Forwarded-Proto"] = "https"
+    headers["X-Forwarded-Host"] = "vibe.example"
+
+    response = client.post(
+        "/config",
+        json={
+            "mode": "self_host",
+            "runtime": {"default_cwd": "/tmp/test"},
+            "agents": {
+                "default_backend": "opencode",
+                "opencode": {"enabled": True, "cli_path": "opencode"},
+                "claude": {"enabled": False, "cli_path": "claude"},
+                "codex": {"enabled": False, "cli_path": "codex"},
+            },
+        },
+        headers=headers,
+        base_url="http://internal:15131",
+    )
+
+    assert response.status_code == 200
+
+
+def test_mutation_guard_exempts_e2e_simulation_endpoint(monkeypatch):
+    monkeypatch.setenv("E2E_TEST_MODE", "true")
+    with app.test_request_context("/e2e/simulate-interaction", method="POST"):
+        assert protect_mutating_ui_requests() is None

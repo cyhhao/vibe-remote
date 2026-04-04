@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 import mimetypes
+import os
 import re
 import secrets
 import threading
@@ -137,7 +138,25 @@ def _request_origin(value: str | None) -> str | None:
 
 def _current_origin() -> str:
     parsed = urlparse(request.host_url)
-    return f"{parsed.scheme}://{parsed.netloc}"
+    scheme = parsed.scheme
+    netloc = parsed.netloc
+
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip()
+    forwarded_host = request.headers.get("X-Forwarded-Host", "").split(",")[0].strip()
+
+    if forwarded_proto:
+        scheme = forwarded_proto
+    if forwarded_host:
+        netloc = forwarded_host
+
+    return f"{scheme}://{netloc}"
+
+
+def _is_mutation_guard_exempt() -> bool:
+    return (
+        request.path == "/e2e/simulate-interaction"
+        and os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes")
+    )
 
 
 def _ensure_csrf_cookie(response: Response) -> Response:
@@ -162,6 +181,8 @@ def _ensure_csrf_cookie(response: Response) -> Response:
 @app.before_request
 def protect_mutating_ui_requests():
     if request.method not in MUTATING_METHODS:
+        return None
+    if _is_mutation_guard_exempt():
         return None
 
     source = _request_origin(request.headers.get("Origin")) or _request_origin(request.headers.get("Referer"))
@@ -895,9 +916,7 @@ def setup_first_bind_code():
 # E2E Test-Only Endpoints (gated by E2E_TEST_MODE env var)
 # =============================================================================
 
-import os as _os
-
-if _os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
+if os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes"):
     logger.warning(
         "E2E_TEST_MODE is ENABLED. /e2e/* endpoints are registered. "
         "These endpoints allow unauthenticated config mutation. "
