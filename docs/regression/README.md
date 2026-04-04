@@ -7,6 +7,7 @@ The container state is persistent by default. Changes you make through the UI or
 It complements the existing automated `E2E` flow instead of replacing it:
 
 - `E2E testing` keeps using scripts and pytest for automatable scenarios.
+- multi-step auth/setup journeys should add a focused scenario harness case; see `AUTH_SETUP_SCENARIOS.md`
 - `Regression testing` is for human-triggered checks on real IM platforms.
 
 ## Setup
