@@ -343,6 +343,28 @@ def test_spawn_update_task_keeps_same_scope_updates_ordered() -> None:
     assert started == [1, 2]
 
 
+def test_scoped_update_gate_is_evicted_once_scope_turns_idle() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+
+    async def scenario() -> None:
+        with patch.object(bot, "_handle_update", new=AsyncMock()) as handle_mock:
+            await bot._handle_scoped_update(
+                {
+                    "update_id": 1,
+                    "message": {
+                        "chat": {"id": -100123, "type": "supergroup"},
+                        "from": {"id": 42},
+                    },
+                },
+                "-100123:42",
+            )
+            handle_mock.assert_awaited_once()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=0.2))
+
+    assert bot._update_scope_gates == {}
+
+
 def test_wait_for_update_capacity_blocks_until_inflight_task_finishes() -> None:
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
     bot._MAX_IN_FLIGHT_UPDATE_TASKS = 1
@@ -414,6 +436,51 @@ def test_spawn_message_callback_task_waits_for_capacity() -> None:
         await bot._drain_background_tasks()
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=0.2))
+
+
+def test_spawn_message_callback_task_rechecks_capacity_after_wakeup() -> None:
+    bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
+    bot._MAX_IN_FLIGHT_MESSAGE_CALLBACK_TASKS = 1
+    first_release = asyncio.Event()
+    second_release = asyncio.Event()
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    order: list[str] = []
+
+    async def running_callback(_context, text: str) -> None:
+        order.append(text)
+        if text == "first":
+            first_started.set()
+            await first_release.wait()
+        elif text == "second":
+            second_started.set()
+            await second_release.wait()
+
+    async def scenario() -> None:
+        bot.on_message_callback = running_callback
+        context = MessageContext(user_id="42", channel_id="-100123", platform="telegram")
+        await bot._spawn_message_callback_task(context, "first")
+        await first_started.wait()
+
+        second_waiter = asyncio.create_task(bot._spawn_message_callback_task(context, "second"))
+        third_waiter = asyncio.create_task(bot._spawn_message_callback_task(context, "third"))
+        await asyncio.sleep(0)
+        assert not second_waiter.done()
+        assert not third_waiter.done()
+
+        first_release.set()
+        await second_started.wait()
+        await asyncio.sleep(0)
+        assert second_waiter.done()
+        assert not third_waiter.done()
+
+        second_release.set()
+        await third_waiter
+        await bot._drain_background_tasks()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=0.2))
+
+    assert order == ["first", "second", "third"]
 
 
 def test_pending_cwd_prompt_consumes_next_plain_message() -> None:

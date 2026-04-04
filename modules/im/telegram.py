@@ -80,6 +80,12 @@ class _TelegramSettingsState:
     is_dm: bool
 
 
+@dataclass
+class _TelegramUpdateScopeGate:
+    lock: asyncio.Lock
+    waiters: int = 0
+
+
 class TelegramBot(BaseIMClient):
     """Telegram adapter using Bot API long polling."""
 
@@ -100,7 +106,7 @@ class TelegramBot(BaseIMClient):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._update_tasks: set[asyncio.Task[Any]] = set()
         self._message_callback_tasks: set[asyncio.Task[Any]] = set()
-        self._update_scope_locks: dict[str, asyncio.Lock] = {}
+        self._update_scope_gates: dict[str, _TelegramUpdateScopeGate] = {}
         self._cwd_prompts: dict[str, _TelegramCwdPrompt] = {}
         self._resume_states: dict[str, _TelegramResumeSessionState] = {}
         self._routing_states: dict[str, _TelegramRoutingState] = {}
@@ -189,12 +195,18 @@ class TelegramBot(BaseIMClient):
         task.add_done_callback(self._handle_update_task_done)
 
     async def _handle_scoped_update(self, update: dict[str, Any], scope_key: str) -> None:
-        lock = self._update_scope_locks.get(scope_key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._update_scope_locks[scope_key] = lock
-        async with lock:
-            await self._handle_update(update)
+        gate = self._update_scope_gates.get(scope_key)
+        if gate is None:
+            gate = _TelegramUpdateScopeGate(lock=asyncio.Lock())
+            self._update_scope_gates[scope_key] = gate
+        gate.waiters += 1
+        try:
+            async with gate.lock:
+                await self._handle_update(update)
+        finally:
+            gate.waiters -= 1
+            if gate.waiters == 0 and self._update_scope_gates.get(scope_key) is gate:
+                self._update_scope_gates.pop(scope_key, None)
 
     def _handle_update_task_done(self, task: asyncio.Task[Any]) -> None:
         self._update_tasks.discard(task)
@@ -213,10 +225,10 @@ class TelegramBot(BaseIMClient):
             await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
 
     async def _wait_for_message_callback_capacity(self) -> None:
-        if len(self._message_callback_tasks) < self._MAX_IN_FLIGHT_MESSAGE_CALLBACK_TASKS:
-            return
-        pending = tuple(self._message_callback_tasks)
-        if pending:
+        while len(self._message_callback_tasks) >= self._MAX_IN_FLIGHT_MESSAGE_CALLBACK_TASKS:
+            pending = tuple(self._message_callback_tasks)
+            if not pending:
+                return
             await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
 
     async def _drain_task_set(self, tasks: set[asyncio.Task[Any]]) -> None:
