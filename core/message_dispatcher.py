@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from modules.im import MessageContext
-from core.reply_enhancer import process_reply
+from core.reply_enhancer import process_reply, strip_file_links
 
 logger = logging.getLogger(__name__)
 
@@ -385,8 +385,7 @@ class ConsolidatedMessageDispatcher:
 
         reply_enhancements_on = getattr(self.controller.config, "reply_enhancements", True)
         if reply_enhancements_on:
-            enhanced = process_reply(text)
-            chunk = enhanced.text.strip()
+            chunk = strip_file_links(text).strip()
         else:
             chunk = text.strip()
 

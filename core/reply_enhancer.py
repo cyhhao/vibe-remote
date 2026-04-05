@@ -93,6 +93,14 @@ def process_reply(text: str) -> EnhancedReply:
     return EnhancedReply(text=text_clean.rstrip(), files=files, buttons=buttons)
 
 
+def strip_file_links(text: str) -> str:
+    """Remove ``file://`` markdown URLs while preserving the surrounding text."""
+    files = _extract_file_links(text)
+    if not files:
+        return text
+    return _strip_file_links(text)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

@@ -237,6 +237,22 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             [("C1", "Preview ready\n\nscreen", "markdown")],
         )
 
+    async def test_lark_log_message_preserves_button_like_markdown_blocks(self):
+        controller = _StubController("lark")
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="lark")
+
+        await dispatcher.emit_agent_message(
+            context,
+            "assistant",
+            "Runbook\n---\n[step one] | [step two]",
+        )
+
+        self.assertEqual(
+            controller.im_client.sent_messages,
+            [("C1", "Runbook\n---\n[step one] | [step two]", "markdown")],
+        )
+
     async def test_telegram_quick_reply_buttons_use_vertical_layout(self):
         controller = _StubController("telegram")
         dispatcher = ConsolidatedMessageDispatcher(controller)
