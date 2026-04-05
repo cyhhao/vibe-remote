@@ -1,6 +1,6 @@
 # Codex Agent Setup
 
-Vibe Remote can route individual Slack channels to Codex instead of Claude Code. (OpenCode is also supported and recommended; see README for quick enablement.) This guide walks through enabling Codex end-to-end.
+Vibe Remote can route individual chat scopes to Codex instead of Claude Code. (OpenCode is also supported and recommended; see README for quick enablement.) This guide walks through enabling Codex end-to-end.
 
 ## 1. Install and authenticate Codex CLI
 
@@ -30,11 +30,11 @@ In `~/.vibe_remote/config/config.json`:
 
 No additional flag is required to bypass approvals—the bot always adds `--dangerously-bypass-approvals-and-sandbox`.
 
-## 3. Route channels to Codex
+## 3. Route chats to Codex
 
-Configure routing via Slack **Agent Settings**: pick Codex for the channel you want.
+Configure routing via the platform **Agent Settings** UI: pick Codex for the Slack channel, Discord channel, Telegram chat, or other scope you want.
 
-Each Slack channel ID (starts with `C`) gets its own agent. Routes fall back to the configured default backend.
+Each routed scope gets its own agent override. Unrouted scopes fall back to the configured default backend.
 
 ## 4. Restart the bot and test
 
@@ -42,10 +42,10 @@ Each Slack channel ID (starts with `C`) gets its own agent. Routes fall back to 
 vibe
 ```
 
-In a routed Slack channel run `@VibeRemote status` or any question—you should see the bot react with 👀 (default) or an acknowledgement like `📨 Codex received, processing...` (when `ACK_MODE=message`), followed by Codex’s reply. If the CLI is missing, the bot will reply with “Agent `codex` is not configured”.
+In a routed chat, send a normal non-command message; you should see the bot acknowledge the request and then reply from Codex. For Telegram groups and forums, the default setup usually requires an explicit command, @mention, or reply-to-bot unless you already disabled `require_mention`. If the CLI is missing, the bot will reply with “Agent `codex` is not configured”.
 
 ## 5. Troubleshooting
 
 - **“Agent `codex` is not configured”**: ensure `codex` CLI is installed and on PATH; check `CODEX_ENABLED`.
-- **`codex exec` errors**: inspect the Slack stderr snippet or tail the latest `~/.vibe_remote/logs/vibe_remote.log`.
-- **Routing not applied**: confirm the channel ID matches Slack’s `C...` value and that the channel override is set in Slack **Agent Settings**.
+- **`codex exec` errors**: inspect the latest `~/.vibe_remote/logs/vibe_remote.log` and the in-chat error details.
+- **Routing not applied**: confirm the target scope is the one you configured in **Agent Settings** for Slack, Discord, Telegram, or the relevant platform.

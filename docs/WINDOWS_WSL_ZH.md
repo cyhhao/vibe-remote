@@ -8,7 +8,7 @@
 
 如果你在 Windows 上使用 Vibe Remote，我更推荐下面这套方式：
 
-- `Windows`：浏览器、Slack、Discord、微信、飞书
+- `Windows`：浏览器、Slack、Discord、Telegram、微信、飞书
 - `WSL`：Vibe Remote、Claude Code / Codex / OpenCode、你的代码仓库
 
 简单理解就是：
@@ -305,7 +305,7 @@ http://127.0.0.1:5123
 
 ### 5. 在聊天工具里使用
 
-之后你就在 Slack、Discord、微信、飞书里和 Agent 交互。
+之后你就在 Slack、Discord、Telegram、微信、飞书里和 Agent 交互。
 
 ## 如何再次打开 WSL
 

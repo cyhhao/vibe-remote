@@ -8,7 +8,7 @@ If someone told you "use WSL" but you do not know where to install it, how to op
 
 If you use Vibe Remote on Windows, the recommended setup is:
 
-- `Windows`: browser, Slack, Discord, WeChat, Lark/Feishu
+- `Windows`: browser, Slack, Discord, Telegram, WeChat, Lark/Feishu
 - `WSL`: Vibe Remote, Claude Code / Codex / OpenCode, your code repository
 
 In plain terms:
@@ -301,7 +301,7 @@ http://127.0.0.1:5123
 
 ### 5. Use your chat app normally
 
-After that, continue using Slack, Discord, WeChat, or Lark as usual.
+After that, continue using Slack, Discord, Telegram, WeChat, or Lark as usual.
 
 ## How to Open WSL Again Later
 

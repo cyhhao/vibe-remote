@@ -52,7 +52,7 @@
   },
   "welcome": {
     "title": "Set up Vibe Remote",
-    "subtitle": "Your local AI coding assistant for Slack and Discord.",
+    "subtitle": "Your local AI coding assistant for Slack, Discord, Telegram, WeChat, and Lark.",
     "getStarted": "Get started",
     "feature1": "Runs locally. Your code stays on your computer.",
     "feature2": "SaaS mode uses a cloud relay for Slack delivery, but does not store message content.",
@@ -63,7 +63,7 @@
     "saasMode": "SaaS Mode",
     "saasDescription": "OAuth install + cloud relay + local execution (coming soon).",
     "selfHostMode": "Self-host Mode",
-    "selfHostDescription": "Use your own Slack app + Socket Mode tokens."
+    "selfHostDescription": "Use your own platform credentials and keep execution local."
   },
   "platform": {
     "title": "Choose a Platform",
@@ -173,13 +173,13 @@
     "step3TipTitle": "Most commonly missed",
     "step3Tip": "If you expect the bot to respond to normal group messages without explicit @mentions, /setprivacy must be set to Disable. This is the most common Telegram setup miss.",
     "step3ExtraTip": "If you only need the bot in DMs for now, /setjoingroups can wait. But before using groups or forum topics, finish it first.",
-    "step4Title": "Add the Bot and Send the First Message",
-    "step4Description": "Complete the Telegram-side onboarding so Vibe Remote can actually discover your DM, group, or forum topic.",
-    "step4Item1": "Start a DM with the bot and send /start to confirm the direct-message path works",
-    "step4Item2": "If you want group or forum usage, add the bot there and grant permission to send messages; for auto-created topics, also grant admin or topic-management rights",
-    "step4Item3": "Send one message in each target conversation so the bot can discover that chat",
-    "step4Item4": "Return to the next channel-selection step and refresh the Telegram chat list",
-    "step4Tip": "If the bot still reacts only to commands or @mentions in groups, go back to Step 3 and verify that /setprivacy is really set to Disable.",
+    "step4Title": "Finish Setup, Bind, Then Discover Chats",
+    "step4Description": "Telegram chat discovery happens only after Vibe Remote is running and has received inbound messages. Finish setup first, then come back from the dashboard to enable discovered group or forum chats.",
+    "step4Item1": "Finish the setup flow and start the service",
+    "step4Item2": "On the summary screen, copy the first bind command and send `bind <code>` or `/bind <code>` to the bot in DM",
+    "step4Item3": "After binding, send /start in DM; for groups or forums, add the bot there and grant message permission (plus admin/topic-management rights if you want forum auto-topic mode)",
+    "step4Item4": "Send one message in each target group or forum chat, then refresh the Telegram chat list later from the dashboard group settings page",
+    "step4Tip": "Direct messages stay hidden from the selectable Telegram chat list. If the bot still reacts only to commands or @mentions in groups, go back to Step 3 and verify that /setprivacy is really set to Disable.",
     "step5Title": "Choose Conversation Defaults",
     "step5Description": "Set the default group reply behavior and forum topic behavior for this bot.",
     "botToken": "Bot Token",

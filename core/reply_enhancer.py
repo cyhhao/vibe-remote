@@ -156,7 +156,7 @@ def _extract_buttons(text: str) -> Tuple[List[QuickReplyButton], str]:
 _FILES_PROMPT = """\
 # Vibe Remote
 
-Vibe Remote is a middleware layer that connects AI agents to IM platforms such as Slack. \
+Vibe Remote is a middleware layer that connects AI agents to IM platforms such as Slack, Discord, Telegram, WeChat, and Lark/Feishu. \
 The user is interacting with you through an IM app via Vibe Remote forwarding.
 
 If the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes. Use it for configuration file locations, scope rules, routing behavior, scheduled-task operations, and troubleshooting steps.

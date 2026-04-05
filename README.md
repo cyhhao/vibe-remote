@@ -4,7 +4,7 @@
 
 # Vibe Remote
 
-### Your AI agent army, commanded from Slack, Discord, WeChat & Lark.
+### Your AI agent army, commanded from Slack, Discord, Telegram, WeChat & Lark.
 
 **No laptop. No IDE. Just vibes.**
 
@@ -20,6 +20,7 @@
 
 ![Slack](https://img.shields.io/badge/Slack-4A154B?style=flat-square&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACMAAAAiCAYAAADVhWD8AAACT0lEQVR42s2VQW7bMBBFfQQdoDa47CIiBBSuu/QRvCpid1HdwNrHjnUDH4Ww0irdCWjtZukjMF0ViGOM0wuoZJRkCFkUJZmIMsAHLXNAPo5Gn506Mdg8TD9uDlwofRxv/n3N59Afl1Maz0EoFeI0vsQcW9Ffgy8h8hr8huAF5Hq2kBB5WQfCihwJnnNkJYphZlvbMKlOXgKOdx2SYwiUbRjQwXy6AfKqMIM1BO3DqNX5BSH2TqswGHJzVfI/6zC4kVkdJZrAEBY6HguJ1tD6a2zSMqHpPSyawNB4sdQYIxpafaHpmWEQpGj+7OpimMFsDtvaICioCuOx0NHNu/E8QUMzyIbpeeL0JTn86TUdkhNguHIdgO46QBhDZT78hFFjGHlzI0yguyhLYbBnsIn761q9w6Urd3Lhfp/7eGHK8SLL0cC48SxBkLca3Bk5nJwTVbqcsnWAEecv80gFFa/zpzeZ3va+wG1vkqqSGys5CzVHPufX2Ud0eR9REEqraBdRvr+iuA7vTnwEOIZBkIL53jjIgaSN9I1mH4I47dYEI35zTQ48wzSBQLlJBoMLF8Jw4jtlOXIN+f5PgRFV5RlMd5yUnVoClcJgZeDkyvB358PifpiEdWDuIho0hdmxs6HSxOORUiGOjVkZJgNirn+/otuKECArgiDmMMNYCOswO+YNVQF7T1qA0X9N+8hdtg6jareiYfswqofYChum17EZYlPNlTHmBtNDQ7MQ6ENFxtj9PDKZ3h3zPJss6NSZMXI5ymecRdOTldivKBcjqwPyH3MZonz6I6ghAAAAAElFTkSuQmCC)
 ![Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white)
+![Telegram](https://img.shields.io/badge/Telegram-26A5E4?style=flat-square&logo=telegram&logoColor=white)
 ![WeChat](https://img.shields.io/badge/WeChat-07C160?style=flat-square&logo=wechat&logoColor=white)
 ![Lark](https://img.shields.io/badge/Lark%20%2F%20Feishu-3370FF?style=flat-square&logo=bytedance&logoColor=white)
 
@@ -41,7 +42,7 @@ You're at the beach. Phone buzzes — production's on fire.
 
 **Old you:** Panic. Find WiFi. Open laptop. Wait for IDE. Lose your tan.
 
-**Vibe Remote you:** Open Slack, Discord, or WeChat. Type "Fix the auth bug in login.py". Watch Claude Code fix it in real-time. Approve. Sip margarita.
+**Vibe Remote you:** Open Slack, Discord, Telegram, or WeChat. Type "Fix the auth bug in login.py". Watch Claude Code fix it in real-time. Approve. Sip margarita.
 
 ```
 AI works. You live.
@@ -77,7 +78,7 @@ If you are new to WSL, this guide explains:
 
 | Problem | Solution |
 |---------|----------|
-| Claude Code is amazing but needs a terminal | Slack/Discord/WeChat/Lark IS your terminal now |
+| Claude Code is amazing but needs a terminal | Slack/Discord/Telegram/WeChat/Lark IS your terminal now |
 | Context-switching kills flow | Stay in one app |
 | Start on desktop, continue on phone | Resume the exact agent session from the current project in seconds |
 | Can't code from phone | Yes you can |
@@ -142,7 +143,7 @@ Get notified the moment your AI finishes. Like assigning tasks to employees — 
 
 ### Thread = Session
 
-Each Slack/Discord/WeChat/Lark thread is an isolated workspace. Open 5 threads, run 5 parallel tasks. Context stays separate.
+Each Slack/Discord/Telegram/WeChat/Lark chat scope is an isolated workspace. Open 5 chats, run 5 parallel tasks. Context stays separate.
 
 ### Resume Anywhere
 
@@ -172,17 +173,18 @@ Ask your agent to schedule work for later, repeat a prompt on a cron, or queue a
 ┌──────────────┐             ┌──────────────┐             ┌──────────────┐
 │     You      │   Slack     │              │   stdio     │  Claude Code │
 │  (anywhere)  │   Discord   │ Vibe Remote  │ ──────────▶ │  OpenCode    │
-│              │   WeChat    │  (your Mac)  │ ◀────────── │  Codex       │
+│              │   Telegram  │  (your Mac)  │ ◀────────── │  Codex       │
+│              │   WeChat    │              │             │              │
 │              │   Lark      │              │             │              │
 └──────────────┘             └──────────────┘             └──────────────┘
 ```
 
-1. **You type** in Slack/Discord/WeChat/Lark: *"Add dark mode to the settings page"*
+1. **You type** in Slack/Discord/Telegram/WeChat/Lark: *"Add dark mode to the settings page"*
 2. **Vibe Remote** routes to your configured agent
 3. **Agent** reads your codebase, writes code, streams back
 4. **You review** in your chat app, iterate in thread
 
-**Your code never leaves your machine.** Vibe Remote runs locally and connects via Slack Socket Mode, Discord Gateway, WeChat polling, or Lark WebSocket.
+**Your code never leaves your machine.** Vibe Remote runs locally and connects via Slack Socket Mode, Discord Gateway, Telegram Bot API long polling, WeChat polling, or Lark WebSocket.
 
 ---
 
@@ -307,6 +309,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 - [x] Slack support
 - [x] Discord support
+- [x] Telegram support
 - [x] WeChat support
 - [x] Lark (Feishu) support
 - [x] Web UI setup wizard & dashboard
@@ -325,6 +328,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 - **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
 - **[Discord Setup Guide](docs/DISCORD_SETUP.md)** — Detailed setup with screenshots
+- **[Telegram Setup Guide](docs/TELEGRAM_SETUP.md)** — BotFather setup, token validation, and chat discovery
 - **WeChat Setup Guide** — Follow the in-app wizard (`vibe` → choose WeChat)
 - **Lark Setup Guide** — Follow the in-app wizard (`vibe` → choose Lark)
 

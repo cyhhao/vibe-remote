@@ -180,7 +180,7 @@ Vibe Remote 管理两类进程：
 
 | 进程 | 说明 |
 |------|------|
-| **主服务** | 处理 Slack 通信，将消息路由到 Agent |
+| **主服务** | 处理各聊天平台通信，并将消息路由到 Agent |
 | **OpenCode 服务器** | OpenCode Agent 的后端服务（如已启用） |
 
 命令的关键区别：
@@ -282,4 +282,5 @@ Web UI (`http://127.0.0.1:5123`) 提供相同的控制功能：
 ## 另请参阅
 
 - [Slack 配置指南](SLACK_SETUP_ZH.md)
+- [Telegram 配置指南](TELEGRAM_SETUP_ZH.md)
 - [Codex 配置指南](CODEX_SETUP.md)

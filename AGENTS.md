@@ -4,7 +4,7 @@ This document is the operating manual for coding agents working in this reposito
 
 ## 1. Project Overview
 
-Vibe Remote is a middleware layer that connects AI agent backends to IM platforms such as Slack, Discord, and Feishu/Lark.
+Vibe Remote is a middleware layer that connects AI agent backends to IM platforms such as Slack, Discord, Telegram, Feishu/Lark, and WeChat.
 
 Current product shape:
 
@@ -42,7 +42,7 @@ Decision checklist before writing code:
 - `core/handlers/` - platform/backend-agnostic business workflows
 - `core/message_dispatcher.py` - outbound message routing and reply enhancement flow
 - `core/reply_enhancer.py` - file-link and quick-reply prompt injection helpers
-- `modules/im/` - IM platform adapters (`slack.py`, `discord.py`, `feishu.py`) plus shared base classes
+- `modules/im/` - IM platform adapters (`slack.py`, `discord.py`, `telegram.py`, `feishu.py`, `wechat.py`) plus shared base classes
 - `modules/agents/` - agent backend adapters (`opencode/`, `codex/`, Claude-related modules) plus shared abstractions
 - `modules/im/formatters/` - platform-specific formatting built on shared formatter concepts
 - `config/` - V2 config, settings, sessions, paths, and compatibility conversion
@@ -107,7 +107,7 @@ Persistent configuration is centered on `config/v2_config.py` and the Web UI.
 
 High-level V2 config areas:
 
-- platform config: Slack / Discord / Feishu credentials and switches
+- platform config: Slack / Discord / Telegram / Feishu / WeChat credentials and switches
 - runtime config: default cwd, log level, and related runtime behavior
 - agent config: default backend plus per-backend enablement and CLI paths
 - UI config: setup host/port and Web UI behavior
