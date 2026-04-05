@@ -185,13 +185,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
             thread_id="1710000000.000100",
             platform_specific={"is_dm": True},
         )
-        keyboard = InlineKeyboard(
-            buttons=[
-                [
-                    InlineButton(text="One", callback_data="choose:1")
-                ]
-            ]
-        )
+        keyboard = InlineKeyboard(buttons=[[InlineButton(text="One", callback_data="choose:1")]])
 
         message_ts = await slack.send_message_with_buttons(context, "hello", keyboard, parse_mode="markdown")
 
@@ -200,6 +194,57 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent_thread_ts, ["1710000000.000100", None])
         self.assertEqual(context.channel_id, "D999")
         self.assertIsNone(context.thread_id)
+
+    async def test_send_message_with_buttons_splits_long_text_before_button_block(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        sent_payloads = []
+
+        class _WebClient:
+            async def chat_postMessage(self, **kwargs):
+                sent_payloads.append(kwargs)
+                return {"ts": f"1710000000.00000{len(sent_payloads)}"}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+        keyboard = InlineKeyboard(buttons=[[InlineButton(text="One", callback_data="choose:1")]])
+        text = "\n\n".join([f"Paragraph {index} {'x' * 120}" for index in range(30)])
+
+        message_ts = await slack.send_message_with_buttons(context, text, keyboard, parse_mode="markdown")
+
+        self.assertEqual(message_ts, "1710000000.000002")
+        self.assertEqual(len(sent_payloads), 2)
+        self.assertEqual(sent_payloads[0]["text"] + sent_payloads[1]["text"], text)
+        self.assertTrue(all(len(payload["text"]) <= 3000 for payload in sent_payloads))
+        self.assertFalse(any(block["type"] == "actions" for block in sent_payloads[0].get("blocks", [])))
+        self.assertEqual(sent_payloads[1]["blocks"][0]["type"], "section")
+        self.assertEqual(sent_payloads[1]["blocks"][1]["type"], "actions")
+
+    async def test_remove_inline_keyboard_uses_visible_chunk_for_long_text(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        updates = []
+
+        class _WebClient:
+            async def chat_update(self, **kwargs):
+                updates.append(kwargs)
+                return {"ok": True}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+        text = "\n\n".join([f"Paragraph {index} {'x' * 120}" for index in range(30)])
+
+        ok = await slack.remove_inline_keyboard(context, "1710000000.000002", text=text, parse_mode="markdown")
+
+        self.assertTrue(ok)
+        self.assertEqual(len(updates), 1)
+        self.assertLessEqual(len(updates[0]["text"]), 3000)
+        self.assertEqual(updates[0]["text"], slack._get_visible_text(text))
+        self.assertEqual(updates[0]["blocks"][0]["type"], "section")
+
+    def test_split_text_keeps_boundary_chunk_within_limit(self):
+        chunks = SlackBot._split_text("a" * 3000 + " " + "b", 3000)
+
+        self.assertEqual(chunks, ["a" * 3000, " b"])
+        self.assertTrue(all(len(chunk) <= 3000 for chunk in chunks))
 
     async def test_get_user_info_prefers_normalized_profile_names(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
