@@ -180,7 +180,7 @@ Vibe Remote manages two types of processes:
 
 | Process | Description |
 |---------|-------------|
-| **Main Service** | Handles Slack communication, routes messages to agents |
+| **Main Service** | Handles chat platform communication and routes messages to agents |
 | **OpenCode Server** | Backend server for OpenCode agent (if enabled) |
 
 The key difference between commands:
@@ -282,4 +282,5 @@ The web UI (`http://127.0.0.1:5123`) provides the same controls:
 ## See Also
 
 - [Slack Setup Guide](SLACK_SETUP.md)
+- [Telegram Setup Guide](TELEGRAM_SETUP.md)
 - [Codex Setup Guide](CODEX_SETUP.md)

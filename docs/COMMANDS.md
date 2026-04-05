@@ -4,7 +4,7 @@ This document is the exhaustive command reference for Vibe Remote.
 
 It covers:
 
-- in-chat commands users send to the bot from Slack, Discord, WeChat, and Lark
+- in-chat commands users send to the bot from Slack, Discord, Telegram, WeChat, and Lark
 - command aliases and parser normalization rules
 - platform differences
 - permission requirements
@@ -14,6 +14,7 @@ For installation, setup, and operations background, also see:
 
 - [CLI Reference](./CLI.md)
 - [Slack Setup Guide](./SLACK_SETUP.md)
+- [Telegram Setup Guide](./TELEGRAM_SETUP.md)
 
 ## 1. Command Surface Overview
 
@@ -96,6 +97,11 @@ Notes:
 
 - Commands are parsed from normal messages that start with `/`.
 - `/resume` opens a Discord-native resume picker flow when the platform interaction context is available.
+
+#### Telegram
+
+- Commands are parsed from normal messages that start with `/`.
+- `/resume` and `/settings` prefer inline button flows in the current chat.
 
 #### Lark / Feishu
 
@@ -307,6 +313,10 @@ Resume a recent native agent session from the current working directory.
 ##### Discord
 
 - `/resume` opens a native resume picker flow when the interaction context exists.
+
+##### Telegram
+
+- `/resume` opens an inline-button picker in the current chat.
 
 ##### Lark
 
@@ -737,4 +747,3 @@ vibe doctor
 vibe task list --brief
 vibe hook send --session-key 'slack::channel::C123' --prompt 'Share the latest build summary.'
 ```
-

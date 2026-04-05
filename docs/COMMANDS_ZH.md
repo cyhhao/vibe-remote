@@ -4,13 +4,14 @@
 
 它覆盖两大类命令：
 
-- 在 Slack、Discord、微信、飞书里直接发给机器人的聊天命令
+- 在 Slack、Discord、Telegram、微信、飞书里直接发给机器人的聊天命令
 - 在安装了 Vibe Remote 的宿主机上执行的 `vibe` CLI 命令
 
 相关文档：
 
 - [CLI 参考手册](./CLI_ZH.md)
 - [Slack 配置指南](./SLACK_SETUP_ZH.md)
+- [Telegram 配置指南](./TELEGRAM_SETUP_ZH.md)
 
 ## 1. 命令总览
 
@@ -93,6 +94,11 @@ Vibe Remote 当前有两套命令面：
 
 - 命令通过普通消息解析，要求消息以 `/` 开头。
 - `/resume` 在有 interaction 上下文时会优先打开 Discord 原生恢复选择器。
+
+#### Telegram
+
+- 命令通过普通消息解析，要求消息以 `/` 开头。
+- `/resume`、`/settings` 会优先走当前聊天里的内联按钮交互。
 
 #### 飞书 / Lark
 
@@ -292,6 +298,10 @@ Vibe Remote 当前有两套命令面：
 ##### Discord
 
 - `/resume` 在有 interaction 上下文时会打开原生恢复选择流程。
+
+##### Telegram
+
+- `/resume` 会在当前聊天里打开内联按钮选择器。
 
 ##### 飞书
 
@@ -716,4 +726,3 @@ vibe doctor
 vibe task list --brief
 vibe hook send --session-key 'slack::channel::C123' --prompt 'Share the latest build summary.'
 ```
-
