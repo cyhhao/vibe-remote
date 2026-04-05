@@ -383,11 +383,20 @@ class ConsolidatedMessageDispatcher:
             )
             return None
 
+        reply_enhancements_on = getattr(self.controller.config, "reply_enhancements", True)
+        if reply_enhancements_on:
+            enhanced = process_reply(text)
+            chunk = enhanced.text.strip()
+        else:
+            chunk = text.strip()
+
+        if not chunk:
+            return None
+
         consolidated_key = self._get_consolidated_message_key(context)
         lock = self._get_consolidated_message_lock(consolidated_key)
 
         async with lock:
-            chunk = text.strip()
             max_bytes = self._get_consolidated_max_bytes(context)
             split_threshold = self._get_consolidated_split_threshold(context)
             existing = self._consolidated_message_buffers.get(consolidated_key, "")

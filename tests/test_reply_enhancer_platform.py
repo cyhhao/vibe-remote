@@ -221,6 +221,22 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         keyboard = controller.im_client.sent_button_messages[0][3]
         self.assertEqual([[button.text for button in row] for row in keyboard.buttons], [["继续"], ["提交PR"]])
 
+    async def test_lark_log_message_strips_file_links_before_sending(self):
+        controller = _StubController("lark")
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="lark")
+
+        await dispatcher.emit_agent_message(
+            context,
+            "assistant",
+            "Preview ready\n\n![screen](file:///tmp/screen-room.png)",
+        )
+
+        self.assertEqual(
+            controller.im_client.sent_messages,
+            [("C1", "Preview ready\n\nscreen", "markdown")],
+        )
+
     async def test_telegram_quick_reply_buttons_use_vertical_layout(self):
         controller = _StubController("telegram")
         dispatcher = ConsolidatedMessageDispatcher(controller)
