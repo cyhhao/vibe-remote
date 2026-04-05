@@ -16,6 +16,9 @@ from core.reply_enhancer import process_reply
 
 logger = logging.getLogger(__name__)
 
+_WECHAT_TEXT_LIMIT = 1900
+_WECHAT_CONSOLIDATED_SPLIT_THRESHOLD = 1700
+
 
 class ConsolidatedMessageDispatcher:
     """Dispatch agent messages while preserving existing product behavior."""
@@ -100,17 +103,23 @@ class ConsolidatedMessageDispatcher:
             self._consolidated_message_buffers.pop(key, None)
 
     def _get_consolidated_max_bytes(self, context: MessageContext) -> int:
-        if (
+        platform = (
             context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
-        ) == "discord":
+        )
+        if platform == "discord":
             return 2000
+        if platform == "wechat":
+            return _WECHAT_TEXT_LIMIT
         return 4000
 
     def _get_consolidated_split_threshold(self, context: MessageContext) -> int:
-        if (
+        platform = (
             context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
-        ) == "discord":
+        )
+        if platform == "discord":
             return 1800
+        if platform == "wechat":
+            return _WECHAT_CONSOLIDATED_SPLIT_THRESHOLD
         return 3600
 
     @staticmethod
@@ -118,16 +127,31 @@ class ConsolidatedMessageDispatcher:
         return len(text.encode("utf-8"))
 
     def _get_result_max_chars(self, context: MessageContext) -> int:
-        if (
+        platform = (
             context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
-        ) == "discord":
+        )
+        if platform == "discord":
             return 1900
         return 30000
+
+    def _get_result_max_bytes(self, context: MessageContext) -> Optional[int]:
+        platform = (
+            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        )
+        if platform == "wechat":
+            return _WECHAT_TEXT_LIMIT
+        return None
 
     def _should_split_long_result(self, context: MessageContext) -> bool:
         return (
             context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
-        ) == "discord"
+        ) in {"discord", "wechat"}
+
+    def _result_within_limit(self, context: MessageContext, text: str) -> bool:
+        max_bytes = self._get_result_max_bytes(context)
+        if max_bytes is not None:
+            return self._get_text_byte_length(text) <= max_bytes
+        return len(text) <= self._get_result_max_chars(context)
 
     def _supports_quick_replies(self, context: MessageContext) -> bool:
         return (
@@ -153,7 +177,8 @@ class ConsolidatedMessageDispatcher:
         for separator in ("\n\n", "\n", " "):
             index = text.rfind(separator, 0, max_chars + 1)
             if index >= minimum_boundary:
-                return index + len(separator)
+                candidate = index + len(separator)
+                return candidate if candidate <= max_chars else index
         return max_chars
 
     def _split_result_text(self, text: str, max_chars: int) -> list[str]:
@@ -174,6 +199,38 @@ class ConsolidatedMessageDispatcher:
             chunks.append(remaining)
 
         return chunks
+
+    def _split_result_text_by_bytes(self, text: str, max_bytes: int) -> list[str]:
+        if self._get_text_byte_length(text) <= max_bytes:
+            return [text]
+
+        chunks: list[str] = []
+        remaining = text
+
+        while self._get_text_byte_length(remaining) > max_bytes:
+            prefix = remaining.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+            minimum_boundary = max(1, len(prefix) // 2)
+            split_at = len(prefix)
+            for separator in ("\n\n", "\n", " "):
+                index = prefix.rfind(separator)
+                if index >= minimum_boundary:
+                    candidate = index + len(separator)
+                    if self._get_text_byte_length(remaining[:candidate]) <= max_bytes:
+                        split_at = candidate
+                        break
+            chunks.append(remaining[:split_at])
+            remaining = remaining[split_at:]
+
+        if remaining:
+            chunks.append(remaining)
+
+        return chunks
+
+    def _split_result_text_for_context(self, context: MessageContext, text: str) -> list[str]:
+        max_bytes = self._get_result_max_bytes(context)
+        if max_bytes is not None:
+            return self._split_result_text_by_bytes(text, max_bytes)
+        return self._split_result_text(text, self._get_result_max_chars(context))
 
     def _truncate_consolidated(self, text: str, max_bytes: int) -> str:
         if self._get_text_byte_length(text) <= max_bytes:
@@ -229,7 +286,7 @@ class ConsolidatedMessageDispatcher:
                 enhanced = None
                 display_text = text
 
-            if len(display_text) <= self._get_result_max_chars(context):
+            if self._result_within_limit(context, display_text):
                 if enhanced and enhanced.buttons and self._supports_quick_replies(context):
                     try:
                         primary_message_id = await self._send_with_quick_replies(
@@ -249,7 +306,9 @@ class ConsolidatedMessageDispatcher:
                             logger.error("Failed to send fallback result message: %s", fallback_err)
                 else:
                     try:
-                        primary_message_id = await im_client.send_message(target_context, display_text, parse_mode=parse_mode)
+                        primary_message_id = await im_client.send_message(
+                            target_context, display_text, parse_mode=parse_mode
+                        )
                     except Exception as err:
                         logger.error("Failed to send result message: %s", err)
             elif self._should_split_long_result(context):
@@ -447,7 +506,9 @@ class ConsolidatedMessageDispatcher:
             callback = f"quick_reply:{btn.text}"
             row.append(InlineButton(text=btn.text, callback_data=callback))
 
-        platform = context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        platform = (
+            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        )
         rows = [[button] for button in row] if platform in {"lark", "telegram"} else [row]
         keyboard = InlineKeyboard(buttons=rows)
         return await im_client.send_message_with_buttons(
@@ -465,7 +526,7 @@ class ConsolidatedMessageDispatcher:
         buttons,
         parse_mode,
     ) -> Optional[str]:
-        chunks = self._split_result_text(text, self._get_result_max_chars(context))
+        chunks = self._split_result_text_for_context(context, text)
         first_message_id: Optional[str] = None
 
         for index, chunk in enumerate(chunks):
