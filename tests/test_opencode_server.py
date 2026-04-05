@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import sys
 import tempfile
@@ -254,6 +255,29 @@ class OpenCodeServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restarted, [])
         self.assertEqual(manager._active_requests, 0)
         self.assertTrue(manager._auth_refresh_pending)
+
+    async def test_close_http_session_skips_session_owned_by_another_loop(self):
+        manager = OpenCodeServerManager(binary="opencode", port=4096)
+        fake_session = _FakeSession()
+        manager._http_session = fake_session
+        manager._http_session_loop = object()
+
+        await manager.close_http_session(loop=asyncio.get_running_loop())
+
+        self.assertFalse(fake_session.closed)
+        self.assertIs(manager._http_session, fake_session)
+
+    async def test_close_http_session_closes_session_for_matching_loop(self):
+        manager = OpenCodeServerManager(binary="opencode", port=4096)
+        fake_session = _FakeSession()
+        current_loop = asyncio.get_running_loop()
+        manager._http_session = fake_session
+        manager._http_session_loop = current_loop
+
+        await manager.close_http_session(loop=current_loop)
+
+        self.assertTrue(fake_session.closed)
+        self.assertIsNone(manager._http_session)
 
     async def test_set_api_key_auth_uses_official_auth_endpoint(self):
         manager = OpenCodeServerManager(binary="opencode", port=4096)

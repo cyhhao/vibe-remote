@@ -569,6 +569,7 @@ async def _telegram_get_me(bot_token: str) -> dict:
 
 async def opencode_options_async(cwd: str) -> dict:
     # Expand ~ to user home directory
+    request_loop = asyncio.get_running_loop()
     expanded_cwd = os.path.expanduser(cwd)
     cache_entry = _OPENCODE_OPTIONS_CACHE.get(expanded_cwd, {})
     cache_data = cache_entry.get("data")
@@ -641,7 +642,7 @@ async def opencode_options_async(cwd: str) -> dict:
         return {"ok": False, "error": str(exc)}
     finally:
         if server is not None:
-            await server.close_http_session()
+            await server.close_http_session(loop=request_loop)
 
 
 def _current_platform() -> str:

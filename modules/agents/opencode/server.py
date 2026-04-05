@@ -118,7 +118,7 @@ class OpenCodeServerManager:
             self._http_session = None
             self._http_session_loop = None
 
-    async def close_http_session(self) -> None:
+    async def close_http_session(self, *, loop: asyncio.AbstractEventLoop | None = None) -> None:
         """Close the cached HTTP session explicitly.
 
         UI helper flows may run on short-lived event loops created per request.
@@ -127,6 +127,8 @@ class OpenCodeServerManager:
         """
 
         async with self._get_lock():
+            if loop is not None and self._http_session_loop is not loop:
+                return
             await self._close_http_session_locked()
 
     async def _restart_for_auth_refresh_locked(self) -> None:

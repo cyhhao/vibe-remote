@@ -17,6 +17,7 @@ def test_opencode_options_closes_server_http_session(monkeypatch):
     class _FakeManager:
         def __init__(self):
             self.closed = 0
+            self.closed_loop = None
 
         async def ensure_running(self):
             return "http://127.0.0.1:4096"
@@ -39,8 +40,9 @@ def test_opencode_options_closes_server_http_session(monkeypatch):
         async def get_default_config(self, directory):
             return {"model": "openai/gpt-5"}
 
-        async def close_http_session(self):
+        async def close_http_session(self, *, loop=None):
             self.closed += 1
+            self.closed_loop = loop
 
     fake_manager = _FakeManager()
 
@@ -74,6 +76,7 @@ def test_opencode_options_closes_server_http_session(monkeypatch):
     assert result["ok"] is True
     assert result["data"]["defaults"] == {"model": "openai/gpt-5"}
     assert fake_manager.closed == 1
+    assert fake_manager.closed_loop is not None
 
 
 def test_detect_cli_prefers_claude_local(monkeypatch, tmp_path):
