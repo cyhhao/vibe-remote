@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.auth import AuthResult
 from modules.im import MessageContext
 from modules.im.wechat import WeChatBot, WeChatConfig, _get_updates_error_code
+from modules.im import wechat_api as wechat_api_module
 
 
 class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
@@ -49,6 +50,117 @@ class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
     def test_get_updates_error_code_prefers_errcode(self):
         self.assertEqual(_get_updates_error_code({"errcode": -14, "errmsg": "session timeout"}), -14)
         self.assertIsNone(_get_updates_error_code({"ret": 0}))
+
+    async def test_wechat_api_get_updates_adds_long_poll_timeout_grace(self):
+        captured = {}
+
+        class _Response:
+            ok = True
+            status = 200
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def text(self):
+                return '{"ret": 0, "msgs": [], "get_updates_buf": "buf-2"}'
+
+        class _Session:
+            def __init__(self, timeout):
+                captured["timeout"] = timeout.total
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def post(self, url, data=None, headers=None):
+                captured["url"] = url
+                return _Response()
+
+        with patch("modules.im.wechat_api.aiohttp.ClientSession", side_effect=lambda timeout: _Session(timeout)):
+            result = await wechat_api_module.get_updates(
+                "https://wechat.example.com",
+                "token",
+                "buf-1",
+                timeout_ms=35_000,
+            )
+
+        self.assertEqual(result["get_updates_buf"], "buf-2")
+        self.assertEqual(captured["timeout"], 40.0)
+        self.assertTrue(captured["url"].endswith("/ilink/bot/getupdates"))
+
+    async def test_wechat_api_get_updates_returns_empty_response_on_timeout(self):
+        class _TimeoutingRequest:
+            async def __aenter__(self):
+                raise TimeoutError()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def post(self, url, data=None, headers=None):
+                return _TimeoutingRequest()
+
+        with patch("modules.im.wechat_api.aiohttp.ClientSession", side_effect=lambda timeout: _Session()):
+            result = await wechat_api_module.get_updates(
+                "https://wechat.example.com",
+                "token",
+                "buf-1",
+                timeout_ms=35_000,
+            )
+
+        self.assertEqual(result, {"ret": 0, "msgs": [], "get_updates_buf": "buf-1"})
+
+    async def test_wechat_api_fetch_keeps_non_long_poll_timeout_unchanged(self):
+        captured = {}
+
+        class _Response:
+            ok = True
+            status = 200
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def text(self):
+                return '{"ret": 0}'
+
+        class _Session:
+            def __init__(self, timeout):
+                captured["timeout"] = timeout.total
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def post(self, url, data=None, headers=None):
+                return _Response()
+
+        with patch("modules.im.wechat_api.aiohttp.ClientSession", side_effect=lambda timeout: _Session(timeout)):
+            result = await wechat_api_module._api_fetch(
+                "https://wechat.example.com",
+                "ilink/bot/test",
+                {"hello": "world"},
+                token="token",
+                timeout_ms=15_000,
+            )
+
+        self.assertEqual(result, {"ret": 0})
+        self.assertEqual(captured["timeout"], 15.0)
 
     async def test_get_user_info_uses_short_fixed_display_name(self):
         bot = self._make_bot()

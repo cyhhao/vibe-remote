@@ -7,6 +7,7 @@ auth/QR endpoints are GET.
 Ported from the TypeScript reference implementation.
 """
 
+import asyncio
 import base64
 import logging
 import struct
@@ -52,6 +53,7 @@ UPLOAD_MEDIA_VOICE = 4
 
 # Timeouts (milliseconds)
 DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000
+DEFAULT_LONG_POLL_TIMEOUT_GRACE_MS = 5_000
 DEFAULT_API_TIMEOUT_MS = 15_000
 DEFAULT_CONFIG_TIMEOUT_MS = 10_000
 
@@ -176,7 +178,7 @@ async def get_updates(
     body_bytes = body_str.encode("utf-8")
     headers = _build_headers(token=token, body_bytes=body_bytes)
 
-    timeout = aiohttp.ClientTimeout(total=timeout_ms / 1000.0)
+    timeout = aiohttp.ClientTimeout(total=(timeout_ms + DEFAULT_LONG_POLL_TIMEOUT_GRACE_MS) / 1000.0)
     logger.info(
         "get_updates: POST %s token=%s timeout=%dms buf_len=%d",
         url,
@@ -198,7 +200,7 @@ async def get_updates(
                 if not resp.ok:
                     raise RuntimeError(f"getUpdates {resp.status}: {raw_text}")
                 return json.loads(raw_text)
-    except (aiohttp.ServerTimeoutError, TimeoutError):
+    except (aiohttp.ServerTimeoutError, asyncio.TimeoutError, TimeoutError):
         logger.debug(
             "getUpdates: client-side timeout after %dms, returning empty response",
             timeout_ms,
