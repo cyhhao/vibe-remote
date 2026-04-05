@@ -3110,10 +3110,26 @@ class FeishuBot(BaseIMClient):
             # Always return a response to avoid Feishu "request failed" toast
             return P2CardActionTriggerResponse({})
 
+        def on_reaction_event(data):
+            """Callback for message reaction events we do not actively process yet."""
+            try:
+                event_id = None
+                event_type = None
+                if hasattr(data, "header") and data.header:
+                    event_id = getattr(data.header, "event_id", None)
+                    event_type = getattr(data.header, "event_type", None)
+                if self._is_duplicate_event(event_id):
+                    return
+                logger.debug("Ignoring Feishu reaction event: %s", event_type or "unknown")
+            except Exception as exc:
+                logger.error("Error in on_reaction_event: %s", exc, exc_info=True)
+
         handler = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(on_message_receive)
             .register_p2_card_action_trigger(on_card_action)
+            .register_p2_im_message_reaction_created_v1(on_reaction_event)
+            .register_p2_im_message_reaction_deleted_v1(on_reaction_event)
             .build()
         )
         return handler
