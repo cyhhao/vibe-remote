@@ -577,6 +577,7 @@ async def opencode_options_async(cwd: str) -> dict:
     if cache_data and cache_age < _OPENCODE_OPTIONS_TTL_SECONDS:
         return {"ok": True, "data": cache_data, "cached": True}
 
+    server = None
     try:
         from config.v2_compat import to_app_config
         from modules.agents.opencode import (
@@ -638,6 +639,9 @@ async def opencode_options_async(cwd: str) -> dict:
         if cache_data:
             return {"ok": True, "data": cache_data, "cached": True, "warning": str(exc)}
         return {"ok": False, "error": str(exc)}
+    finally:
+        if server is not None:
+            await server.close_http_session()
 
 
 def _current_platform() -> str:

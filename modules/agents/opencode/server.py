@@ -118,6 +118,17 @@ class OpenCodeServerManager:
             self._http_session = None
             self._http_session_loop = None
 
+    async def close_http_session(self) -> None:
+        """Close the cached HTTP session explicitly.
+
+        UI helper flows may run on short-lived event loops created per request.
+        Closing the cached session at the end of those flows prevents aiohttp
+        from reporting unclosed sessions/connectors when the loop exits.
+        """
+
+        async with self._get_lock():
+            await self._close_http_session_locked()
+
     async def _restart_for_auth_refresh_locked(self) -> None:
         await self._close_http_session_locked()
 
