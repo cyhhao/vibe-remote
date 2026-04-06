@@ -1,4 +1,6 @@
+import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -6,6 +8,75 @@ from config import paths
 from config.discovered_chats import DiscoveredChatsStore
 from vibe import api
 from vibe.opencode_config import parse_jsonc_object
+
+
+def test_opencode_options_closes_server_http_session(monkeypatch):
+    import config.v2_compat as v2_compat
+    import modules.agents.opencode as opencode_module
+
+    class _FakeManager:
+        def __init__(self):
+            self.closed = 0
+            self.closed_loop = None
+
+        async def ensure_running(self):
+            return "http://127.0.0.1:4096"
+
+        async def get_available_agents(self, directory):
+            return [{"name": "build", "mode": "primary", "hidden": False}]
+
+        async def get_available_models(self, directory):
+            return {
+                "providers": [
+                    {
+                        "id": "openai",
+                        "models": {
+                            "gpt-5": {},
+                        },
+                    }
+                ]
+            }
+
+        async def get_default_config(self, directory):
+            return {"model": "openai/gpt-5"}
+
+        async def close_http_session(self, *, loop=None):
+            self.closed += 1
+            self.closed_loop = loop
+
+    fake_manager = _FakeManager()
+
+    class _FakeServerManager:
+        @staticmethod
+        async def get_instance(**kwargs):
+            return fake_manager
+
+    monkeypatch.setattr(api, "_OPENCODE_OPTIONS_CACHE", {})
+    monkeypatch.setattr(api.V2Config, "load", staticmethod(lambda: object()))
+    monkeypatch.setattr(
+        v2_compat,
+        "to_app_config",
+        lambda config: SimpleNamespace(
+            opencode=SimpleNamespace(
+                binary="opencode",
+                port=4096,
+                request_timeout_seconds=10,
+            )
+        ),
+    )
+    monkeypatch.setattr(opencode_module, "OpenCodeServerManager", _FakeServerManager)
+    monkeypatch.setattr(
+        opencode_module,
+        "build_reasoning_effort_options",
+        lambda models, model_key: [{"value": "__default__"}],
+    )
+
+    result = asyncio.run(api.opencode_options_async("~/workspace"))
+
+    assert result["ok"] is True
+    assert result["data"]["defaults"] == {"model": "openai/gpt-5"}
+    assert fake_manager.closed == 1
+    assert fake_manager.closed_loop is not None
 
 
 def test_detect_cli_prefers_claude_local(monkeypatch, tmp_path):

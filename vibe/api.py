@@ -569,6 +569,7 @@ async def _telegram_get_me(bot_token: str) -> dict:
 
 async def opencode_options_async(cwd: str) -> dict:
     # Expand ~ to user home directory
+    request_loop = asyncio.get_running_loop()
     expanded_cwd = os.path.expanduser(cwd)
     cache_entry = _OPENCODE_OPTIONS_CACHE.get(expanded_cwd, {})
     cache_data = cache_entry.get("data")
@@ -577,6 +578,7 @@ async def opencode_options_async(cwd: str) -> dict:
     if cache_data and cache_age < _OPENCODE_OPTIONS_TTL_SECONDS:
         return {"ok": True, "data": cache_data, "cached": True}
 
+    server = None
     try:
         from config.v2_compat import to_app_config
         from modules.agents.opencode import (
@@ -638,6 +640,9 @@ async def opencode_options_async(cwd: str) -> dict:
         if cache_data:
             return {"ok": True, "data": cache_data, "cached": True, "warning": str(exc)}
         return {"ok": False, "error": str(exc)}
+    finally:
+        if server is not None:
+            await server.close_http_session(loop=request_loop)
 
 
 def _current_platform() -> str:
