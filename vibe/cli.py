@@ -814,6 +814,18 @@ def _watch_payload(watch, runtime_entry: Optional[dict[str, object]], *, brief: 
     return payload
 
 
+def _seconds_since_iso(timestamp: object) -> float | None:
+    if not isinstance(timestamp, str) or not timestamp.strip():
+        return None
+    try:
+        started_at = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return None
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - started_at).total_seconds())
+
+
 def _wait_for_watch_startup(
     store: ManagedWatchStore,
     runtime_store: WatchRuntimeStateStore,
@@ -821,6 +833,7 @@ def _wait_for_watch_startup(
     *,
     timeout_seconds: float = 4.0,
     poll_interval_seconds: float = 0.1,
+    stable_running_seconds: float = 1.5,
 ):
     inspect_command = f"vibe watch show {watch_id}"
     deadline = time.monotonic() + timeout_seconds
@@ -846,12 +859,12 @@ def _wait_for_watch_startup(
                 help_command=inspect_command,
                 details={"watch": _watch_payload(watch, runtime_entry)},
             )
+        if watch.mode == "once" and watch.last_finished_at and not watch.last_error and watch.last_exit_code == 0:
+            return watch, runtime_entry
         if runtime_entry and runtime_entry.get("running"):
-            return watch, runtime_entry
-        if watch.last_started_at:
-            return watch, runtime_entry
-        if watch.mode == "once" and watch.last_finished_at:
-            return watch, runtime_entry
+            stable_for = _seconds_since_iso(runtime_entry.get("started_at")) or _seconds_since_iso(watch.last_started_at)
+            if stable_for is not None and stable_for >= stable_running_seconds:
+                return watch, runtime_entry
         time.sleep(poll_interval_seconds)
 
     store.maybe_reload()
