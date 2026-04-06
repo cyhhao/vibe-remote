@@ -29,11 +29,19 @@ from config.v2_config import (
     V2Config,
 )
 from core.scheduled_tasks import ScheduledTaskStore, TaskExecutionStore, parse_session_key
-from core.watches import ManagedWatchStore, WatchRuntimeStateStore
+from core.watches import (
+    DEFAULT_RETRY_EXIT_CODE,
+    WATCH_RECONCILE_INTERVAL_SECONDS,
+    ManagedWatchStore,
+    WatchRuntimeStateStore,
+)
 from vibe import __version__, api, runtime
 from vibe.upgrade import build_upgrade_plan, cache_running_vibe_path, get_latest_version_info, get_safe_cwd
 
 logger = logging.getLogger(__name__)
+
+WATCH_STARTUP_STABLE_RUNNING_SECONDS = 1.5
+WATCH_STARTUP_JITTER_BUFFER_SECONDS = 1.0
 
 
 class VibeArgumentParser(argparse.ArgumentParser):
@@ -206,7 +214,7 @@ def _watch_examples_text() -> str:
         Examples:
           vibe watch add --session-key 'slack::channel::C123' --name 'Wait for export' --shell 'python3 scripts/wait_for_export.py'
           vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The CI job finished.' -- python3 scripts/wait_for_ci.py --build 42
-          vibe watch add --session-key 'slack::channel::C123' --forever --retry-exit-code 1 --retry-delay 60 --shell 'bash scripts/wait_for_log_pattern.sh'
+          vibe watch add --session-key 'slack::channel::C123' --forever --retry-exit-code 75 --retry-delay 60 --shell 'bash scripts/wait_for_log_pattern.sh'
           vibe watch list --brief
           vibe watch show 12ab34cd56ef
           vibe watch pause 12ab34cd56ef
@@ -225,7 +233,7 @@ def _watch_add_examples_text() -> str:
 
         Guidance:
           If this is your first time using this command, read this whole help entry before creating a watch.
-          Use a watch when a script should wait in the background and send one hook only after a condition is met.
+          Use a watch when a script should wait in the background and send a follow-up when it detects an event or reaches a terminal failure.
           `--session-key` chooses which session Vibe Remote will continue using for follow-up messages from the watch.
           Keep the current session key when follow-up should continue in the same session.
           When you want to leave the current thread session and start or reuse the higher-level session instead, use the higher-level key. Example:
@@ -234,13 +242,15 @@ def _watch_add_examples_text() -> str:
           `--post-to channel` changes where the follow-up is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
           `--prefix` becomes the instruction text of the follow-up hook. On a successful cycle, Vibe Remote prepends `--prefix` before waiter stdout and joins them with a blank line when both exist.
+          Terminal failures also send a follow-up and disable the watch.
+          In forever mode, failures are retried only when the waiter exits with an allowed `--retry-exit-code`.
           Pass either --shell '<command>' or a command after '--'.
           --timeout applies to each cycle. --lifetime-timeout applies only to the whole forever watch lifetime.
 
         Examples:
           vibe watch add --session-key 'slack::channel::C123' --shell 'python3 scripts/wait_for_export.py'
           vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The export finished.' -- bash -lc 'sleep 120; echo done'
-          vibe watch add --session-key 'slack::channel::C123' --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 1 --retry-delay 30 -- uv run --no-project scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
+          vibe watch add --session-key 'slack::channel::C123' --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 75 --retry-delay 30 -- uv run --no-project scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
         """
     )
 
@@ -812,6 +822,87 @@ def _watch_payload(watch, runtime_entry: Optional[dict[str, object]], *, brief: 
     return payload
 
 
+def _seconds_since_iso(timestamp: object) -> float | None:
+    if not isinstance(timestamp, str) or not timestamp.strip():
+        return None
+    try:
+        started_at = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return None
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - started_at).total_seconds())
+
+
+def _default_watch_startup_timeout_seconds(*, stable_running_seconds: float = WATCH_STARTUP_STABLE_RUNNING_SECONDS) -> float:
+    return WATCH_RECONCILE_INTERVAL_SECONDS + stable_running_seconds + WATCH_STARTUP_JITTER_BUFFER_SECONDS
+
+
+def _wait_for_watch_startup(
+    store: ManagedWatchStore,
+    runtime_store: WatchRuntimeStateStore,
+    watch_id: str,
+    *,
+    timeout_seconds: float | None = None,
+    poll_interval_seconds: float = 0.1,
+    stable_running_seconds: float = WATCH_STARTUP_STABLE_RUNNING_SECONDS,
+):
+    inspect_command = f"vibe watch show {watch_id}"
+    if timeout_seconds is None:
+        timeout_seconds = _default_watch_startup_timeout_seconds(stable_running_seconds=stable_running_seconds)
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        store.maybe_reload()
+        watch = store.get_watch(watch_id)
+        if watch is None:
+            raise TaskCliError(
+                f"watch '{watch_id}' could not be verified because it disappeared during startup",
+                code="watch_startup_failed",
+                hint="Recreate the watch, then inspect its first-cycle state before reporting that monitoring is active.",
+                example=inspect_command,
+                help_command=inspect_command,
+                details={"watch_id": watch_id},
+            )
+        runtime_entry = runtime_store.load().get("watches", {}).get(watch_id)
+        if watch.last_error and not watch.enabled:
+            raise TaskCliError(
+                f"watch '{watch.name or watch.id}' failed during startup and has already been disabled",
+                code="watch_startup_failed",
+                hint="Inspect the stored watch error, fix the waiter or its dependencies, then recreate the watch if monitoring should continue.",
+                example=inspect_command,
+                help_command=inspect_command,
+                details={"watch": _watch_payload(watch, runtime_entry)},
+            )
+        if watch.mode == "once" and watch.last_finished_at and not watch.last_error and watch.last_exit_code == 0:
+            return watch, runtime_entry
+        if runtime_entry and runtime_entry.get("running"):
+            stable_for = _seconds_since_iso(runtime_entry.get("started_at")) or _seconds_since_iso(watch.last_started_at)
+            if stable_for is not None and stable_for >= stable_running_seconds:
+                return watch, runtime_entry
+        time.sleep(poll_interval_seconds)
+
+    store.maybe_reload()
+    watch = store.get_watch(watch_id)
+    runtime_entry = runtime_store.load().get("watches", {}).get(watch_id)
+    if watch is not None and watch.last_error and not watch.enabled:
+        raise TaskCliError(
+            f"watch '{watch.name or watch.id}' failed during startup and has already been disabled",
+            code="watch_startup_failed",
+            hint="Inspect the stored watch error, fix the waiter or its dependencies, then recreate the watch if monitoring should continue.",
+            example=inspect_command,
+            help_command=inspect_command,
+            details={"watch": _watch_payload(watch, runtime_entry)},
+        )
+    raise TaskCliError(
+        f"watch '{watch_id}' was created but startup was not confirmed within {timeout_seconds:.0f} second(s)",
+        code="watch_startup_unconfirmed",
+        hint="Confirm that the Vibe Remote service is running, then inspect the watch state before reporting that monitoring is active.",
+        example=inspect_command,
+        help_command=inspect_command,
+        details={"watch": _watch_payload(watch, runtime_entry) if watch is not None else {"id": watch_id}},
+    )
+
+
 def cmd_task_add(args):
     try:
         session_target, delivery_target = _validate_delivery_args(
@@ -1259,7 +1350,7 @@ def cmd_watch_add(args):
                 )
             cwd = str(resolved)
 
-        retry_exit_codes = sorted(set(args.retry_exit_code or [1]))
+        retry_exit_codes = sorted(set(args.retry_exit_code or [DEFAULT_RETRY_EXIT_CODE]))
         store = _watch_store()
         watch = store.add_watch(
             name=_normalize_watch_name(getattr(args, "name", None)),
@@ -1276,8 +1367,9 @@ def cmd_watch_add(args):
             post_to=args.post_to,
             deliver_key=args.deliver_key,
         )
+        runtime_store = _watch_runtime_store()
+        watch, runtime_entry = _wait_for_watch_startup(store, runtime_store, watch.id)
         warnings = _collect_target_warnings(session_target, delivery_target)
-        runtime_entry = _watch_runtime_store().load().get("watches", {}).get(watch.id)
         print(json.dumps({"ok": True, "watch": _watch_payload(watch, runtime_entry), "warnings": warnings}, indent=2))
         return 0
     except Exception as exc:
@@ -2101,11 +2193,11 @@ def build_parser():
     watch_add_parser = watch_subparsers.add_parser(
         "add",
         help="Create a managed background watch",
-        description="Create a managed background watch that runs a waiter command and sends a hook when it succeeds.",
+        description="Create a managed background watch that runs a waiter command and sends a follow-up on success or terminal failure.",
         epilog=_watch_add_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe watch add --help",
-        error_hint="Use --session-key and either --shell or a command after '--'. Add --forever only when the waiter should re-arm after each successful cycle.",
+        error_hint="Use --session-key and either --shell or a command after '--'. Add --forever only when the waiter should re-arm after successful cycles and only retry failures for explicit retry exit codes.",
     )
     watch_add_parser.add_argument("--name", help="Optional human-friendly watch name")
     watch_add_parser.add_argument(
@@ -2137,7 +2229,7 @@ def build_parser():
     watch_add_parser.add_argument(
         "--forever",
         action="store_true",
-        help="Keep re-arming the watch after each successful cycle instead of stopping after the first event.",
+        help="Keep re-arming the watch after each successful cycle instead of stopping after the first event. Terminal failures still stop the watch unless a retry exit code is allowed.",
     )
     watch_add_parser.add_argument(
         "--lifetime-timeout",
@@ -2151,13 +2243,13 @@ def build_parser():
         action="append",
         type=int,
         default=None,
-        help="Cycle exit code that should be retried in forever mode. Repeat to add more. Default: 1",
+        help=f"Cycle exit code that should be retried in forever mode. Repeat to add more. Default: {DEFAULT_RETRY_EXIT_CODE}",
     )
     watch_add_parser.add_argument(
         "--retry-delay",
         type=float,
         default=30,
-        help="Delay in seconds before retrying a retryable forever cycle failure. Default: 30",
+        help="Delay in seconds before retrying an allowed forever cycle failure. Default: 30",
     )
     watch_add_parser.add_argument(
         "--shell",

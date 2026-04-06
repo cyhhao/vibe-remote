@@ -4,6 +4,7 @@ import io
 import json
 import sys
 from contextlib import redirect_stderr
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -44,6 +45,10 @@ def _capture_stderr_json(func, *args):
     return result, json.loads(stderr.getvalue())
 
 
+def _startup_ok(store: ManagedWatchStore, runtime_store: WatchRuntimeStateStore, watch_id: str):
+    return store.get_watch(watch_id), runtime_store.load().get("watches", {}).get(watch_id)
+
+
 def test_watch_help_describes_session_key_guidance(capsys) -> None:
     parser = cli.build_parser()
 
@@ -69,6 +74,7 @@ def test_watch_add_help_mentions_shell_and_lifetime_timeout(capsys) -> None:
     assert "--lifetime-timeout" in captured.out
     assert "vibe watch add --session-key 'slack::channel::C123'" in captured.out
     assert "`--prefix` becomes the instruction text of the follow-up hook." in captured.out
+    assert "Terminal failures also send a follow-up and disable the watch." in captured.out
     assert "If this is your first time using this command, read this whole help entry before creating a watch." in captured.out
 
 
@@ -157,6 +163,7 @@ def test_watch_add_creates_shell_watch(tmp_path: Path, capsys) -> None:
         patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli._watch_store", return_value=store),
         patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
     ):
         result = cli.cmd_watch_add(args)
 
@@ -167,6 +174,7 @@ def test_watch_add_creates_shell_watch(tmp_path: Path, capsys) -> None:
     assert payload["watch"]["shell_command"] == "python3 scripts/wait.py"
     assert payload["watch"]["command"] == []
     assert payload["watch"]["mode"] == "once"
+    assert payload["watch"]["retry_exit_codes"] == [75]
 
 
 def test_watch_add_creates_exec_watch_with_retry_codes(tmp_path: Path, capsys) -> None:
@@ -197,6 +205,7 @@ def test_watch_add_creates_exec_watch_with_retry_codes(tmp_path: Path, capsys) -
         patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli._watch_store", return_value=store),
         patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
     ):
         result = cli.cmd_watch_add(args)
 
@@ -229,12 +238,164 @@ def test_watch_add_persists_absolute_cwd(tmp_path: Path, capsys, monkeypatch: py
         patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli._watch_store", return_value=store),
         patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
     ):
         result = cli.cmd_watch_add(args)
 
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["watch"]["cwd"] == str(workdir.resolve())
+
+
+def test_watch_add_returns_structured_error_when_startup_fails(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--shell",
+            "python3 scripts/wait.py",
+        ]
+    )
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch(
+            "vibe.cli._wait_for_watch_startup",
+            side_effect=cli.TaskCliError(
+                "watch failed during startup and has already been disabled",
+                code="watch_startup_failed",
+                hint="Inspect the stored watch error, fix the waiter or its dependencies, then recreate the watch if monitoring should continue.",
+                example="vibe watch show abc",
+                help_command="vibe watch show abc",
+            ),
+        ),
+    ):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "watch_startup_failed"
+    assert payload["hint"].startswith("Inspect the stored watch error")
+    assert payload["example"] == "vibe watch show abc"
+    assert payload["help_command"] == "vibe watch show abc"
+
+
+def test_wait_for_watch_startup_accepts_stably_running_watch(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    watch = store.add_watch(
+        name="Stable watch",
+        session_key="slack::channel::C123",
+        command=["python3", "wait.py"],
+        shell_command=None,
+        prefix=None,
+        cwd=None,
+        mode="forever",
+        timeout_seconds=600,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[75],
+        retry_delay_seconds=30,
+        post_to=None,
+        deliver_key=None,
+    )
+    watch.last_started_at = (datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat()
+    store.upsert_watch(watch)
+    runtime_store.write(
+        {
+            "watches": {
+                watch.id: {
+                    "running": True,
+                    "pid": 1234,
+                    "started_at": (datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            }
+        }
+    )
+
+    resolved_watch, runtime_entry = cli._wait_for_watch_startup(
+        store,
+        runtime_store,
+        watch.id,
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.01,
+        stable_running_seconds=1.5,
+    )
+
+    assert resolved_watch.id == watch.id
+    assert runtime_entry["running"] is True
+
+
+def test_default_watch_startup_timeout_exceeds_reconcile_and_stable_windows() -> None:
+    timeout_seconds = cli._default_watch_startup_timeout_seconds(
+        stable_running_seconds=cli.WATCH_STARTUP_STABLE_RUNNING_SECONDS
+    )
+
+    assert timeout_seconds > cli.WATCH_RECONCILE_INTERVAL_SECONDS + cli.WATCH_STARTUP_STABLE_RUNNING_SECONDS
+
+
+def test_wait_for_watch_startup_rejects_watch_that_fails_before_stable_window(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    watch = store.add_watch(
+        name="Flaky watch",
+        session_key="slack::channel::C123",
+        command=["python3", "wait.py"],
+        shell_command=None,
+        prefix=None,
+        cwd=None,
+        mode="forever",
+        timeout_seconds=600,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[75],
+        retry_delay_seconds=30,
+        post_to=None,
+        deliver_key=None,
+    )
+    watch.last_started_at = datetime.now(timezone.utc).isoformat()
+    store.upsert_watch(watch)
+    runtime_store.write(
+        {
+            "watches": {
+                watch.id: {
+                    "running": True,
+                    "pid": 1234,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            }
+        }
+    )
+
+    monotonic_values = iter([0.0, 0.05, 0.1, 0.15, 0.2])
+
+    def _fail_watch(_seconds: float) -> None:
+        failed = store.get_watch(watch.id)
+        assert failed is not None
+        failed.enabled = False
+        failed.last_error = "waiter crashed"
+        failed.last_exit_code = 1
+        store.upsert_watch(failed)
+        runtime_store.write({"watches": {}})
+
+    with (
+        patch("vibe.cli.time.monotonic", side_effect=lambda: next(monotonic_values)),
+        patch("vibe.cli.time.sleep", side_effect=_fail_watch),
+    ):
+        with pytest.raises(cli.TaskCliError) as exc:
+            cli._wait_for_watch_startup(
+                store,
+                runtime_store,
+                watch.id,
+                timeout_seconds=0.2,
+                poll_interval_seconds=0.01,
+                stable_running_seconds=1.5,
+            )
+
+    assert exc.value.code == "watch_startup_failed"
 
 
 def test_watch_list_brief_includes_runtime_state(tmp_path: Path, capsys) -> None:
@@ -250,7 +411,7 @@ def test_watch_list_brief_includes_runtime_state(tmp_path: Path, capsys) -> None
         mode="forever",
         timeout_seconds=600,
         lifetime_timeout_seconds=0,
-        retry_exit_codes=[1],
+        retry_exit_codes=[75],
         retry_delay_seconds=30,
         post_to=None,
         deliver_key=None,
@@ -300,7 +461,7 @@ def test_watch_pause_resume_and_remove_update_store(tmp_path: Path, capsys) -> N
         mode="once",
         timeout_seconds=600,
         lifetime_timeout_seconds=0,
-        retry_exit_codes=[1],
+        retry_exit_codes=[75],
         retry_delay_seconds=30,
         post_to=None,
         deliver_key=None,

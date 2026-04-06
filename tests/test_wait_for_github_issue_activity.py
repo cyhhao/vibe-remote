@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import importlib.util
+import urllib.error
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -475,3 +476,57 @@ def test_main_reduces_unauthenticated_new_issue_interval_after_bootstrap() -> No
     assert sleep_calls == [3600.0, 60.0]
     assert fetch_calls == [(None, 1), (None, None), (None, None)]
     assert "issue #41" in stdout.getvalue()
+
+
+def test_main_returns_retry_exit_code_for_retryable_initial_issue_http_error() -> None:
+    module = _load_module()
+    stderr = io.StringIO()
+    err = urllib.error.HTTPError("https://api.github.com/example", 503, "Service Unavailable", hdrs=None, fp=None)
+
+    with (
+        patch.object(module, "_fetch_issue_comment_state", side_effect=err),
+        patch.object(module, "get_token", return_value="token"),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch("sys.argv", ["wait_issue.py", "--repo", "cyhhao/vibe-remote", "--issue", "24"]),
+        patch("sys.stderr", stderr),
+    ):
+        rc = module.main()
+
+    assert rc == 75
+    assert "GitHub API error: 503 Service Unavailable" in stderr.getvalue()
+
+
+def test_main_returns_terminal_exit_code_for_non_retryable_initial_issue_http_error() -> None:
+    module = _load_module()
+    stderr = io.StringIO()
+    err = urllib.error.HTTPError("https://api.github.com/example", 404, "Not Found", hdrs=None, fp=None)
+
+    with (
+        patch.object(module, "_fetch_issue_comment_state", side_effect=err),
+        patch.object(module, "get_token", return_value="token"),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch("sys.argv", ["wait_issue.py", "--repo", "cyhhao/vibe-remote", "--issue", "24"]),
+        patch("sys.stderr", stderr),
+    ):
+        rc = module.main()
+
+    assert rc == 1
+    assert "GitHub API error: 404 Not Found" in stderr.getvalue()
+
+
+def test_main_returns_retry_exit_code_for_initial_issue_network_error() -> None:
+    module = _load_module()
+    stderr = io.StringIO()
+    err = urllib.error.URLError("temporary network failure")
+
+    with (
+        patch.object(module, "_fetch_issue_comment_state", side_effect=err),
+        patch.object(module, "get_token", return_value="token"),
+        patch.object(module, "get_authenticated_login", return_value=None),
+        patch("sys.argv", ["wait_issue.py", "--repo", "cyhhao/vibe-remote", "--issue", "24"]),
+        patch("sys.stderr", stderr),
+    ):
+        rc = module.main()
+
+    assert rc == 75
+    assert "GitHub network error: temporary network failure" in stderr.getvalue()
