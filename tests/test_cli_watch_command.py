@@ -329,6 +329,14 @@ def test_wait_for_watch_startup_accepts_stably_running_watch(tmp_path: Path) -> 
     assert runtime_entry["running"] is True
 
 
+def test_default_watch_startup_timeout_exceeds_reconcile_and_stable_windows() -> None:
+    timeout_seconds = cli._default_watch_startup_timeout_seconds(
+        stable_running_seconds=cli.WATCH_STARTUP_STABLE_RUNNING_SECONDS
+    )
+
+    assert timeout_seconds > cli.WATCH_RECONCILE_INTERVAL_SECONDS + cli.WATCH_STARTUP_STABLE_RUNNING_SECONDS
+
+
 def test_wait_for_watch_startup_rejects_watch_that_fails_before_stable_window(tmp_path: Path) -> None:
     store = ManagedWatchStore(tmp_path / "watches.json")
     runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")

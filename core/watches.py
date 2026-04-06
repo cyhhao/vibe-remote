@@ -18,6 +18,7 @@ from core.scheduled_tasks import TaskExecutionStore
 logger = logging.getLogger(__name__)
 
 DEFAULT_RETRY_EXIT_CODE = 75
+WATCH_RECONCILE_INTERVAL_SECONDS = 2.0
 
 
 def _utc_now_iso() -> str:
@@ -333,7 +334,7 @@ class ManagedWatchService:
                 raise
             except Exception as exc:
                 logger.error("Managed watch reconcile failed: %s", exc, exc_info=True)
-            await asyncio.sleep(2)
+            await asyncio.sleep(WATCH_RECONCILE_INTERVAL_SECONDS)
 
     def reconcile_watches(self) -> None:
         desired_ids = {watch.id for watch in self.store.list_watches() if watch.enabled}

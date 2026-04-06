@@ -29,11 +29,19 @@ from config.v2_config import (
     V2Config,
 )
 from core.scheduled_tasks import ScheduledTaskStore, TaskExecutionStore, parse_session_key
-from core.watches import DEFAULT_RETRY_EXIT_CODE, ManagedWatchStore, WatchRuntimeStateStore
+from core.watches import (
+    DEFAULT_RETRY_EXIT_CODE,
+    WATCH_RECONCILE_INTERVAL_SECONDS,
+    ManagedWatchStore,
+    WatchRuntimeStateStore,
+)
 from vibe import __version__, api, runtime
 from vibe.upgrade import build_upgrade_plan, cache_running_vibe_path, get_latest_version_info, get_safe_cwd
 
 logger = logging.getLogger(__name__)
+
+WATCH_STARTUP_STABLE_RUNNING_SECONDS = 1.5
+WATCH_STARTUP_JITTER_BUFFER_SECONDS = 1.0
 
 
 class VibeArgumentParser(argparse.ArgumentParser):
@@ -826,16 +834,22 @@ def _seconds_since_iso(timestamp: object) -> float | None:
     return max(0.0, (datetime.now(timezone.utc) - started_at).total_seconds())
 
 
+def _default_watch_startup_timeout_seconds(*, stable_running_seconds: float = WATCH_STARTUP_STABLE_RUNNING_SECONDS) -> float:
+    return WATCH_RECONCILE_INTERVAL_SECONDS + stable_running_seconds + WATCH_STARTUP_JITTER_BUFFER_SECONDS
+
+
 def _wait_for_watch_startup(
     store: ManagedWatchStore,
     runtime_store: WatchRuntimeStateStore,
     watch_id: str,
     *,
-    timeout_seconds: float = 4.0,
+    timeout_seconds: float | None = None,
     poll_interval_seconds: float = 0.1,
-    stable_running_seconds: float = 1.5,
+    stable_running_seconds: float = WATCH_STARTUP_STABLE_RUNNING_SECONDS,
 ):
     inspect_command = f"vibe watch show {watch_id}"
+    if timeout_seconds is None:
+        timeout_seconds = _default_watch_startup_timeout_seconds(stable_running_seconds=stable_running_seconds)
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         store.maybe_reload()
