@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
         AssistantMessage,
         ClaudeAgentOptions,
-        ClaudeSDKClient,
+        ClaudeSDKClient as _ClaudeSDKClient,
         ResultMessage,
         SystemMessage,
         TextBlock,
@@ -15,7 +19,32 @@ try:
         ToolUseBlock,
         UserMessage,
     )
+    from claude_agent_sdk._errors import CLIConnectionError, MessageParseError
     CLAUDE_SDK_AVAILABLE = True
+
+    def _should_ignore_message_parse_error(data: object) -> bool:
+        """Skip SDK event types that are safe to ignore in older client versions."""
+        return isinstance(data, dict) and data.get("type") == "rate_limit_event"
+
+    class ClaudeSDKClient(_ClaudeSDKClient):
+        async def receive_messages(self):
+            """Receive all messages from Claude, tolerating non-fatal SDK event additions."""
+            if not self._query:
+                raise CLIConnectionError("Not connected. Call connect() first.")
+
+            from claude_agent_sdk._internal.message_parser import parse_message
+
+            async for data in self._query.receive_messages():
+                try:
+                    yield parse_message(data)
+                except MessageParseError:
+                    if _should_ignore_message_parse_error(data):
+                        logger.info(
+                            "Ignoring unsupported Claude SDK message type from CLI: %s",
+                            data.get("type"),
+                        )
+                        continue
+                    raise
 except ModuleNotFoundError:  # pragma: no cover - exercised only in minimal test envs
     CLAUDE_SDK_AVAILABLE = False
 
@@ -49,4 +78,3 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only in minimal test
 
     class ToolResultBlock:
         pass
-
