@@ -8,8 +8,13 @@ import math
 import os
 import shutil
 import subprocess
+import urllib.error
 import urllib.request
 from typing import Any
+
+
+RETRY_EXIT_CODE = 75
+RETRYABLE_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 
 def get_token() -> str | None:
@@ -54,6 +59,14 @@ def github_get(url: str, token: str | None) -> Any:
 
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def is_retryable_http_error(err: urllib.error.HTTPError) -> bool:
+    try:
+        code = int(err.code)
+    except Exception:
+        return False
+    return code in RETRYABLE_HTTP_STATUS_CODES
 
 
 def get_authenticated_login(token: str | None) -> str | None:

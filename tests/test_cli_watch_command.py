@@ -44,6 +44,10 @@ def _capture_stderr_json(func, *args):
     return result, json.loads(stderr.getvalue())
 
 
+def _startup_ok(store: ManagedWatchStore, runtime_store: WatchRuntimeStateStore, watch_id: str):
+    return store.get_watch(watch_id), runtime_store.load().get("watches", {}).get(watch_id)
+
+
 def test_watch_help_describes_session_key_guidance(capsys) -> None:
     parser = cli.build_parser()
 
@@ -69,6 +73,7 @@ def test_watch_add_help_mentions_shell_and_lifetime_timeout(capsys) -> None:
     assert "--lifetime-timeout" in captured.out
     assert "vibe watch add --session-key 'slack::channel::C123'" in captured.out
     assert "`--prefix` becomes the instruction text of the follow-up hook." in captured.out
+    assert "Terminal failures also send a follow-up and disable the watch." in captured.out
     assert "If this is your first time using this command, read this whole help entry before creating a watch." in captured.out
 
 
@@ -157,6 +162,7 @@ def test_watch_add_creates_shell_watch(tmp_path: Path, capsys) -> None:
         patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli._watch_store", return_value=store),
         patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
     ):
         result = cli.cmd_watch_add(args)
 
@@ -167,6 +173,7 @@ def test_watch_add_creates_shell_watch(tmp_path: Path, capsys) -> None:
     assert payload["watch"]["shell_command"] == "python3 scripts/wait.py"
     assert payload["watch"]["command"] == []
     assert payload["watch"]["mode"] == "once"
+    assert payload["watch"]["retry_exit_codes"] == [75]
 
 
 def test_watch_add_creates_exec_watch_with_retry_codes(tmp_path: Path, capsys) -> None:
@@ -197,6 +204,7 @@ def test_watch_add_creates_exec_watch_with_retry_codes(tmp_path: Path, capsys) -
         patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli._watch_store", return_value=store),
         patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
     ):
         result = cli.cmd_watch_add(args)
 
@@ -229,12 +237,49 @@ def test_watch_add_persists_absolute_cwd(tmp_path: Path, capsys, monkeypatch: py
         patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
         patch("vibe.cli._watch_store", return_value=store),
         patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
     ):
         result = cli.cmd_watch_add(args)
 
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["watch"]["cwd"] == str(workdir.resolve())
+
+
+def test_watch_add_returns_structured_error_when_startup_fails(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--shell",
+            "python3 scripts/wait.py",
+        ]
+    )
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch(
+            "vibe.cli._wait_for_watch_startup",
+            side_effect=cli.TaskCliError(
+                "watch failed during startup and has already been disabled",
+                code="watch_startup_failed",
+                hint="Inspect the stored watch error, fix the waiter or its dependencies, then recreate the watch if monitoring should continue.",
+                example="vibe watch show abc",
+                help_command="vibe watch show abc",
+            ),
+        ),
+    ):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "watch_startup_failed"
+    assert payload["hint"].startswith("Inspect the stored watch error")
+    assert payload["example"] == "vibe watch show abc"
+    assert payload["help_command"] == "vibe watch show abc"
 
 
 def test_watch_list_brief_includes_runtime_state(tmp_path: Path, capsys) -> None:
@@ -250,7 +295,7 @@ def test_watch_list_brief_includes_runtime_state(tmp_path: Path, capsys) -> None
         mode="forever",
         timeout_seconds=600,
         lifetime_timeout_seconds=0,
-        retry_exit_codes=[1],
+        retry_exit_codes=[75],
         retry_delay_seconds=30,
         post_to=None,
         deliver_key=None,
@@ -300,7 +345,7 @@ def test_watch_pause_resume_and_remove_update_store(tmp_path: Path, capsys) -> N
         mode="once",
         timeout_seconds=600,
         lifetime_timeout_seconds=0,
-        retry_exit_codes=[1],
+        retry_exit_codes=[75],
         retry_delay_seconds=30,
         post_to=None,
         deliver_key=None,

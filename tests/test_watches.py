@@ -28,7 +28,7 @@ def test_managed_watch_store_round_trip(tmp_path: Path) -> None:
         mode="forever",
         timeout_seconds=600,
         lifetime_timeout_seconds=3600,
-        retry_exit_codes=[1, 75],
+        retry_exit_codes=[75],
         retry_delay_seconds=45,
         post_to="channel",
         deliver_key=None,
@@ -42,7 +42,7 @@ def test_managed_watch_store_round_trip(tmp_path: Path) -> None:
     assert saved is not None
     assert saved.name == "Watch CI"
     assert saved.mode == "forever"
-    assert saved.retry_exit_codes == [1, 75]
+    assert saved.retry_exit_codes == [75]
     assert saved.post_to == "channel"
 
 
@@ -58,7 +58,7 @@ def test_managed_watch_store_preserves_zero_values_on_reload(tmp_path: Path) -> 
         mode="forever",
         timeout_seconds=0,
         lifetime_timeout_seconds=0,
-        retry_exit_codes=[1],
+        retry_exit_codes=[75],
         retry_delay_seconds=0,
         post_to=None,
         deliver_key=None,
@@ -87,7 +87,7 @@ def test_managed_watch_service_once_success_enqueues_hook_and_disables(tmp_path:
         mode="once",
         timeout_seconds=5,
         lifetime_timeout_seconds=0,
-        retry_exit_codes=[1],
+        retry_exit_codes=[75],
         retry_delay_seconds=30,
         post_to=None,
         deliver_key=None,
@@ -121,7 +121,7 @@ def test_managed_watch_service_once_success_enqueues_hook_and_disables(tmp_path:
     assert saved.last_event_at is not None
 
 
-def test_managed_watch_service_forever_timeout_is_silent_per_cycle(tmp_path: Path) -> None:
+def test_managed_watch_service_forever_timeout_disables_and_enqueues_failure(tmp_path: Path) -> None:
     store = ManagedWatchStore(tmp_path / "watches.json")
     request_store = TaskExecutionStore(tmp_path / "task_requests")
     runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
@@ -135,7 +135,7 @@ def test_managed_watch_service_forever_timeout_is_silent_per_cycle(tmp_path: Pat
         mode="forever",
         timeout_seconds=0.05,
         lifetime_timeout_seconds=0,
-        retry_exit_codes=[1],
+        retry_exit_codes=[75],
         retry_delay_seconds=0.01,
         post_to=None,
         deliver_key=None,
@@ -156,9 +156,12 @@ def test_managed_watch_service_forever_timeout_is_silent_per_cycle(tmp_path: Pat
 
     saved = store.get_watch(watch.id)
 
-    assert request_store.list_pending() == []
+    pending = request_store.list_pending()
     assert saved is not None
-    assert saved.enabled is True
+    assert len(pending) == 1
+    assert "stopped because the waiter timed out" in pending[0].prompt
+    assert "Check whether the timeout is too short or the waiter is blocked" in pending[0].prompt
+    assert saved.enabled is False
     assert saved.last_exit_code == 124
 
 
@@ -176,7 +179,7 @@ def test_managed_watch_service_stop_terminates_running_waiter(tmp_path: Path) ->
         mode="forever",
         timeout_seconds=0,
         lifetime_timeout_seconds=0,
-        retry_exit_codes=[1],
+        retry_exit_codes=[75],
         retry_delay_seconds=0.01,
         post_to=None,
         deliver_key=None,
@@ -220,7 +223,7 @@ def test_managed_watch_service_records_wall_clock_started_at(tmp_path: Path) -> 
         mode="forever",
         timeout_seconds=0,
         lifetime_timeout_seconds=0,
-        retry_exit_codes=[1],
+        retry_exit_codes=[75],
         retry_delay_seconds=0.01,
         post_to=None,
         deliver_key=None,
@@ -261,7 +264,7 @@ def test_managed_watch_service_turns_spawn_error_into_failed_cycle(tmp_path: Pat
         mode="once",
         timeout_seconds=5,
         lifetime_timeout_seconds=0,
-        retry_exit_codes=[1],
+        retry_exit_codes=[75],
         retry_delay_seconds=0.01,
         post_to=None,
         deliver_key=None,
@@ -284,8 +287,97 @@ def test_managed_watch_service_turns_spawn_error_into_failed_cycle(tmp_path: Pat
     asyncio.run(_run())
 
     saved = store.get_watch(watch.id)
+    pending = request_store.list_pending()
     assert saved is not None
     assert saved.enabled is False
     assert saved.last_exit_code == 1
     assert saved.last_error
+    assert len(pending) == 1
+    assert "stopped because the waiter exited with code 1" in pending[0].prompt
+    assert "fix the waiter or its dependencies" in pending[0].prompt
+
+
+def test_managed_watch_service_forever_retries_only_allowed_exit_code(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    watch = store.add_watch(
+        name="Retry waiter",
+        session_key="slack::channel::C123",
+        command=["/bin/sh", "-lc", "exit 75"],
+        shell_command=None,
+        prefix="Retry only.",
+        cwd=None,
+        mode="forever",
+        timeout_seconds=5,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[75],
+        retry_delay_seconds=0.01,
+        post_to=None,
+        deliver_key=None,
+    )
+    service = ManagedWatchService(
+        controller=SimpleNamespace(),
+        store=store,
+        request_store=request_store,
+        runtime_store=runtime_store,
+    )
+
+    async def _run() -> None:
+        service.start()
+        await asyncio.sleep(0.08)
+        await service.stop()
+
+    asyncio.run(_run())
+
+    saved = store.get_watch(watch.id)
+    assert saved is not None
+    assert saved.enabled is True
+    assert saved.last_exit_code == 75
     assert request_store.list_pending() == []
+
+
+def test_managed_watch_service_forever_non_retry_error_disables_and_enqueues_failure(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    watch = store.add_watch(
+        name="Broken forever waiter",
+        session_key="slack::channel::C123",
+        command=["python3", "-c", "import sys; sys.exit(1)"],
+        shell_command=None,
+        prefix="Investigate the failure.",
+        cwd=None,
+        mode="forever",
+        timeout_seconds=5,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[75],
+        retry_delay_seconds=0.01,
+        post_to=None,
+        deliver_key=None,
+    )
+    service = ManagedWatchService(
+        controller=SimpleNamespace(),
+        store=store,
+        request_store=request_store,
+        runtime_store=runtime_store,
+    )
+
+    async def _run() -> None:
+        service.start()
+        for _ in range(100):
+            if watch.id not in service._active_tasks:
+                break
+            await asyncio.sleep(0.02)
+        await service.stop()
+
+    asyncio.run(_run())
+
+    saved = store.get_watch(watch.id)
+    pending = request_store.list_pending()
+    assert saved is not None
+    assert saved.enabled is False
+    assert saved.last_exit_code == 1
+    assert saved.last_error
+    assert len(pending) == 1
+    assert pending[0].prompt.startswith("Investigate the failure.\n\nWatch 'Broken forever waiter' stopped because the waiter exited with code 1.")

@@ -330,7 +330,7 @@ Delivery controls:
 - do not combine `--post-to` and `--deliver-key` in the same command
 - `vibe task add` stores the text from `--prompt` or `--prompt-file` and injects it each time the task runs
 - `vibe hook send` queues the text from `--prompt` or `--prompt-file` once without storing a task
-- `vibe watch add` uses `--prefix` as follow-up instruction text; on a successful cycle Vibe Remote prepends it before waiter stdout, joined with a blank line when both exist
+- `vibe watch add` uses `--prefix` as follow-up instruction text; on a successful cycle Vibe Remote prepends it before waiter stdout, joined with a blank line when both exist, and terminal failures also send a follow-up before disabling the watch
 
 Session key format:
 

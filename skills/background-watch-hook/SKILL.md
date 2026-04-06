@@ -26,7 +26,7 @@ Prefer `vibe watch` when the wait should be inspectable, pausable, resumable, or
 ## Main Tools
 
 - `vibe watch add`
-  Main entrypoint. Starts a managed background watch and sends a follow-up hook after the waiter succeeds or times out.
+  Main entrypoint. Starts a managed background watch and sends a follow-up hook after the waiter succeeds or reaches a terminal failure.
 - `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, `vibe watch remove`
   Use these to inspect and manage the watch after creation.
 - `scripts/wait_pr.py`
@@ -56,7 +56,7 @@ Default behavior:
 - returns immediately
 - keeps the waiter managed by Vibe Remote
 - lets the agent inspect or stop the watch later
-- sends a follow-up after the waiter succeeds or times out
+- sends a follow-up after the waiter succeeds or reaches a terminal failure
 
 Use `--forever` when the same waiter should re-arm after each detected event instead of exiting after one follow-up.
 
@@ -146,6 +146,7 @@ For `vibe watch add`:
 - default is `21600` seconds
 - `0` means no per-cycle timeout
 - `--forever` means re-arm after each detected event
+- forever retries only when the waiter exits with an allowed `--retry-exit-code`; other failures stop the watch and send a failure follow-up
 - `--lifetime-timeout` limits the whole long-running watch; default is `0` meaning run until killed
 
 This separation matters: a forever watch can still use a bounded timeout for each cycle.
@@ -161,6 +162,7 @@ This skill ships bundled GitHub waiters:
 
 Use bundled waiters as examples or as ready-to-run building blocks. The main skill is still `vibe watch`; the waiter is only the thing that blocks until the condition is met.
 When running a bundled script through `uv`, prefer `uv run --no-project ...` so the script does not accidentally attach itself to an unrelated parent project.
+Bundled GitHub waiters use exit code `75` for retryable startup errors such as temporary network failures or GitHub `408/429/5xx` responses.
 
 ## GitHub Example Waiter
 

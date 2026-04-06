@@ -21,10 +21,12 @@ from _github_wait_common import (  # noqa: E402
     get_authenticated_login,
     get_token,
     github_get,
+    is_retryable_http_error,
     list_paginated,
     list_paginated_with_count,
     max_id,
     min_interval_for_unauthenticated,
+    RETRY_EXIT_CODE,
     requests_per_poll,
     squash,
 )
@@ -400,7 +402,10 @@ def main() -> int:
             )
     except urllib.error.HTTPError as err:
         print(f"GitHub API error: {err.code} {err.reason}", file=sys.stderr)
-        return 1
+        return RETRY_EXIT_CODE if is_retryable_http_error(err) else 1
+    except urllib.error.URLError as err:
+        print(f"GitHub network error: {err.reason}", file=sys.stderr)
+        return RETRY_EXIT_CODE
     except Exception as err:  # noqa: BLE001
         print(f"Failed to fetch initial PR state: {err}", file=sys.stderr)
         return 1

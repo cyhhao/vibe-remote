@@ -17,6 +17,8 @@ from core.scheduled_tasks import TaskExecutionStore
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_RETRY_EXIT_CODE = 75
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -48,7 +50,7 @@ class ManagedWatch:
     mode: str = "once"
     timeout_seconds: float = 21600.0
     lifetime_timeout_seconds: float = 0.0
-    retry_exit_codes: list[int] = field(default_factory=lambda: [1])
+    retry_exit_codes: list[int] = field(default_factory=lambda: [DEFAULT_RETRY_EXIT_CODE])
     retry_delay_seconds: float = 30.0
     post_to: Optional[str] = None
     deliver_key: Optional[str] = None
@@ -77,7 +79,7 @@ class ManagedWatch:
             mode=str(payload.get("mode") or "once"),
             timeout_seconds=_payload_float(payload, "timeout_seconds", 21600.0),
             lifetime_timeout_seconds=_payload_float(payload, "lifetime_timeout_seconds", 0.0),
-            retry_exit_codes=[int(code) for code in (payload.get("retry_exit_codes") or [1])],
+            retry_exit_codes=[int(code) for code in (payload.get("retry_exit_codes") or [DEFAULT_RETRY_EXIT_CODE])],
             retry_delay_seconds=_payload_float(payload, "retry_delay_seconds", 30.0),
             post_to=payload.get("post_to"),
             deliver_key=payload.get("deliver_key"),
@@ -434,15 +436,13 @@ class ManagedWatchService:
                 continue
 
             if result.timed_out or result.exit_code == 124:
-                if watch.mode == "forever":
-                    self.store.mark_cycle_result(watch.id, exit_code=124, error=None, disable=False)
-                    continue
-                self._enqueue_hook(
+                error_text = "timed out"
+                self._enqueue_failure_hook(
                     watch,
-                    prefix=watch.prefix,
-                    body=f"Watch timed out after {int(cycle_timeout)} second(s).",
+                    exit_code=124,
+                    error_text=f"Watch timed out after {int(cycle_timeout)} second(s).",
                 )
-                self.store.mark_cycle_result(watch.id, exit_code=124, error="timed out", disable=True)
+                self.store.mark_cycle_result(watch.id, exit_code=124, error=error_text, disable=True)
                 return
 
             error_text = _squash_error(result.stderr) or f"watch command exited with status {result.exit_code}"
@@ -451,6 +451,7 @@ class ManagedWatchService:
                 await asyncio.sleep(watch.retry_delay_seconds)
                 continue
 
+            self._enqueue_failure_hook(watch, exit_code=result.exit_code, error_text=error_text)
             self.store.mark_cycle_result(watch.id, exit_code=result.exit_code, error=error_text, disable=True)
             return
 
@@ -513,6 +514,22 @@ class ManagedWatchService:
             deliver_key=watch.deliver_key,
             prompt=final_prompt,
         )
+
+    def _enqueue_failure_hook(self, watch: ManagedWatch, *, exit_code: int, error_text: str) -> None:
+        watch_label = watch.name or watch.id
+        if exit_code == 124:
+            body = (
+                f"Watch '{watch_label}' stopped because the waiter timed out.\n"
+                f"Check whether the timeout is too short or the waiter is blocked, then recreate the watch if monitoring should continue.\n"
+                f"Details: {error_text}"
+            )
+        else:
+            body = (
+                f"Watch '{watch_label}' stopped because the waiter exited with code {exit_code}.\n"
+                f"Review the error below, fix the waiter or its dependencies, then recreate the watch if monitoring should continue.\n"
+                f"Error: {error_text}"
+            )
+        self._enqueue_hook(watch, prefix=watch.prefix, body=body)
 
 
 def _build_prompt(prefix: Optional[str], body: Optional[str]) -> str:
