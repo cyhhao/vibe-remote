@@ -165,6 +165,46 @@ def test_managed_watch_service_forever_timeout_disables_and_enqueues_failure(tmp
     assert saved.last_exit_code == 124
 
 
+def test_managed_watch_service_forever_timeout_retries_when_explicitly_allowed(tmp_path: Path) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    request_store = TaskExecutionStore(tmp_path / "task_requests")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    watch = store.add_watch(
+        name="Retry timeout forever",
+        session_key="slack::channel::C123",
+        command=["python3", "-c", "import time; time.sleep(0.2)"],
+        shell_command=None,
+        prefix="Should keep waiting.",
+        cwd=None,
+        mode="forever",
+        timeout_seconds=0.05,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[75, 124],
+        retry_delay_seconds=0.01,
+        post_to=None,
+        deliver_key=None,
+    )
+    service = ManagedWatchService(
+        controller=SimpleNamespace(),
+        store=store,
+        request_store=request_store,
+        runtime_store=runtime_store,
+    )
+
+    async def _run() -> None:
+        service.start()
+        await asyncio.sleep(0.2)
+        await service.stop()
+
+    asyncio.run(_run())
+
+    saved = store.get_watch(watch.id)
+    assert saved is not None
+    assert saved.enabled is True
+    assert saved.last_exit_code == 124
+    assert request_store.list_pending() == []
+
+
 def test_managed_watch_service_stop_terminates_running_waiter(tmp_path: Path) -> None:
     store = ManagedWatchStore(tmp_path / "watches.json")
     request_store = TaskExecutionStore(tmp_path / "task_requests")
@@ -304,7 +344,7 @@ def test_managed_watch_service_forever_retries_only_allowed_exit_code(tmp_path: 
     watch = store.add_watch(
         name="Retry waiter",
         session_key="slack::channel::C123",
-        command=["/bin/sh", "-lc", "exit 75"],
+        command=[sys.executable, "-c", "import sys; sys.exit(75)"],
         shell_command=None,
         prefix="Retry only.",
         cwd=None,

@@ -437,6 +437,10 @@ class ManagedWatchService:
 
             if result.timed_out or result.exit_code == 124:
                 error_text = "timed out"
+                if watch.mode == "forever" and 124 in set(watch.retry_exit_codes):
+                    self.store.mark_cycle_result(watch.id, exit_code=124, error=error_text, disable=False)
+                    await asyncio.sleep(watch.retry_delay_seconds)
+                    continue
                 self._enqueue_failure_hook(
                     watch,
                     exit_code=124,
