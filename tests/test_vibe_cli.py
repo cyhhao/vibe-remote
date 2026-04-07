@@ -92,6 +92,57 @@ def test_cli_stop_opencode_server_uses_runtime_helpers(tmp_path, monkeypatch):
     assert not pid_file.exists()
 
 
+def test_cmd_restart_schedules_delayed_restart(monkeypatch, capsys):
+    scheduled = {}
+    stop_called = []
+    start_called = []
+
+    monkeypatch.setattr(cli, "cache_running_vibe_path", lambda: "/usr/local/bin/vibe")
+    monkeypatch.setattr(cli, "get_restart_command", lambda vibe_path=None: [vibe_path or "vibe"])
+    monkeypatch.setattr(cli, "get_safe_cwd", lambda: "/tmp")
+    monkeypatch.setattr(
+        cli.api,
+        "_spawn_delayed_restart",
+        lambda command, cwd, delay_seconds=2.0: scheduled.update(
+            {"command": command, "cwd": cwd, "delay_seconds": delay_seconds}
+        ),
+    )
+    monkeypatch.setattr(cli, "cmd_stop", lambda: stop_called.append(True))
+    monkeypatch.setattr(cli, "cmd_vibe", lambda: start_called.append(True))
+
+    assert cli._cmd_restart_with_delay(60) == 0
+    assert scheduled == {
+        "command": ["/usr/local/bin/vibe", "restart"],
+        "cwd": "/tmp",
+        "delay_seconds": 60,
+    }
+    assert stop_called == []
+    assert start_called == []
+
+    output = capsys.readouterr().out
+    assert "Restart scheduled in 1 minute." in output
+    assert "delayed restart will run in the background" in output
+
+
+def test_cmd_restart_runs_synchronously_by_default(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(cli, "cmd_stop", lambda: calls.append("stop") or 0)
+    monkeypatch.setattr(cli, "cmd_vibe", lambda: calls.append("start") or 0)
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: calls.append(("sleep", seconds)))
+
+    assert cli._cmd_restart_with_delay(0) == 0
+    assert calls == ["stop", ("sleep", 3), "start"]
+
+
+def test_restart_parser_accepts_delay_seconds():
+    parser = cli.build_parser()
+    args = parser.parse_args(["restart", "--delay-seconds", "60"])
+
+    assert args.command == "restart"
+    assert args.delay_seconds == 60
+
+
 def test_stop_pid_handles_process_lookup_race(monkeypatch):
     monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: True)

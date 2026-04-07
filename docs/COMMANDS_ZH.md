@@ -533,7 +533,25 @@ vibe stop
 vibe restart
 ```
 
-- 语义上等价于先停再启
+- 停止主服务
+- 停止 UI 服务
+- 同时终止 OpenCode server
+- 短暂等待后重新启动服务
+
+可选的异步延迟执行：
+
+```bash
+vibe restart --delay-seconds 60
+```
+
+- 会立即打印确认信息
+- 当前命令立刻返回
+- 到达指定延迟后在后台执行重启
+
+推荐用法：
+
+- 如果是 Agent 在活跃会话里触发重启，优先使用 `vibe restart --delay-seconds 60`
+- 只有用户明确要求立刻重启时，再使用普通 `vibe restart`
 
 ### `vibe status`
 
@@ -577,7 +595,7 @@ vibe upgrade
 ```
 
 - 按升级计划升级 Vibe Remote
-- 成功后通常建议再执行 `vibe stop && vibe`
+- 成功后通常建议再执行 `vibe restart --delay-seconds 60`
 
 ## 5.2 `vibe task`
 

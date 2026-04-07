@@ -554,7 +554,25 @@ vibe stop
 vibe restart
 ```
 
-- equivalent lifecycle intent: stop, wait briefly, start again
+- stops the main service
+- stops the UI server
+- terminates the OpenCode server too
+- starts the service again after a brief wait
+
+Optional async scheduling:
+
+```bash
+vibe restart --delay-seconds 60
+```
+
+- prints a confirmation immediately
+- exits without waiting
+- runs the restart in the background after the specified delay
+
+Recommended usage:
+
+- prefer `vibe restart --delay-seconds 60` when an agent triggers the restart from an active conversation
+- use plain `vibe restart` when the user explicitly wants the restart to happen immediately
 
 ### `vibe status`
 
@@ -598,7 +616,7 @@ vibe upgrade
 ```
 
 - upgrades Vibe Remote using the selected upgrade plan
-- recommends `vibe stop && vibe` after success
+- usually recommends `vibe restart --delay-seconds 60` after success
 
 ## 5.2 `vibe task`
 

@@ -34,7 +34,7 @@ Follow this skill as an operations playbook for agents, not as end-user marketin
 6. Only touch the target platform scope in `settings.json`.
 7. Do not hand-edit `sessions.json` unless the user explicitly asks for low-level recovery work.
 8. Tell the user whether the change is global or scope-specific.
-9. After config changes, recommend `vibe doctor` and usually `vibe stop && vibe`.
+9. After config changes, recommend `vibe doctor` and usually `vibe restart --delay-seconds 60`.
 
 ## Runtime Layout
 
@@ -85,8 +85,10 @@ python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$TARGET_FILE"
 
 ```bash
 vibe doctor
-vibe stop && vibe
+vibe restart --delay-seconds 60
 ```
+
+Use plain `vibe restart` only when the user explicitly wants an immediate restart. For agent-triggered restarts during an active conversation, prefer the delayed form so the agent can send its final reply before the service goes down.
 
 8. Summarize the exact keys changed.
 
@@ -577,6 +579,8 @@ Action:
 Main commands:
 
 - `vibe`: start or restart Vibe Remote; preserves the OpenCode server when possible
+- `vibe restart --delay-seconds 60`: preferred agent-safe restart; returns immediately and restarts later in the background
+- `vibe restart`: immediate full restart; use only when the user explicitly wants it now
 - `vibe status`: inspect runtime status
 - `vibe stop`: stop Vibe Remote and the OpenCode server
 - `vibe doctor`: validate config, CLI availability, and runtime health
@@ -586,7 +590,7 @@ Main commands:
 
 Useful checks:
 
-- config does not apply: run `vibe doctor`, then `vibe stop && vibe`
+- config does not apply: run `vibe doctor`, then prefer `vibe restart --delay-seconds 60`
 - backend missing: confirm the backend is enabled and the CLI path is executable
 - channel does not respond: verify the right `settings.json` scope exists and `enabled` is `true`
 - wrong repository/cwd: inspect `custom_cwd` and `runtime.default_cwd`

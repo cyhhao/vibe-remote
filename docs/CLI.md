@@ -187,15 +187,15 @@ The key difference between commands:
 
 | Command | Main Service | OpenCode Server |
 |---------|--------------|-----------------|
-| `vibe` | Restart | **Preserved** |
+| `vibe restart` | Restart | **Terminated** |
 | `vibe stop` | Stop | **Terminated** |
 
 ### Why This Matters
 
-When you run `vibe` to restart:
-- Any **running OpenCode tasks continue uninterrupted**
-- The new Vibe Remote instance "adopts" the existing OpenCode server
-- Session state is preserved
+When you run `vibe restart`:
+- The main service restarts cleanly
+- The UI restarts too
+- The OpenCode server is terminated as part of the restart
 
 When you run `vibe stop`:
 - **Everything stops cleanly**
@@ -206,10 +206,16 @@ When you run `vibe stop`:
 
 ### Daily Restart
 
-Just want to restart Vibe Remote without interrupting work:
+If an agent is triggering the restart from an active conversation, prefer the delayed form for a better user experience:
 
 ```bash
-vibe
+vibe restart --delay-seconds 60
+```
+
+Just want to restart Vibe Remote immediately:
+
+```bash
+vibe restart
 ```
 
 ### Update OpenCode Configuration
@@ -217,7 +223,7 @@ vibe
 After editing `~/.config/opencode/opencode.json`:
 
 ```bash
-vibe stop && vibe
+vibe restart --delay-seconds 60
 ```
 
 ### Update OpenCode Binary
@@ -225,7 +231,7 @@ vibe stop && vibe
 After installing a new version of OpenCode:
 
 ```bash
-vibe stop && vibe
+vibe restart --delay-seconds 60
 ```
 
 ### Update Vibe Remote
@@ -233,7 +239,7 @@ vibe stop && vibe
 ```bash
 vibe upgrade
 # Then restart:
-vibe stop && vibe
+vibe restart --delay-seconds 60
 ```
 
 ### Troubleshooting
@@ -247,8 +253,8 @@ vibe status
 # Run diagnostics
 vibe doctor
 
-# Full restart (stops everything including OpenCode)
-vibe stop && vibe
+# Prefer delayed restart when triggered by an agent
+vibe restart --delay-seconds 60
 ```
 
 ## Web UI Controls
@@ -257,8 +263,8 @@ The web UI (`http://127.0.0.1:5123`) provides the same controls:
 
 | Button | Equivalent CLI | OpenCode Behavior |
 |--------|---------------|-------------------|
-| **Start** | `vibe` | Preserved |
-| **Restart** | `vibe` | Preserved |
+| **Start** | `vibe` | Starts on demand |
+| **Restart** | `vibe restart` | Terminated |
 | **Stop** | `vibe stop` | Terminated |
 
 ## File Locations

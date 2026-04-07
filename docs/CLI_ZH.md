@@ -187,15 +187,15 @@ Vibe Remote 管理两类进程：
 
 | 命令 | 主服务 | OpenCode 服务器 |
 |------|--------|-----------------|
-| `vibe` | 重启 | **保留** |
+| `vibe restart` | 重启 | **终止** |
 | `vibe stop` | 停止 | **终止** |
 
 ### 为什么这很重要
 
-当你运行 `vibe` 重启时：
-- **正在运行的 OpenCode 任务会继续执行**，不会中断
-- 新的 Vibe Remote 实例会「认领」现有的 OpenCode 服务器
-- 会话状态得以保留
+当你运行 `vibe restart` 时：
+- 主服务会被干净地重启
+- UI 也会一起重启
+- OpenCode 服务器会在重启过程中被终止
 
 当你运行 `vibe stop` 时：
 - **一切都会干净地停止**
@@ -206,10 +206,16 @@ Vibe Remote 管理两类进程：
 
 ### 日常重启
 
-只想重启 Vibe Remote，不中断正在进行的工作：
+如果是 Agent 在当前会话里触发重启，默认优先用延迟参数，用户体验更好：
 
 ```bash
-vibe
+vibe restart --delay-seconds 60
+```
+
+如果就是要立刻重启 Vibe Remote：
+
+```bash
+vibe restart
 ```
 
 ### 更新 OpenCode 配置
@@ -217,7 +223,7 @@ vibe
 修改 `~/.config/opencode/opencode.json` 后：
 
 ```bash
-vibe stop && vibe
+vibe restart --delay-seconds 60
 ```
 
 ### 更新 OpenCode 程序
@@ -225,7 +231,7 @@ vibe stop && vibe
 安装新版本 OpenCode 后：
 
 ```bash
-vibe stop && vibe
+vibe restart --delay-seconds 60
 ```
 
 ### 更新 Vibe Remote
@@ -233,7 +239,7 @@ vibe stop && vibe
 ```bash
 vibe upgrade
 # 然后重启：
-vibe stop && vibe
+vibe restart --delay-seconds 60
 ```
 
 ### 故障排查
@@ -247,8 +253,8 @@ vibe status
 # 运行诊断
 vibe doctor
 
-# 完全重启（停止所有服务包括 OpenCode）
-vibe stop && vibe
+# 如果是 Agent 触发，优先延迟重启
+vibe restart --delay-seconds 60
 ```
 
 ## Web UI 控制
@@ -257,8 +263,8 @@ Web UI (`http://127.0.0.1:5123`) 提供相同的控制功能：
 
 | 按钮 | 等效 CLI | OpenCode 行为 |
 |------|---------|---------------|
-| **Start** | `vibe` | 保留 |
-| **Restart** | `vibe` | 保留 |
+| **Start** | `vibe` | 按需启动 |
+| **Restart** | `vibe restart` | 终止 |
 | **Stop** | `vibe stop` | 终止 |
 
 ## 文件位置
