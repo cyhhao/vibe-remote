@@ -33,6 +33,7 @@ from vibe.upgrade import (
     build_upgrade_plan,
     get_latest_version_info,
     get_restart_command,
+    get_restart_environment,
     get_running_vibe_path,
     get_safe_cwd,
 )
@@ -71,11 +72,16 @@ def _delayed_restart_helper_command() -> list[str]:
     raise FileNotFoundError("No stable Python launcher available for delayed restart helper")
 
 
-def _spawn_delayed_restart(command: list[str], cwd: str, delay_seconds: float = 2.0) -> None:
+def _spawn_delayed_restart(
+    command: list[str],
+    cwd: str,
+    delay_seconds: float = 2.0,
+    env: dict[str, str] | None = None,
+) -> None:
     helper_code = (
         "import subprocess, time\n"
         f"time.sleep({delay_seconds!r})\n"
-        f"subprocess.Popen({command!r}, cwd={cwd!r}, stdout=subprocess.DEVNULL, "
+        f"subprocess.Popen({command!r}, cwd={cwd!r}, env={env!r}, stdout=subprocess.DEVNULL, "
         "stderr=subprocess.DEVNULL, close_fds=True)\n"
     )
     helper_cmd = [*_delayed_restart_helper_command(), "-c", helper_code]
@@ -779,6 +785,7 @@ def do_upgrade(auto_restart: bool = True) -> dict:
                 _spawn_delayed_restart(
                     get_restart_command(vibe_path=current_vibe_path),
                     safe_cwd,
+                    env=get_restart_environment(vibe_path=current_vibe_path),
                 )
                 restarting = True
 
