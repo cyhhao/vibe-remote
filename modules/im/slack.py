@@ -179,10 +179,15 @@ class SlackBot(BaseIMClient):
                 channel_id,
             )
 
-        canonical_dm_channel = await self._open_dm_channel(user_id)
+        try:
+            canonical_dm_channel = await self._open_dm_channel(user_id)
+        except Exception as exc:
+            logger.warning("Failed to resolve canonical Slack DM channel for user %s: %s", user_id, exc)
+            return None
         canonical_dm_channel = str(canonical_dm_channel or "").strip()
         if not canonical_dm_channel:
-            return None if not dm_chat_id else False
+            logger.warning("Slack returned no canonical DM channel for user %s during DM validation", user_id)
+            return None
         self._persist_bound_dm_channel(user_id, record, canonical_dm_channel)
         return canonical_dm_channel == channel_id
 

@@ -504,6 +504,111 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(received["called"])
 
+    async def test_bound_user_mismatched_dm_channel_lookup_error_falls_back_to_processing(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {}
+
+        class _Store:
+            def maybe_reload(self):
+                return None
+
+            def get_user(self, user_id, platform=None):
+                if user_id == "U123":
+                    return SimpleNamespace(dm_chat_id="D_STALE")
+                return None
+
+            def is_bound_user(self, user_id, platform=None):
+                return user_id == "U123"
+
+        class _SettingsManager:
+            def get_store(self):
+                return _Store()
+
+            def get_require_mention(self, _channel_id, global_default=False):
+                return global_default
+
+        class _WebClient:
+            async def conversations_open(self, users):
+                raise sys.modules["slack_sdk.errors"].SlackApiError(
+                    "rate limited",
+                    response={"error": "ratelimited"},
+                )
+
+        async def _on_message(_context, text):
+            received["text"] = text
+
+        slack.web_client = _WebClient()
+        slack.set_settings_manager(_SettingsManager())
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-dm-lookup-error",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "D_REAL",
+                "user": "U123",
+                "text": "hello after lookup error",
+                "ts": "1710000000.0002575",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"text": "hello after lookup error"})
+
+    async def test_bound_user_mismatched_dm_channel_missing_lookup_result_falls_back_to_processing(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {}
+
+        class _Store:
+            def maybe_reload(self):
+                return None
+
+            def get_user(self, user_id, platform=None):
+                if user_id == "U123":
+                    return SimpleNamespace(dm_chat_id="D_STALE")
+                return None
+
+            def is_bound_user(self, user_id, platform=None):
+                return user_id == "U123"
+
+        class _SettingsManager:
+            def get_store(self):
+                return _Store()
+
+            def get_require_mention(self, _channel_id, global_default=False):
+                return global_default
+
+        class _WebClient:
+            async def conversations_open(self, users):
+                return {"ok": False, "error": "ratelimited"}
+
+        async def _on_message(_context, text):
+            received["text"] = text
+
+        slack.web_client = _WebClient()
+        slack.set_settings_manager(_SettingsManager())
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-dm-lookup-none",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "D_REAL",
+                "user": "U123",
+                "text": "hello after empty lookup",
+                "ts": "1710000000.0002576",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"text": "hello after empty lookup"})
+
     async def test_bound_user_channel_message_is_not_blocked_by_dm_guard(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         received = {}
