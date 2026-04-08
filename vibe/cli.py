@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import math
 import os
 import shlex
 import shutil
@@ -118,6 +119,8 @@ def _print_task_error(exc: Exception, *, help_command: str | None = None) -> Non
 
 def _non_negative_float(value: str) -> float:
     parsed = float(value)
+    if not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError("must be finite")
     if parsed < 0:
         raise argparse.ArgumentTypeError("must be >= 0")
     return parsed

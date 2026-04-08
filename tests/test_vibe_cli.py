@@ -1,5 +1,6 @@
 import json
 import os
+import pytest
 import signal
 import sys
 from pathlib import Path
@@ -171,6 +172,14 @@ def test_restart_parser_accepts_delay_seconds():
 
     assert args.command == "restart"
     assert args.delay_seconds == 60
+
+
+@pytest.mark.parametrize("raw_value", ["nan", "inf", "-inf"])
+def test_restart_parser_rejects_non_finite_delay_seconds(raw_value):
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["restart", "--delay-seconds", raw_value])
 
 
 def test_stop_pid_handles_process_lookup_race(monkeypatch):
