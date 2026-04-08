@@ -348,6 +348,11 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
                     return SimpleNamespace(dm_chat_id="D_REAL")
                 return None
 
+            def find_channel(self, channel_id, platform=None):
+                if channel_id == "C123":
+                    return SimpleNamespace(enabled=True)
+                return None
+
             def is_bound_user(self, user_id, platform=None):
                 return user_id == "U123"
 
@@ -358,9 +363,15 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
             def get_require_mention(self, _channel_id, global_default=False):
                 return global_default
 
+        class _WebClient:
+            async def conversations_open(self, users):
+                assert users == ["U123"]
+                return {"ok": True, "channel": {"id": "D_REAL"}}
+
         async def _on_message(_context, _text):
             received["called"] = True
 
+        slack.web_client = _WebClient()
         slack.set_settings_manager(_SettingsManager())
         slack.register_callbacks(on_message=_on_message)
 
@@ -380,6 +391,169 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         await slack._handle_event(payload)
 
         self.assertFalse(received["called"])
+
+    async def test_bound_user_message_repairs_missing_dm_channel_binding(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {}
+        updates = []
+
+        class _Store:
+            def maybe_reload(self):
+                return None
+
+            def get_user(self, user_id, platform=None):
+                if user_id == "U123":
+                    return SimpleNamespace(dm_chat_id="")
+                return None
+
+            def update_user(self, user_id, settings, platform=None):
+                updates.append((user_id, getattr(settings, "dm_chat_id", ""), platform))
+
+            def is_bound_user(self, user_id, platform=None):
+                return user_id == "U123"
+
+        class _SettingsManager:
+            def get_store(self):
+                return _Store()
+
+            def get_require_mention(self, _channel_id, global_default=False):
+                return global_default
+
+        class _WebClient:
+            async def conversations_open(self, users):
+                assert users == ["U123"]
+                return {"ok": True, "channel": {"id": "D_REAL"}}
+
+        async def _on_message(_context, text):
+            received["text"] = text
+
+        slack.web_client = _WebClient()
+        slack.set_settings_manager(_SettingsManager())
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-dm-repair-missing-binding",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "D_REAL",
+                "user": "U123",
+                "text": "hello",
+                "ts": "1710000000.000255",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"text": "hello"})
+        self.assertEqual(updates, [("U123", "D_REAL", "slack")])
+
+    async def test_bound_user_missing_dm_channel_still_ignores_wrong_dm(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {"called": False}
+
+        class _Store:
+            def maybe_reload(self):
+                return None
+
+            def get_user(self, user_id, platform=None):
+                if user_id == "U123":
+                    return SimpleNamespace(dm_chat_id="")
+                return None
+
+            def update_user(self, user_id, settings, platform=None):
+                return None
+
+            def is_bound_user(self, user_id, platform=None):
+                return user_id == "U123"
+
+        class _SettingsManager:
+            def get_store(self):
+                return _Store()
+
+            def get_require_mention(self, _channel_id, global_default=False):
+                return global_default
+
+        class _WebClient:
+            async def conversations_open(self, users):
+                assert users == ["U123"]
+                return {"ok": True, "channel": {"id": "D_REAL"}}
+
+        async def _on_message(_context, _text):
+            received["called"] = True
+
+        slack.web_client = _WebClient()
+        slack.set_settings_manager(_SettingsManager())
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-dm-missing-binding-wrong-channel",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "D_OTHER",
+                "user": "U123",
+                "text": "hello",
+                "ts": "1710000000.000257",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertFalse(received["called"])
+
+    async def test_bound_user_channel_message_is_not_blocked_by_dm_guard(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {}
+
+        class _Store:
+            def maybe_reload(self):
+                return None
+
+            def get_user(self, user_id, platform=None):
+                if user_id == "U123":
+                    return SimpleNamespace(dm_chat_id="D_REAL")
+                return None
+
+            def find_channel(self, channel_id, platform=None):
+                if channel_id == "C123":
+                    return SimpleNamespace(enabled=True)
+                return None
+
+            def is_bound_user(self, user_id, platform=None):
+                return user_id == "U123"
+
+        class _SettingsManager:
+            def get_store(self):
+                return _Store()
+
+            def get_require_mention(self, _channel_id, global_default=False):
+                return global_default
+
+        async def _on_message(_context, text):
+            received["text"] = text
+
+        slack.set_settings_manager(_SettingsManager())
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-bound-user-channel-message",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C123",
+                "user": "U123",
+                "text": "hello from channel",
+                "ts": "1710000000.000258",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"text": "hello from channel"})
 
     async def test_bound_user_message_from_recorded_dm_channel_still_processes(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))

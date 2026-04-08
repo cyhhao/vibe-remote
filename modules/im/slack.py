@@ -135,16 +135,56 @@ class SlackBot(BaseIMClient):
             return None
         return record
 
-    def _match_bound_dm_channel(self, user_id: Optional[str], channel_id: Optional[str]) -> Optional[bool]:
+    def _persist_bound_dm_channel(self, user_id: str, record: Any, dm_channel_id: str) -> None:
+        normalized_channel_id = str(dm_channel_id or "").strip()
+        if not normalized_channel_id:
+            return
+        existing_channel_id = str(getattr(record, "dm_chat_id", "") or "").strip()
+        if existing_channel_id == normalized_channel_id:
+            return
+        setattr(record, "dm_chat_id", normalized_channel_id)
+        if self.settings_manager is None:
+            return
+        store_getter = getattr(self.settings_manager, "get_store", None)
+        if not callable(store_getter):
+            return
+        try:
+            store = store_getter()
+        except Exception:
+            logger.debug("Failed to access settings store for Slack DM persistence", exc_info=True)
+            return
+        try:
+            store.update_user(user_id, record, platform="slack")
+        except TypeError:
+            store.update_user(user_id, record)
+        except Exception:
+            logger.debug("Failed to persist Slack dm_chat_id for %s", user_id, exc_info=True)
+            return
+        logger.info("Updated recorded Slack dm_chat_id for user %s to %s", user_id, normalized_channel_id)
+
+    async def _match_bound_dm_channel(self, user_id: Optional[str], channel_id: Optional[str]) -> Optional[bool]:
         if not user_id or not channel_id:
             return None
         record = self._get_bound_user_record(user_id)
         if record is None:
             return None
         dm_chat_id = str(getattr(record, "dm_chat_id", "") or "").strip()
-        if not dm_chat_id:
-            return None
-        return dm_chat_id == channel_id
+        if dm_chat_id == channel_id:
+            return True
+        if dm_chat_id and dm_chat_id != channel_id:
+            logger.warning(
+                "Slack DM channel mismatch for user %s: recorded=%s incoming=%s",
+                user_id,
+                dm_chat_id,
+                channel_id,
+            )
+
+        canonical_dm_channel = await self._open_dm_channel(user_id)
+        canonical_dm_channel = str(canonical_dm_channel or "").strip()
+        if not canonical_dm_channel:
+            return None if not dm_chat_id else False
+        self._persist_bound_dm_channel(user_id, record, canonical_dm_channel)
+        return canonical_dm_channel == channel_id
 
     def _is_duplicate_event(self, event_id: Optional[str]) -> bool:
         """Deduplicate Slack events using event_id with a short TTL."""
@@ -285,7 +325,13 @@ class SlackBot(BaseIMClient):
     def _is_dm_context(self, context: MessageContext) -> bool:
         if not bool((context.platform_specific or {}).get("is_dm", False)) and not self._channel_looks_like_dm(context.channel_id):
             return False
-        return self._match_bound_dm_channel(context.user_id, context.channel_id) is not False
+        record = self._get_bound_user_record(context.user_id)
+        if record is None:
+            return True
+        dm_chat_id = str(getattr(record, "dm_chat_id", "") or "").strip()
+        if not dm_chat_id:
+            return True
+        return dm_chat_id == context.channel_id
 
     async def _open_dm_channel(self, user_id: str) -> Optional[str]:
         self._ensure_clients()
@@ -1244,15 +1290,16 @@ class SlackBot(BaseIMClient):
 
             channel_id = event.get("channel")
             user_id = event.get("user")
-            dm_match = self._match_bound_dm_channel(user_id, channel_id)
-            if dm_match is False:
-                logger.warning(
-                    "Ignoring Slack DM-like message from mismatched channel %s for user %s",
-                    channel_id,
-                    user_id,
-                )
-                return
             is_dm = self._channel_looks_like_dm(channel_id)
+            if is_dm:
+                dm_match = await self._match_bound_dm_channel(user_id, channel_id)
+                if dm_match is False:
+                    logger.warning(
+                        "Ignoring Slack DM-like message from mismatched channel %s for user %s",
+                        channel_id,
+                        user_id,
+                    )
+                    return
 
             # Check if this message contains a bot mention.
             # In channels, app_mention will handle it. In DMs, Slack does not
