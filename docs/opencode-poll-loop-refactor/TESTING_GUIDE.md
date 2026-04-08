@@ -279,7 +279,7 @@ vibe
 
 **Steps:**
 1. Send prompt with question
-2. **Before answering**, restart Vibe: `vibe stop && vibe`
+2. **Before answering**, restart Vibe: `vibe restart`
 3. Check session status
 4. Try to answer question
 

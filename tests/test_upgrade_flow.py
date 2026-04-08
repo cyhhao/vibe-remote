@@ -16,6 +16,7 @@ from vibe.upgrade import (
     get_current_vibe_bin_dir,
     get_latest_version_info,
     get_restart_command,
+    get_restart_environment,
     get_running_vibe_path,
     get_safe_cwd,
 )
@@ -267,6 +268,29 @@ def test_get_restart_command_falls_back_to_python_module(monkeypatch):
     assert command == ["/usr/bin/python3", "-c", "from vibe.cli import main; main()"]
 
 
+def test_get_restart_environment_adds_source_root_for_python_fallback(monkeypatch):
+    monkeypatch.delenv("VIBE_CURRENT_EXECUTABLE", raising=False)
+    monkeypatch.setattr("vibe.upgrade.shutil.which", lambda *args, **kwargs: None)
+
+    env = get_restart_environment(argv0="python", base_env={"PYTHONPATH": "/existing/path"})
+
+    source_root = str(Path(__file__).resolve().parents[1])
+    assert env is not None
+    assert env["PYTHONPATH"] == f"{source_root}{os.pathsep}/existing/path"
+
+
+def test_get_restart_environment_normalizes_relative_pythonpath_entries(monkeypatch, tmp_path):
+    monkeypatch.delenv("VIBE_CURRENT_EXECUTABLE", raising=False)
+    monkeypatch.setattr("vibe.upgrade.shutil.which", lambda *args, **kwargs: None)
+    monkeypatch.chdir(tmp_path)
+
+    env = get_restart_environment(argv0="python", base_env={"PYTHONPATH": f".{os.pathsep}src"})
+
+    source_root = str(Path(__file__).resolve().parents[1])
+    assert env is not None
+    assert env["PYTHONPATH"] == f"{source_root}{os.pathsep}{tmp_path}{os.pathsep}{tmp_path / 'src'}"
+
+
 def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     plan = UpgradePlan(
         command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],
@@ -278,6 +302,7 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     monkeypatch.setattr(api, "build_upgrade_plan", lambda **kwargs: plan)
     monkeypatch.setattr(api, "get_running_vibe_path", lambda: "/custom/bin/vibe")
     monkeypatch.setattr(api, "get_restart_command", lambda **kwargs: ["/custom/bin/vibe"])
+    monkeypatch.setattr(api, "get_restart_environment", lambda **kwargs: None)
     monkeypatch.setattr(api, "_delayed_restart_helper_command", lambda: ["/usr/bin/python3"])
 
     def fake_run(cmd, **kwargs):

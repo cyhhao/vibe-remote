@@ -148,6 +148,62 @@ def get_restart_command(
     return [python_executable or sys.executable, "-c", "from vibe.cli import main; main()"]
 
 
+def _get_source_checkout_root() -> str | None:
+    source_root = Path(__file__).resolve().parent.parent
+    if not source_root.is_dir():
+        return None
+    if not (source_root / "pyproject.toml").is_file():
+        return None
+    if not (source_root / "vibe" / "__init__.py").is_file():
+        return None
+    return str(source_root)
+
+
+def _normalize_pythonpath_entries(pythonpath: str) -> list[str]:
+    normalized_entries: list[str] = []
+    seen_entries: set[str] = set()
+
+    for entry in pythonpath.split(os.pathsep):
+        if not entry:
+            continue
+        normalized_entry = os.path.abspath(os.path.expanduser(entry))
+        if normalized_entry in seen_entries:
+            continue
+        seen_entries.add(normalized_entry)
+        normalized_entries.append(normalized_entry)
+
+    return normalized_entries
+
+
+def get_restart_environment(
+    *,
+    vibe_path: str | None = None,
+    argv0: str | None = None,
+    search_path: str | None = None,
+    base_env: Mapping[str, str] | None = None,
+) -> dict[str, str] | None:
+    resolved = get_running_vibe_path(vibe_path=vibe_path, argv0=argv0, search_path=search_path)
+    if resolved:
+        return None
+
+    source_root = _get_source_checkout_root()
+    if not source_root:
+        return None
+
+    env = dict(base_env or os.environ)
+    pythonpath = env.get("PYTHONPATH")
+    if pythonpath:
+        normalized_root = os.path.abspath(source_root)
+        normalized_entries = _normalize_pythonpath_entries(pythonpath)
+        if normalized_root not in normalized_entries:
+            normalized_entries.insert(0, normalized_root)
+        env["PYTHONPATH"] = os.pathsep.join(normalized_entries)
+        return env
+
+    env["PYTHONPATH"] = source_root
+    return env
+
+
 def get_restart_shell_command(
     *,
     vibe_path: str | None = None,

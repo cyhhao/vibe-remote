@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import math
 import os
 import shlex
 import shutil
@@ -36,7 +37,14 @@ from core.watches import (
     WatchRuntimeStateStore,
 )
 from vibe import __version__, api, runtime
-from vibe.upgrade import build_upgrade_plan, cache_running_vibe_path, get_latest_version_info, get_safe_cwd
+from vibe.upgrade import (
+    build_upgrade_plan,
+    cache_running_vibe_path,
+    get_latest_version_info,
+    get_restart_command,
+    get_restart_environment,
+    get_safe_cwd,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +115,15 @@ def _print_task_error(exc: Exception, *, help_command: str | None = None) -> Non
         if help_command:
             payload["help_command"] = help_command
     print(json.dumps(payload, indent=2), file=sys.stderr)
+
+
+def _non_negative_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError("must be finite")
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return parsed
 
 
 def _task_examples_text() -> str:
@@ -1945,7 +1962,7 @@ def cmd_upgrade():
         if result.returncode == 0:
             print("\033[32mUpgrade successful!\033[0m")
             print("Please restart vibe to use the new version:")
-            print("  vibe stop && vibe")
+            print("  vibe restart")
             return 0
         else:
             print(f"\033[31mUpgrade failed:\033[0m\n{result.stderr}")
@@ -1957,6 +1974,41 @@ def cmd_upgrade():
 
 def cmd_restart():
     """Restart all services (stop + start)."""
+    return _cmd_restart_with_delay(0.0)
+
+
+def _format_restart_delay(delay_seconds: float) -> str:
+    if delay_seconds == int(delay_seconds):
+        whole_seconds = int(delay_seconds)
+        if whole_seconds % 60 == 0:
+            minutes = whole_seconds // 60
+            if minutes == 1:
+                return "1 minute"
+            return f"{minutes} minutes"
+        if whole_seconds == 1:
+            return "1 second"
+        return f"{whole_seconds} seconds"
+    return f"{delay_seconds:g} seconds"
+
+
+def _schedule_delayed_restart(delay_seconds: float) -> int:
+    current_vibe_path = cache_running_vibe_path()
+    restart_command = [*get_restart_command(vibe_path=current_vibe_path), "restart"]
+    api._spawn_delayed_restart(
+        restart_command,
+        get_safe_cwd(),
+        delay_seconds=delay_seconds,
+        env=get_restart_environment(vibe_path=current_vibe_path),
+    )
+    print(f"Restart scheduled in {_format_restart_delay(delay_seconds)}.")
+    print("This command exits immediately; the delayed restart will run in the background.")
+    return 0
+
+
+def _cmd_restart_with_delay(delay_seconds: float) -> int:
+    if delay_seconds > 0:
+        return _schedule_delayed_restart(delay_seconds)
+
     print("Restarting vibe services...")
     cmd_stop()
     print("Waiting 3 seconds...")
@@ -1969,7 +2021,13 @@ def build_parser():
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("stop", help="Stop all services")
-    subparsers.add_parser("restart", help="Restart all services")
+    restart_parser = subparsers.add_parser("restart", help="Restart all services")
+    restart_parser.add_argument(
+        "--delay-seconds",
+        type=_non_negative_float,
+        default=0,
+        help="Schedule the restart to run asynchronously after N seconds, then exit immediately.",
+    )
     subparsers.add_parser("status", help="Show service status")
     subparsers.add_parser("doctor", help="Run diagnostics")
     subparsers.add_parser("version", help="Show version")
@@ -2327,7 +2385,7 @@ def main():
     if args.command == "stop":
         sys.exit(cmd_stop())
     if args.command == "restart":
-        sys.exit(cmd_restart())
+        sys.exit(_cmd_restart_with_delay(args.delay_seconds))
     if args.command == "status":
         sys.exit(cmd_status())
     if args.command == "doctor":
