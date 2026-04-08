@@ -328,15 +328,9 @@ class SlackBot(BaseIMClient):
         return isinstance(channel_id, str) and channel_id.startswith("D")
 
     def _is_dm_context(self, context: MessageContext) -> bool:
-        if not bool((context.platform_specific or {}).get("is_dm", False)) and not self._channel_looks_like_dm(context.channel_id):
-            return False
-        record = self._get_bound_user_record(context.user_id)
-        if record is None:
+        if bool((context.platform_specific or {}).get("is_dm", False)):
             return True
-        dm_chat_id = str(getattr(record, "dm_chat_id", "") or "").strip()
-        if not dm_chat_id:
-            return True
-        return dm_chat_id == context.channel_id
+        return self._channel_looks_like_dm(context.channel_id)
 
     async def _open_dm_channel(self, user_id: str) -> Optional[str]:
         self._ensure_clients()

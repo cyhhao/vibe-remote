@@ -196,6 +196,57 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.channel_id, "D999")
         self.assertIsNone(context.thread_id)
 
+    async def test_send_message_recovers_stale_dm_context_even_when_bound_channel_changed(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        sent_channels = []
+
+        class _WebClient:
+            def __init__(self):
+                self.fail_once = True
+
+            async def chat_postMessage(self, **kwargs):
+                sent_channels.append(kwargs["channel"])
+                if self.fail_once:
+                    self.fail_once = False
+                    raise sys.modules["slack_sdk.errors"].SlackApiError(
+                        "channel missing",
+                        response={"error": "channel_not_found"},
+                    )
+                return {"ts": "1710000000.000003"}
+
+            async def conversations_open(self, users):
+                assert users == ["U123"]
+                return {"ok": True, "channel": {"id": "D999"}}
+
+        class _Store:
+            def maybe_reload(self):
+                return None
+
+            def get_user(self, user_id, platform=None):
+                if user_id == "U123":
+                    return SimpleNamespace(dm_chat_id="D999")
+                return None
+
+        class _SettingsManager:
+            def get_store(self):
+                return _Store()
+
+        slack.web_client = _WebClient()
+        slack.set_settings_manager(_SettingsManager())
+        context = MessageContext(
+            user_id="U123",
+            channel_id="D_OLD",
+            thread_id="1710000000.000100",
+            platform_specific={"is_dm": True},
+        )
+
+        message_ts = await slack.send_message(context, "hello", parse_mode="markdown")
+
+        self.assertEqual(message_ts, "1710000000.000003")
+        self.assertEqual(sent_channels, ["D_OLD", "D999"])
+        self.assertEqual(context.channel_id, "D999")
+        self.assertIsNone(context.thread_id)
+
     async def test_send_message_with_buttons_splits_long_text_before_button_block(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         sent_payloads = []
