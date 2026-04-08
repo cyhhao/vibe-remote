@@ -3,6 +3,7 @@ import unittest
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 
 from config.v2_config import SlackConfig
 from modules.im.base import InlineButton, InlineKeyboard, MessageContext
@@ -327,6 +328,98 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
                 "user": "U123",
                 "text": "<@U_BOT> hello",
                 "ts": "1710000000.000200",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"text": "hello"})
+
+    async def test_bound_user_message_from_mismatched_dm_channel_is_ignored(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {"called": False}
+
+        class _Store:
+            def maybe_reload(self):
+                return None
+
+            def get_user(self, user_id, platform=None):
+                if user_id == "U123":
+                    return SimpleNamespace(dm_chat_id="D_REAL")
+                return None
+
+            def is_bound_user(self, user_id, platform=None):
+                return user_id == "U123"
+
+        class _SettingsManager:
+            def get_store(self):
+                return _Store()
+
+            def get_require_mention(self, _channel_id, global_default=False):
+                return global_default
+
+        async def _on_message(_context, _text):
+            received["called"] = True
+
+        slack.set_settings_manager(_SettingsManager())
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-dm-mismatch",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "D_OTHER",
+                "user": "U123",
+                "text": "hello",
+                "ts": "1710000000.000250",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertFalse(received["called"])
+
+    async def test_bound_user_message_from_recorded_dm_channel_still_processes(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        received = {}
+
+        class _Store:
+            def maybe_reload(self):
+                return None
+
+            def get_user(self, user_id, platform=None):
+                if user_id == "U123":
+                    return SimpleNamespace(dm_chat_id="D_REAL")
+                return None
+
+            def is_bound_user(self, user_id, platform=None):
+                return user_id == "U123"
+
+        class _SettingsManager:
+            def get_store(self):
+                return _Store()
+
+            def get_require_mention(self, _channel_id, global_default=False):
+                return global_default
+
+        async def _on_message(_context, text):
+            received["text"] = text
+
+        slack.set_settings_manager(_SettingsManager())
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-dm-match",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "D_REAL",
+                "user": "U123",
+                "text": "hello",
+                "ts": "1710000000.000260",
             },
         }
 

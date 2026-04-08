@@ -109,6 +109,43 @@ class SlackBot(BaseIMClient):
         lang = self._get_lang(channel_id)
         return i18n_t(key, lang, **kwargs)
 
+    def _get_bound_user_record(self, user_id: Optional[str]) -> Optional[Any]:
+        if not user_id or self.settings_manager is None:
+            return None
+        store_getter = getattr(self.settings_manager, "get_store", None)
+        if not callable(store_getter):
+            return None
+        try:
+            store = store_getter()
+        except Exception:
+            logger.debug("Failed to access settings store for Slack DM validation", exc_info=True)
+            return None
+        try:
+            store.maybe_reload()
+        except Exception:
+            logger.debug("Failed to reload settings store before Slack DM validation", exc_info=True)
+        try:
+            record = store.get_user(user_id, platform="slack")
+        except TypeError:
+            record = store.get_user(user_id)
+        except Exception:
+            logger.debug("Failed to read bound Slack user record for %s", user_id, exc_info=True)
+            return None
+        if record is None:
+            return None
+        return record
+
+    def _match_bound_dm_channel(self, user_id: Optional[str], channel_id: Optional[str]) -> Optional[bool]:
+        if not user_id or not channel_id:
+            return None
+        record = self._get_bound_user_record(user_id)
+        if record is None:
+            return None
+        dm_chat_id = str(getattr(record, "dm_chat_id", "") or "").strip()
+        if not dm_chat_id:
+            return None
+        return dm_chat_id == channel_id
+
     def _is_duplicate_event(self, event_id: Optional[str]) -> bool:
         """Deduplicate Slack events using event_id with a short TTL."""
         if not event_id:
@@ -242,10 +279,13 @@ class SlackBot(BaseIMClient):
             return text
 
     @staticmethod
-    def _is_dm_context(context: MessageContext) -> bool:
-        if bool((context.platform_specific or {}).get("is_dm", False)):
-            return True
-        return isinstance(context.channel_id, str) and context.channel_id.startswith("D")
+    def _channel_looks_like_dm(channel_id: Optional[str]) -> bool:
+        return isinstance(channel_id, str) and channel_id.startswith("D")
+
+    def _is_dm_context(self, context: MessageContext) -> bool:
+        if not bool((context.platform_specific or {}).get("is_dm", False)) and not self._channel_looks_like_dm(context.channel_id):
+            return False
+        return self._match_bound_dm_channel(context.user_id, context.channel_id) is not False
 
     async def _open_dm_channel(self, user_id: str) -> Optional[str]:
         self._ensure_clients()
@@ -1203,7 +1243,16 @@ class SlackBot(BaseIMClient):
                     return
 
             channel_id = event.get("channel")
-            is_dm = isinstance(channel_id, str) and channel_id.startswith("D")
+            user_id = event.get("user")
+            dm_match = self._match_bound_dm_channel(user_id, channel_id)
+            if dm_match is False:
+                logger.warning(
+                    "Ignoring Slack DM-like message from mismatched channel %s for user %s",
+                    channel_id,
+                    user_id,
+                )
+                return
+            is_dm = self._channel_looks_like_dm(channel_id)
 
             # Check if this message contains a bot mention.
             # In channels, app_mention will handle it. In DMs, Slack does not
@@ -1231,7 +1280,6 @@ class SlackBot(BaseIMClient):
             has_shared_content = self._has_shared_attachments(event)
 
             # Ignore messages without user or without actual text/files/shared content
-            user_id = event.get("user")
             if not user_id:
                 logger.debug("Ignoring Slack message without user id")
                 return
@@ -1250,7 +1298,7 @@ class SlackBot(BaseIMClient):
                     channel_id, global_default=self.config.require_mention
                 )
 
-            if effective_require_mention and not channel_id.startswith("D"):
+            if effective_require_mention and not is_dm:
                 # In channel main thread: require mention (silently ignore)
                 if not is_thread_reply:
                     logger.debug(f"Ignoring non-mention message in channel: '{text}'")
