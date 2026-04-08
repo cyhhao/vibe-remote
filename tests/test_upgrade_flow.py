@@ -279,6 +279,18 @@ def test_get_restart_environment_adds_source_root_for_python_fallback(monkeypatc
     assert env["PYTHONPATH"] == f"{source_root}{os.pathsep}/existing/path"
 
 
+def test_get_restart_environment_normalizes_relative_pythonpath_entries(monkeypatch, tmp_path):
+    monkeypatch.delenv("VIBE_CURRENT_EXECUTABLE", raising=False)
+    monkeypatch.setattr("vibe.upgrade.shutil.which", lambda *args, **kwargs: None)
+    monkeypatch.chdir(tmp_path)
+
+    env = get_restart_environment(argv0="python", base_env={"PYTHONPATH": f".{os.pathsep}src"})
+
+    source_root = str(Path(__file__).resolve().parents[1])
+    assert env is not None
+    assert env["PYTHONPATH"] == f"{source_root}{os.pathsep}{tmp_path}{os.pathsep}{tmp_path / 'src'}"
+
+
 def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     plan = UpgradePlan(
         command=["/usr/local/bin/uv", "tool", "install", "vibe-remote", "--upgrade"],

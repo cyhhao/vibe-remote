@@ -159,6 +159,22 @@ def _get_source_checkout_root() -> str | None:
     return str(source_root)
 
 
+def _normalize_pythonpath_entries(pythonpath: str) -> list[str]:
+    normalized_entries: list[str] = []
+    seen_entries: set[str] = set()
+
+    for entry in pythonpath.split(os.pathsep):
+        if not entry:
+            continue
+        normalized_entry = os.path.abspath(os.path.expanduser(entry))
+        if normalized_entry in seen_entries:
+            continue
+        seen_entries.add(normalized_entry)
+        normalized_entries.append(normalized_entry)
+
+    return normalized_entries
+
+
 def get_restart_environment(
     *,
     vibe_path: str | None = None,
@@ -178,14 +194,10 @@ def get_restart_environment(
     pythonpath = env.get("PYTHONPATH")
     if pythonpath:
         normalized_root = os.path.abspath(source_root)
-        normalized_entries = {
-            os.path.abspath(os.path.expanduser(entry))
-            for entry in pythonpath.split(os.pathsep)
-            if entry
-        }
-        if normalized_root in normalized_entries:
-            return env
-        env["PYTHONPATH"] = os.pathsep.join((source_root, pythonpath))
+        normalized_entries = _normalize_pythonpath_entries(pythonpath)
+        if normalized_root not in normalized_entries:
+            normalized_entries.insert(0, normalized_root)
+        env["PYTHONPATH"] = os.pathsep.join(normalized_entries)
         return env
 
     env["PYTHONPATH"] = source_root
