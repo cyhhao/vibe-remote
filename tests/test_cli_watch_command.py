@@ -230,6 +230,39 @@ def test_watch_add_accepts_existing_relative_script_from_current_cwd(
     assert payload["watch"]["command"] == ["python3", "scripts/wait.py"]
 
 
+def test_watch_add_allows_path_resolved_script_executable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "wait_pr.py",
+            "--repo",
+            "cyhhao/vibe-remote",
+            "--pr",
+            "179",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
+    ):
+        result = cli.cmd_watch_add(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["watch"]["command"] == ["wait_pr.py", "--repo", "cyhhao/vibe-remote", "--pr", "179"]
+
+
 def test_watch_add_skips_uv_option_values_before_script_probe(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:

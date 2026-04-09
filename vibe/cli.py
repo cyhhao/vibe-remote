@@ -794,7 +794,7 @@ def _looks_like_script_path(token: str) -> bool:
     if not token or token == "--" or token.startswith("-"):
         return False
     path = Path(token)
-    return path.is_absolute() or path.suffix in {".py", ".sh", ".bash", ".zsh"} or "/" in token or "\\" in token
+    return path.is_absolute() or "/" in token or "\\" in token
 
 
 _PYTHON_RUNNER_RE = re.compile(r"^python(?:\d+(?:\.\d+)*)?$")
