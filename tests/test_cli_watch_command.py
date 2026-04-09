@@ -268,6 +268,30 @@ def test_watch_add_skips_uv_option_values_before_script_probe(
     assert payload["watch"]["command"] == ["uv", "run", "--project", str(project_dir), "scripts/wait.py"]
 
 
+def test_watch_add_preflights_script_after_valueless_uv_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "uv",
+            "run",
+            "-n",
+            "scripts/wait.py",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "scripts/wait.py"
+    assert payload["details"]["resolved_path"] == str((tmp_path / "scripts" / "wait.py").resolve())
+
+
 def test_watch_add_resolves_script_from_uv_directory_override(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:

@@ -837,7 +837,7 @@ UV_RUN_OPTIONS_WITH_VALUES = {
     "--config-file",
 }
 
-UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-w", "-i", "-f", "-U", "-P", "-C", "-n", "-p", "-m"}
+UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-w", "-i", "-f", "-P", "-C", "-p"}
 
 
 def _split_uv_run_command(tokens: list[str]) -> tuple[list[str], str | None]:
