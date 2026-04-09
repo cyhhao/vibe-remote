@@ -847,6 +847,8 @@ UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-w", "-i", "-f", "-P", "-C", "-p"}
 
 PYTHON_OPTIONS_WITH_VALUES = {"-W", "-X"}
 PYTHON_OPTIONS_WITHOUT_SCRIPT = {"-c", "-m"}
+SHELL_LONG_OPTIONS_WITH_VALUES = {"--init-file", "--rcfile"}
+SHELL_SHORT_OPTIONS_WITH_VALUES = {"-o", "-O"}
 
 
 def _split_uv_run_command(tokens: list[str]) -> tuple[list[str], str | None]:
@@ -919,7 +921,15 @@ def _extract_shell_script_path(tokens: list[str]) -> str | None:
         if token == "--":
             index += 1
             break
-        if token == "-c" or (token.startswith("-") and "c" in token[1:]):
+        if token == "-c":
+            return None
+        if token in SHELL_LONG_OPTIONS_WITH_VALUES or token in SHELL_SHORT_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
+        if any(token.startswith(f"{option}=") for option in SHELL_LONG_OPTIONS_WITH_VALUES):
+            index += 1
+            continue
+        if token.startswith("-") and not token.startswith("--") and "c" in token[1:]:
             return None
         if token.startswith("-"):
             index += 1

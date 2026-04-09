@@ -360,6 +360,55 @@ def test_watch_add_preflights_script_after_shell_flag(monkeypatch: pytest.Monkey
     assert payload["details"]["script"] == "scripts/wait.sh"
 
 
+def test_watch_add_preflights_script_after_shell_long_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "bash",
+            "--norc",
+            "scripts/wait.sh",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "scripts/wait.sh"
+
+
+def test_watch_add_preflights_script_after_shell_option_with_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rcfile = tmp_path / "bashrc"
+    rcfile.write_text("# rc\n")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "bash",
+            "--rcfile",
+            str(rcfile),
+            "scripts/wait.sh",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "scripts/wait.sh"
+
+
 def test_watch_add_does_not_treat_shell_command_string_as_script(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:
