@@ -229,9 +229,9 @@ def _watch_examples_text() -> str:
     return dedent(
         """\
         Examples:
-          vibe watch add --session-key 'slack::channel::C123' --name 'Wait for export' --shell 'python3 scripts/wait_for_export.py'
-          vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The CI job finished.' -- python3 scripts/wait_for_ci.py --build 42
-          vibe watch add --session-key 'slack::channel::C123' --forever --retry-exit-code 75 --retry-delay 60 --shell 'bash scripts/wait_for_log_pattern.sh'
+          vibe watch add --session-key 'slack::channel::C123' --cwd /path/to/repo --name 'Wait for export' --shell 'python3 scripts/wait_for_export.py'
+          vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --cwd /path/to/repo --post-to channel --prefix 'The CI job finished.' -- python3 scripts/wait_for_ci.py --build 42
+          vibe watch add --session-key 'slack::channel::C123' --forever --retry-exit-code 75 --retry-delay 60 -- uv run --no-project /path/to/repo/skills/background-watch-hook/scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
           vibe watch list --brief
           vibe watch show 12ab34cd56ef
           vibe watch pause 12ab34cd56ef
@@ -262,12 +262,14 @@ def _watch_add_examples_text() -> str:
           Terminal failures also send a follow-up and disable the watch.
           In forever mode, failures are retried only when the waiter exits with an allowed `--retry-exit-code`.
           Pass either --shell '<command>' or a command after '--'.
+          Creation-time script checks resolve relative script paths from --cwd when provided, otherwise from the current CLI working directory.
+          If the managed watch must run from a different directory later, prefer an absolute script path or set --cwd explicitly.
           --timeout applies to each cycle. --lifetime-timeout applies only to the whole forever watch lifetime.
 
         Examples:
-          vibe watch add --session-key 'slack::channel::C123' --shell 'python3 scripts/wait_for_export.py'
+          vibe watch add --session-key 'slack::channel::C123' --cwd /path/to/repo --shell 'python3 scripts/wait_for_export.py'
           vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The export finished.' -- bash -lc 'sleep 120; echo done'
-          vibe watch add --session-key 'slack::channel::C123' --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 75 --retry-delay 30 -- uv run --no-project scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
+          vibe watch add --session-key 'slack::channel::C123' --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 75 --retry-delay 30 -- uv run --no-project /path/to/repo/skills/background-watch-hook/scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
         """
     )
 
@@ -784,6 +786,81 @@ def _resolve_watch_command(args, *, help_command: str) -> tuple[list[str], Optio
         code="missing_watch_command",
         hint="Pass a shell command with --shell, or add the watcher executable and its args after '--'.",
         help_command=help_command,
+    )
+
+
+def _looks_like_script_path(token: str) -> bool:
+    if not token or token == "--" or token.startswith("-"):
+        return False
+    path = Path(token)
+    return path.is_absolute() or path.suffix in {".py", ".sh", ".bash", ".zsh"} or "/" in token or "\\" in token
+
+
+def _extract_watch_script_path(tokens: list[str]) -> str | None:
+    if not tokens:
+        return None
+
+    runner = Path(tokens[0]).name
+    if runner in {"python", "python3", "bash", "sh"}:
+        if len(tokens) > 1 and _looks_like_script_path(tokens[1]):
+            return tokens[1]
+        return None
+
+    if runner == "uv" and len(tokens) > 2 and tokens[1] == "run":
+        for token in tokens[2:]:
+            if _looks_like_script_path(token):
+                return token
+        return None
+
+    return None
+
+
+def _resolve_watch_script_probe(command: list[str], shell_command: str | None) -> str | None:
+    if shell_command:
+        try:
+            return _extract_watch_script_path(shlex.split(shell_command))
+        except ValueError:
+            return None
+    return _extract_watch_script_path(command)
+
+
+def _validate_watch_script_preflight(
+    command: list[str],
+    shell_command: str | None,
+    *,
+    cwd: str | None,
+    help_command: str,
+) -> None:
+    script_path = _resolve_watch_script_probe(command, shell_command)
+    if not script_path:
+        return
+
+    candidate = Path(script_path).expanduser()
+    checked_from = None
+    if not candidate.is_absolute():
+        checked_from = str(Path(cwd).resolve() if cwd else Path.cwd().resolve())
+        candidate = (Path(checked_from) / candidate).resolve()
+
+    if candidate.is_file():
+        return
+
+    hint = "Fix the script path or use an absolute path."
+    if checked_from is not None:
+        hint = (
+            "Fix the script path, create the watch from the directory that contains it, "
+            "pass --cwd, or use an absolute path."
+        )
+
+    raise TaskCliError(
+        f"watch script not found: {script_path}",
+        code="invalid_watch_script",
+        hint=hint,
+        help_command=help_command,
+        details={
+            "script": script_path,
+            "resolved_path": str(candidate),
+            "checked_from": checked_from,
+        },
     )
 
 
@@ -1366,6 +1443,8 @@ def cmd_watch_add(args):
                     details={"cwd": cwd},
                 )
             cwd = str(resolved)
+
+        _validate_watch_script_preflight(command, shell_command, cwd=cwd, help_command="vibe watch add --help")
 
         retry_exit_codes = sorted(set(args.retry_exit_code or [DEFAULT_RETRY_EXIT_CODE]))
         store = _watch_store()

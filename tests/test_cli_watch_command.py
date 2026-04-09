@@ -49,6 +49,11 @@ def _startup_ok(store: ManagedWatchStore, runtime_store: WatchRuntimeStateStore,
     return store.get_watch(watch_id), runtime_store.load().get("watches", {}).get(watch_id)
 
 
+def _write_script(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("print('ok')\n")
+
+
 def test_watch_help_describes_session_key_guidance(capsys) -> None:
     parser = cli.build_parser()
 
@@ -143,9 +148,94 @@ def test_watch_add_rejects_missing_cwd() -> None:
     assert payload["code"] == "invalid_watch_cwd"
 
 
-def test_watch_add_creates_shell_watch(tmp_path: Path, capsys) -> None:
+def test_watch_add_rejects_missing_relative_script_from_current_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "uv",
+            "run",
+            "--no-project",
+            "scripts/wait_pr.py",
+            "--repo",
+            "cyhhao/vibe-remote",
+            "--pr",
+            "178",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "scripts/wait_pr.py"
+    assert payload["details"]["resolved_path"] == str((tmp_path / "scripts" / "wait_pr.py").resolve())
+
+
+def test_watch_add_rejects_missing_relative_script_from_explicit_cwd(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--cwd",
+            str(repo_root),
+            "--shell",
+            "python3 scripts/wait.py",
+        ]
+    )
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["resolved_path"] == str((repo_root / "scripts" / "wait.py").resolve())
+    assert payload["details"]["checked_from"] == str(repo_root.resolve())
+
+
+def test_watch_add_accepts_existing_relative_script_from_current_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
     store = ManagedWatchStore(tmp_path / "watches.json")
     runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    script_path = tmp_path / "scripts" / "wait.py"
+    script_path.parent.mkdir()
+    script_path.write_text("print('ok')\n")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "python3",
+            "scripts/wait.py",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
+    ):
+        result = cli.cmd_watch_add(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["watch"]["command"] == ["python3", "scripts/wait.py"]
+
+
+def test_watch_add_creates_shell_watch(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    _write_script(tmp_path / "scripts" / "wait.py")
     args = _parse_watch_add(
         [
             "--session-key",
@@ -158,6 +248,8 @@ def test_watch_add_creates_shell_watch(tmp_path: Path, capsys) -> None:
             "python3 scripts/wait.py",
         ]
     )
+
+    monkeypatch.chdir(tmp_path)
 
     with (
         patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
@@ -177,9 +269,12 @@ def test_watch_add_creates_shell_watch(tmp_path: Path, capsys) -> None:
     assert payload["watch"]["retry_exit_codes"] == [75]
 
 
-def test_watch_add_creates_exec_watch_with_retry_codes(tmp_path: Path, capsys) -> None:
+def test_watch_add_creates_exec_watch_with_retry_codes(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = ManagedWatchStore(tmp_path / "watches.json")
     runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    _write_script(tmp_path / "scripts" / "wait.py")
     args = _parse_watch_add(
         [
             "--session-key",
@@ -200,6 +295,8 @@ def test_watch_add_creates_exec_watch_with_retry_codes(tmp_path: Path, capsys) -
             "42",
         ]
     )
+
+    monkeypatch.chdir(tmp_path)
 
     with (
         patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
@@ -247,9 +344,12 @@ def test_watch_add_persists_absolute_cwd(tmp_path: Path, capsys, monkeypatch: py
     assert payload["watch"]["cwd"] == str(workdir.resolve())
 
 
-def test_watch_add_returns_structured_error_when_startup_fails(tmp_path: Path) -> None:
+def test_watch_add_returns_structured_error_when_startup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = ManagedWatchStore(tmp_path / "watches.json")
     runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    _write_script(tmp_path / "scripts" / "wait.py")
     args = _parse_watch_add(
         [
             "--session-key",
@@ -258,6 +358,8 @@ def test_watch_add_returns_structured_error_when_startup_fails(tmp_path: Path) -
             "python3 scripts/wait.py",
         ]
     )
+
+    monkeypatch.chdir(tmp_path)
 
     with (
         patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),

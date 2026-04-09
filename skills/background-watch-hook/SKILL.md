@@ -29,7 +29,7 @@ Prefer `vibe watch` when the wait should be inspectable, pausable, resumable, or
   Main entrypoint. Starts a managed background watch and sends a follow-up hook after the waiter succeeds or reaches a terminal failure.
 - `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, `vibe watch remove`
   Use these to inspect and manage the watch after creation.
-- `scripts/wait_pr.py`
+- `skills/background-watch-hook/scripts/wait_pr.py`
   Bundled waiter example for one common case: GitHub PR review activity.
 
 ## Use `vibe watch` First
@@ -155,13 +155,14 @@ This separation matters: a forever watch can still use a bounded timeout for eac
 
 This skill ships bundled GitHub waiters:
 
-- `scripts/wait_pr.py`
+- `skills/background-watch-hook/scripts/wait_pr.py`
   Waits for GitHub PR review activity, including reviews, inline review comments, PR conversation comments, PR status transitions such as `draft -> open`, `open -> merged`, or `open -> closed`, and the special Codex `+1` reaction on the PR body. It can also wait for newly opened PRs in a repository.
-- `scripts/wait_issue.py`
+- `skills/background-watch-hook/scripts/wait_issue.py`
   Waits for GitHub issue activity, either newly opened issues in a repository or new comments on a single issue.
 
 Use bundled waiters as examples or as ready-to-run building blocks. The main skill is still `vibe watch`; the waiter is only the thing that blocks until the condition is met.
 When running a bundled script through `uv`, prefer `uv run --no-project ...` so the script does not accidentally attach itself to an unrelated parent project.
+When using a relative script path, prefer setting `--cwd` so the creation-time script check and the managed runtime agree about where the script lives.
 Bundled GitHub waiters use exit code `75` for retryable startup errors such as temporary network failures or GitHub `408/429/5xx` responses.
 
 ## GitHub Example Waiter
@@ -173,10 +174,11 @@ One-shot watch:
 ```bash
 vibe watch add \
   --session-key "slack::channel::C123::thread::171717.123" \
+  --cwd /path/to/repo \
   --name "Watch PR 151 reviews" \
   --prefix "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
   -- \
-  uv run --no-project scripts/wait_pr.py \
+  uv run --no-project skills/background-watch-hook/scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
     --pr 151 \
     --interval 60
@@ -187,10 +189,11 @@ Catch up on existing activity first:
 ```bash
 vibe watch add \
   --session-key "slack::channel::C123::thread::171717.123" \
+  --cwd /path/to/repo \
   --name "Catch up PR 151 reviews" \
   --prefix "PR #151 already has review activity. Fetch the latest review state and continue handling it if needed." \
   -- \
-  uv run --no-project scripts/wait_pr.py \
+  uv run --no-project skills/background-watch-hook/scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
     --pr 151 \
     --catch-up
@@ -201,13 +204,14 @@ Stay armed for future activity:
 ```bash
 vibe watch add \
   --session-key "slack::channel::C123::thread::171717.123" \
+  --cwd /path/to/repo \
   --name "Monitor PR 151 reviews" \
   --forever \
   --timeout 21600 \
   --lifetime-timeout 86400 \
   --prefix "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
   -- \
-  uv run --no-project scripts/wait_pr.py \
+  uv run --no-project skills/background-watch-hook/scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
     --pr 151 \
     --interval 60
@@ -227,10 +231,11 @@ New PRs in a repository:
 ```bash
 vibe watch add \
   --session-key "slack::channel::C123::thread::171717.123" \
+  --cwd /path/to/repo \
   --name "Watch new PRs" \
   --prefix "The repository has new pull requests. Review the new PRs and continue as needed." \
   -- \
-  uv run --no-project scripts/wait_pr.py \
+  uv run --no-project skills/background-watch-hook/scripts/wait_pr.py \
     --repo cyhhao/vibe-remote \
     --new-prs \
     --interval 60
@@ -239,8 +244,8 @@ vibe watch add \
 New issues or issue comments:
 
 ```bash
-uv run --no-project scripts/wait_issue.py --repo cyhhao/vibe-remote --new-issues --interval 60
-uv run --no-project scripts/wait_issue.py --repo cyhhao/vibe-remote --issue 157 --interval 60
+uv run --no-project skills/background-watch-hook/scripts/wait_issue.py --repo cyhhao/vibe-remote --new-issues --interval 60
+uv run --no-project skills/background-watch-hook/scripts/wait_issue.py --repo cyhhao/vibe-remote --issue 157 --interval 60
 ```
 
 ## Practical Advice
