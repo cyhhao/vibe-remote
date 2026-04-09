@@ -299,6 +299,35 @@ def test_watch_add_skips_uv_option_values_before_script_probe(
     assert payload["watch"]["command"] == ["uv", "run", "--project", str(project_dir), "scripts/wait.py"]
 
 
+def test_watch_add_preflights_script_after_uv_global_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "uv",
+            "--directory",
+            str(repo_root),
+            "run",
+            "scripts/wait.py",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "scripts/wait.py"
+    assert payload["details"]["checked_from"] == str(repo_root.resolve())
+
+
 def test_watch_add_preflights_script_after_valueless_uv_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = _parse_watch_add(
         [
@@ -413,6 +442,68 @@ def test_watch_add_preflights_plain_python_filename(monkeypatch: pytest.MonkeyPa
     assert result == 1
     assert payload["code"] == "invalid_watch_script"
     assert payload["details"]["script"] == "waiter"
+
+
+def test_watch_add_allows_python_compact_module_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "python3",
+            "-mhttp.server",
+            "8000",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
+    ):
+        result = cli.cmd_watch_add(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["watch"]["command"] == ["python3", "-mhttp.server", "8000"]
+
+
+def test_watch_add_allows_python_compact_command_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "python3",
+            "-cprint(1)",
+            "foo",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
+    ):
+        result = cli.cmd_watch_add(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["watch"]["command"] == ["python3", "-cprint(1)", "foo"]
 
 
 def test_watch_add_preflights_script_after_shell_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

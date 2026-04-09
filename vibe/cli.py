@@ -886,6 +886,43 @@ def _split_uv_run_command(tokens: list[str]) -> tuple[list[str], str | None]:
     return [], effective_cwd
 
 
+def _split_uv_command(tokens: list[str]) -> tuple[str | None, list[str], str | None]:
+    effective_cwd: str | None = None
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return None, [], effective_cwd
+        if token == "run":
+            return token, [tokens[0], *tokens[index:]], effective_cwd
+        if token == "--directory":
+            if index + 1 < len(tokens):
+                effective_cwd = tokens[index + 1]
+            index += 2
+            continue
+        if token.startswith("--directory="):
+            effective_cwd = token.split("=", 1)[1]
+            index += 1
+            continue
+        if token in UV_RUN_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
+        if token in UV_RUN_SHORT_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
+        if token.startswith("--") and "=" in token:
+            index += 1
+            continue
+        if token.startswith("-") and len(token) > 2 and token[:2] in UV_RUN_SHORT_OPTIONS_WITH_VALUES:
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return token, tokens[index:], effective_cwd
+    return None, [], effective_cwd
+
+
 def _extract_python_script_path(tokens: list[str]) -> str | None:
     index = 1
     while index < len(tokens):
@@ -894,6 +931,8 @@ def _extract_python_script_path(tokens: list[str]) -> str | None:
             index += 1
             break
         if token in PYTHON_OPTIONS_WITHOUT_SCRIPT:
+            return None
+        if any(token.startswith(option) and token != option for option in PYTHON_OPTIONS_WITHOUT_SCRIPT):
             return None
         if token in PYTHON_OPTIONS_WITH_VALUES:
             index += 2
@@ -931,10 +970,12 @@ def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | No
     if runner in {"bash", "sh"}:
         return _extract_shell_script_path(tokens), None
 
-    if runner == "uv" and len(tokens) > 2 and tokens[1] == "run":
-        inner_tokens, effective_cwd = _split_uv_run_command(tokens)
-        script_path, nested_cwd = _extract_watch_script_probe_from_tokens(inner_tokens)
-        return script_path, nested_cwd or effective_cwd
+    if runner == "uv":
+        subcommand, uv_tokens, global_cwd = _split_uv_command(tokens)
+        if subcommand == "run":
+            inner_tokens, effective_cwd = _split_uv_run_command(uv_tokens)
+            script_path, nested_cwd = _extract_watch_script_probe_from_tokens(inner_tokens)
+            return script_path, nested_cwd or effective_cwd or global_cwd
 
     if _looks_like_script_path(tokens[0]):
         return tokens[0], None
