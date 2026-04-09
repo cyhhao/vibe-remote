@@ -1,6 +1,5 @@
 import json
 import os
-import pytest
 import signal
 import sys
 from pathlib import Path
@@ -100,13 +99,12 @@ def test_cmd_restart_schedules_delayed_restart(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "cache_running_vibe_path", lambda: "/usr/local/bin/vibe")
     monkeypatch.setattr(cli, "get_restart_command", lambda vibe_path=None: [vibe_path or "vibe"])
-    monkeypatch.setattr(cli, "get_restart_environment", lambda vibe_path=None: None)
     monkeypatch.setattr(cli, "get_safe_cwd", lambda: "/tmp")
     monkeypatch.setattr(
         cli.api,
         "_spawn_delayed_restart",
-        lambda command, cwd, delay_seconds=2.0, env=None: scheduled.update(
-            {"command": command, "cwd": cwd, "delay_seconds": delay_seconds, "env": env}
+        lambda command, cwd, delay_seconds=2.0: scheduled.update(
+            {"command": command, "cwd": cwd, "delay_seconds": delay_seconds}
         ),
     )
     monkeypatch.setattr(cli, "cmd_stop", lambda: stop_called.append(True))
@@ -117,7 +115,6 @@ def test_cmd_restart_schedules_delayed_restart(monkeypatch, capsys):
         "command": ["/usr/local/bin/vibe", "restart"],
         "cwd": "/tmp",
         "delay_seconds": 60,
-        "env": None,
     }
     assert stop_called == []
     assert start_called == []
@@ -125,34 +122,6 @@ def test_cmd_restart_schedules_delayed_restart(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "Restart scheduled in 1 minute." in output
     assert "delayed restart will run in the background" in output
-
-
-def test_cmd_restart_schedules_delayed_restart_with_import_env(monkeypatch):
-    scheduled = {}
-
-    monkeypatch.setattr(cli, "cache_running_vibe_path", lambda: None)
-    monkeypatch.setattr(
-        cli,
-        "get_restart_command",
-        lambda vibe_path=None: [sys.executable, "-c", "from vibe.cli import main; main()"],
-    )
-    monkeypatch.setattr(cli, "get_restart_environment", lambda vibe_path=None: {"PYTHONPATH": "/repo"})
-    monkeypatch.setattr(cli, "get_safe_cwd", lambda: "/tmp")
-    monkeypatch.setattr(
-        cli.api,
-        "_spawn_delayed_restart",
-        lambda command, cwd, delay_seconds=2.0, env=None: scheduled.update(
-            {"command": command, "cwd": cwd, "delay_seconds": delay_seconds, "env": env}
-        ),
-    )
-
-    assert cli._cmd_restart_with_delay(5) == 0
-    assert scheduled == {
-        "command": [sys.executable, "-c", "from vibe.cli import main; main()", "restart"],
-        "cwd": "/tmp",
-        "delay_seconds": 5,
-        "env": {"PYTHONPATH": "/repo"},
-    }
 
 
 def test_cmd_restart_runs_synchronously_by_default(monkeypatch):
@@ -172,14 +141,6 @@ def test_restart_parser_accepts_delay_seconds():
 
     assert args.command == "restart"
     assert args.delay_seconds == 60
-
-
-@pytest.mark.parametrize("raw_value", ["nan", "inf", "-inf"])
-def test_restart_parser_rejects_non_finite_delay_seconds(raw_value):
-    parser = cli.build_parser()
-
-    with pytest.raises(SystemExit):
-        parser.parse_args(["restart", "--delay-seconds", raw_value])
 
 
 def test_stop_pid_handles_process_lookup_race(monkeypatch):

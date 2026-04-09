@@ -2,7 +2,7 @@
 name: use-sentry-cli-debug
 slug: use-sentry-cli-debug
 description: Use the official Sentry CLI to investigate issues, events, traces, and logs for Vibe Remote without committing Sentry credentials into the repository.
-version: 0.1.0
+version: 0.1.1
 ---
 
 # Use Sentry CLI Debug
@@ -16,6 +16,20 @@ Use this skill when the user asks to inspect Sentry issues, events, traces, logs
 3. Keep output small. Prefer `--json --fields ...`, `--limit ...`, and `jq` when filtering.
 4. Stay read-only by default. Do not resolve, mute, delete, or otherwise mutate Sentry state unless the user explicitly asks.
 5. Verify CLI context before debugging. Run `sentry auth status`, then confirm the target org/project if auto-detection looks ambiguous.
+
+## Issue Status Guidance
+
+When the user asks how to mark an issue that is already fixed on `master` but not yet released or validated in a real environment, recommend `Resolved in next release`.
+
+Use that status for this specific state:
+
+- code is merged to `master`
+- the fix is not released yet, or not verified in the real target environment yet
+- the user does not want to mark it as fully resolved now
+
+Do not recommend plain `Resolved` for that case unless the user explicitly wants it.
+
+If the current `sentry` CLI build cannot mutate issue state directly, say so plainly and recommend changing the status in the Sentry UI or via a targeted API call only when the user explicitly asks you to perform the mutation.
 
 ## Prerequisites
 

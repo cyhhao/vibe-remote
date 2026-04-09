@@ -40,7 +40,6 @@ from modules.agents.native_sessions.types import NativeResumeSession
 logger = logging.getLogger(__name__)
 
 _UNSET = object()
-_SLACK_SECTION_TEXT_LIMIT = 3000
 
 
 class SlackBot(BaseIMClient):
@@ -135,61 +134,16 @@ class SlackBot(BaseIMClient):
             return None
         return record
 
-    def _persist_bound_dm_channel(self, user_id: str, record: Any, dm_channel_id: str) -> None:
-        normalized_channel_id = str(dm_channel_id or "").strip()
-        if not normalized_channel_id:
-            return
-        existing_channel_id = str(getattr(record, "dm_chat_id", "") or "").strip()
-        if existing_channel_id == normalized_channel_id:
-            return
-        setattr(record, "dm_chat_id", normalized_channel_id)
-        if self.settings_manager is None:
-            return
-        store_getter = getattr(self.settings_manager, "get_store", None)
-        if not callable(store_getter):
-            return
-        try:
-            store = store_getter()
-        except Exception:
-            logger.debug("Failed to access settings store for Slack DM persistence", exc_info=True)
-            return
-        try:
-            store.update_user(user_id, record, platform="slack")
-        except TypeError:
-            store.update_user(user_id, record)
-        except Exception:
-            logger.debug("Failed to persist Slack dm_chat_id for %s", user_id, exc_info=True)
-            return
-        logger.info("Updated recorded Slack dm_chat_id for user %s to %s", user_id, normalized_channel_id)
-
-    async def _match_bound_dm_channel(self, user_id: Optional[str], channel_id: Optional[str]) -> Optional[bool]:
+    def _match_bound_dm_channel(self, user_id: Optional[str], channel_id: Optional[str]) -> Optional[bool]:
         if not user_id or not channel_id:
             return None
         record = self._get_bound_user_record(user_id)
         if record is None:
             return None
         dm_chat_id = str(getattr(record, "dm_chat_id", "") or "").strip()
-        if dm_chat_id == channel_id:
-            return True
-        if dm_chat_id and dm_chat_id != channel_id:
-            logger.warning(
-                "Slack DM channel mismatch for user %s: recorded=%s incoming=%s",
-                user_id,
-                dm_chat_id,
-                channel_id,
-            )
-
-        try:
-            canonical_dm_channel = await self._open_dm_channel(user_id)
-        except Exception as exc:
-            logger.warning("Failed to resolve canonical Slack DM channel for user %s: %s", user_id, exc)
+        if not dm_chat_id:
             return None
-        canonical_dm_channel = str(canonical_dm_channel or "").strip()
-        if not canonical_dm_channel:
-            logger.warning("Slack returned no canonical DM channel for user %s during DM validation", user_id)
-            return None
-        self._persist_bound_dm_channel(user_id, record, canonical_dm_channel)
-        return canonical_dm_channel == channel_id
+        return dm_chat_id == channel_id
 
     def _is_duplicate_event(self, event_id: Optional[str]) -> bool:
         """Deduplicate Slack events using event_id with a short TTL."""
@@ -328,9 +282,9 @@ class SlackBot(BaseIMClient):
         return isinstance(channel_id, str) and channel_id.startswith("D")
 
     def _is_dm_context(self, context: MessageContext) -> bool:
-        if bool((context.platform_specific or {}).get("is_dm", False)):
-            return True
-        return self._channel_looks_like_dm(context.channel_id)
+        if not bool((context.platform_specific or {}).get("is_dm", False)) and not self._channel_looks_like_dm(context.channel_id):
+            return False
+        return self._match_bound_dm_channel(context.user_id, context.channel_id) is not False
 
     async def _open_dm_channel(self, user_id: str) -> Optional[str]:
         self._ensure_clients()
@@ -370,105 +324,6 @@ class SlackBot(BaseIMClient):
             context.thread_id = None
             return await self.web_client.chat_postMessage(**kwargs)
 
-    @staticmethod
-    def _find_text_split_index(text: str, max_chars: int) -> int:
-        minimum_boundary = max_chars // 2
-        for separator in ("\n\n", "\n", " "):
-            index = text.rfind(separator, 0, max_chars + 1)
-            if index >= minimum_boundary:
-                candidate = index + len(separator)
-                return candidate if candidate <= max_chars else index
-        return max_chars
-
-    @classmethod
-    def _split_text(cls, text: str, max_chars: int) -> List[str]:
-        if len(text) <= max_chars:
-            return [text]
-
-        chunks: List[str] = []
-        remaining = text
-        while len(remaining) > max_chars:
-            split_at = cls._find_text_split_index(remaining, max_chars)
-            chunks.append(remaining[:split_at])
-            remaining = remaining[split_at:]
-        if remaining:
-            chunks.append(remaining)
-        return chunks
-
-    @classmethod
-    def _get_visible_text(cls, text: str, max_chars: int = _SLACK_SECTION_TEXT_LIMIT) -> str:
-        return cls._split_text(text, max_chars)[-1]
-
-    @staticmethod
-    def _build_section_block(text: str, parse_mode: Optional[str] = None) -> Dict[str, Any]:
-        return {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
-                "text": text,
-            },
-        }
-
-    def _build_button_blocks(
-        self,
-        text: Optional[str],
-        keyboard: InlineKeyboard,
-        parse_mode: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        blocks: List[Dict[str, Any]] = []
-        if text:
-            blocks.append(self._build_section_block(text, parse_mode=parse_mode))
-
-        for row_idx, row in enumerate(keyboard.buttons):
-            elements = []
-            for button in row:
-                elements.append(
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": button.text},
-                        "action_id": button.callback_data,
-                        "value": button.callback_data,
-                    }
-                )
-
-            blocks.append(
-                {
-                    "type": "actions",
-                    "block_id": f"actions_{row_idx}",
-                    "elements": elements,
-                }
-            )
-
-        return blocks
-
-    async def _send_prepared_text_message(
-        self,
-        context: MessageContext,
-        text: str,
-        parse_mode: Optional[str] = None,
-        reply_to: Optional[str] = None,
-    ):
-        kwargs = {"channel": context.channel_id, "text": text}
-
-        if context.thread_id:
-            kwargs["thread_ts"] = context.thread_id
-            if context.platform_specific and context.platform_specific.get("reply_broadcast"):
-                kwargs["reply_broadcast"] = True
-        elif reply_to:
-            kwargs["thread_ts"] = reply_to
-
-        if parse_mode == "markdown":
-            kwargs["mrkdwn"] = True
-
-        if "\n" in text and len(text) <= _SLACK_SECTION_TEXT_LIMIT:
-            kwargs["blocks"] = [self._build_section_block(text, parse_mode=parse_mode)]
-
-        return await self._post_message_with_dm_recovery(
-            context,
-            kwargs,
-            log_label="message send",
-        )
-
     async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
         """Send a direct message to a Slack user by opening a DM channel first."""
         self._ensure_clients()
@@ -500,11 +355,41 @@ class SlackBot(BaseIMClient):
             if parse_mode == "markdown":
                 text = self._convert_markdown_to_slack_mrkdwn(text)
 
-            response = await self._send_prepared_text_message(
+            # Prepare message kwargs
+            kwargs = {"channel": context.channel_id, "text": text}
+
+            # Handle thread replies
+            if context.thread_id:
+                kwargs["thread_ts"] = context.thread_id
+                # Optionally broadcast to channel
+                if context.platform_specific and context.platform_specific.get("reply_broadcast"):
+                    kwargs["reply_broadcast"] = True
+            elif reply_to:
+                # If reply_to is specified, use it as thread timestamp
+                kwargs["thread_ts"] = reply_to
+
+            # Handle formatting
+            if parse_mode == "markdown":
+                kwargs["mrkdwn"] = True
+
+            # Workaround: ensure multi-line content is preserved. Slack sometimes collapses
+            # rich_text rendering for bot messages; sending with blocks+mrkdwn forces line breaks.
+            if "\n" in text and "blocks" not in kwargs and len(text) <= 3000:
+                kwargs["blocks"] = [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
+                            "text": text,
+                        },
+                    }
+                ]
+
+            # Send message
+            response = await self._post_message_with_dm_recovery(
                 context,
-                text,
-                parse_mode=parse_mode,
-                reply_to=reply_to,
+                kwargs,
+                log_label="message send",
             )
 
             # Mark thread as active if we sent a message to a thread
@@ -1090,14 +975,38 @@ class SlackBot(BaseIMClient):
             if parse_mode == "markdown":
                 text = self._convert_markdown_to_slack_mrkdwn(text)
 
-            chunks = self._split_text(text, _SLACK_SECTION_TEXT_LIMIT)
-            for chunk in chunks[:-1]:
-                await self._send_prepared_text_message(context, chunk, parse_mode=parse_mode)
-            text = chunks[-1]
+            # Convert our generic keyboard to Slack blocks
+            blocks = [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
+                        "text": text,
+                        "verbatim": True,
+                    },
+                }
+            ]
 
-            blocks = self._build_button_blocks(text, keyboard, parse_mode=parse_mode)
-            if blocks and blocks[0].get("type") == "section":
-                blocks[0]["text"]["verbatim"] = True
+            # Add action blocks for buttons
+            for row_idx, row in enumerate(keyboard.buttons):
+                elements = []
+                for button in row:
+                    elements.append(
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": button.text},
+                            "action_id": button.callback_data,
+                            "value": button.callback_data,
+                        }
+                    )
+
+                blocks.append(
+                    {
+                        "type": "actions",
+                        "block_id": f"actions_{row_idx}",
+                        "elements": elements,
+                    }
+                )
 
             # Prepare message kwargs
             kwargs = {
@@ -1145,11 +1054,43 @@ class SlackBot(BaseIMClient):
             kwargs = {"channel": context.channel_id, "ts": message_id}
 
             if text is not None:
-                kwargs["text"] = self._get_visible_text(text) if keyboard else text
+                kwargs["text"] = text
 
             if keyboard:
-                visible_text = kwargs.get("text") if isinstance(kwargs.get("text"), str) else None
-                kwargs["blocks"] = self._build_button_blocks(visible_text, keyboard, parse_mode=parse_mode)
+                # Convert keyboard to blocks (similar to send_message_with_buttons)
+                blocks = []
+                if text:
+                    blocks.append(
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
+                                "text": text,
+                            },
+                        }
+                    )
+
+                for row_idx, row in enumerate(keyboard.buttons):
+                    elements = []
+                    for button in row:
+                        elements.append(
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": button.text},
+                                "action_id": button.callback_data,
+                                "value": button.callback_data,
+                            }
+                        )
+
+                    blocks.append(
+                        {
+                            "type": "actions",
+                            "block_id": f"actions_{row_idx}",
+                            "elements": elements,
+                        }
+                    )
+
+                kwargs["blocks"] = blocks
 
             await self.web_client.chat_update(**kwargs)
             return True
@@ -1185,16 +1126,22 @@ class SlackBot(BaseIMClient):
             fallback_text = text
             if fallback_text is not None and parse_mode == "markdown":
                 fallback_text = self._convert_markdown_to_slack_mrkdwn(fallback_text)
-            if fallback_text:
-                fallback_text = self._get_visible_text(fallback_text)
 
             if fallback_text is None and isinstance(payload_message, dict):
                 payload_text = payload_message.get("text")
                 if isinstance(payload_text, str):
-                    fallback_text = self._get_visible_text(payload_text)
+                    fallback_text = payload_text
 
             if not blocks and fallback_text:
-                blocks = [self._build_section_block(fallback_text, parse_mode=parse_mode)]
+                blocks = [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn" if parse_mode == "markdown" else "plain_text",
+                            "text": fallback_text,
+                        },
+                    }
+                ]
 
             kwargs = {"channel": context.channel_id, "ts": message_id, "blocks": blocks}
             if fallback_text is not None:
@@ -1289,16 +1236,15 @@ class SlackBot(BaseIMClient):
 
             channel_id = event.get("channel")
             user_id = event.get("user")
+            dm_match = self._match_bound_dm_channel(user_id, channel_id)
+            if dm_match is False:
+                logger.warning(
+                    "Ignoring Slack DM-like message from mismatched channel %s for user %s",
+                    channel_id,
+                    user_id,
+                )
+                return
             is_dm = self._channel_looks_like_dm(channel_id)
-            if is_dm:
-                dm_match = await self._match_bound_dm_channel(user_id, channel_id)
-                if dm_match is False:
-                    logger.warning(
-                        "Ignoring Slack DM-like message from mismatched channel %s for user %s",
-                        channel_id,
-                        user_id,
-                    )
-                    return
 
             # Check if this message contains a bot mention.
             # In channels, app_mention will handle it. In DMs, Slack does not
@@ -1355,13 +1301,9 @@ class SlackBot(BaseIMClient):
                     thread_ts = event.get("thread_ts")
                     # If we have settings_manager, check if thread is active
                     if self.settings_manager:
-                        thread_active = (
-                            self.sessions.is_thread_active(user_id, channel_id, thread_ts) if self.sessions else False
-                        )
+                        thread_active = self.sessions.is_thread_active(user_id, channel_id, thread_ts) if self.sessions else False
                         scheduled_thread_active = (
-                            self.sessions.is_thread_active("scheduled", channel_id, thread_ts)
-                            if self.sessions
-                            else False
+                            self.sessions.is_thread_active("scheduled", channel_id, thread_ts) if self.sessions else False
                         )
                         if not thread_active and not scheduled_thread_active:
                             logger.debug(f"Ignoring message in inactive thread {thread_ts}: '{text}'")

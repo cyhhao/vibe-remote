@@ -1,7 +1,6 @@
 import argparse
 import json
 import logging
-import math
 import os
 import shlex
 import shutil
@@ -30,26 +29,17 @@ from config.v2_config import (
     V2Config,
 )
 from core.scheduled_tasks import ScheduledTaskStore, TaskExecutionStore, parse_session_key
-from core.watches import (
-    DEFAULT_RETRY_EXIT_CODE,
-    WATCH_RECONCILE_INTERVAL_SECONDS,
-    ManagedWatchStore,
-    WatchRuntimeStateStore,
-)
+from core.watches import DEFAULT_RETRY_EXIT_CODE, ManagedWatchStore, WatchRuntimeStateStore
 from vibe import __version__, api, runtime
 from vibe.upgrade import (
     build_upgrade_plan,
     cache_running_vibe_path,
     get_latest_version_info,
     get_restart_command,
-    get_restart_environment,
     get_safe_cwd,
 )
 
 logger = logging.getLogger(__name__)
-
-WATCH_STARTUP_STABLE_RUNNING_SECONDS = 1.5
-WATCH_STARTUP_JITTER_BUFFER_SECONDS = 1.0
 
 
 class VibeArgumentParser(argparse.ArgumentParser):
@@ -119,8 +109,6 @@ def _print_task_error(exc: Exception, *, help_command: str | None = None) -> Non
 
 def _non_negative_float(value: str) -> float:
     parsed = float(value)
-    if not math.isfinite(parsed):
-        raise argparse.ArgumentTypeError("must be finite")
     if parsed < 0:
         raise argparse.ArgumentTypeError("must be >= 0")
     return parsed
@@ -839,34 +827,15 @@ def _watch_payload(watch, runtime_entry: Optional[dict[str, object]], *, brief: 
     return payload
 
 
-def _seconds_since_iso(timestamp: object) -> float | None:
-    if not isinstance(timestamp, str) or not timestamp.strip():
-        return None
-    try:
-        started_at = datetime.fromisoformat(timestamp)
-    except ValueError:
-        return None
-    if started_at.tzinfo is None:
-        started_at = started_at.replace(tzinfo=timezone.utc)
-    return max(0.0, (datetime.now(timezone.utc) - started_at).total_seconds())
-
-
-def _default_watch_startup_timeout_seconds(*, stable_running_seconds: float = WATCH_STARTUP_STABLE_RUNNING_SECONDS) -> float:
-    return WATCH_RECONCILE_INTERVAL_SECONDS + stable_running_seconds + WATCH_STARTUP_JITTER_BUFFER_SECONDS
-
-
 def _wait_for_watch_startup(
     store: ManagedWatchStore,
     runtime_store: WatchRuntimeStateStore,
     watch_id: str,
     *,
-    timeout_seconds: float | None = None,
+    timeout_seconds: float = 4.0,
     poll_interval_seconds: float = 0.1,
-    stable_running_seconds: float = WATCH_STARTUP_STABLE_RUNNING_SECONDS,
 ):
     inspect_command = f"vibe watch show {watch_id}"
-    if timeout_seconds is None:
-        timeout_seconds = _default_watch_startup_timeout_seconds(stable_running_seconds=stable_running_seconds)
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         store.maybe_reload()
@@ -890,12 +859,12 @@ def _wait_for_watch_startup(
                 help_command=inspect_command,
                 details={"watch": _watch_payload(watch, runtime_entry)},
             )
-        if watch.mode == "once" and watch.last_finished_at and not watch.last_error and watch.last_exit_code == 0:
-            return watch, runtime_entry
         if runtime_entry and runtime_entry.get("running"):
-            stable_for = _seconds_since_iso(runtime_entry.get("started_at")) or _seconds_since_iso(watch.last_started_at)
-            if stable_for is not None and stable_for >= stable_running_seconds:
-                return watch, runtime_entry
+            return watch, runtime_entry
+        if watch.last_started_at:
+            return watch, runtime_entry
+        if watch.mode == "once" and watch.last_finished_at:
+            return watch, runtime_entry
         time.sleep(poll_interval_seconds)
 
     store.maybe_reload()
@@ -1994,12 +1963,7 @@ def _format_restart_delay(delay_seconds: float) -> str:
 def _schedule_delayed_restart(delay_seconds: float) -> int:
     current_vibe_path = cache_running_vibe_path()
     restart_command = [*get_restart_command(vibe_path=current_vibe_path), "restart"]
-    api._spawn_delayed_restart(
-        restart_command,
-        get_safe_cwd(),
-        delay_seconds=delay_seconds,
-        env=get_restart_environment(vibe_path=current_vibe_path),
-    )
+    api._spawn_delayed_restart(restart_command, get_safe_cwd(), delay_seconds=delay_seconds)
     print(f"Restart scheduled in {_format_restart_delay(delay_seconds)}.")
     print("This command exits immediately; the delayed restart will run in the background.")
     return 0
