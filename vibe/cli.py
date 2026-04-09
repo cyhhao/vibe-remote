@@ -1,4 +1,5 @@
 import argparse
+import glob
 import json
 import logging
 import math
@@ -821,6 +822,7 @@ UV_RUN_OPTIONS_WITH_VALUES = {
     "--fork-strategy",
     "--exclude-newer",
     "--exclude-newer-package",
+    "--refresh-package",
     "--reinstall-package",
     "--link-mode",
     "--config-setting",
@@ -947,6 +949,29 @@ def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | No
     return None, None
 
 
+def _resolve_watch_preflight_base_dir(cwd: str | None, probe_cwd: str | None) -> Path:
+    base_dir = Path(cwd).resolve() if cwd else Path.cwd().resolve()
+    if not probe_cwd:
+        return base_dir
+
+    probe_base = Path(os.path.expandvars(os.path.expanduser(probe_cwd)))
+    if not probe_base.is_absolute():
+        probe_base = (base_dir / probe_base).resolve()
+    return probe_base
+
+
+def _resolve_shell_script_candidates(script_path: str, *, base_dir: Path) -> list[Path]:
+    expanded = os.path.expandvars(os.path.expanduser(script_path))
+    pattern_path = Path(expanded)
+    if not pattern_path.is_absolute():
+        pattern_path = base_dir / pattern_path
+
+    matches = [Path(match).resolve() for match in glob.glob(str(pattern_path))]
+    if matches:
+        return matches
+    return [pattern_path.resolve()]
+
+
 def _resolve_watch_script_probe(command: list[str], shell_command: str | None) -> tuple[str | None, str | None]:
     if shell_command:
         try:
@@ -967,20 +992,20 @@ def _validate_watch_script_preflight(
     if not script_path:
         return
 
-    candidate = Path(script_path).expanduser()
-    checked_from = None
-    if not candidate.is_absolute():
-        base_dir = Path(cwd).resolve() if cwd else Path.cwd().resolve()
-        if probe_cwd:
-            probe_base = Path(probe_cwd).expanduser()
-            if not probe_base.is_absolute():
-                probe_base = (base_dir / probe_base).resolve()
-            base_dir = probe_base
-        checked_from = str(base_dir)
-        candidate = (Path(checked_from) / candidate).resolve()
+    base_dir = _resolve_watch_preflight_base_dir(cwd, probe_cwd)
+    checked_from = None if Path(script_path).expanduser().is_absolute() else str(base_dir)
 
-    if candidate.is_file():
-        return
+    if shell_command:
+        candidates = _resolve_shell_script_candidates(script_path, base_dir=base_dir)
+        if any(candidate.is_file() for candidate in candidates):
+            return
+        candidate = candidates[0]
+    else:
+        candidate = Path(script_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = (base_dir / candidate).resolve()
+        if candidate.is_file():
+            return
 
     hint = "Fix the script path or use an absolute path."
     if checked_from is not None:
