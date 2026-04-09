@@ -543,6 +543,31 @@ def test_watch_add_rejects_shell_command_with_single_quoted_home_literal(
     assert payload["details"]["script"] == "$HOME/scripts/wait.py"
 
 
+def test_watch_add_rejects_shell_command_with_mixed_quoted_home_literal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home_dir = tmp_path / "home"
+    _write_script(home_dir / "scripts" / "wait.py")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--shell",
+            "python3 '$HOME'/scripts/wait.py",
+        ]
+    )
+
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "$HOME/scripts/wait.py"
+
+
 def test_watch_add_rejects_shell_command_with_quoted_glob_literal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

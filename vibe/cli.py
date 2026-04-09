@@ -948,6 +948,33 @@ def _extract_shell_script_path(tokens: list[str]) -> str | None:
     return None
 
 
+def _tokenize_shell_command(shell_command: str) -> tuple[list[str], list[list[str]]]:
+    raw_lexer = shlex.shlex(shell_command, posix=False)
+    raw_lexer.whitespace_split = True
+    raw_lexer.commenters = ""
+    raw_fragments = list(raw_lexer)
+    normalized_tokens = shlex.split(shell_command)
+
+    grouped_fragments: list[list[str]] = []
+    raw_index = 0
+    for token in normalized_tokens:
+        parts: list[str] = []
+        combined = ""
+        while raw_index < len(raw_fragments) and combined != token:
+            fragment = raw_fragments[raw_index]
+            raw_index += 1
+            parts.append(fragment)
+            combined += "".join(shlex.split(fragment))
+            if combined == token:
+                break
+        if combined != token:
+            grouped_fragments.append([token])
+            continue
+        grouped_fragments.append(parts)
+
+    return normalized_tokens, grouped_fragments
+
+
 def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | None, str | None]:
     if not tokens:
         return None, None
@@ -970,20 +997,36 @@ def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | No
     return None, None
 
 
-def _detect_shell_quote_mode(shell_command: str, token: str) -> str | None:
-    if f"'{token}'" in shell_command:
+def _raw_shell_fragment_quote_mode(fragment: str) -> str | None:
+    if len(fragment) >= 2 and fragment[0] == fragment[-1] == "'":
         return "'"
-    if f'"{token}"' in shell_command:
+    if len(fragment) >= 2 and fragment[0] == fragment[-1] == '"':
         return '"'
     return None
 
 
-def _expand_shell_token(token: str, *, quote_mode: str | None) -> str:
-    if quote_mode == "'":
-        return token
-    if quote_mode == '"':
-        return os.path.expandvars(token)
-    return os.path.expandvars(os.path.expanduser(token))
+def _expand_shell_fragments(fragments: list[str]) -> tuple[str, bool]:
+    expanded_parts: list[str] = []
+    allow_glob = False
+    for index, fragment in enumerate(fragments):
+        quote_mode = _raw_shell_fragment_quote_mode(fragment)
+        text = "".join(shlex.split(fragment))
+
+        if quote_mode == "'":
+            expanded_parts.append(glob.escape(text))
+            continue
+
+        if quote_mode == '"':
+            expanded_parts.append(glob.escape(os.path.expandvars(text)))
+            continue
+
+        if index == 0:
+            text = os.path.expanduser(text)
+        text = os.path.expandvars(text)
+        expanded_parts.append(text)
+        allow_glob = True
+
+    return "".join(expanded_parts), allow_glob
 
 
 def _resolve_watch_preflight_base_dir(
@@ -991,18 +1034,15 @@ def _resolve_watch_preflight_base_dir(
     probe_cwd: str | None,
     *,
     shell_expansion: bool,
-    shell_command: str | None = None,
+    shell_fragments: list[str] | None = None,
 ) -> Path:
     base_dir = Path(cwd).resolve() if cwd else Path.cwd().resolve()
     if not probe_cwd:
         return base_dir
 
     probe_value = probe_cwd
-    if shell_expansion:
-        probe_value = _expand_shell_token(
-            probe_value,
-            quote_mode=_detect_shell_quote_mode(shell_command or "", probe_cwd),
-        )
+    if shell_expansion and shell_fragments is not None:
+        probe_value, _ = _expand_shell_fragments(shell_fragments)
 
     probe_base = Path(probe_value)
     if not probe_base.is_absolute():
@@ -1010,13 +1050,13 @@ def _resolve_watch_preflight_base_dir(
     return probe_base
 
 
-def _resolve_shell_script_candidates(script_path: str, *, base_dir: Path, quote_mode: str | None) -> list[Path]:
-    expanded = _expand_shell_token(script_path, quote_mode=quote_mode)
+def _resolve_shell_script_candidates(script_path: str, *, base_dir: Path, shell_fragments: list[str] | None) -> list[Path]:
+    expanded, allow_glob = _expand_shell_fragments(shell_fragments or [script_path])
     pattern_path = Path(expanded)
     if not pattern_path.is_absolute():
         pattern_path = base_dir / pattern_path
 
-    if quote_mode is not None:
+    if not allow_glob:
         return [pattern_path.resolve()]
 
     matches = [Path(match).resolve() for match in glob.glob(str(pattern_path))]
@@ -1025,13 +1065,27 @@ def _resolve_shell_script_candidates(script_path: str, *, base_dir: Path, quote_
     return [pattern_path.resolve()]
 
 
-def _resolve_watch_script_probe(command: list[str], shell_command: str | None) -> tuple[str | None, str | None]:
+def _resolve_watch_script_probe(
+    command: list[str],
+    shell_command: str | None,
+) -> tuple[str | None, str | None, list[str] | None, list[str] | None]:
     if shell_command:
         try:
-            return _extract_watch_script_probe_from_tokens(shlex.split(shell_command))
+            tokens, grouped_fragments = _tokenize_shell_command(shell_command)
+            script_path, probe_cwd = _extract_watch_script_probe_from_tokens(tokens)
+            script_fragments = None
+            probe_cwd_fragments = None
+            if script_path is not None:
+                script_index = tokens.index(script_path)
+                script_fragments = grouped_fragments[script_index]
+            if probe_cwd is not None:
+                probe_cwd_index = tokens.index(probe_cwd)
+                probe_cwd_fragments = grouped_fragments[probe_cwd_index]
+            return script_path, probe_cwd, script_fragments, probe_cwd_fragments
         except ValueError:
-            return None, None
-    return _extract_watch_script_probe_from_tokens(command)
+            return None, None, None, None
+    script_path, probe_cwd = _extract_watch_script_probe_from_tokens(command)
+    return script_path, probe_cwd, None, None
 
 
 def _validate_watch_script_preflight(
@@ -1041,7 +1095,7 @@ def _validate_watch_script_preflight(
     cwd: str | None,
     help_command: str,
 ) -> None:
-    script_path, probe_cwd = _resolve_watch_script_probe(command, shell_command)
+    script_path, probe_cwd, script_fragments, probe_cwd_fragments = _resolve_watch_script_probe(command, shell_command)
     if not script_path:
         return
 
@@ -1049,7 +1103,7 @@ def _validate_watch_script_preflight(
         cwd,
         probe_cwd,
         shell_expansion=bool(shell_command),
-        shell_command=shell_command,
+        shell_fragments=probe_cwd_fragments,
     )
     checked_from = None if Path(script_path).is_absolute() else str(base_dir)
 
@@ -1057,7 +1111,7 @@ def _validate_watch_script_preflight(
         candidates = _resolve_shell_script_candidates(
             script_path,
             base_dir=base_dir,
-            quote_mode=_detect_shell_quote_mode(shell_command, script_path),
+            shell_fragments=script_fragments,
         )
         if any(candidate.is_file() for candidate in candidates):
             return
