@@ -1,5 +1,4 @@
 import argparse
-import glob
 import json
 import logging
 import math
@@ -921,6 +920,28 @@ def _extract_python_script_path(tokens: list[str]) -> str | None:
     return None
 
 
+def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | None, str | None]:
+    if not tokens:
+        return None, None
+
+    runner = Path(tokens[0]).name
+    if _PYTHON_RUNNER_RE.fullmatch(runner):
+        return _extract_python_script_path(tokens), None
+
+    if runner in {"bash", "sh"}:
+        return _extract_shell_script_path(tokens), None
+
+    if runner == "uv" and len(tokens) > 2 and tokens[1] == "run":
+        inner_tokens, effective_cwd = _split_uv_run_command(tokens)
+        script_path, nested_cwd = _extract_watch_script_probe_from_tokens(inner_tokens)
+        return script_path, nested_cwd or effective_cwd
+
+    if _looks_like_script_path(tokens[0]):
+        return tokens[0], None
+
+    return None, None
+
+
 def _extract_shell_script_path(tokens: list[str]) -> str | None:
     index = 1
     while index < len(tokens):
@@ -947,271 +968,24 @@ def _extract_shell_script_path(tokens: list[str]) -> str | None:
         return tokens[index]
     return None
 
-
-_SHELL_CONTROL_CHARS = ";|&()<>"
-
-
-def _shell_control_operator_at(command: str, index: int) -> str | None:
-    char = command[index]
-    if char not in _SHELL_CONTROL_CHARS:
-        return None
-
-    if index + 1 < len(command):
-        pair = command[index : index + 2]
-        if pair in {"&&", "||", "<<", ">>", "|&", "<>", ";&"}:
-            return pair
-    return char
-
-
-def _tokenize_shell_command(shell_command: str) -> tuple[list[str], list[list[str]]]:
-    tokens: list[str] = []
-    grouped_fragments: list[list[str]] = []
-    length = len(shell_command)
-    index = 0
-
-    while index < length:
-        while index < length and shell_command[index].isspace():
-            index += 1
-        if index >= length:
-            break
-
-        operator = _shell_control_operator_at(shell_command, index)
-        if operator is not None:
-            tokens.append(operator)
-            grouped_fragments.append([operator])
-            index += len(operator)
-            continue
-
-        fragments: list[str] = []
-        unquoted: list[str] = []
-        while index < length:
-            operator = _shell_control_operator_at(shell_command, index)
-            if operator is not None:
-                break
-
-            char = shell_command[index]
-            if char.isspace():
-                break
-
-            if char == "'":
-                if unquoted:
-                    fragments.append("".join(unquoted))
-                    unquoted = []
-                start = index
-                index += 1
-                while index < length and shell_command[index] != "'":
-                    index += 1
-                if index >= length:
-                    raise ValueError("No closing quotation")
-                index += 1
-                fragments.append(shell_command[start:index])
-                continue
-
-            if char == '"':
-                if unquoted:
-                    fragments.append("".join(unquoted))
-                    unquoted = []
-                start = index
-                index += 1
-                while index < length:
-                    inner = shell_command[index]
-                    if inner == "\\" and index + 1 < length:
-                        index += 2
-                        continue
-                    if inner == '"':
-                        index += 1
-                        break
-                    index += 1
-                else:
-                    raise ValueError("No closing quotation")
-                fragments.append(shell_command[start:index])
-                continue
-
-            if char == "\\" and index + 1 < length:
-                unquoted.append(shell_command[index : index + 2])
-                index += 2
-                continue
-
-            unquoted.append(char)
-            index += 1
-
-        if unquoted:
-            fragments.append("".join(unquoted))
-
-        raw_token = "".join(fragments)
-        normalized = shlex.split(raw_token)
-        if len(normalized) != 1:
-            raise ValueError("Unable to normalize shell token")
-        tokens.append(normalized[0])
-        grouped_fragments.append(fragments or [raw_token])
-
-    return tokens, grouped_fragments
-
-
-def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | None, str | None]:
-    if not tokens:
-        return None, None
-
-    runner = Path(tokens[0]).name
-    if _PYTHON_RUNNER_RE.fullmatch(runner):
-        return _extract_python_script_path(tokens), None
-
-    if runner in {"bash", "sh"}:
-        return _extract_shell_script_path(tokens), None
-
-    if runner == "uv" and len(tokens) > 2 and tokens[1] == "run":
-        inner_tokens, effective_cwd = _split_uv_run_command(tokens)
-        script_path, nested_cwd = _extract_watch_script_probe_from_tokens(inner_tokens)
-        return script_path, nested_cwd or effective_cwd
-
-    if _looks_like_script_path(tokens[0]):
-        return tokens[0], None
-
-    return None, None
-
-
-def _raw_shell_fragment_quote_mode(fragment: str) -> str | None:
-    if len(fragment) >= 2 and fragment[0] == fragment[-1] == "'":
-        return "'"
-    if len(fragment) >= 2 and fragment[0] == fragment[-1] == '"':
-        return '"'
-    return None
-
-
-_ESCAPED_SHELL_DOLLAR = "\0VIBE_WATCH_ESCAPED_DOLLAR\0"
-_ESCAPED_SHELL_TILDE = "\0VIBE_WATCH_ESCAPED_TILDE\0"
-
-
-def _expand_shell_fragment(fragment: str, *, first_fragment: bool) -> tuple[str, bool]:
-    quote_mode = _raw_shell_fragment_quote_mode(fragment)
-    if quote_mode == "'":
-        return glob.escape(fragment[1:-1]), False
-
-    if quote_mode == '"':
-        content = fragment[1:-1]
-        parts: list[str] = []
-        index = 0
-        while index < len(content):
-            char = content[index]
-            if char == "\\" and index + 1 < len(content):
-                next_char = content[index + 1]
-                if next_char == "$":
-                    parts.append(_ESCAPED_SHELL_DOLLAR)
-                    index += 2
-                    continue
-                if next_char in {'"', "\\"}:
-                    parts.append(next_char)
-                    index += 2
-                    continue
-            parts.append(char)
-            index += 1
-        text = "".join(parts)
-        text = os.path.expandvars(text)
-        text = text.replace(_ESCAPED_SHELL_DOLLAR, "$")
-        return glob.escape(text), False
-
-    parts = []
-    allow_glob = False
-    index = 0
-    while index < len(fragment):
-        char = fragment[index]
-        if char == "\\" and index + 1 < len(fragment):
-            next_char = fragment[index + 1]
-            if next_char == "$":
-                parts.append(_ESCAPED_SHELL_DOLLAR)
-            elif first_fragment and not parts and next_char == "~":
-                parts.append(_ESCAPED_SHELL_TILDE)
-            elif next_char in "*?[":
-                parts.append(glob.escape(next_char))
-            else:
-                parts.append(next_char)
-            index += 2
-            continue
-        if char in "*?[":
-            allow_glob = True
-        parts.append(char)
-        index += 1
-
-    text = "".join(parts)
-    if first_fragment and text.startswith("~"):
-        text = os.path.expanduser(text)
-    text = os.path.expandvars(text)
-    text = text.replace(_ESCAPED_SHELL_DOLLAR, "$")
-    text = text.replace(_ESCAPED_SHELL_TILDE, "~")
-    return text, allow_glob
-
-
-def _expand_shell_fragments(fragments: list[str]) -> tuple[str, bool]:
-    expanded_parts: list[str] = []
-    allow_glob = False
-    for index, fragment in enumerate(fragments):
-        text, fragment_allows_glob = _expand_shell_fragment(
-            fragment,
-            first_fragment=index == 0,
-        )
-        expanded_parts.append(text)
-        allow_glob = allow_glob or fragment_allows_glob
-
-    return "".join(expanded_parts), allow_glob
-
-
 def _resolve_watch_preflight_base_dir(
     cwd: str | None,
     probe_cwd: str | None,
-    *,
-    shell_expansion: bool,
-    shell_fragments: list[str] | None = None,
 ) -> Path:
     base_dir = Path(cwd).resolve() if cwd else Path.cwd().resolve()
     if not probe_cwd:
         return base_dir
 
-    probe_value = probe_cwd
-    if shell_expansion and shell_fragments is not None:
-        probe_value, _ = _expand_shell_fragments(shell_fragments)
-
-    probe_base = Path(probe_value)
+    probe_base = Path(probe_cwd)
     if not probe_base.is_absolute():
         probe_base = (base_dir / probe_base).resolve()
     return probe_base
 
 
-def _resolve_shell_script_candidates(script_path: str, *, base_dir: Path, shell_fragments: list[str] | None) -> list[Path]:
-    expanded, allow_glob = _expand_shell_fragments(shell_fragments or [script_path])
-    pattern_path = Path(expanded)
-    if not pattern_path.is_absolute():
-        pattern_path = base_dir / pattern_path
-
-    if not allow_glob:
-        return [pattern_path.resolve()]
-
-    matches = [Path(match).resolve() for match in sorted(glob.glob(str(pattern_path)))]
-    if matches:
-        return matches
-    return [pattern_path.resolve()]
-
-
 def _resolve_watch_script_probe(
     command: list[str],
-    shell_command: str | None,
-) -> tuple[str | None, str | None, list[str] | None, list[str] | None]:
-    if shell_command:
-        try:
-            tokens, grouped_fragments = _tokenize_shell_command(shell_command)
-            script_path, probe_cwd = _extract_watch_script_probe_from_tokens(tokens)
-            script_fragments = None
-            probe_cwd_fragments = None
-            if script_path is not None:
-                script_index = tokens.index(script_path)
-                script_fragments = grouped_fragments[script_index]
-            if probe_cwd is not None:
-                probe_cwd_index = tokens.index(probe_cwd)
-                probe_cwd_fragments = grouped_fragments[probe_cwd_index]
-            return script_path, probe_cwd, script_fragments, probe_cwd_fragments
-        except ValueError:
-            return None, None, None, None
-    script_path, probe_cwd = _extract_watch_script_probe_from_tokens(command)
-    return script_path, probe_cwd, None, None
+) -> tuple[str | None, str | None]:
+    return _extract_watch_script_probe_from_tokens(command)
 
 
 def _validate_watch_script_preflight(
@@ -1221,33 +995,23 @@ def _validate_watch_script_preflight(
     cwd: str | None,
     help_command: str,
 ) -> None:
-    script_path, probe_cwd, script_fragments, probe_cwd_fragments = _resolve_watch_script_probe(command, shell_command)
+    if shell_command:
+        return
+
+    script_path, probe_cwd = _resolve_watch_script_probe(command)
     if not script_path:
         return
 
     base_dir = _resolve_watch_preflight_base_dir(
         cwd,
         probe_cwd,
-        shell_expansion=bool(shell_command),
-        shell_fragments=probe_cwd_fragments,
     )
     checked_from = None if Path(script_path).is_absolute() else str(base_dir)
-
-    if shell_command:
-        candidates = _resolve_shell_script_candidates(
-            script_path,
-            base_dir=base_dir,
-            shell_fragments=script_fragments,
-        )
-        candidate = candidates[0]
-        if candidate.is_file():
-            return
-    else:
-        candidate = Path(script_path)
-        if not candidate.is_absolute():
-            candidate = (base_dir / candidate).resolve()
-        if candidate.is_file():
-            return
+    candidate = Path(script_path)
+    if not candidate.is_absolute():
+        candidate = (base_dir / candidate).resolve()
+    if candidate.is_file():
+        return
 
     hint = "Fix the script path or use an absolute path."
     if checked_from is not None:
