@@ -796,32 +796,113 @@ def _looks_like_script_path(token: str) -> bool:
     return path.is_absolute() or path.suffix in {".py", ".sh", ".bash", ".zsh"} or "/" in token or "\\" in token
 
 
-def _extract_watch_script_path(tokens: list[str]) -> str | None:
+UV_RUN_OPTIONS_WITH_VALUES = {
+    "--extra",
+    "--no-extra",
+    "--group",
+    "--no-group",
+    "--only-group",
+    "--env-file",
+    "--with",
+    "--with-editable",
+    "--with-requirements",
+    "--package",
+    "--python-platform",
+    "--index",
+    "--default-index",
+    "--index-url",
+    "--extra-index-url",
+    "--find-links",
+    "--index-strategy",
+    "--keyring-provider",
+    "--upgrade-package",
+    "--resolution",
+    "--prerelease",
+    "--fork-strategy",
+    "--exclude-newer",
+    "--exclude-newer-package",
+    "--reinstall-package",
+    "--link-mode",
+    "--config-setting",
+    "--config-settings-package",
+    "--no-build-isolation-package",
+    "--no-build-package",
+    "--no-binary-package",
+    "--cache-dir",
+    "--python",
+    "--color",
+    "--allow-insecure-host",
+    "--directory",
+    "--project",
+    "--config-file",
+}
+
+UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-w", "-i", "-f", "-U", "-P", "-C", "-n", "-p", "-m"}
+
+
+def _split_uv_run_command(tokens: list[str]) -> tuple[list[str], str | None]:
+    effective_cwd: str | None = None
+    index = 2
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return tokens[index + 1 :], effective_cwd
+        if token == "--directory":
+            if index + 1 < len(tokens):
+                effective_cwd = tokens[index + 1]
+            index += 2
+            continue
+        if token.startswith("--directory="):
+            effective_cwd = token.split("=", 1)[1]
+            index += 1
+            continue
+        if token in UV_RUN_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
+        if token in UV_RUN_SHORT_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
+        if token.startswith("--") and "=" in token:
+            index += 1
+            continue
+        if token.startswith("-") and len(token) > 2 and token[:2] in UV_RUN_SHORT_OPTIONS_WITH_VALUES:
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return tokens[index:], effective_cwd
+    return [], effective_cwd
+
+
+def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | None, str | None]:
     if not tokens:
-        return None
+        return None, None
 
     runner = Path(tokens[0]).name
     if runner in {"python", "python3", "bash", "sh"}:
         if len(tokens) > 1 and _looks_like_script_path(tokens[1]):
-            return tokens[1]
-        return None
+            return tokens[1], None
+        return None, None
 
     if runner == "uv" and len(tokens) > 2 and tokens[1] == "run":
-        for token in tokens[2:]:
-            if _looks_like_script_path(token):
-                return token
-        return None
+        inner_tokens, effective_cwd = _split_uv_run_command(tokens)
+        script_path, nested_cwd = _extract_watch_script_probe_from_tokens(inner_tokens)
+        return script_path, nested_cwd or effective_cwd
 
-    return None
+    if _looks_like_script_path(tokens[0]):
+        return tokens[0], None
+
+    return None, None
 
 
-def _resolve_watch_script_probe(command: list[str], shell_command: str | None) -> str | None:
+def _resolve_watch_script_probe(command: list[str], shell_command: str | None) -> tuple[str | None, str | None]:
     if shell_command:
         try:
-            return _extract_watch_script_path(shlex.split(shell_command))
+            return _extract_watch_script_probe_from_tokens(shlex.split(shell_command))
         except ValueError:
-            return None
-    return _extract_watch_script_path(command)
+            return None, None
+    return _extract_watch_script_probe_from_tokens(command)
 
 
 def _validate_watch_script_preflight(
@@ -831,14 +912,20 @@ def _validate_watch_script_preflight(
     cwd: str | None,
     help_command: str,
 ) -> None:
-    script_path = _resolve_watch_script_probe(command, shell_command)
+    script_path, probe_cwd = _resolve_watch_script_probe(command, shell_command)
     if not script_path:
         return
 
     candidate = Path(script_path).expanduser()
     checked_from = None
     if not candidate.is_absolute():
-        checked_from = str(Path(cwd).resolve() if cwd else Path.cwd().resolve())
+        base_dir = Path(cwd).resolve() if cwd else Path.cwd().resolve()
+        if probe_cwd:
+            probe_base = Path(probe_cwd).expanduser()
+            if not probe_base.is_absolute():
+                probe_base = (base_dir / probe_base).resolve()
+            base_dir = probe_base
+        checked_from = str(base_dir)
         candidate = (Path(checked_from) / candidate).resolve()
 
     if candidate.is_file():
