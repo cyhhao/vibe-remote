@@ -127,12 +127,87 @@ def test_prepare_preserves_existing_state_without_reset(tmp_path: Path, monkeypa
     (vibe_dir / "config" / "config.json").write_text('{"keep": true}', encoding="utf-8")
     (vibe_dir / "state" / "settings.json").write_text('{"custom": true}', encoding="utf-8")
     (vibe_dir / "state" / "sessions.json").write_text('{"session": true}', encoding="utf-8")
+    shared_home = tmp_path / "shared-home"
+    (shared_home / ".claude").mkdir(parents=True)
+    (shared_home / ".codex").mkdir(parents=True)
+    (shared_home / ".config" / "opencode").mkdir(parents=True)
+    (shared_home / ".claude" / "settings.json").write_text('{"env": {"ANTHROPIC_AUTH_TOKEN": "keep"}}', encoding="utf-8")
+    (shared_home / ".claude.json").write_text('{"keep": true}', encoding="utf-8")
+    (shared_home / ".codex" / "config.toml").write_text('model = "keep"\n', encoding="utf-8")
+    (shared_home / ".codex" / "auth.json").write_text('{"OPENAI_API_KEY": "keep"}', encoding="utf-8")
+    (shared_home / ".config" / "opencode" / "opencode.json").write_text('{"keep": true}', encoding="utf-8")
+
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "THREE_REGRESSION_SLACK_BOT_TOKEN",
+        "THREE_REGRESSION_SLACK_APP_TOKEN",
+        "THREE_REGRESSION_DISCORD_BOT_TOKEN",
+        "THREE_REGRESSION_FEISHU_APP_ID",
+        "THREE_REGRESSION_FEISHU_APP_SECRET",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
     module.prepare(tmp_path)
 
     assert json.loads((vibe_dir / "config" / "config.json").read_text(encoding="utf-8")) == {"keep": True}
     assert json.loads((vibe_dir / "state" / "settings.json").read_text(encoding="utf-8")) == {"custom": True}
     assert json.loads((vibe_dir / "state" / "sessions.json").read_text(encoding="utf-8")) == {"session": True}
+    assert json.loads((shared_home / ".claude" / "settings.json").read_text(encoding="utf-8")) == {
+        "env": {"ANTHROPIC_AUTH_TOKEN": "keep"}
+    }
+    assert json.loads((shared_home / ".claude.json").read_text(encoding="utf-8")) == {"keep": True}
+    assert (shared_home / ".codex" / "config.toml").read_text(encoding="utf-8") == 'model = "keep"\n'
+    assert json.loads((shared_home / ".codex" / "auth.json").read_text(encoding="utf-8")) == {"OPENAI_API_KEY": "keep"}
+    assert json.loads((shared_home / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")) == {
+        "keep": True
+    }
+
+
+def test_prepare_without_reset_still_requires_llm_keys_when_shared_configs_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    vibe_dir = tmp_path / "vibe"
+    (vibe_dir / "config").mkdir(parents=True)
+    (vibe_dir / "state").mkdir(parents=True)
+    (vibe_dir / "config" / "config.json").write_text('{"keep": true}', encoding="utf-8")
+    (vibe_dir / "state" / "settings.json").write_text('{"custom": true}', encoding="utf-8")
+    (vibe_dir / "state" / "sessions.json").write_text('{"session": true}', encoding="utf-8")
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY, OPENAI_API_KEY"):
+        module.prepare(tmp_path)
+
+
+def test_prepare_without_reset_still_requires_platform_envs_when_config_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    vibe_dir = tmp_path / "vibe"
+    (vibe_dir / "state").mkdir(parents=True)
+    (vibe_dir / "state" / "sessions.json").write_text('{"session": true}', encoding="utf-8")
+    shared_home = tmp_path / "shared-home"
+    (shared_home / ".claude").mkdir(parents=True)
+    (shared_home / ".codex").mkdir(parents=True)
+    (shared_home / ".config" / "opencode").mkdir(parents=True)
+    (shared_home / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    (shared_home / ".claude.json").write_text("{}", encoding="utf-8")
+    (shared_home / ".codex" / "config.toml").write_text("", encoding="utf-8")
+    (shared_home / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
+    (shared_home / ".config" / "opencode" / "opencode.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.delenv("THREE_REGRESSION_SLACK_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("THREE_REGRESSION_SLACK_APP_TOKEN", raising=False)
+
+    with pytest.raises(SystemExit, match="THREE_REGRESSION_SLACK_BOT_TOKEN, THREE_REGRESSION_SLACK_APP_TOKEN"):
+        module.prepare(tmp_path)
 
 
 def test_prepare_allows_missing_channel_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
