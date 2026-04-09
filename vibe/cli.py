@@ -839,6 +839,9 @@ UV_RUN_OPTIONS_WITH_VALUES = {
 
 UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-w", "-i", "-f", "-P", "-C", "-p"}
 
+PYTHON_OPTIONS_WITH_VALUES = {"-W", "-X"}
+PYTHON_OPTIONS_WITHOUT_SCRIPT = {"-c", "-m"}
+
 
 def _split_uv_run_command(tokens: list[str]) -> tuple[list[str], str | None]:
     effective_cwd: str | None = None
@@ -875,15 +878,63 @@ def _split_uv_run_command(tokens: list[str]) -> tuple[list[str], str | None]:
     return [], effective_cwd
 
 
+def _extract_python_script_path(tokens: list[str]) -> str | None:
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token in PYTHON_OPTIONS_WITHOUT_SCRIPT:
+            return None
+        if token in PYTHON_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
+        if any(token.startswith(f"{option}=") for option in PYTHON_OPTIONS_WITH_VALUES):
+            index += 1
+            continue
+        if any(token.startswith(option) and token != option for option in PYTHON_OPTIONS_WITH_VALUES):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        break
+
+    if index < len(tokens) and _looks_like_script_path(tokens[index]):
+        return tokens[index]
+    return None
+
+
+def _extract_shell_script_path(tokens: list[str]) -> str | None:
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-c" or (token.startswith("-") and "c" in token[1:]):
+            return None
+        if token.startswith("-"):
+            index += 1
+            continue
+        break
+
+    if index < len(tokens) and _looks_like_script_path(tokens[index]):
+        return tokens[index]
+    return None
+
+
 def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | None, str | None]:
     if not tokens:
         return None, None
 
     runner = Path(tokens[0]).name
-    if runner in {"python", "python3", "bash", "sh"}:
-        if len(tokens) > 1 and _looks_like_script_path(tokens[1]):
-            return tokens[1], None
-        return None, None
+    if runner in {"python", "python3"}:
+        return _extract_python_script_path(tokens), None
+
+    if runner in {"bash", "sh"}:
+        return _extract_shell_script_path(tokens), None
 
     if runner == "uv" and len(tokens) > 2 and tokens[1] == "run":
         inner_tokens, effective_cwd = _split_uv_run_command(tokens)
