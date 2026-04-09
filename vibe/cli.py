@@ -847,6 +847,7 @@ UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-w", "-i", "-f", "-P", "-C", "-p"}
 
 PYTHON_OPTIONS_WITH_VALUES = {"-W", "-X"}
 PYTHON_OPTIONS_WITHOUT_SCRIPT = {"-c", "-m"}
+PYTHON_LONG_OPTIONS_WITH_VALUES = {"--check-hash-based-pycs"}
 SHELL_LONG_OPTIONS_WITH_VALUES = {"--init-file", "--rcfile"}
 SHELL_SHORT_OPTIONS_WITH_VALUES = {"-o", "-O"}
 
@@ -898,7 +899,13 @@ def _extract_python_script_path(tokens: list[str]) -> str | None:
         if token in PYTHON_OPTIONS_WITH_VALUES:
             index += 2
             continue
+        if token in PYTHON_LONG_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
         if any(token.startswith(f"{option}=") for option in PYTHON_OPTIONS_WITH_VALUES):
+            index += 1
+            continue
+        if any(token.startswith(f"{option}=") for option in PYTHON_LONG_OPTIONS_WITH_VALUES):
             index += 1
             continue
         if any(token.startswith(option) and token != option for option in PYTHON_OPTIONS_WITH_VALUES):
@@ -963,12 +970,16 @@ def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | No
     return None, None
 
 
-def _resolve_watch_preflight_base_dir(cwd: str | None, probe_cwd: str | None) -> Path:
+def _resolve_watch_preflight_base_dir(cwd: str | None, probe_cwd: str | None, *, shell_expansion: bool) -> Path:
     base_dir = Path(cwd).resolve() if cwd else Path.cwd().resolve()
     if not probe_cwd:
         return base_dir
 
-    probe_base = Path(os.path.expandvars(os.path.expanduser(probe_cwd)))
+    probe_value = probe_cwd
+    if shell_expansion:
+        probe_value = os.path.expandvars(os.path.expanduser(probe_value))
+
+    probe_base = Path(probe_value)
     if not probe_base.is_absolute():
         probe_base = (base_dir / probe_base).resolve()
     return probe_base
@@ -1006,7 +1017,7 @@ def _validate_watch_script_preflight(
     if not script_path:
         return
 
-    base_dir = _resolve_watch_preflight_base_dir(cwd, probe_cwd)
+    base_dir = _resolve_watch_preflight_base_dir(cwd, probe_cwd, shell_expansion=bool(shell_command))
     checked_from = None if Path(script_path).is_absolute() else str(base_dir)
 
     if shell_command:

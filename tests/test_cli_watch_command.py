@@ -338,6 +338,31 @@ def test_watch_add_preflights_script_after_python_flag(monkeypatch: pytest.Monke
     assert payload["details"]["script"] == "scripts/wait.py"
 
 
+def test_watch_add_preflights_script_after_python_long_option_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "python3",
+            "--check-hash-based-pycs",
+            "always",
+            "scripts/wait.py",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "scripts/wait.py"
+
+
 def test_watch_add_preflights_script_after_shell_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     args = _parse_watch_add(
         [
@@ -545,6 +570,34 @@ def test_watch_add_preflights_versioned_python_runner(monkeypatch: pytest.Monkey
     assert result == 1
     assert payload["code"] == "invalid_watch_script"
     assert payload["details"]["script"] == "scripts/wait.py"
+
+
+def test_watch_add_rejects_exec_uv_directory_with_literal_tilde(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    _write_script(repo_root / "scripts" / "wait.py")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "uv",
+            "run",
+            "--directory",
+            "~/repo",
+            "scripts/wait.py",
+        ]
+    )
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "scripts/wait.py"
+    assert payload["details"]["checked_from"] == str((tmp_path / "~/repo").resolve())
 
 
 def test_watch_add_resolves_script_from_uv_directory_override(
