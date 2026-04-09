@@ -916,7 +916,7 @@ def _extract_python_script_path(tokens: list[str]) -> str | None:
             continue
         break
 
-    if index < len(tokens) and _looks_like_script_path(tokens[index]):
+    if index < len(tokens) and tokens[index] != "-":
         return tokens[index]
     return None
 
@@ -943,7 +943,7 @@ def _extract_shell_script_path(tokens: list[str]) -> str | None:
             continue
         break
 
-    if index < len(tokens) and _looks_like_script_path(tokens[index]):
+    if index < len(tokens) and tokens[index] != "-":
         return tokens[index]
     return None
 
@@ -970,14 +970,39 @@ def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | No
     return None, None
 
 
-def _resolve_watch_preflight_base_dir(cwd: str | None, probe_cwd: str | None, *, shell_expansion: bool) -> Path:
+def _detect_shell_quote_mode(shell_command: str, token: str) -> str | None:
+    if f"'{token}'" in shell_command:
+        return "'"
+    if f'"{token}"' in shell_command:
+        return '"'
+    return None
+
+
+def _expand_shell_token(token: str, *, quote_mode: str | None) -> str:
+    if quote_mode == "'":
+        return token
+    if quote_mode == '"':
+        return os.path.expandvars(token)
+    return os.path.expandvars(os.path.expanduser(token))
+
+
+def _resolve_watch_preflight_base_dir(
+    cwd: str | None,
+    probe_cwd: str | None,
+    *,
+    shell_expansion: bool,
+    shell_command: str | None = None,
+) -> Path:
     base_dir = Path(cwd).resolve() if cwd else Path.cwd().resolve()
     if not probe_cwd:
         return base_dir
 
     probe_value = probe_cwd
     if shell_expansion:
-        probe_value = os.path.expandvars(os.path.expanduser(probe_value))
+        probe_value = _expand_shell_token(
+            probe_value,
+            quote_mode=_detect_shell_quote_mode(shell_command or "", probe_cwd),
+        )
 
     probe_base = Path(probe_value)
     if not probe_base.is_absolute():
@@ -985,11 +1010,14 @@ def _resolve_watch_preflight_base_dir(cwd: str | None, probe_cwd: str | None, *,
     return probe_base
 
 
-def _resolve_shell_script_candidates(script_path: str, *, base_dir: Path) -> list[Path]:
-    expanded = os.path.expandvars(os.path.expanduser(script_path))
+def _resolve_shell_script_candidates(script_path: str, *, base_dir: Path, quote_mode: str | None) -> list[Path]:
+    expanded = _expand_shell_token(script_path, quote_mode=quote_mode)
     pattern_path = Path(expanded)
     if not pattern_path.is_absolute():
         pattern_path = base_dir / pattern_path
+
+    if quote_mode is not None:
+        return [pattern_path.resolve()]
 
     matches = [Path(match).resolve() for match in glob.glob(str(pattern_path))]
     if matches:
@@ -1017,11 +1045,20 @@ def _validate_watch_script_preflight(
     if not script_path:
         return
 
-    base_dir = _resolve_watch_preflight_base_dir(cwd, probe_cwd, shell_expansion=bool(shell_command))
+    base_dir = _resolve_watch_preflight_base_dir(
+        cwd,
+        probe_cwd,
+        shell_expansion=bool(shell_command),
+        shell_command=shell_command,
+    )
     checked_from = None if Path(script_path).is_absolute() else str(base_dir)
 
     if shell_command:
-        candidates = _resolve_shell_script_candidates(script_path, base_dir=base_dir)
+        candidates = _resolve_shell_script_candidates(
+            script_path,
+            base_dir=base_dir,
+            quote_mode=_detect_shell_quote_mode(shell_command, script_path),
+        )
         if any(candidate.is_file() for candidate in candidates):
             return
         candidate = candidates[0]
