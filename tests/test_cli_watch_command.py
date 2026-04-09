@@ -486,6 +486,36 @@ def test_watch_add_does_not_treat_shell_command_string_as_script(
     assert payload["watch"]["command"] == ["bash", "-lc", "sleep 1; echo done"]
 
 
+def test_watch_add_accepts_shell_command_with_control_operator_after_script(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    _write_script(tmp_path / "scripts" / "wait.py")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--shell",
+            "python3 scripts/wait.py; echo done",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+        patch("vibe.cli._wait_for_watch_startup", side_effect=lambda *args, **kwargs: _startup_ok(store, runtime_store, args[2])),
+    ):
+        result = cli.cmd_watch_add(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["watch"]["shell_command"] == "python3 scripts/wait.py; echo done"
+
+
 def test_watch_add_accepts_shell_command_with_home_expansion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:
@@ -638,6 +668,29 @@ def test_watch_add_rejects_shell_command_with_escaped_glob_literal(
     assert payload["code"] == "invalid_watch_script"
     assert payload["details"]["script"] == "scripts/*.py"
     assert payload["details"]["resolved_path"] == str((tmp_path / "scripts" / "[*].py").resolve())
+
+
+def test_watch_add_rejects_shell_command_with_escaped_space_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--shell",
+            r"python3 scripts/my\ script.py",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "scripts/my script.py"
+    assert payload["details"]["resolved_path"] == str((tmp_path / "scripts" / "my script.py").resolve())
 
 
 def test_watch_add_rejects_exec_command_with_literal_tilde_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

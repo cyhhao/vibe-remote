@@ -948,31 +948,104 @@ def _extract_shell_script_path(tokens: list[str]) -> str | None:
     return None
 
 
+_SHELL_CONTROL_CHARS = ";|&()<>"
+
+
+def _shell_control_operator_at(command: str, index: int) -> str | None:
+    char = command[index]
+    if char not in _SHELL_CONTROL_CHARS:
+        return None
+
+    if index + 1 < len(command):
+        pair = command[index : index + 2]
+        if pair in {"&&", "||", "<<", ">>", "|&", "<>", ";&"}:
+            return pair
+    return char
+
+
 def _tokenize_shell_command(shell_command: str) -> tuple[list[str], list[list[str]]]:
-    raw_lexer = shlex.shlex(shell_command, posix=False)
-    raw_lexer.whitespace_split = True
-    raw_lexer.commenters = ""
-    raw_fragments = list(raw_lexer)
-    normalized_tokens = shlex.split(shell_command)
-
+    tokens: list[str] = []
     grouped_fragments: list[list[str]] = []
-    raw_index = 0
-    for token in normalized_tokens:
-        parts: list[str] = []
-        combined = ""
-        while raw_index < len(raw_fragments) and combined != token:
-            fragment = raw_fragments[raw_index]
-            raw_index += 1
-            parts.append(fragment)
-            combined += "".join(shlex.split(fragment))
-            if combined == token:
-                break
-        if combined != token:
-            grouped_fragments.append([token])
-            continue
-        grouped_fragments.append(parts)
+    length = len(shell_command)
+    index = 0
 
-    return normalized_tokens, grouped_fragments
+    while index < length:
+        while index < length and shell_command[index].isspace():
+            index += 1
+        if index >= length:
+            break
+
+        operator = _shell_control_operator_at(shell_command, index)
+        if operator is not None:
+            tokens.append(operator)
+            grouped_fragments.append([operator])
+            index += len(operator)
+            continue
+
+        fragments: list[str] = []
+        unquoted: list[str] = []
+        while index < length:
+            operator = _shell_control_operator_at(shell_command, index)
+            if operator is not None:
+                break
+
+            char = shell_command[index]
+            if char.isspace():
+                break
+
+            if char == "'":
+                if unquoted:
+                    fragments.append("".join(unquoted))
+                    unquoted = []
+                start = index
+                index += 1
+                while index < length and shell_command[index] != "'":
+                    index += 1
+                if index >= length:
+                    raise ValueError("No closing quotation")
+                index += 1
+                fragments.append(shell_command[start:index])
+                continue
+
+            if char == '"':
+                if unquoted:
+                    fragments.append("".join(unquoted))
+                    unquoted = []
+                start = index
+                index += 1
+                while index < length:
+                    inner = shell_command[index]
+                    if inner == "\\" and index + 1 < length:
+                        index += 2
+                        continue
+                    if inner == '"':
+                        index += 1
+                        break
+                    index += 1
+                else:
+                    raise ValueError("No closing quotation")
+                fragments.append(shell_command[start:index])
+                continue
+
+            if char == "\\" and index + 1 < length:
+                unquoted.append(shell_command[index : index + 2])
+                index += 2
+                continue
+
+            unquoted.append(char)
+            index += 1
+
+        if unquoted:
+            fragments.append("".join(unquoted))
+
+        raw_token = "".join(fragments)
+        normalized = shlex.split(raw_token)
+        if len(normalized) != 1:
+            raise ValueError("Unable to normalize shell token")
+        tokens.append(normalized[0])
+        grouped_fragments.append(fragments or [raw_token])
+
+    return tokens, grouped_fragments
 
 
 def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | None, str | None]:
