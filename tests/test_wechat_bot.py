@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock
 from pathlib import Path
@@ -213,11 +214,58 @@ class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
         }
 
         await bot._process_inbound_message(msg)
+        await asyncio.gather(*tuple(bot._message_callback_tasks))
 
         bot.on_message_callback.assert_awaited_once()
         args = bot.on_message_callback.await_args.args  # type: ignore[union-attr]
         self.assertEqual(args[0].user_id, "user-1")
         self.assertEqual(args[1], "hi")
+
+    async def test_process_inbound_message_does_not_block_commands_behind_running_callback(self):
+        bot = self._make_bot()
+        bot.check_authorization = lambda **kwargs: AuthResult(allowed=True, is_dm=True)
+        bot._process_media_items = AsyncMock(return_value=None)
+
+        callback_started = asyncio.Event()
+        release_callback = asyncio.Event()
+
+        async def running_callback(_context, _text: str):
+            callback_started.set()
+            await release_callback.wait()
+
+        async def dispatch_command(_context, text: str, allow_plain_bind: bool = False) -> bool:
+            return text == "/new"
+
+        bot.on_message_callback = running_callback
+        bot.dispatch_text_command = AsyncMock(side_effect=dispatch_command)
+
+        normal_msg = {
+            "message_id": "mid-1",
+            "from_user_id": "user-1",
+            "context_token": "ctx-1",
+            "item_list": [{"type": 1, "text_item": {"text": "hi"}}],
+        }
+        command_msg = {
+            "message_id": "mid-2",
+            "from_user_id": "user-1",
+            "context_token": "ctx-1",
+            "item_list": [{"type": 1, "text_item": {"text": "/new"}}],
+        }
+
+        first_task = asyncio.create_task(bot._process_inbound_message(normal_msg))
+        await asyncio.sleep(0)
+        self.assertTrue(first_task.done())
+        await callback_started.wait()
+
+        second_task = asyncio.create_task(bot._process_inbound_message(command_msg))
+        await asyncio.sleep(0)
+        self.assertTrue(second_task.done())
+
+        dispatched_texts = [call.args[1] for call in bot.dispatch_text_command.await_args_list]
+        self.assertEqual(dispatched_texts, ["hi", "/new"])
+
+        release_callback.set()
+        await asyncio.gather(*tuple(bot._message_callback_tasks))
 
     async def test_process_media_items_falls_back_to_referenced_media(self):
         bot = self._make_bot()
