@@ -1005,26 +1005,79 @@ def _raw_shell_fragment_quote_mode(fragment: str) -> str | None:
     return None
 
 
+_ESCAPED_SHELL_DOLLAR = "\0VIBE_WATCH_ESCAPED_DOLLAR\0"
+_ESCAPED_SHELL_TILDE = "\0VIBE_WATCH_ESCAPED_TILDE\0"
+
+
+def _expand_shell_fragment(fragment: str, *, first_fragment: bool) -> tuple[str, bool]:
+    quote_mode = _raw_shell_fragment_quote_mode(fragment)
+    if quote_mode == "'":
+        return glob.escape(fragment[1:-1]), False
+
+    if quote_mode == '"':
+        content = fragment[1:-1]
+        parts: list[str] = []
+        index = 0
+        while index < len(content):
+            char = content[index]
+            if char == "\\" and index + 1 < len(content):
+                next_char = content[index + 1]
+                if next_char == "$":
+                    parts.append(_ESCAPED_SHELL_DOLLAR)
+                    index += 2
+                    continue
+                if next_char in {'"', "\\"}:
+                    parts.append(next_char)
+                    index += 2
+                    continue
+            parts.append(char)
+            index += 1
+        text = "".join(parts)
+        text = os.path.expandvars(text)
+        text = text.replace(_ESCAPED_SHELL_DOLLAR, "$")
+        return glob.escape(text), False
+
+    parts = []
+    allow_glob = False
+    index = 0
+    while index < len(fragment):
+        char = fragment[index]
+        if char == "\\" and index + 1 < len(fragment):
+            next_char = fragment[index + 1]
+            if next_char == "$":
+                parts.append(_ESCAPED_SHELL_DOLLAR)
+            elif first_fragment and not parts and next_char == "~":
+                parts.append(_ESCAPED_SHELL_TILDE)
+            elif next_char in "*?[":
+                parts.append(glob.escape(next_char))
+            else:
+                parts.append(next_char)
+            index += 2
+            continue
+        if char in "*?[":
+            allow_glob = True
+        parts.append(char)
+        index += 1
+
+    text = "".join(parts)
+    if first_fragment and text.startswith("~"):
+        text = os.path.expanduser(text)
+    text = os.path.expandvars(text)
+    text = text.replace(_ESCAPED_SHELL_DOLLAR, "$")
+    text = text.replace(_ESCAPED_SHELL_TILDE, "~")
+    return text, allow_glob
+
+
 def _expand_shell_fragments(fragments: list[str]) -> tuple[str, bool]:
     expanded_parts: list[str] = []
     allow_glob = False
     for index, fragment in enumerate(fragments):
-        quote_mode = _raw_shell_fragment_quote_mode(fragment)
-        text = "".join(shlex.split(fragment))
-
-        if quote_mode == "'":
-            expanded_parts.append(glob.escape(text))
-            continue
-
-        if quote_mode == '"':
-            expanded_parts.append(glob.escape(os.path.expandvars(text)))
-            continue
-
-        if index == 0:
-            text = os.path.expanduser(text)
-        text = os.path.expandvars(text)
+        text, fragment_allows_glob = _expand_shell_fragment(
+            fragment,
+            first_fragment=index == 0,
+        )
         expanded_parts.append(text)
-        allow_glob = True
+        allow_glob = allow_glob or fragment_allows_glob
 
     return "".join(expanded_parts), allow_glob
 
@@ -1059,7 +1112,7 @@ def _resolve_shell_script_candidates(script_path: str, *, base_dir: Path, shell_
     if not allow_glob:
         return [pattern_path.resolve()]
 
-    matches = [Path(match).resolve() for match in glob.glob(str(pattern_path))]
+    matches = [Path(match).resolve() for match in sorted(glob.glob(str(pattern_path)))]
     if matches:
         return matches
     return [pattern_path.resolve()]
@@ -1113,9 +1166,9 @@ def _validate_watch_script_preflight(
             base_dir=base_dir,
             shell_fragments=script_fragments,
         )
-        if any(candidate.is_file() for candidate in candidates):
-            return
         candidate = candidates[0]
+        if candidate.is_file():
+            return
     else:
         candidate = Path(script_path)
         if not candidate.is_absolute():
