@@ -423,6 +423,30 @@ def test_watch_add_accepts_shell_command_with_home_expansion(
     assert payload["watch"]["shell_command"] == "python3 $HOME/scripts/wait.py"
 
 
+def test_watch_add_rejects_exec_command_with_literal_tilde_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    home_dir = tmp_path / "home"
+    _write_script(home_dir / "scripts" / "wait.py")
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "python3",
+            "~/scripts/wait.py",
+        ]
+    )
+
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "~/scripts/wait.py"
+
+
 def test_watch_add_accepts_shell_command_with_glob_expansion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:
@@ -451,6 +475,27 @@ def test_watch_add_accepts_shell_command_with_glob_expansion(
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["watch"]["shell_command"] == "python3 scripts/*.py"
+
+
+def test_watch_add_preflights_versioned_python_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = _parse_watch_add(
+        [
+            "--session-key",
+            "slack::channel::C123",
+            "--",
+            "python3.11",
+            "scripts/wait.py",
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})):
+        result, payload = _capture_stderr_json(cli.cmd_watch_add, args)
+
+    assert result == 1
+    assert payload["code"] == "invalid_watch_script"
+    assert payload["details"]["script"] == "scripts/wait.py"
 
 
 def test_watch_add_resolves_script_from_uv_directory_override(

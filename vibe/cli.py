@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -797,6 +798,9 @@ def _looks_like_script_path(token: str) -> bool:
     return path.is_absolute() or path.suffix in {".py", ".sh", ".bash", ".zsh"} or "/" in token or "\\" in token
 
 
+_PYTHON_RUNNER_RE = re.compile(r"^python(?:\d+(?:\.\d+)*)?$")
+
+
 UV_RUN_OPTIONS_WITH_VALUES = {
     "--extra",
     "--no-extra",
@@ -932,7 +936,7 @@ def _extract_watch_script_probe_from_tokens(tokens: list[str]) -> tuple[str | No
         return None, None
 
     runner = Path(tokens[0]).name
-    if runner in {"python", "python3"}:
+    if _PYTHON_RUNNER_RE.fullmatch(runner):
         return _extract_python_script_path(tokens), None
 
     if runner in {"bash", "sh"}:
@@ -993,7 +997,7 @@ def _validate_watch_script_preflight(
         return
 
     base_dir = _resolve_watch_preflight_base_dir(cwd, probe_cwd)
-    checked_from = None if Path(script_path).expanduser().is_absolute() else str(base_dir)
+    checked_from = None if Path(script_path).is_absolute() else str(base_dir)
 
     if shell_command:
         candidates = _resolve_shell_script_candidates(script_path, base_dir=base_dir)
@@ -1001,7 +1005,7 @@ def _validate_watch_script_preflight(
             return
         candidate = candidates[0]
     else:
-        candidate = Path(script_path).expanduser()
+        candidate = Path(script_path)
         if not candidate.is_absolute():
             candidate = (base_dir / candidate).resolve()
         if candidate.is_file():
