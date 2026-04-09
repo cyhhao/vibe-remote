@@ -374,6 +374,8 @@ class WeChatAuthManager:
 class WeChatBot(BaseIMClient):
     """WeChat personal messaging adapter via iLink bot protocol."""
 
+    _MAX_IN_FLIGHT_MESSAGE_CALLBACK_TASKS = 100
+
     def __init__(self, config: WeChatConfig):
         super().__init__(config)
         self.config: WeChatConfig = config
@@ -382,6 +384,7 @@ class WeChatBot(BaseIMClient):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop_event: Optional[asyncio.Event] = None
         self._poll_task: Optional[asyncio.Task] = None
+        self._message_callback_tasks: Set[asyncio.Task[Any]] = set()
 
         # Context tokens per user (needed for replies)
         self._context_tokens: Dict[str, str] = {}
@@ -1174,6 +1177,30 @@ class WeChatBot(BaseIMClient):
     # Inbound message processing
     # ------------------------------------------------------------------
 
+    async def _wait_for_message_callback_capacity(self) -> None:
+        while len(self._message_callback_tasks) >= self._MAX_IN_FLIGHT_MESSAGE_CALLBACK_TASKS:
+            pending = tuple(self._message_callback_tasks)
+            if not pending:
+                return
+            await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+
+    async def _spawn_message_callback_task(self, context: MessageContext, text: str) -> None:
+        if not self.on_message_callback:
+            return
+        await self._wait_for_message_callback_capacity()
+        task = asyncio.create_task(self.on_message_callback(context, text))
+        self._message_callback_tasks.add(task)
+        task.add_done_callback(self._handle_message_callback_task_done)
+
+    def _handle_message_callback_task_done(self, task: asyncio.Task[Any]) -> None:
+        self._message_callback_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("WeChat message callback task failed")
+
     async def _process_inbound_message(self, msg: dict) -> None:
         """Convert an iLink message to MessageContext and dispatch."""
         message_id = str(msg.get("message_id", ""))
@@ -1261,7 +1288,7 @@ class WeChatBot(BaseIMClient):
         # Dispatch to message handler
         if self.on_message_callback:
             try:
-                await self.on_message_callback(context, text)
+                await self._spawn_message_callback_task(context, text)
             except Exception as exc:
                 logger.error(
                     "Message callback error for user %s: %s",
