@@ -290,10 +290,14 @@ def _ensure_shared_home(output_root: Path, reset_mode: str = "none") -> Path:
     return shared_root
 
 
-def _ensure_vibe_dir(vibe_dir: Path, reset_mode: str = "none") -> None:
+def _validate_reset_mode(reset_mode: str) -> None:
     if reset_mode not in RESET_MODES:
         allowed = ", ".join(sorted(RESET_MODES))
         raise SystemExit(f"reset_mode must be one of: {allowed}")
+
+
+def _ensure_vibe_dir(vibe_dir: Path, reset_mode: str = "none") -> None:
+    _validate_reset_mode(reset_mode)
 
     if reset_mode == "all" and vibe_dir.exists():
         shutil.rmtree(vibe_dir)
@@ -416,8 +420,23 @@ def _build_opencode_payload() -> dict:
     }
 
 
-def _write_shared_agent_configs(output_root: Path) -> None:
-    shared_root = _ensure_shared_home(output_root)
+def _shared_agent_config_paths(output_root: Path) -> tuple[Path, ...]:
+    shared_root = output_root / "shared-home"
+    return (
+        shared_root / ".claude" / "settings.json",
+        shared_root / ".claude.json",
+        shared_root / ".codex" / "config.toml",
+        shared_root / ".codex" / "auth.json",
+        shared_root / ".config" / "opencode" / "opencode.json",
+    )
+
+
+def _should_write_shared_agent_configs(output_root: Path, *, reset_mode: str) -> bool:
+    return reset_mode in {"config", "all"} or any(not path.exists() for path in _shared_agent_config_paths(output_root))
+
+
+def _write_shared_agent_configs(output_root: Path, *, reset_mode: str) -> None:
+    shared_root = _ensure_shared_home(output_root, reset_mode=reset_mode)
     _write_json(shared_root / ".claude" / "settings.json", _build_claude_settings_payload())
     claude_state_path = shared_root / ".claude.json"
     if not claude_state_path.exists():
@@ -428,27 +447,33 @@ def _write_shared_agent_configs(output_root: Path) -> None:
 
 
 def prepare(output_root: Path, reset_mode: str = "none") -> None:
-    _require_envs(("ANTHROPIC_API_KEY", "OPENAI_API_KEY"))
-
-    # Validate platform-specific required env vars
-    for name, pdef in PLATFORM_DEFS.items():
-        _require_envs(pdef["required_envs"])
-
-    _ensure_shared_home(output_root, reset_mode=reset_mode)
-    _write_shared_agent_configs(output_root)
-
+    _validate_reset_mode(reset_mode)
     vibe_dir = output_root / "vibe"
-    _ensure_vibe_dir(vibe_dir, reset_mode=reset_mode)
-
     config_path = vibe_dir / "config" / "config.json"
     settings_path = vibe_dir / "state" / "settings.json"
     sessions_path = vibe_dir / "state" / "sessions.json"
+    needs_config = reset_mode in {"config", "all"} or not config_path.exists()
+    needs_settings = reset_mode in {"config", "all"} or not settings_path.exists()
+    needs_sessions = reset_mode in {"config", "all"} or not sessions_path.exists()
+    needs_shared_agent_configs = _should_write_shared_agent_configs(output_root, reset_mode=reset_mode)
 
-    if reset_mode in {"config", "all"} or not config_path.exists():
+    if needs_shared_agent_configs:
+        _require_envs(("ANTHROPIC_API_KEY", "OPENAI_API_KEY"))
+
+    if needs_config or needs_settings:
+        for pdef in PLATFORM_DEFS.values():
+            _require_envs(pdef["required_envs"])
+
+    if needs_shared_agent_configs:
+        _write_shared_agent_configs(output_root, reset_mode=reset_mode)
+
+    _ensure_vibe_dir(vibe_dir, reset_mode=reset_mode)
+
+    if needs_config:
         _write_json(config_path, _build_config_payload())
-    if reset_mode in {"config", "all"} or not settings_path.exists():
+    if needs_settings:
         _write_json(settings_path, _build_settings_payload())
-    if reset_mode in {"config", "all"} or not sessions_path.exists():
+    if needs_sessions:
         _write_json(sessions_path, {})
 
     summary_lines: list[str] = []

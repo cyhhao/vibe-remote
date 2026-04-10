@@ -127,12 +127,87 @@ def test_prepare_preserves_existing_state_without_reset(tmp_path: Path, monkeypa
     (vibe_dir / "config" / "config.json").write_text('{"keep": true}', encoding="utf-8")
     (vibe_dir / "state" / "settings.json").write_text('{"custom": true}', encoding="utf-8")
     (vibe_dir / "state" / "sessions.json").write_text('{"session": true}', encoding="utf-8")
+    shared_home = tmp_path / "shared-home"
+    (shared_home / ".claude").mkdir(parents=True)
+    (shared_home / ".codex").mkdir(parents=True)
+    (shared_home / ".config" / "opencode").mkdir(parents=True)
+    (shared_home / ".claude" / "settings.json").write_text('{"env": {"ANTHROPIC_AUTH_TOKEN": "keep"}}', encoding="utf-8")
+    (shared_home / ".claude.json").write_text('{"keep": true}', encoding="utf-8")
+    (shared_home / ".codex" / "config.toml").write_text('model = "keep"\n', encoding="utf-8")
+    (shared_home / ".codex" / "auth.json").write_text('{"OPENAI_API_KEY": "keep"}', encoding="utf-8")
+    (shared_home / ".config" / "opencode" / "opencode.json").write_text('{"keep": true}', encoding="utf-8")
+
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "THREE_REGRESSION_SLACK_BOT_TOKEN",
+        "THREE_REGRESSION_SLACK_APP_TOKEN",
+        "THREE_REGRESSION_DISCORD_BOT_TOKEN",
+        "THREE_REGRESSION_FEISHU_APP_ID",
+        "THREE_REGRESSION_FEISHU_APP_SECRET",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
     module.prepare(tmp_path)
 
     assert json.loads((vibe_dir / "config" / "config.json").read_text(encoding="utf-8")) == {"keep": True}
     assert json.loads((vibe_dir / "state" / "settings.json").read_text(encoding="utf-8")) == {"custom": True}
     assert json.loads((vibe_dir / "state" / "sessions.json").read_text(encoding="utf-8")) == {"session": True}
+    assert json.loads((shared_home / ".claude" / "settings.json").read_text(encoding="utf-8")) == {
+        "env": {"ANTHROPIC_AUTH_TOKEN": "keep"}
+    }
+    assert json.loads((shared_home / ".claude.json").read_text(encoding="utf-8")) == {"keep": True}
+    assert (shared_home / ".codex" / "config.toml").read_text(encoding="utf-8") == 'model = "keep"\n'
+    assert json.loads((shared_home / ".codex" / "auth.json").read_text(encoding="utf-8")) == {"OPENAI_API_KEY": "keep"}
+    assert json.loads((shared_home / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8")) == {
+        "keep": True
+    }
+
+
+def test_prepare_without_reset_still_requires_llm_keys_when_shared_configs_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    vibe_dir = tmp_path / "vibe"
+    (vibe_dir / "config").mkdir(parents=True)
+    (vibe_dir / "state").mkdir(parents=True)
+    (vibe_dir / "config" / "config.json").write_text('{"keep": true}', encoding="utf-8")
+    (vibe_dir / "state" / "settings.json").write_text('{"custom": true}', encoding="utf-8")
+    (vibe_dir / "state" / "sessions.json").write_text('{"session": true}', encoding="utf-8")
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY, OPENAI_API_KEY"):
+        module.prepare(tmp_path)
+
+
+def test_prepare_without_reset_still_requires_platform_envs_when_config_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    vibe_dir = tmp_path / "vibe"
+    (vibe_dir / "state").mkdir(parents=True)
+    (vibe_dir / "state" / "sessions.json").write_text('{"session": true}', encoding="utf-8")
+    shared_home = tmp_path / "shared-home"
+    (shared_home / ".claude").mkdir(parents=True)
+    (shared_home / ".codex").mkdir(parents=True)
+    (shared_home / ".config" / "opencode").mkdir(parents=True)
+    (shared_home / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    (shared_home / ".claude.json").write_text("{}", encoding="utf-8")
+    (shared_home / ".codex" / "config.toml").write_text("", encoding="utf-8")
+    (shared_home / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
+    (shared_home / ".config" / "opencode" / "opencode.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.delenv("THREE_REGRESSION_SLACK_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("THREE_REGRESSION_SLACK_APP_TOKEN", raising=False)
+
+    with pytest.raises(SystemExit, match="THREE_REGRESSION_SLACK_BOT_TOKEN, THREE_REGRESSION_SLACK_APP_TOKEN"):
+        module.prepare(tmp_path)
 
 
 def test_prepare_allows_missing_channel_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -177,6 +252,58 @@ def test_prepare_reset_config_preserves_workdir(tmp_path: Path, monkeypatch: pyt
     assert (workdir / "keep.txt").read_text(encoding="utf-8") == "keep-me"
     refreshed = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
     assert refreshed["agents"]["default_backend"] == "opencode"
+
+
+def test_prepare_reset_config_rewrites_shared_agent_configs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    shared_home = tmp_path / "shared-home"
+    (shared_home / ".claude").mkdir(parents=True)
+    (shared_home / ".codex").mkdir(parents=True)
+    (shared_home / ".config" / "opencode").mkdir(parents=True)
+    (shared_home / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_AUTH_TOKEN": "stale-token"}}),
+        encoding="utf-8",
+    )
+    (shared_home / ".claude.json").write_text('{"keep": true}', encoding="utf-8")
+    (shared_home / ".codex" / "config.toml").write_text('model = "stale-model"\n', encoding="utf-8")
+    (shared_home / ".codex" / "auth.json").write_text('{"OPENAI_API_KEY": "stale-key"}', encoding="utf-8")
+    (shared_home / ".config" / "opencode" / "opencode.json").write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "openai": {"options": {"apiKey": "stale-openai", "baseURL": "https://stale.example/v1"}},
+                    "anthropic": {"options": {"apiKey": "stale-anthropic", "baseURL": "https://stale.example/v1"}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("THREE_REGRESSION_CODEX_MODEL", "gpt-5.4")
+    monkeypatch.setenv("THREE_REGRESSION_CODEX_OPENAI_API_KEY", "sk-codex-new")
+    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_OPENAI_API_KEY", "sk-opencode-new")
+    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_ANTHROPIC_API_KEY", "sk-opencode-anthropic-new")
+    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_OPENAI_BASE_URL", "https://fresh.example/v1")
+    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_ANTHROPIC_BASE_URL", "https://fresh.example/v1")
+    monkeypatch.setenv("THREE_REGRESSION_CLAUDE_AUTH_TOKEN", "sk-claude-fresh")
+
+    module.prepare(tmp_path, reset_mode="config")
+
+    claude_settings = json.loads((shared_home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    codex_config = (shared_home / ".codex" / "config.toml").read_text(encoding="utf-8")
+    codex_auth = json.loads((shared_home / ".codex" / "auth.json").read_text(encoding="utf-8"))
+    opencode_config = json.loads((shared_home / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8"))
+
+    assert claude_settings["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-claude-fresh"
+    assert json.loads((shared_home / ".claude.json").read_text(encoding="utf-8")) == {"keep": True}
+    assert 'model = "gpt-5.4"' in codex_config
+    assert codex_auth["OPENAI_API_KEY"] == "sk-codex-new"
+    assert opencode_config["provider"]["openai"]["options"]["apiKey"] == "sk-opencode-new"
+    assert opencode_config["provider"]["openai"]["options"]["baseURL"] == "https://fresh.example/v1"
+    assert opencode_config["provider"]["anthropic"]["options"]["apiKey"] == "sk-opencode-anthropic-new"
+    assert opencode_config["provider"]["anthropic"]["options"]["baseURL"] == "https://fresh.example/v1"
 
 
 def test_prepare_reset_all_clears_workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
