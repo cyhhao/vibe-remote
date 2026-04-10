@@ -254,6 +254,58 @@ def test_prepare_reset_config_preserves_workdir(tmp_path: Path, monkeypatch: pyt
     assert refreshed["agents"]["default_backend"] == "opencode"
 
 
+def test_prepare_reset_config_rewrites_shared_agent_configs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+
+    shared_home = tmp_path / "shared-home"
+    (shared_home / ".claude").mkdir(parents=True)
+    (shared_home / ".codex").mkdir(parents=True)
+    (shared_home / ".config" / "opencode").mkdir(parents=True)
+    (shared_home / ".claude" / "settings.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_AUTH_TOKEN": "stale-token"}}),
+        encoding="utf-8",
+    )
+    (shared_home / ".claude.json").write_text('{"keep": true}', encoding="utf-8")
+    (shared_home / ".codex" / "config.toml").write_text('model = "stale-model"\n', encoding="utf-8")
+    (shared_home / ".codex" / "auth.json").write_text('{"OPENAI_API_KEY": "stale-key"}', encoding="utf-8")
+    (shared_home / ".config" / "opencode" / "opencode.json").write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "openai": {"options": {"apiKey": "stale-openai", "baseURL": "https://stale.example/v1"}},
+                    "anthropic": {"options": {"apiKey": "stale-anthropic", "baseURL": "https://stale.example/v1"}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("THREE_REGRESSION_CODEX_MODEL", "gpt-5.4")
+    monkeypatch.setenv("THREE_REGRESSION_CODEX_OPENAI_API_KEY", "sk-codex-new")
+    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_OPENAI_API_KEY", "sk-opencode-new")
+    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_ANTHROPIC_API_KEY", "sk-opencode-anthropic-new")
+    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_OPENAI_BASE_URL", "https://fresh.example/v1")
+    monkeypatch.setenv("THREE_REGRESSION_OPENCODE_ANTHROPIC_BASE_URL", "https://fresh.example/v1")
+    monkeypatch.setenv("THREE_REGRESSION_CLAUDE_AUTH_TOKEN", "sk-claude-fresh")
+
+    module.prepare(tmp_path, reset_mode="config")
+
+    claude_settings = json.loads((shared_home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    codex_config = (shared_home / ".codex" / "config.toml").read_text(encoding="utf-8")
+    codex_auth = json.loads((shared_home / ".codex" / "auth.json").read_text(encoding="utf-8"))
+    opencode_config = json.loads((shared_home / ".config" / "opencode" / "opencode.json").read_text(encoding="utf-8"))
+
+    assert claude_settings["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-claude-fresh"
+    assert json.loads((shared_home / ".claude.json").read_text(encoding="utf-8")) == {"keep": True}
+    assert 'model = "gpt-5.4"' in codex_config
+    assert codex_auth["OPENAI_API_KEY"] == "sk-codex-new"
+    assert opencode_config["provider"]["openai"]["options"]["apiKey"] == "sk-opencode-new"
+    assert opencode_config["provider"]["openai"]["options"]["baseURL"] == "https://fresh.example/v1"
+    assert opencode_config["provider"]["anthropic"]["options"]["apiKey"] == "sk-opencode-anthropic-new"
+    assert opencode_config["provider"]["anthropic"]["options"]["baseURL"] == "https://fresh.example/v1"
+
+
 def test_prepare_reset_all_clears_workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     _set_required_env(monkeypatch)

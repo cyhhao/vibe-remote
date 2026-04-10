@@ -432,7 +432,7 @@ def _shared_agent_config_paths(output_root: Path) -> tuple[Path, ...]:
 
 
 def _should_write_shared_agent_configs(output_root: Path, *, reset_mode: str) -> bool:
-    return reset_mode == "all" or any(not path.exists() for path in _shared_agent_config_paths(output_root))
+    return reset_mode in {"config", "all"} or any(not path.exists() for path in _shared_agent_config_paths(output_root))
 
 
 def _write_shared_agent_configs(output_root: Path, *, reset_mode: str) -> None:
