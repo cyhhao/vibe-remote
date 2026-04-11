@@ -52,6 +52,11 @@ class SessionHandler(BaseHandler):
         self.active_sessions.discard(composite_key)
         self.session_last_activity.pop(composite_key, None)
 
+    def bind_claude_runtime_session(self, client: ClaudeSDKClient, base_session_id: str, composite_key: str) -> None:
+        """Attach the resolved Claude runtime keys to the connected client."""
+        setattr(client, "_vibe_runtime_base_session_id", base_session_id)
+        setattr(client, "_vibe_runtime_session_key", composite_key)
+
     def get_base_session_id(self, context: MessageContext, source: str = "human") -> str:
         """Get base session ID based on platform and context (without path)"""
         platform = self._get_context_platform(context)
@@ -381,6 +386,7 @@ class SessionHandler(BaseHandler):
             logger.info(
                 f"Using existing Claude SDK client for {base_session_id} at {working_path} (model={current_model})"
             )
+            self.bind_claude_runtime_session(client, base_session_id, composite_key)
             self.touch_session_activity(composite_key)
             return client
 
@@ -409,6 +415,7 @@ class SessionHandler(BaseHandler):
                     working_path,
                     explicit_model,
                 )
+                self.bind_claude_runtime_session(client, cached_base, cached_key)
                 self.touch_session_activity(cached_key)
                 return client
             # Always use agent-specific key when effective_agent is set
@@ -561,6 +568,7 @@ class SessionHandler(BaseHandler):
         await client.connect()
 
         self.claude_sessions[composite_key] = client
+        self.bind_claude_runtime_session(client, base_session_id, composite_key)
         self.touch_session_activity(composite_key)
         logger.info(f"Created new Claude SDK client for {base_session_id} at {working_path}")
 

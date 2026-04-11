@@ -133,6 +133,8 @@ def test_session_handler_passes_configured_claude_cli_path(monkeypatch, tmp_path
     assert captured["connected"] is True
     assert captured["options"].cli_path == "/usr/local/bin/claude-proxy"
     assert controller.claude_sessions[f"slack_C123:{tmp_path}"] is client
+    assert getattr(client, "_vibe_runtime_base_session_id") == "slack_C123"
+    assert getattr(client, "_vibe_runtime_session_key") == f"slack_C123:{tmp_path}"
 
 
 def test_session_handler_keeps_sdk_default_for_default_claude_binary(monkeypatch, tmp_path: Path) -> None:

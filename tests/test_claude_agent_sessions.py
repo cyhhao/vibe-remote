@@ -60,6 +60,64 @@ class _StubController:
 
 
 class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_handle_message_uses_runtime_session_key_for_claude_tracking(self):
+        controller = _StubController()
+        controller.emit_agent_message = AsyncMock()
+        runtime_key = "wechat_o9:reviewer:/tmp/work"
+        client = SimpleNamespace(
+            query=AsyncMock(),
+            _vibe_runtime_base_session_id="wechat_o9:reviewer",
+            _vibe_runtime_session_key=runtime_key,
+        )
+        controller.session_handler = SimpleNamespace(
+            get_or_create_claude_session=AsyncMock(return_value=client),
+            mark_session_active=SimpleNamespace(),
+            handle_session_error=AsyncMock(),
+            capture_session_id=lambda *_: None,
+        )
+        mark_active_calls = []
+        controller.session_handler.mark_session_active = lambda composite_key: mark_active_calls.append(composite_key)
+
+        agent = ClaudeAgent(controller)
+        agent._prepare_message_with_files = lambda request: request.message
+        agent._delete_ack = AsyncMock()
+        agent._receive_messages = AsyncMock()
+
+        request = SimpleNamespace(
+            context=SimpleNamespace(),
+            message="hello",
+            working_path="/tmp/work",
+            base_session_id="wechat_o9",
+            composite_session_id="wechat_o9:/tmp/work",
+            session_key="wechat-user",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+            ack_message_id=None,
+            ack_reaction_message_id="m1",
+            ack_reaction_emoji=":eyes:",
+            files=None,
+        )
+
+        await agent.handle_message(request)
+        await asyncio.sleep(0)
+
+        controller.session_handler.get_or_create_claude_session.assert_awaited_once()
+        self.assertEqual(mark_active_calls, [runtime_key])
+        client.query.assert_awaited_once_with("hello", session_id=runtime_key)
+        self.assertIn(runtime_key, agent._pending_requests)
+        self.assertIn(runtime_key, agent._pending_reactions)
+        self.assertNotIn(request.composite_session_id, agent._pending_requests)
+        self.assertNotIn(request.composite_session_id, agent._pending_reactions)
+        self.assertIn(runtime_key, controller.receiver_tasks)
+        agent._receive_messages.assert_awaited_once_with(
+            client,
+            "wechat_o9:reviewer",
+            "/tmp/work",
+            request.context,
+            composite_key=runtime_key,
+        )
+
     async def test_clear_sessions_cancels_receiver_tasks_for_cleared_session(self):
         controller = _StubController()
         agent = ClaudeAgent(controller)

@@ -52,6 +52,8 @@ class ClaudeAgent(BaseAgent):
 
     async def handle_message(self, request: AgentRequest) -> None:
         context = request.context
+        runtime_base_session_id = request.base_session_id
+        runtime_session_key = request.composite_session_id
 
         # Question callback handling (disabled - SDK doesn't support AskUserQuestion response)
         # if self.ENABLE_ASK_USER_QUESTION and request.message.startswith("claude_question:"):
@@ -65,43 +67,51 @@ class ClaudeAgent(BaseAgent):
                 subagent_model=request.subagent_model,
                 subagent_reasoning_effort=request.subagent_reasoning_effort,
             )
+            runtime_base_session_id = getattr(client, "_vibe_runtime_base_session_id", runtime_base_session_id)
+            runtime_session_key = getattr(client, "_vibe_runtime_session_key", runtime_session_key)
             mark_session_active = getattr(self.session_handler, "mark_session_active", None)
             if callable(mark_session_active):
-                mark_session_active(request.composite_session_id)
+                mark_session_active(runtime_session_key)
 
             # Queue reaction BEFORE sending query to avoid race condition where
             # a fast result arrives before the reaction is queued
             if request.ack_reaction_message_id and request.ack_reaction_emoji:
-                if request.composite_session_id not in self._pending_reactions:
-                    self._pending_reactions[request.composite_session_id] = []
-                self._pending_reactions[request.composite_session_id].append(
+                if runtime_session_key not in self._pending_reactions:
+                    self._pending_reactions[runtime_session_key] = []
+                self._pending_reactions[runtime_session_key].append(
                     (request.ack_reaction_message_id, request.ack_reaction_emoji)
                 )
-            self._pending_requests.setdefault(request.composite_session_id, []).append(request)
+            self._pending_requests.setdefault(runtime_session_key, []).append(request)
 
             # Prepare message with file attachment info if present
             message = self._prepare_message_with_files(request)
 
-            await client.query(message, session_id=request.composite_session_id)
-            logger.info(f"Sent message to Claude for session {request.composite_session_id}")
+            await client.query(message, session_id=runtime_session_key)
+            logger.info(f"Sent message to Claude for session {runtime_session_key}")
 
             await self._delete_ack(context, request)
 
             if (
-                request.composite_session_id not in self.receiver_tasks
-                or self.receiver_tasks[request.composite_session_id].done()
+                runtime_session_key not in self.receiver_tasks
+                or self.receiver_tasks[runtime_session_key].done()
             ):
-                self.receiver_tasks[request.composite_session_id] = asyncio.create_task(
-                    self._receive_messages(client, request.base_session_id, request.working_path, context)
+                self.receiver_tasks[runtime_session_key] = asyncio.create_task(
+                    self._receive_messages(
+                        client,
+                        runtime_base_session_id,
+                        request.working_path,
+                        context,
+                        composite_key=runtime_session_key,
+                    )
                 )
         except Exception as e:
             logger.error(f"Error processing Claude message: {e}", exc_info=True)
             mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
             if callable(mark_session_idle):
-                mark_session_idle(request.composite_session_id)
+                mark_session_idle(runtime_session_key)
             # Clean up the specific reaction for this request (not FIFO)
-            await self._remove_specific_pending_reaction(request.composite_session_id, context, request)
-            self._remove_pending_request(request.composite_session_id, request)
+            await self._remove_specific_pending_reaction(runtime_session_key, context, request)
+            self._remove_pending_request(runtime_session_key, request)
             await self._remove_ack_reaction(request)
             handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                 context,
@@ -109,7 +119,7 @@ class ClaudeAgent(BaseAgent):
                 f"❌ Claude error: {e}",
             )
             if not handled:
-                await self.session_handler.handle_session_error(request.composite_session_id, context, e)
+                await self.session_handler.handle_session_error(runtime_session_key, context, e)
         finally:
             await self._delete_ack(context, request)
 
@@ -282,11 +292,13 @@ class ClaudeAgent(BaseAgent):
         base_session_id: str,
         working_path: str,
         context: MessageContext,
+        *,
+        composite_key: str | None = None,
     ):
         """Receive messages from Claude SDK client."""
         try:
             session_key = self.controller._get_session_key(context)
-            composite_key = f"{base_session_id}:{working_path}"
+            composite_key = composite_key or f"{base_session_id}:{working_path}"
 
             # Build a request object for question handler
             request = AgentRequest(
@@ -479,7 +491,7 @@ class ClaudeAgent(BaseAgent):
                             mark_session_idle(composite_key)
                         session = await self.session_manager.get_or_create_session(context.user_id, context.channel_id)
                         if session:
-                            session.session_active[f"{base_session_id}:{working_path}"] = False
+                            session.session_active[composite_key] = False
                         continue
 
                     # Ignore UserMessage/tool results; toolcalls are emitted from ToolUseBlock.
@@ -491,7 +503,7 @@ class ClaudeAgent(BaseAgent):
             # Receiver task was explicitly cancelled (e.g. /stop, /clear,
             # or a new message replacing the session).  Clean up reactions
             # because this receiver will never process another result.
-            composite_key = f"{base_session_id}:{working_path}"
+            composite_key = composite_key or f"{base_session_id}:{working_path}"
             mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
             if callable(mark_session_idle):
                 mark_session_idle(composite_key)
@@ -499,7 +511,7 @@ class ClaudeAgent(BaseAgent):
             await self._clear_pending_reactions(composite_key, context)
             raise
         except Exception as e:
-            composite_key = f"{base_session_id}:{working_path}"
+            composite_key = composite_key or f"{base_session_id}:{working_path}"
             mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
             if callable(mark_session_idle):
                 mark_session_idle(composite_key)
