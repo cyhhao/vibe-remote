@@ -401,8 +401,7 @@ class Controller:
         except Exception as e:
             logger.error("Failed to start watch service: %s", e, exc_info=True)
 
-        claude_timeout = int(max(0, getattr(self.config.claude, "idle_timeout_seconds", 600) or 0))
-        codex_timeout = int(max(0, getattr(getattr(self.config, "codex", None), "idle_timeout_seconds", 600) or 0))
+        claude_timeout, codex_timeout = self._get_idle_cleanup_timeouts()
         if (claude_timeout > 0 or codex_timeout > 0) and (
             self.cleanup_task is None or self.cleanup_task.done()
         ):
@@ -592,10 +591,17 @@ class Controller:
                 self._loop.close()
                 self._loop = None
 
+    def _get_idle_cleanup_timeouts(self) -> tuple[int, int]:
+        """Return normalized idle cleanup timeouts for Claude and Codex."""
+        claude_config = getattr(self.config, "claude", None)
+        codex_config = getattr(self.config, "codex", None)
+        claude_timeout = int(max(0, getattr(claude_config, "idle_timeout_seconds", 600) or 0))
+        codex_timeout = int(max(0, getattr(codex_config, "idle_timeout_seconds", 0) or 0))
+        return claude_timeout, codex_timeout
+
     async def periodic_cleanup(self):
         """Sweep idle backend runtime state without interrupting active work."""
-        claude_timeout = int(max(0, getattr(self.config.claude, "idle_timeout_seconds", 600) or 0))
-        codex_timeout = int(max(0, getattr(getattr(self.config, "codex", None), "idle_timeout_seconds", 600) or 0))
+        claude_timeout, codex_timeout = self._get_idle_cleanup_timeouts()
         enabled_timeouts = [timeout for timeout in (claude_timeout, codex_timeout) if timeout > 0]
         if not enabled_timeouts:
             logger.info("Idle cleanup disabled for Claude and Codex.")
