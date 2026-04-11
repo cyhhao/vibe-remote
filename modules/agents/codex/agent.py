@@ -282,26 +282,40 @@ class CodexAgent(BaseAgent):
             if idle_for < idle_timeout:
                 continue
 
-            logger.info("Evicting idle Codex transport for cwd=%s after %.1fs idle", cwd, idle_for)
-            try:
-                await transport.stop()
-            except Exception as exc:
-                logger.warning("Failed to stop idle Codex transport for cwd=%s: %s", cwd, exc)
-                continue
+            lock = self._transport_locks.setdefault(cwd, asyncio.Lock())
+            async with lock:
+                current_transport = self._transports.get(cwd)
+                current_last_activity = self._transport_last_activity.get(cwd)
+                if current_transport is None or current_transport is not transport:
+                    continue
+                if self._has_active_turns_for_cwd(cwd):
+                    continue
+                if current_last_activity is None:
+                    continue
+                idle_for = time.monotonic() - current_last_activity
+                if idle_for < idle_timeout:
+                    continue
 
-            self._transports.pop(cwd, None)
-            self._transport_last_activity.pop(cwd, None)
-            self._transport_locks.pop(cwd, None)
+                logger.info("Evicting idle Codex transport for cwd=%s after %.1fs idle", cwd, idle_for)
+                try:
+                    await transport.stop()
+                except Exception as exc:
+                    logger.warning("Failed to stop idle Codex transport for cwd=%s: %s", cwd, exc)
+                    continue
 
-            for base_session_id in list(self._session_mgr.sessions_for_cwd(cwd)):
-                session_key = self._session_mgr.get_session_key(base_session_id)
-                if session_key:
-                    self.sessions.clear_agent_session_mapping(session_key, self.name, base_session_id)
-                self._session_mgr.clear(base_session_id)
-                self._turn_registry.clear_session(base_session_id)
-                self._session_locks.pop(base_session_id, None)
+                self._transports.pop(cwd, None)
+                self._transport_last_activity.pop(cwd, None)
+                self._transport_locks.pop(cwd, None)
 
-            evicted += 1
+                for base_session_id in list(self._session_mgr.sessions_for_cwd(cwd)):
+                    session_key = self._session_mgr.get_session_key(base_session_id)
+                    if session_key:
+                        self.sessions.clear_agent_session_mapping(session_key, self.name, base_session_id)
+                    self._session_mgr.clear(base_session_id)
+                    self._turn_registry.clear_session(base_session_id)
+                    self._session_locks.pop(base_session_id, None)
+
+                evicted += 1
 
         return evicted
 

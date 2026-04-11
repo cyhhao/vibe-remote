@@ -277,3 +277,38 @@ def test_session_handler_keeps_active_claude_session(monkeypatch, tmp_path: Path
     assert evicted == 0
     assert captured["disconnects"] == 0
     assert composite_key in controller.claude_sessions
+
+
+def test_cleanup_session_swallows_cancelled_receiver_task(monkeypatch, tmp_path: Path) -> None:
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            self.disconnects = 0
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            self.disconnects += 1
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+    client = _run_session(handler, context)
+    composite_key = f"slack_C123:{tmp_path}"
+
+    async def _exercise_cleanup() -> None:
+        async def _receiver():
+            await asyncio.Future()
+
+        controller.receiver_tasks[composite_key] = asyncio.create_task(_receiver())
+        await asyncio.sleep(0)
+        await handler.cleanup_session(composite_key)
+
+    asyncio.run(_exercise_cleanup())
+
+    assert client.disconnects == 1
+    assert composite_key not in controller.receiver_tasks
+    assert composite_key not in controller.claude_sessions

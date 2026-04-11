@@ -1,5 +1,6 @@
 """Session management handlers for Claude SDK sessions"""
 
+import asyncio
 import logging
 import os
 import time
@@ -729,6 +730,8 @@ class SessionHandler(BaseHandler):
                 task.cancel()
                 try:
                     await task
+                except asyncio.CancelledError:
+                    pass
                 except Exception:
                     pass
             del self.receiver_tasks[composite_key]
