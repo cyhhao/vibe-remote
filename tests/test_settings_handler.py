@@ -271,3 +271,27 @@ def test_gather_routing_modal_data_hides_disabled_backends() -> None:
         "models:/tmp/workspace",
         "config:/tmp/workspace",
     ]
+
+
+def test_gather_routing_modal_data_falls_back_to_visible_backend_when_current_is_disabled() -> None:
+    handler, server = _make_routing_handler()
+    handler.config.claude.enabled = False
+    context = MessageContext(user_id="U1", channel_id="D0APS47LPU2", platform="slack")
+    handler.controller.resolve_agent_for_context = lambda context: "claude"
+
+    with patch("vibe.api.claude_models", side_effect=AssertionError("claude should not be fetched")), patch(
+        "vibe.api.claude_agents", side_effect=AssertionError("claude should not be fetched")
+    ), patch("vibe.api.codex_models", side_effect=AssertionError("codex should not be fetched")), patch(
+        "vibe.api.codex_agents", side_effect=AssertionError("codex should not be fetched")
+    ):
+        data = asyncio.run(handler._gather_routing_modal_data(context))
+
+    assert data.current_backend == "claude"
+    assert data.registered_backends == ["opencode", "codex"]
+    assert data.opencode_agents == [{"name": "build"}]
+    assert server.calls == [
+        "ensure_running",
+        "agents:/tmp/workspace",
+        "models:/tmp/workspace",
+        "config:/tmp/workspace",
+    ]

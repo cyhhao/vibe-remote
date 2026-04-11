@@ -431,7 +431,11 @@ class SettingsHandler(BaseHandler):
         if not enabled_backends and current_backend:
             enabled_backends = [current_backend]
         registered_backends = sorted(enabled_backends, key=lambda x: (x != "opencode", x))
-        active_backend = selected_backend if selected_backend in registered_backends else current_backend
+        active_backend = registered_backends[0] if registered_backends else current_backend
+        if current_backend in registered_backends:
+            active_backend = current_backend
+        if selected_backend in registered_backends:
+            active_backend = selected_backend
         backends_to_load = set(registered_backends) if include_all_backend_data else {active_backend}
 
         opencode_agents = []
