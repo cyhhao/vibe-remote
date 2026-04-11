@@ -767,11 +767,24 @@ class SessionHandler(BaseHandler):
             if now - last_activity >= idle_timeout:
                 expired.append((composite_key, now - last_activity))
 
+        evicted = 0
         for composite_key, idle_for in expired:
+            current_last_activity = self.session_last_activity.get(composite_key)
+            if composite_key not in self.claude_sessions:
+                self.session_last_activity.pop(composite_key, None)
+                self.active_sessions.discard(composite_key)
+                continue
+            if composite_key in self.active_sessions:
+                continue
+            if current_last_activity is None:
+                continue
+            if time.monotonic() - current_last_activity < idle_timeout:
+                continue
             logger.info("Evicting idle Claude session %s after %.1fs idle", composite_key, idle_for)
             await self.cleanup_session(composite_key)
+            evicted += 1
 
-        return len(expired)
+        return evicted
 
     async def handle_session_error(self, composite_key: str, context: MessageContext, error: Exception):
         """Handle session-related errors"""

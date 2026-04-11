@@ -305,7 +305,6 @@ class CodexAgent(BaseAgent):
 
                 self._transports.pop(cwd, None)
                 self._transport_last_activity.pop(cwd, None)
-                self._transport_locks.pop(cwd, None)
 
                 for base_session_id in list(self._session_mgr.sessions_for_cwd(cwd)):
                     session_key = self._session_mgr.get_session_key(base_session_id)

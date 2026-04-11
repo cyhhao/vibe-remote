@@ -312,3 +312,45 @@ def test_cleanup_session_swallows_cancelled_receiver_task(monkeypatch, tmp_path:
     assert client.disconnects == 1
     assert composite_key not in controller.receiver_tasks
     assert composite_key not in controller.claude_sessions
+
+
+def test_evict_idle_sessions_rechecks_active_state_before_cleanup(monkeypatch, tmp_path: Path) -> None:
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            self.disconnects = 0
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            self.disconnects += 1
+
+    class _FlippingActiveSet(set):
+        def __init__(self, target_key: str):
+            super().__init__()
+            self.target_key = target_key
+            self._checks = 0
+
+        def __contains__(self, item):
+            if item == self.target_key:
+                self._checks += 1
+                return self._checks >= 2
+            return super().__contains__(item)
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+    monkeypatch.setattr(session_handler_module.time, "monotonic", lambda: 1000.0)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+    client = _run_session(handler, context)
+    composite_key = f"slack_C123:{tmp_path}"
+    handler.session_last_activity[composite_key] = 0.0
+    handler.active_sessions = _FlippingActiveSet(composite_key)
+
+    evicted = asyncio.run(handler.evict_idle_sessions(600))
+
+    assert evicted == 0
+    assert client.disconnects == 0
+    assert composite_key in controller.claude_sessions

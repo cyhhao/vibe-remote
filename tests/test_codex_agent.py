@@ -318,6 +318,7 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cleared_turns, ["session-1"])
         agent.sessions.clear_agent_session_mapping.assert_called_once_with("scope-1", "codex", "session-1")
         self.assertEqual(agent._transports, {})
+        self.assertIn("/tmp/work", agent._transport_locks)
         self.assertEqual(agent._transport_last_activity, {})
 
     async def test_evict_idle_transports_keeps_active_codex_runtime(self):
