@@ -323,3 +323,4 @@ def test_handle_routing_modal_update_uses_visible_current_backend() -> None:
 
     assert len(update_calls) == 1
     assert update_calls[0]["current_backend"] == "opencode"
+    assert update_calls[0]["selected_backend"] == "opencode"

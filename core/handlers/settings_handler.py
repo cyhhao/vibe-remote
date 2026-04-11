@@ -703,6 +703,9 @@ class SettingsHandler(BaseHandler):
             current_routing = routing_data.current_routing
             registered_backends = routing_data.registered_backends
             current_backend = routing_data.current_backend
+            visible_selected_backend = (
+                selected_backend if selected_backend in registered_backends else current_backend
+            )
 
             if hasattr(im_client, "update_routing_modal"):
                 await im_client.update_routing_modal(  # type: ignore[attr-defined]
@@ -719,7 +722,7 @@ class SettingsHandler(BaseHandler):
                     claude_models=routing_data.claude_models,
                     codex_agents=routing_data.codex_agents,
                     codex_models=routing_data.codex_models,
-                    selected_backend=selected_backend,
+                    selected_backend=visible_selected_backend,
                     selected_opencode_agent=selection.selected_opencode_agent,
                     selected_opencode_model=selection.selected_opencode_model,
                     selected_opencode_reasoning=selection.selected_opencode_reasoning,
