@@ -287,6 +287,7 @@ class CodexAgent(BaseAgent):
                 await transport.stop()
             except Exception as exc:
                 logger.warning("Failed to stop idle Codex transport for cwd=%s: %s", cwd, exc)
+                continue
 
             self._transports.pop(cwd, None)
             self._transport_last_activity.pop(cwd, None)
@@ -700,5 +701,8 @@ class CodexAgent(BaseAgent):
     def _has_active_turns_for_cwd(self, cwd: str) -> bool:
         for base_session_id in self._session_mgr.sessions_for_cwd(cwd):
             if self._turn_registry.get_active_turn(base_session_id):
+                return True
+            has_pending_turn_start = getattr(self._turn_registry, "has_pending_turn_start", None)
+            if callable(has_pending_turn_start) and has_pending_turn_start(base_session_id):
                 return True
         return False
