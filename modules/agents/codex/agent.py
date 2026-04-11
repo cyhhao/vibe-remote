@@ -325,11 +325,6 @@ class CodexAgent(BaseAgent):
 
     async def _get_or_create_transport(self, cwd: str) -> CodexTransport:
         """Return an initialized transport for the given working directory."""
-        existing = self._transports.get(cwd)
-        if existing and existing.is_initialized:
-            self._touch_transport_activity(cwd)
-            return existing
-
         # Serialize creation per cwd
         if cwd not in self._transport_locks:
             self._transport_locks[cwd] = asyncio.Lock()

@@ -452,6 +452,25 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent._transport_last_activity["/tmp/work"], 950.0)
         agent.sessions.clear_agent_session_mapping.assert_not_called()
 
+    async def test_get_or_create_transport_fast_path_waits_for_transport_lock(self):
+        agent = object.__new__(CodexAgent)
+        lock = asyncio.Lock()
+        await lock.acquire()
+        transport = SimpleNamespace(is_initialized=True)
+        agent._transports = {"/tmp/work": transport}
+        agent._transport_locks = {"/tmp/work": lock}
+        agent._transport_last_activity = {}
+
+        with patch.object(_MODULE.time, "monotonic", return_value=1000.0):
+            transport_task = asyncio.create_task(agent._get_or_create_transport("/tmp/work"))
+            await asyncio.sleep(0)
+            self.assertFalse(transport_task.done())
+            lock.release()
+            resolved = await transport_task
+
+        self.assertIs(resolved, transport)
+        self.assertEqual(agent._transport_last_activity["/tmp/work"], 1000.0)
+
 
 class _HandleMessageTurnRegistry:
     def __init__(self, active_turn: str | None):

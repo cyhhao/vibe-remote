@@ -172,6 +172,55 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
             composite_key=runtime_key,
         )
 
+    async def test_handle_message_error_keeps_session_active_when_requests_remain_queued(self):
+        controller = _StubController()
+        mark_idle_calls = []
+        controller.emit_agent_message = AsyncMock()
+        runtime_key = "wechat_o9:reviewer:/tmp/work"
+        queued_request = SimpleNamespace()
+        client = SimpleNamespace(
+            query=AsyncMock(side_effect=RuntimeError("boom")),
+            _vibe_runtime_base_session_id="wechat_o9:reviewer",
+            _vibe_runtime_session_key=runtime_key,
+        )
+        controller.session_handler = SimpleNamespace(
+            get_or_create_claude_session=AsyncMock(return_value=client),
+            mark_session_active=lambda composite_key: None,
+            mark_session_idle=lambda composite_key: mark_idle_calls.append(composite_key),
+            handle_session_error=AsyncMock(),
+            capture_session_id=lambda *_: None,
+        )
+
+        agent = ClaudeAgent(controller)
+        agent._prepare_message_with_files = lambda request: request.message
+        agent._delete_ack = AsyncMock()
+        agent._remove_ack_reaction = AsyncMock()
+
+        request = SimpleNamespace(
+            context=SimpleNamespace(),
+            message="hello",
+            working_path="/tmp/work",
+            base_session_id="wechat_o9",
+            composite_session_id="wechat_o9:/tmp/work",
+            session_key="wechat-user",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+            ack_message_id=None,
+            ack_reaction_message_id="m1",
+            ack_reaction_emoji=":eyes:",
+            files=None,
+        )
+        agent._pending_requests[runtime_key] = [queued_request]
+        agent._pending_reactions[runtime_key] = [("m2", ":eyes:")]
+
+        await agent.handle_message(request)
+
+        self.assertEqual(mark_idle_calls, [])
+        self.assertEqual(agent._pending_requests[runtime_key], [queued_request])
+        self.assertEqual(agent._pending_reactions[runtime_key], [("m2", ":eyes:")])
+        agent._remove_ack_reaction.assert_awaited_once_with(request)
+
     async def test_clear_sessions_cancels_receiver_tasks_for_cleared_session(self):
         controller = _StubController()
         agent = ClaudeAgent(controller)

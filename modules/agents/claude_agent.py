@@ -106,12 +106,10 @@ class ClaudeAgent(BaseAgent):
                 )
         except Exception as e:
             logger.error(f"Error processing Claude message: {e}", exc_info=True)
-            mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
-            if callable(mark_session_idle):
-                mark_session_idle(runtime_session_key)
             # Clean up the specific reaction for this request (not FIFO)
             await self._remove_specific_pending_reaction(runtime_session_key, context, request)
             self._remove_pending_request(runtime_session_key, request)
+            self._mark_session_idle_if_no_pending_requests(runtime_session_key)
             await self._remove_ack_reaction(request)
             handled = await self.controller.agent_auth_service.maybe_emit_auth_recovery_message(
                 context,
