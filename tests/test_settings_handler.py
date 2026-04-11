@@ -231,6 +231,31 @@ def test_gather_routing_modal_data_fetches_selected_backend_on_modal_update() ->
     assert server.calls == []
 
 
+def test_gather_routing_modal_data_prefetches_all_backends_when_requested() -> None:
+    handler, server = _make_routing_handler()
+    context = MessageContext(user_id="U1", channel_id="D0APS47LPU2", platform="telegram")
+
+    with patch("vibe.api.claude_agents", return_value={"ok": True, "agents": [{"id": "reviewer"}]}), patch(
+        "vibe.api.claude_models", return_value={"ok": True, "models": ["claude-sonnet-4-6"]}
+    ), patch("vibe.api.codex_agents", return_value={"ok": True, "agents": [{"id": "builder"}]}), patch(
+        "vibe.api.codex_models", return_value={"ok": True, "models": ["gpt-5.4"]}
+    ):
+        data = asyncio.run(handler._gather_routing_modal_data(context, include_all_backend_data=True))
+
+    assert data.registered_backends == ["opencode", "claude", "codex"]
+    assert data.opencode_agents == [{"name": "build"}]
+    assert data.claude_agents == [{"id": "reviewer"}]
+    assert data.claude_models == ["claude-sonnet-4-6"]
+    assert data.codex_agents == [{"id": "builder"}]
+    assert data.codex_models == ["gpt-5.4"]
+    assert server.calls == [
+        "ensure_running",
+        "agents:/tmp/workspace",
+        "models:/tmp/workspace",
+        "config:/tmp/workspace",
+    ]
+
+
 def test_gather_routing_modal_data_hides_disabled_backends() -> None:
     handler, server = _make_routing_handler()
     handler.config.claude.enabled = False

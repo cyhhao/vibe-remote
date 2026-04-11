@@ -419,6 +419,7 @@ class SettingsHandler(BaseHandler):
         self,
         context: MessageContext,
         selected_backend: Optional[str] = None,
+        include_all_backend_data: bool = False,
     ) -> RoutingModalData:
         """Collect backend/agent/model data for routing modal renderers."""
         settings_key = self._get_settings_key(context)
@@ -431,6 +432,7 @@ class SettingsHandler(BaseHandler):
             enabled_backends = [current_backend]
         registered_backends = sorted(enabled_backends, key=lambda x: (x != "opencode", x))
         active_backend = selected_backend if selected_backend in registered_backends else current_backend
+        backends_to_load = set(registered_backends) if include_all_backend_data else {active_backend}
 
         opencode_agents = []
         opencode_models = {}
@@ -440,7 +442,7 @@ class SettingsHandler(BaseHandler):
         codex_agents = []
         codex_models = []
 
-        if active_backend == "opencode":
+        if "opencode" in backends_to_load:
             try:
                 opencode_agent = self.controller.agent_service.agents.get("opencode")
                 if opencode_agent and hasattr(opencode_agent, "_get_server"):
@@ -454,7 +456,7 @@ class SettingsHandler(BaseHandler):
             except Exception as e:
                 logger.warning(f"Failed to fetch OpenCode data: {e}")
 
-        if active_backend == "claude":
+        if "claude" in backends_to_load:
             try:
                 from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
 
@@ -468,7 +470,7 @@ class SettingsHandler(BaseHandler):
             except Exception as e:
                 logger.warning(f"Failed to fetch Claude data: {e}")
 
-        if active_backend == "codex":
+        if "codex" in backends_to_load:
             try:
                 from vibe.api import codex_agents as get_codex_agents, codex_models as get_codex_models
 
@@ -542,7 +544,7 @@ class SettingsHandler(BaseHandler):
     async def _handle_routing_discord(self, context: MessageContext):
         im_client = self._get_im_client(context)
         interaction = context.platform_specific.get("interaction") if context.platform_specific else None
-        routing_data = await self._gather_routing_modal_data(context)
+        routing_data = await self._gather_routing_modal_data(context, include_all_backend_data=True)
 
         try:
             await im_client.run_on_client_loop(
@@ -558,7 +560,7 @@ class SettingsHandler(BaseHandler):
 
     async def _handle_routing_telegram(self, context: MessageContext):
         im_client = self._get_im_client(context)
-        routing_data = await self._gather_routing_modal_data(context)
+        routing_data = await self._gather_routing_modal_data(context, include_all_backend_data=True)
         try:
             await im_client.run_on_client_loop(
                 im_client.open_routing_modal(
@@ -578,7 +580,7 @@ class SettingsHandler(BaseHandler):
         Feishu card can display selectors for all available options.
         """
         im_client = self._get_im_client(context)
-        routing_data = await self._gather_routing_modal_data(context)
+        routing_data = await self._gather_routing_modal_data(context, include_all_backend_data=True)
 
         try:
             await im_client.run_on_client_loop(
