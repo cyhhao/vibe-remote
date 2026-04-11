@@ -25,9 +25,13 @@ class _StubSessions:
 class _StubSessionManager:
     def __init__(self):
         self.cleared = []
+        self.session = SimpleNamespace(session_active={})
 
     async def clear_session(self, settings_key):
         self.cleared.append(settings_key)
+
+    async def get_or_create_session(self, user_id, channel_id):
+        return self.session
 
 
 class _StubClient:
@@ -60,6 +64,56 @@ class _StubController:
 
 
 class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_result_keeps_claude_session_active_when_requests_are_queued(self):
+        controller = _StubController()
+        mark_idle_calls = []
+        controller.session_handler = SimpleNamespace(
+            mark_session_idle=lambda composite_key: mark_idle_calls.append(composite_key),
+            handle_session_error=AsyncMock(),
+            capture_session_id=lambda *_: None,
+        )
+        controller._get_session_key = lambda context: "wechat-user"
+        controller.emit_agent_message = AsyncMock()
+
+        agent = ClaudeAgent(controller)
+        agent.emit_result_message = AsyncMock()
+        context = SimpleNamespace(user_id="U1", channel_id="C1")
+        composite_key = "session-1:/tmp/work"
+        queued_request = SimpleNamespace(started_at=None)
+        next_request = SimpleNamespace(started_at=None)
+        agent._pending_requests[composite_key] = [queued_request, next_request]
+        agent._pending_reactions[composite_key] = [("m1", ":eyes:"), ("m2", ":eyes:")]
+        agent._last_assistant_text[composite_key] = "last"
+        controller.session_manager.session.session_active[composite_key] = True
+
+        result_message = type(
+            "ResultMessage",
+            (),
+            {"subtype": "success", "result": "done", "duration_ms": 1},
+        )()
+
+        class _Client:
+            def receive_messages(self):
+                async def _iterate():
+                    yield result_message
+
+                return _iterate()
+
+        await agent._receive_messages(_Client(), "session-1", "/tmp/work", context, composite_key=composite_key)
+
+        self.assertEqual(mark_idle_calls, [])
+        agent.emit_result_message.assert_awaited_once_with(
+            context,
+            "done",
+            subtype="success",
+            duration_ms=1,
+            parse_mode="markdown",
+            request=queued_request,
+        )
+        self.assertEqual(agent._pending_requests[composite_key], [next_request])
+        self.assertEqual(agent._pending_reactions[composite_key], [("m2", ":eyes:")])
+        self.assertTrue(controller.session_manager.session.session_active[composite_key])
+
     async def test_handle_message_uses_runtime_session_key_for_claude_tracking(self):
         controller = _StubController()
         controller.emit_agent_message = AsyncMock()

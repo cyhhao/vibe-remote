@@ -486,11 +486,9 @@ class ClaudeAgent(BaseAgent):
                         self._discard_pending_reaction(composite_key)
 
                         self._last_assistant_text.pop(composite_key, None)
-                        mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
-                        if callable(mark_session_idle):
-                            mark_session_idle(composite_key)
+                        is_idle = self._mark_session_idle_if_no_pending_requests(composite_key)
                         session = await self.session_manager.get_or_create_session(context.user_id, context.channel_id)
-                        if session:
+                        if session and is_idle:
                             session.session_active[composite_key] = False
                         continue
 
@@ -581,6 +579,17 @@ class ClaudeAgent(BaseAgent):
         if not requests:
             self._pending_requests.pop(composite_key, None)
         return request
+
+    def _has_pending_requests(self, composite_key: str) -> bool:
+        return bool(self._pending_requests.get(composite_key))
+
+    def _mark_session_idle_if_no_pending_requests(self, composite_key: str) -> bool:
+        if self._has_pending_requests(composite_key):
+            return False
+        mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
+        if callable(mark_session_idle):
+            mark_session_idle(composite_key)
+        return True
 
     def _remove_pending_request(self, composite_key: str, request: AgentRequest) -> None:
         requests = self._pending_requests.get(composite_key)
