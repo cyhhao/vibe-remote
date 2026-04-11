@@ -37,6 +37,7 @@ from vibe.upgrade import (
     get_running_vibe_path,
     get_safe_cwd,
 )
+from vibe.claude_model_catalog import DEFAULT_CLAUDE_MODEL_ALIASES, load_catalog_models
 from modules.agents.subagent_router import list_codex_subagents
 
 
@@ -1077,8 +1078,7 @@ def claude_models() -> dict:
 
     Claude Code does not expose a stable `list models` CLI subcommand.
     We merge suggestions from:
-    - Built-in known model ids and aliases
-    - The locally installed Claude CLI bundle (when available)
+    - The repository-owned Claude model catalog
     - ~/.claude/settings.json model/env values
     """
 
@@ -1091,40 +1091,14 @@ def claude_models() -> dict:
         seen.add(model)
         options.append(model)
 
-    built_in_options = [
-        "claude-opus-4-6",
-        "claude-sonnet-4-6",
-        "claude-haiku-4-5",
-        "claude-opus-4-5",
-        "claude-sonnet-4-5",
-        "claude-opus-4",
-        "claude-sonnet-4",
-        "claude-haiku-4",
-        "opus",
-        "sonnet",
-        "haiku",
-    ]
-
     options: list[str] = []
     seen: set[str] = set()
 
-    for model in built_in_options:
+    for model in load_catalog_models():
         _append_unique(options, seen, model)
 
-    claude_path = resolve_cli_path("claude")
-    if claude_path:
-        cli_bundle_candidates = [
-            Path(claude_path).resolve(),
-            Path(claude_path).resolve().parent / "cli.js",
-        ]
-        cli_bundle_path = next((path for path in cli_bundle_candidates if path.exists() and path.is_file()), None)
-        if cli_bundle_path is not None:
-            try:
-                bundle_text = cli_bundle_path.read_text(encoding="utf-8", errors="ignore")
-                for match in re.findall(r"claude-(?:opus|sonnet|haiku)-\d+(?:-\d+)*(?:-\d{8})?", bundle_text):
-                    _append_unique(options, seen, match)
-            except Exception as exc:
-                logger.warning("Failed to inspect Claude CLI bundle: %s", exc, exc_info=True)
+    for model in DEFAULT_CLAUDE_MODEL_ALIASES:
+        _append_unique(options, seen, model)
 
     settings_path = Path.home() / ".claude" / "settings.json"
     try:

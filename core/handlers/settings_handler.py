@@ -415,14 +415,29 @@ class SettingsHandler(BaseHandler):
                 context, f"❌ {self._t('error.routingFailed', error=str(e))}"
             )
 
-    async def _gather_routing_modal_data(self, context: MessageContext) -> RoutingModalData:
+    async def _gather_routing_modal_data(
+        self,
+        context: MessageContext,
+        selected_backend: Optional[str] = None,
+        include_all_backend_data: bool = False,
+    ) -> RoutingModalData:
         """Collect backend/agent/model data for routing modal renderers."""
         settings_key = self._get_settings_key(context)
         current_routing = self._get_settings_manager(context).get_channel_routing(settings_key)
 
         all_backends = list(self.controller.agent_service.agents.keys())
-        registered_backends = sorted(all_backends, key=lambda x: (x != "opencode", x))
         current_backend = self.controller.resolve_agent_for_context(context)
+        enabled_backends = [backend for backend in all_backends if self._is_backend_enabled(backend)]
+        if not enabled_backends and current_backend:
+            enabled_backends = [current_backend]
+        registered_backends = sorted(enabled_backends, key=lambda x: (x != "opencode", x))
+        active_backend = registered_backends[0] if registered_backends else current_backend
+        if current_backend in registered_backends:
+            active_backend = current_backend
+        if selected_backend in registered_backends:
+            active_backend = selected_backend
+        visible_current_backend = current_backend if current_backend in registered_backends else active_backend
+        backends_to_load = set(registered_backends) if include_all_backend_data else {active_backend}
 
         opencode_agents = []
         opencode_models = {}
@@ -432,7 +447,7 @@ class SettingsHandler(BaseHandler):
         codex_agents = []
         codex_models = []
 
-        if "opencode" in registered_backends:
+        if "opencode" in backends_to_load:
             try:
                 opencode_agent = self.controller.agent_service.agents.get("opencode")
                 if opencode_agent and hasattr(opencode_agent, "_get_server"):
@@ -446,7 +461,7 @@ class SettingsHandler(BaseHandler):
             except Exception as e:
                 logger.warning(f"Failed to fetch OpenCode data: {e}")
 
-        if "claude" in registered_backends:
+        if "claude" in backends_to_load:
             try:
                 from vibe.api import claude_agents as get_claude_agents, claude_models as get_claude_models
 
@@ -460,7 +475,7 @@ class SettingsHandler(BaseHandler):
             except Exception as e:
                 logger.warning(f"Failed to fetch Claude data: {e}")
 
-        if "codex" in registered_backends:
+        if "codex" in backends_to_load:
             try:
                 from vibe.api import codex_agents as get_codex_agents, codex_models as get_codex_models
 
@@ -476,7 +491,7 @@ class SettingsHandler(BaseHandler):
 
         return RoutingModalData(
             registered_backends=registered_backends,
-            current_backend=current_backend,
+            current_backend=visible_current_backend,
             current_routing=current_routing,
             opencode_agents=opencode_agents,
             opencode_models=opencode_models,
@@ -486,6 +501,12 @@ class SettingsHandler(BaseHandler):
             codex_agents=codex_agents,
             codex_models=codex_models,
         )
+
+    def _is_backend_enabled(self, backend: str) -> bool:
+        backend_config = getattr(self.config, backend, None)
+        if backend_config is None:
+            return False
+        return bool(getattr(backend_config, "enabled", True))
 
     async def _handle_routing_slack(self, context: MessageContext):
         """Handle routing for Slack using modal dialog"""
@@ -528,7 +549,7 @@ class SettingsHandler(BaseHandler):
     async def _handle_routing_discord(self, context: MessageContext):
         im_client = self._get_im_client(context)
         interaction = context.platform_specific.get("interaction") if context.platform_specific else None
-        routing_data = await self._gather_routing_modal_data(context)
+        routing_data = await self._gather_routing_modal_data(context, include_all_backend_data=True)
 
         try:
             await im_client.run_on_client_loop(
@@ -544,7 +565,7 @@ class SettingsHandler(BaseHandler):
 
     async def _handle_routing_telegram(self, context: MessageContext):
         im_client = self._get_im_client(context)
-        routing_data = await self._gather_routing_modal_data(context)
+        routing_data = await self._gather_routing_modal_data(context, include_all_backend_data=True)
         try:
             await im_client.run_on_client_loop(
                 im_client.open_routing_modal(
@@ -564,7 +585,7 @@ class SettingsHandler(BaseHandler):
         Feishu card can display selectors for all available options.
         """
         im_client = self._get_im_client(context)
-        routing_data = await self._gather_routing_modal_data(context)
+        routing_data = await self._gather_routing_modal_data(context, include_all_backend_data=True)
 
         try:
             await im_client.run_on_client_loop(
@@ -676,11 +697,15 @@ class SettingsHandler(BaseHandler):
             )
             im_client = self._get_im_client(context)
 
-            routing_data = await self._gather_routing_modal_data(context)
+            resolved_backend = self.controller.resolve_agent_for_context(context)
+            selected_backend = selection.selected_backend or resolved_backend
+            routing_data = await self._gather_routing_modal_data(context, selected_backend=selected_backend)
             current_routing = routing_data.current_routing
             registered_backends = routing_data.registered_backends
             current_backend = routing_data.current_backend
-            selected_backend = selection.selected_backend or current_backend
+            visible_selected_backend = (
+                selected_backend if selected_backend in registered_backends else current_backend
+            )
 
             if hasattr(im_client, "update_routing_modal"):
                 await im_client.update_routing_modal(  # type: ignore[attr-defined]
@@ -697,7 +722,7 @@ class SettingsHandler(BaseHandler):
                     claude_models=routing_data.claude_models,
                     codex_agents=routing_data.codex_agents,
                     codex_models=routing_data.codex_models,
-                    selected_backend=selected_backend,
+                    selected_backend=visible_selected_backend,
                     selected_opencode_agent=selection.selected_opencode_agent,
                     selected_opencode_model=selection.selected_opencode_model,
                     selected_opencode_reasoning=selection.selected_opencode_reasoning,

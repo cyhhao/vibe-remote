@@ -251,7 +251,7 @@ def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
     assert calls[0][0] == [str(npm_path), "install", "-g", "@openai/codex"]
     assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == str(npm_path.parent)
 
-def test_claude_models_merge_builtin_cli_and_settings(monkeypatch, tmp_path):
+def test_claude_models_merge_catalog_and_settings(monkeypatch, tmp_path):
     claude_dir = tmp_path / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
     (claude_dir / "settings.json").write_text(
@@ -266,21 +266,18 @@ def test_claude_models_merge_builtin_cli_and_settings(monkeypatch, tmp_path):
         ),
         encoding="utf-8",
     )
-    cli_bundle = tmp_path / "claude-cli.js"
-    cli_bundle.write_text(
-        '\n'.join(
-            [
-                'const OPUS_ID = "claude-opus-4-6";',
-                'const SONNET_ID = "claude-sonnet-4-6";',
-                'const HAIKU_ID = "claude-haiku-4-5";',
-                'const PREV_SONNET_ID = "claude-sonnet-4-5";',
-            ]
-        ),
-        encoding="utf-8",
-    )
 
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
-    monkeypatch.setattr(api, "resolve_cli_path", lambda binary: str(cli_bundle) if binary == "claude" else None)
+    monkeypatch.setattr(
+        api,
+        "load_catalog_models",
+        lambda: [
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+            "claude-opus-4-5",
+        ],
+    )
 
     result = api.claude_models()
 
