@@ -6,6 +6,7 @@ from config.v2_config import V2Config, SlackConfig, DiscordConfig, TelegramConfi
 
 @dataclass
 class ClaudeCompatConfig:
+    enabled: bool
     permission_mode: str
     cwd: str
     system_prompt: Optional[str] = None
@@ -21,6 +22,7 @@ class ClaudeCompatConfig:
 
 @dataclass
 class CodexCompatConfig:
+    enabled: bool
     binary: str
     extra_args: list[str]
     default_model: Optional[str] = None
@@ -28,6 +30,7 @@ class CodexCompatConfig:
 
 @dataclass
 class OpenCodeCompatConfig:
+    enabled: bool
     binary: str
     port: int
     request_timeout_seconds: int
@@ -63,6 +66,7 @@ class AppCompatConfig:
 
 def to_app_config(v2: V2Config) -> AppCompatConfig:
     claude = ClaudeCompatConfig(
+        enabled=v2.agents.claude.enabled,
         permission_mode="bypassPermissions",
         cwd=v2.runtime.default_cwd,
         system_prompt=None,
@@ -72,6 +76,7 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
     codex = None
     if v2.agents.codex.enabled:
         codex = CodexCompatConfig(
+            enabled=True,
             binary=v2.agents.codex.cli_path,
             extra_args=[],
             default_model=v2.agents.codex.default_model,
@@ -79,6 +84,7 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
     opencode = None
     if v2.agents.opencode.enabled:
         opencode = OpenCodeCompatConfig(
+            enabled=True,
             binary=v2.agents.opencode.cli_path,
             port=4096,
             request_timeout_seconds=60,
