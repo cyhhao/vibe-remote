@@ -48,6 +48,8 @@ class Controller:
         self.claude_sessions: Dict[str, Any] = {}
         self.receiver_tasks: Dict[str, asyncio.Task] = {}
         self.stored_session_mappings: Dict[str, str] = {}
+        self.session_last_activity: Dict[str, float] = {}
+        self.claude_active_sessions: set[str] = set()
 
         # Initialize core modules
         self._init_modules()
@@ -399,6 +401,13 @@ class Controller:
         except Exception as e:
             logger.error("Failed to start watch service: %s", e, exc_info=True)
 
+        claude_timeout = int(max(0, getattr(self.config.claude, "idle_timeout_seconds", 600) or 0))
+        codex_timeout = int(max(0, getattr(getattr(self.config, "codex", None), "idle_timeout_seconds", 600) or 0))
+        if (claude_timeout > 0 or codex_timeout > 0) and (
+            self.cleanup_task is None or self.cleanup_task.done()
+        ):
+            self.cleanup_task = asyncio.create_task(self.periodic_cleanup())
+
     # Utility methods used by handlers
 
     def get_cwd(self, context: MessageContext) -> str:
@@ -584,9 +593,42 @@ class Controller:
                 self._loop = None
 
     async def periodic_cleanup(self):
-        """[Deprecated] Periodic cleanup is disabled in favor of safe on-demand cleanup"""
-        logger.info("periodic_cleanup is deprecated and not scheduled.")
-        return
+        """Sweep idle backend runtime state without interrupting active work."""
+        claude_timeout = int(max(0, getattr(self.config.claude, "idle_timeout_seconds", 600) or 0))
+        codex_timeout = int(max(0, getattr(getattr(self.config, "codex", None), "idle_timeout_seconds", 600) or 0))
+        enabled_timeouts = [timeout for timeout in (claude_timeout, codex_timeout) if timeout > 0]
+        if not enabled_timeouts:
+            logger.info("Idle cleanup disabled for Claude and Codex.")
+            return
+
+        sweep_interval = max(min(enabled_timeouts) // 6, 60)
+        logger.info(
+            "Starting idle cleanup loop (interval=%ss, claude_timeout=%ss, codex_timeout=%ss)",
+            sweep_interval,
+            claude_timeout,
+            codex_timeout,
+        )
+
+        try:
+            while True:
+                await asyncio.sleep(sweep_interval)
+
+                if claude_timeout > 0:
+                    try:
+                        await self.session_handler.evict_idle_sessions(claude_timeout)
+                    except Exception as e:
+                        logger.error("Claude idle cleanup failed: %s", e, exc_info=True)
+
+                if codex_timeout > 0:
+                    codex_agent = self.agent_service.agents.get("codex")
+                    if codex_agent and hasattr(codex_agent, "evict_idle_transports"):
+                        try:
+                            await codex_agent.evict_idle_transports(codex_timeout)
+                        except Exception as e:
+                            logger.error("Codex idle cleanup failed: %s", e, exc_info=True)
+        except asyncio.CancelledError:
+            logger.info("Idle cleanup loop stopped.")
+            raise
 
     def cleanup_sync(self):
         """Best-effort synchronous cleanup without cross-loop awaits"""
@@ -618,8 +660,25 @@ class Controller:
         except Exception as e:
             logger.debug(f"Update checker cleanup skipped: {e}")
 
+        async def _cancel_cleanup_task() -> None:
+            if self.cleanup_task and not self.cleanup_task.done():
+                self.cleanup_task.cancel()
+                try:
+                    await self.cleanup_task
+                except asyncio.CancelledError:
+                    pass
+            self.cleanup_task = None
+
+        _stop_loop_coroutine(_cancel_cleanup_task(), "Idle cleanup task")
         _stop_loop_coroutine(self.scheduled_task_service.stop(), "Scheduled task service")
         _stop_loop_coroutine(self.watch_service.stop(), "Watch service")
+
+        try:
+            codex_agent = self.agent_service.agents.get("codex")
+            if codex_agent and hasattr(codex_agent, "shutdown_runtime"):
+                _stop_loop_coroutine(codex_agent.shutdown_runtime(), "Codex runtime")
+        except Exception as e:
+            logger.debug(f"Codex runtime cleanup skipped: {e}")
 
         # Cancel receiver tasks without awaiting (they may belong to other loops)
         try:

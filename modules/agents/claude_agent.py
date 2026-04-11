@@ -65,6 +65,9 @@ class ClaudeAgent(BaseAgent):
                 subagent_model=request.subagent_model,
                 subagent_reasoning_effort=request.subagent_reasoning_effort,
             )
+            mark_session_active = getattr(self.session_handler, "mark_session_active", None)
+            if callable(mark_session_active):
+                mark_session_active(request.composite_session_id)
 
             # Queue reaction BEFORE sending query to avoid race condition where
             # a fast result arrives before the reaction is queued
@@ -93,6 +96,9 @@ class ClaudeAgent(BaseAgent):
                 )
         except Exception as e:
             logger.error(f"Error processing Claude message: {e}", exc_info=True)
+            mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
+            if callable(mark_session_idle):
+                mark_session_idle(request.composite_session_id)
             # Clean up the specific reaction for this request (not FIFO)
             await self._remove_specific_pending_reaction(request.composite_session_id, context, request)
             self._remove_pending_request(request.composite_session_id, request)
@@ -157,6 +163,9 @@ class ClaudeAgent(BaseAgent):
                 self._pending_assistant_message.pop(composite_id, None)
                 self._pending_reactions.pop(composite_id, None)
                 self._pending_requests.pop(composite_id, None)
+                clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
+                if callable(clear_tracking):
+                    clear_tracking(composite_id)
 
         # Legacy session manager cleanup (best-effort)
         await self.session_manager.clear_session(session_key)
@@ -192,6 +201,9 @@ class ClaudeAgent(BaseAgent):
             self._pending_assistant_message.pop(composite_id, None)
             self._pending_reactions.pop(composite_id, None)
             self._pending_requests.pop(composite_id, None)
+            clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
+            if callable(clear_tracking):
+                clear_tracking(composite_id)
 
         logger.info("Refreshed Claude auth state across %d runtime session(s)", len(session_ids))
 
@@ -233,6 +245,9 @@ class ClaudeAgent(BaseAgent):
         if not preserve_pending_request_state:
             self._pending_reactions.pop(composite_key, None)
             self._pending_requests.pop(composite_key, None)
+        clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
+        if callable(clear_tracking):
+            clear_tracking(composite_key)
 
     async def handle_stop(self, request: AgentRequest) -> bool:
         composite_key = request.composite_session_id
@@ -285,6 +300,9 @@ class ClaudeAgent(BaseAgent):
 
             async for message in client.receive_messages():
                 try:
+                    touch_session_activity = getattr(self.session_handler, "touch_session_activity", None)
+                    if callable(touch_session_activity):
+                        touch_session_activity(composite_key)
                     claude_session_id = self._maybe_capture_session_id(message, base_session_id, session_key)
                     if claude_session_id:
                         logger.info(f"Captured Claude session id {claude_session_id} for {base_session_id}")
@@ -330,6 +348,9 @@ class ClaudeAgent(BaseAgent):
                             "error" if auth_failure_assistant else "",
                             auth_failure_text if auth_failure_assistant else assistant_text,
                         ):
+                            mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
+                            if callable(mark_session_idle):
+                                mark_session_idle(composite_key)
                             await self._clear_pending_reactions(composite_key, context)
                             self._last_assistant_text.pop(composite_key, None)
                             self._pending_assistant_message.pop(composite_key, None)
@@ -396,6 +417,9 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             formatted_message,
                         ):
+                            mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
+                            if callable(mark_session_idle):
+                                mark_session_idle(composite_key)
                             await self._clear_pending_reactions(composite_key, context)
                             continue
                         if formatted_message and formatted_message.strip():
@@ -423,6 +447,9 @@ class ClaudeAgent(BaseAgent):
                             getattr(message, "subtype", "") or "",
                             result_text,
                         ):
+                            mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
+                            if callable(mark_session_idle):
+                                mark_session_idle(composite_key)
                             await self._clear_pending_reactions(composite_key, context)
                             self._last_assistant_text.pop(composite_key, None)
                             self._pending_assistant_message.pop(composite_key, None)
@@ -447,6 +474,9 @@ class ClaudeAgent(BaseAgent):
                         self._discard_pending_reaction(composite_key)
 
                         self._last_assistant_text.pop(composite_key, None)
+                        mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
+                        if callable(mark_session_idle):
+                            mark_session_idle(composite_key)
                         session = await self.session_manager.get_or_create_session(context.user_id, context.channel_id)
                         if session:
                             session.session_active[f"{base_session_id}:{working_path}"] = False
@@ -462,11 +492,17 @@ class ClaudeAgent(BaseAgent):
             # or a new message replacing the session).  Clean up reactions
             # because this receiver will never process another result.
             composite_key = f"{base_session_id}:{working_path}"
+            mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
+            if callable(mark_session_idle):
+                mark_session_idle(composite_key)
             logger.info("Claude receiver cancelled for session %s", composite_key)
             await self._clear_pending_reactions(composite_key, context)
             raise
         except Exception as e:
             composite_key = f"{base_session_id}:{working_path}"
+            mark_session_idle = getattr(self.session_handler, "mark_session_idle", None)
+            if callable(mark_session_idle):
+                mark_session_idle(composite_key)
             logger.error(
                 f"Error in Claude receiver for session {composite_key}: {e}",
                 exc_info=True,

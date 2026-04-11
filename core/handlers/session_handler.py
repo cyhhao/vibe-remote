@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 from typing import Optional, Dict, Any, Tuple
 from uuid import uuid4
 from modules.im import MessageContext
@@ -23,6 +24,33 @@ class SessionHandler(BaseHandler):
         self.claude_sessions = controller.claude_sessions
         self.receiver_tasks = controller.receiver_tasks
         self.stored_session_mappings = controller.stored_session_mappings
+        self.session_last_activity = getattr(controller, "session_last_activity", {})
+        self.active_sessions = getattr(controller, "claude_active_sessions", set())
+        controller.session_last_activity = self.session_last_activity
+        controller.claude_active_sessions = self.active_sessions
+
+    def touch_session_activity(self, composite_key: str) -> None:
+        if composite_key:
+            self.session_last_activity[composite_key] = time.monotonic()
+
+    def mark_session_active(self, composite_key: str) -> None:
+        if not composite_key:
+            return
+        self.active_sessions.add(composite_key)
+        self.touch_session_activity(composite_key)
+
+    def mark_session_idle(self, composite_key: str) -> None:
+        if not composite_key:
+            return
+        self.active_sessions.discard(composite_key)
+        if composite_key in self.claude_sessions:
+            self.touch_session_activity(composite_key)
+
+    def clear_session_tracking(self, composite_key: str) -> None:
+        if not composite_key:
+            return
+        self.active_sessions.discard(composite_key)
+        self.session_last_activity.pop(composite_key, None)
 
     def get_base_session_id(self, context: MessageContext, source: str = "human") -> str:
         """Get base session ID based on platform and context (without path)"""
@@ -353,6 +381,7 @@ class SessionHandler(BaseHandler):
             logger.info(
                 f"Using existing Claude SDK client for {base_session_id} at {working_path} (model={current_model})"
             )
+            self.touch_session_activity(composite_key)
             return client
 
         if effective_agent:
@@ -380,6 +409,7 @@ class SessionHandler(BaseHandler):
                     working_path,
                     explicit_model,
                 )
+                self.touch_session_activity(cached_key)
                 return client
             # Always use agent-specific key when effective_agent is set
             # This ensures session continuity even on first use
@@ -531,6 +561,7 @@ class SessionHandler(BaseHandler):
         await client.connect()
 
         self.claude_sessions[composite_key] = client
+        self.touch_session_activity(composite_key)
         logger.info(f"Created new Claude SDK client for {base_session_id} at {working_path}")
 
         return client
@@ -704,6 +735,32 @@ class SessionHandler(BaseHandler):
                 logger.error(f"Error disconnecting Claude session {composite_key}: {e}")
             del self.claude_sessions[composite_key]
             logger.info(f"Cleaned up Claude session {composite_key}")
+
+        self.clear_session_tracking(composite_key)
+
+    async def evict_idle_sessions(self, idle_timeout: float) -> int:
+        """Disconnect Claude sessions that have been idle beyond the timeout."""
+        if idle_timeout <= 0:
+            return 0
+
+        now = time.monotonic()
+        expired: list[tuple[str, float]] = []
+
+        for composite_key, last_activity in list(self.session_last_activity.items()):
+            if composite_key not in self.claude_sessions:
+                self.session_last_activity.pop(composite_key, None)
+                self.active_sessions.discard(composite_key)
+                continue
+            if composite_key in self.active_sessions:
+                continue
+            if now - last_activity >= idle_timeout:
+                expired.append((composite_key, now - last_activity))
+
+        for composite_key, idle_for in expired:
+            logger.info("Evicting idle Claude session %s after %.1fs idle", composite_key, idle_for)
+            await self.cleanup_session(composite_key)
+
+        return len(expired)
 
     async def handle_session_error(self, composite_key: str, context: MessageContext, error: Exception):
         """Handle session-related errors"""

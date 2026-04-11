@@ -133,6 +133,7 @@ class ClaudeConfig:
     enabled: bool = True
     cli_path: str = "claude"
     default_model: Optional[str] = None
+    idle_timeout_seconds: int = 600
 
 
 @dataclass
@@ -140,6 +141,7 @@ class CodexConfig:
     enabled: bool = True
     cli_path: str = "codex"
     default_model: Optional[str] = None
+    idle_timeout_seconds: int = 600
 
 
 @dataclass
