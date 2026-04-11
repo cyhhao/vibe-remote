@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from config.v2_settings import RoutingSettings
 from core.handlers.settings_handler import SettingsHandler
+from core.modals import RoutingModalSelection
 from modules.im import MessageContext
 
 
@@ -286,7 +287,7 @@ def test_gather_routing_modal_data_falls_back_to_visible_backend_when_current_is
     ):
         data = asyncio.run(handler._gather_routing_modal_data(context))
 
-    assert data.current_backend == "claude"
+    assert data.current_backend == "opencode"
     assert data.registered_backends == ["opencode", "codex"]
     assert data.opencode_agents == [{"name": "build"}]
     assert server.calls == [
@@ -295,3 +296,30 @@ def test_gather_routing_modal_data_falls_back_to_visible_backend_when_current_is
         "models:/tmp/workspace",
         "config:/tmp/workspace",
     ]
+
+
+def test_handle_routing_modal_update_uses_visible_current_backend() -> None:
+    handler, _server = _make_routing_handler()
+    handler.config.claude.enabled = False
+    handler.controller.resolve_agent_for_context = lambda context: "claude"
+    update_calls = []
+
+    async def _update_routing_modal(**kwargs):
+        update_calls.append(kwargs)
+
+    handler._get_im_client = lambda context: SimpleNamespace(update_routing_modal=_update_routing_modal)
+    selection = RoutingModalSelection(selected_backend="opencode")
+
+    asyncio.run(
+        handler.handle_routing_modal_update(
+            user_id="U1",
+            channel_id="D0APS47LPU2",
+            view_id="view-1",
+            view_hash="hash-1",
+            selection=selection,
+            platform="slack",
+        )
+    )
+
+    assert len(update_calls) == 1
+    assert update_calls[0]["current_backend"] == "opencode"

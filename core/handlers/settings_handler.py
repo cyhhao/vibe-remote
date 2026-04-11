@@ -436,6 +436,7 @@ class SettingsHandler(BaseHandler):
             active_backend = current_backend
         if selected_backend in registered_backends:
             active_backend = selected_backend
+        visible_current_backend = current_backend if current_backend in registered_backends else active_backend
         backends_to_load = set(registered_backends) if include_all_backend_data else {active_backend}
 
         opencode_agents = []
@@ -490,7 +491,7 @@ class SettingsHandler(BaseHandler):
 
         return RoutingModalData(
             registered_backends=registered_backends,
-            current_backend=current_backend,
+            current_backend=visible_current_backend,
             current_routing=current_routing,
             opencode_agents=opencode_agents,
             opencode_models=opencode_models,
@@ -696,11 +697,12 @@ class SettingsHandler(BaseHandler):
             )
             im_client = self._get_im_client(context)
 
-            current_backend = self.controller.resolve_agent_for_context(context)
-            selected_backend = selection.selected_backend or current_backend
+            resolved_backend = self.controller.resolve_agent_for_context(context)
+            selected_backend = selection.selected_backend or resolved_backend
             routing_data = await self._gather_routing_modal_data(context, selected_backend=selected_backend)
             current_routing = routing_data.current_routing
             registered_backends = routing_data.registered_backends
+            current_backend = routing_data.current_backend
 
             if hasattr(im_client, "update_routing_modal"):
                 await im_client.update_routing_modal(  # type: ignore[attr-defined]
