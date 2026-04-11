@@ -115,6 +115,9 @@ class CodexTurnRegistry:
             return
         self._pending_turn_starts.pop(base_session_id, None)
 
+    def has_pending_turn_start(self, base_session_id: str) -> bool:
+        return base_session_id in self._pending_turn_starts
+
     def get_turn(self, turn_id: str) -> Optional[CodexTurnState]:
         if not turn_id:
             return None

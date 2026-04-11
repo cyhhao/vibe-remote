@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import sys
 import types
@@ -284,6 +285,193 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(invalidated, ["session-1", "session-2"])
         self.assertEqual(cleared_sessions, ["session-1", "session-2"])
 
+    async def test_evict_idle_transports_stops_idle_codex_runtime(self):
+        agent = object.__new__(CodexAgent)
+        stop_calls = []
+        cleared_sessions = []
+        cleared_turns = []
+
+        async def stop_transport():
+            stop_calls.append("stop")
+
+        agent._transports = {"/tmp/work": SimpleNamespace(stop=stop_transport)}
+        agent._transport_last_activity = {"/tmp/work": 0.0}
+        agent._transport_locks = {"/tmp/work": asyncio.Lock()}
+        agent._session_mgr = SimpleNamespace(
+            sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
+            get_session_key=lambda base_session_id: "scope-1",
+            clear=lambda base_session_id: cleared_sessions.append(base_session_id),
+        )
+        agent._turn_registry = SimpleNamespace(
+            get_active_turn=lambda base_session_id: None,
+            clear_session=lambda base_session_id: cleared_turns.append(base_session_id),
+        )
+        agent._session_locks = {"session-1": asyncio.Lock()}
+        agent.sessions = SimpleNamespace(clear_agent_session_mapping=Mock())
+
+        with patch.object(_MODULE.time, "monotonic", return_value=1000.0):
+            evicted = await agent.evict_idle_transports(600)
+
+        self.assertEqual(evicted, 1)
+        self.assertEqual(stop_calls, ["stop"])
+        self.assertEqual(cleared_sessions, ["session-1"])
+        self.assertEqual(cleared_turns, ["session-1"])
+        agent.sessions.clear_agent_session_mapping.assert_called_once_with("scope-1", "codex", "session-1")
+        self.assertEqual(agent._transports, {})
+        self.assertIn("/tmp/work", agent._transport_locks)
+        self.assertEqual(agent._transport_last_activity, {})
+
+    async def test_evict_idle_transports_keeps_active_codex_runtime(self):
+        agent = object.__new__(CodexAgent)
+
+        async def stop_transport():
+            raise AssertionError("active transport should not be stopped")
+
+        agent._transports = {"/tmp/work": SimpleNamespace(stop=stop_transport)}
+        agent._transport_last_activity = {"/tmp/work": 0.0}
+        agent._transport_locks = {"/tmp/work": asyncio.Lock()}
+        agent._session_mgr = SimpleNamespace(
+            sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
+            get_session_key=lambda base_session_id: "scope-1",
+            clear=lambda base_session_id: None,
+        )
+        agent._turn_registry = SimpleNamespace(
+            get_active_turn=lambda base_session_id: "turn-1",
+            clear_session=lambda base_session_id: None,
+        )
+        agent._session_locks = {"session-1": asyncio.Lock()}
+        agent.sessions = SimpleNamespace(clear_agent_session_mapping=Mock())
+
+        with patch.object(_MODULE.time, "monotonic", return_value=1000.0):
+            evicted = await agent.evict_idle_transports(600)
+
+        self.assertEqual(evicted, 0)
+        self.assertIn("/tmp/work", agent._transports)
+        agent.sessions.clear_agent_session_mapping.assert_not_called()
+
+    async def test_evict_idle_transports_keeps_pending_turn_start_runtime(self):
+        agent = object.__new__(CodexAgent)
+
+        async def stop_transport():
+            raise AssertionError("pending turn-start transport should not be stopped")
+
+        agent._transports = {"/tmp/work": SimpleNamespace(stop=stop_transport)}
+        agent._transport_last_activity = {"/tmp/work": 0.0}
+        agent._transport_locks = {"/tmp/work": asyncio.Lock()}
+        agent._session_mgr = SimpleNamespace(
+            sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
+            get_session_key=lambda base_session_id: "scope-1",
+            clear=lambda base_session_id: None,
+        )
+        agent._turn_registry = SimpleNamespace(
+            get_active_turn=lambda base_session_id: None,
+            has_pending_turn_start=lambda base_session_id: True,
+            clear_session=lambda base_session_id: None,
+        )
+        agent._session_locks = {"session-1": asyncio.Lock()}
+        agent.sessions = SimpleNamespace(clear_agent_session_mapping=Mock())
+
+        with patch.object(_MODULE.time, "monotonic", return_value=1000.0):
+            evicted = await agent.evict_idle_transports(600)
+
+        self.assertEqual(evicted, 0)
+        self.assertIn("/tmp/work", agent._transports)
+        agent.sessions.clear_agent_session_mapping.assert_not_called()
+
+    async def test_evict_idle_transports_preserves_state_when_stop_fails(self):
+        agent = object.__new__(CodexAgent)
+        cleared_sessions = []
+        cleared_turns = []
+
+        async def stop_transport():
+            raise RuntimeError("boom")
+
+        transport = SimpleNamespace(stop=stop_transport)
+        lock = asyncio.Lock()
+        agent._transports = {"/tmp/work": transport}
+        agent._transport_last_activity = {"/tmp/work": 0.0}
+        agent._transport_locks = {"/tmp/work": lock}
+        agent._session_mgr = SimpleNamespace(
+            sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
+            get_session_key=lambda base_session_id: "scope-1",
+            clear=lambda base_session_id: cleared_sessions.append(base_session_id),
+        )
+        agent._turn_registry = SimpleNamespace(
+            get_active_turn=lambda base_session_id: None,
+            has_pending_turn_start=lambda base_session_id: False,
+            clear_session=lambda base_session_id: cleared_turns.append(base_session_id),
+        )
+        agent._session_locks = {"session-1": asyncio.Lock()}
+        agent.sessions = SimpleNamespace(clear_agent_session_mapping=Mock())
+
+        with patch.object(_MODULE.time, "monotonic", return_value=1000.0):
+            evicted = await agent.evict_idle_transports(600)
+
+        self.assertEqual(evicted, 0)
+        self.assertIs(agent._transports["/tmp/work"], transport)
+        self.assertIs(agent._transport_locks["/tmp/work"], lock)
+        self.assertEqual(agent._transport_last_activity["/tmp/work"], 0.0)
+        self.assertEqual(cleared_sessions, [])
+        self.assertEqual(cleared_turns, [])
+        agent.sessions.clear_agent_session_mapping.assert_not_called()
+
+    async def test_evict_idle_transports_revalidates_activity_before_stop(self):
+        agent = object.__new__(CodexAgent)
+        stop_calls = []
+
+        async def stop_transport():
+            stop_calls.append("stop")
+
+        lock = asyncio.Lock()
+        await lock.acquire()
+        agent._transports = {"/tmp/work": SimpleNamespace(stop=stop_transport)}
+        agent._transport_last_activity = {"/tmp/work": 0.0}
+        agent._transport_locks = {"/tmp/work": lock}
+        agent._session_mgr = SimpleNamespace(
+            sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
+            get_session_key=lambda base_session_id: "scope-1",
+            clear=lambda base_session_id: None,
+        )
+        agent._turn_registry = SimpleNamespace(
+            get_active_turn=lambda base_session_id: None,
+            has_pending_turn_start=lambda base_session_id: False,
+            clear_session=lambda base_session_id: None,
+        )
+        agent._session_locks = {"session-1": asyncio.Lock()}
+        agent.sessions = SimpleNamespace(clear_agent_session_mapping=Mock())
+
+        with patch.object(_MODULE.time, "monotonic", return_value=1000.0):
+            eviction_task = asyncio.create_task(agent.evict_idle_transports(600))
+            await asyncio.sleep(0)
+            agent._transport_last_activity["/tmp/work"] = 950.0
+            lock.release()
+            evicted = await eviction_task
+
+        self.assertEqual(evicted, 0)
+        self.assertEqual(stop_calls, [])
+        self.assertIn("/tmp/work", agent._transports)
+        self.assertEqual(agent._transport_last_activity["/tmp/work"], 950.0)
+        agent.sessions.clear_agent_session_mapping.assert_not_called()
+
+    async def test_get_or_create_transport_fast_path_waits_for_transport_lock(self):
+        agent = object.__new__(CodexAgent)
+        lock = asyncio.Lock()
+        await lock.acquire()
+        transport = SimpleNamespace(is_initialized=True)
+        agent._transports = {"/tmp/work": transport}
+        agent._transport_locks = {"/tmp/work": lock}
+        agent._transport_last_activity = {}
+
+        with patch.object(_MODULE.time, "monotonic", return_value=1000.0):
+            transport_task = asyncio.create_task(agent._get_or_create_transport("/tmp/work"))
+            await asyncio.sleep(0)
+            self.assertFalse(transport_task.done())
+            lock.release()
+            resolved = await transport_task
+
+        self.assertIs(resolved, transport)
+        self.assertEqual(agent._transport_last_activity["/tmp/work"], 1000.0)
+
 
 class _HandleMessageTurnRegistry:
     def __init__(self, active_turn: str | None):
@@ -295,6 +483,9 @@ class _HandleMessageTurnRegistry:
 
     def get_active_turn(self, base_session_id: str):
         return self.active_turn
+
+    def has_pending_turn_start(self, base_session_id: str):
+        return False
 
 
 class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):

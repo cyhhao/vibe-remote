@@ -88,6 +88,15 @@ def _run_session(handler: SessionHandler, context: MessageContext):
     return asyncio.run(handler.get_or_create_claude_session(context))
 
 
+class _StubClaudeAgentOptions:
+    def __init__(self, **kwargs: Any) -> None:
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        if not hasattr(self, "cli_path"):
+            self.cli_path = None
+        self.continue_conversation = False
+
+
 def test_to_app_config_preserves_claude_cli_path() -> None:
     v2 = V2Config(
         mode="self_host",
@@ -112,6 +121,7 @@ def test_session_handler_passes_configured_claude_cli_path(monkeypatch, tmp_path
         async def connect(self) -> None:
             captured["connected"] = True
 
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
     monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
 
     controller = _Controller(tmp_path)
@@ -123,6 +133,8 @@ def test_session_handler_passes_configured_claude_cli_path(monkeypatch, tmp_path
     assert captured["connected"] is True
     assert captured["options"].cli_path == "/usr/local/bin/claude-proxy"
     assert controller.claude_sessions[f"slack_C123:{tmp_path}"] is client
+    assert getattr(client, "_vibe_runtime_base_session_id") == "slack_C123"
+    assert getattr(client, "_vibe_runtime_session_key") == f"slack_C123:{tmp_path}"
 
 
 def test_session_handler_keeps_sdk_default_for_default_claude_binary(monkeypatch, tmp_path: Path) -> None:
@@ -135,6 +147,7 @@ def test_session_handler_keeps_sdk_default_for_default_claude_binary(monkeypatch
         async def connect(self) -> None:
             captured["connected"] = True
 
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
     monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
 
     controller = _Controller(tmp_path)
@@ -158,6 +171,7 @@ def test_session_handler_passes_non_default_claude_command_name(monkeypatch, tmp
         async def connect(self) -> None:
             captured["connected"] = True
 
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
     monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
 
     controller = _Controller(tmp_path)
@@ -181,6 +195,7 @@ def test_session_handler_expands_tilde_in_claude_cli_path(monkeypatch, tmp_path:
         async def connect(self) -> None:
             captured["connected"] = True
 
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
     monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
 
     controller = _Controller(tmp_path)
@@ -192,3 +207,150 @@ def test_session_handler_expands_tilde_in_claude_cli_path(monkeypatch, tmp_path:
 
     assert captured["connected"] is True
     assert captured["options"].cli_path == str(Path("~/bin/claude").expanduser())
+
+
+def test_session_handler_evicts_idle_claude_session(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+            captured["disconnects"] = 0
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+        async def disconnect(self) -> None:
+            captured["disconnects"] += 1
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+    monkeypatch.setattr(session_handler_module.time, "monotonic", lambda: 1000.0)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    _run_session(handler, context)
+
+    composite_key = f"slack_C123:{tmp_path}"
+    handler.session_last_activity[composite_key] = 0.0
+
+    evicted = asyncio.run(handler.evict_idle_sessions(600))
+
+    assert evicted == 1
+    assert captured["disconnects"] == 1
+    assert composite_key not in controller.claude_sessions
+    assert composite_key not in handler.session_last_activity
+
+
+def test_session_handler_keeps_active_claude_session(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+            captured["disconnects"] = 0
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+        async def disconnect(self) -> None:
+            captured["disconnects"] += 1
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+    monkeypatch.setattr(session_handler_module.time, "monotonic", lambda: 1000.0)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    _run_session(handler, context)
+
+    composite_key = f"slack_C123:{tmp_path}"
+    handler.session_last_activity[composite_key] = 0.0
+    handler.active_sessions.add(composite_key)
+
+    evicted = asyncio.run(handler.evict_idle_sessions(600))
+
+    assert evicted == 0
+    assert captured["disconnects"] == 0
+    assert composite_key in controller.claude_sessions
+
+
+def test_cleanup_session_swallows_cancelled_receiver_task(monkeypatch, tmp_path: Path) -> None:
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            self.disconnects = 0
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            self.disconnects += 1
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+    client = _run_session(handler, context)
+    composite_key = f"slack_C123:{tmp_path}"
+
+    async def _exercise_cleanup() -> None:
+        async def _receiver():
+            await asyncio.Future()
+
+        controller.receiver_tasks[composite_key] = asyncio.create_task(_receiver())
+        await asyncio.sleep(0)
+        await handler.cleanup_session(composite_key)
+
+    asyncio.run(_exercise_cleanup())
+
+    assert client.disconnects == 1
+    assert composite_key not in controller.receiver_tasks
+    assert composite_key not in controller.claude_sessions
+
+
+def test_evict_idle_sessions_rechecks_active_state_before_cleanup(monkeypatch, tmp_path: Path) -> None:
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            self.disconnects = 0
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            self.disconnects += 1
+
+    class _FlippingActiveSet(set):
+        def __init__(self, target_key: str):
+            super().__init__()
+            self.target_key = target_key
+            self._checks = 0
+
+        def __contains__(self, item):
+            if item == self.target_key:
+                self._checks += 1
+                return self._checks >= 2
+            return super().__contains__(item)
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+    monkeypatch.setattr(session_handler_module.time, "monotonic", lambda: 1000.0)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+    client = _run_session(handler, context)
+    composite_key = f"slack_C123:{tmp_path}"
+    handler.session_last_activity[composite_key] = 0.0
+    handler.active_sessions = _FlippingActiveSet(composite_key)
+
+    evicted = asyncio.run(handler.evict_idle_sessions(600))
+
+    assert evicted == 0
+    assert client.disconnects == 0
+    assert composite_key in controller.claude_sessions

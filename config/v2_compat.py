@@ -1,7 +1,17 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from config.v2_config import V2Config, SlackConfig, DiscordConfig, TelegramConfig, LarkConfig, WeChatConfig
+from config.v2_config import (
+    DEFAULT_AGENT_BACKEND,
+    DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS,
+    DEFAULT_OPENCODE_ERROR_RETRY_LIMIT,
+    V2Config,
+    SlackConfig,
+    DiscordConfig,
+    TelegramConfig,
+    LarkConfig,
+    WeChatConfig,
+)
 
 
 @dataclass
@@ -11,6 +21,7 @@ class ClaudeCompatConfig:
     system_prompt: Optional[str] = None
     default_model: Optional[str] = None
     cli_path: Optional[str] = None
+    idle_timeout_seconds: int = DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
 
     def __post_init__(self) -> None:
         self.permission_mode = str(self.permission_mode)
@@ -24,6 +35,7 @@ class CodexCompatConfig:
     binary: str
     extra_args: list[str]
     default_model: Optional[str] = None
+    idle_timeout_seconds: int = DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
 
 
 @dataclass
@@ -31,7 +43,7 @@ class OpenCodeCompatConfig:
     binary: str
     port: int
     request_timeout_seconds: int
-    error_retry_limit: int = 1  # Max retries on LLM stream errors (0 = no retry)
+    error_retry_limit: int = DEFAULT_OPENCODE_ERROR_RETRY_LIMIT  # Max retries on LLM stream errors (0 = no retry)
 
 
 @dataclass
@@ -52,7 +64,7 @@ class AppCompatConfig:
     show_duration: bool = False
     include_user_info: bool = True
     reply_enhancements: bool = True
-    default_backend: str = "opencode"
+    default_backend: str = DEFAULT_AGENT_BACKEND
 
     def enabled_platforms(self) -> list[str]:
         enabled = self.platforms.get("enabled") if isinstance(self.platforms, dict) else None
@@ -68,6 +80,7 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         system_prompt=None,
         default_model=v2.agents.claude.default_model,
         cli_path=v2.agents.claude.cli_path,
+        idle_timeout_seconds=v2.agents.claude.idle_timeout_seconds,
     )
     codex = None
     if v2.agents.codex.enabled:
@@ -75,6 +88,7 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
             binary=v2.agents.codex.cli_path,
             extra_args=[],
             default_model=v2.agents.codex.default_model,
+            idle_timeout_seconds=v2.agents.codex.idle_timeout_seconds,
         )
     opencode = None
     if v2.agents.opencode.enabled:

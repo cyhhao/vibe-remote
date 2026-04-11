@@ -7,6 +7,7 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
+from config.v2_config import DEFAULT_OPENCODE_ERROR_RETRY_LIMIT
 from modules.agents.base import AgentRequest
 
 from .question_handler import OpenCodeQuestionHandler
@@ -88,7 +89,11 @@ class OpenCodePollLoop:
         final_text: Optional[str] = None
 
         error_retry_count = 0
-        error_retry_limit = getattr(self._agent.opencode_config, "error_retry_limit", 1)
+        error_retry_limit = getattr(
+            self._agent.opencode_config,
+            "error_retry_limit",
+            DEFAULT_OPENCODE_ERROR_RETRY_LIMIT,
+        )
         last_error_message_id: Optional[str] = None
 
         def _relative_path(path: str) -> str:
@@ -339,7 +344,11 @@ class OpenCodePollLoop:
         final_text: Optional[str] = None
 
         error_retry_count = 0
-        error_retry_limit = getattr(self._agent.opencode_config, "error_retry_limit", 1)
+        error_retry_limit = getattr(
+            self._agent.opencode_config,
+            "error_retry_limit",
+            DEFAULT_OPENCODE_ERROR_RETRY_LIMIT,
+        )
         last_error_message_id: Optional[str] = None
 
         started_at = time.monotonic()

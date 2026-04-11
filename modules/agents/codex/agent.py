@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -34,6 +35,7 @@ class CodexAgent(BaseAgent):
         # cwd → CodexTransport (one persistent process per working dir)
         self._transports: Dict[str, CodexTransport] = {}
         self._transport_locks: Dict[str, asyncio.Lock] = {}
+        self._transport_last_activity: Dict[str, float] = {}
 
         self._session_mgr = CodexSessionManager()
         self._turn_registry = CodexTurnRegistry()
@@ -78,6 +80,7 @@ class CodexAgent(BaseAgent):
         # Track session_key and cwd for scoped invalidation
         self._session_mgr.set_session_key(request.base_session_id, request.session_key)
         self._session_mgr.set_cwd(request.base_session_id, request.working_path)
+        self._touch_transport_activity(request.working_path)
 
         await self._delete_ack(request)
 
@@ -207,8 +210,11 @@ class CodexAgent(BaseAgent):
 
     async def refresh_auth_state(self) -> None:
         """Drop app-server runtime state so future turns pick up fresh auth."""
+        if not hasattr(self, "_transport_last_activity"):
+            self._transport_last_activity = {}
         transports = list(self._transports.values())
         self._transports.clear()
+        self._transport_last_activity.clear()
 
         for transport in transports:
             try:
@@ -222,16 +228,102 @@ class CodexAgent(BaseAgent):
 
         logger.info("Refreshed Codex auth state across %d transport(s)", len(transports))
 
+    async def shutdown_runtime(self) -> None:
+        """Stop all app-server transports during vibe-remote shutdown."""
+        if not hasattr(self, "_transport_last_activity"):
+            self._transport_last_activity = {}
+        if not hasattr(self, "_transport_locks"):
+            self._transport_locks = {}
+        if not hasattr(self, "_session_locks"):
+            self._session_locks = {}
+        transports = list(self._transports.values())
+        self._transports.clear()
+        self._transport_last_activity.clear()
+        self._transport_locks.clear()
+
+        for transport in transports:
+            try:
+                await transport.stop()
+            except Exception as exc:
+                logger.warning("Failed to stop Codex transport during shutdown: %s", exc)
+
+        for base_session_id in list(self._session_mgr.all_base_sessions()):
+            session_key = self._session_mgr.get_session_key(base_session_id)
+            if session_key:
+                self.sessions.clear_agent_session_mapping(session_key, self.name, base_session_id)
+            self._session_mgr.clear(base_session_id)
+            self._turn_registry.clear_session(base_session_id)
+
+        self._session_locks.clear()
+        logger.info("Stopped Codex runtime across %d transport(s)", len(transports))
+
+    async def evict_idle_transports(self, idle_timeout: float) -> int:
+        """Stop idle Codex transports and invalidate stale thread mappings."""
+        if idle_timeout <= 0:
+            return 0
+        if not hasattr(self, "_transport_last_activity"):
+            self._transport_last_activity = {}
+        if not hasattr(self, "_transport_locks"):
+            self._transport_locks = {}
+        if not hasattr(self, "_session_locks"):
+            self._session_locks = {}
+
+        now = time.monotonic()
+        evicted = 0
+
+        for cwd, last_activity in list(self._transport_last_activity.items()):
+            transport = self._transports.get(cwd)
+            if transport is None:
+                self._transport_last_activity.pop(cwd, None)
+                continue
+            if self._has_active_turns_for_cwd(cwd):
+                continue
+            idle_for = now - last_activity
+            if idle_for < idle_timeout:
+                continue
+
+            lock = self._transport_locks.setdefault(cwd, asyncio.Lock())
+            async with lock:
+                current_transport = self._transports.get(cwd)
+                current_last_activity = self._transport_last_activity.get(cwd)
+                if current_transport is None or current_transport is not transport:
+                    continue
+                if self._has_active_turns_for_cwd(cwd):
+                    continue
+                if current_last_activity is None:
+                    continue
+                idle_for = time.monotonic() - current_last_activity
+                if idle_for < idle_timeout:
+                    continue
+
+                logger.info("Evicting idle Codex transport for cwd=%s after %.1fs idle", cwd, idle_for)
+                try:
+                    await transport.stop()
+                except Exception as exc:
+                    logger.warning("Failed to stop idle Codex transport for cwd=%s: %s", cwd, exc)
+                    continue
+
+                self._transports.pop(cwd, None)
+                self._transport_last_activity.pop(cwd, None)
+
+                for base_session_id in list(self._session_mgr.sessions_for_cwd(cwd)):
+                    session_key = self._session_mgr.get_session_key(base_session_id)
+                    if session_key:
+                        self.sessions.clear_agent_session_mapping(session_key, self.name, base_session_id)
+                    self._session_mgr.clear(base_session_id)
+                    self._turn_registry.clear_session(base_session_id)
+                    self._session_locks.pop(base_session_id, None)
+
+                evicted += 1
+
+        return evicted
+
     # ------------------------------------------------------------------
     # Transport management
     # ------------------------------------------------------------------
 
     async def _get_or_create_transport(self, cwd: str) -> CodexTransport:
         """Return an initialized transport for the given working directory."""
-        existing = self._transports.get(cwd)
-        if existing and existing.is_initialized:
-            return existing
-
         # Serialize creation per cwd
         if cwd not in self._transport_locks:
             self._transport_locks[cwd] = asyncio.Lock()
@@ -240,6 +332,7 @@ class CodexAgent(BaseAgent):
             # Double-check after acquiring lock
             existing = self._transports.get(cwd)
             if existing and existing.is_initialized:
+                self._touch_transport_activity(cwd)
                 return existing
 
             # Stop stale transport if any
@@ -271,6 +364,7 @@ class CodexAgent(BaseAgent):
 
             await transport.start()
             self._transports[cwd] = transport
+            self._touch_transport_activity(cwd)
             return transport
 
     # ------------------------------------------------------------------
@@ -517,6 +611,7 @@ class CodexAgent(BaseAgent):
             )
             return
 
+        self._touch_transport_activity(request.working_path)
         await self._event_handler.handle_notification(method, params, request)
 
     async def _on_server_request(
@@ -604,3 +699,18 @@ class CodexAgent(BaseAgent):
                 logger.debug("Could not delete ack message: %s", err)
             finally:
                 request.ack_message_id = None
+
+    def _touch_transport_activity(self, cwd: str) -> None:
+        if not hasattr(self, "_transport_last_activity"):
+            self._transport_last_activity = {}
+        if cwd:
+            self._transport_last_activity[cwd] = time.monotonic()
+
+    def _has_active_turns_for_cwd(self, cwd: str) -> bool:
+        for base_session_id in self._session_mgr.sessions_for_cwd(cwd):
+            if self._turn_registry.get_active_turn(base_session_id):
+                return True
+            has_pending_turn_start = getattr(self._turn_registry, "has_pending_turn_start", None)
+            if callable(has_pending_turn_start) and has_pending_turn_start(base_session_id):
+                return True
+        return False
