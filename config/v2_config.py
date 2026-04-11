@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 CONFIG_LOCK = threading.RLock()
 
+DEFAULT_AGENT_BACKEND = "opencode"
+DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS = 600
+DEFAULT_OPENCODE_ERROR_RETRY_LIMIT = 1
+
 
 def _filter_dataclass_fields(dc_class, payload: dict) -> dict:
     """Filter payload to only include fields defined in dataclass."""
@@ -125,7 +129,7 @@ class OpenCodeConfig:
     default_agent: Optional[str] = None
     default_model: Optional[str] = None
     default_reasoning_effort: Optional[str] = None
-    error_retry_limit: int = 1  # Max retries on LLM stream errors (0 = no retry)
+    error_retry_limit: int = DEFAULT_OPENCODE_ERROR_RETRY_LIMIT  # Max retries on LLM stream errors (0 = no retry)
 
 
 @dataclass
@@ -133,7 +137,7 @@ class ClaudeConfig:
     enabled: bool = True
     cli_path: str = "claude"
     default_model: Optional[str] = None
-    idle_timeout_seconds: int = 600
+    idle_timeout_seconds: int = DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
 
 
 @dataclass
@@ -141,12 +145,12 @@ class CodexConfig:
     enabled: bool = True
     cli_path: str = "codex"
     default_model: Optional[str] = None
-    idle_timeout_seconds: int = 600
+    idle_timeout_seconds: int = DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
 
 
 @dataclass
 class AgentsConfig:
-    default_backend: str = "opencode"
+    default_backend: str = DEFAULT_AGENT_BACKEND
     opencode: OpenCodeConfig = field(default_factory=OpenCodeConfig)
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
     codex: CodexConfig = field(default_factory=CodexConfig)
@@ -349,7 +353,7 @@ class V2Config:
         claude = ClaudeConfig(**_filter_dataclass_fields(ClaudeConfig, claude_payload))
         codex = CodexConfig(**_filter_dataclass_fields(CodexConfig, codex_payload))
 
-        default_backend = agents_payload.get("default_backend", "opencode")
+        default_backend = agents_payload.get("default_backend", DEFAULT_AGENT_BACKEND)
         if default_backend not in {"opencode", "claude", "codex"}:
             raise ValueError("Config 'agents.default_backend' must be 'opencode', 'claude', or 'codex'")
 

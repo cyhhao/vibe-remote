@@ -7,6 +7,7 @@ import logging
 import threading
 from typing import Optional, Dict, Any
 from config import paths
+from config.v2_config import DEFAULT_AGENT_BACKEND, DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
 from modules.im import BaseIMClient, MessageContext, IMFactory
 from modules.im.multi import MultiIMClient
 from modules.im.formatters import SlackFormatter, DiscordFormatter, TelegramFormatter
@@ -109,7 +110,7 @@ class Controller:
         self._migrate_language_from_settings()
 
         # Agent routing - use configured default_backend
-        default_backend = getattr(self.config, "default_backend", "opencode")
+        default_backend = getattr(self.config, "default_backend", DEFAULT_AGENT_BACKEND)
         self.agent_router = AgentRouter.from_file(None, platform=self.primary_platform, default_backend=default_backend)
         for platform in self.enabled_platforms:
             if platform not in self.agent_router.platform_routes:
@@ -595,8 +596,14 @@ class Controller:
         """Return normalized idle cleanup timeouts for Claude and Codex."""
         claude_config = getattr(self.config, "claude", None)
         codex_config = getattr(self.config, "codex", None)
-        claude_timeout = int(max(0, getattr(claude_config, "idle_timeout_seconds", 600) or 0))
-        codex_timeout = int(max(0, getattr(codex_config, "idle_timeout_seconds", 0) or 0))
+        claude_timeout = int(
+            max(0, getattr(claude_config, "idle_timeout_seconds", DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS) or 0)
+        )
+        codex_timeout = (
+            int(max(0, getattr(codex_config, "idle_timeout_seconds", DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS) or 0))
+            if codex_config is not None
+            else 0
+        )
         return claude_timeout, codex_timeout
 
     async def periodic_cleanup(self):

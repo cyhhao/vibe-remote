@@ -4,12 +4,14 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+from config.v2_config import DEFAULT_AGENT_BACKEND
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class PlatformRoute:
-    default: str = "opencode"
+    default: str = DEFAULT_AGENT_BACKEND
     overrides: Dict[str, str] = field(default_factory=dict)
 
 
@@ -19,14 +21,14 @@ class AgentRouter:
     def __init__(
         self,
         platform_routes: Dict[str, PlatformRoute],
-        global_default: str = "opencode",
+        global_default: str = DEFAULT_AGENT_BACKEND,
     ):
         self.platform_routes = platform_routes
         self.global_default = global_default
 
     @classmethod
     def from_file(
-        cls, file_path: Optional[str], *, platform: str, default_backend: str = "opencode"
+        cls, file_path: Optional[str], *, platform: str, default_backend: str = DEFAULT_AGENT_BACKEND
     ) -> "AgentRouter":
         routes: Dict[str, PlatformRoute] = {}
         global_default = default_backend

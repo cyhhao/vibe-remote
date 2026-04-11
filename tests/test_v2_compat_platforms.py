@@ -10,6 +10,9 @@ from config.v2_config import (
     AgentsConfig,
     ClaudeConfig,
     CodexConfig,
+    DEFAULT_AGENT_BACKEND,
+    DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS,
+    DEFAULT_OPENCODE_ERROR_RETRY_LIMIT,
     DiscordConfig,
     OpenCodeConfig,
     PlatformsConfig,
@@ -72,3 +75,22 @@ def test_to_app_config_preserves_telegram_config():
     assert compat.platform == "telegram"
     assert compat.telegram is not None
     assert compat.telegram.bot_token == "123456:test-token"
+
+
+def test_to_app_config_uses_shared_agent_defaults() -> None:
+    config = V2Config(
+        mode="self_host",
+        version="v2",
+        slack=SlackConfig(),
+        runtime=RuntimeConfig(default_cwd="."),
+        agents=AgentsConfig(),
+        ui=UiConfig(),
+        update=UpdateConfig(),
+    )
+
+    compat = to_app_config(config)
+
+    assert compat.default_backend == DEFAULT_AGENT_BACKEND
+    assert compat.claude.idle_timeout_seconds == DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
+    assert compat.opencode is not None
+    assert compat.opencode.error_retry_limit == DEFAULT_OPENCODE_ERROR_RETRY_LIMIT
