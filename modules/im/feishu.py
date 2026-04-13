@@ -1457,6 +1457,8 @@ class FeishuBot(BaseIMClient):
             file_attachments = None
             if msg_type in ("file", "image", "media"):
                 file_attachments = self._extract_file_attachments(message_id, msg_content, msg_type)
+            elif msg_type == "post":
+                file_attachments = self._extract_post_images(message_id, msg_content)
 
             # Check for shared/forwarded messages
             shared_text = None
@@ -1583,8 +1585,49 @@ class FeishuBot(BaseIMClient):
                     line_parts.append(element.get("text", element.get("href", "")))
                 elif tag == "at":
                     line_parts.append(element.get("user_name", ""))
+                elif tag == "img":
+                    line_parts.append("[image]")
             parts.append("".join(line_parts))
         return "\n".join(parts).strip()
+
+    def _extract_post_images(
+        self, message_id: str, msg_content: Dict[str, Any]
+    ) -> Optional[List[FileAttachment]]:
+        """Extract image attachments from a Feishu 'post' (rich text) message.
+
+        Post messages embed images as elements with tag='img' and an image_key.
+        This method walks the post content structure and creates FileAttachment
+        objects for each embedded image, using the same download URL pattern as
+        standalone image messages.
+        """
+        attachments: List[FileAttachment] = []
+        # Post structure may be wrapped in a language key: {"zh_cn": {"content": [...]}}
+        # or directly: {"content": [...]}
+        content_body = msg_content
+        for lang_key in ("zh_cn", "en_us", "ja_jp"):
+            if lang_key in msg_content:
+                content_body = msg_content[lang_key]
+                break
+        for line in content_body.get("content", []):
+            for element in line:
+                if element.get("tag") == "img":
+                    image_key = element.get("image_key", "")
+                    if not image_key:
+                        continue
+                    url = (
+                        f"{self.config.api_base_url}/open-apis/im/v1/messages/{message_id}/resources/{image_key}?type=image"
+                        if message_id and image_key
+                        else None
+                    )
+                    attachments.append(
+                        FileAttachment(
+                            name=f"{image_key}.image",
+                            mimetype="image/unknown",
+                            url=url,
+                            size=None,
+                        )
+                    )
+        return attachments if attachments else None
 
     def _handle_card_action(self, event_data: Dict[str, Any]):
         """Handle card.action.trigger event (button clicks)."""
