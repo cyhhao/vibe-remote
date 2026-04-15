@@ -171,6 +171,62 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sess_dm", im_client.messages[0][2])
         self.assertIn("Send your next message directly", im_client.messages[1][2])
 
+    async def test_handle_resume_session_submission_refreshes_codex_runtime(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig())
+        codex_agent = type("CodexAgent", (), {"refresh_auth_state": AsyncMock()})()
+        ctrl.agent_service = type("A", (), {"agents": {"claude": object(), "codex": codex_agent}})()
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U999",
+            channel_id="DXYZ",
+            thread_id=None,
+            agent="codex",
+            session_id="sess_dm",
+        )
+
+        codex_agent.refresh_auth_state.assert_awaited_once()
+
+    async def test_handle_resume_session_submission_refreshes_claude_runtime(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig())
+        claude_agent = type("ClaudeAgent", (), {"refresh_auth_state": AsyncMock()})()
+        ctrl.agent_service = type("A", (), {"agents": {"claude": claude_agent, "codex": object()}})()
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U123",
+            channel_id="C111",
+            thread_id="169999.123",
+            agent="claude",
+            session_id="sess_abc",
+        )
+
+        claude_agent.refresh_auth_state.assert_awaited_once()
+
+    async def test_handle_resume_session_submission_skips_runtime_refresh_when_backend_has_no_hook(self):
+        settings = _StubSettingsManager()
+        im_client = _StubIMClient()
+        ctrl = _StubController()
+        ctrl.init_minimal(im_client, settings, _StubConfig())
+        ctrl.agent_service = type("A", (), {"agents": {"claude": object(), "codex": object()}})()
+
+        await ctrl.session_handler.handle_resume_session_submission(
+            user_id="U123",
+            channel_id="C111",
+            thread_id="169999.123",
+            agent="claude",
+            session_id="sess_abc",
+        )
+
+        self.assertEqual(len(settings.set_calls), 1)
+        self.assertEqual(settings.set_calls[0][0], "slack::C111")
+        self.assertEqual(settings.set_calls[0][1], "claude")
+        self.assertEqual(settings.set_calls[0][3], "sess_abc")
+
     async def test_handle_resume_session_submission_discord_dm_uses_channel_session_key(self):
         settings = _StubSettingsManager()
         im_client = _StubIMClient()

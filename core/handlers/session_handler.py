@@ -575,6 +575,15 @@ class SessionHandler(BaseHandler):
 
         return client
 
+    async def _prepare_backend_for_resume(self, agent: str) -> None:
+        """Refresh backend runtime so resumed sessions can pick up fresh auth state."""
+        agent_service = getattr(self.controller, "agent_service", None)
+        backend = getattr(agent_service, "agents", {}).get(agent) if agent_service else None
+        refresh = getattr(backend, "refresh_auth_state", None)
+        if callable(refresh):
+            logger.info("Refreshing %s runtime before resuming session", agent)
+            await refresh()
+
     async def handle_resume_session_submission(
         self,
         user_id: str,
@@ -597,6 +606,8 @@ class SessionHandler(BaseHandler):
                 available_agents = set(self.controller.agent_service.agents.keys())
                 if agent not in available_agents:
                     raise ValueError(f"Agent '{agent}' is not enabled.")
+
+            await self._prepare_backend_for_resume(agent)
 
             reuse_thread = True
             if host_message_ts and thread_id and thread_id == host_message_ts:
