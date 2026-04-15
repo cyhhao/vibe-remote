@@ -215,6 +215,21 @@ class ClaudeAgent(BaseAgent):
 
         logger.info("Refreshed Claude auth state across %d runtime session(s)", len(session_ids))
 
+    async def prepare_resume_binding(
+        self,
+        *,
+        base_session_id: str,
+        session_key: str,
+        working_path: str,
+    ) -> None:
+        """Drop only the target Claude runtime session before rebinding it."""
+        composite_key = f"{base_session_id}:{working_path}"
+        if composite_key not in self.claude_sessions and composite_key not in self.receiver_tasks:
+            return
+
+        await self._cleanup_runtime_session(composite_key)
+        logger.info("Prepared Claude runtime for resumed session %s", composite_key)
+
     async def _cleanup_runtime_session(
         self,
         composite_key: str,

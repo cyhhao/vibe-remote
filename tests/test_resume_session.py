@@ -171,30 +171,36 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sess_dm", im_client.messages[0][2])
         self.assertIn("Send your next message directly", im_client.messages[1][2])
 
-    async def test_handle_resume_session_submission_refreshes_codex_runtime(self):
+    async def test_handle_resume_session_submission_prepares_resume_binding(self):
         settings = _StubSettingsManager()
         im_client = _StubIMClient()
         ctrl = _StubController()
         ctrl.init_minimal(im_client, settings, _StubConfig())
-        codex_agent = type("CodexAgent", (), {"refresh_auth_state": AsyncMock()})()
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
+        codex_agent = type("CodexAgent", (), {"prepare_resume_binding": AsyncMock()})()
         ctrl.agent_service = type("A", (), {"agents": {"claude": object(), "codex": codex_agent}})()
 
         await ctrl.session_handler.handle_resume_session_submission(
             user_id="U999",
-            channel_id="DXYZ",
-            thread_id=None,
+            channel_id="C111",
+            thread_id="169999.123",
             agent="codex",
-            session_id="sess_dm",
+            session_id="sess_abc",
         )
 
-        codex_agent.refresh_auth_state.assert_awaited_once()
+        codex_agent.prepare_resume_binding.assert_awaited_once_with(
+            base_session_id="slack_169999.123",
+            session_key="slack::C111",
+            working_path="/Users/cyh/vibe-remote",
+        )
 
-    async def test_handle_resume_session_submission_refreshes_claude_runtime(self):
+    async def test_handle_resume_session_submission_prepares_claude_binding(self):
         settings = _StubSettingsManager()
         im_client = _StubIMClient()
         ctrl = _StubController()
         ctrl.init_minimal(im_client, settings, _StubConfig())
-        claude_agent = type("ClaudeAgent", (), {"refresh_auth_state": AsyncMock()})()
+        ctrl.im_client.should_use_thread_for_reply = lambda: True
+        claude_agent = type("ClaudeAgent", (), {"prepare_resume_binding": AsyncMock()})()
         ctrl.agent_service = type("A", (), {"agents": {"claude": claude_agent, "codex": object()}})()
 
         await ctrl.session_handler.handle_resume_session_submission(
@@ -205,9 +211,13 @@ class ResumeSessionTests(unittest.IsolatedAsyncioTestCase):
             session_id="sess_abc",
         )
 
-        claude_agent.refresh_auth_state.assert_awaited_once()
+        claude_agent.prepare_resume_binding.assert_awaited_once_with(
+            base_session_id="slack_169999.123",
+            session_key="slack::C111",
+            working_path="/Users/cyh/vibe-remote",
+        )
 
-    async def test_handle_resume_session_submission_skips_runtime_refresh_when_backend_has_no_hook(self):
+    async def test_handle_resume_session_submission_skips_resume_prepare_when_backend_has_no_hook(self):
         settings = _StubSettingsManager()
         im_client = _StubIMClient()
         ctrl = _StubController()

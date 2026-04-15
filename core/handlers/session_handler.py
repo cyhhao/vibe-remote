@@ -575,14 +575,25 @@ class SessionHandler(BaseHandler):
 
         return client
 
-    async def _prepare_backend_for_resume(self, agent: str) -> None:
-        """Refresh backend runtime so resumed sessions can pick up fresh auth state."""
+    async def _prepare_backend_for_resume(
+        self,
+        agent: str,
+        *,
+        base_session_id: str,
+        session_key: str,
+        working_path: str,
+    ) -> None:
+        """Let the backend prepare scoped runtime state before a resume bind."""
         agent_service = getattr(self.controller, "agent_service", None)
         backend = getattr(agent_service, "agents", {}).get(agent) if agent_service else None
-        refresh = getattr(backend, "refresh_auth_state", None)
-        if callable(refresh):
-            logger.info("Refreshing %s runtime before resuming session", agent)
-            await refresh()
+        prepare = getattr(backend, "prepare_resume_binding", None)
+        if callable(prepare):
+            logger.info("Preparing %s runtime before resuming session %s", agent, base_session_id)
+            await prepare(
+                base_session_id=base_session_id,
+                session_key=session_key,
+                working_path=working_path,
+            )
 
     async def handle_resume_session_submission(
         self,
@@ -606,8 +617,6 @@ class SessionHandler(BaseHandler):
                 available_agents = set(self.controller.agent_service.agents.keys())
                 if agent not in available_agents:
                     raise ValueError(f"Agent '{agent}' is not enabled.")
-
-            await self._prepare_backend_for_resume(agent)
 
             reuse_thread = True
             if host_message_ts and thread_id and thread_id == host_message_ts:
@@ -708,12 +717,19 @@ class SessionHandler(BaseHandler):
                     platform_specific={"is_dm": is_dm},
                 )
             base_session_id = self.get_base_session_id(mapping_context)
+            working_path = self.get_working_path(mapping_context)
+
+            await self._prepare_backend_for_resume(
+                agent,
+                base_session_id=base_session_id,
+                session_key=session_key,
+                working_path=working_path,
+            )
 
             # OpenCode session mappings use composite keys that include
             # working_path so that cwd changes create new sessions.
             mapping_key = base_session_id
             if agent == "opencode":
-                working_path = self.get_working_path(mapping_context)
                 mapping_key = f"{base_session_id}:{working_path}"
 
             self.sessions.set_agent_session_mapping(session_key, agent, mapping_key, session_id)

@@ -173,6 +173,16 @@ class BaseAgent(ABC):
         """Clear session state for a given session scope key. Returns cleared count."""
         return 0
 
+    async def prepare_resume_binding(
+        self,
+        *,
+        base_session_id: str,
+        session_key: str,
+        working_path: str,
+    ) -> None:
+        """Prepare backend runtime before binding a resumed session."""
+        return None
+
     async def handle_stop(self, request: AgentRequest) -> bool:
         """Attempt to interrupt an in-flight task. Returns True if handled."""
         return False

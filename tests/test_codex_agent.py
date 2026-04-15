@@ -285,6 +285,61 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(invalidated, ["session-1", "session-2"])
         self.assertEqual(cleared_sessions, ["session-1", "session-2"])
 
+    async def test_prepare_resume_binding_restarts_unshared_transport(self):
+        agent = object.__new__(CodexAgent)
+        stop_calls = []
+
+        async def stop_transport():
+            stop_calls.append("stop")
+
+        agent._transports = {"/tmp/work": SimpleNamespace(stop=stop_transport)}
+        agent._transport_last_activity = {"/tmp/work": 1.0}
+        invalidated = []
+        cleared_sessions = []
+        agent._session_mgr = SimpleNamespace(
+            sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
+            invalidate_thread=lambda base_session_id: invalidated.append(base_session_id),
+        )
+        agent._turn_registry = SimpleNamespace(clear_session=lambda base_session_id: cleared_sessions.append(base_session_id))
+
+        await agent.prepare_resume_binding(
+            base_session_id="session-1",
+            session_key="scope-1",
+            working_path="/tmp/work",
+        )
+
+        self.assertEqual(stop_calls, ["stop"])
+        self.assertEqual(agent._transports, {})
+        self.assertEqual(agent._transport_last_activity, {})
+        self.assertEqual(invalidated, ["session-1"])
+        self.assertEqual(cleared_sessions, ["session-1"])
+
+    async def test_prepare_resume_binding_skips_shared_transport(self):
+        agent = object.__new__(CodexAgent)
+        stop_transport = AsyncMock()
+        transport = SimpleNamespace(stop=stop_transport)
+        agent._transports = {"/tmp/work": transport}
+        agent._transport_last_activity = {"/tmp/work": 1.0}
+        invalidated = []
+        cleared_sessions = []
+        agent._session_mgr = SimpleNamespace(
+            sessions_for_cwd=lambda cwd: ["session-1", "session-2"] if cwd == "/tmp/work" else [],
+            invalidate_thread=lambda base_session_id: invalidated.append(base_session_id),
+        )
+        agent._turn_registry = SimpleNamespace(clear_session=lambda base_session_id: cleared_sessions.append(base_session_id))
+
+        await agent.prepare_resume_binding(
+            base_session_id="session-1",
+            session_key="scope-1",
+            working_path="/tmp/work",
+        )
+
+        stop_transport.assert_not_awaited()
+        self.assertIs(agent._transports["/tmp/work"], transport)
+        self.assertEqual(agent._transport_last_activity, {"/tmp/work": 1.0})
+        self.assertEqual(invalidated, [])
+        self.assertEqual(cleared_sessions, [])
+
     async def test_evict_idle_transports_stops_idle_codex_runtime(self):
         agent = object.__new__(CodexAgent)
         stop_calls = []
