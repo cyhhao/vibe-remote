@@ -1568,14 +1568,31 @@ class FeishuBot(BaseIMClient):
         except Exception as exc:
             logger.error("Error handling Feishu message event: %s", exc, exc_info=True)
 
+    def _get_post_content_body(self, content: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize a Feishu/Lark post payload to the body holding title/content."""
+        if isinstance(content.get("content"), list):
+            return content
+
+        for lang_key in ("zh_cn", "en_us", "ja_jp"):
+            candidate = content.get(lang_key)
+            if isinstance(candidate, dict) and isinstance(candidate.get("content"), list):
+                return candidate
+
+        for value in content.values():
+            if isinstance(value, dict) and isinstance(value.get("content"), list):
+                return value
+
+        return content
+
     def _extract_post_text(self, content: Dict[str, Any]) -> str:
         """Extract plain text from a Feishu 'post' (rich text) message."""
         parts: List[str] = []
+        content_body = self._get_post_content_body(content)
         # Post structure: {"title": "...", "content": [[{"tag": "text", "text": "..."}, ...]]}
-        title = content.get("title", "")
+        title = content_body.get("title", "")
         if title:
             parts.append(title)
-        for line in content.get("content", []):
+        for line in content_body.get("content", []):
             line_parts = []
             for element in line:
                 tag = element.get("tag", "")
@@ -1601,13 +1618,7 @@ class FeishuBot(BaseIMClient):
         standalone image messages.
         """
         attachments: List[FileAttachment] = []
-        # Post structure may be wrapped in a language key: {"zh_cn": {"content": [...]}}
-        # or directly: {"content": [...]}
-        content_body = msg_content
-        for lang_key in ("zh_cn", "en_us", "ja_jp"):
-            if lang_key in msg_content:
-                content_body = msg_content[lang_key]
-                break
+        content_body = self._get_post_content_body(msg_content)
         for line in content_body.get("content", []):
             for element in line:
                 if element.get("tag") == "img":
