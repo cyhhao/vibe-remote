@@ -228,6 +228,41 @@ class CodexAgent(BaseAgent):
 
         logger.info("Refreshed Codex auth state across %d transport(s)", len(transports))
 
+    async def prepare_resume_binding(
+        self,
+        *,
+        base_session_id: str,
+        session_key: str,
+        working_path: str,
+    ) -> None:
+        """Restart a Codex transport only when the resumed session owns that cwd."""
+        transport = self._transports.get(working_path)
+        if transport is None:
+            return
+
+        affected_sessions = self._session_mgr.sessions_for_cwd(working_path)
+        other_sessions = [session_id for session_id in affected_sessions if session_id != base_session_id]
+        if other_sessions:
+            logger.info(
+                "Skipping Codex resume preparation for %s; cwd=%s is shared by %d other session(s)",
+                base_session_id,
+                working_path,
+                len(other_sessions),
+            )
+            return
+
+        try:
+            await transport.stop()
+        except Exception as exc:
+            logger.warning("Failed to stop Codex transport during resume preparation: %s", exc)
+            return
+
+        self._transports.pop(working_path, None)
+        self._transport_last_activity.pop(working_path, None)
+        self._session_mgr.invalidate_thread(base_session_id)
+        self._turn_registry.clear_session(base_session_id)
+        logger.info("Prepared Codex runtime for resumed session %s", base_session_id)
+
     async def shutdown_runtime(self) -> None:
         """Stop all app-server transports during vibe-remote shutdown."""
         if not hasattr(self, "_transport_last_activity"):

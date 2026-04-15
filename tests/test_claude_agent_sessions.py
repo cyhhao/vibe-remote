@@ -283,6 +283,36 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(session_key, agent._pending_reactions)
         self.assertNotIn(session_key, agent._pending_requests)
 
+    async def test_prepare_resume_binding_cleans_only_target_runtime_session(self):
+        controller = _StubController()
+        agent = ClaudeAgent(controller)
+        target_key = "wechat_o9:/tmp/work"
+        other_key = "wechat_o10:/tmp/work"
+        target_client = _StubClient()
+        other_client = _StubClient()
+        controller.claude_sessions[target_key] = target_client
+        controller.claude_sessions[other_key] = other_client
+        controller.receiver_tasks[target_key] = asyncio.create_task(asyncio.sleep(3600))
+        controller.receiver_tasks[other_key] = asyncio.create_task(asyncio.sleep(3600))
+        await asyncio.sleep(0)
+
+        await agent.prepare_resume_binding(
+            base_session_id="wechat_o9",
+            session_key="wechat-user",
+            working_path="/tmp/work",
+        )
+
+        self.assertTrue(target_client.disconnected)
+        self.assertFalse(other_client.disconnected)
+        self.assertNotIn(target_key, controller.claude_sessions)
+        self.assertIn(other_key, controller.claude_sessions)
+        self.assertNotIn(target_key, controller.receiver_tasks)
+        self.assertIn(other_key, controller.receiver_tasks)
+
+        controller.receiver_tasks[other_key].cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await controller.receiver_tasks[other_key]
+
     async def test_receiver_auth_error_prefers_oauth_recovery_message(self):
         controller = _StubController()
         controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
