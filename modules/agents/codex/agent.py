@@ -307,10 +307,9 @@ class CodexAgent(BaseAgent):
                 self._transport_last_activity.pop(cwd, None)
 
                 for base_session_id in list(self._session_mgr.sessions_for_cwd(cwd)):
-                    session_key = self._session_mgr.get_session_key(base_session_id)
-                    if session_key:
-                        self.sessions.clear_agent_session_mapping(session_key, self.name, base_session_id)
-                    self._session_mgr.clear(base_session_id)
+                    # Keep the persisted thread mapping so a later transport restart
+                    # can resume the same Codex conversation for this Slack thread.
+                    self._session_mgr.invalidate_thread(base_session_id)
                     self._turn_registry.clear_session(base_session_id)
                     self._session_locks.pop(base_session_id, None)
 

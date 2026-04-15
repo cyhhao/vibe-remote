@@ -288,7 +288,7 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
     async def test_evict_idle_transports_stops_idle_codex_runtime(self):
         agent = object.__new__(CodexAgent)
         stop_calls = []
-        cleared_sessions = []
+        invalidated_sessions = []
         cleared_turns = []
 
         async def stop_transport():
@@ -299,8 +299,7 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         agent._transport_locks = {"/tmp/work": asyncio.Lock()}
         agent._session_mgr = SimpleNamespace(
             sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
-            get_session_key=lambda base_session_id: "scope-1",
-            clear=lambda base_session_id: cleared_sessions.append(base_session_id),
+            invalidate_thread=lambda base_session_id: invalidated_sessions.append(base_session_id),
         )
         agent._turn_registry = SimpleNamespace(
             get_active_turn=lambda base_session_id: None,
@@ -314,9 +313,9 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(evicted, 1)
         self.assertEqual(stop_calls, ["stop"])
-        self.assertEqual(cleared_sessions, ["session-1"])
+        self.assertEqual(invalidated_sessions, ["session-1"])
         self.assertEqual(cleared_turns, ["session-1"])
-        agent.sessions.clear_agent_session_mapping.assert_called_once_with("scope-1", "codex", "session-1")
+        agent.sessions.clear_agent_session_mapping.assert_not_called()
         self.assertEqual(agent._transports, {})
         self.assertIn("/tmp/work", agent._transport_locks)
         self.assertEqual(agent._transport_last_activity, {})
@@ -332,8 +331,7 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         agent._transport_locks = {"/tmp/work": asyncio.Lock()}
         agent._session_mgr = SimpleNamespace(
             sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
-            get_session_key=lambda base_session_id: "scope-1",
-            clear=lambda base_session_id: None,
+            invalidate_thread=lambda base_session_id: None,
         )
         agent._turn_registry = SimpleNamespace(
             get_active_turn=lambda base_session_id: "turn-1",
@@ -360,8 +358,7 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         agent._transport_locks = {"/tmp/work": asyncio.Lock()}
         agent._session_mgr = SimpleNamespace(
             sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
-            get_session_key=lambda base_session_id: "scope-1",
-            clear=lambda base_session_id: None,
+            invalidate_thread=lambda base_session_id: None,
         )
         agent._turn_registry = SimpleNamespace(
             get_active_turn=lambda base_session_id: None,
@@ -380,7 +377,7 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_evict_idle_transports_preserves_state_when_stop_fails(self):
         agent = object.__new__(CodexAgent)
-        cleared_sessions = []
+        invalidated_sessions = []
         cleared_turns = []
 
         async def stop_transport():
@@ -393,8 +390,7 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         agent._transport_locks = {"/tmp/work": lock}
         agent._session_mgr = SimpleNamespace(
             sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
-            get_session_key=lambda base_session_id: "scope-1",
-            clear=lambda base_session_id: cleared_sessions.append(base_session_id),
+            invalidate_thread=lambda base_session_id: invalidated_sessions.append(base_session_id),
         )
         agent._turn_registry = SimpleNamespace(
             get_active_turn=lambda base_session_id: None,
@@ -411,7 +407,7 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(agent._transports["/tmp/work"], transport)
         self.assertIs(agent._transport_locks["/tmp/work"], lock)
         self.assertEqual(agent._transport_last_activity["/tmp/work"], 0.0)
-        self.assertEqual(cleared_sessions, [])
+        self.assertEqual(invalidated_sessions, [])
         self.assertEqual(cleared_turns, [])
         agent.sessions.clear_agent_session_mapping.assert_not_called()
 
@@ -429,8 +425,7 @@ class CodexAgentStopTests(unittest.IsolatedAsyncioTestCase):
         agent._transport_locks = {"/tmp/work": lock}
         agent._session_mgr = SimpleNamespace(
             sessions_for_cwd=lambda cwd: ["session-1"] if cwd == "/tmp/work" else [],
-            get_session_key=lambda base_session_id: "scope-1",
-            clear=lambda base_session_id: None,
+            invalidate_thread=lambda base_session_id: None,
         )
         agent._turn_registry = SimpleNamespace(
             get_active_turn=lambda base_session_id: None,
