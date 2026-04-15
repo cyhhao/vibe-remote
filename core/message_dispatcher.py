@@ -166,6 +166,14 @@ class ConsolidatedMessageDispatcher:
             context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
         ) != "wechat"
 
+    def _attachment_id_can_anchor_delivery(self, context: MessageContext) -> bool:
+        platform = (
+            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        )
+        # Only treat attachment uploads as scheduled anchors on platforms where
+        # upload_markdown() returns the posted message ID rather than a file ID.
+        return platform in {"discord", "telegram", "lark"}
+
     @staticmethod
     def _is_video_path(path: str) -> bool:
         return Path(path).suffix.lower() in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
@@ -284,6 +292,7 @@ class ConsolidatedMessageDispatcher:
         if canonical_type == "result":
             target_context = self._get_target_context(context)
             primary_message_id: Optional[str] = None
+            scheduled_anchor_message_id: Optional[str] = None
             delivered_as_attachment = False
 
             # --- Reply enhancements: extract file links & quick-reply buttons ---
@@ -305,12 +314,14 @@ class ConsolidatedMessageDispatcher:
                             enhanced.buttons,
                             parse_mode,
                         )
+                        scheduled_anchor_message_id = primary_message_id
                     except Exception as err:
                         logger.warning("Failed to send result with quick replies, falling back: %s", err)
                         try:
                             primary_message_id = await im_client.send_message(
                                 target_context, display_text, parse_mode=parse_mode
                             )
+                            scheduled_anchor_message_id = primary_message_id
                         except Exception as fallback_err:
                             logger.error("Failed to send fallback result message: %s", fallback_err)
                 else:
@@ -318,6 +329,7 @@ class ConsolidatedMessageDispatcher:
                         primary_message_id = await im_client.send_message(
                             target_context, display_text, parse_mode=parse_mode
                         )
+                        scheduled_anchor_message_id = primary_message_id
                     except Exception as err:
                         logger.error("Failed to send result message: %s", err)
             elif self._should_split_long_result(context):
@@ -329,12 +341,14 @@ class ConsolidatedMessageDispatcher:
                         enhanced.buttons if enhanced else [],
                         parse_mode,
                     )
+                    scheduled_anchor_message_id = primary_message_id
                 except Exception as err:
                     logger.error("Failed to send split result messages: %s", err)
             else:
                 summary = self._build_result_summary(display_text, self._get_result_max_chars(context))
                 try:
                     primary_message_id = await im_client.send_message(target_context, summary, parse_mode=parse_mode)
+                    scheduled_anchor_message_id = primary_message_id
                 except Exception as err:
                     logger.error("Failed to send result summary: %s", err)
 
@@ -353,6 +367,8 @@ class ConsolidatedMessageDispatcher:
                         if primary_message_id is None:
                             primary_message_id = attachment_message_id
                             delivered_as_attachment = True
+                            if self._attachment_id_can_anchor_delivery(context):
+                                scheduled_anchor_message_id = attachment_message_id
                     except Exception as err:
                         logger.warning(f"Failed to upload result attachment: {err}")
                         await im_client.send_message(
@@ -377,6 +393,8 @@ class ConsolidatedMessageDispatcher:
                         )
                         _file_uploaded = True
                         delivered_as_attachment = True
+                        if self._attachment_id_can_anchor_delivery(context):
+                            scheduled_anchor_message_id = primary_message_id
                         logger.info("Result delivered as .md file attachment (fallback)")
                     except Exception as _upload_err:
                         logger.warning("upload_markdown fallback failed: %s", _upload_err)
@@ -391,6 +409,7 @@ class ConsolidatedMessageDispatcher:
                             enhanced.buttons if enhanced else [],
                             parse_mode,
                         )
+                        scheduled_anchor_message_id = primary_message_id
                         logger.info("Result delivered via split messages (fallback)")
                     except Exception as _split_err:
                         logger.error("Split message fallback also failed: %s", _split_err)
@@ -412,9 +431,9 @@ class ConsolidatedMessageDispatcher:
             if enhanced and enhanced.files:
                 await self._upload_file_links(im_client, target_context, enhanced.files)
 
-            if primary_message_id:
+            if scheduled_anchor_message_id:
                 try:
-                    self.controller.session_handler.finalize_scheduled_delivery(context, primary_message_id)
+                    self.controller.session_handler.finalize_scheduled_delivery(context, scheduled_anchor_message_id)
                 except Exception as err:
                     logger.warning("Failed to finalize scheduled delivery anchor: %s", err)
 

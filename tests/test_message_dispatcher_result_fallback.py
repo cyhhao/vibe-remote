@@ -27,12 +27,13 @@ class _StubSessionHandler:
 
 
 class _StubIMClient:
-    def __init__(self, *, fail_first_send: bool = False):
+    def __init__(self, *, fail_first_send: bool = False, upload_id: str = "file-1"):
         self.sent_messages = []
         self.uploaded_markdowns = []
         self._next_id = 1
         self._fail_first_send = fail_first_send
         self._send_attempts = 0
+        self._upload_id = upload_id
 
     def should_use_thread_for_reply(self):
         return False
@@ -48,18 +49,25 @@ class _StubIMClient:
 
     async def upload_markdown(self, context, title, content, filetype="markdown"):
         self.uploaded_markdowns.append((context.channel_id, title, content, filetype))
-        return "file-1"
+        return self._upload_id
 
 
 class _StubController:
-    def __init__(self, *, platform: str = "lark", language: str = "en", fail_first_send: bool = False):
+    def __init__(
+        self,
+        *,
+        platform: str = "lark",
+        language: str = "en",
+        fail_first_send: bool = False,
+        upload_id: str = "file-1",
+    ):
         self.config = type(
             "Config",
             (),
             {"platform": platform, "language": language, "reply_enhancements": False},
         )()
         self.session_handler = _StubSessionHandler()
-        self.im_client = _StubIMClient(fail_first_send=fail_first_send)
+        self.im_client = _StubIMClient(fail_first_send=fail_first_send, upload_id=upload_id)
 
     def _get_settings_key(self, context):
         return context.channel_id
@@ -111,6 +119,38 @@ class MessageDispatcherResultFallbackTests(unittest.IsolatedAsyncioTestCase):
             [("C1", "⚠️ 这条消息无法以内联形式发送，所以我已将完整内容作为 `result.md` 发在上方。", "markdown")],
         )
         self.assertEqual(controller.session_handler.calls, [("C1", None, "file-1")])
+
+    async def test_slack_attachment_only_fallback_does_not_finalize_with_file_id(self):
+        controller = _StubController(platform="slack", language="en", fail_first_send=True, upload_id="F123")
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(
+            user_id="scheduled",
+            channel_id="C1",
+            thread_id="171717.123",
+            platform="slack",
+            platform_specific={
+                "turn_source": "scheduled",
+                "turn_base_session_id": "slack_171717.123",
+                "scheduled_delivery_alias": {
+                    "mode": "sent_message",
+                    "session_key": "slack::C1",
+                    "clear_source": False,
+                },
+            },
+        )
+
+        message_id = await dispatcher.emit_agent_message(context, "result", "| A | B |\n| - | - |\n| 1 | 2 |")
+
+        self.assertEqual(message_id, "F123")
+        self.assertEqual(
+            controller.im_client.uploaded_markdowns,
+            [("C1", "result.md", "| A | B |\n| - | - |\n| 1 | 2 |", "markdown")],
+        )
+        self.assertEqual(
+            controller.im_client.sent_messages,
+            [("C1", "⚠️ The message could not be sent inline, so I sent it as `result.md` above.", "markdown")],
+        )
+        self.assertEqual(controller.session_handler.calls, [])
 
 
 if __name__ == "__main__":
