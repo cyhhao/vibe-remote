@@ -13,6 +13,7 @@ from typing import Optional
 
 from modules.im import MessageContext
 from core.reply_enhancer import process_reply, strip_file_links
+from vibe.i18n import t as i18n_t
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,13 @@ class ConsolidatedMessageDispatcher:
         if callable(getter):
             return getter(context)
         return self.controller.im_client
+
+    def _t(self, key: str, **kwargs) -> str:
+        translator = getattr(self.controller, "_t", None)
+        if callable(translator):
+            return translator(key, **kwargs)
+        lang = getattr(getattr(self.controller, "config", None), "language", "en")
+        return i18n_t(key, lang, **kwargs)
 
     def _get_target_context(self, context: MessageContext) -> MessageContext:
         payload = dict(context.platform_specific or {})
@@ -276,6 +284,7 @@ class ConsolidatedMessageDispatcher:
         if canonical_type == "result":
             target_context = self._get_target_context(context)
             primary_message_id: Optional[str] = None
+            delivered_as_attachment = False
 
             # --- Reply enhancements: extract file links & quick-reply buttons ---
             reply_enhancements_on = getattr(self.controller.config, "reply_enhancements", True)
@@ -335,17 +344,20 @@ class ConsolidatedMessageDispatcher:
                     or self.controller.config.platform
                 ) in {"slack", "discord", "telegram", "lark"} and hasattr(im_client, "upload_markdown"):
                     try:
-                        await im_client.upload_markdown(
+                        attachment_message_id = await im_client.upload_markdown(
                             target_context,
                             title="result.md",
                             content=display_text,
                             filetype="markdown",
                         )
+                        if primary_message_id is None:
+                            primary_message_id = attachment_message_id
+                            delivered_as_attachment = True
                     except Exception as err:
                         logger.warning(f"Failed to upload result attachment: {err}")
                         await im_client.send_message(
                             target_context,
-                            "Failed to upload attachment. Want me to split the result into multiple messages?",
+                            self._t("error.resultAttachmentUploadFailed"),
                             parse_mode=parse_mode,
                         )
 
@@ -357,13 +369,14 @@ class ConsolidatedMessageDispatcher:
                 # Fallback 1: upload full content as .md file
                 if hasattr(im_client, "upload_markdown"):
                     try:
-                        await im_client.upload_markdown(
+                        primary_message_id = await im_client.upload_markdown(
                             target_context,
                             title="result.md",
                             content=display_text,
                             filetype="markdown",
                         )
                         _file_uploaded = True
+                        delivered_as_attachment = True
                         logger.info("Result delivered as .md file attachment (fallback)")
                     except Exception as _upload_err:
                         logger.warning("upload_markdown fallback failed: %s", _upload_err)
@@ -382,18 +395,18 @@ class ConsolidatedMessageDispatcher:
                     except Exception as _split_err:
                         logger.error("Split message fallback also failed: %s", _split_err)
 
-                # Notify user about delivery status
-                try:
-                    if _file_uploaded:
-                        _notice = "⚠️ 消息格式超限（如表格过多），已作为 result.md 文件发送，请查看上方附件。"
-                    elif primary_message_id is None:
-                        _notice = "⚠️ 消息投递失败，内容可能过长或格式不兼容，请让我重新发送。"
-                    else:
-                        _notice = None
-                    if _notice:
-                        await im_client.send_message(target_context, _notice, parse_mode="markdown")
-                except Exception:
-                    logger.error("Failed to send delivery status notification")
+            # Explain attachment-only delivery or total failure once all attempts settle.
+            try:
+                if delivered_as_attachment:
+                    notice = self._t("info.resultDeliveredAsAttachment")
+                elif primary_message_id is None and display_text:
+                    notice = self._t("error.resultDeliveryFailed")
+                else:
+                    notice = None
+                if notice:
+                    await im_client.send_message(target_context, notice, parse_mode="markdown")
+            except Exception:
+                logger.error("Failed to send delivery status notification")
 
             # Upload extracted file attachments
             if enhanced and enhanced.files:
