@@ -515,7 +515,7 @@ class SessionHandler(BaseHandler):
             "system_prompt": final_system_prompt,
             "resume": stored_claude_session_id if stored_claude_session_id else None,
             "extra_args": extra_args,
-            "setting_sources": ["user"],  # Load user settings from ~/.claude/settings.json
+            "setting_sources": ["user", "project", "local"],  # Load all setting sources (user, project CLAUDE.md, local overrides)
             # Disable AskUserQuestion tool - SDK cannot respond to it programmatically
             # See: https://github.com/anthropics/claude-code/issues/10168
             "disallowed_tools": ["AskUserQuestion"],

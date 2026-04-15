@@ -646,7 +646,7 @@ class AgentAuthService:
         option_kwargs = {
             "cwd": working_path,
             "env": claude_env,
-            "setting_sources": ["user"],
+            "setting_sources": ["user", "project", "local"],
         }
         permission_mode = getattr(getattr(self.controller.config, "claude", None), "permission_mode", None)
         if permission_mode:
