@@ -1444,7 +1444,7 @@ class SlackBot(BaseIMClient):
                 event.get("text", ""),
                 await self._get_bot_user_id(payload),
                 anywhere=True,
-            )
+            ).strip()
 
             # Parse command action for proper admin-protected auth check
             parsed_command = self.parse_text_command(text)
@@ -1469,6 +1469,13 @@ class SlackBot(BaseIMClient):
             slack_files = event.get("files", [])
             file_attachments = self._extract_file_attachments(slack_files) if slack_files else None
 
+            # Extract shared/forwarded message content (defer appending until after command check)
+            shared_text = await self._extract_shared_message_content(event)
+
+            if not text and not file_attachments and not shared_text:
+                logger.debug("Ignoring Slack app_mention with empty text and no files")
+                return
+
             context = MessageContext(
                 user_id=event.get("user"),
                 channel_id=channel_id,
@@ -1482,14 +1489,11 @@ class SlackBot(BaseIMClient):
                 files=file_attachments,
             )
 
-            # Mark thread as active when bot is @mentioned
+            # Mark thread as active only when the mention carries actionable content.
             if self.settings_manager and thread_id:
                 if self.sessions:
                     self.sessions.mark_thread_active(event.get("user"), channel_id, thread_id)
                 logger.info(f"Marked thread {thread_id} as active due to @mention")
-
-            # Extract shared/forwarded message content (defer appending until after command check)
-            shared_text = await self._extract_shared_message_content(event)
 
             logger.info(f"App mention processed: original='{event.get('text')}', cleaned='{text}'")
 

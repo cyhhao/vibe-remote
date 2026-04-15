@@ -76,7 +76,7 @@ class CodexSessionManager:
 
     def clear_all(self) -> int:
         """Remove all tracked sessions. Returns count cleared."""
-        count = len(self._threads)
+        count = len(set(self._threads) | set(self._session_keys) | set(self._cwds))
         self._threads.clear()
         self._session_keys.clear()
         self._cwds.clear()
@@ -88,7 +88,7 @@ class CodexSessionManager:
 
     def all_base_sessions(self) -> list[str]:
         """Return all base session IDs being tracked."""
-        return list(self._threads.keys())
+        return list(set(self._threads) | set(self._session_keys) | set(self._cwds))
 
     def find_base_session_id_for_thread(self, thread_id: str) -> Optional[str]:
         for base_session_id, stored_thread_id in self._threads.items():
