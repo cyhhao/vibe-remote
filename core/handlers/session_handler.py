@@ -358,7 +358,8 @@ class SessionHandler(BaseHandler):
         subagent_reasoning_effort: Optional[str] = None,
     ) -> ClaudeSDKClient:
         """Get existing Claude session or create a new one"""
-        base_session_id, working_path, composite_key = self.get_session_info(context)
+        turn_source = str((context.platform_specific or {}).get("turn_source") or "human")
+        base_session_id, working_path, composite_key = self.get_session_info(context, source=turn_source)
 
         settings_key = self._get_settings_key(context)
         session_key = self._get_session_key(context)

@@ -209,6 +209,100 @@ def test_session_handler_expands_tilde_in_claude_cli_path(monkeypatch, tmp_path:
     assert captured["options"].cli_path == str(Path("~/bin/claude").expanduser())
 
 
+def test_session_handler_uses_scheduled_turn_source_for_dm_anchor(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class _ScheduledSessions:
+        def __init__(self) -> None:
+            self.lookup = None
+
+        def get_claude_session_id(self, settings_key, base_session_id):
+            self.lookup = (settings_key, base_session_id)
+            return None
+
+        @staticmethod
+        def get_agent_session_id(settings_key, base_session_id, agent_name):
+            return None
+
+    class _ScheduledSettingsManager:
+        def __init__(self) -> None:
+            self.sessions = _ScheduledSessions()
+
+        @staticmethod
+        def get_channel_settings(settings_key):
+            return None
+
+        @staticmethod
+        def get_channel_routing(settings_key):
+            return None
+
+    class _ScheduledController:
+        def __init__(self, working_path: Path) -> None:
+            self.config = _Config()
+            self.im_client = type(
+                "IM",
+                (),
+                {
+                    "formatter": None,
+                    "should_use_thread_for_dm_session": lambda self: True,
+                    "should_use_thread_for_reply": lambda self: True,
+                },
+            )()
+            self.settings_manager = _ScheduledSettingsManager()
+            self.platform_settings_managers = {"slack": self.settings_manager}
+            self.session_manager = object()
+            self.claude_sessions = {}
+            self.receiver_tasks = {}
+            self.stored_session_mappings = {}
+            self._working_path = working_path
+
+        def get_cwd(self, context) -> str:
+            return str(self._working_path)
+
+        @staticmethod
+        def _get_settings_key(context) -> str:
+            return context.user_id if (context.platform_specific or {}).get("is_dm") else context.channel_id
+
+        @staticmethod
+        def _get_session_key(context) -> str:
+            settings_key = _ScheduledController._get_settings_key(context)
+            return f"{getattr(context, 'platform', None) or 'test'}::{settings_key}"
+
+        def get_settings_manager_for_context(self, context=None):
+            return self.settings_manager
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _ScheduledController(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(
+        user_id="U123",
+        channel_id="D123",
+        message_id="scheduled:task-1:exec-1",
+        platform="slack",
+        platform_specific={"is_dm": True, "turn_source": "scheduled"},
+    )
+
+    client = _run_session(handler, context)
+
+    assert captured["connected"] is True
+    assert controller.settings_manager.sessions.lookup is not None
+    settings_key, base_session_id = controller.settings_manager.sessions.lookup
+    assert settings_key == "slack::U123"
+    assert base_session_id.startswith("slack_scheduled-")
+    assert base_session_id != "slack_scheduled:task-1:exec-1"
+    assert getattr(client, "_vibe_runtime_base_session_id") == base_session_id
+    assert getattr(client, "_vibe_runtime_session_key") == f"{base_session_id}:{tmp_path}"
+
+
 def test_session_handler_evicts_idle_claude_session(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, Any] = {}
 
