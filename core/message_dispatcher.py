@@ -349,6 +349,60 @@ class ConsolidatedMessageDispatcher:
                             parse_mode=parse_mode,
                         )
 
+            # --- Fallback: card content rejected (e.g. table over limit) ---
+            if primary_message_id is None and display_text:
+                logger.warning("All direct result sends failed; attempting fallback delivery")
+                _file_uploaded = False
+
+                # Fallback 1: upload full content as .md file
+                if hasattr(im_client, "upload_markdown"):
+                    try:
+                        await im_client.upload_markdown(
+                            target_context,
+                            title="result.md",
+                            content=display_text,
+                            filetype="markdown",
+                        )
+                        _file_uploaded = True
+                        logger.info("Result delivered as .md file attachment (fallback)")
+                    except Exception as _upload_err:
+                        logger.warning("upload_markdown fallback failed: %s", _upload_err)
+
+                # Fallback 2: split into multiple messages
+                if not _file_uploaded:
+                    try:
+                        primary_message_id = await self._send_split_result_messages(
+                            im_client,
+                            target_context,
+                            display_text,
+                            enhanced.buttons if enhanced else [],
+                            parse_mode,
+                        )
+                        logger.info("Result delivered via split messages (fallback)")
+                    except Exception as _split_err:
+                        logger.error("Split message fallback also failed: %s", _split_err)
+
+                # Notify user about delivery status
+                try:
+                    if _file_uploaded:
+                        _notice = (
+                            "\u26a0\ufe0f Message format exceeded platform limits "
+                            "(e.g. too many tables). Sent as result.md file instead."
+                        )
+                    elif primary_message_id is None:
+                        _notice = (
+                            "\u26a0\ufe0f Message delivery failed — content may be "
+                            "too long or incompatible. Please ask me to resend."
+                        )
+                    else:
+                        _notice = None
+                    if _notice:
+                        await im_client.send_message(
+                            target_context, _notice, parse_mode="markdown"
+                        )
+                except Exception:
+                    logger.error("Failed to send delivery status notification")
+
             # Upload extracted file attachments
             if enhanced and enhanced.files:
                 await self._upload_file_links(im_client, target_context, enhanced.files)
