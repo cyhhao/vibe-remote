@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from modules.im import MessageContext
 from modules.im.base import FileAttachment
+from core.reply_enhancer import strip_silent_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -139,14 +140,26 @@ class BaseAgent(ABC):
         if duration_ms is None:
             duration_ms = self._calculate_duration_ms(started_at)
 
+        raw_result = result_text or ""
+        raw_suffix = suffix or ""
+        visible_result = strip_silent_blocks(raw_result)
+        visible_suffix = strip_silent_blocks(raw_suffix) if raw_suffix else None
+        has_silent_directive = "<silent" in raw_result.lower() or "<silent" in raw_suffix.lower()
+
+        if has_silent_directive and not visible_result.strip() and not (visible_suffix or "").strip():
+            await self.controller.emit_agent_message(context, "result", "", parse_mode=parse_mode)
+            if request:
+                await self._remove_ack_reaction(request)
+            return
+
         # When show_duration is disabled, skip the entire result line
         # unless there is actual result_text or suffix to deliver.
         if not show_duration:
             parts = []
-            if result_text and result_text.strip():
-                parts.append(result_text)
-            if suffix:
-                parts.append(suffix)
+            if visible_result and visible_result.strip():
+                parts.append(visible_result)
+            if visible_suffix:
+                parts.append(visible_suffix)
             if parts:
                 formatted = "\n".join(parts)
                 await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
@@ -154,11 +167,11 @@ class BaseAgent(ABC):
             formatted = self._get_formatter(context).format_result_message(
                 subtype or "",
                 duration_ms,
-                result_text,
+                visible_result,
                 show_duration=True,
             )
-            if suffix:
-                formatted = f"{formatted}\n{suffix}"
+            if visible_suffix:
+                formatted = f"{formatted}\n{visible_suffix}"
             await self.controller.emit_agent_message(context, "result", formatted, parse_mode=parse_mode)
 
         # Remove ack reaction after result is sent

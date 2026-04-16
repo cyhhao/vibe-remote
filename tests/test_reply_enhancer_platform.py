@@ -76,6 +76,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
             prompt = build_reply_enhancements_prompt(include_quick_replies=False)
 
+        self.assertIn("## Silent replies", prompt)
+        self.assertIn("<silent>reason not shown to the user</silent>", prompt)
         self.assertIn(
             "If the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes.",
             prompt,
@@ -86,6 +88,15 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("## 4. User Context and Preferences", prompt)
         self.assertIn("`/tmp/user_preferences.md`", prompt)
         self.assertIn("`<platform>/<user_id>`", prompt)
+
+    def test_process_reply_strips_silent_blocks_before_enhancements(self):
+        reply = process_reply(
+            "Visible\n<silent>skip [secret](file:///tmp/secret.txt)\n---\n[Hidden]</silent>\nDone"
+        )
+
+        self.assertEqual(reply.text, "Visible\n\nDone")
+        self.assertEqual(reply.files, [])
+        self.assertEqual(reply.buttons, [])
 
     def test_prompt_includes_task_watch_and_hook_usage_with_thread_default_session_key(self):
         context = MessageContext(

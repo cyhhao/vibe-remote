@@ -1,11 +1,14 @@
 """Reply enhancer: parse agent responses for file attachments and quick-reply buttons.
 
-Extracts two special syntaxes from agent reply text:
+Extracts special syntaxes from agent reply text:
 
-1. **File links** – Markdown links whose URL starts with ``file://``
+1. **Silent blocks** – ``<silent>...</silent>`` sections that are never forwarded
+   to the IM user. If nothing remains after stripping them, no message is sent.
+
+2. **File links** – Markdown links whose URL starts with ``file://``
    e.g. ``[screenshot](file:///tmp/shot.png)``
 
-2. **Quick-reply buttons** – A ``---`` separator followed by
+3. **Quick-reply buttons** – A ``---`` separator followed by
    ``[button text]`` tokens separated by ``|``
    e.g. ``---\\n[👌好的] | [✅提交PR] | [先review一下]``
 """
@@ -75,6 +78,12 @@ _BUTTON_BLOCK_RE = re.compile(
 # Individual button token:  [button text]
 _BUTTON_TOKEN_RE = re.compile(r"\[([^\]]+)\]")
 
+# Silent output blocks are intentionally simple and model-facing.  They are
+# stripped before any reply enhancement parsing so hidden text cannot create
+# file uploads or quick replies.
+_SILENT_BLOCK_RE = re.compile(r"<silent\b[^>]*>.*?</silent\s*>", re.IGNORECASE | re.DOTALL)
+_UNTERMINATED_SILENT_RE = re.compile(r"<silent\b[^>]*>.*\Z", re.IGNORECASE | re.DOTALL)
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -87,6 +96,7 @@ def process_reply(text: str) -> EnhancedReply:
     The returned ``.text`` has file-link markup converted to plain labels and
     the trailing button block (if any) stripped.
     """
+    text = strip_silent_blocks(text)
     files = _extract_file_links(text)
     text_no_files = _strip_file_links(text) if files else text
     buttons, text_clean = _extract_buttons(text_no_files)
@@ -99,6 +109,16 @@ def strip_file_links(text: str) -> str:
     if not files:
         return text
     return _strip_file_links(text)
+
+
+def strip_silent_blocks(text: str) -> str:
+    """Remove all ``<silent>...</silent>`` blocks from agent-visible output."""
+    if not text:
+        return text
+    if "<silent" not in text.lower():
+        return text
+    stripped = _SILENT_BLOCK_RE.sub("", text)
+    return _UNTERMINATED_SILENT_RE.sub("", stripped).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +190,15 @@ The user is interacting with you through an IM app via Vibe Remote forwarding.
 If the user asks you to configure, repair, or operate Vibe Remote itself, read `https://github.com/cyhhao/vibe-remote/raw/master/skills/use-vibe-remote/SKILL.md` before making changes. Use it for configuration file locations, scope rules, routing behavior, scheduled-task operations, and troubleshooting steps.
 
 Vibe Remote provides optional capabilities:
+
+## Silent replies
+If you decide no user-facing response is needed, respond only with a silent block:
+`<silent>reason not shown to the user</silent>`
+
+Rules:
+- Vibe Remote strips all `<silent>...</silent>` blocks before sending messages.
+- If nothing remains after stripping silent blocks, Vibe Remote sends no message.
+- Use this for thread messages where you have received context but should not interrupt.
 
 ## 1. Send files
 You can send a local file to the user by using a Markdown link with the `file://` protocol:
