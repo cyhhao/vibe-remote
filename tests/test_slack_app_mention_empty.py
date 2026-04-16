@@ -104,6 +104,14 @@ _install_slack_stubs()
 SlackBot = _load_local_slack_bot()
 
 
+class _ResponseLike:
+    def __init__(self, data):
+        self._data = data
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+
 class SlackAppMentionEmptyTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_app_mention_does_not_activate_or_dispatch(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
@@ -135,6 +143,38 @@ class SlackAppMentionEmptyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(received["called"])
         slack.sessions.mark_thread_active.assert_not_called()
+
+
+class SlackFileAttachmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_extract_file_attachments_preserves_file_id_when_url_missing(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+
+        attachments = slack._extract_file_attachments([{"id": "F123", "mimetype": "application/pdf"}])
+
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0].name, "F123")
+        self.assertIsNone(attachments[0].url)
+        self.assertEqual(attachments[0].__dict__["slack_file_id"], "F123")
+
+    async def test_resolve_downloadable_file_info_hydrates_thin_file_event(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        slack.web_client = SimpleNamespace(
+            files_info=AsyncMock(
+                return_value=_ResponseLike({
+                    "file": {
+                        "id": "F123",
+                        "name": "report.pdf",
+                        "url_private_download": "https://files.slack.test/report.pdf",
+                    }
+                })
+            )
+        )
+
+        resolved = await slack._resolve_downloadable_file_info({"slack_file_id": "F123", "name": "F123"})
+
+        self.assertEqual(resolved["name"], "report.pdf")
+        self.assertEqual(resolved["url_private_download"], "https://files.slack.test/report.pdf")
+        slack.web_client.files_info.assert_awaited_once_with(file="F123")
 
 
 if __name__ == "__main__":

@@ -73,8 +73,12 @@ class SlackBot(BaseIMClient):
         # Controller reference for update button handling (will be injected later)
         self._controller = None
         self._recent_event_ids: Dict[str, float] = {}
+        self._processed_mention_event_keys: Dict[str, float] = {}
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
+        self._channel_info_cache: Dict[str, Dict[str, Any]] = {}
         self._bot_user_id: Optional[str] = None
+        self._bot_id: Optional[str] = None
+        self._bot_identity_lookup_attempted = False
         self._stop_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._on_ready: Optional[Callable] = None
@@ -206,6 +210,23 @@ class SlackBot(BaseIMClient):
         self._recent_event_ids[event_id] = now
         return False
 
+    def _mark_mention_event_processed(self, channel_id: Optional[str], message_id: Optional[str]) -> bool:
+        """Track mention handling across Slack message/app_mention event pairs."""
+        if not channel_id or not message_id:
+            return True
+        now = time.time()
+        expiry = now - 300
+        for key in list(self._processed_mention_event_keys.keys()):
+            if self._processed_mention_event_keys[key] < expiry:
+                del self._processed_mention_event_keys[key]
+
+        key = f"{channel_id}:{message_id}"
+        if key in self._processed_mention_event_keys:
+            logger.debug("Ignoring duplicate Slack mention event for %s", key)
+            return False
+        self._processed_mention_event_keys[key] = now
+        return True
+
     def get_default_parse_mode(self) -> str:
         """Get the default parse mode for Slack"""
         return "markdown"
@@ -264,27 +285,40 @@ class SlackBot(BaseIMClient):
         payload_user_id = self._extract_bot_user_id_from_payload(payload or {})
         if payload_user_id:
             self._bot_user_id = payload_user_id
+            if not self._bot_id:
+                await self._hydrate_bot_identity()
             return payload_user_id
 
         if self._bot_user_id:
+            if not self._bot_id:
+                await self._hydrate_bot_identity()
             return self._bot_user_id
+
+        await self._hydrate_bot_identity()
+        return self._bot_user_id
+
+    async def _hydrate_bot_identity(self) -> None:
+        if (self._bot_user_id and self._bot_id) or self._bot_identity_lookup_attempted:
+            return
 
         self._ensure_clients()
         auth_test = getattr(self.web_client, "auth_test", None)
         if not callable(auth_test):
-            return None
+            return
 
         try:
             response = await auth_test()
         except Exception as exc:
-            logger.debug("Failed to resolve Slack bot user id: %s", exc)
-            return None
+            logger.debug("Failed to resolve Slack bot identity: %s", exc)
+            return
 
-        user_id = response.get("user_id") if isinstance(response, dict) else None
+        self._bot_identity_lookup_attempted = True
+        user_id = self._slack_response_get(response, "user_id")
         if isinstance(user_id, str) and user_id:
             self._bot_user_id = user_id
-            return user_id
-        return None
+        bot_id = self._slack_response_get(response, "bot_id")
+        if isinstance(bot_id, str) and bot_id:
+            self._bot_id = bot_id
 
     @staticmethod
     def _has_specific_mention(text: str, user_id: Optional[str]) -> bool:
@@ -331,6 +365,58 @@ class SlackBot(BaseIMClient):
         if bool((context.platform_specific or {}).get("is_dm", False)):
             return True
         return self._channel_looks_like_dm(context.channel_id)
+
+    def _is_own_bot_message(self, event: Dict[str, Any], bot_user_id: Optional[str]) -> bool:
+        bot_profile = event.get("bot_profile") if isinstance(event.get("bot_profile"), dict) else {}
+        if bot_user_id and event.get("user") == bot_user_id:
+            return True
+        if bot_user_id and bot_profile.get("user_id") == bot_user_id:
+            return True
+        if self._bot_id and event.get("bot_id") == self._bot_id:
+            return True
+        config_app_id = getattr(self.config, "app_id", None)
+        if config_app_id and event.get("app_id") == config_app_id:
+            return True
+        return bool(config_app_id and bot_profile.get("app_id") == config_app_id)
+
+    @staticmethod
+    def _slack_response_get(response: Any, key: str) -> Any:
+        getter = getattr(response, "get", None)
+        if callable(getter):
+            return getter(key)
+        try:
+            return response[key]
+        except Exception:
+            return None
+
+    async def _get_channel_info_cached(self, channel_id: Optional[str]) -> Dict[str, Any]:
+        if not channel_id:
+            return {}
+        cached = self._channel_info_cache.get(channel_id)
+        if cached is not None:
+            return cached
+
+        self._ensure_clients()
+        conversations_info = getattr(self.web_client, "conversations_info", None)
+        if not callable(conversations_info):
+            return {}
+
+        try:
+            response = await conversations_info(channel=channel_id)
+            channel = self._slack_response_get(response, "channel")
+            if isinstance(channel, dict):
+                self._channel_info_cache[channel_id] = channel
+                return channel
+        except SlackApiError as err:
+            error_code = getattr(err, "response", {}).get("error") if getattr(err, "response", None) else None
+            logger.debug("Failed to fetch Slack channel info for %s: %s", channel_id, error_code or err)
+        except Exception as err:
+            logger.debug("Failed to fetch Slack channel info for %s: %s", channel_id, err)
+        return {}
+
+    async def _is_slack_connect_channel(self, channel_id: Optional[str]) -> bool:
+        channel = await self._get_channel_info_cached(channel_id)
+        return bool(channel.get("is_ext_shared"))
 
     async def _open_dm_channel(self, user_id: str) -> Optional[str]:
         self._ensure_clients()
@@ -582,7 +668,8 @@ class SlackBot(BaseIMClient):
         Returns:
             File content as bytes, or None if download fails
         """
-        url = file_info.get("url_private_download") or file_info.get("url_private")
+        file_info = await self._resolve_downloadable_file_info(file_info)
+        url = file_info.get("url_private_download") or file_info.get("url_private") or file_info.get("url")
         if not url:
             logger.warning(f"No download URL for file: {file_info.get('name')}")
             return None
@@ -634,7 +721,8 @@ class SlackBot(BaseIMClient):
         max_bytes: Optional[int] = None,
         timeout_seconds: int = 30,
     ) -> FileDownloadResult:
-        url = file_info.get("url_private_download") or file_info.get("url_private")
+        file_info = await self._resolve_downloadable_file_info(file_info)
+        url = file_info.get("url_private_download") or file_info.get("url_private") or file_info.get("url")
         if not url:
             logger.warning(f"No download URL for file: {file_info.get('name')}")
             return FileDownloadResult(False, "No download URL available")
@@ -679,6 +767,30 @@ class SlackBot(BaseIMClient):
             logger.error(f"Error downloading Slack file: {e}")
             return FileDownloadResult(False, f"Download error: {e}")
 
+    async def _resolve_downloadable_file_info(self, file_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Best-effort hydrate a thin Slack file event before download."""
+        if file_info.get("url_private_download") or file_info.get("url_private") or file_info.get("url"):
+            return file_info
+
+        file_id = file_info.get("slack_file_id") or file_info.get("id") or file_info.get("file_id")
+        if not file_id or not self.web_client:
+            return file_info
+
+        try:
+            response = await self.web_client.files_info(file=file_id)
+            slack_file = self._slack_response_get(response, "file")
+            if not isinstance(slack_file, dict) or not slack_file:
+                return file_info
+            resolved = {**file_info, **slack_file}
+            resolved.setdefault("slack_file_id", file_id)
+            return resolved
+        except SlackApiError as err:
+            error_code = getattr(err, "response", {}).get("error") if getattr(err, "response", None) else None
+            logger.warning("Failed to resolve Slack file info for %s: %s", file_id, error_code or err)
+        except Exception as err:
+            logger.warning("Failed to resolve Slack file info for %s: %s", file_id, err)
+        return file_info
+
     def _extract_file_attachments(self, files: List[Dict[str, Any]]) -> List[FileAttachment]:
         """Convert Slack file objects to FileAttachment list.
 
@@ -690,12 +802,16 @@ class SlackBot(BaseIMClient):
         """
         attachments = []
         for f in files:
+            file_id = f.get("id")
+            name = f.get("name") or f.get("title") or file_id or "slack-file"
             attachment = FileAttachment(
-                name=f.get("name", "unknown"),
+                name=name,
                 mimetype=f.get("mimetype", "application/octet-stream"),
                 url=f.get("url_private_download") or f.get("url_private"),
                 size=f.get("size"),
             )
+            if file_id:
+                attachment.__dict__["slack_file_id"] = file_id
             attachments.append(attachment)
         return attachments
 
@@ -1270,10 +1386,6 @@ class SlackBot(BaseIMClient):
             if self._controller and hasattr(self._controller, "_refresh_config_from_disk"):
                 self._controller._refresh_config_from_disk()
 
-            # Ignore bot messages
-            if event.get("bot_id"):
-                return
-
             # Check for file attachments first
             slack_files = event.get("files", [])
             has_files = bool(slack_files)
@@ -1288,7 +1400,8 @@ class SlackBot(BaseIMClient):
                     return
 
             channel_id = event.get("channel")
-            user_id = event.get("user")
+            bot_profile = event.get("bot_profile") if isinstance(event.get("bot_profile"), dict) else {}
+            user_id = event.get("user") or bot_profile.get("user_id") or event.get("bot_id")
             is_dm = self._channel_looks_like_dm(channel_id)
             if is_dm:
                 dm_match = await self._match_bound_dm_channel(user_id, channel_id)
@@ -1300,21 +1413,36 @@ class SlackBot(BaseIMClient):
                     )
                     return
 
-            # Check if this message contains a bot mention.
-            # In channels, app_mention will handle it. In DMs, Slack does not
-            # emit app_mention, so we strip the mention and continue.
-            text = (event.get("text") or "").strip()
+            # Check if this message contains a bot mention. Use a normalized
+            # copy for routing/commands while preserving the raw Slack text for
+            # the agent.
+            raw_text = (event.get("text") or "").strip()
+            route_text = raw_text
+            agent_text = raw_text
 
             had_dm_mention_only = False
             bot_user_id = await self._get_bot_user_id(payload)
-            has_bot_mention = self._has_specific_mention(text, bot_user_id)
-            cleaned_text = self._strip_specific_mention(text, bot_user_id)
+            bot_mention = f"<@{bot_user_id}>" if bot_user_id else None
+            has_bot_mention = self._has_specific_mention(raw_text, bot_user_id)
+            cleaned_text = self._strip_specific_mention(raw_text, bot_user_id)
+            handled_bot_mention_in_message_event = False
+            if event.get("bot_id"):
+                if self._is_own_bot_message(event, bot_user_id):
+                    return
+                if not has_bot_mention:
+                    return
             if has_bot_mention:
                 if is_dm:
-                    text = cleaned_text
-                    had_dm_mention_only = not text
+                    route_text = cleaned_text
+                    had_dm_mention_only = not route_text
+                    if had_dm_mention_only:
+                        agent_text = ""
+                elif await self._is_slack_connect_channel(channel_id):
+                    route_text = self._strip_specific_mention(raw_text, bot_user_id, anywhere=True)
+                    handled_bot_mention_in_message_event = True
+                    logger.info("Processing Slack Connect message event with bot mention: '%s'", event.get("text"))
                 else:
-                    logger.info(f"Skipping message event with bot mention: '{text}'")
+                    logger.info(f"Skipping message event with bot mention: '{raw_text}'")
                     return
 
             # Extract file attachments (slack_files already checked above)
@@ -1329,8 +1457,13 @@ class SlackBot(BaseIMClient):
             if not user_id:
                 logger.debug("Ignoring Slack message without user id")
                 return
-            if not text and not file_attachments and not has_shared_content and not had_dm_mention_only:
+            if not route_text and not file_attachments and not has_shared_content and not had_dm_mention_only:
                 logger.debug("Ignoring Slack message with empty text and no files")
+                return
+
+            if handled_bot_mention_in_message_event and not self._mark_mention_event_processed(
+                channel_id, event.get("ts")
+            ):
                 return
 
             # Check if we require mention in channels (not DMs)
@@ -1346,12 +1479,14 @@ class SlackBot(BaseIMClient):
 
             if effective_require_mention and not is_dm:
                 # In channel main thread: require mention (silently ignore)
-                if not is_thread_reply:
-                    logger.debug(f"Ignoring non-mention message in channel: '{text}'")
+                if handled_bot_mention_in_message_event:
+                    logger.debug("Processing message event because Slack Connect bot mention was already detected")
+                elif not is_thread_reply:
+                    logger.debug(f"Ignoring non-mention message in channel: '{route_text}'")
                     return
 
                 # In thread: check if bot is active in this thread
-                if is_thread_reply:
+                elif is_thread_reply:
                     thread_ts = event.get("thread_ts")
                     # If we have settings_manager, check if thread is active
                     if self.settings_manager:
@@ -1364,18 +1499,18 @@ class SlackBot(BaseIMClient):
                             else False
                         )
                         if not thread_active and not scheduled_thread_active:
-                            logger.debug(f"Ignoring message in inactive thread {thread_ts}: '{text}'")
+                            logger.debug(f"Ignoring message in inactive thread {thread_ts}: '{route_text}'")
                             return
                     else:
                         # Without settings_manager, fall back to ignoring non-mention in threads
-                        logger.debug(f"No settings_manager, ignoring thread message: '{text}'")
+                        logger.debug(f"No settings_manager, ignoring thread message: '{route_text}'")
                         return
 
             auth = self.check_authorization(
                 user_id=user_id,
                 channel_id=channel_id,
                 is_dm=is_dm,
-                text=text,
+                text=route_text,
                 settings_manager=self.settings_manager,
             )
             if not auth.allowed:
@@ -1389,7 +1524,7 @@ class SlackBot(BaseIMClient):
                 shared_text = await self._extract_shared_message_content(event)
                 # If shared content extraction found nothing and we have no text/files,
                 # there's nothing to process
-                if not shared_text and not text and not file_attachments:
+                if not shared_text and not route_text and not file_attachments:
                     logger.debug("Ignoring shared message with no extractable content")
                     return
 
@@ -1406,15 +1541,24 @@ class SlackBot(BaseIMClient):
                     "team_id": payload.get("team_id"),
                     "event": event,
                     "is_dm": is_dm,
+                    "bot_user_id": bot_user_id,
+                    "bot_mention": bot_mention,
+                    "control_text": route_text,
                 },
                 files=file_attachments,
             )
 
+            if handled_bot_mention_in_message_event and self.settings_manager and thread_id:
+                if self.sessions:
+                    self.sessions.mark_thread_active(user_id, channel_id, thread_id)
+                logger.info(f"Marked thread {thread_id} as active due to Slack Connect @mention")
+
             # Handle slash commands in regular messages (before appending shared content)
-            # Use only the user's original text for command detection
+            # Use mention-normalized text for internal command detection;
+            # keep agent_text as the original Slack message.
             if await self.dispatch_text_command(
                 context,
-                text,
+                route_text,
                 allow_plain_bind=self.should_allow_plain_bind(
                     user_id=user_id,
                     is_dm=is_dm,
@@ -1425,29 +1569,34 @@ class SlackBot(BaseIMClient):
 
             # Append shared content to user text (after command parsing)
             if shared_text:
-                if text:
-                    text = f"{text}\n\n{shared_text}"
+                if agent_text:
+                    agent_text = f"{agent_text}\n\n{shared_text}"
                 else:
-                    text = shared_text
+                    agent_text = shared_text
 
             # Handle as regular message
             if self.on_message_callback:
-                await self.on_message_callback(context, text)
+                await self.on_message_callback(context, agent_text)
 
         elif event_type == "app_mention":
             # Handle @mentions
             channel_id = event.get("channel")
             user_id_mention = event.get("user")
+            if not self._mark_mention_event_processed(channel_id, event.get("ts")):
+                return
 
+            raw_text = (event.get("text") or "").strip()
+            bot_user_id = await self._get_bot_user_id(payload)
+            bot_mention = f"<@{bot_user_id}>" if bot_user_id else None
             # Remove the mention from the text first so we can parse commands for auth
-            text = self._strip_specific_mention(
-                event.get("text", ""),
-                await self._get_bot_user_id(payload),
+            route_text = self._strip_specific_mention(
+                raw_text,
+                bot_user_id,
                 anywhere=True,
             ).strip()
 
             # Parse command action for proper admin-protected auth check
-            parsed_command = self.parse_text_command(text)
+            parsed_command = self.parse_text_command(route_text)
             auth_action = parsed_command[0] if parsed_command else ""
 
             # Centralized auth gate (app_mention is always in a channel, not DM)
@@ -1472,7 +1621,7 @@ class SlackBot(BaseIMClient):
             # Extract shared/forwarded message content (defer appending until after command check)
             shared_text = await self._extract_shared_message_content(event)
 
-            if not text and not file_attachments and not shared_text:
+            if not route_text and not file_attachments and not shared_text:
                 logger.debug("Ignoring Slack app_mention with empty text and no files")
                 return
 
@@ -1485,6 +1634,9 @@ class SlackBot(BaseIMClient):
                     "team_id": payload.get("team_id"),
                     "event": event,
                     "is_dm": channel_id.startswith("D"),
+                    "bot_user_id": bot_user_id,
+                    "bot_mention": bot_mention,
+                    "control_text": route_text,
                 },
                 files=file_attachments,
             )
@@ -1495,7 +1647,7 @@ class SlackBot(BaseIMClient):
                     self.sessions.mark_thread_active(event.get("user"), channel_id, thread_id)
                 logger.info(f"Marked thread {thread_id} as active due to @mention")
 
-            logger.info(f"App mention processed: original='{event.get('text')}', cleaned='{text}'")
+            logger.info(f"App mention processed: original='{event.get('text')}', cleaned='{route_text}'")
 
             # Check if this is a command after mention (command already parsed above for auth)
             if parsed_command:
@@ -1510,16 +1662,17 @@ class SlackBot(BaseIMClient):
                 logger.warning(f"Command '{command}' not found in callbacks")
 
             # Append shared content to user text (after command parsing)
+            agent_text = raw_text
             if shared_text:
-                if text:
-                    text = f"{text}\n\n{shared_text}"
+                if agent_text:
+                    agent_text = f"{agent_text}\n\n{shared_text}"
                 else:
-                    text = shared_text
+                    agent_text = shared_text
 
             # Handle as regular message
-            logger.info(f"Handling as regular message: '{text}'")
+            logger.info(f"Handling as regular message: '{agent_text}'")
             if self.on_message_callback:
-                await self.on_message_callback(context, text)
+                await self.on_message_callback(context, agent_text)
 
     async def _handle_slash_command(self, payload: Dict[str, Any]):
         """Handle native Slack slash commands"""

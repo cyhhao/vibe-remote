@@ -16,8 +16,13 @@ from modules.im.base import FileAttachment, FileDownloadResult
 def _load_message_handler_class():
     with patch.dict(sys.modules, {}, clear=False):
         agents_module = types.ModuleType("modules.agents")
-        setattr(agents_module, "AgentRequest", type("AgentRequest", (), {}))
+        agents_module.__path__ = []
+        agent_request = type("AgentRequest", (), {})
+        setattr(agents_module, "AgentRequest", agent_request)
         sys.modules["modules.agents"] = agents_module
+        agents_base_module = types.ModuleType("modules.agents.base")
+        setattr(agents_base_module, "AgentRequest", agent_request)
+        sys.modules["modules.agents.base"] = agents_base_module
 
         core_pkg = types.ModuleType("core")
         core_pkg.__path__ = [str(ROOT / "core")]
@@ -209,6 +214,29 @@ class MessageHandlerAttachmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(file_info["cdn_info"]["encrypt_query_param"], "encrypted-param")
         self.assertEqual(file_info["wechat_item"]["aeskey"], "00112233445566778899aabbccddeeff")
 
+    async def test_process_file_attachments_allows_platform_download_without_url(self):
+        im_client = _StubIMClient(download_result=b"%PDF-1.7\n", stream_result=True)
+        handler = MessageHandler(_StubController(im_client))
+        attachment = FileAttachment(
+            name="F123",
+            mimetype="application/pdf",
+            url=None,
+            size=1024,
+        )
+        attachment.__dict__["slack_file_id"] = "F123"
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack", files=[attachment])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("config.paths.get_attachments_dir", return_value=Path(tmpdir)):
+                processed, errors = await handler._process_file_attachments(context, "/tmp/work")
+
+        self.assertIsNotNone(processed)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(im_client.stream_calls), 1)
+        file_info = im_client.stream_calls[0][0]
+        self.assertIsNone(file_info["url"])
+        self.assertEqual(file_info["slack_file_id"], "F123")
+
     def test_append_attachment_errors_uses_error_text_without_file_paths(self):
         handler = MessageHandler(_StubController(_StubIMClient()))
 
@@ -220,6 +248,21 @@ class MessageHandlerAttachmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[Attachment Download Errors]", message)
         self.assertIn("Download failed with HTTP 403", message)
         self.assertNotIn("/.vibe_remote/attachments/", message)
+
+    def test_prepend_agent_identity_keeps_original_message_text(self):
+        handler = MessageHandler(_StubController(_StubIMClient()))
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform_specific={"bot_mention": "<@U_BOT>"},
+        )
+
+        message = handler._prepend_agent_identity(context, "please <@U_BOT> help <@U_OTHER>")
+
+        self.assertEqual(
+            message,
+            "[Agent Identity] Slack bot mention: <@U_BOT>\nplease <@U_BOT> help <@U_OTHER>",
+        )
 
 
 if __name__ == "__main__":

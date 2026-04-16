@@ -126,6 +126,7 @@ class MessageHandler(BaseHandler):
         typing_indicator_task = None
         try:
             is_human = source == self.TURN_SOURCE_HUMAN
+            control_message = self._get_control_message(context, message) if is_human else message
 
             # Record user activity for auto-update idle detection
             if is_human and hasattr(self.controller, "update_checker"):
@@ -159,14 +160,14 @@ class MessageHandler(BaseHandler):
             if is_human and not has_files:
                 maybe_consume_setup_reply = getattr(self.controller.agent_auth_service, "maybe_consume_setup_reply", None)
                 if callable(maybe_consume_setup_reply):
-                    consumed = await maybe_consume_setup_reply(context, message)
+                    consumed = await maybe_consume_setup_reply(context, control_message)
                     if consumed:
                         return None
 
             # Skip automatic cleanup; receiver tasks are retained until shutdown
 
             # Allow "stop" shortcut inside Slack threads
-            if is_human and context.thread_id and message.strip().lower() in ["stop", "/stop"]:
+            if is_human and context.thread_id and control_message.strip().lower() in ["stop", "/stop"]:
                 if await self._handle_inline_stop(context):
                     return None
 
@@ -228,7 +229,7 @@ class MessageHandler(BaseHandler):
                     parse_subagent_prefix,
                 )
 
-                parsed = parse_subagent_prefix(message)
+                parsed = parse_subagent_prefix(control_message)
                 if parsed:
                     normalized = normalize_subagent_name(parsed.name)
                     if agent_name == "opencode":
@@ -336,6 +337,8 @@ class MessageHandler(BaseHandler):
             # Prepend user identity when include_user_info is enabled
             if is_human and self.config.include_user_info:
                 message = await self._prepend_user_info(context, message)
+            if is_human:
+                message = self._prepend_agent_identity(context, message)
 
             message = self._append_attachment_errors(message, attachment_errors)
 
@@ -421,6 +424,22 @@ class MessageHandler(BaseHandler):
         name = self._sanitize_identity(raw_name)
         uid = self._sanitize_identity(context.user_id)
         return f"[{name}<{uid}>] {message}"
+
+    def _prepend_agent_identity(self, context: MessageContext, message: str) -> str:
+        """Add platform identity context without rewriting the user's message."""
+        payload = context.platform_specific or {}
+        bot_mention = payload.get("bot_mention")
+        if isinstance(bot_mention, str) and bot_mention.strip():
+            return f"[Agent Identity] Slack bot mention: {bot_mention.strip()}\n{message}"
+        return message
+
+    @staticmethod
+    def _get_control_message(context: MessageContext, message: str) -> str:
+        payload = context.platform_specific or {}
+        control_text = payload.get("control_text")
+        if isinstance(control_text, str):
+            return control_text
+        return message
 
     async def handle_callback_query(self, context: MessageContext, callback_data: str):
         """Route callback queries to appropriate handlers"""
@@ -750,16 +769,20 @@ class MessageHandler(BaseHandler):
 
             try:
                 im_client = self._get_im_client(context)
-                # Download the file content
-                if hasattr(im_client, "download_file") and attachment.url:
+                # Download the file content. Some platforms receive a thin
+                # attachment event first and resolve the actual URL from
+                # platform metadata such as a Slack file id.
+                can_download = hasattr(im_client, "download_file_to_path") or hasattr(im_client, "download_file")
+                if can_download:
                     # Platform-agnostic download info dict
                     file_info = {
                         "url": attachment.url,
-                        "url_private_download": attachment.url,  # Slack compat
                         "name": attachment.name,
                         "size": attachment.size,
                         "platform": context.platform,
                     }
+                    if attachment.url:
+                        file_info["url_private_download"] = attachment.url  # Slack compat
                     attachment_data = getattr(attachment, "__dict__", {})
                     for key, value in attachment_data.items():
                         if key in {"name", "mimetype", "url", "content", "local_path", "size"}:
