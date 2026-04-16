@@ -113,12 +113,15 @@ class _ResponseLike:
 
 
 class SlackAppMentionEmptyTests(unittest.IsolatedAsyncioTestCase):
-    async def test_empty_app_mention_does_not_activate_or_dispatch(self):
+    async def test_empty_app_mention_dispatches_empty_message_for_start_menu(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
-        received = {"called": False}
+        received = {}
 
-        async def _on_message(_context, _text):
-            received["called"] = True
+        async def _on_message(context, text):
+            received["channel_id"] = context.channel_id
+            received["thread_id"] = context.thread_id
+            received["text"] = text
+            received["control_text"] = (context.platform_specific or {}).get("control_text")
 
         slack.register_callbacks(on_message=_on_message)
         slack.settings_manager = object()
@@ -134,15 +137,23 @@ class SlackAppMentionEmptyTests(unittest.IsolatedAsyncioTestCase):
                 "type": "app_mention",
                 "channel": "C123",
                 "user": "U123",
-                "text": "<@U_BOT>",
+                "text": "<@U_BOT> \n \t",
                 "ts": "1710000000.000700",
             },
         }
 
         await slack._handle_event(payload)
 
-        self.assertFalse(received["called"])
-        slack.sessions.mark_thread_active.assert_not_called()
+        self.assertEqual(
+            received,
+            {
+                "channel_id": "C123",
+                "thread_id": "1710000000.000700",
+                "text": "",
+                "control_text": "",
+            },
+        )
+        slack.sessions.mark_thread_active.assert_called_once_with("U123", "C123", "1710000000.000700")
 
 
 class SlackFileAttachmentTests(unittest.IsolatedAsyncioTestCase):
