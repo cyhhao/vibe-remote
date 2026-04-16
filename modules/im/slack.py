@@ -73,6 +73,7 @@ class SlackBot(BaseIMClient):
         # Controller reference for update button handling (will be injected later)
         self._controller = None
         self._recent_event_ids: Dict[str, float] = {}
+        self._processed_mention_event_keys: Dict[str, float] = {}
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
         self._channel_info_cache: Dict[str, Dict[str, Any]] = {}
         self._bot_user_id: Optional[str] = None
@@ -206,6 +207,23 @@ class SlackBot(BaseIMClient):
             return True
         self._recent_event_ids[event_id] = now
         return False
+
+    def _mark_mention_event_processed(self, channel_id: Optional[str], message_id: Optional[str]) -> bool:
+        """Track mention handling across Slack message/app_mention event pairs."""
+        if not channel_id or not message_id:
+            return True
+        now = time.time()
+        expiry = now - 300
+        for key in list(self._processed_mention_event_keys.keys()):
+            if self._processed_mention_event_keys[key] < expiry:
+                del self._processed_mention_event_keys[key]
+
+        key = f"{channel_id}:{message_id}"
+        if key in self._processed_mention_event_keys:
+            logger.debug("Ignoring duplicate Slack mention event for %s", key)
+            return False
+        self._processed_mention_event_keys[key] = now
+        return True
 
     def get_default_parse_mode(self) -> str:
         """Get the default parse mode for Slack"""
@@ -1398,6 +1416,11 @@ class SlackBot(BaseIMClient):
                 logger.debug("Ignoring Slack message with empty text and no files")
                 return
 
+            if handled_bot_mention_in_message_event and not self._mark_mention_event_processed(
+                channel_id, event.get("ts")
+            ):
+                return
+
             # Check if we require mention in channels (not DMs)
             # For threads: only respond if the bot is active in that thread
             is_thread_reply = event.get("thread_ts") is not None
@@ -1510,6 +1533,8 @@ class SlackBot(BaseIMClient):
             # Handle @mentions
             channel_id = event.get("channel")
             user_id_mention = event.get("user")
+            if not self._mark_mention_event_processed(channel_id, event.get("ts")):
+                return
 
             # Remove the mention from the text first so we can parse commands for auth
             text = self._strip_specific_mention(

@@ -857,6 +857,94 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(marked, [("U123", "C_CONNECT", "1710000000.000360")])
 
+    async def test_slack_connect_message_then_app_mention_is_handled_once(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
+        received = []
+
+        class _WebClient:
+            async def conversations_info(self, channel):
+                return {"channel": {"id": channel, "is_ext_shared": True}}
+
+        async def _on_message(_context, text):
+            received.append(text)
+
+        slack.web_client = _WebClient()
+        slack.register_callbacks(on_message=_on_message)
+
+        message_payload = {
+            "event_id": "evt-slack-connect-message-first",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C_CONNECT",
+                "user": "U123",
+                "text": "<@U_BOT> please help",
+                "ts": "1710000000.000370",
+            },
+        }
+        app_mention_payload = {
+            "event_id": "evt-slack-connect-app-mention-second",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "app_mention",
+                "channel": "C_CONNECT",
+                "user": "U123",
+                "text": "<@U_BOT> please help",
+                "ts": "1710000000.000370",
+            },
+        }
+
+        await slack._handle_event(message_payload)
+        await slack._handle_event(app_mention_payload)
+
+        self.assertEqual(received, ["please help"])
+
+    async def test_slack_connect_app_mention_then_message_is_handled_once(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
+        received = []
+
+        class _WebClient:
+            async def conversations_info(self, channel):
+                return {"channel": {"id": channel, "is_ext_shared": True}}
+
+        async def _on_message(_context, text):
+            received.append(text)
+
+        slack.web_client = _WebClient()
+        slack.register_callbacks(on_message=_on_message)
+
+        app_mention_payload = {
+            "event_id": "evt-slack-connect-app-mention-first",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "app_mention",
+                "channel": "C_CONNECT",
+                "user": "U123",
+                "text": "<@U_BOT> please help",
+                "ts": "1710000000.000380",
+            },
+        }
+        message_payload = {
+            "event_id": "evt-slack-connect-message-second",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C_CONNECT",
+                "user": "U123",
+                "text": "<@U_BOT> please help",
+                "ts": "1710000000.000380",
+            },
+        }
+
+        await slack._handle_event(app_mention_payload)
+        await slack._handle_event(message_payload)
+
+        self.assertEqual(received, ["please help"])
+
     async def test_dm_preserves_non_bot_mentions(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         received = {}
