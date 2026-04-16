@@ -27,24 +27,31 @@ def test_claude_reasoning_options_default_to_low_medium_high() -> None:
     assert [item["value"] for item in options] == ["__default__", "low", "medium", "high"]
 
 
+def test_claude_reasoning_options_add_xhigh_for_opus_47() -> None:
+    options = build_claude_reasoning_options("claude-opus-4-7")
+
+    assert [item["value"] for item in options] == ["__default__", "low", "medium", "high", "xhigh", "max"]
+
+
 def test_claude_reasoning_options_add_max_for_opus_46() -> None:
     options = build_claude_reasoning_options("claude-opus-4-6")
 
     assert [item["value"] for item in options] == ["__default__", "low", "medium", "high", "max"]
 
 
-def test_claude_reasoning_options_do_not_add_max_for_sonnet_46() -> None:
+def test_claude_reasoning_options_add_max_for_sonnet_46() -> None:
     options = build_claude_reasoning_options("claude-sonnet-4-6")
 
-    assert [item["value"] for item in options] == ["__default__", "low", "medium", "high"]
+    assert [item["value"] for item in options] == ["__default__", "low", "medium", "high", "max"]
 
 
-def test_claude_reasoning_options_add_max_for_opus_aliases() -> None:
+def test_claude_reasoning_options_add_xhigh_for_opus_aliases() -> None:
     assert [item["value"] for item in build_claude_reasoning_options("opus")] == [
         "__default__",
         "low",
         "medium",
         "high",
+        "xhigh",
         "max",
     ]
     assert [item["value"] for item in build_claude_reasoning_options("opus[1m]")] == [
@@ -52,11 +59,17 @@ def test_claude_reasoning_options_add_max_for_opus_aliases() -> None:
         "low",
         "medium",
         "high",
+        "xhigh",
         "max",
     ]
 
 
-def test_normalize_claude_reasoning_effort_drops_invalid_max() -> None:
-    assert normalize_claude_reasoning_effort("claude-sonnet-4-6", "max") is None
+def test_normalize_claude_reasoning_effort_drops_invalid_efforts() -> None:
+    assert normalize_claude_reasoning_effort("claude-sonnet-4-5", "max") is None
+    assert normalize_claude_reasoning_effort("claude-opus-4-6", "xhigh") is None
+    assert normalize_claude_reasoning_effort("claude-opus-4-7", "xhigh") == "xhigh"
+    assert normalize_claude_reasoning_effort("claude-opus-4-7", "max") == "max"
     assert normalize_claude_reasoning_effort("claude-opus-4-6", "max") == "max"
+    assert normalize_claude_reasoning_effort("claude-sonnet-4-6", "max") == "max"
+    assert normalize_claude_reasoning_effort("opus", "xhigh") == "xhigh"
     assert normalize_claude_reasoning_effort("opus", "max") == "max"
