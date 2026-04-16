@@ -104,6 +104,14 @@ _install_slack_stubs()
 SlackBot = _load_local_slack_bot()
 
 
+class _ResponseLike:
+    def __init__(self, data):
+        self._data = data
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+
 class SlackAppMentionEmptyTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_app_mention_does_not_activate_or_dispatch(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
@@ -152,13 +160,13 @@ class SlackFileAttachmentTests(unittest.IsolatedAsyncioTestCase):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         slack.web_client = SimpleNamespace(
             files_info=AsyncMock(
-                return_value={
+                return_value=_ResponseLike({
                     "file": {
                         "id": "F123",
                         "name": "report.pdf",
                         "url_private_download": "https://files.slack.test/report.pdf",
                     }
-                }
+                })
             )
         )
 

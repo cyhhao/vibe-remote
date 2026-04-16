@@ -116,6 +116,14 @@ _install_slack_stubs()
 from modules.im.slack import SlackBot
 
 
+class _ResponseLike:
+    def __init__(self, data):
+        self._data = data
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+
 class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
     async def test_send_message_recovers_dm_channel_after_channel_not_found(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
@@ -789,7 +797,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         class _WebClient:
             async def conversations_info(self, channel):
-                return {"channel": {"id": channel, "is_ext_shared": True}}
+                return _ResponseLike({"channel": {"id": channel, "is_ext_shared": True}})
 
         async def _on_message(context, text):
             received["text"] = text

@@ -351,6 +351,16 @@ class SlackBot(BaseIMClient):
             return True
         return self._channel_looks_like_dm(context.channel_id)
 
+    @staticmethod
+    def _slack_response_get(response: Any, key: str) -> Any:
+        getter = getattr(response, "get", None)
+        if callable(getter):
+            return getter(key)
+        try:
+            return response[key]
+        except Exception:
+            return None
+
     async def _get_channel_info_cached(self, channel_id: Optional[str]) -> Dict[str, Any]:
         if not channel_id:
             return {}
@@ -365,7 +375,7 @@ class SlackBot(BaseIMClient):
 
         try:
             response = await conversations_info(channel=channel_id)
-            channel = response.get("channel") if isinstance(response, dict) else None
+            channel = self._slack_response_get(response, "channel")
             if isinstance(channel, dict):
                 self._channel_info_cache[channel_id] = channel
                 return channel
@@ -740,7 +750,7 @@ class SlackBot(BaseIMClient):
 
         try:
             response = await self.web_client.files_info(file=file_id)
-            slack_file = response.get("file") if isinstance(response, dict) else None
+            slack_file = self._slack_response_get(response, "file")
             if not isinstance(slack_file, dict) or not slack_file:
                 return file_info
             resolved = {**file_info, **slack_file}
