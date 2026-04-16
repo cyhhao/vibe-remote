@@ -922,6 +922,33 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(received["called"])
 
+    async def test_own_bot_message_with_top_level_app_id_is_ignored(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", app_id="A_SELF"))
+        received = {"called": False}
+
+        async def _on_message(_context, _text):
+            received["called"] = True
+
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-own-bot-top-level-app",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C_CONNECT",
+                "bot_id": "B_SELF",
+                "app_id": "A_SELF",
+                "text": "<@U_BOT> loop",
+                "ts": "1710000000.000358",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertFalse(received["called"])
+
     async def test_slack_connect_channel_mention_marks_thread_active(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
         marked = []

@@ -358,6 +358,8 @@ class SlackBot(BaseIMClient):
         if bot_user_id and bot_profile.get("user_id") == bot_user_id:
             return True
         config_app_id = getattr(self.config, "app_id", None)
+        if config_app_id and event.get("app_id") == config_app_id:
+            return True
         return bool(config_app_id and bot_profile.get("app_id") == config_app_id)
 
     @staticmethod

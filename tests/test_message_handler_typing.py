@@ -342,6 +342,25 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(controller.agent_service.stop_requests), 1)
         self.assertEqual(controller.agent_service.requests, [])
 
+    async def test_empty_fallback_uses_agent_message_not_control_text(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        controller.command_handler.handle_start = AsyncMock()
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            message_id="m1",
+            platform="slack",
+            platform_specific={"bot_mention": "<@U_BOT>", "control_text": ""},
+        )
+
+        await handler.handle_user_message(context, "<@U_BOT>\n\nshared content")
+
+        controller.command_handler.handle_start.assert_not_awaited()
+        _, request = controller.agent_service.requests[0]
+        self.assertIn("shared content", request.message)
+
     async def test_control_text_routes_mentioned_subagent_prefix(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
         handler = MessageHandler(controller)
