@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from modules.im import MessageContext
-from core.reply_enhancer import process_reply, strip_file_links
+from core.reply_enhancer import process_reply, strip_file_links, strip_silent_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,13 @@ class ConsolidatedMessageDispatcher:
         if key not in self._consolidated_message_locks:
             self._consolidated_message_locks[key] = asyncio.Lock()
         return self._consolidated_message_locks[key]
+
+    async def _clear_consolidated_state(self, context: MessageContext) -> None:
+        consolidated_key = self._get_consolidated_message_key(context)
+        lock = self._get_consolidated_message_lock(consolidated_key)
+        async with lock:
+            self._consolidated_message_ids.pop(consolidated_key, None)
+            self._consolidated_message_buffers.pop(consolidated_key, None)
 
     async def clear_consolidated_message_id(
         self,
@@ -256,14 +263,16 @@ class ConsolidatedMessageDispatcher:
         - Result Message: final output, always sent immediately, not hideable.
         - Notify Message: notifications, always sent immediately.
         """
-        if not text or not text.strip():
-            return None
-
         settings_manager = self.controller.get_settings_manager_for_context(context)
         im_client = self._get_im_client(context)
 
         canonical_type = settings_manager._canonicalize_message_type(message_type or "")
         settings_key = self._get_settings_key(context)
+        text = strip_silent_blocks(text)
+        if not text or not text.strip():
+            if canonical_type == "result":
+                await self._clear_consolidated_state(context)
+            return None
 
         if canonical_type == "notify":
             target_context = self._get_target_context(context)
@@ -362,11 +371,7 @@ class ConsolidatedMessageDispatcher:
             # Final result closes the current turn: clear consolidated
             # assistant/tool/system message state so the next user turn starts
             # a fresh log message instead of appending to the previous one.
-            consolidated_key = self._get_consolidated_message_key(context)
-            lock = self._get_consolidated_message_lock(consolidated_key)
-            async with lock:
-                self._consolidated_message_ids.pop(consolidated_key, None)
-                self._consolidated_message_buffers.pop(consolidated_key, None)
+            await self._clear_consolidated_state(context)
 
             return primary_message_id
 

@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import paths
 from config.v2_sessions import SessionsStore
+from modules.sessions_facade import SessionsFacade
 
 
 def test_sessions_store_roundtrip(tmp_path, monkeypatch):
@@ -31,6 +32,26 @@ def test_sessions_store_namespaces(tmp_path, monkeypatch):
     assert thread_map == {}
     assert "U2" in store.state.session_mappings
     assert "U2" in store.state.active_slack_threads
+
+
+def test_active_thread_is_shared_across_users(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    store = SessionsStore()
+    sessions = SessionsFacade(store)
+
+    sessions.mark_thread_active("U1", "C1", "123.456")
+
+    assert sessions.is_thread_active("U2", "C1", "123.456")
+
+
+def test_shared_active_thread_ignores_expired_entries(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    store = SessionsStore()
+    store.state.active_slack_threads = {"U1": {"C1": {"123.456": 1.0}}}
+    sessions = SessionsFacade(store)
+
+    assert not sessions.is_thread_active("U2", "C1", "123.456")
+    assert "U1" not in store.state.active_slack_threads
 
 
 def test_migrate_active_polls_backfills_platform_and_scoped_key(tmp_path, monkeypatch):

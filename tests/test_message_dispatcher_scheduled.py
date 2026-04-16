@@ -86,6 +86,49 @@ class MessageDispatcherScheduledTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controller.im_client.sent, [("C123", None, "hello")])
         self.assertEqual(controller.session_handler.calls, [("C123", None, "bot-msg-1")])
 
+    async def test_result_message_strips_silent_blocks(self):
+        controller = _StubController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C123", platform="slack")
+
+        message_id = await dispatcher.emit_agent_message(
+            context,
+            "result",
+            "<silent>internal decision</silent>\nVisible reply",
+        )
+
+        self.assertEqual(message_id, "bot-msg-1")
+        self.assertEqual(controller.im_client.sent, [("C123", None, "Visible reply")])
+
+    async def test_silent_only_result_sends_nothing(self):
+        controller = _StubController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C123", platform="slack")
+
+        message_id = await dispatcher.emit_agent_message(
+            context,
+            "result",
+            "<silent>not relevant to the bot</silent>",
+        )
+
+        self.assertIsNone(message_id)
+        self.assertEqual(controller.im_client.sent, [])
+        self.assertEqual(controller.session_handler.calls, [])
+
+    async def test_silent_only_log_message_sends_nothing(self):
+        controller = _StubController()
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C123", platform="slack")
+
+        message_id = await dispatcher.emit_agent_message(
+            context,
+            "assistant",
+            "<silent>only internal note</silent>",
+        )
+
+        self.assertIsNone(message_id)
+        self.assertEqual(controller.im_client.sent, [])
+
     async def test_delivery_override_sends_result_to_parent_channel(self):
         controller = _StubController()
         dispatcher = ConsolidatedMessageDispatcher(controller)

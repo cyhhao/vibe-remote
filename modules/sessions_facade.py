@@ -241,7 +241,46 @@ class SessionsFacade:
         user_key = self._normalize_user_id(user_id)
         self._cleanup_expired_threads_for_channel(user_id, channel_id)
         channel_map = self.sessions_store.get_thread_map(user_key, channel_id)
-        return thread_ts in channel_map
+        if thread_ts in channel_map:
+            return True
+        return self._is_thread_active_for_any_user(channel_id, thread_ts)
+
+    def _is_thread_active_for_any_user(self, channel_id: str, thread_ts: str) -> bool:
+        """Return whether a channel thread is active for any participant.
+
+        Thread activation gates whether replies can be routed to the agent; once
+        the bot is invited into a thread, all participants should be able to
+        continue the conversation without mentioning the bot again.
+        """
+        cutoff = time.time() - (24 * 60 * 60)
+        changed = False
+
+        for user_key, channels in list(self.sessions_store.state.active_slack_threads.items()):
+            if not isinstance(channels, dict):
+                continue
+            channel_map = channels.get(channel_id)
+            if not isinstance(channel_map, dict):
+                continue
+
+            last_active = channel_map.get(thread_ts)
+            if last_active is None:
+                continue
+            if last_active < cutoff:
+                del channel_map[thread_ts]
+                if not channel_map:
+                    channels.pop(channel_id, None)
+                if not channels:
+                    self.sessions_store.state.active_slack_threads.pop(user_key, None)
+                changed = True
+                continue
+
+            if changed:
+                self.sessions_store.save()
+            return True
+
+        if changed:
+            self.sessions_store.save()
+        return False
 
     def _cleanup_expired_threads_for_channel(self, user_id: Union[int, str], channel_id: str) -> None:
         user_key = self._normalize_user_id(user_id)
