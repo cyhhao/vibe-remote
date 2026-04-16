@@ -45,7 +45,9 @@
     "opencodeQuestionUnsupportedWechat": "OpenCode interactive questions are temporarily disabled on WeChat. Please send a follow-up message instead.",
     "sessionReset": "Session error detected. Session has been reset. Please try your message again.",
     "sessionConnectionLost": "Connection to Claude was lost. Please try your message again.",
-    "sessionGeneric": "An error occurred: {error}"
+    "sessionGeneric": "An error occurred: {error}",
+    "resultAttachmentUploadFailed": "Failed to upload attachment. Want me to split the result into multiple messages?",
+    "resultDeliveryFailed": "⚠️ Message delivery failed. The content may be too long or incompatible. Ask me to resend it."
   },
   "success": {
     "settingsUpdated": "Settings updated successfully!",
@@ -103,7 +105,8 @@
     "howItWorksSettingsDesc": "Mention @bot to switch agents, models, reasoning effort, or hide verbose message types.",
     "howItWorksFooter": "Just type to chat with {agent}. No special commands needed!",
     "genericTitle": "Info: {topic}",
-    "genericFooter": "This feature is coming soon!"
+    "genericFooter": "This feature is coming soon!",
+    "resultDeliveredAsAttachment": "⚠️ The message could not be sent inline, so I sent it as `result.md` above."
   },
   "modal": {
     "settings": {
