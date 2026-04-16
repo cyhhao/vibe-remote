@@ -45,7 +45,9 @@
     "opencodeQuestionUnsupportedWechat": "微信平台暂时不支持 OpenCode 的交互式提问。请直接再发一条消息继续。",
     "sessionReset": "检测到会话错误。会话已重置，请重试。",
     "sessionConnectionLost": "与 Claude 的连接已断开，请重试。",
-    "sessionGeneric": "发生错误：{error}"
+    "sessionGeneric": "发生错误：{error}",
+    "resultAttachmentUploadFailed": "附件上传失败。要我改成拆分成多条消息发送吗？",
+    "resultDeliveryFailed": "⚠️ 消息投递失败，内容可能过长或格式不兼容。你可以让我重新发送一次。"
   },
   "success": {
     "settingsUpdated": "设置更新成功！",
@@ -103,7 +105,8 @@
     "howItWorksSettingsDesc": "通过 @bot 随时切换 Agent、模型、推理强度，或隐藏冗余消息类型。",
     "howItWorksFooter": "直接输入消息即可与 {agent} 对话，无需特殊命令！",
     "genericTitle": "信息：{topic}",
-    "genericFooter": "该功能即将上线！"
+    "genericFooter": "该功能即将上线！",
+    "resultDeliveredAsAttachment": "⚠️ 这条消息无法以内联形式发送，所以我已将完整内容作为 `result.md` 发在上方。"
   },
   "modal": {
     "settings": {
