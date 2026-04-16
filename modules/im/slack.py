@@ -77,6 +77,8 @@ class SlackBot(BaseIMClient):
         self._user_info_cache: Dict[str, Dict[str, Any]] = {}
         self._channel_info_cache: Dict[str, Dict[str, Any]] = {}
         self._bot_user_id: Optional[str] = None
+        self._bot_id: Optional[str] = None
+        self._bot_identity_lookup_attempted = False
         self._stop_event: Optional[asyncio.Event] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._on_ready: Optional[Callable] = None
@@ -283,27 +285,40 @@ class SlackBot(BaseIMClient):
         payload_user_id = self._extract_bot_user_id_from_payload(payload or {})
         if payload_user_id:
             self._bot_user_id = payload_user_id
+            if not self._bot_id:
+                await self._hydrate_bot_identity()
             return payload_user_id
 
         if self._bot_user_id:
+            if not self._bot_id:
+                await self._hydrate_bot_identity()
             return self._bot_user_id
+
+        await self._hydrate_bot_identity()
+        return self._bot_user_id
+
+    async def _hydrate_bot_identity(self) -> None:
+        if (self._bot_user_id and self._bot_id) or self._bot_identity_lookup_attempted:
+            return
 
         self._ensure_clients()
         auth_test = getattr(self.web_client, "auth_test", None)
         if not callable(auth_test):
-            return None
+            return
 
         try:
             response = await auth_test()
         except Exception as exc:
-            logger.debug("Failed to resolve Slack bot user id: %s", exc)
-            return None
+            logger.debug("Failed to resolve Slack bot identity: %s", exc)
+            return
 
-        user_id = response.get("user_id") if isinstance(response, dict) else None
+        self._bot_identity_lookup_attempted = True
+        user_id = self._slack_response_get(response, "user_id")
         if isinstance(user_id, str) and user_id:
             self._bot_user_id = user_id
-            return user_id
-        return None
+        bot_id = self._slack_response_get(response, "bot_id")
+        if isinstance(bot_id, str) and bot_id:
+            self._bot_id = bot_id
 
     @staticmethod
     def _has_specific_mention(text: str, user_id: Optional[str]) -> bool:
@@ -356,6 +371,8 @@ class SlackBot(BaseIMClient):
         if bot_user_id and event.get("user") == bot_user_id:
             return True
         if bot_user_id and bot_profile.get("user_id") == bot_user_id:
+            return True
+        if self._bot_id and event.get("bot_id") == self._bot_id:
             return True
         config_app_id = getattr(self.config, "app_id", None)
         if config_app_id and event.get("app_id") == config_app_id:
