@@ -783,6 +783,80 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(received["called"])
 
+    async def test_slack_connect_channel_mention_falls_back_to_message_event(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
+        received = {}
+
+        class _WebClient:
+            async def conversations_info(self, channel):
+                return {"channel": {"id": channel, "is_ext_shared": True}}
+
+        async def _on_message(context, text):
+            received["text"] = text
+            received["thread_id"] = context.thread_id
+
+        slack.web_client = _WebClient()
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-slack-connect-mention",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C_CONNECT",
+                "user": "U123",
+                "text": "<@U_BOT> please help",
+                "ts": "1710000000.000350",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"text": "please help", "thread_id": "1710000000.000350"})
+
+    async def test_slack_connect_channel_mention_marks_thread_active(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
+        marked = []
+
+        class _WebClient:
+            async def conversations_info(self, channel):
+                return {"channel": {"id": channel, "is_ext_shared": True}}
+
+        class _Sessions:
+            def mark_thread_active(self, user_id, channel_id, thread_id):
+                marked.append((user_id, channel_id, thread_id))
+
+        class _SettingsManager:
+            sessions = _Sessions()
+
+            def get_require_mention(self, _channel_id, global_default=False):
+                return global_default
+
+        async def _on_message(_context, _text):
+            return None
+
+        slack.web_client = _WebClient()
+        slack.set_settings_manager(_SettingsManager())
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-slack-connect-mark-thread",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C_CONNECT",
+                "user": "U123",
+                "text": "<@U_BOT> please help",
+                "ts": "1710000000.000360",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(marked, [("U123", "C_CONNECT", "1710000000.000360")])
+
     async def test_dm_preserves_non_bot_mentions(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         received = {}

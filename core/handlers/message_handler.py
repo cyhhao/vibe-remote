@@ -750,16 +750,20 @@ class MessageHandler(BaseHandler):
 
             try:
                 im_client = self._get_im_client(context)
-                # Download the file content
-                if hasattr(im_client, "download_file") and attachment.url:
+                # Download the file content. Some platforms receive a thin
+                # attachment event first and resolve the actual URL from
+                # platform metadata such as a Slack file id.
+                can_download = hasattr(im_client, "download_file_to_path") or hasattr(im_client, "download_file")
+                if can_download:
                     # Platform-agnostic download info dict
                     file_info = {
                         "url": attachment.url,
-                        "url_private_download": attachment.url,  # Slack compat
                         "name": attachment.name,
                         "size": attachment.size,
                         "platform": context.platform,
                     }
+                    if attachment.url:
+                        file_info["url_private_download"] = attachment.url  # Slack compat
                     attachment_data = getattr(attachment, "__dict__", {})
                     for key, value in attachment_data.items():
                         if key in {"name", "mimetype", "url", "content", "local_path", "size"}:

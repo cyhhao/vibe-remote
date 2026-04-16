@@ -137,5 +137,37 @@ class SlackAppMentionEmptyTests(unittest.IsolatedAsyncioTestCase):
         slack.sessions.mark_thread_active.assert_not_called()
 
 
+class SlackFileAttachmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_extract_file_attachments_preserves_file_id_when_url_missing(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+
+        attachments = slack._extract_file_attachments([{"id": "F123", "mimetype": "application/pdf"}])
+
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0].name, "F123")
+        self.assertIsNone(attachments[0].url)
+        self.assertEqual(attachments[0].__dict__["slack_file_id"], "F123")
+
+    async def test_resolve_downloadable_file_info_hydrates_thin_file_event(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        slack.web_client = SimpleNamespace(
+            files_info=AsyncMock(
+                return_value={
+                    "file": {
+                        "id": "F123",
+                        "name": "report.pdf",
+                        "url_private_download": "https://files.slack.test/report.pdf",
+                    }
+                }
+            )
+        )
+
+        resolved = await slack._resolve_downloadable_file_info({"slack_file_id": "F123", "name": "F123"})
+
+        self.assertEqual(resolved["name"], "report.pdf")
+        self.assertEqual(resolved["url_private_download"], "https://files.slack.test/report.pdf")
+        slack.web_client.files_info.assert_awaited_once_with(file="F123")
+
+
 if __name__ == "__main__":
     unittest.main()
