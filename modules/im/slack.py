@@ -1416,6 +1416,8 @@ class SlackBot(BaseIMClient):
                 if is_dm:
                     route_text = cleaned_text
                     had_dm_mention_only = not route_text
+                    if had_dm_mention_only:
+                        agent_text = ""
                 elif await self._is_slack_connect_channel(channel_id):
                     route_text = self._strip_specific_mention(raw_text, bot_user_id, anywhere=True)
                     handled_bot_mention_in_message_event = True

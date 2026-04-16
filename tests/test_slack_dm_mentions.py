@@ -333,7 +333,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(user_info["real_name"], "Alex")
         self.assertEqual(user_info["name"], "cyh")
 
-    async def test_dm_mention_only_preserves_raw_text_for_agent(self):
+    async def test_dm_mention_only_falls_through_as_empty_message(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         received = {}
 
@@ -364,7 +364,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
             {
                 "channel_id": "D123",
                 "thread_id": "1710000000.000100",
-                "text": "<@U_BOT>",
+                "text": "",
             },
         )
 
