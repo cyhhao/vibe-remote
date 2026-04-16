@@ -333,7 +333,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(user_info["real_name"], "Alex")
         self.assertEqual(user_info["name"], "cyh")
 
-    async def test_dm_mention_only_falls_through_as_empty_message(self):
+    async def test_dm_mention_only_preserves_raw_text_for_agent(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         received = {}
 
@@ -364,11 +364,11 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
             {
                 "channel_id": "D123",
                 "thread_id": "1710000000.000100",
-                "text": "",
+                "text": "<@U_BOT>",
             },
         )
 
-    async def test_dm_mention_with_text_strips_mention(self):
+    async def test_dm_mention_with_text_preserves_raw_text_for_agent(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         received = {}
 
@@ -392,7 +392,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         await slack._handle_event(payload)
 
-        self.assertEqual(received, {"text": "hello"})
+        self.assertEqual(received, {"text": "<@U_BOT> hello"})
 
     async def test_bound_user_message_from_mismatched_dm_channel_is_ignored(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
@@ -802,6 +802,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         async def _on_message(context, text):
             received["text"] = text
             received["thread_id"] = context.thread_id
+            received["bot_mention"] = (context.platform_specific or {}).get("bot_mention")
 
         slack.web_client = _WebClient()
         slack.register_callbacks(on_message=_on_message)
@@ -821,9 +822,16 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         await slack._handle_event(payload)
 
-        self.assertEqual(received, {"text": "please help", "thread_id": "1710000000.000350"})
+        self.assertEqual(
+            received,
+            {
+                "text": "<@U_BOT> please help",
+                "thread_id": "1710000000.000350",
+                "bot_mention": "<@U_BOT>",
+            },
+        )
 
-    async def test_slack_connect_mid_text_mention_is_stripped_in_message_fallback(self):
+    async def test_slack_connect_mid_text_mention_is_forwarded_raw_in_message_fallback(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
         received = {}
 
@@ -852,7 +860,67 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         await slack._handle_event(payload)
 
-        self.assertEqual(received, {"text": "please help"})
+        self.assertEqual(received, {"text": "please <@U_BOT> help"})
+
+    async def test_slack_connect_other_bot_mention_is_forwarded_raw(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
+        received = {}
+
+        class _WebClient:
+            async def conversations_info(self, channel):
+                return {"channel": {"id": channel, "is_ext_shared": True}}
+
+        async def _on_message(context, text):
+            received["user_id"] = context.user_id
+            received["text"] = text
+
+        slack.web_client = _WebClient()
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-slack-connect-other-bot-mention",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C_CONNECT",
+                "bot_id": "B_OTHER",
+                "bot_profile": {"user_id": "U_OTHER_BOT"},
+                "text": "handoff to <@U_BOT> please",
+                "ts": "1710000000.000356",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"user_id": "U_OTHER_BOT", "text": "handoff to <@U_BOT> please"})
+
+    async def test_own_bot_message_is_ignored_even_when_mentioned(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", app_id="A_SELF"))
+        received = {"called": False}
+
+        async def _on_message(_context, _text):
+            received["called"] = True
+
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-own-bot-mention",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C_CONNECT",
+                "bot_id": "B_SELF",
+                "bot_profile": {"user_id": "U_BOT", "app_id": "A_SELF"},
+                "text": "<@U_BOT> loop",
+                "ts": "1710000000.000357",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertFalse(received["called"])
 
     async def test_slack_connect_channel_mention_marks_thread_active(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
@@ -938,7 +1006,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         await slack._handle_event(message_payload)
         await slack._handle_event(app_mention_payload)
 
-        self.assertEqual(received, ["please help"])
+        self.assertEqual(received, ["<@U_BOT> please help"])
 
     async def test_slack_connect_app_mention_then_message_is_handled_once(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
@@ -982,7 +1050,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         await slack._handle_event(app_mention_payload)
         await slack._handle_event(message_payload)
 
-        self.assertEqual(received, ["please help"])
+        self.assertEqual(received, ["<@U_BOT> please help"])
 
     async def test_dm_preserves_non_bot_mentions(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
@@ -1008,7 +1076,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         await slack._handle_event(payload)
 
-        self.assertEqual(received, {"text": "summarize what <@U_OTHER> said"})
+        self.assertEqual(received, {"text": "<@U_BOT> summarize what <@U_OTHER> said"})
 
     async def test_channel_message_with_other_mentions_is_not_skipped(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
@@ -1086,7 +1154,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         await slack._handle_event(payload)
 
-        self.assertEqual(received, {"text": "summarize what <@U_OTHER> said"})
+        self.assertEqual(received, {"text": "<@U_BOT> summarize what <@U_OTHER> said"})
 
 
 if __name__ == "__main__":

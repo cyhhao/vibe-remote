@@ -336,6 +336,8 @@ class MessageHandler(BaseHandler):
             # Prepend user identity when include_user_info is enabled
             if is_human and self.config.include_user_info:
                 message = await self._prepend_user_info(context, message)
+            if is_human:
+                message = self._prepend_agent_identity(context, message)
 
             message = self._append_attachment_errors(message, attachment_errors)
 
@@ -421,6 +423,14 @@ class MessageHandler(BaseHandler):
         name = self._sanitize_identity(raw_name)
         uid = self._sanitize_identity(context.user_id)
         return f"[{name}<{uid}>] {message}"
+
+    def _prepend_agent_identity(self, context: MessageContext, message: str) -> str:
+        """Add platform identity context without rewriting the user's message."""
+        payload = context.platform_specific or {}
+        bot_mention = payload.get("bot_mention")
+        if isinstance(bot_mention, str) and bot_mention.strip():
+            return f"[Agent Identity] Slack bot mention: {bot_mention.strip()}\n{message}"
+        return message
 
     async def handle_callback_query(self, context: MessageContext, callback_data: str):
         """Route callback queries to appropriate handlers"""

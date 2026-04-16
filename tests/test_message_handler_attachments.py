@@ -249,6 +249,21 @@ class MessageHandlerAttachmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Download failed with HTTP 403", message)
         self.assertNotIn("/.vibe_remote/attachments/", message)
 
+    def test_prepend_agent_identity_keeps_original_message_text(self):
+        handler = MessageHandler(_StubController(_StubIMClient()))
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform_specific={"bot_mention": "<@U_BOT>"},
+        )
+
+        message = handler._prepend_agent_identity(context, "please <@U_BOT> help <@U_OTHER>")
+
+        self.assertEqual(
+            message,
+            "[Agent Identity] Slack bot mention: <@U_BOT>\nplease <@U_BOT> help <@U_OTHER>",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
