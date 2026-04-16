@@ -480,7 +480,18 @@ export const UserList: React.FC = () => {
     if (cached?.length) return cached;
 
     const fallback = claudeReasoningOptions[''] || [];
-    if (modelKey.toLowerCase().includes('claude-opus-4-6')) {
+    const normalizedModel = modelKey.toLowerCase();
+    if (normalizedModel.includes('claude-opus-4-7') || normalizedModel === 'opus' || normalizedModel === 'opus[1m]') {
+      const options = [...fallback];
+      if (!options.some((option) => option.value === 'xhigh')) {
+        options.push({ value: 'xhigh', label: 'Extra High' });
+      }
+      if (!options.some((option) => option.value === 'max')) {
+        options.push({ value: 'max', label: 'Max' });
+      }
+      return options;
+    }
+    if (normalizedModel.includes('claude-opus-4-6') || normalizedModel.includes('claude-sonnet-4-6')) {
       return fallback.some((option) => option.value === 'max')
         ? fallback
         : [...fallback, { value: 'max', label: 'Max' }];
@@ -497,6 +508,8 @@ export const UserList: React.FC = () => {
         return t('channelList.reasoningMedium');
       case 'high':
         return t('channelList.reasoningHigh');
+      case 'xhigh':
+        return t('channelList.reasoningXHigh');
       case 'max':
         return t('channelList.reasoningMax');
       default:

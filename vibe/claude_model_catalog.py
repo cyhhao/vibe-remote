@@ -8,6 +8,7 @@ from typing import Iterable
 
 DEFAULT_CLAUDE_MODEL_ALIASES: tuple[str, ...] = ("opus", "sonnet", "haiku")
 FALLBACK_CLAUDE_MODELS: tuple[str, ...] = (
+    "claude-opus-4-7",
     "claude-opus-4-6",
     "claude-sonnet-4-6",
     "claude-haiku-4-5",

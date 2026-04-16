@@ -299,6 +299,7 @@ def test_claude_models_merge_catalog_and_settings(monkeypatch, tmp_path):
         "low",
         "medium",
         "high",
+        "xhigh",
         "max",
     ]
 
