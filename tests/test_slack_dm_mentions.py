@@ -831,6 +831,46 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_slack_connect_mention_only_falls_back_as_empty_message(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
+        received = {}
+
+        class _WebClient:
+            async def conversations_info(self, channel):
+                return {"channel": {"id": channel, "is_ext_shared": True}}
+
+        async def _on_message(context, text):
+            received["text"] = text
+            received["thread_id"] = context.thread_id
+            received["control_text"] = (context.platform_specific or {}).get("control_text")
+
+        slack.web_client = _WebClient()
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-slack-connect-mention-only",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C_CONNECT",
+                "user": "U123",
+                "text": "<@U_BOT> \n",
+                "ts": "1710000000.000355",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(
+            received,
+            {
+                "text": "",
+                "thread_id": "1710000000.000355",
+                "control_text": "",
+            },
+        )
+
     async def test_slack_connect_mid_text_mention_is_forwarded_raw_in_message_fallback(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
         received = {}

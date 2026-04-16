@@ -1420,7 +1420,7 @@ class SlackBot(BaseIMClient):
             route_text = raw_text
             agent_text = raw_text
 
-            had_dm_mention_only = False
+            had_mention_only = False
             bot_user_id = await self._get_bot_user_id(payload)
             bot_mention = f"<@{bot_user_id}>" if bot_user_id else None
             has_bot_mention = self._has_specific_mention(raw_text, bot_user_id)
@@ -1434,11 +1434,14 @@ class SlackBot(BaseIMClient):
             if has_bot_mention:
                 if is_dm:
                     route_text = cleaned_text
-                    had_dm_mention_only = not route_text
-                    if had_dm_mention_only:
+                    had_mention_only = not route_text
+                    if had_mention_only:
                         agent_text = ""
                 elif await self._is_slack_connect_channel(channel_id):
                     route_text = self._strip_specific_mention(raw_text, bot_user_id, anywhere=True)
+                    had_mention_only = not route_text
+                    if had_mention_only:
+                        agent_text = ""
                     handled_bot_mention_in_message_event = True
                     logger.info("Processing Slack Connect message event with bot mention: '%s'", event.get("text"))
                 else:
@@ -1457,7 +1460,7 @@ class SlackBot(BaseIMClient):
             if not user_id:
                 logger.debug("Ignoring Slack message without user id")
                 return
-            if not route_text and not file_attachments and not has_shared_content and not had_dm_mention_only:
+            if not route_text and not file_attachments and not has_shared_content and not had_mention_only:
                 logger.debug("Ignoring Slack message with empty text and no files")
                 return
 
@@ -1621,9 +1624,7 @@ class SlackBot(BaseIMClient):
             # Extract shared/forwarded message content (defer appending until after command check)
             shared_text = await self._extract_shared_message_content(event)
 
-            if not route_text and not file_attachments and not shared_text:
-                logger.debug("Ignoring Slack app_mention with empty text and no files")
-                return
+            had_mention_only = not route_text and not file_attachments and not shared_text
 
             context = MessageContext(
                 user_id=event.get("user"),
@@ -1662,7 +1663,7 @@ class SlackBot(BaseIMClient):
                 logger.warning(f"Command '{command}' not found in callbacks")
 
             # Append shared content to user text (after command parsing)
-            agent_text = raw_text
+            agent_text = "" if had_mention_only else raw_text
             if shared_text:
                 if agent_text:
                     agent_text = f"{agent_text}\n\n{shared_text}"
