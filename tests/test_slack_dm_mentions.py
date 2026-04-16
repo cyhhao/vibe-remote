@@ -815,6 +815,37 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(received, {"text": "please help", "thread_id": "1710000000.000350"})
 
+    async def test_slack_connect_mid_text_mention_is_stripped_in_message_fallback(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
+        received = {}
+
+        class _WebClient:
+            async def conversations_info(self, channel):
+                return {"channel": {"id": channel, "is_ext_shared": True}}
+
+        async def _on_message(_context, text):
+            received["text"] = text
+
+        slack.web_client = _WebClient()
+        slack.register_callbacks(on_message=_on_message)
+
+        payload = {
+            "event_id": "evt-slack-connect-mid-text-mention",
+            "team_id": "T1",
+            "authorizations": [{"user_id": "U_BOT"}],
+            "event": {
+                "type": "message",
+                "channel": "C_CONNECT",
+                "user": "U123",
+                "text": "please <@U_BOT> help",
+                "ts": "1710000000.000355",
+            },
+        }
+
+        await slack._handle_event(payload)
+
+        self.assertEqual(received, {"text": "please help"})
+
     async def test_slack_connect_channel_mention_marks_thread_active(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test", require_mention=True))
         marked = []

@@ -1393,7 +1393,7 @@ class SlackBot(BaseIMClient):
                     text = cleaned_text
                     had_dm_mention_only = not text
                 elif await self._is_slack_connect_channel(channel_id):
-                    text = cleaned_text
+                    text = self._strip_specific_mention(text, bot_user_id, anywhere=True)
                     handled_bot_mention_in_message_event = True
                     logger.info("Processing Slack Connect message event with bot mention: '%s'", event.get("text"))
                 else:
