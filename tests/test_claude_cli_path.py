@@ -283,12 +283,17 @@ def test_session_handler_uses_scheduled_turn_source_for_dm_anchor(monkeypatch, t
 
     controller = _ScheduledController(tmp_path)
     handler = SessionHandler(controller)
+    precomputed_base = "slack_scheduled-anchor-123"
     context = MessageContext(
         user_id="U123",
         channel_id="D123",
         message_id="scheduled:task-1:exec-1",
         platform="slack",
-        platform_specific={"is_dm": True, "turn_source": "scheduled"},
+        platform_specific={
+            "is_dm": True,
+            "turn_source": "scheduled",
+            "turn_base_session_id": precomputed_base,
+        },
     )
 
     client = _run_session(handler, context)
@@ -297,8 +302,7 @@ def test_session_handler_uses_scheduled_turn_source_for_dm_anchor(monkeypatch, t
     assert controller.settings_manager.sessions.lookup is not None
     settings_key, base_session_id = controller.settings_manager.sessions.lookup
     assert settings_key == "slack::U123"
-    assert base_session_id.startswith("slack_scheduled-")
-    assert base_session_id != "slack_scheduled:task-1:exec-1"
+    assert base_session_id == precomputed_base
     assert getattr(client, "_vibe_runtime_base_session_id") == base_session_id
     assert getattr(client, "_vibe_runtime_session_key") == f"{base_session_id}:{tmp_path}"
 
