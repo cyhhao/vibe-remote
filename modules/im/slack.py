@@ -1524,6 +1524,7 @@ class SlackBot(BaseIMClient):
                     "is_dm": is_dm,
                     "bot_user_id": bot_user_id,
                     "bot_mention": bot_mention,
+                    "control_text": route_text,
                 },
                 files=file_attachments,
             )
@@ -1616,6 +1617,7 @@ class SlackBot(BaseIMClient):
                     "is_dm": channel_id.startswith("D"),
                     "bot_user_id": bot_user_id,
                     "bot_mention": bot_mention,
+                    "control_text": route_text,
                 },
                 files=file_attachments,
             )

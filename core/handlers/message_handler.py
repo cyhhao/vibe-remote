@@ -126,6 +126,7 @@ class MessageHandler(BaseHandler):
         typing_indicator_task = None
         try:
             is_human = source == self.TURN_SOURCE_HUMAN
+            control_message = self._get_control_message(context, message) if is_human else message
 
             # Record user activity for auto-update idle detection
             if is_human and hasattr(self.controller, "update_checker"):
@@ -134,7 +135,7 @@ class MessageHandler(BaseHandler):
             # If message is empty AND no files attached (e.g., user just @mentioned bot without text),
             # trigger the /start command instead of sending empty message to agent
             has_files = bool(context.files)
-            if (not message or not message.strip()) and not has_files:
+            if (not control_message or not control_message.strip()) and not has_files:
                 if is_human:
                     await self.controller.command_handler.handle_start(context, "")
                 return None
@@ -159,14 +160,14 @@ class MessageHandler(BaseHandler):
             if is_human and not has_files:
                 maybe_consume_setup_reply = getattr(self.controller.agent_auth_service, "maybe_consume_setup_reply", None)
                 if callable(maybe_consume_setup_reply):
-                    consumed = await maybe_consume_setup_reply(context, message)
+                    consumed = await maybe_consume_setup_reply(context, control_message)
                     if consumed:
                         return None
 
             # Skip automatic cleanup; receiver tasks are retained until shutdown
 
             # Allow "stop" shortcut inside Slack threads
-            if is_human and context.thread_id and message.strip().lower() in ["stop", "/stop"]:
+            if is_human and context.thread_id and control_message.strip().lower() in ["stop", "/stop"]:
                 if await self._handle_inline_stop(context):
                     return None
 
@@ -228,7 +229,7 @@ class MessageHandler(BaseHandler):
                     parse_subagent_prefix,
                 )
 
-                parsed = parse_subagent_prefix(message)
+                parsed = parse_subagent_prefix(control_message)
                 if parsed:
                     normalized = normalize_subagent_name(parsed.name)
                     if agent_name == "opencode":
@@ -430,6 +431,14 @@ class MessageHandler(BaseHandler):
         bot_mention = payload.get("bot_mention")
         if isinstance(bot_mention, str) and bot_mention.strip():
             return f"[Agent Identity] Slack bot mention: {bot_mention.strip()}\n{message}"
+        return message
+
+    @staticmethod
+    def _get_control_message(context: MessageContext, message: str) -> str:
+        payload = context.platform_specific or {}
+        control_text = payload.get("control_text")
+        if isinstance(control_text, str):
+            return control_text
         return message
 
     async def handle_callback_query(self, context: MessageContext, callback_data: str):

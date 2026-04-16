@@ -142,12 +142,18 @@ class _StubAgentService:
     def __init__(self):
         self.default_agent = "codex"
         self.requests = []
+        self.stop_requests = []
         self.error = None
+        self.stop_result = True
 
     async def handle_message(self, agent_name, request):
         if self.error is not None:
             raise self.error
         self.requests.append((agent_name, request))
+
+    async def handle_stop(self, agent_name, request):
+        self.stop_requests.append((agent_name, request))
+        return self.stop_result
 
 
 class _StubController:
@@ -165,6 +171,7 @@ class _StubController:
         self.agent_service = _StubAgentService()
         self.settings_handler = type("Settings", (), {})()
         self.command_handler = type("Cmd", (), {"handle_start": staticmethod(lambda context, args: None)})()
+        self.agent_auth_service = type("Auth", (), {})()
 
     def update_thread_message_id(self, context):
         return None
@@ -316,6 +323,49 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         result = await handler._prepend_user_info(context, "hello")
 
         self.assertEqual(result, "[WeChat User<wx-user>] hello")
+
+    async def test_control_text_handles_mentioned_inline_stop(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            thread_id="T1",
+            message_id="m1",
+            platform="slack",
+            platform_specific={"control_text": "stop"},
+        )
+
+        await handler.handle_user_message(context, "<@U_BOT> stop")
+
+        self.assertEqual(len(controller.agent_service.stop_requests), 1)
+        self.assertEqual(controller.agent_service.requests, [])
+
+    async def test_control_text_routes_mentioned_subagent_prefix(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            message_id="m1",
+            platform="slack",
+            platform_specific={"bot_mention": "<@U_BOT>", "control_text": "reviewer: check this"},
+        )
+
+        from modules.agents.subagent_router import SubagentDefinition
+
+        with patch(
+            "modules.agents.subagent_router.load_codex_subagent",
+            return_value=SubagentDefinition(name="reviewer"),
+        ):
+            await handler.handle_user_message(context, "<@U_BOT> reviewer: check this")
+
+        _, request = controller.agent_service.requests[0]
+        self.assertEqual(request.subagent_name, "reviewer")
+        self.assertEqual(request.subagent_key, "reviewer")
+        self.assertEqual(request.message, "[Agent Identity] Slack bot mention: <@U_BOT>\ncheck this")
 
     async def test_scheduled_turn_returns_error_string_after_notifying_im(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
