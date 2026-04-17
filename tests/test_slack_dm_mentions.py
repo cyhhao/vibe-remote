@@ -125,6 +125,87 @@ class _ResponseLike:
 
 
 class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_send_message_does_not_set_unfurl_params_by_default(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        sent_payloads = []
+
+        class _WebClient:
+            async def chat_postMessage(self, **kwargs):
+                sent_payloads.append(kwargs)
+                return {"ts": "1710000000.000010"}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+
+        message_ts = await slack.send_message(context, "https://example.com", parse_mode="markdown")
+
+        self.assertEqual(message_ts, "1710000000.000010")
+        self.assertNotIn("unfurl_links", sent_payloads[0])
+        self.assertNotIn("unfurl_media", sent_payloads[0])
+
+    async def test_send_message_disables_link_unfurl_when_configured(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", disable_link_unfurl=True))
+        sent_payloads = []
+
+        class _WebClient:
+            async def chat_postMessage(self, **kwargs):
+                sent_payloads.append(kwargs)
+                return {"ts": "1710000000.000011"}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+
+        message_ts = await slack.send_message(context, "https://example.com", parse_mode="markdown")
+
+        self.assertEqual(message_ts, "1710000000.000011")
+        self.assertIs(sent_payloads[0]["unfurl_links"], False)
+        self.assertIs(sent_payloads[0]["unfurl_media"], False)
+
+    async def test_send_dm_disables_link_unfurl_when_configured(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", disable_link_unfurl=True))
+        sent_payloads = []
+
+        class _WebClient:
+            async def conversations_open(self, users):
+                return {"ok": True, "channel": {"id": "D123"}}
+
+            async def chat_postMessage(self, **kwargs):
+                sent_payloads.append(kwargs)
+                return {"ts": "1710000000.000012"}
+
+        slack.web_client = _WebClient()
+
+        message_ts = await slack.send_dm("U123", "https://example.com")
+
+        self.assertEqual(message_ts, "1710000000.000012")
+        self.assertEqual(sent_payloads[0]["channel"], "D123")
+        self.assertIs(sent_payloads[0]["unfurl_links"], False)
+        self.assertIs(sent_payloads[0]["unfurl_media"], False)
+
+    async def test_send_message_with_buttons_disables_link_unfurl_when_configured(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", disable_link_unfurl=True))
+        sent_payloads = []
+
+        class _WebClient:
+            async def chat_postMessage(self, **kwargs):
+                sent_payloads.append(kwargs)
+                return {"ts": "1710000000.000013"}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+        keyboard = InlineKeyboard(buttons=[[InlineButton(text="Open", callback_data="open")]])
+
+        message_ts = await slack.send_message_with_buttons(
+            context,
+            "https://example.com",
+            keyboard,
+            parse_mode="markdown",
+        )
+
+        self.assertEqual(message_ts, "1710000000.000013")
+        self.assertIs(sent_payloads[0]["unfurl_links"], False)
+        self.assertIs(sent_payloads[0]["unfurl_media"], False)
+
     async def test_send_message_recovers_dm_channel_after_channel_not_found(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         sent_channels = []

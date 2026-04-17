@@ -22,6 +22,7 @@ def _full_config_payload() -> dict:
             "team_name": None,
             "app_id": None,
             "require_mention": False,
+            "disable_link_unfurl": False,
         },
         "discord": {
             "bot_token": "discord-token-1234567890",
@@ -115,6 +116,17 @@ def test_save_config_accepts_typing_ack_mode(monkeypatch, tmp_path):
     updated = api.save_config({**_full_config_payload(), "ack_mode": "typing"})
 
     assert updated.ack_mode == "typing"
+
+
+def test_save_config_accepts_slack_disable_link_unfurl(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = _full_config_payload()
+    payload["slack"]["disable_link_unfurl"] = True
+
+    updated = api.save_config(payload)
+
+    assert updated.slack.disable_link_unfurl is True
 
 
 def test_save_config_preserves_platforms_metadata(monkeypatch, tmp_path):

@@ -24,6 +24,7 @@ V2 stores all user data under `~/.vibe_remote/` as JSON files. The model preserv
 - `team_name`: Slack workspace name (SaaS OAuth)
 - `app_id`: Slack app ID (optional, for diagnostics)
 - `signing_secret`: optional for SaaS relay validation
+- `disable_link_unfurl`: bool, suppress Slack link and media previews on outbound messages
 
 ### gateway
 
