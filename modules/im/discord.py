@@ -849,7 +849,10 @@ class DiscordBot(BaseIMClient):
             if snippet:
                 snippet = snippet[:50]
             name = snippet or "vibe-remote session"
-            thread = await message.create_thread(name=name, auto_archive_duration=60)
+            thread = await message.create_thread(
+                name=name,
+                auto_archive_duration=self.config.thread_auto_archive_minutes,
+            )
             return thread
         except Exception as err:
             logger.warning("Failed to create thread: %s", err)

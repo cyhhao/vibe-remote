@@ -52,11 +52,23 @@ class DiscordConfig(BaseIMConfig):
     guild_allowlist: Optional[List[str]] = None
     guild_denylist: Optional[List[str]] = None
     require_mention: bool = False
+    # Auto-archive duration (minutes) for threads created by vibe-remote.
+    # Discord only accepts 60, 1440, 4320, or 10080 (1h / 1d / 3d / 7d).
+    # Defaults to 10080 (7d) to match Discord's longest native inactivity window
+    # rather than aggressively archiving idle sessions after 1 hour.
+    thread_auto_archive_minutes: int = 10080
 
     def validate(self) -> None:
         # Allow empty token for initial setup
         if self.bot_token and len(self.bot_token.strip()) < 10:
             raise ValueError("Invalid Discord bot token format")
+        allowed_archive = {60, 1440, 4320, 10080}
+        if self.thread_auto_archive_minutes not in allowed_archive:
+            raise ValueError(
+                "Invalid Discord thread_auto_archive_minutes "
+                f"{self.thread_auto_archive_minutes!r}; must be one of "
+                f"{sorted(allowed_archive)}"
+            )
 
 
 @dataclass
