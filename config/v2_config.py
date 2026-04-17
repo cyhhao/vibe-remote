@@ -35,6 +35,7 @@ class SlackConfig(BaseIMConfig):
     team_name: Optional[str] = None
     app_id: Optional[str] = None
     require_mention: bool = False
+    disable_link_unfurl: bool = False
 
     def validate(self) -> None:
         # Allow empty token for initial setup

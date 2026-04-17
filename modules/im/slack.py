@@ -426,6 +426,12 @@ class SlackBot(BaseIMClient):
             return None
         return resp.get("channel", {}).get("id")
 
+    async def _chat_post_message(self, **kwargs):
+        if getattr(self.config, "disable_link_unfurl", False):
+            kwargs["unfurl_links"] = False
+            kwargs["unfurl_media"] = False
+        return await self.web_client.chat_postMessage(**kwargs)
+
     async def _post_message_with_dm_recovery(
         self,
         context: MessageContext,
@@ -434,7 +440,7 @@ class SlackBot(BaseIMClient):
         log_label: str,
     ):
         try:
-            return await self.web_client.chat_postMessage(**kwargs)
+            return await self._chat_post_message(**kwargs)
         except SlackApiError as err:
             error_code = err.response.get("error") if getattr(err, "response", None) else None
             if error_code != "channel_not_found" or not self._is_dm_context(context) or not context.user_id:
@@ -454,7 +460,7 @@ class SlackBot(BaseIMClient):
             kwargs.pop("thread_ts", None)
             context.channel_id = recovered_channel_id
             context.thread_id = None
-            return await self.web_client.chat_postMessage(**kwargs)
+            return await self._chat_post_message(**kwargs)
 
     @staticmethod
     def _find_text_split_index(text: str, max_chars: int) -> int:
@@ -564,7 +570,7 @@ class SlackBot(BaseIMClient):
                 return None
             msg_kwargs = {"channel": dm_channel, "text": text}
             msg_kwargs.update(kwargs)
-            result = await self.web_client.chat_postMessage(**msg_kwargs)
+            result = await self._chat_post_message(**msg_kwargs)
             return result.get("ts")
         except Exception as e:
             logger.error("Failed to send DM to Slack user %s: %s", user_id, e)
@@ -3940,7 +3946,7 @@ class SlackBot(BaseIMClient):
 
         try:
             self._ensure_clients()
-            await self.web_client.chat_postMessage(channel=channel_id, text=msg)
+            await self._chat_post_message(channel=channel_id, text=msg)
         except Exception as e:
             logger.error(f"Failed to send auth denial message: {e}")
 
@@ -3948,7 +3954,7 @@ class SlackBot(BaseIMClient):
         """Send unauthorized access message to channel"""
         try:
             self._ensure_clients()
-            await self.web_client.chat_postMessage(
+            await self._chat_post_message(
                 channel=channel_id,
                 text=f"❌ {self._t('error.channelNotEnabled', channel_id)}",
             )

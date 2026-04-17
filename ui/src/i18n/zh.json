@@ -477,6 +477,8 @@
     "includeUserInfoHint": "在发给 Agent 的消息前添加 [用户名<用户ID>]",
     "replyEnhancements": "增强回复",
     "replyEnhancementsHint": "启用 Agent 回复中的文件附件和快捷回复按钮",
+    "slackLinkPreviews": "关闭 Slack 链接预览",
+    "slackLinkPreviewsHint": "关闭 Vibe Remote 发送到 Slack 的 URL 和媒体预览卡片",
     "allowedChannels": "允许的群组",
     "consoleServer": "控制台服务器",
     "host": "主机",

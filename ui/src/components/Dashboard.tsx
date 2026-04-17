@@ -438,6 +438,42 @@ export const Dashboard: React.FC = () => {
                                 : t('common.disabled')}
                         </button>
                     </div>
+                    {enabledPlatforms.includes('slack') && (
+                        <div className="flex justify-between items-center">
+                            <span className="text-muted flex items-center gap-1">
+                                {t('dashboard.slackLinkPreviews')}
+                                <span className="relative group">
+                                    <Info size={12} className="text-muted/50 cursor-help" />
+                                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-60 text-center">
+                                        {t('dashboard.slackLinkPreviewsHint')}
+                                    </span>
+                                </span>
+                            </span>
+                            <button
+                                onClick={() => {
+                                    setSettingsMessage(null);
+                                    const newConfig = {
+                                        ...config,
+                                        slack: {
+                                            ...(config.slack || {}),
+                                            disable_link_unfurl: !config.slack?.disable_link_unfurl,
+                                        },
+                                    };
+                                    setConfig(newConfig);
+                                    autoSaveMessageConfig(newConfig);
+                                }}
+                                className={`px-2 py-1 rounded text-xs font-semibold border ${
+                                    config.slack?.disable_link_unfurl
+                                        ? 'bg-success/10 text-success border-success/20'
+                                        : 'bg-neutral-100 text-muted border-border'
+                                }`}
+                            >
+                                {config.slack?.disable_link_unfurl
+                                    ? t('common.enabled')
+                                    : t('common.disabled')}
+                            </button>
+                        </div>
+                    )}
                     <div className="flex justify-between items-center">
                         <span className="text-muted">{t('dashboard.allowedChannels')}</span>
                         <Link to="/channels" className="text-xs text-accent hover:underline font-medium">{t('common.manageChannels')}</Link>
