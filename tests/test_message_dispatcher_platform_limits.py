@@ -11,13 +11,18 @@ from modules.im import MessageContext
 
 
 class _StubIMClient:
-    def __init__(self, max_bytes: int | None = None):
+    def __init__(self, max_bytes: int | None = None, *, supports_editing: bool = True):
         self.sent = []
+        self.edit_calls = []
         self._next_id = 1
         self._max_bytes = max_bytes
+        self._supports_editing = supports_editing
 
     def should_use_thread_for_reply(self):
         return False
+
+    def supports_message_editing(self, context=None):
+        return self._supports_editing
 
     async def send_message(self, context, text, parse_mode=None, reply_to=None):
         if self._max_bytes is not None and len(text.encode("utf-8")) > self._max_bytes:
@@ -28,6 +33,7 @@ class _StubIMClient:
         return message_id
 
     async def edit_message(self, context, message_id, text=None, keyboard=None, parse_mode=None):
+        self.edit_calls.append((context.channel_id, context.thread_id, message_id, text, parse_mode))
         return False
 
 
@@ -51,7 +57,7 @@ class _StubController:
     def __init__(self, platform: str, *, max_bytes: int | None = None):
         self.config = type("Config", (), {"platform": platform, "reply_enhancements": False})()
         self.session_handler = _StubSessionHandler()
-        self.im_client = _StubIMClient(max_bytes=max_bytes)
+        self.im_client = _StubIMClient(max_bytes=max_bytes, supports_editing=platform != "wechat")
 
     def _get_settings_key(self, context):
         return context.channel_id
@@ -91,6 +97,23 @@ class MessageDispatcherPlatformLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(message_id)
         self.assertGreater(len(controller.im_client.sent), 1)
         self.assertTrue(all(len(text.encode("utf-8")) <= 1900 for _, _, text, _ in controller.im_client.sent))
+        self.assertEqual(controller.im_client.edit_calls, [])
+
+    async def test_wechat_log_messages_send_individually_without_append_edit(self):
+        controller = _StubController("wechat")
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="wechat-user", channel_id="wechat-user", platform="wechat")
+
+        first_id = await dispatcher.emit_agent_message(context, "system", "cwd: /tmp/project")
+        second_id = await dispatcher.emit_agent_message(context, "assistant", "running command")
+        third_id = await dispatcher.emit_agent_message(context, "toolcall", "exec_command")
+
+        self.assertEqual((first_id, second_id, third_id), ("bot-msg-1", "bot-msg-2", "bot-msg-3"))
+        self.assertEqual(
+            [text for _, _, text, _ in controller.im_client.sent],
+            ["cwd: /tmp/project", "running command", "exec_command"],
+        )
+        self.assertEqual(controller.im_client.edit_calls, [])
 
     def test_result_split_boundary_never_exceeds_platform_limit(self):
         dispatcher = ConsolidatedMessageDispatcher(_StubController("wechat"))

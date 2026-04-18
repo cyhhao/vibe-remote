@@ -138,6 +138,10 @@ class BaseIMClient(ABC):
         # Default implementation - subclasses should override
         return False
 
+    def supports_message_editing(self, context: Optional[MessageContext] = None) -> bool:
+        """Whether sent messages can be edited after delivery."""
+        return True
+
     def should_use_thread_for_dm_session(self) -> bool:
         """Check if DM conversations should use thread-based session IDs.
 

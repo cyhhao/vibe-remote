@@ -199,6 +199,11 @@ class MultiIMClient(BaseIMClient):
             context, text, keyboard, parse_mode=parse_mode
         )
 
+    def supports_message_editing(self, context: Optional[MessageContext] = None) -> bool:
+        if context is None:
+            return all(client.supports_message_editing() for client in self.clients.values())
+        return self.get_client_for_context(context).supports_message_editing(context)
+
     async def upload_markdown(
         self, context: MessageContext, title: str, content: str, filetype: str = "markdown"
     ) -> str:

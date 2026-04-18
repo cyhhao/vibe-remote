@@ -173,6 +173,17 @@ class ConsolidatedMessageDispatcher:
             context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
         ) != "wechat"
 
+    def _supports_message_editing(self, im_client, context: MessageContext) -> bool:
+        supports_editing = getattr(im_client, "supports_message_editing", None)
+        if callable(supports_editing):
+            try:
+                return bool(supports_editing(context))
+            except TypeError:
+                return bool(supports_editing())
+        return (
+            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+        ) != "wechat"
+
     def _attachment_id_can_anchor_delivery(self, context: MessageContext) -> bool:
         platform = (
             context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
@@ -263,6 +274,28 @@ class ConsolidatedMessageDispatcher:
         encoded = text.encode("utf-8")
         truncated = encoded[:target_bytes].decode("utf-8", errors="ignore")
         return truncated.rstrip() + ellipsis
+
+    async def _send_unconsolidated_log_message(
+        self,
+        im_client,
+        context: MessageContext,
+        text: str,
+    ) -> Optional[str]:
+        target_context = self._get_target_context(context)
+        max_bytes = self._get_consolidated_max_bytes(context)
+        chunks = self._split_result_text_by_bytes(text, max_bytes)
+        first_message_id: Optional[str] = None
+
+        for chunk in chunks:
+            try:
+                message_id = await im_client.send_message(target_context, chunk, parse_mode="markdown")
+            except Exception as err:
+                logger.error("Failed to send Log Message: %s", err, exc_info=True)
+                return first_message_id
+            if first_message_id is None:
+                first_message_id = message_id
+
+        return first_message_id
 
     async def emit_agent_message(
         self,
@@ -474,6 +507,9 @@ class ConsolidatedMessageDispatcher:
 
         if not chunk:
             return None
+
+        if not self._supports_message_editing(im_client, context):
+            return await self._send_unconsolidated_log_message(im_client, context, chunk)
 
         consolidated_key = self._get_consolidated_message_key(context)
         lock = self._get_consolidated_message_lock(consolidated_key)
