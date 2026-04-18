@@ -378,9 +378,9 @@ class MessageHandler(BaseHandler):
             # Use try/except to safely access possibly-unbound local variables
             try:
                 try:
-                    # Try using request object if it was created
-                    if request.ack_reaction_message_id:  # type: ignore[possibly-undefined]
-                        await self._remove_ack_reaction(context, request)  # type: ignore[possibly-undefined]
+                    # Try using request object if it was created. This also
+                    # clears typing indicators, which do not have a reaction ID.
+                    await self._remove_ack_reaction(context, request)  # type: ignore[possibly-undefined]
                 except NameError:
                     # request not defined yet, try using local variables
                     if (
