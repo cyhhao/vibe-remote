@@ -294,6 +294,26 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controller.im_client.reactions, [])
         self.assertGreaterEqual(len(controller.im_client.typing_calls), 1)
 
+    async def test_wechat_typing_is_cleared_when_agent_processing_raises(self):
+        controller = _StubController(platform="wechat", ack_mode="message", typing_result=True)
+        captured_requests = []
+
+        async def _raise_after_request(agent_name, request):
+            captured_requests.append(request)
+            raise RuntimeError("agent failed")
+
+        controller.agent_service.handle_message = _raise_after_request
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(user_id="wx-user", channel_id="wx-chat", message_id="m1")
+
+        await handler.handle_user_message(context, "hello")
+
+        self.assertEqual(controller.im_client.clear_calls, [("wx-chat", "wx-user")])
+        self.assertFalse(captured_requests[0].typing_indicator_active)
+        self.assertIsNone(captured_requests[0].typing_indicator_task)
+        self.assertEqual(controller.im_client.sent_messages, [("wx-chat", "Error: agent failed")])
+
     async def test_telegram_reaction_mode_matches_global_ack_strategy(self):
         controller = _StubController(platform="telegram", ack_mode="reaction", typing_result=True)
         handler = MessageHandler(controller)
