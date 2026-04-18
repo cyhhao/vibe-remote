@@ -507,6 +507,9 @@ class WeChatBot(BaseIMClient):
     # Sending messages
     # ------------------------------------------------------------------
 
+    def supports_message_editing(self, context: Optional[MessageContext] = None) -> bool:
+        return False
+
     async def send_message(
         self,
         context: MessageContext,

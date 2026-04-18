@@ -20,9 +20,10 @@ class _StubConfig(BaseIMConfig):
 
 
 class _StubClient(BaseIMClient):
-    def __init__(self, name: str):
+    def __init__(self, name: str, *, supports_editing: bool = True):
         super().__init__(_StubConfig())
         self.name = name
+        self._supports_editing = supports_editing
         self.sent = []
         self.removed = []
         self.dismissed = []
@@ -36,6 +37,9 @@ class _StubClient(BaseIMClient):
 
     async def edit_message(self, context, message_id, text=None, keyboard=None, parse_mode=None):
         return True
+
+    def supports_message_editing(self, context=None):
+        return self._supports_editing
 
     async def remove_inline_keyboard(self, context, message_id, text=None, parse_mode=None):
         self.removed.append((context.platform, message_id, text))
@@ -100,6 +104,15 @@ def test_multi_im_client_routes_send_by_context_platform():
 
     assert slack.sent == []
     assert wechat.sent == [("wechat", "c", "hello")]
+
+
+def test_multi_im_client_routes_message_edit_capability_by_context_platform():
+    slack = _StubClient("slack")
+    wechat = _StubClient("wechat", supports_editing=False)
+    client = MultiIMClient({"slack": slack, "wechat": wechat}, primary_platform="slack")
+
+    assert client.supports_message_editing(MessageContext(user_id="u", channel_id="c", platform="slack"))
+    assert not client.supports_message_editing(MessageContext(user_id="u", channel_id="c", platform="wechat"))
 
 
 def test_multi_im_client_annotates_inbound_context_platform():
