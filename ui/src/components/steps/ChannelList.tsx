@@ -227,16 +227,20 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     setSelectedGuild(guildId);
   };
 
-  const toggleAllowedGuild = (guildId: string, checked: boolean) => {
+  const toggleAllowedGuild = async (guildId: string, checked: boolean) => {
+    const previous = selectedGuildIds;
     const next = checked
       ? addDiscordGuildToAllowlist(selectedGuildIds, guildId)
       : selectedGuildIds.filter(id => id !== guildId);
     setSelectedGuildIds(next);
-    void persistDiscordGuildAllowlist(next);
+    const saved = await persistDiscordGuildAllowlist(next);
+    if (!saved) {
+      setSelectedGuildIds(previous);
+    }
   };
 
-  const persistDiscordGuildAllowlist = async (allowlist: string[]) => {
-    if (!isPage) return;
+  const persistDiscordGuildAllowlist = async (allowlist: string[]): Promise<boolean> => {
+    if (!isPage) return true;
     const updated = {
       ...config,
       discord: {
@@ -244,12 +248,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         guild_allowlist: allowlist,
       },
     };
-    setConfig(updated);
     try {
       await api.saveConfig(updated);
+      setConfig(updated);
       showToast(t('common.saved'), 'success');
+      return true;
     } catch {
       showToast(t('channelList.settingsSaveFailed'), 'error');
+      return false;
     }
   };
 
