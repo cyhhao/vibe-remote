@@ -26,6 +26,9 @@ class ActivePollInfo:
     # Ack reaction info for cleanup on restore
     ack_reaction_message_id: Optional[str] = None
     ack_reaction_emoji: Optional[str] = None
+    # Typing indicator info for cleanup on restore
+    typing_indicator_active: bool = False
+    context_token: str = ""
     # User identity for restoring question UI context
     user_id: str = ""
     platform: str = ""
@@ -44,6 +47,8 @@ class ActivePollInfo:
             "started_at": self.started_at,
             "ack_reaction_message_id": self.ack_reaction_message_id,
             "ack_reaction_emoji": self.ack_reaction_emoji,
+            "typing_indicator_active": self.typing_indicator_active,
+            "context_token": self.context_token,
             "user_id": self.user_id,
             "platform": self.platform,
         }
@@ -63,6 +68,8 @@ class ActivePollInfo:
             started_at=data.get("started_at", 0.0),
             ack_reaction_message_id=data.get("ack_reaction_message_id"),
             ack_reaction_emoji=data.get("ack_reaction_emoji"),
+            typing_indicator_active=bool(data.get("typing_indicator_active", False)),
+            context_token=data.get("context_token", ""),
             user_id=data.get("user_id", ""),
             platform=data.get("platform", ""),
         )

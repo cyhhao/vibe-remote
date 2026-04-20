@@ -136,6 +136,34 @@ def test_migrate_active_polls_extracts_platform_from_scoped_key(tmp_path, monkey
     assert poll["settings_key"] == "C789"
 
 
+def test_active_poll_persists_typing_cleanup_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    store = SessionsStore()
+    sessions = SessionsFacade(store)
+
+    sessions.add_active_poll(
+        opencode_session_id="oc-session-4",
+        base_session_id="base-4",
+        channel_id="wx-chat",
+        thread_id="",
+        settings_key="wx-chat",
+        working_path="/tmp/work",
+        baseline_message_ids=[],
+        typing_indicator_active=True,
+        context_token="ctx-4",
+        user_id="wx-user",
+        platform="wechat",
+    )
+
+    reloaded = SessionsStore()
+    reloaded.load()
+    poll = reloaded.get_active_poll("oc-session-4")
+
+    assert poll is not None
+    assert poll.typing_indicator_active is True
+    assert poll.context_token == "ctx-4"
+
+
 # --- session_mappings migration tests ---
 
 

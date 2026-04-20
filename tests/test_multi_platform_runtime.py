@@ -11,6 +11,7 @@ from modules.im.base import BaseIMClient, BaseIMConfig, MessageContext
 from modules.im.multi import MultiIMClient
 from modules.settings_manager import MultiSettingsManager
 from config.v2_sessions import ActivePollInfo
+from modules.agents.opencode.poll_loop import OpenCodePollLoop
 
 
 @dataclass
@@ -147,7 +148,7 @@ def test_multi_im_client_routes_scoped_identity_lookups():
     assert wechat.sent[-1] == ("dm", "wx-user", "hello")
 
 
-def test_active_poll_info_round_trips_platform():
+def test_active_poll_info_round_trips_restored_typing_context():
     poll = ActivePollInfo(
         opencode_session_id="ses-1",
         base_session_id="base-1",
@@ -156,12 +157,45 @@ def test_active_poll_info_round_trips_platform():
         settings_key="chan-1",
         working_path="/tmp/work",
         user_id="user-1",
-        platform="discord",
+        platform="wechat",
+        typing_indicator_active=True,
+        context_token="ctx-1",
     )
 
     restored = ActivePollInfo.from_dict(poll.to_dict())
 
-    assert restored.platform == "discord"
+    assert restored.platform == "wechat"
+    assert restored.typing_indicator_active is True
+    assert restored.context_token == "ctx-1"
+
+
+def test_opencode_restored_ack_preserves_wechat_typing_context():
+    captured = []
+
+    class _StubAgent:
+        async def _remove_ack_reaction(self, request):
+            captured.append(request)
+
+    poll = ActivePollInfo(
+        opencode_session_id="ses-1",
+        base_session_id="base-1",
+        channel_id="chan-1",
+        thread_id="thread-1",
+        settings_key="chan-1",
+        working_path="/tmp/work",
+        user_id="user-1",
+        platform="wechat",
+        typing_indicator_active=True,
+        context_token="ctx-1",
+    )
+    loop = OpenCodePollLoop(_StubAgent(), question_handler=None)
+
+    asyncio.run(loop.remove_restored_ack(poll))
+
+    request = captured[0]
+    assert request.typing_indicator_active is True
+    assert request.context.platform == "wechat"
+    assert request.context.platform_specific == {"platform": "wechat", "context_token": "ctx-1"}
 
 
 def test_multi_im_client_routes_download_by_file_info_platform():

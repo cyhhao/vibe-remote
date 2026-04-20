@@ -21,6 +21,41 @@ class OpenCodePollLoop:
         self._agent = agent
         self._question_handler = question_handler
 
+    def _build_restored_context(self, poll_info):
+        from modules.im import MessageContext
+
+        platform_specific: dict[str, Any] = {}
+        if poll_info.platform:
+            platform_specific["platform"] = poll_info.platform
+        if getattr(poll_info, "context_token", ""):
+            platform_specific["context_token"] = poll_info.context_token
+
+        return MessageContext(
+            user_id=poll_info.user_id or "",
+            channel_id=poll_info.channel_id,
+            platform=poll_info.platform or None,
+            thread_id=poll_info.thread_id,
+            platform_specific=platform_specific or None,
+        )
+
+    def _build_restored_ack_request(self, poll_info) -> AgentRequest:
+        context = self._build_restored_context(poll_info)
+        session_key = f"{poll_info.platform}::{poll_info.settings_key}" if poll_info.platform else poll_info.settings_key
+        return AgentRequest(
+            context=context,
+            message="",
+            working_path=poll_info.working_path,
+            base_session_id=poll_info.base_session_id,
+            composite_session_id=f"{poll_info.base_session_id}:{poll_info.working_path}",
+            session_key=session_key,
+            ack_reaction_message_id=poll_info.ack_reaction_message_id,
+            ack_reaction_emoji=poll_info.ack_reaction_emoji,
+            typing_indicator_active=bool(getattr(poll_info, "typing_indicator_active", False)),
+        )
+
+    async def remove_restored_ack(self, poll_info) -> None:
+        await self._agent._remove_ack_reaction(self._build_restored_ack_request(poll_info))
+
     def _fallback_extract_text(
         self,
         messages: list[Dict[str, Any]],
@@ -307,28 +342,8 @@ class OpenCodePollLoop:
     async def run_restored_poll_loop(self, poll_info) -> None:
         """Continue a poll loop that was interrupted by restart."""
 
-        from modules.im import MessageContext
-
         session_id = poll_info.opencode_session_id
-        context = MessageContext(
-            user_id=poll_info.user_id or "",
-            channel_id=poll_info.channel_id,
-            platform=poll_info.platform or None,
-            thread_id=poll_info.thread_id,
-            platform_specific={"platform": poll_info.platform} if poll_info.platform else None,
-        )
-
-        async def _remove_ack_reaction() -> None:
-            """Remove ack reaction from the original message."""
-            if poll_info.ack_reaction_message_id and poll_info.ack_reaction_emoji:
-                try:
-                    await self._agent.controller.get_im_client_for_context(context).remove_reaction(
-                        context,
-                        poll_info.ack_reaction_message_id,
-                        poll_info.ack_reaction_emoji,
-                    )
-                except Exception as e:
-                    logger.debug(f"Failed to remove ack reaction: {e}")
+        context = self._build_restored_context(poll_info)
 
         await self._agent.controller.emit_agent_message(
             context,
@@ -413,13 +428,7 @@ class OpenCodePollLoop:
                             from modules.agents.base import AgentRequest
 
                             restored_request = AgentRequest(
-                                context=MessageContext(
-                                    user_id=poll_info.user_id or "",
-                                    channel_id=poll_info.channel_id,
-                                    platform=poll_info.platform or None,
-                                    thread_id=poll_info.thread_id,
-                                    platform_specific={"platform": poll_info.platform} if poll_info.platform else None,
-                                ),
+                                context=context,
                                 message="",
                                 session_key=f"{poll_info.platform}::{poll_info.settings_key}"
                                 if poll_info.platform
@@ -451,7 +460,7 @@ class OpenCodePollLoop:
                                 break
                             # Answer failed or cancelled — exit gracefully
                             self._agent.sessions.remove_active_poll(session_id)
-                            await _remove_ack_reaction()
+                            await self.remove_restored_ack(poll_info)
                             return
 
                         seen_tool_calls.add(call_key)
@@ -516,7 +525,7 @@ class OpenCodePollLoop:
                                             message,
                                         )
                                     self._agent.sessions.remove_active_poll(session_id)
-                                    await _remove_ack_reaction()
+                                    await self.remove_restored_ack(poll_info)
                                     return
 
                             if last_info.get("finish") != "tool-calls":
@@ -557,14 +566,14 @@ class OpenCodePollLoop:
                 )
 
             # Clean up ack reaction after result is sent
-            await _remove_ack_reaction()
+            await self.remove_restored_ack(poll_info)
             # Clean up answer reaction after result is sent
             await self._question_handler.clear(poll_info.base_session_id, context)
             self._agent.sessions.remove_active_poll(session_id)
 
         except asyncio.CancelledError:
             logger.info(f"Restored OpenCode poll cancelled for {poll_info.base_session_id}")
-            await _remove_ack_reaction()
+            await self.remove_restored_ack(poll_info)
             await self._question_handler.clear(poll_info.base_session_id, context)
             self._agent.sessions.remove_active_poll(session_id)
             raise
@@ -580,7 +589,7 @@ class OpenCodePollLoop:
                 logger.warning(f"Failed to abort OpenCode session after error: {abort_err}")
 
             self._agent.sessions.remove_active_poll(session_id)
-            await _remove_ack_reaction()
+            await self.remove_restored_ack(poll_info)
 
             message = f"Restored OpenCode session failed: {error_text}"
             handled = await self._agent.controller.agent_auth_service.maybe_emit_auth_recovery_message(

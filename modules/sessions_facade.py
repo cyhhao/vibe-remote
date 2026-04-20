@@ -332,6 +332,8 @@ class SessionsFacade:
         baseline_message_ids: List[str],
         ack_reaction_message_id: Optional[str] = None,
         ack_reaction_emoji: Optional[str] = None,
+        typing_indicator_active: bool = False,
+        context_token: str = "",
         user_id: str = "",
         platform: str = "",
     ) -> None:
@@ -348,6 +350,8 @@ class SessionsFacade:
             started_at=time.time(),
             ack_reaction_message_id=ack_reaction_message_id,
             ack_reaction_emoji=ack_reaction_emoji,
+            typing_indicator_active=typing_indicator_active,
+            context_token=context_token,
             user_id=user_id,
             platform=platform,
         )
