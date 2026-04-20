@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Hash, CheckSquare, Square, RefreshCw, HelpCircle, Globe, FolderOpen, MessageSquare, Users, AtSign } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
@@ -63,6 +63,19 @@ interface TelegramDiscoverySummary {
   forum_count: number;
 }
 
+const getDiscordGuildAllowlist = (source: any): string[] => {
+  const allowlist = source?.discord?.guild_allowlist;
+  return Array.isArray(allowlist) ? allowlist : [];
+};
+
+const addDiscordGuildToAllowlist = (allowlist: string[], selectedGuild: string): string[] => {
+  const merged = [...allowlist];
+  if (selectedGuild && !merged.includes(selectedGuild)) {
+    merged.push(selectedGuild);
+  }
+  return merged;
+};
+
 export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onBack, isPage, forcedPlatform, wizardPlatforms }) => {
   const { t } = useTranslation();
   const api = useApi();
@@ -89,10 +102,48 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [codexModels, setCodexModels] = useState<string[]>([]);
   const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
   const [guilds, setGuilds] = useState<any[]>([]);
-  const [selectedGuild, setSelectedGuild] = useState<string>(data.discord?.guild_allowlist?.[0] || '');
+  const [selectedGuildIds, setSelectedGuildIds] = useState<string[]>(getDiscordGuildAllowlist(data));
+  const [selectedGuild, setSelectedGuild] = useState<string>(getDiscordGuildAllowlist(data)[0] || '');
+  const selectedGuildIdsRef = useRef<string[]>(getDiscordGuildAllowlist(data));
+  const confirmedGuildAllowlistRef = useRef<string[]>(getDiscordGuildAllowlist(data));
+  const allowlistSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const allowlistSaveVersionRef = useRef(0);
+  const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const configVersionRef = useRef(0);
+  const configRef = useRef<any>(data);
   const [telegramSummary, setTelegramSummary] = useState<TelegramDiscoverySummary | null>(null);
   // Directory browser state — tracks which channel's cwd picker is open
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
+
+  const applySelectedGuildIds = (allowlist: string[]) => {
+    const normalized = [...allowlist];
+    selectedGuildIdsRef.current = normalized;
+    setSelectedGuildIds(normalized);
+  };
+
+  const applyConfig = (nextConfig: any): number => {
+    configRef.current = nextConfig;
+    configVersionRef.current += 1;
+    setConfig(nextConfig);
+    return configVersionRef.current;
+  };
+
+  const saveLatestConfig = async (): Promise<boolean> => {
+    const saveTask = configSaveQueueRef.current.then(async () => {
+      await api.saveConfig(configRef.current);
+    });
+    configSaveQueueRef.current = saveTask.catch(() => {});
+    try {
+      await saveTask;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
 
   useEffect(() => {
     if (isPage) return;
@@ -126,7 +177,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   useEffect(() => {
     if (!isPage) {
-      setSelectedGuild(data.discord?.guild_allowlist?.[0] || '');
+      const allowlist = getDiscordGuildAllowlist(data);
+      confirmedGuildAllowlistRef.current = allowlist;
+      applySelectedGuildIds(allowlist);
+      setSelectedGuild(allowlist[0] || '');
     }
   }, [data.discord?.guild_allowlist, isPage]);
 
@@ -134,7 +188,11 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   useEffect(() => {
     if (isPage) {
       api.getConfig().then(c => {
-        setConfig(c);
+        applyConfig(c);
+        const allowlist = getDiscordGuildAllowlist(c);
+        confirmedGuildAllowlistRef.current = allowlist;
+        applySelectedGuildIds(allowlist);
+        setSelectedGuild(allowlist[0] || '');
         const defaultPlatform = forcedPlatform || getEnabledPlatforms(c).find(platformSupportsChannels) || c?.platform || 'slack';
         setPagePlatform(defaultPlatform);
         api.getSettings(defaultPlatform).then(s => {
@@ -148,6 +206,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     ? wizardActivePlatform
     : (forcedPlatform || pagePlatform || config.platform || data.platform || 'slack');
   const channelPlatforms = getEnabledPlatforms(config).filter(platformSupportsChannels);
+  const knownDiscordGuilds = [
+    ...guilds,
+    ...selectedGuildIds
+      .filter((id) => !guilds.some((guild) => guild.id === id))
+      .map((id) => ({ id, name: id })),
+  ];
 
   // Switch platforms in wizard multi-platform mode
   const switchWizardPlatform = (newPlatform: string) => {
@@ -184,11 +248,64 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   useEffect(() => {
     if (platform !== 'discord') return;
     if (selectedGuild) return;
-    const preferredGuild = config.discord?.guild_allowlist?.[0] || data.discord?.guild_allowlist?.[0] || '';
+    const preferredGuild = getDiscordGuildAllowlist(config)[0] || getDiscordGuildAllowlist(data)[0] || '';
     if (preferredGuild) {
       setSelectedGuild(preferredGuild);
     }
   }, [platform, config.discord?.guild_allowlist, data.discord?.guild_allowlist, selectedGuild]);
+
+  const updateSelectedGuild = (guildId: string) => {
+    setSelectedGuild(guildId);
+  };
+
+  const toggleAllowedGuild = async (guildId: string, checked: boolean) => {
+    const current = selectedGuildIdsRef.current;
+    const next = checked
+      ? addDiscordGuildToAllowlist(current, guildId)
+      : current.filter(id => id !== guildId);
+    const version = allowlistSaveVersionRef.current + 1;
+    allowlistSaveVersionRef.current = version;
+    applySelectedGuildIds(next);
+    if (!isPage) return;
+
+    const saveTask = allowlistSaveQueueRef.current.then(async () => {
+      const saved = await persistDiscordGuildAllowlist(next);
+      if (saved) {
+        confirmedGuildAllowlistRef.current = next;
+      } else if (allowlistSaveVersionRef.current === version) {
+        const confirmed = confirmedGuildAllowlistRef.current;
+        applySelectedGuildIds(confirmed);
+        applyConfig({
+          ...configRef.current,
+          discord: {
+            ...(configRef.current.discord || {}),
+            guild_allowlist: confirmed,
+          },
+        });
+      }
+    });
+    allowlistSaveQueueRef.current = saveTask.catch(() => {});
+    await saveTask;
+  };
+
+  const persistDiscordGuildAllowlist = async (allowlist: string[]): Promise<boolean> => {
+    if (!isPage) return true;
+    const updated = {
+      ...configRef.current,
+      discord: {
+        ...(configRef.current.discord || {}),
+        guild_allowlist: allowlist,
+      },
+    };
+    applyConfig(updated);
+    const saved = await saveLatestConfig();
+    if (saved) {
+      showToast(t('common.saved'), 'success');
+      return true;
+    }
+    showToast(t('channelList.settingsSaveFailed'), 'error');
+    return false;
+  };
 
   const loadGuilds = async () => {
     if (!botToken) return;
@@ -630,16 +747,22 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           <button
             onClick={async () => {
               const key = platform as 'slack' | 'discord' | 'telegram' | 'lark' | 'wechat';
-              const current = !!(config as any)[key]?.require_mention;
+              const currentConfig = configRef.current;
+              const current = !!(currentConfig as any)[key]?.require_mention;
               const updated = {
-                ...config,
-                [key]: { ...(config as any)[key], require_mention: !current },
+                ...currentConfig,
+                [key]: { ...(currentConfig as any)[key], require_mention: !current },
               };
-              setConfig(updated);
-              try {
-                await api.saveConfig(updated);
+              const version = applyConfig(updated);
+              const saved = await saveLatestConfig();
+              if (saved) {
                 showToast(t('common.saved'), 'success');
-              } catch { /* ignore */ }
+              } else if (configVersionRef.current === version) {
+                applyConfig(currentConfig);
+                showToast(t('channelList.settingsSaveFailed'), 'error');
+              } else {
+                showToast(t('channelList.settingsSaveFailed'), 'error');
+              }
             }}
             className={clsx(
               'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
@@ -700,18 +823,53 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           <span className="text-sm text-muted font-mono">{t('channelList.enabledCount', { count: selectedCount })}</span>
         </div>
         {platform === 'discord' && (
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <label className="text-muted">{t('channelList.guild')}</label>
-            <select
-              value={selectedGuild}
-              onChange={(e) => setSelectedGuild(e.target.value)}
-              className="bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
-            >
-              <option value="">{t('channelList.guildPlaceholder')}</option>
-              {guilds.map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
+          <div className="rounded-lg border border-border bg-panel p-3 text-sm">
+            <div className="grid gap-3 md:grid-cols-[minmax(220px,280px)_1fr]">
+              <div className="space-y-1">
+                <label className="font-medium text-text">{t('channelList.guildBrowse')}</label>
+                <select
+                  value={selectedGuild}
+                  onChange={(e) => updateSelectedGuild(e.target.value)}
+                  className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
+                >
+                  <option value="">{t('channelList.guildPlaceholder')}</option>
+                  {knownDiscordGuilds.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium text-text">{t('channelList.guildAccess')}</span>
+                  <span className="text-xs text-muted">
+                    {t('channelList.guildAccessCount', { count: selectedGuildIds.length })}
+                  </span>
+                </div>
+                {knownDiscordGuilds.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {knownDiscordGuilds.map((g) => (
+                      <label
+                        key={g.id}
+                        className={clsx(
+                          'inline-flex items-center gap-2 rounded border px-2 py-1 text-xs transition-colors',
+                          selectedGuildIds.includes(g.id)
+                            ? 'border-accent bg-accent/10 text-text'
+                            : 'border-border bg-bg text-muted hover:text-text'
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedGuildIds.includes(g.id)}
+                          onChange={(e) => toggleAllowedGuild(g.id, e.target.checked)}
+                          className="h-3.5 w-3.5 accent-accent"
+                        />
+                        <span>{g.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
         {isPage && (
@@ -1180,6 +1338,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           </button>
           <button
             onClick={() => {
+              const discordGuildAllowlist = selectedGuildIds;
+              const discordPayload = getEnabledPlatforms(data).includes('discord') || platform === 'discord'
+                ? {
+                    discord: {
+                      ...(data.discord || {}),
+                      ...(config.discord || {}),
+                      guild_allowlist: discordGuildAllowlist,
+                    },
+                  }
+                : {};
               if (isWizardMultiPlatform) {
                 // Merge configs from all visited platforms
                 const allConfigs = { ...wizardConfigsMap, [wizardActivePlatform]: configs };
@@ -1188,6 +1356,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     ...(data.channelConfigsByPlatform || {}),
                     ...allConfigs,
                   },
+                  ...discordPayload,
                 });
               } else {
                 onNext && onNext({
@@ -1196,7 +1365,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     [platform]: configs,
                   },
                   settingsPlatform: platform,
-                  ...(platform === 'discord' ? { discord: { ...config.discord, guild_allowlist: selectedGuild ? [selectedGuild] : [] } } : {}),
+                  ...(platform === 'discord' ? {
+                    discord: {
+                      ...config.discord,
+                      guild_allowlist: discordGuildAllowlist,
+                    },
+                  } : {}),
                 });
               }
             }}
