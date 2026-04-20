@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import time
 from typing import Optional, Dict, Any, Tuple
 from uuid import uuid4
@@ -13,6 +14,20 @@ from modules.agents.native_sessions.base import build_resume_preview
 from .base import BaseHandler
 
 logger = logging.getLogger(__name__)
+
+CLAUDE_NO_CONVERSATION_RE = re.compile(r"No conversation found with session ID:\s*([0-9a-fA-F-]+)")
+
+
+class ClaudeSessionNotFoundError(RuntimeError):
+    """Claude Code could not resume a persisted session in the current cwd."""
+
+    def __init__(self, session_id: str, working_path: str, stderr: str = ""):
+        self.session_id = session_id
+        self.working_path = working_path
+        self.stderr = stderr
+        super().__init__(
+            f"Claude Code session not found in current working directory: {session_id} ({working_path})"
+        )
 
 
 class SessionHandler(BaseHandler):
@@ -507,6 +522,16 @@ class SessionHandler(BaseHandler):
         if effective_model:
             extra_args["model"] = effective_model
 
+        claude_stderr_lines: list[str] = []
+
+        def _capture_claude_stderr(line: str) -> None:
+            text = (line or "").strip()
+            if not text:
+                return
+            claude_stderr_lines.append(text)
+            if len(claude_stderr_lines) > 40:
+                del claude_stderr_lines[:-40]
+
         # Collect Anthropic-related environment variables to pass to Claude
         claude_env = {}
         for key in os.environ:
@@ -527,6 +552,7 @@ class SessionHandler(BaseHandler):
             # See: https://github.com/anthropics/claude-code/issues/10168
             "disallowed_tools": ["AskUserQuestion"],
             "env": claude_env,  # Pass Anthropic/Claude env vars
+            "stderr": _capture_claude_stderr,
         }
         cli_path_override = self._get_claude_cli_path_override()
         if cli_path_override:
@@ -573,7 +599,18 @@ class SessionHandler(BaseHandler):
             logger.info(f"  - subagent: {subagent_name}")
 
         # Connect the client
-        await client.connect()
+        try:
+            await client.connect()
+        except Exception as exc:
+            stderr_text = "\n".join(claude_stderr_lines)
+            match = CLAUDE_NO_CONVERSATION_RE.search(stderr_text) or CLAUDE_NO_CONVERSATION_RE.search(str(exc))
+            if match:
+                raise ClaudeSessionNotFoundError(
+                    session_id=match.group(1),
+                    working_path=str(working_path),
+                    stderr=stderr_text,
+                ) from exc
+            raise
 
         self.claude_sessions[composite_key] = client
         self.bind_claude_runtime_session(client, base_session_id, composite_key)
@@ -825,7 +862,23 @@ class SessionHandler(BaseHandler):
         error_msg = str(error)
 
         # Check for specific error types
-        if "read() called while another coroutine" in error_msg:
+        if isinstance(error, ClaudeSessionNotFoundError):
+            logger.warning(
+                "Claude session %s not found for current working directory %s; keeping persisted mapping unchanged",
+                error.session_id,
+                error.working_path,
+            )
+            await self._get_im_client(context).send_message(
+                context,
+                self._get_formatter(context).format_error(
+                    self._t(
+                        "error.claudeSessionNotFound",
+                        sessionId=error.session_id,
+                        path=error.working_path,
+                    )
+                ),
+            )
+        elif "read() called while another coroutine" in error_msg:
             logger.error(f"Session {composite_key} has concurrent read error - cleaning up")
             await self.cleanup_session(composite_key)
 

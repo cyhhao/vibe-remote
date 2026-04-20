@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.handlers.session_handler import SessionHandler
+from core.handlers.session_handler import ClaudeSessionNotFoundError, SessionHandler
 from modules.im import MessageContext
 
 
@@ -87,6 +88,33 @@ class _Controller:
 
     def get_im_client_for_context(self, context: MessageContext):
         return self.im_client
+
+
+class _FakeFormatter:
+    @staticmethod
+    def format_error(text: str) -> str:
+        return f"ERR:{text}"
+
+
+class _FakeIM:
+    def __init__(self) -> None:
+        self.formatter = _FakeFormatter()
+        self.sent_messages = []
+
+    @staticmethod
+    def should_use_thread_for_dm_session() -> bool:
+        return False
+
+    @staticmethod
+    def should_use_message_id_for_channel_session(context=None) -> bool:
+        return True
+
+    @staticmethod
+    def should_use_thread_for_reply() -> bool:
+        return True
+
+    async def send_message(self, context: MessageContext, message: str) -> None:
+        self.sent_messages.append((context, message))
 
 
 def test_dm_session_base_id_uses_stable_channel_id() -> None:
@@ -286,3 +314,34 @@ def test_alias_session_base_clears_source_even_when_alias_already_exists() -> No
     assert changed is True
     assert controller.sessions.alias_calls == [("slack::C123", "slack_scheduled-abc", "slack_171717.123")]
     assert controller.sessions.clear_calls == [("slack::C123", "slack_scheduled-abc")]
+
+
+def test_claude_session_not_found_error_is_reported_without_cleanup() -> None:
+    controller = _Controller(platform="slack", dm_threads=False)
+    controller.im_client = _FakeIM()
+    handler = SessionHandler(controller)
+    cleanup_calls = []
+
+    async def _cleanup_session(composite_key: str) -> None:
+        cleanup_calls.append(composite_key)
+
+    handler.cleanup_session = _cleanup_session
+    context = MessageContext(user_id="U123", channel_id="C123", platform="slack")
+
+    asyncio.run(
+        handler.handle_session_error(
+            "slack_C123:/tmp/other",
+            context,
+            ClaudeSessionNotFoundError(
+                session_id="11111111-1111-1111-1111-111111111111",
+                working_path="/tmp/other",
+            ),
+        )
+    )
+
+    assert cleanup_calls == []
+    assert len(controller.im_client.sent_messages) == 1
+    _, message = controller.im_client.sent_messages[0]
+    assert message.startswith("ERR:Claude Code could not find the historical session")
+    assert "11111111-1111-1111-1111-111111111111" in message
+    assert "/tmp/other" in message

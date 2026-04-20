@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 from typing import Any
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import core.handlers.session_handler as session_handler_module
@@ -207,6 +209,46 @@ def test_session_handler_expands_tilde_in_claude_cli_path(monkeypatch, tmp_path:
 
     assert captured["connected"] is True
     assert captured["options"].cli_path == str(Path("~/bin/claude").expanduser())
+
+
+def test_session_handler_surfaces_claude_missing_resume_session(monkeypatch, tmp_path: Path) -> None:
+    stale_session_id = "11111111-1111-1111-1111-111111111111"
+    captured: dict[str, Any] = {}
+
+    class _StaleSessions:
+        @staticmethod
+        def get_claude_session_id(settings_key, base_session_id):
+            assert settings_key == "test::C123"
+            assert base_session_id == "slack_C123"
+            return stale_session_id
+
+        @staticmethod
+        def get_agent_session_id(settings_key, base_session_id, agent_name):
+            return None
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+
+        async def connect(self) -> None:
+            captured["options"].stderr(f"No conversation found with session ID: {stale_session_id}")
+            raise RuntimeError("Command failed with exit code 1")
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    controller.settings_manager.sessions = _StaleSessions()
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    with pytest.raises(session_handler_module.ClaudeSessionNotFoundError) as exc_info:
+        _run_session(handler, context)
+
+    assert exc_info.value.session_id == stale_session_id
+    assert exc_info.value.working_path == str(tmp_path)
+    assert stale_session_id in exc_info.value.stderr
+    assert captured["options"].resume == stale_session_id
 
 
 def test_session_handler_uses_scheduled_turn_source_for_dm_anchor(monkeypatch, tmp_path: Path) -> None:
