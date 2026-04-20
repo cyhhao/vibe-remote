@@ -73,6 +73,24 @@ class SessionHandler(BaseHandler):
         setattr(client, "_vibe_runtime_base_session_id", base_session_id)
         setattr(client, "_vibe_runtime_session_key", composite_key)
 
+    async def _set_claude_model_if_needed(self, client: ClaudeSDKClient, desired_model: Optional[str]) -> None:
+        unknown = object()
+        current_model = getattr(client, "_vibe_current_model", unknown)
+        if current_model is not unknown and current_model == desired_model:
+            return
+
+        if current_model is unknown and desired_model is None:
+            setattr(client, "_vibe_current_model", None)
+            return
+
+        set_model = getattr(client, "set_model", None)
+        if not callable(set_model):
+            logger.warning("Claude SDK client does not support model switching")
+            return
+
+        await set_model(desired_model)
+        setattr(client, "_vibe_current_model", desired_model)
+
     def get_base_session_id(self, context: MessageContext, source: str = "human") -> str:
         """Get base session ID based on platform and context (without path)"""
         platform = self._get_context_platform(context)
@@ -399,11 +417,11 @@ class SessionHandler(BaseHandler):
 
         if composite_key in self.claude_sessions and not effective_agent:
             client = self.claude_sessions[composite_key]
-            # Apply current model from routing on every request, consistent with
-            # how OpenCode/Codex pass the model on each prompt/turn call.
+            # Claude SDK model changes are control requests; only send one when
+            # the effective model actually changes.
             current_model = explicit_model or self.config.claude.default_model
             try:
-                await client.set_model(current_model)
+                await self._set_claude_model_if_needed(client, current_model)
             except Exception as e:
                 logger.warning(f"Failed to update model on cached Claude session: {e}")
             logger.info(
@@ -423,13 +441,11 @@ class SessionHandler(BaseHandler):
             )
             if cached_key in self.claude_sessions:
                 client = self.claude_sessions[cached_key]
-                # Apply explicit model override from routing/subagent params,
-                # consistent with how OpenCode/Codex pass the model per request.
-                # When no explicit override, keep the agent frontmatter model
+                # When no explicit override, keep the agent/frontmatter model
                 # that was set at session creation.
                 if explicit_model:
                     try:
-                        await client.set_model(explicit_model)
+                        await self._set_claude_model_if_needed(client, explicit_model)
                     except Exception as e:
                         logger.warning(f"Failed to update model on cached Claude subagent session: {e}")
                 logger.info(
@@ -613,6 +629,7 @@ class SessionHandler(BaseHandler):
             raise
 
         self.claude_sessions[composite_key] = client
+        setattr(client, "_vibe_current_model", effective_model)
         self.bind_claude_runtime_session(client, base_session_id, composite_key)
         self.touch_session_activity(composite_key)
         logger.info(f"Created new Claude SDK client for {base_session_id} at {working_path}")
