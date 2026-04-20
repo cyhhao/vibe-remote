@@ -119,6 +119,11 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     setSelectedGuildIds(normalized);
   };
 
+  const applyConfig = (nextConfig: any) => {
+    configRef.current = nextConfig;
+    setConfig(nextConfig);
+  };
+
   useEffect(() => {
     configRef.current = config;
   }, [config]);
@@ -166,8 +171,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   useEffect(() => {
     if (isPage) {
       api.getConfig().then(c => {
-        configRef.current = c;
-        setConfig(c);
+        applyConfig(c);
         const allowlist = getDiscordGuildAllowlist(c);
         confirmedGuildAllowlistRef.current = allowlist;
         applySelectedGuildIds(allowlist);
@@ -276,8 +280,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     };
     try {
       await api.saveConfig(updated);
-      configRef.current = updated;
-      setConfig(updated);
+      applyConfig(updated);
       showToast(t('common.saved'), 'success');
       return true;
     } catch {
@@ -726,12 +729,13 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           <button
             onClick={async () => {
               const key = platform as 'slack' | 'discord' | 'telegram' | 'lark' | 'wechat';
-              const current = !!(config as any)[key]?.require_mention;
+              const currentConfig = configRef.current;
+              const current = !!(currentConfig as any)[key]?.require_mention;
               const updated = {
-                ...config,
-                [key]: { ...(config as any)[key], require_mention: !current },
+                ...currentConfig,
+                [key]: { ...(currentConfig as any)[key], require_mention: !current },
               };
-              setConfig(updated);
+              applyConfig(updated);
               try {
                 await api.saveConfig(updated);
                 showToast(t('common.saved'), 'success');
