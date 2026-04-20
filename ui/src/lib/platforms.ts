@@ -33,6 +33,67 @@ const LEGACY_FALLBACK_CATALOG: PlatformDescriptor[] = [
       supports_message_editing: true,
     },
   },
+  {
+    id: 'discord',
+    config_key: 'discord',
+    title_key: 'platform.discord.title',
+    description_key: 'platform.discord.desc',
+    credential_fields: ['bot_token'],
+    capabilities: {
+      supports_channels: true,
+      supports_threads: true,
+      supports_buttons: true,
+      supports_quick_replies: true,
+      supports_message_editing: true,
+      markdown_upload_returns_message_id: true,
+    },
+  },
+  {
+    id: 'telegram',
+    config_key: 'telegram',
+    title_key: 'platform.telegram.title',
+    description_key: 'platform.telegram.desc',
+    credential_fields: ['bot_token'],
+    capabilities: {
+      supports_channels: true,
+      supports_threads: false,
+      supports_buttons: true,
+      supports_quick_replies: true,
+      supports_message_editing: true,
+      markdown_upload_returns_message_id: true,
+      quick_reply_single_column: true,
+    },
+  },
+  {
+    id: 'lark',
+    config_key: 'lark',
+    title_key: 'platform.lark.title',
+    description_key: 'platform.lark.desc',
+    credential_fields: ['app_id', 'app_secret'],
+    capabilities: {
+      supports_channels: true,
+      supports_threads: true,
+      supports_buttons: true,
+      supports_quick_replies: true,
+      supports_message_editing: true,
+      markdown_upload_returns_message_id: true,
+      quick_reply_single_column: true,
+    },
+  },
+  {
+    id: 'wechat',
+    config_key: 'wechat',
+    title_key: 'platform.wechat.title',
+    description_key: 'platform.wechat.desc',
+    credential_fields: ['bot_token'],
+    capabilities: {
+      supports_channels: false,
+      supports_threads: false,
+      supports_buttons: false,
+      supports_quick_replies: false,
+      supports_message_editing: false,
+    },
+  },
 ];
 
 export const getPlatformCatalog = (data: any): PlatformDescriptor[] => {
@@ -79,3 +140,17 @@ export const platformHasCapability = (
 
 export const platformSupportsChannels = (data: any, platform: string): boolean =>
   platformHasCapability(data, platform, 'supports_channels');
+
+export const platformHasCredentials = (data: any, platform: string): boolean => {
+  const descriptor = getPlatformDescriptor(data, platform);
+  const configKey = descriptor?.config_key || platform;
+  const credentialFields = descriptor?.credential_fields || [];
+  const platformConfig = data?.[configKey];
+  if (!platformConfig || credentialFields.length === 0) {
+    return false;
+  }
+  return credentialFields.every((field) => !!platformConfig?.[field]);
+};
+
+export const hasConfiguredPlatformCredentials = (data: any): boolean =>
+  getEnabledPlatforms(data).some((platform) => platformHasCredentials(data, platform));
