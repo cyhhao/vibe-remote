@@ -141,7 +141,7 @@ export const Wizard: React.FC = () => {
     });
 
     // Channel steps: merge into a single step with platform tabs (instead of one step per platform)
-    const channelPlatforms = enabledPlatforms.filter(platformSupportsChannels);
+    const channelPlatforms = enabledPlatforms.filter((platform) => platformSupportsChannels(data, platform));
     const channelStep = channelPlatforms.length > 0
       ? [{ id: 'channels', title: t('nav.channels'), component: (props: any) => <ChannelList {...props} wizardPlatforms={channelPlatforms} /> }]
       : [];
@@ -159,9 +159,21 @@ export const Wizard: React.FC = () => {
 
   useEffect(() => {
     const bootstrap = async () => {
+      let platformCatalog: any[] = [];
+      try {
+        const catalog = await api.getPlatformCatalog();
+        platformCatalog = catalog?.platforms || [];
+      } catch {
+        // Config payloads from newer backends also include the catalog.
+      }
+
       try {
         const config = await api.getConfig();
-        const enabledPlatforms = getEnabledPlatforms(config);
+        const configWithCatalog = {
+          ...config,
+          platform_catalog: config.platform_catalog || platformCatalog,
+        };
+        const enabledPlatforms = getEnabledPlatforms(configWithCatalog);
         const settingsEntries = await Promise.all(
           enabledPlatforms.map(async (platform) => [platform, await api.getSettings(platform)] as const)
         );
@@ -169,7 +181,7 @@ export const Wizard: React.FC = () => {
           settingsEntries.map(([platform, settings]) => [platform, settings.channels || {}])
         );
           setData({
-            ...config,
+            ...configWithCatalog,
             channelConfigsByPlatform,
             default_backend: config.agents?.default_backend,
             agents: {
@@ -180,7 +192,10 @@ export const Wizard: React.FC = () => {
           });
 
       } catch {
-        // ignore
+        setData((current: any) => ({
+          ...current,
+          platform_catalog: platformCatalog,
+        }));
       } finally {
         setLoaded(true);
       }

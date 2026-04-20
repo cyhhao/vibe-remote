@@ -8,6 +8,13 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from config import paths
+from config.platform_registry import (
+    get_platform_descriptor,
+    platform_catalog_payload,
+    platform_descriptors,
+    supported_platform_ids,
+    supported_platform_set,
+)
 from modules.im.base import BaseIMConfig
 from vibe.i18n import normalize_language
 
@@ -198,7 +205,7 @@ class PlatformsConfig:
     primary: str = "slack"
 
     def validate(self) -> None:
-        supported = {"slack", "discord", "telegram", "lark", "wechat"}
+        supported = supported_platform_set()
         normalized: list[str] = []
         for platform in self.enabled:
             if platform not in supported:
@@ -208,7 +215,8 @@ class PlatformsConfig:
         if not normalized:
             raise ValueError("Config 'platforms.enabled' must contain at least one platform")
         if self.primary not in supported:
-            raise ValueError("Config 'platforms.primary' must be 'slack', 'discord', 'telegram', 'lark', or 'wechat'")
+            supported_text = "', '".join(supported_platform_ids())
+            raise ValueError(f"Config 'platforms.primary' must be one of: '{supported_text}'")
         if self.primary not in normalized:
             normalized.insert(0, self.primary)
         self.enabled = normalized
@@ -227,6 +235,7 @@ class V2Config:
     telegram: Optional[TelegramConfig] = None
     lark: Optional[LarkConfig] = None
     wechat: Optional[WeChatConfig] = None
+    platform_configs: dict[str, BaseIMConfig] = field(default_factory=dict)
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
@@ -256,8 +265,11 @@ class V2Config:
             raise ValueError("Config 'mode' must be 'self_host' or 'saas'")
 
         platform = payload.get("platform") or "slack"
-        if platform not in {"slack", "discord", "telegram", "lark", "wechat"}:
-            raise ValueError("Config 'platform' must be 'slack', 'discord', 'telegram', 'lark', or 'wechat'")
+        try:
+            get_platform_descriptor(platform)
+        except ValueError as err:
+            supported_text = "', '".join(supported_platform_ids())
+            raise ValueError(f"Config 'platform' must be one of: '{supported_text}'") from err
 
         platforms_payload = payload.get("platforms")
         if platforms_payload is not None and not isinstance(platforms_payload, dict):
@@ -278,63 +290,27 @@ class V2Config:
         platforms.validate()
         platform = platforms.primary
 
-        slack_payload = payload.get("slack") or {}
-        if not isinstance(slack_payload, dict):
-            raise ValueError("Config 'slack' must be an object")
+        platform_configs: dict[str, Optional[BaseIMConfig]] = {}
+        for descriptor in platform_descriptors():
+            platform_payload = payload.get(descriptor.config_key)
+            if descriptor.id == "slack":
+                platform_payload = platform_payload or {}
+                if isinstance(platform_payload, dict) and "require_mention" not in platform_payload:
+                    platform_payload = dict(platform_payload)
+                    platform_payload["require_mention"] = False
+            if platform_payload is not None and not isinstance(platform_payload, dict):
+                raise ValueError(f"Config '{descriptor.config_key}' must be an object")
+            if platform_payload is None:
+                platform_configs[descriptor.id] = None
+                continue
 
-        if "require_mention" not in slack_payload:
-            slack_payload = dict(slack_payload)
-            slack_payload["require_mention"] = False
-
-        slack = SlackConfig(**_filter_dataclass_fields(SlackConfig, slack_payload))
-        slack.validate()
-
-        discord_payload = payload.get("discord")
-        if discord_payload is not None and not isinstance(discord_payload, dict):
-            raise ValueError("Config 'discord' must be an object")
-        discord = None
-        if discord_payload is not None:
-            discord = DiscordConfig(**_filter_dataclass_fields(DiscordConfig, discord_payload))
-            discord.validate()
-
-        telegram_payload = payload.get("telegram")
-        if telegram_payload is not None and not isinstance(telegram_payload, dict):
-            raise ValueError("Config 'telegram' must be an object")
-        telegram = None
-        if telegram_payload is not None:
-            telegram = TelegramConfig(**_filter_dataclass_fields(TelegramConfig, telegram_payload))
-            telegram.validate()
-
-        lark_payload = payload.get("lark")
-        if lark_payload is not None and not isinstance(lark_payload, dict):
-            raise ValueError("Config 'lark' must be an object")
-        lark = None
-        if lark_payload is not None:
-            lark = LarkConfig(**_filter_dataclass_fields(LarkConfig, lark_payload))
-            lark.validate()
-
-        wechat_payload = payload.get("wechat")
-        if wechat_payload is not None and not isinstance(wechat_payload, dict):
-            raise ValueError("Config 'wechat' must be an object")
-        wechat = None
-        if wechat_payload is not None:
-            wechat = WeChatConfig(**_filter_dataclass_fields(WeChatConfig, wechat_payload))
-            wechat.validate()
+            platform_configs[descriptor.id] = descriptor.create_config(platform_payload)
 
         # Validate that every enabled platform has its config section present.
-        # The old single-platform check (``if platform == "discord"``) only
-        # guarded the primary; with multi-platform enabled we must ensure ALL
-        # enabled platforms have valid credentials so that the runtime won't
-        # crash on startup with a config that was already persisted to disk.
         for _ep in platforms.enabled:
-            if _ep == "discord" and discord is None:
-                raise ValueError("Config 'discord' must be provided when discord is enabled")
-            if _ep == "telegram" and telegram is None:
-                raise ValueError("Config 'telegram' must be provided when telegram is enabled")
-            if _ep == "lark" and lark is None:
-                raise ValueError("Config 'lark' must be provided when lark is enabled")
-            if _ep == "wechat" and wechat is None:
-                raise ValueError("Config 'wechat' must be provided when wechat is enabled")
+            descriptor = get_platform_descriptor(_ep)
+            if platform_configs[descriptor.id] is None:
+                raise ValueError(f"Config '{descriptor.config_key}' must be provided when {_ep} is enabled")
 
         gateway_payload = payload.get("gateway")
         if gateway_payload is not None and not isinstance(gateway_payload, dict):
@@ -413,11 +389,12 @@ class V2Config:
             platforms=platforms,
             mode=mode,
             version=payload.get("version", "v2"),
-            slack=slack,
-            discord=discord,
-            telegram=telegram,
-            lark=lark,
-            wechat=wechat,
+            slack=platform_configs["slack"],
+            discord=platform_configs["discord"],
+            telegram=platform_configs["telegram"],
+            lark=platform_configs["lark"],
+            wechat=platform_configs["wechat"],
+            platform_configs={key: value for key, value in platform_configs.items() if value is not None},
             runtime=runtime,
             agents=agents,
             gateway=gateway,
@@ -435,6 +412,10 @@ class V2Config:
         path = config_path or paths.get_config_path()
         self.platforms.validate()
         self.platform = self.platforms.primary
+        platform_payload = {
+            descriptor.config_key: (descriptor.get_config(self).__dict__ if descriptor.get_config(self) else None)
+            for descriptor in platform_descriptors()
+        }
         payload = {
             "platform": self.platform,
             "platforms": {
@@ -443,11 +424,7 @@ class V2Config:
             },
             "mode": self.mode,
             "version": self.version,
-            "slack": self.slack.__dict__,
-            "discord": self.discord.__dict__ if self.discord else None,
-            "telegram": self.telegram.__dict__ if self.telegram else None,
-            "lark": self.lark.__dict__ if self.lark else None,
-            "wechat": self.wechat.__dict__ if self.wechat else None,
+            **platform_payload,
             "runtime": {
                 "default_cwd": self.runtime.default_cwd,
                 "log_level": self.runtime.log_level,
@@ -479,3 +456,27 @@ class V2Config:
 
     def enabled_platforms(self) -> list[str]:
         return list(self.platforms.enabled)
+
+    def platform_has_credentials(self, platform: str) -> bool:
+        return get_platform_descriptor(platform).has_credentials(self)
+
+    def configured_platforms(self) -> list[str]:
+        return [platform for platform in self.enabled_platforms() if self.platform_has_credentials(platform)]
+
+    def missing_platform_credentials(self) -> list[str]:
+        return [platform for platform in self.enabled_platforms() if not self.platform_has_credentials(platform)]
+
+    def has_configured_platform_credentials(self) -> bool:
+        return bool(self.configured_platforms())
+
+    def platform_catalog(self) -> list[dict]:
+        return platform_catalog_payload()
+
+    def setup_state(self) -> dict:
+        configured = self.configured_platforms()
+        missing = self.missing_platform_credentials()
+        return {
+            "needs_setup": not bool(self.mode) or not bool(configured),
+            "configured_platforms": configured,
+            "missing_credentials": missing,
+        }

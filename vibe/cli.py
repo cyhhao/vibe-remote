@@ -1779,8 +1779,14 @@ def cmd_vibe():
     runtime.stop_service()
     runtime.stop_ui()
 
-    if not config.slack.bot_token:
-        _write_status("setup", "missing Slack bot token")
+    has_configured_platform_credentials = getattr(config, "has_configured_platform_credentials", None)
+    if callable(has_configured_platform_credentials):
+        ready = bool(has_configured_platform_credentials())
+    else:
+        ready = bool(getattr(getattr(config, "slack", None), "bot_token", ""))
+
+    if not ready:
+        _write_status("setup", "missing platform credentials")
     else:
         _write_status("starting")
 

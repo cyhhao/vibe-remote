@@ -193,7 +193,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         confirmedGuildAllowlistRef.current = allowlist;
         applySelectedGuildIds(allowlist);
         setSelectedGuild(allowlist[0] || '');
-        const defaultPlatform = forcedPlatform || getEnabledPlatforms(c).find(platformSupportsChannels) || c?.platform || 'slack';
+        const defaultPlatform = forcedPlatform || getEnabledPlatforms(c).find((p) => platformSupportsChannels(c, p)) || c?.platform || 'slack';
         setPagePlatform(defaultPlatform);
         api.getSettings(defaultPlatform).then(s => {
           setConfigs(s.channels || {});
@@ -205,7 +205,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const platform = isWizardMultiPlatform
     ? wizardActivePlatform
     : (forcedPlatform || pagePlatform || config.platform || data.platform || 'slack');
-  const channelPlatforms = getEnabledPlatforms(config).filter(platformSupportsChannels);
+  const channelPlatforms = getEnabledPlatforms(config).filter((p) => platformSupportsChannels(config, p));
   const knownDiscordGuilds = [
     ...guilds,
     ...selectedGuildIds

@@ -341,6 +341,13 @@ def config_get():
     return jsonify(api.config_to_payload(config))
 
 
+@app.route("/platforms", methods=["GET"])
+def platforms_get():
+    from vibe import api
+
+    return jsonify(api.get_platform_catalog())
+
+
 @app.route("/settings", methods=["GET"])
 def settings_get():
     from vibe import api

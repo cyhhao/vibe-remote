@@ -10,7 +10,7 @@ import { StatusProvider } from './context/StatusContext';
 import { ApiProvider, useApi } from './context/ApiContext';
 import { ToastProvider } from './context/ToastContext';
 import { useEffect, useState } from 'react';
-import { getEnabledPlatforms } from './lib/platforms';
+import { hasConfiguredPlatformCredentials } from './lib/platforms';
 
 // Wrapper to check if setup is needed
 const AuthGuard = ({ children }: { children: any }) => {
@@ -32,17 +32,11 @@ const AuthGuard = ({ children }: { children: any }) => {
 
         getConfig().then(config => {
             if (cancelled) return;
-            const enabledPlatforms = getEnabledPlatforms(config);
-            const hasToken = enabledPlatforms.some((platform) =>
-              platform === 'discord'
-                ? !!config?.discord?.bot_token
-                : platform === 'lark'
-                  ? !!(config?.lark?.app_id && config?.lark?.app_secret)
-                  : platform === 'wechat'
-                    ? !!config?.wechat?.bot_token
-                    : !!config?.slack?.bot_token
-            );
-            setNeedsSetup(!config || !config.mode || !hasToken);
+            const setupState = config?.setup_state;
+            const setupReady = typeof setupState?.needs_setup === 'boolean'
+                ? setupState.needs_setup === false
+                : hasConfiguredPlatformCredentials(config);
+            setNeedsSetup(!config || !config.mode || !setupReady);
             setLoading(false);
         }).catch(() => {
              if (cancelled) return;
