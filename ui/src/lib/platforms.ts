@@ -8,6 +8,13 @@ export type PlatformCapabilities = {
   supports_message_editing?: boolean;
   markdown_upload_returns_message_id?: boolean;
   quick_reply_single_column?: boolean;
+  supports_processing_typing?: boolean;
+  processing_typing_requires_clear?: boolean;
+  supports_processing_reaction?: boolean;
+  supports_processing_message?: boolean;
+  supports_processing_message_delete?: boolean;
+  preferred_processing_indicator?: string;
+  force_preferred_processing_indicator?: boolean;
 };
 
 export type PlatformDescriptor = {
@@ -32,6 +39,10 @@ const LEGACY_FALLBACK_CATALOG: PlatformDescriptor[] = [
       supports_buttons: true,
       supports_quick_replies: true,
       supports_message_editing: true,
+      supports_processing_typing: true,
+      supports_processing_reaction: true,
+      supports_processing_message: true,
+      preferred_processing_indicator: 'typing',
     },
   },
   {
@@ -47,6 +58,10 @@ const LEGACY_FALLBACK_CATALOG: PlatformDescriptor[] = [
       supports_quick_replies: true,
       supports_message_editing: true,
       markdown_upload_returns_message_id: true,
+      supports_processing_typing: true,
+      supports_processing_reaction: true,
+      supports_processing_message: true,
+      preferred_processing_indicator: 'typing',
     },
   },
   {
@@ -63,6 +78,11 @@ const LEGACY_FALLBACK_CATALOG: PlatformDescriptor[] = [
       supports_message_editing: true,
       markdown_upload_returns_message_id: true,
       quick_reply_single_column: true,
+      supports_processing_typing: true,
+      supports_processing_reaction: true,
+      supports_processing_message: true,
+      supports_processing_message_delete: true,
+      preferred_processing_indicator: 'typing',
     },
   },
   {
@@ -79,6 +99,9 @@ const LEGACY_FALLBACK_CATALOG: PlatformDescriptor[] = [
       supports_message_editing: true,
       markdown_upload_returns_message_id: true,
       quick_reply_single_column: true,
+      supports_processing_reaction: true,
+      supports_processing_message: true,
+      preferred_processing_indicator: 'reaction',
     },
   },
   {
@@ -93,6 +116,12 @@ const LEGACY_FALLBACK_CATALOG: PlatformDescriptor[] = [
       supports_buttons: false,
       supports_quick_replies: false,
       supports_message_editing: false,
+      supports_processing_typing: true,
+      processing_typing_requires_clear: true,
+      supports_processing_reaction: false,
+      supports_processing_message: true,
+      preferred_processing_indicator: 'typing',
+      force_preferred_processing_indicator: true,
     },
   },
 ];

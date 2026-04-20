@@ -18,14 +18,28 @@ conversation context token, and restored OpenCode polls did not own that state.
 `core.processing_indicator.ProcessingIndicatorService` is the lifecycle owner.
 
 - Start indicators through one service.
+- Select indicator strategy from platform registry capabilities, not platform
+  string checks.
 - Store a single handle on `AgentRequest`.
 - Keep legacy request fields in sync for compatibility while callers migrate.
 - Finish and ack-message deletion go through the same service for OpenCode,
   Codex, Claude, and handler-level errors.
 - Persist a serializable handle snapshot for restored OpenCode polls.
 
-## Follow-Up Boundary
+## Platform Capability Source
 
-This PR keeps the public request fields as a compatibility layer. A later cleanup
-can remove direct reads of `ack_reaction_message_id`, `typing_indicator_active`,
-and related fields once all tests and helper code use the handle directly.
+The registry owns ACK/typing differences:
+
+- which platforms can use typing, reaction, or message indicators
+- whether typing requires an explicit clear operation
+- whether message ACKs can be deleted
+- whether a platform has a preferred or forced indicator mode
+
+This keeps WeChat's explicit cancel requirement, Lark's reaction preference, and
+Telegram's message-delete support out of backend-specific code.
+
+## Compatibility Boundary
+
+This PR keeps the public request fields as a compatibility layer. They mirror the
+handle, but lifecycle ownership and platform policy live in
+`ProcessingIndicatorService` plus `config.platform_registry`.

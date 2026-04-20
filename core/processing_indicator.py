@@ -10,13 +10,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
+from config.platform_registry import PlatformCapabilities, get_platform_descriptor
 from modules.im import MessageContext
 from vibe.i18n import t as i18n_t
 
 logger = logging.getLogger(__name__)
+
+_PROCESSING_INDICATOR_MODES = ("typing", "reaction", "message")
 
 
 @dataclass
@@ -94,14 +97,48 @@ class ProcessingIndicatorService:
             or getattr(self.config, "platform", "")
         )
 
-    def _should_use_typing_ack(self, context: MessageContext) -> bool:
-        if self._get_context_platform(context) == "wechat":
-            return True
-        return getattr(self.config, "ack_mode", "typing") == "typing"
+    def _capabilities(self, context: MessageContext) -> PlatformCapabilities:
+        return get_platform_descriptor(self._get_context_platform(context)).capabilities
+
+    def _mode_supported(
+        self,
+        capabilities: PlatformCapabilities,
+        mode: str,
+        context: MessageContext,
+    ) -> bool:
+        if mode == "typing":
+            return capabilities.supports_processing_typing
+        if mode == "reaction":
+            return capabilities.supports_processing_reaction and bool(context.message_id)
+        if mode == "message":
+            return capabilities.supports_processing_message
+        return False
+
+    def _candidate_modes(self, capabilities: PlatformCapabilities) -> list[str]:
+        preferred = capabilities.preferred_processing_indicator
+        configured = getattr(self.config, "ack_mode", "typing")
+        if capabilities.force_preferred_processing_indicator:
+            candidates = [preferred]
+        else:
+            candidates = [configured, preferred, "typing", "reaction", "message"]
+        return [
+            mode
+            for index, mode in enumerate(candidates)
+            if mode in _PROCESSING_INDICATOR_MODES and mode not in candidates[:index]
+        ]
+
+    def _processing_modes(self, context: MessageContext) -> list[str]:
+        capabilities = self._capabilities(context)
+        return [
+            mode
+            for mode in self._candidate_modes(capabilities)
+            if self._mode_supported(capabilities, mode, context)
+        ]
 
     def _get_target_context(self, context: MessageContext) -> MessageContext:
         im_client = self._get_im_client(context)
-        if im_client.should_use_thread_for_reply() and context.thread_id:
+        capabilities = self._capabilities(context)
+        if capabilities.supports_threads and im_client.should_use_thread_for_reply() and context.thread_id:
             return MessageContext(
                 user_id=context.user_id,
                 channel_id=context.channel_id,
@@ -134,49 +171,103 @@ class ProcessingIndicatorService:
         if not enabled:
             return handle
 
-        im_client = self._get_im_client(context)
-        ack_mode = getattr(self.config, "ack_mode", "typing")
-        effective_ack_mode = "typing" if self._get_context_platform(context) == "wechat" else ack_mode
-
-        if effective_ack_mode == "message":
-            ack_context = self._get_target_context(context)
-            try:
-                handle.ack_message_id = await self._get_im_client(ack_context).send_message(
-                    ack_context,
-                    self._get_ack_text(agent_name),
-                )
-                handle.ack_message_channel_id = ack_context.channel_id
-            except Exception as ack_err:
-                logger.debug("Failed to send ack message: %s", ack_err)
-            return handle
-
-        if self._should_use_typing_ack(context):
-            try:
-                ok = await im_client.send_typing_indicator(context)
-                if ok:
-                    handle.typing_indicator_active = True
-                    handle.typing_indicator_task = asyncio.create_task(self._typing_keepalive_loop(context))
-                    return handle
-                logger.info("Typing indicator not applied (platform returned False)")
-            except Exception as ack_err:
-                logger.debug("Failed to send typing ack: %s", ack_err)
-            if self._get_context_platform(context) == "wechat":
+        for mode in self._processing_modes(context):
+            if mode == "message" and await self._start_message_indicator(handle, agent_name):
+                return handle
+            if mode == "typing" and await self._start_typing_indicator(handle):
+                return handle
+            if mode == "reaction" and await self._start_reaction_indicator(handle):
                 return handle
 
+        return handle
+
+    async def _start_message_indicator(self, handle: ProcessingIndicatorHandle, agent_name: str) -> bool:
+        ack_context = self._get_target_context(handle.context)
         try:
-            if context.message_id:
-                handle.ack_reaction_message_id = context.message_id
-                handle.ack_reaction_emoji = ":eyes:"
-                ok = await im_client.add_reaction(
-                    context,
-                    handle.ack_reaction_message_id,
-                    handle.ack_reaction_emoji,
-                )
-                if not ok:
-                    logger.info("Ack reaction not applied (platform returned False)")
+            ack_message_id = await self._get_im_client(ack_context).send_message(
+                ack_context,
+                self._get_ack_text(agent_name),
+            )
+        except Exception as ack_err:
+            logger.debug("Failed to send ack message: %s", ack_err)
+            return False
+
+        if not ack_message_id:
+            logger.info("Ack message not applied (platform returned empty message id)")
+            return False
+
+        handle.ack_message_id = ack_message_id
+        handle.ack_message_channel_id = ack_context.channel_id
+        return True
+
+    async def _start_typing_indicator(self, handle: ProcessingIndicatorHandle) -> bool:
+        context = handle.context
+        im_client = self._get_im_client(context)
+        try:
+            ok = await im_client.send_typing_indicator(context)
+        except Exception as ack_err:
+            logger.debug("Failed to send typing ack: %s", ack_err)
+            return False
+
+        if not ok:
+            logger.info("Typing indicator not applied (platform returned False)")
+            return False
+
+        handle.typing_indicator_active = True
+        handle.typing_indicator_task = asyncio.create_task(self._typing_keepalive_loop(context))
+        return True
+
+    async def _start_reaction_indicator(self, handle: ProcessingIndicatorHandle) -> bool:
+        context = handle.context
+        if not context.message_id:
+            return False
+        im_client = self._get_im_client(context)
+        try:
+            ok = await im_client.add_reaction(context, context.message_id, ":eyes:")
         except Exception as ack_err:
             logger.debug("Failed to add reaction ack: %s", ack_err)
-        return handle
+            return False
+
+        if not ok:
+            logger.info("Ack reaction not applied (platform returned False)")
+            return False
+
+        handle.ack_reaction_message_id = context.message_id
+        handle.ack_reaction_emoji = ":eyes:"
+        return True
+
+    def _delete_context(self, handle: ProcessingIndicatorHandle, channel_id: Optional[str]) -> MessageContext:
+        target_channel_id = channel_id or handle.ack_message_channel_id
+        if target_channel_id and target_channel_id != handle.context.channel_id:
+            return replace(handle.context, channel_id=target_channel_id)
+        return handle.context
+
+    def _should_delete_ack_message(self, handle: ProcessingIndicatorHandle) -> bool:
+        return self._capabilities(handle.context).supports_processing_message_delete
+
+    def _should_clear_typing_indicator(self, handle: ProcessingIndicatorHandle) -> bool:
+        return self._capabilities(handle.context).processing_typing_requires_clear
+
+    async def _delete_ack_message_for_handle(
+        self,
+        handle: ProcessingIndicatorHandle,
+        *,
+        request: Optional[Any] = None,
+        channel_id: Optional[str] = None,
+    ) -> None:
+        ack_id = handle.ack_message_id
+        if not ack_id:
+            return
+        if self._should_delete_ack_message(handle):
+            im_client = self._get_im_client(handle.context)
+            if hasattr(im_client, "delete_message"):
+                try:
+                    await im_client.delete_message(self._delete_context(handle, channel_id), ack_id)
+                except Exception as err:
+                    logger.debug("Could not delete ack message: %s", err)
+        handle.ack_message_id = None
+        if request is not None:
+            request.ack_message_id = None
 
     def apply_to_request(self, request: Any, handle: ProcessingIndicatorHandle) -> None:
         request.processing_indicator = handle
@@ -223,29 +314,6 @@ class ProcessingIndicatorService:
         if getattr(request, "processing_indicator", None) is None:
             request.processing_indicator = handle
 
-    async def _delete_ack_message_for_handle(
-        self,
-        handle: ProcessingIndicatorHandle,
-        *,
-        request: Optional[Any] = None,
-        channel_id: Optional[str] = None,
-    ) -> None:
-        ack_id = handle.ack_message_id
-        if ack_id:
-            im_client = self._get_im_client(handle.context)
-            if hasattr(im_client, "delete_message"):
-                try:
-                    await im_client.delete_message(
-                        channel_id or handle.ack_message_channel_id or handle.context.channel_id,
-                        ack_id,
-                    )
-                except Exception as err:
-                    logger.debug("Could not delete ack message: %s", err)
-                finally:
-                    handle.ack_message_id = None
-                    if request is not None:
-                        request.ack_message_id = None
-
     async def finish(self, request_or_handle: Any) -> None:
         if isinstance(request_or_handle, ProcessingIndicatorHandle):
             handle = request_or_handle
@@ -270,15 +338,16 @@ class ProcessingIndicatorService:
                 if request is not None:
                     request.typing_indicator_task = None
 
-        if handle.typing_indicator_active:
+        if handle.typing_indicator_active and self._should_clear_typing_indicator(handle):
             try:
                 await self._get_im_client(handle.context).clear_typing_indicator(handle.context)
             except Exception as err:
                 logger.debug("Failed to clear typing indicator: %s", err)
-            finally:
-                handle.typing_indicator_active = False
-                if request is not None:
-                    request.typing_indicator_active = False
+
+        if handle.typing_indicator_active:
+            handle.typing_indicator_active = False
+            if request is not None:
+                request.typing_indicator_active = False
 
         if handle.ack_reaction_message_id and handle.ack_reaction_emoji:
             try:

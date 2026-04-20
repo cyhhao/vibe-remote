@@ -331,6 +331,20 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.ack_reaction_emoji, ":eyes:")
         self.assertEqual(controller.im_client.reactions, [("tg-chat", "m1", ":eyes:")])
 
+    async def test_lark_typing_preference_uses_registry_reaction_capability(self):
+        controller = _StubController(platform="lark", ack_mode="typing", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(user_id="lark-user", channel_id="lark-chat", message_id="om_1", platform="lark")
+
+        await handler.handle_user_message(context, "hello")
+
+        _, request = controller.agent_service.requests[0]
+        self.assertFalse(request.typing_indicator_active)
+        self.assertEqual(controller.im_client.typing_calls, [])
+        self.assertEqual(request.ack_reaction_message_id, "om_1")
+        self.assertEqual(controller.im_client.reactions, [("lark-chat", "om_1", ":eyes:")])
+
     async def test_platform_specific_client_is_used_for_user_info(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
         handler = MessageHandler(controller)

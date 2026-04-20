@@ -83,6 +83,10 @@ class _StubClient(BaseIMClient):
         self.sent.append(("clear_typing", context.platform, context.user_id, (context.platform_specific or {}).get("context_token")))
         return True
 
+    async def delete_message(self, context, message_id):
+        self.sent.append(("delete", context.platform, context.channel_id, message_id))
+        return True
+
     def format_markdown(self, text: str) -> str:
         return text
 
@@ -277,6 +281,64 @@ def test_processing_indicator_handle_is_source_of_truth_for_backend_cleanup():
     assert request.typing_indicator_active is False
     assert handle.typing_indicator_active is False
     assert wechat.sent == [("clear_typing", "wechat", "user-1", "ctx-1")]
+
+
+def test_processing_indicator_clear_policy_comes_from_platform_registry():
+    slack = _StubClient("slack")
+
+    class _Controller:
+        def __init__(self):
+            self.config = type("Config", (), {"platform": "slack", "ack_mode": "typing", "language": "en"})()
+            self.im_client = slack
+
+        def get_im_client_for_context(self, context):
+            return slack
+
+    controller = _Controller()
+    service = ProcessingIndicatorService(controller)
+    handle = service.handle_from_snapshot(
+        {
+            "platform": "slack",
+            "user_id": "user-1",
+            "channel_id": "chan-1",
+            "typing_indicator_active": True,
+        }
+    )
+
+    asyncio.run(service.finish(handle))
+
+    assert handle.typing_indicator_active is False
+    assert slack.sent == []
+
+
+def test_processing_indicator_message_delete_policy_comes_from_platform_registry():
+    telegram = _StubClient("telegram")
+
+    class _Controller:
+        def __init__(self):
+            self.config = type("Config", (), {"platform": "telegram", "ack_mode": "message", "language": "en"})()
+            self.im_client = telegram
+
+        def get_im_client_for_context(self, context):
+            return telegram
+
+    service = ProcessingIndicatorService(_Controller())
+    handle = service.handle_from_snapshot(
+        {
+            "platform": "telegram",
+            "user_id": "user-1",
+            "channel_id": "chat-1",
+            "ack_message_id": "ack-1",
+            "ack_message_channel_id": "chat-1",
+        }
+    )
+    request = type("Request", (), {"context": handle.context, "ack_message_id": "ack-1", "processing_indicator": handle})()
+
+    asyncio.run(service.delete_ack_message(request))
+
+    assert request.ack_message_id is None
+    assert handle.ack_message_id is None
+    assert telegram.sent == [("delete", "telegram", "chat-1", "ack-1")]
 
 
 def test_multi_im_client_routes_download_by_file_info_platform():

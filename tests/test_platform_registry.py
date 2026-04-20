@@ -15,6 +15,12 @@ def test_platform_catalog_exposes_capability_flags() -> None:
     assert catalog["telegram"]["capabilities"]["supports_threads"] is False
     assert catalog["wechat"]["capabilities"]["supports_buttons"] is False
     assert catalog["wechat"]["capabilities"]["supports_channels"] is False
+    assert catalog["wechat"]["capabilities"]["supports_processing_typing"] is True
+    assert catalog["wechat"]["capabilities"]["processing_typing_requires_clear"] is True
+    assert catalog["wechat"]["capabilities"]["force_preferred_processing_indicator"] is True
+    assert catalog["lark"]["capabilities"]["supports_processing_typing"] is False
+    assert catalog["lark"]["capabilities"]["preferred_processing_indicator"] == "reaction"
+    assert catalog["telegram"]["capabilities"]["supports_processing_message_delete"] is True
 
 
 def test_credential_readiness_comes_from_platform_descriptor() -> None:
