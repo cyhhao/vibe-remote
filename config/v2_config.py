@@ -236,6 +236,28 @@ class V2Config:
     reply_enhancements: bool = True  # Enable file sending & quick-reply buttons
     language: str = "en"  # Global language setting (see vibe/i18n)
 
+    def enabled_platforms(self) -> list[str]:
+        return list(self.platforms.enabled)
+
+    def platform_has_credentials(self, platform: str) -> bool:
+        if platform == "slack":
+            return bool(self.slack.bot_token)
+        if platform == "discord":
+            return bool(self.discord and self.discord.bot_token)
+        if platform == "telegram":
+            return bool(self.telegram and self.telegram.bot_token)
+        if platform == "lark":
+            return bool(self.lark and self.lark.app_id and self.lark.app_secret)
+        if platform == "wechat":
+            return bool(self.wechat and self.wechat.bot_token)
+        raise ValueError(f"Unsupported platform: {platform}")
+
+    def configured_platforms(self) -> list[str]:
+        return [platform for platform in self.enabled_platforms() if self.platform_has_credentials(platform)]
+
+    def has_configured_platform_credentials(self) -> bool:
+        return bool(self.configured_platforms())
+
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "V2Config":
         paths.ensure_data_dirs()
