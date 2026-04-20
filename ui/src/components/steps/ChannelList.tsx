@@ -68,7 +68,7 @@ const getDiscordGuildAllowlist = (source: any): string[] => {
   return Array.isArray(allowlist) ? allowlist : [];
 };
 
-const mergeDiscordGuildAllowlist = (allowlist: string[], selectedGuild: string): string[] => {
+const addDiscordGuildToAllowlist = (allowlist: string[], selectedGuild: string): string[] => {
   const merged = [...allowlist];
   if (selectedGuild && !merged.includes(selectedGuild)) {
     merged.push(selectedGuild);
@@ -225,21 +225,13 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   const updateSelectedGuild = (guildId: string) => {
     setSelectedGuild(guildId);
-    if (guildId) {
-      const next = mergeDiscordGuildAllowlist(selectedGuildIds, guildId);
-      setSelectedGuildIds(next);
-      void persistDiscordGuildAllowlist(next);
-    }
   };
 
   const toggleAllowedGuild = (guildId: string, checked: boolean) => {
     const next = checked
-      ? mergeDiscordGuildAllowlist(selectedGuildIds, guildId)
+      ? addDiscordGuildToAllowlist(selectedGuildIds, guildId)
       : selectedGuildIds.filter(id => id !== guildId);
     setSelectedGuildIds(next);
-    if (selectedGuild === guildId && !checked) {
-      setSelectedGuild(next[0] || '');
-    }
     void persistDiscordGuildAllowlist(next);
   };
 
@@ -1286,7 +1278,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           </button>
           <button
             onClick={() => {
-              const discordGuildAllowlist = mergeDiscordGuildAllowlist(selectedGuildIds, selectedGuild);
+              const discordGuildAllowlist = selectedGuildIds;
               const discordPayload = getEnabledPlatforms(data).includes('discord') || platform === 'discord'
                 ? {
                     discord: {
