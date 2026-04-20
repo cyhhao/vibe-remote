@@ -497,7 +497,7 @@ class MessageHandler(BaseHandler):
                     try:
                         quick_reply_echo = self._t("message.quickReplyNote", text=reply_text)
                         quick_reply_echo_id = await im_client.send_message(
-                            self._get_target_context(context),
+                            self.controller.processing_indicator.target_context(context),
                             quick_reply_echo,
                         )
                     except Exception as err:
@@ -507,7 +507,7 @@ class MessageHandler(BaseHandler):
                     if quick_reply_echo_id and getattr(self.config, "ack_mode", "typing") == "reaction":
                         try:
                             await im_client.add_reaction(
-                                self._get_target_context(context),
+                                self.controller.processing_indicator.target_context(context),
                                 quick_reply_echo_id,
                                 ":eyes:",
                             )

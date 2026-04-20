@@ -135,7 +135,9 @@ class ProcessingIndicatorService:
             if self._mode_supported(capabilities, mode, context)
         ]
 
-    def _get_target_context(self, context: MessageContext) -> MessageContext:
+    def target_context(self, context: MessageContext) -> MessageContext:
+        """Return the platform-appropriate context for immediate ACK-style replies."""
+
         im_client = self._get_im_client(context)
         capabilities = self._capabilities(context)
         if capabilities.supports_threads and im_client.should_use_thread_for_reply() and context.thread_id:
@@ -182,7 +184,7 @@ class ProcessingIndicatorService:
         return handle
 
     async def _start_message_indicator(self, handle: ProcessingIndicatorHandle, agent_name: str) -> bool:
-        ack_context = self._get_target_context(handle.context)
+        ack_context = self.target_context(handle.context)
         try:
             ack_message_id = await self._get_im_client(ack_context).send_message(
                 ack_context,

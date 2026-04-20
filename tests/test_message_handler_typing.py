@@ -483,6 +483,8 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         await handler.handle_callback_query(context, "quick_reply:继续")
 
         self.assertEqual(controller.im_client.removed_keyboards, [("chat1", "lark", "om_123")])
+        self.assertEqual(controller.im_client.sent_messages, [("chat1", "Reply: 继续")])
+        self.assertEqual(controller.im_client.reactions, [("chat1", "msg-1", ":eyes:")])
         handler.handle_user_message.assert_awaited_once()
         forwarded_context, forwarded_text = handler.handle_user_message.await_args.args
         self.assertEqual(forwarded_text, "继续")
