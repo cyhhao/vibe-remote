@@ -27,6 +27,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const [codeCopied, setCodeCopied] = useState(false);
   const enabledPlatforms = getEnabledPlatforms(data);
   const primaryPlatform = getPrimaryPlatform(data);
+  const discordGuildAllowlist = Array.isArray(data.discord?.guild_allowlist) ? data.discord.guild_allowlist : [];
   const [requireMentionByPlatform, setRequireMentionByPlatform] = useState<Record<string, boolean>>(
     Object.fromEntries(
       enabledPlatforms.map((platform) => [
@@ -210,7 +211,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             <Section title={t('summary.discordBotToken')} value={mask(data.discord?.bot_token || '')} />
             <Section
               title={t('summary.discordGuild')}
-              value={(data.discord?.guild_allowlist || []).join(', ') || t('summary.notSet')}
+              value={discordGuildAllowlist.join(', ') || t('summary.notSet')}
             />
           </>
         )}

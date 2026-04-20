@@ -128,9 +128,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     return configVersionRef.current;
   };
 
-  const saveConfigSnapshot = async (snapshot: any): Promise<boolean> => {
+  const saveLatestConfig = async (): Promise<boolean> => {
     const saveTask = configSaveQueueRef.current.then(async () => {
-      await api.saveConfig(snapshot);
+      await api.saveConfig(configRef.current);
     });
     configSaveQueueRef.current = saveTask.catch(() => {});
     try {
@@ -298,7 +298,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       },
     };
     applyConfig(updated);
-    const saved = await saveConfigSnapshot(updated);
+    const saved = await saveLatestConfig();
     if (saved) {
       showToast(t('common.saved'), 'success');
       return true;
@@ -754,7 +754,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 [key]: { ...(currentConfig as any)[key], require_mention: !current },
               };
               const version = applyConfig(updated);
-              const saved = await saveConfigSnapshot(updated);
+              const saved = await saveLatestConfig();
               if (saved) {
                 showToast(t('common.saved'), 'success');
               } else if (configVersionRef.current === version) {
