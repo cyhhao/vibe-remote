@@ -15,7 +15,7 @@ from .base import BaseHandler
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_NO_CONVERSATION_RE = re.compile(r"No conversation found with session ID:\s*([0-9a-fA-F-]+)")
+CLAUDE_NO_CONVERSATION_RE = re.compile(r"No conversation found with session ID:\s*(\S+)")
 
 
 class ClaudeSessionNotFoundError(RuntimeError):
