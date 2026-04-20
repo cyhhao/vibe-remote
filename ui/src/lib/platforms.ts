@@ -25,6 +25,7 @@ const LEGACY_FALLBACK_CATALOG: PlatformDescriptor[] = [
     config_key: 'slack',
     title_key: 'platform.slack.title',
     description_key: 'platform.slack.desc',
+    credential_fields: ['bot_token'],
     capabilities: {
       supports_channels: true,
       supports_threads: true,
