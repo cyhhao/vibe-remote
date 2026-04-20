@@ -108,6 +108,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const confirmedGuildAllowlistRef = useRef<string[]>(getDiscordGuildAllowlist(data));
   const allowlistSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const allowlistSaveVersionRef = useRef(0);
+  const configSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const configVersionRef = useRef(0);
   const configRef = useRef<any>(data);
   const [telegramSummary, setTelegramSummary] = useState<TelegramDiscoverySummary | null>(null);
   // Directory browser state — tracks which channel's cwd picker is open
@@ -119,9 +121,24 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     setSelectedGuildIds(normalized);
   };
 
-  const applyConfig = (nextConfig: any) => {
+  const applyConfig = (nextConfig: any): number => {
     configRef.current = nextConfig;
+    configVersionRef.current += 1;
     setConfig(nextConfig);
+    return configVersionRef.current;
+  };
+
+  const saveConfigSnapshot = async (snapshot: any): Promise<boolean> => {
+    const saveTask = configSaveQueueRef.current.then(async () => {
+      await api.saveConfig(snapshot);
+    });
+    configSaveQueueRef.current = saveTask.catch(() => {});
+    try {
+      await saveTask;
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   useEffect(() => {
@@ -237,12 +254,6 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     }
   }, [platform, config.discord?.guild_allowlist, data.discord?.guild_allowlist, selectedGuild]);
 
-  useEffect(() => {
-    if (platform !== 'discord') return;
-    const allowlist = getDiscordGuildAllowlist(config);
-    confirmedGuildAllowlistRef.current = allowlist;
-  }, [platform, config.discord?.guild_allowlist]);
-
   const updateSelectedGuild = (guildId: string) => {
     setSelectedGuild(guildId);
   };
@@ -262,7 +273,15 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       if (saved) {
         confirmedGuildAllowlistRef.current = next;
       } else if (allowlistSaveVersionRef.current === version) {
-        applySelectedGuildIds(confirmedGuildAllowlistRef.current);
+        const confirmed = confirmedGuildAllowlistRef.current;
+        applySelectedGuildIds(confirmed);
+        applyConfig({
+          ...configRef.current,
+          discord: {
+            ...(configRef.current.discord || {}),
+            guild_allowlist: confirmed,
+          },
+        });
       }
     });
     allowlistSaveQueueRef.current = saveTask.catch(() => {});
@@ -278,15 +297,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         guild_allowlist: allowlist,
       },
     };
-    try {
-      await api.saveConfig(updated);
-      applyConfig(updated);
+    applyConfig(updated);
+    const saved = await saveConfigSnapshot(updated);
+    if (saved) {
       showToast(t('common.saved'), 'success');
       return true;
-    } catch {
-      showToast(t('channelList.settingsSaveFailed'), 'error');
-      return false;
     }
+    showToast(t('channelList.settingsSaveFailed'), 'error');
+    return false;
   };
 
   const loadGuilds = async () => {
@@ -735,11 +753,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 ...currentConfig,
                 [key]: { ...(currentConfig as any)[key], require_mention: !current },
               };
-              applyConfig(updated);
-              try {
-                await api.saveConfig(updated);
+              const version = applyConfig(updated);
+              const saved = await saveConfigSnapshot(updated);
+              if (saved) {
                 showToast(t('common.saved'), 'success');
-              } catch { /* ignore */ }
+              } else if (configVersionRef.current === version) {
+                applyConfig(currentConfig);
+                showToast(t('channelList.settingsSaveFailed'), 'error');
+              } else {
+                showToast(t('channelList.settingsSaveFailed'), 'error');
+              }
             }}
             className={clsx(
               'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
