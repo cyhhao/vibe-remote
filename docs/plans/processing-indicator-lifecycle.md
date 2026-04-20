@@ -32,11 +32,14 @@ The registry owns ACK/typing differences:
 
 - which platforms can use typing, reaction, or message indicators
 - whether typing requires an explicit clear operation
+- whether typing support is best-effort rather than a stable platform path
 - whether message ACKs can be deleted
 - whether a platform has a preferred or forced indicator mode
 
 This keeps WeChat's explicit cancel requirement, Lark's reaction preference, and
-Telegram's message-delete support out of backend-specific code.
+Telegram's sendChatAction/message-delete support out of backend-specific code.
+Slack is marked as typing-capable but best-effort because it relies on legacy
+RTM availability.
 
 ## Compatibility Boundary
 

@@ -107,11 +107,11 @@ class ProcessingIndicatorService:
         context: MessageContext,
     ) -> bool:
         if mode == "typing":
-            return capabilities.supports_processing_typing
+            return capabilities.supports_typing_indicator
         if mode == "reaction":
-            return capabilities.supports_processing_reaction and bool(context.message_id)
+            return capabilities.supports_reaction_indicator and bool(context.message_id)
         if mode == "message":
-            return capabilities.supports_processing_message
+            return capabilities.supports_message_indicator
         return False
 
     def _candidate_modes(self, capabilities: PlatformCapabilities) -> list[str]:
@@ -243,10 +243,10 @@ class ProcessingIndicatorService:
         return handle.context
 
     def _should_delete_ack_message(self, handle: ProcessingIndicatorHandle) -> bool:
-        return self._capabilities(handle.context).supports_processing_message_delete
+        return self._capabilities(handle.context).supports_message_indicator_delete
 
     def _should_clear_typing_indicator(self, handle: ProcessingIndicatorHandle) -> bool:
-        return self._capabilities(handle.context).processing_typing_requires_clear
+        return self._capabilities(handle.context).typing_indicator_requires_clear
 
     async def _delete_ack_message_for_handle(
         self,
