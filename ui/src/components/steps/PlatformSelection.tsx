@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-import { ALL_PLATFORMS, getEnabledPlatforms, getPrimaryPlatform } from '../../lib/platforms';
+import { getEnabledPlatforms, getPlatformCatalog, getPrimaryPlatform } from '../../lib/platforms';
 
 interface PlatformSelectionProps {
   data: any;
@@ -12,6 +12,7 @@ interface PlatformSelectionProps {
 export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNext, onBack }) => {
   const { t } = useTranslation();
   const initialPlatforms = useMemo(() => getEnabledPlatforms(data), [data]);
+  const platformCatalog = useMemo(() => getPlatformCatalog(data), [data]);
   const [selected, setSelected] = useState<string[]>(initialPlatforms);
   const [primary, setPrimary] = useState<string>(getPrimaryPlatform(data));
 
@@ -36,7 +37,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
   };
 
   const handleContinue = () => {
-    const normalized = selected.length ? selected : ['slack'];
+    const normalized = selected.length ? selected : [platformCatalog[0]?.id || 'slack'];
     const resolvedPrimary = normalized.includes(primary) ? primary : normalized[0];
     onNext({
       platform: resolvedPrimary,
@@ -55,7 +56,8 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
-        {ALL_PLATFORMS.map((option) => {
+        {platformCatalog.map((platform) => {
+          const option = platform.id;
           const active = selected.includes(option);
           return (
             <button
@@ -69,8 +71,8 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-lg font-semibold text-text">{t(`platform.${option}.title`)}</div>
-                  <div className="text-sm text-muted mt-2">{t(`platform.${option}.desc`)}</div>
+                  <div className="text-lg font-semibold text-text">{t(platform.title_key || `platform.${option}.title`)}</div>
+                  <div className="text-sm text-muted mt-2">{t(platform.description_key || `platform.${option}.desc`)}</div>
                 </div>
                 <div
                   className={clsx(
@@ -95,19 +97,22 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
         <div className="text-sm font-medium text-text">{t('platform.primaryTitle')}</div>
         <p className="text-xs text-muted mt-1">{t('platform.primaryDesc')}</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          {selected.map((platform) => (
-            <button
-              key={platform}
-              type="button"
-              onClick={() => setPrimary(platform)}
-              className={clsx(
-                'px-3 py-1.5 rounded-full text-sm border transition-colors',
-                primary === platform ? 'bg-accent text-white border-accent' : 'bg-bg text-text border-border hover:border-accent/60'
-              )}
-            >
-              {t(`platform.${platform}.title`)}
-            </button>
-          ))}
+          {selected.map((platform) => {
+            const descriptor = platformCatalog.find((item) => item.id === platform);
+            return (
+              <button
+                key={platform}
+                type="button"
+                onClick={() => setPrimary(platform)}
+                className={clsx(
+                  'px-3 py-1.5 rounded-full text-sm border transition-colors',
+                  primary === platform ? 'bg-accent text-white border-accent' : 'bg-bg text-text border-border hover:border-accent/60'
+                )}
+              >
+                {t(descriptor?.title_key || `platform.${platform}.title`)}
+              </button>
+            );
+          })}
         </div>
       </div>
 

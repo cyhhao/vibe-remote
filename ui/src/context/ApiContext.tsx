@@ -4,6 +4,7 @@ import { apiFetch } from '../lib/apiFetch';
 
 export type ApiContextType = {
   getConfig: () => Promise<any>;
+  getPlatformCatalog: () => Promise<any>;
   saveConfig: (payload: any) => Promise<any>;
   getSettings: (platform?: string) => Promise<any>;
   saveSettings: (payload: any, platform?: string) => Promise<any>;
@@ -143,6 +144,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const value: ApiContextType = {
     getConfig: () => getJson('/config'),
+    getPlatformCatalog: () => getJson('/platforms'),
     saveConfig: (payload) => postJson('/config', payload),
     getSettings: (platform) => getJson(platform ? `/settings?platform=${encodeURIComponent(platform)}` : '/settings'),
     saveSettings: (payload, platform) => postJson('/settings', platform ? { ...payload, platform } : payload),

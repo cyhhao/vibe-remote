@@ -301,6 +301,8 @@ def config_to_payload(config: V2Config) -> dict:
             "enabled": config.platforms.enabled,
             "primary": config.platforms.primary,
         },
+        "platform_catalog": config.platform_catalog(),
+        "setup_state": config.setup_state(),
         "mode": config.mode,
         "version": config.version,
         "slack": {
@@ -331,6 +333,12 @@ def config_to_payload(config: V2Config) -> dict:
         "reply_enhancements": config.reply_enhancements,
     }
     return payload
+
+
+def get_platform_catalog() -> dict:
+    from config.platform_registry import platform_catalog_payload
+
+    return {"platforms": platform_catalog_payload()}
 
 
 def get_settings(platform: Optional[str] = None) -> dict:

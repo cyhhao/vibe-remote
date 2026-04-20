@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from typing import Any, Optional
+from config.platform_registry import get_platform_descriptor
 from modules.agents import get_agent_display_name
 from modules.agents.native_sessions.types import NativeResumeSession
 from modules.agents.base import AgentRequest
@@ -29,7 +30,7 @@ class CommandHandlers(BaseHandler):
         """Get context for channel messages (no thread)"""
         # Send command responses directly to channel, not in thread/topic
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
-        if platform in {"slack", "discord", "lark"}:
+        if get_platform_descriptor(platform).capabilities.supports_threads:
             return MessageContext(
                 user_id=context.user_id,
                 channel_id=context.channel_id,
@@ -370,6 +371,7 @@ class CommandHandlers(BaseHandler):
         """Handle /start command with interactive buttons"""
         im_client = self._get_im_client(context)
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
+        platform_capabilities = get_platform_descriptor(platform).capabilities
         platform_name = str(platform).capitalize()
 
         is_dm = bool((context.platform_specific or {}).get("is_dm", False))
@@ -418,14 +420,13 @@ class CommandHandlers(BaseHandler):
         )
 
         # For non-interactive platforms, use traditional text message
-        if platform not in {"slack", "discord", "lark", "telegram"}:
+        if not platform_capabilities.supports_buttons:
             user_name = self._resolve_user_display_name(user_info, self._t("command.start.userFallback"))
-            show_channel = platform != "wechat"
             message_text = self._build_non_interactive_start_message(
                 platform_name=platform_name,
                 agent_display_name=agent_display_name,
                 user_name=user_name,
-                show_channel=show_channel,
+                show_channel=platform_capabilities.supports_channels,
                 channel_name=channel_info.get("name", "Unknown"),
                 supports_threads=supports_threads,
             )

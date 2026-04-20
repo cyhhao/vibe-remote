@@ -11,6 +11,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 
+from config.platform_registry import get_platform_descriptor
 from modules.im import MessageContext
 from core.reply_enhancer import process_reply, strip_file_links, strip_silent_blocks
 from vibe.i18n import t as i18n_t
@@ -30,6 +31,12 @@ class ConsolidatedMessageDispatcher:
         self._consolidated_message_buffers: dict[str, str] = {}
         self._consolidated_message_locks: dict[str, asyncio.Lock] = {}
         self._thread_current_message_id: dict[str, str] = {}
+
+    def _get_platform(self, context: MessageContext) -> str:
+        return context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
+
+    def _capabilities(self, context: MessageContext):
+        return get_platform_descriptor(self._get_platform(context)).capabilities
 
     def _get_settings_key(self, context: MessageContext) -> str:
         return self.controller._get_settings_key(context)
@@ -169,9 +176,7 @@ class ConsolidatedMessageDispatcher:
         return len(text) <= self._get_result_max_chars(context)
 
     def _supports_quick_replies(self, context: MessageContext) -> bool:
-        return (
-            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
-        ) != "wechat"
+        return self._capabilities(context).supports_quick_replies
 
     def _supports_message_editing(self, im_client, context: MessageContext) -> bool:
         supports_editing = getattr(im_client, "supports_message_editing", None)
@@ -180,17 +185,12 @@ class ConsolidatedMessageDispatcher:
                 return bool(supports_editing(context))
             except TypeError:
                 return bool(supports_editing())
-        return (
-            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
-        ) != "wechat"
+        return self._capabilities(context).supports_message_editing
 
     def _attachment_id_can_anchor_delivery(self, context: MessageContext) -> bool:
-        platform = (
-            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
-        )
         # Only treat attachment uploads as scheduled anchors on platforms where
         # upload_markdown() returns the posted message ID rather than a file ID.
-        return platform in {"discord", "telegram", "lark"}
+        return self._capabilities(context).markdown_upload_returns_message_id
 
     @staticmethod
     def _is_video_path(path: str) -> bool:
@@ -633,10 +633,7 @@ class ConsolidatedMessageDispatcher:
             callback = f"quick_reply:{btn.text}"
             row.append(InlineButton(text=btn.text, callback_data=callback))
 
-        platform = (
-            context.platform or (context.platform_specific or {}).get("platform") or self.controller.config.platform
-        )
-        rows = [[button] for button in row] if platform in {"lark", "telegram"} else [row]
+        rows = [[button] for button in row] if self._capabilities(context).quick_reply_single_column else [row]
         keyboard = InlineKeyboard(buttons=rows)
         return await im_client.send_message_with_buttons(
             context,

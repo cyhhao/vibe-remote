@@ -31,13 +31,17 @@ export const AppShell: React.FC = () => {
   const api = useApi();
   const location = useLocation();
   const [enabledPlatforms, setEnabledPlatforms] = useState<string[]>([]);
+  const [config, setConfig] = useState<any>(null);
 
   useEffect(() => {
-    api.getConfig().then((c: any) => setEnabledPlatforms(getEnabledPlatforms(c))).catch(() => {});
+    api.getConfig().then((c: any) => {
+      setConfig(c);
+      setEnabledPlatforms(getEnabledPlatforms(c));
+    }).catch(() => {});
   }, []);
 
   const isRunning = status.state === 'running';
-  const hasChannelPlatforms = enabledPlatforms.some(platformSupportsChannels);
+  const hasChannelPlatforms = enabledPlatforms.some((platform) => platformSupportsChannels(config, platform));
 
   if (location.pathname === '/setup') {
     return <Outlet />;

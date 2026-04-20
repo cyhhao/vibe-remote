@@ -7,10 +7,10 @@ import logging
 import threading
 from typing import Optional, Dict, Any
 from config import paths
+from config.platform_registry import get_platform_descriptor
 from config.v2_config import DEFAULT_AGENT_BACKEND, DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
 from modules.im import BaseIMClient, MessageContext, IMFactory
 from modules.im.multi import MultiIMClient
-from modules.im.formatters import SlackFormatter, DiscordFormatter, TelegramFormatter
 from modules.agent_router import AgentRouter
 from modules.agents.service import AgentService
 from modules.claude_client import ClaudeClient
@@ -128,19 +128,7 @@ class Controller:
         return self.native_session_service
 
     def _create_formatter(self, platform: str):
-        if platform == "discord":
-            return DiscordFormatter()
-        if platform == "telegram":
-            return TelegramFormatter()
-        if platform == "lark":
-            from modules.im.formatters.feishu_formatter import FeishuFormatter
-
-            return FeishuFormatter()
-        if platform == "wechat":
-            from modules.im.formatters.wechat_formatter import WeChatFormatter
-
-            return WeChatFormatter()
-        return SlackFormatter()
+        return get_platform_descriptor(platform).create_formatter()
 
     def _inject_runtime_dependencies(self, platform: str, client: BaseIMClient) -> None:
         settings_manager = self.platform_settings_managers[platform]
@@ -181,21 +169,13 @@ class Controller:
                 self.config.include_user_info = v2_config.include_user_info
                 self.config.reply_enhancements = v2_config.reply_enhancements
 
-                # Sync global require_mention into the IM client's platform config
                 for platform, client in self.im_clients.items():
                     im_cfg = getattr(client, "config", None)
                     if im_cfg is None or not hasattr(im_cfg, "require_mention"):
                         continue
-                    if platform == "lark" and v2_config.lark:
-                        im_cfg.require_mention = v2_config.lark.require_mention
-                    elif platform == "slack":
-                        im_cfg.require_mention = v2_config.slack.require_mention
-                    elif platform == "discord" and v2_config.discord:
-                        im_cfg.require_mention = v2_config.discord.require_mention
-                    elif platform == "telegram" and v2_config.telegram:
-                        im_cfg.require_mention = v2_config.telegram.require_mention
-                    elif platform == "wechat" and v2_config.wechat:
-                        im_cfg.require_mention = v2_config.wechat.require_mention
+                    latest_platform_config = get_platform_descriptor(platform).get_config(v2_config)
+                    if latest_platform_config is not None and hasattr(latest_platform_config, "require_mention"):
+                        im_cfg.require_mention = latest_platform_config.require_mention
 
                 self._config_mtime = mtime
         except Exception as err:
