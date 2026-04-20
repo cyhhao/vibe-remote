@@ -1,6 +1,5 @@
 """Message routing and Agent communication handlers"""
 
-import asyncio
 import logging
 from typing import List, Optional, Tuple
 
@@ -30,72 +29,6 @@ class MessageHandler(BaseHandler):
         """Set reference to session handler"""
         self.session_handler = session_handler
 
-    def _get_target_context(self, context: MessageContext) -> MessageContext:
-        """Get target context for sending messages"""
-        # For Slack, use thread for replies if enabled
-        if self._get_im_client(context).should_use_thread_for_reply() and context.thread_id:
-            return MessageContext(
-                user_id=context.user_id,
-                channel_id=context.channel_id,
-                platform=context.platform,
-                thread_id=context.thread_id,
-                message_id=context.message_id,
-                platform_specific=context.platform_specific,
-            )
-        return context
-
-    def _get_context_platform(self, context: MessageContext) -> str:
-        return (
-            context.platform
-            or (context.platform_specific or {}).get("platform")
-            or getattr(self.config, "platform", "")
-        )
-
-    def _should_use_typing_ack(self, context: MessageContext) -> bool:
-        platform = self._get_context_platform(context)
-        if platform == "wechat":
-            return True
-        return getattr(self.config, "ack_mode", "typing") == "typing"
-
-    async def _typing_keepalive_loop(self, context: MessageContext) -> None:
-        im_client = self._get_im_client(context)
-        try:
-            while True:
-                await asyncio.sleep(5)
-                ok = await im_client.send_typing_indicator(context)
-                if not ok:
-                    logger.debug("Typing keepalive not applied for %s", context.user_id)
-        except asyncio.CancelledError:
-            raise
-
-    async def _start_processing_indicator(
-        self, context: MessageContext
-    ) -> Tuple[Optional[str], Optional[str], bool, Optional[asyncio.Task]]:
-        im_client = self._get_im_client(context)
-        if self._should_use_typing_ack(context):
-            try:
-                ok = await im_client.send_typing_indicator(context)
-                if ok:
-                    return None, None, True, asyncio.create_task(self._typing_keepalive_loop(context))
-                logger.info("Typing indicator not applied (platform returned False)")
-            except Exception as ack_err:
-                logger.debug(f"Failed to send typing ack: {ack_err}")
-            if self._get_context_platform(context) == "wechat":
-                return None, None, False, None
-
-        ack_reaction_message_id = None
-        ack_reaction_emoji = None
-        try:
-            if context.message_id:
-                ack_reaction_message_id = context.message_id
-                ack_reaction_emoji = ":eyes:"
-                ok = await im_client.add_reaction(context, ack_reaction_message_id, ack_reaction_emoji)
-                if not ok:
-                    logger.info("Ack reaction not applied (platform returned False)")
-        except Exception as ack_err:
-            logger.debug(f"Failed to add reaction ack: {ack_err}")
-        return ack_reaction_message_id, ack_reaction_emoji, False, None
-
     async def handle_user_message(self, context: MessageContext, message: str):
         """Process regular human-originated messages and route to configured agent."""
         await self._handle_turn(context, message, source=self.TURN_SOURCE_HUMAN)
@@ -120,10 +53,7 @@ class MessageHandler(BaseHandler):
 
     async def _handle_turn(self, context: MessageContext, message: str, *, source: str) -> Optional[str]:
         """Shared turn-processing pipeline used by both human and scheduled turns."""
-        ack_reaction_message_id = None
-        ack_reaction_emoji = None
-        typing_indicator_active = False
-        typing_indicator_task = None
+        processing_indicator = None
         try:
             is_human = source == self.TURN_SOURCE_HUMAN
             control_message = self._get_control_message(context, message) if is_human else message
@@ -292,24 +222,8 @@ class MessageHandler(BaseHandler):
                 base_session_id = f"{base_session_id}:{routing_agent}"
                 composite_key = f"{base_session_id}:{working_path}"
 
-            ack_message_id = None
             if is_human:
-                ack_mode = getattr(self.config, "ack_mode", "typing")
-                effective_ack_mode = "typing" if self._get_context_platform(context) == "wechat" else ack_mode
-                if effective_ack_mode == "message":
-                    ack_context = self._get_target_context(context)
-                    ack_text = self._get_ack_text(agent_name)
-                    try:
-                        ack_message_id = await self._get_im_client(ack_context).send_message(ack_context, ack_text)
-                    except Exception as ack_err:
-                        logger.debug(f"Failed to send ack message: {ack_err}")
-                else:
-                    (
-                        ack_reaction_message_id,
-                        ack_reaction_emoji,
-                        typing_indicator_active,
-                        typing_indicator_task,
-                    ) = await self._start_processing_indicator(context)
+                processing_indicator = await self.controller.processing_indicator.start(context, agent_name)
 
             if is_human and subagent_name and context.message_id:
                 try:
@@ -349,18 +263,15 @@ class MessageHandler(BaseHandler):
                 base_session_id=base_session_id,
                 composite_session_id=composite_key,
                 session_key=session_key,
-                ack_message_id=ack_message_id,
                 subagent_name=subagent_name,
                 subagent_key=matched_prefix,
                 subagent_model=subagent_model,
                 subagent_reasoning_effort=subagent_reasoning_effort,
-                # Reaction info — agent removes :eyes: on result/error
-                ack_reaction_message_id=ack_reaction_message_id,
-                ack_reaction_emoji=ack_reaction_emoji,
-                typing_indicator_active=typing_indicator_active,
-                typing_indicator_task=typing_indicator_task,
+                processing_indicator=processing_indicator,
                 files=processed_files,
             )
+            if processing_indicator is not None:
+                self.controller.processing_indicator.apply_to_request(request, processing_indicator)
             try:
                 await self.controller.agent_service.handle_message(agent_name, request)
             except KeyError:
@@ -382,22 +293,8 @@ class MessageHandler(BaseHandler):
                     # clears typing indicators, which do not have a reaction ID.
                     await self._remove_ack_reaction(context, request)  # type: ignore[possibly-undefined]
                 except NameError:
-                    # request not defined yet, try using local variables
-                    if (
-                        ack_reaction_message_id  # type: ignore[possibly-undefined]
-                        and ack_reaction_emoji  # type: ignore[possibly-undefined]
-                    ):
-                        await self._get_im_client(context).remove_reaction(
-                            context, ack_reaction_message_id, ack_reaction_emoji
-                        )
-                    if typing_indicator_task:  # type: ignore[possibly-undefined]
-                        typing_indicator_task.cancel()
-                        try:
-                            await typing_indicator_task
-                        except asyncio.CancelledError:
-                            pass
-                    if typing_indicator_active:  # type: ignore[possibly-undefined]
-                        await self._get_im_client(context).clear_typing_indicator(context)
+                    if processing_indicator is not None:
+                        await self.controller.processing_indicator.finish(processing_indicator)
             except Exception as cleanup_err:
                 logger.debug(f"Failed to clean up reaction on error: {cleanup_err}")
             await self._get_im_client(context).send_message(
@@ -681,56 +578,11 @@ class MessageHandler(BaseHandler):
 
     async def _delete_ack(self, channel_id: str, request: AgentRequest):
         """Delete acknowledgement message if it still exists."""
-        im_client = self._get_im_client(request.context)
-        if request.ack_message_id and hasattr(im_client, "delete_message"):
-            try:
-                await im_client.delete_message(channel_id, request.ack_message_id)
-            except Exception as err:
-                logger.debug(f"Failed to delete ack message: {err}")
-            finally:
-                request.ack_message_id = None
+        await self.controller.processing_indicator.delete_ack_message(request, channel_id=channel_id)
 
     async def _remove_ack_reaction(self, context: MessageContext, request: AgentRequest):
         """Remove acknowledgement reaction / typing indicator if it still exists."""
-        im_client = self._get_im_client(context)
-        typing_task = request.typing_indicator_task
-        if typing_task is not None:
-            typing_task.cancel()
-            try:
-                await typing_task
-            except asyncio.CancelledError:
-                pass
-            except Exception as err:
-                logger.debug(f"Failed to stop typing keepalive task: {err}")
-            finally:
-                request.typing_indicator_task = None
-
-        if request.typing_indicator_active:
-            try:
-                await im_client.clear_typing_indicator(context)
-            except Exception as err:
-                logger.debug(f"Failed to clear typing ack: {err}")
-            finally:
-                request.typing_indicator_active = False
-
-        if request.ack_reaction_message_id and request.ack_reaction_emoji:
-            try:
-                await im_client.remove_reaction(
-                    context,
-                    request.ack_reaction_message_id,
-                    request.ack_reaction_emoji,
-                )
-            except Exception as err:
-                logger.debug(f"Failed to remove reaction ack: {err}")
-            finally:
-                request.ack_reaction_message_id = None
-                request.ack_reaction_emoji = None
-
-    def _get_ack_text(self, agent_name: str) -> str:
-        """Unified acknowledgement text before agent processing."""
-        label = agent_name or self.controller.agent_service.default_agent
-        agent_label = label.capitalize() if label else ""
-        return f"📨 {self._t('message.ack', agent=agent_label)}"
+        await self.controller.processing_indicator.finish(request)
 
     async def _process_file_attachments(
         self, context: MessageContext, working_path: str

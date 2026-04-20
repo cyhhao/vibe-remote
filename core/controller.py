@@ -24,6 +24,7 @@ from core.handlers import (
 )
 from core.agent_auth_service import AgentAuthService
 from core.message_dispatcher import ConsolidatedMessageDispatcher
+from core.processing_indicator import ProcessingIndicatorService
 from core.scheduled_tasks import ScheduledTaskService
 from core.update_checker import UpdateChecker
 from core.watches import ManagedWatchService
@@ -105,6 +106,7 @@ class Controller:
         self.platform_settings_managers = self.settings_manager.managers
         self.sessions = self.settings_manager.sessions
         self.native_session_service = None
+        self.processing_indicator = ProcessingIndicatorService(self)
 
         # Migrate legacy per-channel language into global config
         self._migrate_language_from_settings()

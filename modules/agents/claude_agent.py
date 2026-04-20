@@ -550,12 +550,16 @@ class ClaudeAgent(BaseAgent):
         # inside the loop.
 
     async def _delete_ack(self, context: MessageContext, request: AgentRequest):
+        service = getattr(self.controller, "processing_indicator", None)
+        if service is not None:
+            await service.delete_ack_message(request, channel_id=context.channel_id)
+            return
         ack_id = request.ack_message_id
         if ack_id and hasattr(self.im_client, "delete_message"):
             try:
                 await self.im_client.delete_message(context.channel_id, ack_id)
             except Exception as err:
-                logger.debug(f"Could not delete ack message: {err}")
+                logger.debug("Could not delete ack message: %s", err)
             finally:
                 request.ack_message_id = None
 

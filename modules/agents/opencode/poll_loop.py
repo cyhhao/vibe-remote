@@ -21,25 +21,25 @@ class OpenCodePollLoop:
         self._agent = agent
         self._question_handler = question_handler
 
+    def _build_restored_handle(self, poll_info):
+        snapshot = poll_info.processing_indicator or {
+            "platform": poll_info.platform,
+            "user_id": poll_info.user_id,
+            "channel_id": poll_info.channel_id,
+            "thread_id": poll_info.thread_id,
+            "context_token": getattr(poll_info, "context_token", ""),
+            "ack_reaction_message_id": poll_info.ack_reaction_message_id,
+            "ack_reaction_emoji": poll_info.ack_reaction_emoji,
+            "typing_indicator_active": bool(getattr(poll_info, "typing_indicator_active", False)),
+        }
+        return self._agent.controller.processing_indicator.handle_from_snapshot(snapshot)
+
     def _build_restored_context(self, poll_info):
-        from modules.im import MessageContext
-
-        platform_specific: dict[str, Any] = {}
-        if poll_info.platform:
-            platform_specific["platform"] = poll_info.platform
-        if getattr(poll_info, "context_token", ""):
-            platform_specific["context_token"] = poll_info.context_token
-
-        return MessageContext(
-            user_id=poll_info.user_id or "",
-            channel_id=poll_info.channel_id,
-            platform=poll_info.platform or None,
-            thread_id=poll_info.thread_id,
-            platform_specific=platform_specific or None,
-        )
+        return self._build_restored_handle(poll_info).context
 
     def _build_restored_ack_request(self, poll_info) -> AgentRequest:
-        context = self._build_restored_context(poll_info)
+        handle = self._build_restored_handle(poll_info)
+        context = handle.context
         session_key = f"{poll_info.platform}::{poll_info.settings_key}" if poll_info.platform else poll_info.settings_key
         return AgentRequest(
             context=context,
@@ -48,9 +48,11 @@ class OpenCodePollLoop:
             base_session_id=poll_info.base_session_id,
             composite_session_id=f"{poll_info.base_session_id}:{poll_info.working_path}",
             session_key=session_key,
-            ack_reaction_message_id=poll_info.ack_reaction_message_id,
-            ack_reaction_emoji=poll_info.ack_reaction_emoji,
-            typing_indicator_active=bool(getattr(poll_info, "typing_indicator_active", False)),
+            processing_indicator=handle,
+            ack_message_id=handle.ack_message_id,
+            ack_reaction_message_id=handle.ack_reaction_message_id,
+            ack_reaction_emoji=handle.ack_reaction_emoji,
+            typing_indicator_active=handle.typing_indicator_active,
         )
 
     async def remove_restored_ack(self, poll_info) -> None:

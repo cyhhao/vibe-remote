@@ -725,6 +725,10 @@ class CodexAgent(BaseAgent):
         return turn_id
 
     async def _delete_ack(self, request: AgentRequest) -> None:
+        service = getattr(self.controller, "processing_indicator", None)
+        if service is not None:
+            await service.delete_ack_message(request)
+            return
         ack_id = request.ack_message_id
         if ack_id and hasattr(self.im_client, "delete_message"):
             try:

@@ -289,6 +289,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 ack_reaction_emoji=request.ack_reaction_emoji,
                 typing_indicator_active=request.typing_indicator_active,
                 context_token=str(platform_payload.get("context_token") or ""),
+                processing_indicator=self.controller.processing_indicator.snapshot_request(request),
                 user_id=request.context.user_id or "",
                 platform=request.context.platform or platform_payload.get("platform") or "",
             )
@@ -421,12 +422,16 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         return terminated
 
     async def _delete_ack(self, request: AgentRequest) -> None:
+        service = getattr(self.controller, "processing_indicator", None)
+        if service is not None:
+            await service.delete_ack_message(request)
+            return
         ack_id = request.ack_message_id
         if ack_id and hasattr(self.im_client, "delete_message"):
             try:
                 await self.im_client.delete_message(request.context.channel_id, ack_id)
             except Exception as err:
-                logger.debug(f"Could not delete ack message: {err}")
+                logger.debug("Could not delete ack message: %s", err)
             finally:
                 request.ack_message_id = None
 

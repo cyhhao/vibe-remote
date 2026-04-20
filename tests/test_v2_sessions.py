@@ -151,6 +151,13 @@ def test_active_poll_persists_typing_cleanup_context(tmp_path, monkeypatch):
         baseline_message_ids=[],
         typing_indicator_active=True,
         context_token="ctx-4",
+        processing_indicator={
+            "platform": "wechat",
+            "user_id": "wx-user",
+            "channel_id": "wx-chat",
+            "context_token": "ctx-4",
+            "typing_indicator_active": True,
+        },
         user_id="wx-user",
         platform="wechat",
     )
@@ -162,6 +169,7 @@ def test_active_poll_persists_typing_cleanup_context(tmp_path, monkeypatch):
     assert poll is not None
     assert poll.typing_indicator_active is True
     assert poll.context_token == "ctx-4"
+    assert poll.processing_indicator["context_token"] == "ctx-4"
 
 
 # --- session_mappings migration tests ---

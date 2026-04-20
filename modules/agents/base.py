@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import time
-import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -35,6 +34,7 @@ class AgentRequest:
     last_agent_message_parse_mode: Optional[str] = None
     started_at: float = field(default_factory=time.monotonic)
     # Reaction ack: emoji added to user's message, to be removed when result is sent
+    processing_indicator: Optional[Any] = None
     ack_reaction_message_id: Optional[str] = None
     ack_reaction_emoji: Optional[str] = None
     typing_indicator_active: bool = False
@@ -92,38 +92,7 @@ class BaseAgent(ABC):
         should NOT override it.  The guard (check-then-clear) is idempotent so
         calling it more than once is harmless.
         """
-        typing_task = request.typing_indicator_task
-        if typing_task is not None:
-            typing_task.cancel()
-            try:
-                await typing_task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.debug("Failed to stop typing keepalive task", exc_info=True)
-            finally:
-                request.typing_indicator_task = None
-
-        if request.typing_indicator_active:
-            try:
-                await self._get_im_client(request.context).clear_typing_indicator(request.context)
-            except Exception as err:
-                logger.debug(f"Failed to clear typing indicator: {err}")
-            finally:
-                request.typing_indicator_active = False
-
-        if request.ack_reaction_message_id and request.ack_reaction_emoji:
-            try:
-                await self._get_im_client(request.context).remove_reaction(
-                    request.context,
-                    request.ack_reaction_message_id,
-                    request.ack_reaction_emoji,
-                )
-            except Exception as err:
-                logger.debug(f"Failed to remove reaction ack: {err}")
-            finally:
-                request.ack_reaction_message_id = None
-                request.ack_reaction_emoji = None
+        await self.controller.processing_indicator.finish(request)
 
     async def emit_result_message(
         self,

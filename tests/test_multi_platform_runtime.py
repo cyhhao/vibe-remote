@@ -11,6 +11,7 @@ from modules.im.base import BaseIMClient, BaseIMConfig, MessageContext
 from modules.im.multi import MultiIMClient
 from modules.settings_manager import MultiSettingsManager
 from config.v2_sessions import ActivePollInfo
+from core.processing_indicator import ProcessingIndicatorService
 from modules.agents.opencode.poll_loop import OpenCodePollLoop
 
 
@@ -77,6 +78,10 @@ class _StubClient(BaseIMClient):
         from modules.im.base import FileDownloadResult
 
         return FileDownloadResult(True, target_path)
+
+    async def clear_typing_indicator(self, context):
+        self.sent.append(("clear_typing", context.platform, context.user_id, (context.platform_specific or {}).get("context_token")))
+        return True
 
     def format_markdown(self, text: str) -> str:
         return text
@@ -160,6 +165,14 @@ def test_active_poll_info_round_trips_restored_typing_context():
         platform="wechat",
         typing_indicator_active=True,
         context_token="ctx-1",
+        processing_indicator={
+            "platform": "wechat",
+            "user_id": "user-1",
+            "channel_id": "chan-1",
+            "thread_id": "thread-1",
+            "context_token": "ctx-1",
+            "typing_indicator_active": True,
+        },
     )
 
     restored = ActivePollInfo.from_dict(poll.to_dict())
@@ -167,14 +180,29 @@ def test_active_poll_info_round_trips_restored_typing_context():
     assert restored.platform == "wechat"
     assert restored.typing_indicator_active is True
     assert restored.context_token == "ctx-1"
+    assert restored.processing_indicator["context_token"] == "ctx-1"
 
 
 def test_opencode_restored_ack_preserves_wechat_typing_context():
     captured = []
+    wechat = _StubClient("wechat")
 
     class _StubAgent:
+        def __init__(self):
+            self.controller = type(
+                "Controller",
+                (),
+                {
+                    "config": type("Config", (), {"platform": "wechat", "ack_mode": "typing", "language": "en"})(),
+                    "im_client": wechat,
+                    "get_im_client_for_context": lambda self, context: wechat,
+                },
+            )()
+            self.controller.processing_indicator = ProcessingIndicatorService(self.controller)
+
         async def _remove_ack_reaction(self, request):
             captured.append(request)
+            await self.controller.processing_indicator.finish(request)
 
     poll = ActivePollInfo(
         opencode_session_id="ses-1",
@@ -187,15 +215,68 @@ def test_opencode_restored_ack_preserves_wechat_typing_context():
         platform="wechat",
         typing_indicator_active=True,
         context_token="ctx-1",
+        processing_indicator={
+            "platform": "wechat",
+            "user_id": "user-1",
+            "channel_id": "chan-1",
+            "thread_id": "thread-1",
+            "context_token": "ctx-1",
+            "typing_indicator_active": True,
+        },
     )
     loop = OpenCodePollLoop(_StubAgent(), question_handler=None)
 
     asyncio.run(loop.remove_restored_ack(poll))
 
     request = captured[0]
-    assert request.typing_indicator_active is True
+    assert request.typing_indicator_active is False
     assert request.context.platform == "wechat"
     assert request.context.platform_specific == {"platform": "wechat", "context_token": "ctx-1"}
+    assert wechat.sent == [("clear_typing", "wechat", "user-1", "ctx-1")]
+
+
+def test_processing_indicator_handle_is_source_of_truth_for_backend_cleanup():
+    wechat = _StubClient("wechat")
+
+    class _Controller:
+        def __init__(self):
+            self.config = type("Config", (), {"platform": "wechat", "ack_mode": "typing", "language": "en"})()
+            self.im_client = wechat
+            self.settings_manager = type("Settings", (), {})()
+            self.processing_indicator = ProcessingIndicatorService(self)
+
+        def get_im_client_for_context(self, context):
+            return wechat
+
+    controller = _Controller()
+    handle = controller.processing_indicator.handle_from_snapshot(
+        {
+            "platform": "wechat",
+            "user_id": "user-1",
+            "channel_id": "chan-1",
+            "context_token": "ctx-1",
+            "typing_indicator_active": True,
+        }
+    )
+    request = type(
+        "Request",
+        (),
+        {
+            "context": handle.context,
+            "ack_message_id": None,
+            "ack_reaction_message_id": None,
+            "ack_reaction_emoji": None,
+            "typing_indicator_active": False,
+            "typing_indicator_task": None,
+            "processing_indicator": handle,
+        },
+    )()
+
+    asyncio.run(controller.processing_indicator.finish(request))
+
+    assert request.typing_indicator_active is False
+    assert handle.typing_indicator_active is False
+    assert wechat.sent == [("clear_typing", "wechat", "user-1", "ctx-1")]
 
 
 def test_multi_im_client_routes_download_by_file_info_platform():

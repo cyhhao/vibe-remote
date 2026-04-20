@@ -334,6 +334,7 @@ class SessionsFacade:
         ack_reaction_emoji: Optional[str] = None,
         typing_indicator_active: bool = False,
         context_token: str = "",
+        processing_indicator: Optional[Dict[str, Any]] = None,
         user_id: str = "",
         platform: str = "",
     ) -> None:
@@ -352,6 +353,7 @@ class SessionsFacade:
             ack_reaction_emoji=ack_reaction_emoji,
             typing_indicator_active=typing_indicator_active,
             context_token=context_token,
+            processing_indicator=processing_indicator or {},
             user_id=user_id,
             platform=platform,
         )

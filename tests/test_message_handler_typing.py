@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from modules.im import MessageContext
+from core.processing_indicator import ProcessingIndicatorService
 
 
 def _load_message_handler_class():
@@ -31,6 +32,7 @@ def _load_message_handler_class():
             subagent_key: str | None = None
             subagent_model: str | None = None
             subagent_reasoning_effort: str | None = None
+            processing_indicator: object | None = None
             ack_reaction_message_id: str | None = None
             ack_reaction_emoji: str | None = None
             typing_indicator_active: bool = False
@@ -172,6 +174,7 @@ class _StubController:
         self.settings_handler = type("Settings", (), {})()
         self.command_handler = type("Cmd", (), {"handle_start": staticmethod(lambda context, args: None)})()
         self.agent_auth_service = type("Auth", (), {})()
+        self.processing_indicator = ProcessingIndicatorService(self)
 
     def update_thread_message_id(self, context):
         return None
