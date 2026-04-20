@@ -208,7 +208,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         {enabledPlatforms.includes('discord') && (
           <>
             <Section title={t('summary.discordBotToken')} value={mask(data.discord?.bot_token || '')} />
-            <Section title={t('summary.discordGuild')} value={(data.discord?.guild_allowlist || [])[0] || t('summary.notSet')} />
+            <Section
+              title={t('summary.discordGuild')}
+              value={(data.discord?.guild_allowlist || []).join(', ') || t('summary.notSet')}
+            />
           </>
         )}
         {enabledPlatforms.includes('telegram') && (

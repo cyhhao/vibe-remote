@@ -20,7 +20,9 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   const [checking, setChecking] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
   const [guilds, setGuilds] = useState<any[]>([]);
-  const [selectedGuild, setSelectedGuild] = useState<string>(data.discord?.guild_allowlist?.[0] || '');
+  const [selectedGuilds, setSelectedGuilds] = useState<string[]>(
+    Array.isArray(data.discord?.guild_allowlist) ? data.discord.guild_allowlist : []
+  );
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 2: false, 3: false, 4: false });
   const [inviteCopied, setInviteCopied] = useState(false);
   const [clientId, setClientId] = useState(data.discord_client_id || '');
@@ -81,6 +83,19 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
 
   const toggleStep = (step: number) => {
     setExpandedSteps(prev => ({ ...prev, [step]: !prev[step] }));
+  };
+
+  const toggleGuild = (guildId: string, checked: boolean) => {
+    setSelectedGuilds(prev => {
+      if (checked) {
+        return prev.includes(guildId) ? prev : [...prev, guildId];
+      }
+      return prev.filter(id => id !== guildId);
+    });
+  };
+
+  const selectAllGuilds = () => {
+    setSelectedGuilds(guilds.map((g) => g.id));
   };
 
   const openDiscordDeveloperPortal = () => {
@@ -318,16 +333,49 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                   <label className="text-sm font-medium text-text flex items-center gap-2">
                     <Server size={16} className="text-accent" /> {t('discordConfig.guild')}
                   </label>
-                  <select
-                    value={selectedGuild}
-                    onChange={(e) => setSelectedGuild(e.target.value)}
-                    className="w-full bg-bg border border-border rounded-lg p-3 text-text focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
-                  >
-                    <option value="">{t('discordConfig.guildPlaceholder')}</option>
-                    {guilds.map((g) => (
-                      <option key={g.id} value={g.id}>{g.name}</option>
-                    ))}
-                  </select>
+                  {guilds.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs text-muted">
+                        {t('discordConfig.selectedGuilds', { count: selectedGuilds.length })}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={selectAllGuilds}
+                          className="text-xs font-medium text-accent hover:text-accent/80"
+                        >
+                          {t('discordConfig.selectAllGuilds')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedGuilds([])}
+                          className="text-xs font-medium text-muted hover:text-text"
+                        >
+                          {t('discordConfig.clearGuilds')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="max-h-52 overflow-y-auto rounded-lg border border-border bg-bg">
+                    {guilds.length === 0 ? (
+                      <div className="p-3 text-sm text-muted">{t('discordConfig.guildPlaceholder')}</div>
+                    ) : (
+                      guilds.map((g) => (
+                        <label
+                          key={g.id}
+                          className="flex items-center gap-3 border-b border-border/70 px-3 py-2 last:border-b-0"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedGuilds.includes(g.id)}
+                            onChange={(e) => toggleGuild(g.id, e.target.checked)}
+                            className="h-4 w-4 accent-accent"
+                          />
+                          <span className="text-sm text-text">{g.name}</span>
+                        </label>
+                      ))
+                    )}
+                  </div>
                   <p className="text-xs text-muted">{t('discordConfig.guildHint')}</p>
                 </div>
               )}
@@ -346,7 +394,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
             discord: {
               ...(data.discord || {}),
               bot_token: botToken,
-              guild_allowlist: selectedGuild ? [selectedGuild] : [],
+              guild_allowlist: selectedGuilds,
             },
           })}
           disabled={!isValid}
