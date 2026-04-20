@@ -295,6 +295,12 @@ def save_config(payload: dict) -> V2Config:
 
 
 def config_to_payload(config: V2Config) -> dict:
+    from config.platform_registry import platform_descriptors
+
+    platform_payload = {
+        descriptor.config_key: (descriptor.get_config(config).__dict__ if descriptor.get_config(config) else None)
+        for descriptor in platform_descriptors()
+    }
     payload = {
         "platform": config.platform,
         "platforms": {
@@ -305,14 +311,7 @@ def config_to_payload(config: V2Config) -> dict:
         "setup_state": config.setup_state(),
         "mode": config.mode,
         "version": config.version,
-        "slack": {
-            **config.slack.__dict__,
-            "require_mention": config.slack.require_mention,
-        },
-        "discord": config.discord.__dict__ if config.discord else None,
-        "telegram": config.telegram.__dict__ if config.telegram else None,
-        "lark": config.lark.__dict__ if config.lark else None,
-        "wechat": config.wechat.__dict__ if config.wechat else None,
+        **platform_payload,
         "runtime": {
             "default_cwd": config.runtime.default_cwd,
             "log_level": config.runtime.log_level,

@@ -26,10 +26,18 @@ def test_credential_readiness_comes_from_platform_descriptor() -> None:
     assert get_platform_descriptor("lark").has_credentials(config) is False
 
 
+def test_descriptors_resolve_config_classes() -> None:
+    config = get_platform_descriptor("telegram").create_config({"bot_token": "123456:test-token"})
+
+    assert config.bot_token == "123456:test-token"
+
+
 def test_registry_addition_drives_platform_validation_and_readiness(monkeypatch) -> None:
     descriptor = PlatformDescriptor(
         id="mockchat",
         config_key="mockchat",
+        config_module="config.v2_config",
+        config_class="SlackConfig",
         client_module="unused",
         client_class="Unused",
         formatter_module="unused",

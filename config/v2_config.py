@@ -127,15 +127,6 @@ class WeChatConfig(BaseIMConfig):
         pass
 
 
-PLATFORM_CONFIG_CLASSES: dict[str, type[BaseIMConfig]] = {
-    "slack": SlackConfig,
-    "discord": DiscordConfig,
-    "telegram": TelegramConfig,
-    "lark": LarkConfig,
-    "wechat": WeChatConfig,
-}
-
-
 @dataclass
 class GatewayConfig:
     relay_url: Optional[str] = None
@@ -244,6 +235,7 @@ class V2Config:
     telegram: Optional[TelegramConfig] = None
     lark: Optional[LarkConfig] = None
     wechat: Optional[WeChatConfig] = None
+    platform_configs: dict[str, BaseIMConfig] = field(default_factory=dict)
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
@@ -312,10 +304,7 @@ class V2Config:
                 platform_configs[descriptor.id] = None
                 continue
 
-            config_class = PLATFORM_CONFIG_CLASSES[descriptor.id]
-            platform_config = config_class(**_filter_dataclass_fields(config_class, platform_payload))
-            platform_config.validate()
-            platform_configs[descriptor.id] = platform_config
+            platform_configs[descriptor.id] = descriptor.create_config(platform_payload)
 
         # Validate that every enabled platform has its config section present.
         for _ep in platforms.enabled:
@@ -405,6 +394,7 @@ class V2Config:
             telegram=platform_configs["telegram"],
             lark=platform_configs["lark"],
             wechat=platform_configs["wechat"],
+            platform_configs={key: value for key, value in platform_configs.items() if value is not None},
             runtime=runtime,
             agents=agents,
             gateway=gateway,
@@ -423,9 +413,7 @@ class V2Config:
         self.platforms.validate()
         self.platform = self.platforms.primary
         platform_payload = {
-            descriptor.config_key: (
-                getattr(self, descriptor.config_key).__dict__ if getattr(self, descriptor.config_key, None) else None
-            )
+            descriptor.config_key: (descriptor.get_config(self).__dict__ if descriptor.get_config(self) else None)
             for descriptor in platform_descriptors()
         }
         payload = {

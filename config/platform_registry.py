@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from importlib import import_module
 from typing import Any
 
@@ -22,6 +22,8 @@ class PlatformCapabilities:
 class PlatformDescriptor:
     id: str
     config_key: str
+    config_module: str
+    config_class: str
     client_module: str
     client_class: str
     formatter_module: str
@@ -38,7 +40,22 @@ class PlatformDescriptor:
         return f"platform.{self.id}.desc"
 
     def get_config(self, app_config: Any) -> Any:
+        platform_configs = getattr(app_config, "platform_configs", None)
+        if isinstance(platform_configs, dict) and self.id in platform_configs:
+            return platform_configs[self.id]
         return getattr(app_config, self.config_key, None)
+
+    def get_config_class(self) -> type[Any]:
+        return _load_attr(self.config_module, self.config_class)
+
+    def create_config(self, payload: dict[str, Any]) -> Any:
+        config_cls = self.get_config_class()
+        valid_fields = {field.name for field in fields(config_cls)}
+        platform_config = config_cls(**{key: value for key, value in payload.items() if key in valid_fields})
+        validate = getattr(platform_config, "validate", None)
+        if callable(validate):
+            validate()
+        return platform_config
 
     def has_credentials(self, app_config: Any) -> bool:
         platform_config = self.get_config(app_config)
@@ -77,6 +94,8 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
     "slack": PlatformDescriptor(
         id="slack",
         config_key="slack",
+        config_module="config.v2_config",
+        config_class="SlackConfig",
         client_module="modules.im.slack",
         client_class="SlackBot",
         formatter_module="modules.im.formatters",
@@ -93,6 +112,8 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
     "discord": PlatformDescriptor(
         id="discord",
         config_key="discord",
+        config_module="config.v2_config",
+        config_class="DiscordConfig",
         client_module="modules.im.discord",
         client_class="DiscordBot",
         formatter_module="modules.im.formatters",
@@ -110,6 +131,8 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
     "telegram": PlatformDescriptor(
         id="telegram",
         config_key="telegram",
+        config_module="config.v2_config",
+        config_class="TelegramConfig",
         client_module="modules.im.telegram",
         client_class="TelegramBot",
         formatter_module="modules.im.formatters",
@@ -128,6 +151,8 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
     "lark": PlatformDescriptor(
         id="lark",
         config_key="lark",
+        config_module="config.v2_config",
+        config_class="LarkConfig",
         client_module="modules.im.feishu",
         client_class="FeishuBot",
         formatter_module="modules.im.formatters",
@@ -146,6 +171,8 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
     "wechat": PlatformDescriptor(
         id="wechat",
         config_key="wechat",
+        config_module="config.v2_config",
+        config_class="WeChatConfig",
         client_module="modules.im.wechat",
         client_class="WeChatBot",
         formatter_module="modules.im.formatters",
