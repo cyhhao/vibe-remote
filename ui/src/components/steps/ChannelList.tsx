@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Hash, CheckSquare, Square, RefreshCw, HelpCircle, Globe, FolderOpen, MessageSquare, Users, AtSign } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
@@ -104,9 +104,24 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [guilds, setGuilds] = useState<any[]>([]);
   const [selectedGuildIds, setSelectedGuildIds] = useState<string[]>(getDiscordGuildAllowlist(data));
   const [selectedGuild, setSelectedGuild] = useState<string>(getDiscordGuildAllowlist(data)[0] || '');
+  const selectedGuildIdsRef = useRef<string[]>(getDiscordGuildAllowlist(data));
+  const confirmedGuildAllowlistRef = useRef<string[]>(getDiscordGuildAllowlist(data));
+  const allowlistSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const allowlistSaveVersionRef = useRef(0);
+  const configRef = useRef<any>(data);
   const [telegramSummary, setTelegramSummary] = useState<TelegramDiscoverySummary | null>(null);
   // Directory browser state — tracks which channel's cwd picker is open
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
+
+  const applySelectedGuildIds = (allowlist: string[]) => {
+    const normalized = [...allowlist];
+    selectedGuildIdsRef.current = normalized;
+    setSelectedGuildIds(normalized);
+  };
+
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
 
   useEffect(() => {
     if (isPage) return;
@@ -141,7 +156,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   useEffect(() => {
     if (!isPage) {
       const allowlist = getDiscordGuildAllowlist(data);
-      setSelectedGuildIds(allowlist);
+      confirmedGuildAllowlistRef.current = allowlist;
+      applySelectedGuildIds(allowlist);
       setSelectedGuild(allowlist[0] || '');
     }
   }, [data.discord?.guild_allowlist, isPage]);
@@ -150,9 +166,11 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   useEffect(() => {
     if (isPage) {
       api.getConfig().then(c => {
+        configRef.current = c;
         setConfig(c);
         const allowlist = getDiscordGuildAllowlist(c);
-        setSelectedGuildIds(allowlist);
+        confirmedGuildAllowlistRef.current = allowlist;
+        applySelectedGuildIds(allowlist);
         setSelectedGuild(allowlist[0] || '');
         const defaultPlatform = forcedPlatform || getEnabledPlatforms(c).find(platformSupportsChannels) || c?.platform || 'slack';
         setPagePlatform(defaultPlatform);
@@ -218,9 +236,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   useEffect(() => {
     if (platform !== 'discord') return;
     const allowlist = getDiscordGuildAllowlist(config);
-    if (allowlist.length > 0) {
-      setSelectedGuildIds(allowlist);
-    }
+    confirmedGuildAllowlistRef.current = allowlist;
   }, [platform, config.discord?.guild_allowlist]);
 
   const updateSelectedGuild = (guildId: string) => {
@@ -228,28 +244,39 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   };
 
   const toggleAllowedGuild = async (guildId: string, checked: boolean) => {
-    const previous = selectedGuildIds;
+    const current = selectedGuildIdsRef.current;
     const next = checked
-      ? addDiscordGuildToAllowlist(selectedGuildIds, guildId)
-      : selectedGuildIds.filter(id => id !== guildId);
-    setSelectedGuildIds(next);
-    const saved = await persistDiscordGuildAllowlist(next);
-    if (!saved) {
-      setSelectedGuildIds(previous);
-    }
+      ? addDiscordGuildToAllowlist(current, guildId)
+      : current.filter(id => id !== guildId);
+    const version = allowlistSaveVersionRef.current + 1;
+    allowlistSaveVersionRef.current = version;
+    applySelectedGuildIds(next);
+    if (!isPage) return;
+
+    const saveTask = allowlistSaveQueueRef.current.then(async () => {
+      const saved = await persistDiscordGuildAllowlist(next);
+      if (saved) {
+        confirmedGuildAllowlistRef.current = next;
+      } else if (allowlistSaveVersionRef.current === version) {
+        applySelectedGuildIds(confirmedGuildAllowlistRef.current);
+      }
+    });
+    allowlistSaveQueueRef.current = saveTask.catch(() => {});
+    await saveTask;
   };
 
   const persistDiscordGuildAllowlist = async (allowlist: string[]): Promise<boolean> => {
     if (!isPage) return true;
     const updated = {
-      ...config,
+      ...configRef.current,
       discord: {
-        ...(config.discord || {}),
+        ...(configRef.current.discord || {}),
         guild_allowlist: allowlist,
       },
     };
     try {
       await api.saveConfig(updated);
+      configRef.current = updated;
       setConfig(updated);
       showToast(t('common.saved'), 'success');
       return true;
