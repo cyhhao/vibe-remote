@@ -163,6 +163,100 @@ def test_session_handler_keeps_sdk_default_for_default_claude_binary(monkeypatch
     assert captured["options"].cli_path is None
 
 
+def test_session_handler_does_not_repeat_claude_model_control_request(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {"clients": []}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+            captured["clients"].append(self)
+            self.model_calls = []
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+        async def set_model(self, model) -> None:
+            self.model_calls.append(model)
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    controller.config.claude.default_model = "claude-sonnet-4-5"
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    first_client = _run_session(handler, context)
+    second_client = _run_session(handler, context)
+
+    assert first_client is second_client
+    assert len(captured["clients"]) == 1
+    assert captured["options"].extra_args == {"model": "claude-sonnet-4-5"}
+    assert first_client.model_calls == []
+
+
+def test_session_handler_updates_cached_claude_model_only_when_changed(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+            self.model_calls = []
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+        async def set_model(self, model) -> None:
+            self.model_calls.append(model)
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    controller.config.claude.default_model = "claude-sonnet-4-5"
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    client = _run_session(handler, context)
+    controller.config.claude.default_model = "claude-opus-4-1"
+
+    _run_session(handler, context)
+    _run_session(handler, context)
+
+    assert client.model_calls == ["claude-opus-4-1"]
+
+
+def test_session_handler_does_not_send_none_model_control_request_for_cached_default(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+            self.model_calls = []
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+        async def set_model(self, model) -> None:
+            self.model_calls.append(model)
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    client = _run_session(handler, context)
+    _run_session(handler, context)
+
+    assert captured["options"].extra_args == {}
+    assert client.model_calls == []
+
+
 def test_session_handler_passes_non_default_claude_command_name(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, Any] = {}
 
