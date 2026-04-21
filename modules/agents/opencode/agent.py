@@ -275,6 +275,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             raw_settings_key = request.session_key
             if "::" in raw_settings_key:
                 raw_settings_key = raw_settings_key.split("::", 1)[1]
+            platform_payload = request.context.platform_specific or {}
 
             self.sessions.add_active_poll(
                 opencode_session_id=session_id,
@@ -286,8 +287,11 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 baseline_message_ids=list(baseline_message_ids),
                 ack_reaction_message_id=request.ack_reaction_message_id,
                 ack_reaction_emoji=request.ack_reaction_emoji,
+                typing_indicator_active=request.typing_indicator_active,
+                context_token=str(platform_payload.get("context_token") or ""),
+                processing_indicator=self.controller.processing_indicator.snapshot_request(request),
                 user_id=request.context.user_id or "",
-                platform=request.context.platform or (request.context.platform_specific or {}).get("platform") or "",
+                platform=request.context.platform or platform_payload.get("platform") or "",
             )
 
             final_text, should_emit = await self._poll_loop.run_prompt_poll(
@@ -418,12 +422,16 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
         return terminated
 
     async def _delete_ack(self, request: AgentRequest) -> None:
+        service = getattr(self.controller, "processing_indicator", None)
+        if service is not None:
+            await service.delete_ack_message(request)
+            return
         ack_id = request.ack_message_id
         if ack_id and hasattr(self.im_client, "delete_message"):
             try:
                 await self.im_client.delete_message(request.context.channel_id, ack_id)
             except Exception as err:
-                logger.debug(f"Could not delete ack message: {err}")
+                logger.debug("Could not delete ack message: %s", err)
             finally:
                 request.ack_message_id = None
 
@@ -467,6 +475,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
             session_still_active = has_in_progress or last_assistant_finish == "tool-calls"
             if not session_still_active:
                 logger.info(f"OpenCode session {session_id} has completed, removing from active polls")
+                await self._poll_loop.remove_restored_ack(poll_info)
                 stale_poll_ids.append(session_id)
                 continue
 

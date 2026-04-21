@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from modules.im import MessageContext
+from core.processing_indicator import ProcessingIndicatorService
 
 
 def _load_message_handler_class():
@@ -31,6 +32,7 @@ def _load_message_handler_class():
             subagent_key: str | None = None
             subagent_model: str | None = None
             subagent_reasoning_effort: str | None = None
+            processing_indicator: object | None = None
             ack_reaction_message_id: str | None = None
             ack_reaction_emoji: str | None = None
             typing_indicator_active: bool = False
@@ -172,6 +174,7 @@ class _StubController:
         self.settings_handler = type("Settings", (), {})()
         self.command_handler = type("Cmd", (), {"handle_start": staticmethod(lambda context, args: None)})()
         self.agent_auth_service = type("Auth", (), {})()
+        self.processing_indicator = ProcessingIndicatorService(self)
 
     def update_thread_message_id(self, context):
         return None
@@ -328,6 +331,20 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.ack_reaction_emoji, ":eyes:")
         self.assertEqual(controller.im_client.reactions, [("tg-chat", "m1", ":eyes:")])
 
+    async def test_lark_typing_preference_uses_registry_reaction_capability(self):
+        controller = _StubController(platform="lark", ack_mode="typing", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(user_id="lark-user", channel_id="lark-chat", message_id="om_1", platform="lark")
+
+        await handler.handle_user_message(context, "hello")
+
+        _, request = controller.agent_service.requests[0]
+        self.assertFalse(request.typing_indicator_active)
+        self.assertEqual(controller.im_client.typing_calls, [])
+        self.assertEqual(request.ack_reaction_message_id, "om_1")
+        self.assertEqual(controller.im_client.reactions, [("lark-chat", "om_1", ":eyes:")])
+
     async def test_platform_specific_client_is_used_for_user_info(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
         handler = MessageHandler(controller)
@@ -466,6 +483,8 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         await handler.handle_callback_query(context, "quick_reply:继续")
 
         self.assertEqual(controller.im_client.removed_keyboards, [("chat1", "lark", "om_123")])
+        self.assertEqual(controller.im_client.sent_messages, [("chat1", "Reply: 继续")])
+        self.assertEqual(controller.im_client.reactions, [("chat1", "msg-1", ":eyes:")])
         handler.handle_user_message.assert_awaited_once()
         forwarded_context, forwarded_text = handler.handle_user_message.await_args.args
         self.assertEqual(forwarded_text, "继续")

@@ -26,6 +26,10 @@ class ActivePollInfo:
     # Ack reaction info for cleanup on restore
     ack_reaction_message_id: Optional[str] = None
     ack_reaction_emoji: Optional[str] = None
+    # Typing indicator info for cleanup on restore
+    typing_indicator_active: bool = False
+    context_token: str = ""
+    processing_indicator: Dict[str, Any] = field(default_factory=dict)
     # User identity for restoring question UI context
     user_id: str = ""
     platform: str = ""
@@ -44,12 +48,27 @@ class ActivePollInfo:
             "started_at": self.started_at,
             "ack_reaction_message_id": self.ack_reaction_message_id,
             "ack_reaction_emoji": self.ack_reaction_emoji,
+            "typing_indicator_active": self.typing_indicator_active,
+            "context_token": self.context_token,
+            "processing_indicator": self.processing_indicator,
             "user_id": self.user_id,
             "platform": self.platform,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ActivePollInfo":
+        processing_indicator = data.get("processing_indicator") or {}
+        if not processing_indicator:
+            processing_indicator = {
+                "platform": data.get("platform", ""),
+                "user_id": data.get("user_id", ""),
+                "channel_id": data.get("channel_id", ""),
+                "thread_id": data.get("thread_id", ""),
+                "context_token": data.get("context_token", ""),
+                "ack_reaction_message_id": data.get("ack_reaction_message_id"),
+                "ack_reaction_emoji": data.get("ack_reaction_emoji"),
+                "typing_indicator_active": bool(data.get("typing_indicator_active", False)),
+            }
         return cls(
             opencode_session_id=data.get("opencode_session_id", ""),
             base_session_id=data.get("base_session_id", ""),
@@ -63,6 +82,9 @@ class ActivePollInfo:
             started_at=data.get("started_at", 0.0),
             ack_reaction_message_id=data.get("ack_reaction_message_id"),
             ack_reaction_emoji=data.get("ack_reaction_emoji"),
+            typing_indicator_active=bool(data.get("typing_indicator_active", False)),
+            context_token=data.get("context_token", ""),
+            processing_indicator=processing_indicator,
             user_id=data.get("user_id", ""),
             platform=data.get("platform", ""),
         )

@@ -16,6 +16,14 @@ class PlatformCapabilities:
     supports_message_editing: bool
     markdown_upload_returns_message_id: bool = False
     quick_reply_single_column: bool = False
+    supports_typing_indicator: bool = False
+    typing_indicator_requires_clear: bool = False
+    typing_indicator_best_effort: bool = False
+    supports_reaction_indicator: bool = False
+    supports_message_indicator: bool = True
+    supports_message_indicator_delete: bool = False
+    preferred_processing_indicator: str = "typing"
+    force_preferred_processing_indicator: bool = False
 
 
 @dataclass(frozen=True)
@@ -107,6 +115,9 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
             supports_buttons=True,
             supports_quick_replies=True,
             supports_message_editing=True,
+            supports_typing_indicator=True,
+            typing_indicator_best_effort=True,
+            supports_reaction_indicator=True,
         ),
     ),
     "discord": PlatformDescriptor(
@@ -126,6 +137,8 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
             supports_quick_replies=True,
             supports_message_editing=True,
             markdown_upload_returns_message_id=True,
+            supports_typing_indicator=True,
+            supports_reaction_indicator=True,
         ),
     ),
     "telegram": PlatformDescriptor(
@@ -146,6 +159,9 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
             supports_message_editing=True,
             markdown_upload_returns_message_id=True,
             quick_reply_single_column=True,
+            supports_typing_indicator=True,
+            supports_reaction_indicator=True,
+            supports_message_indicator_delete=True,
         ),
     ),
     "lark": PlatformDescriptor(
@@ -166,6 +182,8 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
             supports_message_editing=True,
             markdown_upload_returns_message_id=True,
             quick_reply_single_column=True,
+            supports_reaction_indicator=True,
+            preferred_processing_indicator="reaction",
         ),
     ),
     "wechat": PlatformDescriptor(
@@ -184,6 +202,11 @@ PLATFORM_REGISTRY: dict[str, PlatformDescriptor] = {
             supports_buttons=False,
             supports_quick_replies=False,
             supports_message_editing=False,
+            supports_typing_indicator=True,
+            typing_indicator_requires_clear=True,
+            supports_reaction_indicator=False,
+            preferred_processing_indicator="typing",
+            force_preferred_processing_indicator=True,
         ),
     ),
 }
