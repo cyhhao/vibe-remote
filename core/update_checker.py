@@ -238,14 +238,19 @@ class UpdateChecker:
 
             # Notification flow — failure must not block auto-update
             if self.config.notify_admins and self.state.notified_version != latest:
+                delivered = False
                 try:
-                    await self._send_update_notification(current, latest)
-                    # Only record delivery time on success — grace period depends on this
-                    self.state.notified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    delivered = await self._send_update_notification(current, latest)
                 except Exception as e:
                     logger.error(f"Failed to send update notification: {e}", exc_info=True)
-                # Always mark version to prevent retry every cycle (even if send failed)
-                self.state.notified_version = latest
+                if delivered:
+                    self.state.notified_version = latest
+                    self.state.notified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                else:
+                    logger.warning(
+                        "Update notification for %s was not delivered; skipping grace period",
+                        latest,
+                    )
                 self.state.save()
 
             # Auto-update flow — respect a grace period after successful notification
@@ -426,25 +431,27 @@ class UpdateChecker:
 
         return None
 
-    async def _send_update_notification(self, current: str, latest: str) -> None:
+    async def _send_update_notification(self, current: str, latest: str) -> bool:
         """Send update notification to admin users, with platform-specific fallbacks."""
         platform = getattr(self.controller.config, "platform", "slack")
         admin_ids = self._get_admin_user_ids()
 
         if admin_ids:
             # Send DM to each admin via the platform-agnostic send_dm method
-            await self._send_notification_to_admins(admin_ids, current, latest, platform)
+            return await self._send_notification_to_admins(admin_ids, current, latest, platform)
         else:
             # Legacy fallback: no admins configured
             if platform == "slack":
-                await self._send_slack_notification_legacy(current, latest)
+                return await self._send_slack_notification_legacy(current, latest)
             elif platform == "discord":
-                await self._send_discord_notification_fallback(current, latest)
+                return await self._send_discord_notification_fallback(current, latest)
             else:
                 logger.warning("Update notification skipped: no admins and unsupported platform %s", platform)
+                return False
 
-    async def _send_notification_to_admins(self, admin_ids: list, current: str, latest: str, platform: str) -> None:
+    async def _send_notification_to_admins(self, admin_ids: list, current: str, latest: str, platform: str) -> bool:
         """Send update notification DM to each admin user."""
+        delivered = False
         for uid in admin_ids:
             im_client, raw_user_id, user_platform = self._get_im_client_for_user(uid)
             try:
@@ -482,11 +489,13 @@ class UpdateChecker:
                     result = await im_client.send_dm(raw_user_id, text, **kwargs)
 
                 if result:
+                    delivered = True
                     logger.info(f"Sent update notification to admin {uid}")
                 else:
                     logger.warning(f"Failed to send update notification to admin {uid}: send_dm returned None")
             except Exception as e:
                 logger.error(f"Failed to send update notification to admin {uid}: {e}")
+        return delivered
 
     def _supports_admin_update_button(self, platform: str) -> bool:
         """Return whether admin update DMs should include an update button."""
@@ -502,18 +511,18 @@ class UpdateChecker:
             return f"🚀 Vibe Remote Update Available\n\nUpdate from `{current}` → `{latest}`"
         return f"🚀 Vibe Remote Update Available\n\nUpdate from {current} → {latest}"
 
-    async def _send_slack_notification_legacy(self, current: str, latest: str) -> None:
+    async def _send_slack_notification_legacy(self, current: str, latest: str) -> bool:
         """Legacy Slack notification: send to workspace owner when no admins configured."""
         owner_id = await self._get_workspace_owner_id()
         if not owner_id:
             logger.warning("Cannot send update notification: no admins and no workspace owner found")
-            return
+            return False
 
         # Open DM channel first (required for sending messages to users)
         dm_channel = await self._open_dm_channel(owner_id)
         if not dm_channel:
             logger.warning(f"Cannot send update notification: failed to open DM with {owner_id}")
-            return
+            return False
 
         try:
             im_client = self._get_im_client_for_platform("slack")
@@ -544,15 +553,17 @@ class UpdateChecker:
                 channel=dm_channel, text=f"Vibe Remote update available: {current} → {latest}", blocks=blocks
             )
             logger.info(f"Sent update notification to workspace owner {owner_id}")
+            return True
         except Exception as e:
             logger.error(f"Failed to send update notification: {e}")
+            return False
 
-    async def _send_discord_notification_fallback(self, current: str, latest: str) -> None:
+    async def _send_discord_notification_fallback(self, current: str, latest: str) -> bool:
         """Fallback Discord notification: send to first enabled channel when no admins configured."""
         channel_id = self._get_default_notification_channel_id()
         if not channel_id:
             logger.warning("Cannot send update notification: no admins and no enabled channel found")
-            return
+            return False
         try:
             from modules.im import InlineButton, InlineKeyboard, MessageContext
 
@@ -561,12 +572,14 @@ class UpdateChecker:
                 buttons=[[InlineButton(text="Update Now", callback_data=f"vibe_update_now:{latest}")]]
             )
             context = MessageContext(user_id="system", channel_id=channel_id, platform="discord")
-            await self.controller.get_im_client_for_context(context).send_message_with_buttons(
+            message_id = await self.controller.get_im_client_for_context(context).send_message_with_buttons(
                 context, text, keyboard, parse_mode="markdown"
             )
             logger.info("Sent update notification to Discord channel %s", channel_id)
+            return bool(message_id)
         except Exception as e:
             logger.error(f"Failed to send Discord update notification: {e}")
+            return False
 
     def _get_default_notification_channel_id(self) -> Optional[str]:
         if not hasattr(self.controller, "settings_manager"):
