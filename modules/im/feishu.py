@@ -318,7 +318,14 @@ class FeishuBot(BaseIMClient):
                 CreateMessageRequestBody,
             )
 
-            content = self._build_card_json(text)
+            button_rows: Optional[List[List[dict]]] = None
+            keyboard = kwargs.get("keyboard")
+            if keyboard is not None:
+                button_rows = [
+                    [{"text": button.text, "callback_data": button.callback_data} for button in row]
+                    for row in keyboard.buttons
+                ]
+            content = self._build_card_json(text, button_rows)
             body = (
                 CreateMessageRequestBody.builder().receive_id(user_id).msg_type("interactive").content(content).build()
             )
@@ -332,7 +339,12 @@ class FeishuBot(BaseIMClient):
                     response.msg,
                 )
                 return None
-            return response.data.message_id
+            message_id = response.data.message_id
+            self._remember_message_text(message_id, text)
+            chat_id = getattr(response.data, "chat_id", None) or getattr(response.data, "open_chat_id", None)
+            if chat_id:
+                self._dm_chat_ids.add(chat_id)
+            return message_id
         except Exception as e:
             logger.error("Failed to send DM to Feishu user %s: %s", user_id, e)
             return None

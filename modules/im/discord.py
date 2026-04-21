@@ -447,7 +447,17 @@ class DiscordBot(BaseIMClient):
                 if user is None:
                     return None
                 dm_channel = user.dm_channel or await user.create_dm()
-                message = await dm_channel.send(content=text)
+                keyboard = kwargs.get("keyboard")
+                view = None
+                if keyboard is not None:
+                    context = MessageContext(
+                        user_id=user_id,
+                        channel_id=str(dm_channel.id),
+                        platform="discord",
+                        platform_specific={"is_dm": True},
+                    )
+                    view = _DiscordButtonView(self, context, keyboard, owner_id=str(uid))
+                message = await dm_channel.send(content=text, view=view)
                 return str(message.id)
             except Exception as e:
                 logger.error("Failed to send DM to Discord user %s: %s", user_id, e)
