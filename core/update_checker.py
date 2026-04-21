@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from config import paths
 from config.v2_config import UpdateConfig
 from config.v2_settings import _infer_channel_platform, _infer_user_platform, _split_scoped_key
-from modules.im import MessageContext
+from modules.im import InlineButton, InlineKeyboard, MessageContext
 from vibe.upgrade import has_newer_version, select_latest_update_version
 
 if TYPE_CHECKING:
@@ -473,12 +473,13 @@ class UpdateChecker:
                         },
                     ]
                     result = await im_client.send_dm(raw_user_id, text, blocks=blocks)
-                elif user_platform == "discord":
-                    text = f"🚀 **Vibe Remote Update Available**\n\nUpdate from `{current}` → `{latest}`"
-                    result = await im_client.send_dm(raw_user_id, text)
                 else:
-                    text = f"🚀 Vibe Remote Update Available\n\nUpdate from {current} → {latest}"
-                    result = await im_client.send_dm(raw_user_id, text)
+                    text = self._format_update_notification_text(current, latest, user_platform)
+                    kwargs: dict[str, Any] = {}
+                    if self._supports_admin_update_button(user_platform):
+                        kwargs["keyboard"] = self._build_update_keyboard(latest)
+                        kwargs["parse_mode"] = "markdown"
+                    result = await im_client.send_dm(raw_user_id, text, **kwargs)
 
                 if result:
                     logger.info(f"Sent update notification to admin {uid}")
@@ -486,6 +487,20 @@ class UpdateChecker:
                     logger.warning(f"Failed to send update notification to admin {uid}: send_dm returned None")
             except Exception as e:
                 logger.error(f"Failed to send update notification to admin {uid}: {e}")
+
+    def _supports_admin_update_button(self, platform: str) -> bool:
+        """Return whether admin update DMs should include an update button."""
+        return platform not in {"wechat", "unknown"}
+
+    def _build_update_keyboard(self, latest: str) -> InlineKeyboard:
+        return InlineKeyboard(buttons=[[InlineButton(text="Update Now", callback_data=f"vibe_update_now:{latest}")]])
+
+    def _format_update_notification_text(self, current: str, latest: str, platform: str) -> str:
+        if platform == "discord":
+            return f"🚀 **Vibe Remote Update Available**\n\nUpdate from `{current}` → `{latest}`"
+        if platform in {"telegram", "lark"}:
+            return f"🚀 Vibe Remote Update Available\n\nUpdate from `{current}` → `{latest}`"
+        return f"🚀 Vibe Remote Update Available\n\nUpdate from {current} → {latest}"
 
     async def _send_slack_notification_legacy(self, current: str, latest: str) -> None:
         """Legacy Slack notification: send to workspace owner when no admins configured."""
@@ -568,7 +583,7 @@ class UpdateChecker:
         return None
 
     async def handle_update_button_click(self, context: MessageContext, target_version: Optional[str] = None) -> None:
-        """Handle update button click for Discord (non-Slack)."""
+        """Handle update button click for non-Slack platforms."""
         im_client = self.controller.get_im_client_for_context(context)
         message_id = context.message_id
         if not message_id:
@@ -598,14 +613,24 @@ class UpdateChecker:
                 return
 
         await im_client.edit_message(context, message_id, text="Updating Vibe Remote...")
-        result = await self._perform_update(target_version, channel_id=context.channel_id, message_id=message_id)
+        platform = context.platform or (context.platform_specific or {}).get("platform")
+        result = await self._perform_update(
+            target_version,
+            channel_id=context.channel_id,
+            message_id=message_id,
+            platform=platform,
+        )
         if not result.get("ok"):
             await im_client.edit_message(context, message_id, text="Upgrade failed. Please check logs.")
         elif not result.get("restarting"):
             await im_client.edit_message(context, message_id, text="Upgrade complete. Please restart Vibe Remote.")
 
     async def _perform_update(
-        self, target_version: str, channel_id: Optional[str] = None, message_id: Optional[str] = None
+        self,
+        target_version: str,
+        channel_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+        platform: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Perform the actual update and restart. Returns do_upgrade result dict."""
         # Prevent concurrent upgrades
@@ -630,7 +655,12 @@ class UpdateChecker:
                 logger.info(f"Upgrade successful: {result['message']}")
                 if result.get("restarting"):
                     # Write marker only if restart is scheduled
-                    self._write_update_marker(target_version, channel_id=channel_id, message_id=message_id)
+                    self._write_update_marker(
+                        target_version,
+                        channel_id=channel_id,
+                        message_id=message_id,
+                        platform=platform,
+                    )
                 else:
                     logger.warning("Upgrade completed without restart; manual restart required")
                 return result
@@ -642,7 +672,11 @@ class UpdateChecker:
                 return result
 
     def _write_update_marker(
-        self, version: str, channel_id: Optional[str] = None, message_id: Optional[str] = None
+        self,
+        version: str,
+        channel_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+        platform: Optional[str] = None,
     ) -> None:
         """Write a marker file to trigger post-update notification."""
         try:
@@ -656,6 +690,8 @@ class UpdateChecker:
             if channel_id and message_id:
                 data["channel_id"] = channel_id
                 data["message_id"] = message_id
+            if platform:
+                data["platform"] = platform
 
             # Atomic write
             with tempfile.NamedTemporaryFile(
@@ -688,9 +724,9 @@ class UpdateChecker:
             # Use the target version from marker (more reliable than __version__ in edge cases)
             target_version = data.get("version", "unknown")
 
-            platform = getattr(self.controller.config, "platform", "slack")
+            platform = data.get("platform") or getattr(self.controller.config, "platform", "slack")
             if channel_id:
-                platform = _infer_channel_platform(channel_id)
+                platform = data.get("platform") or _infer_channel_platform(channel_id)
             im_client = self._get_im_client_for_platform(platform)
             if platform == "discord":
                 success_text = f"✅ Vibe Remote has been updated to `{target_version}`"
@@ -716,15 +752,13 @@ class UpdateChecker:
                     blocks=success_blocks,
                 )
                 logger.info("Updated original message with post-update notification")
-            elif channel_id and message_id and platform == "discord":
+            elif channel_id and message_id:
                 try:
-                    from modules.im import MessageContext
-
-                    context = MessageContext(user_id="system", channel_id=channel_id, platform="discord")
+                    context = MessageContext(user_id="system", channel_id=channel_id, platform=platform)
                     await im_client.edit_message(context, message_id, text=success_text)
-                    logger.info("Updated Discord message with post-update notification")
+                    logger.info("Updated %s message with post-update notification", platform)
                 except Exception as e:
-                    logger.error("Failed to edit Discord update message: %s", e)
+                    logger.error("Failed to edit %s update message: %s", platform, e)
             else:
                 # Fallback: send a new message to admins, or workspace owner
                 admin_ids = self._get_admin_user_ids()
@@ -829,7 +863,10 @@ async def _do_update_from_button(controller: "Controller", channel_id: str, mess
         if version_info.get("has_update"):
             # Perform the update
             result = await update_checker._perform_update(
-                version_info["latest"], channel_id=channel_id, message_id=message_id
+                version_info["latest"],
+                channel_id=channel_id,
+                message_id=message_id,
+                platform="slack",
             )
             if not result.get("ok"):
                 # Update failed, show error

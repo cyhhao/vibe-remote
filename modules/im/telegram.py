@@ -884,8 +884,17 @@ class TelegramBot(BaseIMClient):
         return {"id": channel_id, "name": name, "type": chat.get("type")}
 
     async def send_dm(self, user_id: str, text: str, **kwargs) -> Optional[str]:
-        context = MessageContext(user_id=user_id, channel_id=user_id, platform="telegram", platform_specific={"is_dm": True})
-        return await self.send_message(context, text)
+        context = MessageContext(
+            user_id=user_id,
+            channel_id=user_id,
+            platform="telegram",
+            platform_specific={"is_dm": True},
+        )
+        keyboard = kwargs.get("keyboard")
+        parse_mode = kwargs.get("parse_mode")
+        if keyboard is not None:
+            return await self.send_message_with_buttons(context, text, keyboard, parse_mode=parse_mode)
+        return await self.send_message(context, text, parse_mode=parse_mode)
 
     def _normalize_reaction_emoji(self, emoji: str) -> Optional[str]:
         normalized = (emoji or "").strip()
