@@ -13,6 +13,7 @@ import json
 import logging
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -39,6 +40,8 @@ MIN_CHECK_INTERVAL_MINUTES = 1
 # This gives admins time to read the notification and decide whether to update manually.
 NOTIFICATION_GRACE_PERIOD_MINUTES = 10
 
+GITHUB_RELEASE_TAG_BASE_URL = "https://github.com/cyhhao/vibe-remote/releases/tag"
+
 
 def _fetch_pypi_version_sync() -> Dict[str, Any]:
     """Synchronous PyPI version fetch (to be run in thread)."""
@@ -61,6 +64,22 @@ def _fetch_pypi_version_sync() -> Dict[str, Any]:
         result["error"] = str(e)
 
     return result
+
+
+def _github_release_url(version: str) -> str:
+    version_text = str(version).strip()
+    tag = version_text if version_text.startswith(("v", "gh-v")) else f"v{version_text}"
+    return f"{GITHUB_RELEASE_TAG_BASE_URL}/{urllib.parse.quote(tag, safe='')}"
+
+
+def _format_release_version_link(version: str, platform: str = "markdown") -> str:
+    version_text = str(version).strip()
+    url = _github_release_url(version_text)
+    if platform == "slack":
+        return f"<{url}|{version_text}>"
+    if platform == "plain":
+        return f"{version_text} ({url})"
+    return f"[{version_text}]({url})"
 
 
 @dataclass
@@ -456,14 +475,16 @@ class UpdateChecker:
             im_client, raw_user_id, user_platform = self._get_im_client_for_user(uid)
             try:
                 if user_platform == "slack":
-                    text = f"Vibe Remote update available: {current} → {latest}"
+                    release_url = _github_release_url(latest)
+                    latest_link = _format_release_version_link(latest, "slack")
+                    text = f"Vibe Remote update available: {current} → {latest} ({release_url})"
                     blocks = [
                         {
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
                                 "text": f":rocket: *Vibe Remote Update Available*\n\n"
-                                f"A new version is available: `{current}` → `{latest}`",
+                                f"A new version is available: `{current}` → {latest_link}",
                             },
                         },
                         {
@@ -505,11 +526,15 @@ class UpdateChecker:
         return InlineKeyboard(buttons=[[InlineButton(text="Update Now", callback_data=f"vibe_update_now:{latest}")]])
 
     def _format_update_notification_text(self, current: str, latest: str, platform: str) -> str:
+        latest_link = _format_release_version_link(
+            latest,
+            "plain" if platform in {"wechat", "unknown"} else "markdown",
+        )
         if platform == "discord":
-            return f"🚀 **Vibe Remote Update Available**\n\nUpdate from `{current}` → `{latest}`"
+            return f"🚀 **Vibe Remote Update Available**\n\nUpdate from `{current}` → {latest_link}"
         if platform in {"telegram", "lark"}:
-            return f"🚀 Vibe Remote Update Available\n\nUpdate from `{current}` → `{latest}`"
-        return f"🚀 Vibe Remote Update Available\n\nUpdate from {current} → {latest}"
+            return f"🚀 Vibe Remote Update Available\n\nUpdate from `{current}` → {latest_link}"
+        return f"🚀 Vibe Remote Update Available\n\nUpdate from {current} → {latest_link}"
 
     async def _send_slack_notification_legacy(self, current: str, latest: str) -> bool:
         """Legacy Slack notification: send to workspace owner when no admins configured."""
@@ -526,13 +551,15 @@ class UpdateChecker:
 
         try:
             im_client = self._get_im_client_for_platform("slack")
+            release_url = _github_release_url(latest)
+            latest_link = _format_release_version_link(latest, "slack")
             blocks = [
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
                         "text": f":rocket: *Vibe Remote Update Available*\n\n"
-                        f"A new version is available: `{current}` → `{latest}`",
+                        f"A new version is available: `{current}` → {latest_link}",
                     },
                 },
                 {
@@ -550,7 +577,9 @@ class UpdateChecker:
             ]
 
             await im_client.web_client.chat_postMessage(
-                channel=dm_channel, text=f"Vibe Remote update available: {current} → {latest}", blocks=blocks
+                channel=dm_channel,
+                text=f"Vibe Remote update available: {current} → {latest} ({release_url})",
+                blocks=blocks,
             )
             logger.info(f"Sent update notification to workspace owner {owner_id}")
             return True
@@ -567,7 +596,7 @@ class UpdateChecker:
         try:
             from modules.im import InlineButton, InlineKeyboard, MessageContext
 
-            text = f"🚀 **Vibe Remote Update Available**\n\nUpdate from `{current}` → `{latest}`"
+            text = self._format_update_notification_text(current, latest, "discord")
             keyboard = InlineKeyboard(
                 buttons=[[InlineButton(text="Update Now", callback_data=f"vibe_update_now:{latest}")]]
             )

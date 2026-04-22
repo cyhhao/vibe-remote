@@ -15,6 +15,9 @@ from core import update_checker
 from core.update_checker import UpdateChecker
 
 
+RELEASE_URL_101 = "https://github.com/cyhhao/vibe-remote/releases/tag/v1.0.1"
+
+
 class _StubSettingsManager:
     def __init__(self, store):
         self._store = store
@@ -79,14 +82,28 @@ def test_update_notification_admin_dms_include_buttons_except_wechat(monkeypatch
     slack_kwargs = clients["slack"].dm_calls[0][2]
     assert slack_kwargs["blocks"][1]["elements"][0]["action_id"] == "vibe_update_now"
     assert slack_kwargs["blocks"][1]["elements"][0]["value"] == "1.0.1"
+    assert f"<{RELEASE_URL_101}|1.0.1>" in slack_kwargs["blocks"][0]["text"]["text"]
+    assert RELEASE_URL_101 in clients["slack"].dm_calls[0][1]
 
     for platform in ["discord", "telegram", "lark"]:
+        text = clients[platform].dm_calls[0][1]
+        assert f"[1.0.1]({RELEASE_URL_101})" in text
         kwargs = clients[platform].dm_calls[0][2]
         keyboard = kwargs["keyboard"]
         assert keyboard.buttons[0][0].text == "Update Now"
         assert keyboard.buttons[0][0].callback_data == "vibe_update_now:1.0.1"
 
+    assert f"1.0.1 ({RELEASE_URL_101})" in clients["wechat"].dm_calls[0][1]
     assert "keyboard" not in clients["wechat"].dm_calls[0][2]
+
+
+def test_update_notification_release_url_normalizes_github_tags():
+    assert update_checker._github_release_url("1.0.1") == RELEASE_URL_101
+    assert update_checker._github_release_url("v1.0.1") == RELEASE_URL_101
+    assert (
+        update_checker._github_release_url("gh-v2.2.8rc1")
+        == "https://github.com/cyhhao/vibe-remote/releases/tag/gh-v2.2.8rc1"
+    )
 
 
 def test_update_notification_returns_false_when_all_admin_dms_fail(monkeypatch, tmp_path):
