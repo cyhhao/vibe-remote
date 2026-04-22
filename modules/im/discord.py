@@ -425,6 +425,16 @@ class DiscordBot(BaseIMClient):
         return (text or "").strip()
 
     def _is_allowed_guild(self, guild_id: Optional[str]) -> bool:
+        if guild_id and self.settings_manager and hasattr(self.settings_manager, "has_guild_scope"):
+            try:
+                if self.settings_manager.has_guild_scope():
+                    allowed = bool(self.settings_manager.is_guild_enabled(guild_id))
+                    if not allowed:
+                        logger.debug("Ignoring Discord message from disabled guild %s", guild_id)
+                    return allowed
+            except Exception:
+                logger.debug("Failed to resolve Discord guild access settings", exc_info=True)
+
         allow = set(self.config.guild_allowlist or [])
         deny = set(self.config.guild_denylist or [])
         if guild_id and guild_id in deny:

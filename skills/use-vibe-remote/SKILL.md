@@ -209,8 +209,6 @@ Important config payload shape:
   "discord": {
     "bot_token": "...",
     "application_id": "...",
-    "guild_allowlist": [],
-    "guild_denylist": [],
     "require_mention": false
   },
   "telegram": {
@@ -268,6 +266,21 @@ Important config payload shape:
   "show_duration": false,
   "include_user_info": true,
   "reply_enhancements": true
+}
+```
+
+Discord server access belongs to `/settings`, not `/config`. Store enabled
+servers under `guilds`, next to channel settings:
+
+```json
+{
+  "platform": "discord",
+  "guilds": {
+    "900740769198006293": { "enabled": true }
+  },
+  "channels": {
+    "1067738479234138202": { "enabled": true }
+  }
 }
 ```
 

@@ -12,6 +12,11 @@ interface DiscordConfigProps {
   onBack: () => void;
 }
 
+const getDiscordGuildAllowlist = (source: any): string[] => {
+  const allowlist = source?.discordGuildAllowlist || source?.guild_allowlist || source?.discord?.guild_allowlist;
+  return Array.isArray(allowlist) ? allowlist : [];
+};
+
 export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
@@ -20,9 +25,8 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   const [checking, setChecking] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
   const [guilds, setGuilds] = useState<any[]>([]);
-  const [selectedGuilds, setSelectedGuilds] = useState<string[]>(
-    Array.isArray(data.discord?.guild_allowlist) ? data.discord.guild_allowlist : []
-  );
+  const [selectedGuilds, setSelectedGuilds] = useState<string[]>(getDiscordGuildAllowlist(data));
+  const [guildSelectionTouched, setGuildSelectionTouched] = useState(false);
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 2: false, 3: false, 4: false });
   const [inviteCopied, setInviteCopied] = useState(false);
   const [clientId, setClientId] = useState(data.discord_client_id || '');
@@ -86,6 +90,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   };
 
   const toggleGuild = (guildId: string, checked: boolean) => {
+    setGuildSelectionTouched(true);
     setSelectedGuilds(prev => {
       if (checked) {
         return prev.includes(guildId) ? prev : [...prev, guildId];
@@ -95,6 +100,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   };
 
   const selectAllGuilds = () => {
+    setGuildSelectionTouched(true);
     setSelectedGuilds(guilds.map((g) => g.id));
   };
 
@@ -348,7 +354,10 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                         </button>
                         <button
                           type="button"
-                          onClick={() => setSelectedGuilds([])}
+                          onClick={() => {
+                            setGuildSelectionTouched(true);
+                            setSelectedGuilds([]);
+                          }}
                           className="text-xs font-medium text-muted hover:text-text"
                         >
                           {t('discordConfig.clearGuilds')}
@@ -394,8 +403,9 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
             discord: {
               ...(data.discord || {}),
               bot_token: botToken,
-              guild_allowlist: selectedGuilds,
             },
+            discordGuildAllowlist: selectedGuilds,
+            discordGuildAllowlistTouched: guildSelectionTouched,
           })}
           disabled={!isValid}
           className={clsx(

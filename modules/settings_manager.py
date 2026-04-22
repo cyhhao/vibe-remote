@@ -5,7 +5,7 @@ from pathlib import Path
 
 from config import paths
 from config.v2_sessions import SessionsStore
-from config.v2_settings import SettingsStore, ChannelSettings, RoutingSettings, SCOPED_KEY_SEP
+from config.v2_settings import SettingsStore, ChannelSettings, GuildSettings, RoutingSettings, SCOPED_KEY_SEP
 from config.v2_settings import UserSettings as BoundUserSettings
 from modules.sessions_facade import SessionsFacade
 
@@ -328,6 +328,33 @@ class SettingsManager:
         key = str(channel_id)
         return self.store.get_channels_for_platform(self.platform).get(key)
 
+    def has_guild_scope(self) -> bool:
+        """Return whether this platform has an explicit server access policy."""
+        self._reload_if_changed()
+        return self.store.has_guild_scope_for_platform(self.platform)
+
+    def get_enabled_guild_ids(self) -> list[str]:
+        """Return enabled Discord server IDs for this platform."""
+        self._reload_if_changed()
+        return [
+            guild_id
+            for guild_id, settings in self.store.get_guilds_for_platform(self.platform).items()
+            if settings.enabled
+        ]
+
+    def set_enabled_guild_ids(self, guild_ids: list[str]) -> None:
+        """Replace enabled Discord server IDs for this platform."""
+        self.store.set_guilds_for_platform(
+            self.platform,
+            {str(guild_id): GuildSettings(enabled=True) for guild_id in guild_ids},
+        )
+        self.store.save()
+
+    def is_guild_enabled(self, guild_id: Union[int, str]) -> bool:
+        """Return whether a Discord server is enabled in settings."""
+        self._reload_if_changed()
+        return self.store.is_guild_enabled(self.platform, str(guild_id))
+
     def is_message_type_hidden(self, user_id: Union[int, str], message_type: str) -> bool:
         """Check if a message type is hidden for user (not in show_message_types)"""
         self._reload_if_changed()
@@ -537,6 +564,22 @@ class MultiSettingsManager:
     def get_channel_settings(self, settings_key: Union[int, str]) -> Optional[ChannelSettings]:
         manager, raw = self._resolve(settings_key)
         return manager.get_channel_settings(raw)
+
+    def has_guild_scope(self, platform: Optional[str] = None) -> bool:
+        manager = self.managers[platform or self.primary_platform]
+        return manager.has_guild_scope()
+
+    def get_enabled_guild_ids(self, platform: Optional[str] = None) -> list[str]:
+        manager = self.managers[platform or self.primary_platform]
+        return manager.get_enabled_guild_ids()
+
+    def set_enabled_guild_ids(self, guild_ids: list[str], platform: Optional[str] = None) -> None:
+        manager = self.managers[platform or self.primary_platform]
+        return manager.set_enabled_guild_ids(guild_ids)
+
+    def is_guild_enabled(self, guild_id: Union[int, str], platform: Optional[str] = None) -> bool:
+        manager = self.managers[platform or self.primary_platform]
+        return manager.is_guild_enabled(guild_id)
 
     def is_message_type_hidden(self, settings_key: Union[int, str], message_type: str) -> bool:
         manager, raw = self._resolve(settings_key)

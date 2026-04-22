@@ -107,6 +107,7 @@ class Controller:
         self.sessions = self.settings_manager.sessions
         self.native_session_service = None
         self.processing_indicator = ProcessingIndicatorService(self)
+        self._migrate_discord_guild_scope_from_config()
 
         # Migrate legacy per-channel language into global config
         self._migrate_language_from_settings()
@@ -132,6 +133,30 @@ class Controller:
     def _create_formatter(self, platform: str):
         return get_platform_descriptor(platform).create_formatter()
 
+    def _migrate_discord_guild_scope_from_config(self) -> None:
+        if "discord" not in self.platform_settings_managers:
+            return
+        discord_config = getattr(self.config, "discord", None)
+        if not discord_config:
+            return
+        allowlist = getattr(discord_config, "guild_allowlist", None) or []
+        denylist = getattr(discord_config, "guild_denylist", None) or []
+        if not allowlist and not denylist:
+            return
+        manager = self.platform_settings_managers["discord"]
+        if manager.has_guild_scope():
+            return
+        from config.v2_settings import GuildSettings
+
+        store = manager.get_store()
+        default_enabled = not bool(allowlist)
+        guilds = {str(guild_id): GuildSettings(enabled=True) for guild_id in allowlist if str(guild_id)}
+        for guild_id in denylist:
+            guilds[str(guild_id)] = GuildSettings(enabled=False)
+        store.set_guilds_for_platform("discord", guilds, default_enabled=default_enabled)
+        store.save()
+        logger.info("Migrated Discord guild access from config to settings")
+
     def _inject_runtime_dependencies(self, platform: str, client: BaseIMClient) -> None:
         settings_manager = self.platform_settings_managers[platform]
         setter = getattr(client, "set_settings_manager", None)
@@ -154,7 +179,7 @@ class Controller:
 
         Called on every ``_t()`` invocation (guarded by mtime check).
         Refreshes: language, show_duration, ack_mode, include_user_info,
-        reply_enhancements, require_mention (global).
+        reply_enhancements, and mutable platform message filters.
         """
         try:
             config_path = paths.get_config_path()
@@ -171,13 +196,25 @@ class Controller:
                 self.config.include_user_info = v2_config.include_user_info
                 self.config.reply_enhancements = v2_config.reply_enhancements
 
+                mutable_platform_attrs = (
+                    "require_mention",
+                    "guild_allowlist",
+                    "guild_denylist",
+                    "thread_auto_archive_minutes",
+                    "allowed_chat_ids",
+                    "allowed_user_ids",
+                    "disable_link_unfurl",
+                )
                 for platform, client in self.im_clients.items():
                     im_cfg = getattr(client, "config", None)
-                    if im_cfg is None or not hasattr(im_cfg, "require_mention"):
+                    if im_cfg is None:
                         continue
                     latest_platform_config = get_platform_descriptor(platform).get_config(v2_config)
-                    if latest_platform_config is not None and hasattr(latest_platform_config, "require_mention"):
-                        im_cfg.require_mention = latest_platform_config.require_mention
+                    if latest_platform_config is None:
+                        continue
+                    for attr in mutable_platform_attrs:
+                        if hasattr(im_cfg, attr) and hasattr(latest_platform_config, attr):
+                            setattr(im_cfg, attr, getattr(latest_platform_config, attr))
 
                 self._config_mtime = mtime
         except Exception as err:

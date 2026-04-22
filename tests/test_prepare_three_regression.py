@@ -74,7 +74,7 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     # All platform credentials populated
     assert config["slack"]["bot_token"] == "xoxb-test-token"
     assert config["discord"]["bot_token"] == "discord-token-1234567890"
-    assert config["discord"]["guild_allowlist"] == ["754776951587340359"]
+    assert "guild_allowlist" not in config["discord"]
     assert config["lark"]["app_id"] == "cli_test_app_id"
     assert config["wechat"]["base_url"] == "https://ilinkai.weixin.qq.com"
 
@@ -90,6 +90,9 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     # Per-channel routing in settings for each platform
     assert settings["scopes"]["channel"]["slack"]["C123SLACK"]["routing"]["agent_backend"] == "opencode"
     assert settings["scopes"]["channel"]["discord"]["123456789012345678"]["routing"]["agent_backend"] == "codex"
+    assert settings["schema_version"] == 5
+    assert settings["scopes"]["guild"]["discord"]["754776951587340359"]["enabled"] is True
+    assert settings["scopes"]["guild_policy"]["discord"]["default_enabled"] is False
     assert settings["scopes"]["channel"]["lark"]["oc_test_chat_id"]["routing"]["agent_backend"] == "claude"
 
     # WeChat has no channel set, so scope is empty
@@ -225,6 +228,19 @@ def test_prepare_allows_missing_channel_ids(tmp_path: Path, monkeypatch: pytest.
     assert settings["scopes"]["channel"]["discord"] == {}
     assert settings["scopes"]["channel"]["lark"] == {}
     assert settings["scopes"]["channel"]["wechat"] == {}
+
+
+def test_prepare_preserves_discord_denylist_only_guild_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = _load_module()
+    _set_required_env(monkeypatch)
+    monkeypatch.delenv("THREE_REGRESSION_DISCORD_GUILD_ALLOWLIST", raising=False)
+    monkeypatch.setenv("THREE_REGRESSION_DISCORD_GUILD_DENYLIST", "blocked-guild")
+
+    module.prepare(tmp_path, reset_mode="config")
+
+    settings = json.loads((tmp_path / "vibe" / "state" / "settings.json").read_text(encoding="utf-8"))
+    assert settings["scopes"]["guild"]["discord"]["blocked-guild"]["enabled"] is False
+    assert settings["scopes"]["guild_policy"]["discord"]["default_enabled"] is True
 
 
 def test_prepare_requires_supported_backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

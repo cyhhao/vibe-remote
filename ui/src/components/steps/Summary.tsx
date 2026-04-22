@@ -27,7 +27,11 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const [codeCopied, setCodeCopied] = useState(false);
   const enabledPlatforms = getEnabledPlatforms(data);
   const primaryPlatform = getPrimaryPlatform(data);
-  const discordGuildAllowlist = Array.isArray(data.discord?.guild_allowlist) ? data.discord.guild_allowlist : [];
+  const discordGuildAllowlist = Array.isArray(data.discordGuildAllowlist)
+    ? data.discordGuildAllowlist
+    : Array.isArray(data.discord?.guild_allowlist)
+      ? data.discord.guild_allowlist
+      : [];
   const [requireMentionByPlatform, setRequireMentionByPlatform] = useState<Record<string, boolean>>(
     Object.fromEntries(
       enabledPlatforms.map((platform) => [
@@ -376,8 +380,6 @@ const buildConfigPayload = (data: any) => {
     discord: {
       ...data.discord,
       bot_token: data.discord?.bot_token || '',
-      guild_allowlist: data.discord?.guild_allowlist || [],
-      guild_denylist: data.discord?.guild_denylist || [],
       require_mention: data.discord?.require_mention || false,
     },
     telegram: {
@@ -454,6 +456,13 @@ const buildConfigPayload = (data: any) => {
 
 const buildSettingsPayload = (data: any) => {
   const channelConfigsByPlatform = data.channelConfigsByPlatform || {};
+  const discordGuildAllowlist = Array.isArray(data.discordGuildAllowlist)
+    ? data.discordGuildAllowlist
+    : Array.isArray(data.discord?.guild_allowlist)
+      ? data.discord.guild_allowlist
+      : [];
+  const shouldPersistDiscordGuilds =
+    discordGuildAllowlist.length > 0 || data.discordGuildAllowlistTouched === true;
   return Object.fromEntries(
     Object.entries(channelConfigsByPlatform).map(([platform, channels]: any) => [
       platform,
@@ -481,6 +490,13 @@ const buildSettingsPayload = (data: any) => {
             },
           ])
         ),
+        ...(platform === 'discord' && shouldPersistDiscordGuilds
+          ? {
+              guilds: Object.fromEntries(
+                discordGuildAllowlist.map((guildId: string) => [guildId, { enabled: true }])
+              ),
+            }
+          : {}),
       },
     ])
   );

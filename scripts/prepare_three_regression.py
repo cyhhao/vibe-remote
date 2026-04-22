@@ -133,8 +133,6 @@ def _build_discord_payload() -> dict:
     return {
         "bot_token": _env("THREE_REGRESSION_DISCORD_BOT_TOKEN"),
         "application_id": None,
-        "guild_allowlist": _parse_csv(_optional("THREE_REGRESSION_DISCORD_GUILD_ALLOWLIST")),
-        "guild_denylist": _parse_csv(_optional("THREE_REGRESSION_DISCORD_GUILD_DENYLIST")),
         "require_mention": require_mention,
     }
 
@@ -231,6 +229,8 @@ def _build_config_payload() -> dict:
 def _build_settings_payload() -> dict:
     """Build a unified settings.json with per-channel routing for every platform."""
     channel_scopes: dict[str, dict] = {}
+    guild_scopes: dict[str, dict] = {}
+    guild_policy_scopes: dict[str, dict] = {}
 
     for name, pdef in PLATFORM_DEFS.items():
         platform_key = pdef["platform"]
@@ -253,10 +253,25 @@ def _build_settings_payload() -> dict:
 
         channel_scopes[platform_key] = scope
 
+    discord_allowlist = _parse_csv(_optional("THREE_REGRESSION_DISCORD_GUILD_ALLOWLIST")) or []
+    discord_denylist = _parse_csv(_optional("THREE_REGRESSION_DISCORD_GUILD_DENYLIST")) or []
+    if discord_allowlist or discord_denylist:
+        guild_scopes["discord"] = {
+            guild_id: {"enabled": True}
+            for guild_id in discord_allowlist
+        }
+        for guild_id in discord_denylist:
+            guild_scopes["discord"][guild_id] = {"enabled": False}
+        guild_policy_scopes["discord"] = {
+            "default_enabled": not bool(discord_allowlist),
+        }
+
     return {
-        "schema_version": 3,
+        "schema_version": 5,
         "scopes": {
             "channel": channel_scopes,
+            "guild": guild_scopes,
+            "guild_policy": guild_policy_scopes,
             "user": {},
         },
         "bind_codes": [],
