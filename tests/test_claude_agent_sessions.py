@@ -243,11 +243,209 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         cleared = await agent.clear_sessions("wechat-user")
 
         self.assertEqual(cleared, 1)
-        self.assertTrue(client.closed)
+        self.assertTrue(client.disconnected)
         self.assertTrue(task_cancelled.is_set())
         self.assertNotIn(session_key, controller.receiver_tasks)
         self.assertNotIn(session_key, controller.claude_sessions)
         self.assertEqual(controller.session_manager.cleared, ["wechat-user"])
+
+    async def test_clear_sessions_swallows_receiver_task_failure(self):
+        controller = _StubController()
+        agent = ClaudeAgent(controller)
+        session_key = "wechat_o9:/tmp/work"
+        client = _StubClient()
+        controller.claude_sessions[session_key] = client
+        disconnected = asyncio.Event()
+
+        async def _disconnect():
+            client.disconnected = True
+            disconnected.set()
+
+        client.disconnect = _disconnect
+
+        async def _receiver():
+            await disconnected.wait()
+            raise RuntimeError("receiver failed")
+
+        controller.receiver_tasks[session_key] = asyncio.create_task(_receiver())
+        await asyncio.sleep(0)
+
+        cleared = await agent.clear_sessions("wechat-user")
+
+        self.assertEqual(cleared, 1)
+        self.assertTrue(client.disconnected)
+        self.assertNotIn(session_key, controller.receiver_tasks)
+        self.assertNotIn(session_key, controller.claude_sessions)
+        self.assertEqual(controller.session_manager.cleared, ["wechat-user"])
+
+    async def test_clear_sessions_drains_finished_receiver_task_failure(self):
+        controller = _StubController()
+        agent = ClaudeAgent(controller)
+        session_key = "wechat_o9:/tmp/work"
+        client = _StubClient()
+        controller.claude_sessions[session_key] = client
+
+        class _DoneReceiverTask:
+            drained = False
+
+            @staticmethod
+            def done():
+                return True
+
+            def exception(self):
+                self.drained = True
+                return RuntimeError("receiver already failed")
+
+        receiver_task = _DoneReceiverTask()
+        controller.receiver_tasks[session_key] = receiver_task
+
+        cleared = await agent.clear_sessions("wechat-user")
+
+        self.assertEqual(cleared, 1)
+        self.assertTrue(client.disconnected)
+        self.assertTrue(receiver_task.drained)
+        self.assertNotIn(session_key, controller.receiver_tasks)
+        self.assertNotIn(session_key, controller.claude_sessions)
+        self.assertEqual(controller.session_manager.cleared, ["wechat-user"])
+
+    async def test_cleanup_runtime_session_cancels_receiver_when_disconnect_is_cancelled(self):
+        controller = _StubController()
+        agent = ClaudeAgent(controller)
+        session_key = "wechat_o9:/tmp/work"
+        disconnect_started = asyncio.Event()
+        receiver_cancelled = asyncio.Event()
+
+        class _SlowDisconnectClient(_StubClient):
+            async def disconnect(self):
+                self.disconnected = True
+                disconnect_started.set()
+                await asyncio.Future()
+
+        client = _SlowDisconnectClient()
+        controller.claude_sessions[session_key] = client
+
+        async def _receiver():
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                receiver_cancelled.set()
+                raise
+
+        receiver_task = asyncio.create_task(_receiver())
+        controller.receiver_tasks[session_key] = receiver_task
+        cleanup_task = asyncio.create_task(agent._cleanup_runtime_session(session_key))
+
+        await disconnect_started.wait()
+        self.assertNotIn(session_key, controller.receiver_tasks)
+
+        cleanup_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await cleanup_task
+
+        self.assertTrue(client.disconnected)
+        self.assertTrue(receiver_cancelled.is_set())
+        self.assertNotIn(session_key, controller.receiver_tasks)
+        self.assertNotIn(session_key, controller.claude_sessions)
+
+    async def test_cleanup_runtime_session_preserves_new_receiver_during_disconnect(self):
+        controller = _StubController()
+        agent = ClaudeAgent(controller)
+        session_key = "wechat_o9:/tmp/work"
+        disconnect_started = asyncio.Event()
+        old_receiver_cancelled = asyncio.Event()
+        clear_tracking_calls = []
+        controller.session_handler.clear_session_tracking = lambda key: clear_tracking_calls.append(key)
+
+        class _SlowDisconnectClient(_StubClient):
+            async def disconnect(self):
+                self.disconnected = True
+                disconnect_started.set()
+                await asyncio.Future()
+
+        client = _SlowDisconnectClient()
+        controller.claude_sessions[session_key] = client
+
+        async def _old_receiver():
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                old_receiver_cancelled.set()
+                raise
+
+        old_receiver = asyncio.create_task(_old_receiver())
+        new_receiver = asyncio.create_task(asyncio.sleep(3600))
+        old_request = SimpleNamespace(name="old")
+        agent._pending_requests[session_key] = [old_request]
+        agent._pending_reactions[session_key] = [("old", ":eyes:")]
+        agent._last_assistant_text[session_key] = "old text"
+        agent._pending_assistant_message[session_key] = "old assistant"
+        controller.receiver_tasks[session_key] = old_receiver
+        cleanup_task = asyncio.create_task(agent._cleanup_runtime_session(session_key))
+
+        await disconnect_started.wait()
+        self.assertNotIn(session_key, controller.receiver_tasks)
+        self.assertNotIn(session_key, agent._pending_requests)
+        self.assertNotIn(session_key, agent._pending_reactions)
+        self.assertNotIn(session_key, agent._last_assistant_text)
+        self.assertNotIn(session_key, agent._pending_assistant_message)
+        self.assertEqual(clear_tracking_calls, [session_key])
+
+        new_request = SimpleNamespace(name="new")
+        controller.receiver_tasks[session_key] = new_receiver
+        agent._pending_requests[session_key] = [new_request]
+        agent._pending_reactions[session_key] = [("new", ":eyes:")]
+        agent._last_assistant_text[session_key] = "new text"
+        agent._pending_assistant_message[session_key] = "new assistant"
+
+        cleanup_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await cleanup_task
+
+        self.assertTrue(old_receiver_cancelled.is_set())
+        self.assertIs(controller.receiver_tasks[session_key], new_receiver)
+        self.assertEqual(agent._pending_requests[session_key], [new_request])
+        self.assertEqual(agent._pending_reactions[session_key], [("new", ":eyes:")])
+        self.assertEqual(agent._last_assistant_text[session_key], "new text")
+        self.assertEqual(agent._pending_assistant_message[session_key], "new assistant")
+        new_receiver.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await new_receiver
+
+    async def test_cleanup_runtime_session_defers_disconnect_for_current_receiver(self):
+        controller = _StubController()
+        agent = ClaudeAgent(controller)
+        session_key = "wechat_o9:/tmp/work"
+        cleanup_returned = asyncio.Event()
+        disconnect_started = asyncio.Event()
+        release_disconnect = asyncio.Event()
+
+        class _SlowDisconnectClient(_StubClient):
+            async def disconnect(self):
+                self.disconnected = True
+                disconnect_started.set()
+                await release_disconnect.wait()
+
+        client = _SlowDisconnectClient()
+        controller.claude_sessions[session_key] = client
+
+        async def _receiver():
+            await agent._cleanup_runtime_session(
+                session_key,
+                current_receiver_task=asyncio.current_task(),
+            )
+            cleanup_returned.set()
+
+        receiver_task = asyncio.create_task(_receiver())
+        controller.receiver_tasks[session_key] = receiver_task
+
+        await cleanup_returned.wait()
+        self.assertNotIn(session_key, controller.receiver_tasks)
+        self.assertNotIn(session_key, controller.claude_sessions)
+
+        await disconnect_started.wait()
+        self.assertTrue(client.disconnected)
+        release_disconnect.set()
+        await asyncio.sleep(0)
 
     async def test_refresh_auth_state_disconnects_runtime_sessions(self):
         controller = _StubController()
@@ -380,6 +578,55 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(composite_key, controller.receiver_tasks)
         self.assertNotIn(composite_key, controller.claude_sessions)
         agent.emit_result_message.assert_not_awaited()
+
+    async def test_result_auth_error_exits_receiver_and_disconnects_client(self):
+        controller = _StubController()
+        controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
+        controller._get_session_key = lambda context: "telegram::user::U1"
+        controller.emit_agent_message = AsyncMock()
+        agent = ClaudeAgent(controller)
+        agent._clear_pending_reactions = AsyncMock()
+        context = SimpleNamespace()
+        composite_key = "session-1:/tmp/work"
+        disconnect_started = asyncio.Event()
+
+        ResultMessage = type("ResultMessage", (), {})
+        init_message = type(
+            "SystemMessage",
+            (),
+            {"subtype": "init", "data": {"session_id": "session-sdk"}},
+        )()
+        error_result = ResultMessage()
+        error_result.subtype = "error"
+        error_result.result = (
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error",'
+            '"message":"Invalid bearer token"}}'
+        )
+        error_result.duration_ms = 0
+
+        class _Client:
+            async def disconnect(self):
+                disconnect_started.set()
+
+            def receive_messages(self):
+                async def _iterate():
+                    yield init_message
+                    yield error_result
+                    await asyncio.Future()
+
+                return _iterate()
+
+        client = _Client()
+        controller.claude_sessions[composite_key] = client
+        receiver_task = asyncio.create_task(agent._receive_messages(client, "session-1", "/tmp/work", context))
+        controller.receiver_tasks[composite_key] = receiver_task
+
+        await asyncio.wait_for(receiver_task, timeout=1)
+        await asyncio.wait_for(disconnect_started.wait(), timeout=1)
+
+        controller.agent_auth_service.maybe_emit_auth_recovery_message.assert_awaited_once()
+        self.assertNotIn(composite_key, controller.receiver_tasks)
+        self.assertNotIn(composite_key, controller.claude_sessions)
 
     async def test_assistant_auth_error_prefers_oauth_recovery_message(self):
         controller = _StubController()
