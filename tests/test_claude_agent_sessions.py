@@ -243,7 +243,7 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         cleared = await agent.clear_sessions("wechat-user")
 
         self.assertEqual(cleared, 1)
-        self.assertTrue(client.closed)
+        self.assertTrue(client.disconnected)
         self.assertTrue(task_cancelled.is_set())
         self.assertNotIn(session_key, controller.receiver_tasks)
         self.assertNotIn(session_key, controller.claude_sessions)

@@ -514,6 +514,8 @@ def test_session_handler_keeps_active_claude_session(monkeypatch, tmp_path: Path
 
 
 def test_cleanup_session_swallows_cancelled_receiver_task(monkeypatch, tmp_path: Path) -> None:
+    events = []
+
     class _StubClaudeSDKClient:
         def __init__(self, options):
             self.disconnects = 0
@@ -522,6 +524,7 @@ def test_cleanup_session_swallows_cancelled_receiver_task(monkeypatch, tmp_path:
             return None
 
         async def disconnect(self) -> None:
+            events.append("disconnect")
             self.disconnects += 1
 
     monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
@@ -535,7 +538,11 @@ def test_cleanup_session_swallows_cancelled_receiver_task(monkeypatch, tmp_path:
 
     async def _exercise_cleanup() -> None:
         async def _receiver():
-            await asyncio.Future()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                events.append("cancel")
+                raise
 
         controller.receiver_tasks[composite_key] = asyncio.create_task(_receiver())
         await asyncio.sleep(0)
@@ -544,6 +551,7 @@ def test_cleanup_session_swallows_cancelled_receiver_task(monkeypatch, tmp_path:
     asyncio.run(_exercise_cleanup())
 
     assert client.disconnects == 1
+    assert events == ["disconnect", "cancel"]
     assert composite_key not in controller.receiver_tasks
     assert composite_key not in controller.claude_sessions
 

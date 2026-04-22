@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+from contextlib import suppress
 from typing import Optional, Dict, Any, Tuple
 from uuid import uuid4
 from modules.im import MessageContext
@@ -811,29 +812,32 @@ class SessionHandler(BaseHandler):
 
     async def cleanup_session(self, composite_key: str):
         """Clean up a specific session by composite key"""
-        # Cancel receiver task if exists
-        if composite_key in self.receiver_tasks:
-            task = self.receiver_tasks[composite_key]
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    pass
-            del self.receiver_tasks[composite_key]
-            logger.info(f"Cancelled receiver task for session {composite_key}")
+        receiver_task = self.receiver_tasks.pop(composite_key, None)
+        client = self.claude_sessions.pop(composite_key, None)
 
-        # Cleanup Claude session
-        if composite_key in self.claude_sessions:
-            client = self.claude_sessions[composite_key]
+        # Close the SDK client first so its receive stream can finish normally.
+        # Cancelling the receiver first can leave the SDK's anyio cancel scope
+        # retrying cancellation on every event-loop tick.
+        if client is not None:
             try:
                 await client.disconnect()
             except Exception as e:
                 logger.error(f"Error disconnecting Claude session {composite_key}: {e}")
-            del self.claude_sessions[composite_key]
             logger.info(f"Cleaned up Claude session {composite_key}")
+
+        if receiver_task is not None:
+            if not receiver_task.done():
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(receiver_task), timeout=0.1)
+            if not receiver_task.done():
+                receiver_task.cancel()
+                try:
+                    await receiver_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+            logger.info(f"Cancelled receiver task for session {composite_key}")
 
         self.clear_session_tracking(composite_key)
 

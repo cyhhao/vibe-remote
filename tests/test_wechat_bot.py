@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import unittest
 from unittest.mock import AsyncMock
 from pathlib import Path
@@ -93,6 +94,45 @@ class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["get_updates_buf"], "buf-2")
         self.assertEqual(captured["timeout"], 40.0)
         self.assertTrue(captured["url"].endswith("/ilink/bot/getupdates"))
+
+    async def test_wechat_api_get_updates_poll_logs_are_debug(self):
+        class _Response:
+            ok = True
+            status = 200
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def text(self):
+                return '{"ret": 0, "msgs": [], "get_updates_buf": "buf-2"}'
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def post(self, url, data=None, headers=None):
+                return _Response()
+
+        with patch("modules.im.wechat_api.aiohttp.ClientSession", side_effect=lambda timeout: _Session()):
+            with self.assertLogs("modules.im.wechat_api", level="DEBUG") as captured:
+                await wechat_api_module.get_updates(
+                    "https://wechat.example.com",
+                    "token",
+                    "buf-1",
+                    timeout_ms=35_000,
+                )
+
+        self.assertTrue(captured.records)
+        self.assertTrue(
+            all(record.levelno == logging.DEBUG for record in captured.records),
+            [record.getMessage() for record in captured.records],
+        )
 
     async def test_wechat_api_get_updates_returns_empty_response_on_timeout(self):
         class _TimeoutingRequest:

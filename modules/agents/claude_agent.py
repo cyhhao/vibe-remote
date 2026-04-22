@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from contextlib import suppress
 from typing import Callable, Optional
 
 from core.agent_auth_service import classify_auth_error
@@ -149,31 +150,20 @@ class ClaudeAgent(BaseAgent):
                 sessions_to_clear.append(composite_id)
 
         for composite_id in sessions_to_clear:
-            try:
-                client = self.claude_sessions[composite_id]
-                if hasattr(client, "close"):
-                    await client.close()
-            except Exception as e:
-                logger.warning(f"Error closing Claude session {composite_id}: {e}")
-            finally:
-                self.claude_sessions.pop(composite_id, None)
-                receiver_task = self.receiver_tasks.pop(composite_id, None)
-                if receiver_task is not None:
-                    receiver_task.cancel()
-                    try:
-                        await receiver_task
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as task_err:
-                        logger.warning(f"Error stopping Claude receiver {composite_id}: {task_err}")
+            client = self.claude_sessions.pop(composite_id, None)
+            if client is not None:
+                await self._disconnect_client(client, composite_id)
 
-                self._last_assistant_text.pop(composite_id, None)
-                self._pending_assistant_message.pop(composite_id, None)
-                self._pending_reactions.pop(composite_id, None)
-                self._pending_requests.pop(composite_id, None)
-                clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
-                if callable(clear_tracking):
-                    clear_tracking(composite_id)
+            receiver_task = self.receiver_tasks.pop(composite_id, None)
+            await self._stop_receiver_task(receiver_task)
+
+            self._last_assistant_text.pop(composite_id, None)
+            self._pending_assistant_message.pop(composite_id, None)
+            self._pending_reactions.pop(composite_id, None)
+            self._pending_requests.pop(composite_id, None)
+            clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
+            if callable(clear_tracking):
+                clear_tracking(composite_id)
 
         # Legacy session manager cleanup (best-effort)
         await self.session_manager.clear_session(session_key)
@@ -186,24 +176,10 @@ class ClaudeAgent(BaseAgent):
 
         for composite_id in session_ids:
             receiver_task = self.receiver_tasks.pop(composite_id, None)
-            if receiver_task is not None and not receiver_task.done():
-                receiver_task.cancel()
-                try:
-                    await receiver_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as exc:
-                    logger.warning("Error stopping Claude receiver %s during auth refresh: %s", composite_id, exc)
-
             client = self.claude_sessions.pop(composite_id, None)
             if client is not None:
-                try:
-                    if hasattr(client, "disconnect"):
-                        await client.disconnect()
-                    elif hasattr(client, "close"):
-                        await client.close()
-                except Exception as exc:
-                    logger.warning("Error disconnecting Claude session %s during auth refresh: %s", composite_id, exc)
+                await self._disconnect_client(client, composite_id)
+            await self._stop_receiver_task(receiver_task)
 
             self._last_assistant_text.pop(composite_id, None)
             self._pending_assistant_message.pop(composite_id, None)
@@ -230,6 +206,30 @@ class ClaudeAgent(BaseAgent):
         await self._cleanup_runtime_session(composite_key)
         logger.info("Prepared Claude runtime for resumed session %s", composite_key)
 
+    async def _disconnect_client(self, client, composite_key: str) -> None:
+        try:
+            if hasattr(client, "disconnect"):
+                await client.disconnect()
+            elif hasattr(client, "close"):
+                await client.close()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Error disconnecting Claude session %s: %s", composite_key, exc)
+
+    async def _stop_receiver_task(self, receiver_task: asyncio.Task | None) -> None:
+        if receiver_task is None or receiver_task.done():
+            return
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(receiver_task), timeout=0.1)
+        if receiver_task.done():
+            return
+        receiver_task.cancel()
+        try:
+            await receiver_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Error stopping Claude receiver during cleanup: %s", exc)
+
     async def _cleanup_runtime_session(
         self,
         composite_key: str,
@@ -240,28 +240,15 @@ class ClaudeAgent(BaseAgent):
         """Drop Claude runtime state without canceling the current receiver task."""
 
         receiver_task = self.receiver_tasks.pop(composite_key, None)
-        if (
-            receiver_task is not None
-            and receiver_task is not current_receiver_task
-            and not receiver_task.done()
-        ):
-            receiver_task.cancel()
-            try:
-                await receiver_task
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Error stopping Claude receiver %s during cleanup: %s", composite_key, exc)
-
         client = self.claude_sessions.pop(composite_key, None)
         if client is not None:
-            try:
-                if hasattr(client, "disconnect"):
-                    await client.disconnect()
-                elif hasattr(client, "close"):
-                    await client.close()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Error disconnecting Claude session %s during cleanup: %s", composite_key, exc)
+            # Closing the SDK client first lets the receiver consume the end of
+            # stream. Cancelling it first can leave an anyio cancellation retry
+            # handle spinning in the controller loop.
+            await self._disconnect_client(client, composite_key)
+
+        if receiver_task is not current_receiver_task:
+            await self._stop_receiver_task(receiver_task)
 
         self._last_assistant_text.pop(composite_key, None)
         self._pending_assistant_message.pop(composite_key, None)

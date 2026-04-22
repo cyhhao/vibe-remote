@@ -179,7 +179,7 @@ async def get_updates(
     headers = _build_headers(token=token, body_bytes=body_bytes)
 
     timeout = aiohttp.ClientTimeout(total=(timeout_ms + DEFAULT_LONG_POLL_TIMEOUT_GRACE_MS) / 1000.0)
-    logger.info(
+    logger.debug(
         "get_updates: POST %s token=%s timeout=%dms buf_len=%d",
         url,
         _redact_token(token),
@@ -191,7 +191,7 @@ async def get_updates(
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, data=body_bytes, headers=headers) as resp:
                 raw_text = await resp.text()
-                logger.info(
+                logger.debug(
                     "getUpdates: status=%d body_len=%d raw=%s",
                     resp.status,
                     len(raw_text) if raw_text else 0,
