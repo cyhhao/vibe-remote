@@ -336,7 +336,7 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         cleanup_task = asyncio.create_task(agent._cleanup_runtime_session(session_key))
 
         await disconnect_started.wait()
-        self.assertIs(controller.receiver_tasks[session_key], receiver_task)
+        self.assertNotIn(session_key, controller.receiver_tasks)
 
         cleanup_task.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -346,6 +346,48 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(receiver_cancelled.is_set())
         self.assertNotIn(session_key, controller.receiver_tasks)
         self.assertNotIn(session_key, controller.claude_sessions)
+
+    async def test_cleanup_runtime_session_preserves_new_receiver_during_disconnect(self):
+        controller = _StubController()
+        agent = ClaudeAgent(controller)
+        session_key = "wechat_o9:/tmp/work"
+        disconnect_started = asyncio.Event()
+        old_receiver_cancelled = asyncio.Event()
+
+        class _SlowDisconnectClient(_StubClient):
+            async def disconnect(self):
+                self.disconnected = True
+                disconnect_started.set()
+                await asyncio.Future()
+
+        client = _SlowDisconnectClient()
+        controller.claude_sessions[session_key] = client
+
+        async def _old_receiver():
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                old_receiver_cancelled.set()
+                raise
+
+        old_receiver = asyncio.create_task(_old_receiver())
+        new_receiver = asyncio.create_task(asyncio.sleep(3600))
+        controller.receiver_tasks[session_key] = old_receiver
+        cleanup_task = asyncio.create_task(agent._cleanup_runtime_session(session_key))
+
+        await disconnect_started.wait()
+        self.assertNotIn(session_key, controller.receiver_tasks)
+        controller.receiver_tasks[session_key] = new_receiver
+
+        cleanup_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await cleanup_task
+
+        self.assertTrue(old_receiver_cancelled.is_set())
+        self.assertIs(controller.receiver_tasks[session_key], new_receiver)
+        new_receiver.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await new_receiver
 
     async def test_refresh_auth_state_disconnects_runtime_sessions(self):
         controller = _StubController()

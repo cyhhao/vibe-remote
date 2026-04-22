@@ -238,7 +238,7 @@ class ClaudeAgent(BaseAgent):
     ) -> None:
         """Drop Claude runtime state without canceling the current receiver task."""
 
-        receiver_task = self.receiver_tasks.get(composite_key)
+        receiver_task = self.receiver_tasks.pop(composite_key, None)
         client = self.claude_sessions.pop(composite_key, None)
         try:
             if client is not None:
@@ -247,8 +247,6 @@ class ClaudeAgent(BaseAgent):
                 # retry handle spinning in the controller loop.
                 await self._disconnect_client(client, composite_key)
         finally:
-            if self.receiver_tasks.get(composite_key) is receiver_task:
-                self.receiver_tasks.pop(composite_key, None)
             if receiver_task is not current_receiver_task:
                 await self._stop_receiver_task(receiver_task)
 

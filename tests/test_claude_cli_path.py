@@ -680,7 +680,7 @@ def test_cleanup_session_cancels_receiver_when_disconnect_is_cancelled(monkeypat
         cleanup_task = asyncio.create_task(handler.cleanup_session(composite_key))
 
         await events["disconnect_started"].wait()
-        assert controller.receiver_tasks[composite_key] is receiver_task
+        assert composite_key not in controller.receiver_tasks
 
         cleanup_task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -692,6 +692,67 @@ def test_cleanup_session_cancels_receiver_when_disconnect_is_cancelled(monkeypat
     asyncio.run(_exercise_cleanup())
 
     assert composite_key not in controller.receiver_tasks
+    assert composite_key not in controller.claude_sessions
+
+
+def test_cleanup_session_preserves_new_receiver_during_disconnect(monkeypatch, tmp_path: Path) -> None:
+    events = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            self.disconnects = 0
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            self.disconnects += 1
+            events["disconnect_started"].set()
+            await asyncio.Future()
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+    composite_key = f"slack_C123:{tmp_path}"
+
+    async def _exercise_cleanup() -> None:
+        events["disconnect_started"] = asyncio.Event()
+        events["old_receiver_cancelled"] = asyncio.Event()
+        await handler.get_or_create_claude_session(context)
+
+        async def _old_receiver():
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                events["old_receiver_cancelled"].set()
+                raise
+
+        old_receiver = asyncio.create_task(_old_receiver())
+        new_receiver = asyncio.create_task(asyncio.sleep(3600))
+        controller.receiver_tasks[composite_key] = old_receiver
+        cleanup_task = asyncio.create_task(handler.cleanup_session(composite_key))
+
+        await events["disconnect_started"].wait()
+        assert composite_key not in controller.receiver_tasks
+        controller.receiver_tasks[composite_key] = new_receiver
+
+        cleanup_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cleanup_task
+
+        assert events["old_receiver_cancelled"].is_set()
+        assert controller.receiver_tasks[composite_key] is new_receiver
+        new_receiver.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await new_receiver
+
+    asyncio.run(_exercise_cleanup())
+
+    assert composite_key in controller.receiver_tasks
+    controller.receiver_tasks.pop(composite_key, None)
     assert composite_key not in controller.claude_sessions
 
 

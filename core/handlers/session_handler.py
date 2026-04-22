@@ -811,7 +811,7 @@ class SessionHandler(BaseHandler):
 
     async def cleanup_session(self, composite_key: str):
         """Clean up a specific session by composite key"""
-        receiver_task = self.receiver_tasks.get(composite_key)
+        receiver_task = self.receiver_tasks.pop(composite_key, None)
         client = self.claude_sessions.pop(composite_key, None)
 
         try:
@@ -825,8 +825,6 @@ class SessionHandler(BaseHandler):
                     logger.error(f"Error disconnecting Claude session {composite_key}: {e}")
                 logger.info(f"Cleaned up Claude session {composite_key}")
         finally:
-            if self.receiver_tasks.get(composite_key) is receiver_task:
-                self.receiver_tasks.pop(composite_key, None)
             await self._stop_receiver_task(receiver_task, composite_key)
             self.clear_session_tracking(composite_key)
 
