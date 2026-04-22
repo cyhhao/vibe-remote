@@ -388,7 +388,7 @@ class ClaudeAgent(BaseAgent):
                             await self._clear_pending_reactions(composite_key, context)
                             self._last_assistant_text.pop(composite_key, None)
                             self._pending_assistant_message.pop(composite_key, None)
-                            continue
+                            return
                         if assistant_text:
                             self._last_assistant_text[composite_key] = assistant_text
 
@@ -455,7 +455,7 @@ class ClaudeAgent(BaseAgent):
                             if callable(mark_session_idle):
                                 mark_session_idle(composite_key)
                             await self._clear_pending_reactions(composite_key, context)
-                            continue
+                            return
                         if formatted_message and formatted_message.strip():
                             await self.controller.emit_agent_message(
                                 context,
@@ -487,7 +487,7 @@ class ClaudeAgent(BaseAgent):
                             await self._clear_pending_reactions(composite_key, context)
                             self._last_assistant_text.pop(composite_key, None)
                             self._pending_assistant_message.pop(composite_key, None)
-                            continue
+                            return
 
                         # NOTE: The pending assistant message is intentionally
                         # NOT emitted here.  ResultMessage.result already
