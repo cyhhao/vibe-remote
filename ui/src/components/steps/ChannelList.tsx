@@ -875,8 +875,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         )}
         {isPage && (
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <span className="text-muted">{t('channelList.accessPolicy')}</span>
-            <span className="text-xs text-muted">{t('channelList.accessPolicyHint')}</span>
+            <span className="text-muted">
+              {platform === 'discord' ? t('channelList.accessPolicyDiscord') : t('channelList.accessPolicy')}
+            </span>
+            <span className="text-xs text-muted">
+              {platform === 'discord' ? t('channelList.accessPolicyHintDiscord') : t('channelList.accessPolicyHint')}
+            </span>
           </div>
         )}
         {platform === 'telegram' && (
