@@ -503,27 +503,19 @@ class MessageHandler(BaseHandler):
                     except Exception as err:
                         logger.debug(f"Failed to send quick-reply echo message: {err}")
 
-                    # Add ack reaction on the echo message before dispatching.
-                    if quick_reply_echo_id and getattr(self.config, "ack_mode", "typing") == "reaction":
-                        try:
-                            await im_client.add_reaction(
-                                self.controller.processing_indicator.target_context(context),
-                                quick_reply_echo_id,
-                                ":eyes:",
-                            )
-                        except Exception as err:
-                            logger.debug(f"Failed to add quick-reply ack reaction: {err}")
-
-                    # Dispatch as a normal user message (message_id=None to
-                    # bypass dedup — this is a synthetic message, not a real
-                    # platform message that could be replayed).
+                    # Dispatch as a normal user message with message_id=None to
+                    # bypass platform event dedup.  The echo message remains
+                    # available as the processing-indicator reaction target.
+                    reply_payload = dict(context.platform_specific or {})
+                    if quick_reply_echo_id:
+                        reply_payload["processing_indicator_message_id"] = quick_reply_echo_id
                     context_for_reply = MessageContext(
                         user_id=context.user_id,
                         channel_id=context.channel_id,
                         platform=context.platform or (context.platform_specific or {}).get("platform"),
                         thread_id=context.thread_id,
                         message_id=None,
-                        platform_specific=context.platform_specific,
+                        platform_specific=reply_payload or None,
                     )
                     await self.handle_user_message(context_for_reply, reply_text)
 

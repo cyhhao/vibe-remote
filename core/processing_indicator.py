@@ -109,10 +109,18 @@ class ProcessingIndicatorService:
         if mode == "typing":
             return capabilities.supports_typing_indicator
         if mode == "reaction":
-            return capabilities.supports_reaction_indicator and bool(context.message_id)
+            return capabilities.supports_reaction_indicator and bool(self._reaction_target_message_id(context))
         if mode == "message":
             return capabilities.supports_message_indicator
         return False
+
+    def _reaction_target_message_id(self, context: MessageContext) -> Optional[str]:
+        payload = context.platform_specific or {}
+        if isinstance(payload, dict):
+            target_id = payload.get("processing_indicator_message_id")
+            if target_id:
+                return str(target_id)
+        return context.message_id
 
     def _candidate_modes(self, capabilities: PlatformCapabilities) -> list[str]:
         preferred = capabilities.preferred_processing_indicator
@@ -221,11 +229,12 @@ class ProcessingIndicatorService:
 
     async def _start_reaction_indicator(self, handle: ProcessingIndicatorHandle) -> bool:
         context = handle.context
-        if not context.message_id:
+        message_id = self._reaction_target_message_id(context)
+        if not message_id:
             return False
         im_client = self._get_im_client(context)
         try:
-            ok = await im_client.add_reaction(context, context.message_id, ":eyes:")
+            ok = await im_client.add_reaction(context, message_id, ":eyes:")
         except Exception as ack_err:
             logger.debug("Failed to add reaction ack: %s", ack_err)
             return False
@@ -234,7 +243,7 @@ class ProcessingIndicatorService:
             logger.info("Ack reaction not applied (platform returned False)")
             return False
 
-        handle.ack_reaction_message_id = context.message_id
+        handle.ack_reaction_message_id = message_id
         handle.ack_reaction_emoji = ":eyes:"
         return True
 
