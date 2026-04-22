@@ -5,6 +5,7 @@ import json
 import pytest
 
 from config import paths
+from config.v2_config import V2Config
 from config.v2_settings import GuildSettings, SettingsStore
 from modules.settings_manager import SettingsManager
 from vibe import api
@@ -181,6 +182,36 @@ def test_partial_legacy_guild_config_update_preserves_omitted_denylist(tmp_path,
     assert store.is_guild_enabled("discord", "guild-new") is True
     assert store.is_guild_enabled("discord", "guild-blocked") is False
     assert store.is_guild_enabled("discord", "guild-old") is False
+
+
+def test_direct_config_save_preserves_unmigrated_discord_guild_rules(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+
+    config = V2Config.from_payload(
+        {
+            **_config_payload(),
+            "platform": "slack",
+            "platforms": {"enabled": ["slack"], "primary": "slack"},
+            "slack": {
+                "bot_token": "xoxb-test-token",
+                "app_token": "xapp-test-token",
+                "require_mention": False,
+            },
+            "discord": {
+                "bot_token": "discord-token-1234567890",
+                "guild_allowlist": [],
+                "guild_denylist": ["guild-blocked"],
+                "require_mention": False,
+            },
+        }
+    )
+
+    config.save()
+    saved_config = json.loads(paths.get_config_path().read_text(encoding="utf-8"))
+
+    assert saved_config["discord"]["guild_allowlist"] == []
+    assert saved_config["discord"]["guild_denylist"] == ["guild-blocked"]
 
 
 def test_save_settings_preserves_discord_denylist_policy_when_default_omitted(tmp_path, monkeypatch) -> None:

@@ -419,8 +419,9 @@ class V2Config:
             descriptor_config = descriptor.get_config(self)
             config_payload = descriptor_config.__dict__.copy() if descriptor_config else None
             if descriptor.id == "discord" and isinstance(config_payload, dict):
-                config_payload.pop("guild_allowlist", None)
-                config_payload.pop("guild_denylist", None)
+                if not config_payload.get("guild_allowlist") and not config_payload.get("guild_denylist"):
+                    config_payload.pop("guild_allowlist", None)
+                    config_payload.pop("guild_denylist", None)
             platform_payload[descriptor.config_key] = config_payload
         payload = {
             "platform": self.platform,
