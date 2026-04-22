@@ -488,7 +488,7 @@ const buildSettingsPayload = (data: any) => {
             },
           ])
         ),
-        ...(platform === 'discord'
+        ...(platform === 'discord' && discordGuildAllowlist.length > 0
           ? {
               guilds: Object.fromEntries(
                 discordGuildAllowlist.map((guildId: string) => [guildId, { enabled: true }])
