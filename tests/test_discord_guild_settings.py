@@ -148,6 +148,41 @@ def test_partial_save_config_migrates_existing_legacy_discord_denylist(tmp_path,
     assert store.is_guild_enabled("discord", "guild-other") is True
 
 
+def test_partial_legacy_guild_config_update_preserves_omitted_denylist(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+
+    paths.ensure_data_dirs()
+    paths.get_config_path().write_text(
+        json.dumps(
+            {
+                **_config_payload(),
+                "discord": {
+                    "bot_token": "discord-token-1234567890",
+                    "guild_allowlist": ["guild-old"],
+                    "guild_denylist": ["guild-blocked"],
+                    "require_mention": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    api.save_config(
+        {
+            "discord": {
+                "guild_allowlist": ["guild-new"],
+            },
+        }
+    )
+    store = SettingsStore.get_instance()
+
+    assert store.get_guild_default_enabled_for_platform("discord") is False
+    assert store.is_guild_enabled("discord", "guild-new") is True
+    assert store.is_guild_enabled("discord", "guild-blocked") is False
+    assert store.is_guild_enabled("discord", "guild-old") is False
+
+
 def test_save_settings_preserves_discord_denylist_policy_when_default_omitted(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     SettingsStore.reset_instance()

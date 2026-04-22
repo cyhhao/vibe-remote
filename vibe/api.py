@@ -282,8 +282,6 @@ def save_config(payload: dict) -> V2Config:
     if not isinstance(payload, dict):
         raise ValueError("Config payload must be an object")
 
-    payload, guild_scope_update = _extract_settings_scopes_from_config_payload(payload)
-
     with CONFIG_LOCK:
         base_payload: dict = {}
         base_config: Optional[V2Config] = None
@@ -294,7 +292,9 @@ def save_config(payload: dict) -> V2Config:
             base_payload = {}
 
         merged_payload = _deep_merge_dicts(base_payload, payload) if base_payload else payload
-        config = V2Config.from_payload(merged_payload)
+        merged_payload = _merge_legacy_discord_guild_scope_fields(merged_payload, payload, base_config)
+        sanitized_payload, guild_scope_update = _extract_settings_scopes_from_config_payload(merged_payload)
+        config = V2Config.from_payload(sanitized_payload)
         if guild_scope_update is not None:
             _save_discord_guild_scope_update(*guild_scope_update)
         elif base_config is not None:
@@ -348,6 +348,31 @@ def config_to_payload(config: V2Config) -> dict:
         "reply_enhancements": config.reply_enhancements,
     }
     return payload
+
+
+def _merge_legacy_discord_guild_scope_fields(
+    merged_payload: dict,
+    request_payload: dict,
+    base_config: Optional[V2Config],
+) -> dict:
+    """Complete partial legacy Discord guild updates before migration."""
+    request_discord = request_payload.get("discord")
+    if not isinstance(request_discord, dict):
+        return merged_payload
+    if "guild_allowlist" not in request_discord and "guild_denylist" not in request_discord:
+        return merged_payload
+
+    next_payload = dict(merged_payload)
+    merged_discord = dict(next_payload.get("discord") or {})
+    base_discord = getattr(base_config, "discord", None) if base_config is not None else None
+
+    if "guild_allowlist" not in request_discord and base_discord is not None:
+        merged_discord["guild_allowlist"] = getattr(base_discord, "guild_allowlist", None) or []
+    if "guild_denylist" not in request_discord and base_discord is not None:
+        merged_discord["guild_denylist"] = getattr(base_discord, "guild_denylist", None) or []
+
+    next_payload["discord"] = merged_discord
+    return next_payload
 
 
 def get_platform_catalog() -> dict:

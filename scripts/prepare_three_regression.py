@@ -230,6 +230,7 @@ def _build_settings_payload() -> dict:
     """Build a unified settings.json with per-channel routing for every platform."""
     channel_scopes: dict[str, dict] = {}
     guild_scopes: dict[str, dict] = {}
+    guild_policy_scopes: dict[str, dict] = {}
 
     for name, pdef in PLATFORM_DEFS.items():
         platform_key = pdef["platform"]
@@ -261,12 +262,16 @@ def _build_settings_payload() -> dict:
         }
         for guild_id in discord_denylist:
             guild_scopes["discord"][guild_id] = {"enabled": False}
+        guild_policy_scopes["discord"] = {
+            "default_enabled": not bool(discord_allowlist),
+        }
 
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "scopes": {
             "channel": channel_scopes,
             "guild": guild_scopes,
+            "guild_policy": guild_policy_scopes,
             "user": {},
         },
         "bind_codes": [],
