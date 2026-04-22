@@ -389,6 +389,42 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await new_receiver
 
+    async def test_cleanup_runtime_session_defers_disconnect_for_current_receiver(self):
+        controller = _StubController()
+        agent = ClaudeAgent(controller)
+        session_key = "wechat_o9:/tmp/work"
+        cleanup_returned = asyncio.Event()
+        disconnect_started = asyncio.Event()
+        release_disconnect = asyncio.Event()
+
+        class _SlowDisconnectClient(_StubClient):
+            async def disconnect(self):
+                self.disconnected = True
+                disconnect_started.set()
+                await release_disconnect.wait()
+
+        client = _SlowDisconnectClient()
+        controller.claude_sessions[session_key] = client
+
+        async def _receiver():
+            await agent._cleanup_runtime_session(
+                session_key,
+                current_receiver_task=asyncio.current_task(),
+            )
+            cleanup_returned.set()
+
+        receiver_task = asyncio.create_task(_receiver())
+        controller.receiver_tasks[session_key] = receiver_task
+
+        await cleanup_returned.wait()
+        self.assertNotIn(session_key, controller.receiver_tasks)
+        self.assertNotIn(session_key, controller.claude_sessions)
+
+        await disconnect_started.wait()
+        self.assertTrue(client.disconnected)
+        release_disconnect.set()
+        await asyncio.sleep(0)
+
     async def test_refresh_auth_state_disconnects_runtime_sessions(self):
         controller = _StubController()
         agent = ClaudeAgent(controller)

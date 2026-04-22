@@ -189,6 +189,24 @@ class ClaudeAgent(BaseAgent):
         except Exception as exc:  # noqa: BLE001
             logger.warning("Error disconnecting Claude session %s: %s", composite_key, exc)
 
+    def _disconnect_client_after_receiver(
+        self,
+        client,
+        composite_key: str,
+        receiver_task: asyncio.Task | None,
+    ) -> None:
+        async def _run() -> None:
+            if receiver_task is not None:
+                try:
+                    await receiver_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Claude receiver ended with error before deferred disconnect: %s", exc)
+            await self._disconnect_client(client, composite_key)
+
+        asyncio.create_task(_run())
+
     @staticmethod
     def _drain_receiver_task_exception(receiver_task: asyncio.Task) -> None:
         try:
@@ -240,14 +258,18 @@ class ClaudeAgent(BaseAgent):
 
         receiver_task = self.receiver_tasks.pop(composite_key, None)
         client = self.claude_sessions.pop(composite_key, None)
+        cleanup_from_receiver = receiver_task is not None and receiver_task is current_receiver_task
         try:
             if client is not None:
                 # Closing the SDK client first lets the receiver consume the end
                 # of stream. Cancelling it first can leave an anyio cancellation
                 # retry handle spinning in the controller loop.
-                await self._disconnect_client(client, composite_key)
+                if cleanup_from_receiver:
+                    self._disconnect_client_after_receiver(client, composite_key, receiver_task)
+                else:
+                    await self._disconnect_client(client, composite_key)
         finally:
-            if receiver_task is not current_receiver_task:
+            if not cleanup_from_receiver:
                 await self._stop_receiver_task(receiver_task)
 
             self._last_assistant_text.pop(composite_key, None)
