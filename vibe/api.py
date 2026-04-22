@@ -390,13 +390,27 @@ def save_settings(payload: dict) -> dict:
             )
         store.set_channels_for_platform(platform, channels)
     if "guilds" in payload or "guild_allowlist" in payload:
-        store.set_guilds_for_platform(
-            platform,
-            _guild_settings_from_payload(payload),
-            default_enabled=bool(payload.get("guild_default_enabled", False)),
-        )
+        guilds, default_enabled = _guild_scope_update_from_settings_payload(store, platform, payload)
+        store.set_guilds_for_platform(platform, guilds, default_enabled=default_enabled)
     store.save()
     return _settings_to_payload(store, platform=platform)
+
+
+def _guild_scope_update_from_settings_payload(
+    store: SettingsStore,
+    platform: str,
+    payload: dict,
+) -> tuple[dict[str, GuildSettings], bool]:
+    next_guilds = _guild_settings_from_payload(payload)
+    if "guild_default_enabled" in payload:
+        return next_guilds, bool(payload.get("guild_default_enabled", False))
+
+    default_enabled = store.get_guild_default_enabled_for_platform(platform)
+    if default_enabled:
+        for guild_id, settings in store.get_guilds_for_platform(platform).items():
+            if not settings.enabled and guild_id not in next_guilds:
+                next_guilds[guild_id] = settings
+    return next_guilds, default_enabled
 
 
 def _guild_settings_from_payload(payload: dict) -> dict[str, GuildSettings]:

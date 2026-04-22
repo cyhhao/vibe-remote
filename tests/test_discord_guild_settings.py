@@ -148,6 +148,56 @@ def test_partial_save_config_migrates_existing_legacy_discord_denylist(tmp_path,
     assert store.is_guild_enabled("discord", "guild-other") is True
 
 
+def test_save_settings_preserves_discord_denylist_policy_when_default_omitted(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+
+    store = SettingsStore.get_instance()
+    store.set_guilds_for_platform(
+        "discord",
+        {"guild-blocked": GuildSettings(enabled=False)},
+        default_enabled=True,
+    )
+    store.save()
+
+    settings = api.save_settings(
+        {
+            "platform": "discord",
+            "guilds": {
+                "guild-enabled": {"enabled": True},
+            },
+        }
+    )
+    reloaded = SettingsStore.get_instance()
+
+    assert settings["guild_default_enabled"] is True
+    assert settings["guilds"]["guild-blocked"]["enabled"] is False
+    assert settings["guilds"]["guild-enabled"]["enabled"] is True
+    assert reloaded.is_guild_enabled("discord", "guild-blocked") is False
+    assert reloaded.is_guild_enabled("discord", "guild-other") is True
+
+
+def test_wizard_style_guild_save_preserves_migrated_discord_denylist(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+
+    store = SettingsStore.get_instance()
+    store.set_guilds_for_platform(
+        "discord",
+        {"guild-blocked": GuildSettings(enabled=False)},
+        default_enabled=True,
+    )
+    store.save()
+
+    api.save_settings({"platform": "discord", "guilds": {}})
+    reloaded = SettingsStore.get_instance()
+
+    assert reloaded.has_guild_scope_for_platform("discord") is True
+    assert reloaded.get_guild_default_enabled_for_platform("discord") is True
+    assert reloaded.is_guild_enabled("discord", "guild-blocked") is False
+    assert reloaded.is_guild_enabled("discord", "guild-other") is True
+
+
 def test_save_config_validates_before_migrating_discord_guild_settings(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     SettingsStore.reset_instance()
