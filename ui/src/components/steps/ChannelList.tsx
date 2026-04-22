@@ -64,9 +64,12 @@ interface TelegramDiscoverySummary {
 }
 
 const getDiscordGuildAllowlist = (source: any): string[] => {
-  const allowlist = source?.discord?.guild_allowlist;
+  const allowlist = source?.discordGuildAllowlist || source?.guild_allowlist || source?.discord?.guild_allowlist;
   return Array.isArray(allowlist) ? allowlist : [];
 };
+
+const buildDiscordGuildSettings = (allowlist: string[]) =>
+  Object.fromEntries(allowlist.map((guildId) => [guildId, { enabled: true }]));
 
 const addDiscordGuildToAllowlist = (allowlist: string[], selectedGuild: string): string[] => {
   const merged = [...allowlist];
@@ -182,7 +185,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       applySelectedGuildIds(allowlist);
       setSelectedGuild(allowlist[0] || '');
     }
-  }, [data.discord?.guild_allowlist, isPage]);
+  }, [data.discordGuildAllowlist, data.discord?.guild_allowlist, isPage]);
 
 
   useEffect(() => {
@@ -197,6 +200,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         setPagePlatform(defaultPlatform);
         api.getSettings(defaultPlatform).then(s => {
           setConfigs(s.channels || {});
+          if (defaultPlatform === 'discord') {
+            const allowlist = getDiscordGuildAllowlist(s);
+            confirmedGuildAllowlistRef.current = allowlist;
+            applySelectedGuildIds(allowlist);
+            setSelectedGuild(allowlist[0] || '');
+          }
         });
       });
     }
@@ -232,6 +241,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     if (!platform) return;
     api.getSettings(platform).then((settings) => {
       setConfigs(settings.channels || {});
+      if (platform === 'discord') {
+        const allowlist = getDiscordGuildAllowlist(settings);
+        confirmedGuildAllowlistRef.current = allowlist;
+        applySelectedGuildIds(allowlist);
+        setSelectedGuild((current) => current || allowlist[0] || '');
+      }
     }).catch(() => {});
   }, [api, isPage, platform]);
   const botToken = platform === 'discord'
@@ -248,11 +263,11 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   useEffect(() => {
     if (platform !== 'discord') return;
     if (selectedGuild) return;
-    const preferredGuild = getDiscordGuildAllowlist(config)[0] || getDiscordGuildAllowlist(data)[0] || '';
+    const preferredGuild = selectedGuildIdsRef.current[0] || getDiscordGuildAllowlist(data)[0] || '';
     if (preferredGuild) {
       setSelectedGuild(preferredGuild);
     }
-  }, [platform, config.discord?.guild_allowlist, data.discord?.guild_allowlist, selectedGuild]);
+  }, [platform, data.discordGuildAllowlist, selectedGuild]);
 
   const updateSelectedGuild = (guildId: string) => {
     setSelectedGuild(guildId);
@@ -275,13 +290,6 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       } else if (allowlistSaveVersionRef.current === version) {
         const confirmed = confirmedGuildAllowlistRef.current;
         applySelectedGuildIds(confirmed);
-        applyConfig({
-          ...configRef.current,
-          discord: {
-            ...(configRef.current.discord || {}),
-            guild_allowlist: confirmed,
-          },
-        });
       }
     });
     allowlistSaveQueueRef.current = saveTask.catch(() => {});
@@ -290,21 +298,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   const persistDiscordGuildAllowlist = async (allowlist: string[]): Promise<boolean> => {
     if (!isPage) return true;
-    const updated = {
-      ...configRef.current,
-      discord: {
-        ...(configRef.current.discord || {}),
-        guild_allowlist: allowlist,
-      },
-    };
-    applyConfig(updated);
-    const saved = await saveLatestConfig();
-    if (saved) {
+    try {
+      await api.saveSettings({ guilds: buildDiscordGuildSettings(allowlist) }, 'discord');
       showToast(t('common.saved'), 'success');
       return true;
+    } catch {
+      showToast(t('channelList.settingsSaveFailed'), 'error');
+      return false;
     }
-    showToast(t('channelList.settingsSaveFailed'), 'error');
-    return false;
   };
 
   const loadGuilds = async () => {
@@ -1339,15 +1340,6 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           <button
             onClick={() => {
               const discordGuildAllowlist = selectedGuildIds;
-              const discordPayload = getEnabledPlatforms(data).includes('discord') || platform === 'discord'
-                ? {
-                    discord: {
-                      ...(data.discord || {}),
-                      ...(config.discord || {}),
-                      guild_allowlist: discordGuildAllowlist,
-                    },
-                  }
-                : {};
               if (isWizardMultiPlatform) {
                 // Merge configs from all visited platforms
                 const allConfigs = { ...wizardConfigsMap, [wizardActivePlatform]: configs };
@@ -1356,7 +1348,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     ...(data.channelConfigsByPlatform || {}),
                     ...allConfigs,
                   },
-                  ...discordPayload,
+                  ...(getEnabledPlatforms(data).includes('discord') ? { discordGuildAllowlist } : {}),
                 });
               } else {
                 onNext && onNext({
@@ -1365,12 +1357,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     [platform]: configs,
                   },
                   settingsPlatform: platform,
-                  ...(platform === 'discord' ? {
-                    discord: {
-                      ...config.discord,
-                      guild_allowlist: discordGuildAllowlist,
-                    },
-                  } : {}),
+                  ...(platform === 'discord' ? { discordGuildAllowlist } : {}),
                 });
               }
             }}

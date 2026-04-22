@@ -74,7 +74,7 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     # All platform credentials populated
     assert config["slack"]["bot_token"] == "xoxb-test-token"
     assert config["discord"]["bot_token"] == "discord-token-1234567890"
-    assert config["discord"]["guild_allowlist"] == ["754776951587340359"]
+    assert "guild_allowlist" not in config["discord"]
     assert config["lark"]["app_id"] == "cli_test_app_id"
     assert config["wechat"]["base_url"] == "https://ilinkai.weixin.qq.com"
 
@@ -90,6 +90,7 @@ def test_prepare_generates_unified_state(tmp_path: Path, monkeypatch: pytest.Mon
     # Per-channel routing in settings for each platform
     assert settings["scopes"]["channel"]["slack"]["C123SLACK"]["routing"]["agent_backend"] == "opencode"
     assert settings["scopes"]["channel"]["discord"]["123456789012345678"]["routing"]["agent_backend"] == "codex"
+    assert settings["scopes"]["guild"]["discord"]["754776951587340359"]["enabled"] is True
     assert settings["scopes"]["channel"]["lark"]["oc_test_chat_id"]["routing"]["agent_backend"] == "claude"
 
     # WeChat has no channel set, so scope is empty

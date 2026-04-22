@@ -21,22 +21,15 @@ def _config_payload(discord_payload: dict) -> dict:
     }
 
 
-def test_refresh_config_updates_discord_guild_filters(tmp_path, monkeypatch) -> None:
+def test_refresh_config_updates_platform_message_settings(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 
-    stale_discord_config = DiscordConfig(
-        bot_token="discord-token",
-        guild_allowlist=["guild-old"],
-        guild_denylist=["guild-denied-old"],
-        require_mention=True,
-    )
+    stale_discord_config = DiscordConfig(bot_token="discord-token", require_mention=True)
     controller = Controller.__new__(Controller)
     controller.config = V2Config.from_payload(
         _config_payload(
             {
                 "bot_token": "discord-token",
-                "guild_allowlist": stale_discord_config.guild_allowlist,
-                "guild_denylist": stale_discord_config.guild_denylist,
                 "require_mention": stale_discord_config.require_mention,
             }
         )
@@ -48,8 +41,6 @@ def test_refresh_config_updates_discord_guild_filters(tmp_path, monkeypatch) -> 
         _config_payload(
             {
                 "bot_token": "discord-token",
-                "guild_allowlist": ["guild-old", "guild-new"],
-                "guild_denylist": ["guild-denied-new"],
                 "require_mention": False,
             }
         )
@@ -58,6 +49,4 @@ def test_refresh_config_updates_discord_guild_filters(tmp_path, monkeypatch) -> 
 
     controller._refresh_config_from_disk()
 
-    assert stale_discord_config.guild_allowlist == ["guild-old", "guild-new"]
-    assert stale_discord_config.guild_denylist == ["guild-denied-new"]
     assert stale_discord_config.require_mention is False

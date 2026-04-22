@@ -107,6 +107,7 @@ class Controller:
         self.sessions = self.settings_manager.sessions
         self.native_session_service = None
         self.processing_indicator = ProcessingIndicatorService(self)
+        self._migrate_discord_guild_scope_from_config()
 
         # Migrate legacy per-channel language into global config
         self._migrate_language_from_settings()
@@ -131,6 +132,29 @@ class Controller:
 
     def _create_formatter(self, platform: str):
         return get_platform_descriptor(platform).create_formatter()
+
+    def _migrate_discord_guild_scope_from_config(self) -> None:
+        if "discord" not in self.platform_settings_managers:
+            return
+        discord_config = getattr(self.config, "discord", None)
+        if not discord_config:
+            return
+        allowlist = getattr(discord_config, "guild_allowlist", None) or []
+        denylist = getattr(discord_config, "guild_denylist", None) or []
+        if not allowlist:
+            return
+        manager = self.platform_settings_managers["discord"]
+        if manager.has_guild_scope():
+            return
+        from config.v2_settings import GuildSettings
+
+        store = manager.get_store()
+        guilds = {str(guild_id): GuildSettings(enabled=True) for guild_id in allowlist if str(guild_id)}
+        for guild_id in denylist:
+            guilds[str(guild_id)] = GuildSettings(enabled=False)
+        store.set_guilds_for_platform("discord", guilds)
+        store.save()
+        logger.info("Migrated Discord guild access from config to settings")
 
     def _inject_runtime_dependencies(self, platform: str, client: BaseIMClient) -> None:
         settings_manager = self.platform_settings_managers[platform]

@@ -56,6 +56,8 @@ class SlackConfig(BaseIMConfig):
 class DiscordConfig(BaseIMConfig):
     bot_token: str = ""
     application_id: Optional[str] = None
+    # Legacy input fields. Runtime server access is stored in settings.json
+    # under scopes.guild.discord so it stays with channel/user scope settings.
     guild_allowlist: Optional[List[str]] = None
     guild_denylist: Optional[List[str]] = None
     require_mention: bool = False
@@ -412,10 +414,14 @@ class V2Config:
         path = config_path or paths.get_config_path()
         self.platforms.validate()
         self.platform = self.platforms.primary
-        platform_payload = {
-            descriptor.config_key: (descriptor.get_config(self).__dict__ if descriptor.get_config(self) else None)
-            for descriptor in platform_descriptors()
-        }
+        platform_payload = {}
+        for descriptor in platform_descriptors():
+            descriptor_config = descriptor.get_config(self)
+            config_payload = descriptor_config.__dict__.copy() if descriptor_config else None
+            if descriptor.id == "discord" and isinstance(config_payload, dict):
+                config_payload.pop("guild_allowlist", None)
+                config_payload.pop("guild_denylist", None)
+            platform_payload[descriptor.config_key] = config_payload
         payload = {
             "platform": self.platform,
             "platforms": {

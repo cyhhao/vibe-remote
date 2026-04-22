@@ -40,8 +40,6 @@ const buildConfigPayload = (data: any) => {
   discord: {
     ...data.discord,
     bot_token: data.discord?.bot_token || '',
-    guild_allowlist: data.discord?.guild_allowlist || [],
-    guild_denylist: data.discord?.guild_denylist || [],
     require_mention: data.discord?.require_mention || false,
   },
   telegram: {
@@ -180,8 +178,10 @@ export const Wizard: React.FC = () => {
         const channelConfigsByPlatform = Object.fromEntries(
           settingsEntries.map(([platform, settings]) => [platform, settings.channels || {}])
         );
+        const discordSettings = settingsEntries.find(([platform]) => platform === 'discord')?.[1];
           setData({
             ...configWithCatalog,
+            discordGuildAllowlist: discordSettings?.guild_allowlist || [],
             channelConfigsByPlatform,
             default_backend: config.agents?.default_backend,
             agents: {
@@ -242,6 +242,13 @@ export const Wizard: React.FC = () => {
       mergedData.channelConfigsByPlatform
     ) {
       await api.saveConfig(buildConfigPayload(mergedData));
+    }
+    if (stepData?.discordGuildAllowlist !== undefined) {
+      await api.saveSettings({
+        guilds: Object.fromEntries(
+          (stepData.discordGuildAllowlist || []).map((guildId: string) => [guildId, { enabled: true }])
+        ),
+      }, 'discord');
     }
     if (stepData?.channelConfigsByPlatform) {
       const platforms = Object.keys(stepData.channelConfigsByPlatform);

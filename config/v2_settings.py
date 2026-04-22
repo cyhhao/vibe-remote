@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SHOW_MESSAGE_TYPES: List[str] = ["assistant"]
 ALLOWED_MESSAGE_TYPES = {"system", "assistant", "toolcall"}
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SCOPED_KEY_SEP = "::"
 
 # Bind code prefix and length
@@ -102,6 +102,11 @@ class ChannelSettings:
 
 
 @dataclass
+class GuildSettings:
+    enabled: bool = True
+
+
+@dataclass
 class UserSettings:
     """Settings for a bound DM user."""
 
@@ -130,6 +135,8 @@ class BindCode:
 @dataclass
 class SettingsState:
     channels: Dict[str, ChannelSettings] = field(default_factory=dict)
+    guilds: Dict[str, GuildSettings] = field(default_factory=dict)
+    guild_scope_platforms: set[str] = field(default_factory=set)
     users: Dict[str, UserSettings] = field(default_factory=dict)
     bind_codes: List[BindCode] = field(default_factory=list)
 
@@ -180,8 +187,9 @@ class SettingsStore:
         Automatically reloads from disk if the file has changed.
         """
         with cls._instance_lock:
-            if cls._instance is None:
-                cls._instance = cls(settings_path)
+            target_path = settings_path or paths.get_settings_path()
+            if cls._instance is None or cls._instance.settings_path != target_path:
+                cls._instance = cls(target_path)
             else:
                 cls._instance.maybe_reload()
             return cls._instance
@@ -221,6 +229,8 @@ class SettingsStore:
             return
 
         channels: Dict[str, ChannelSettings] = {}
+        guilds: Dict[str, GuildSettings] = {}
+        guild_scope_platforms: set[str] = set()
         users: Dict[str, UserSettings] = {}
         migrated_legacy_channels = False
 
@@ -243,6 +253,19 @@ class SettingsStore:
                             routing=_parse_routing(cp.get("routing") or {}),
                             require_mention=cp.get("require_mention"),
                         )
+
+            raw_guild_scopes = scopes.get("guild") or {}
+            if isinstance(raw_guild_scopes, dict):
+                for platform, items in raw_guild_scopes.items():
+                    platform_key = str(platform)
+                    guild_scope_platforms.add(platform_key)
+                    if not isinstance(items, dict):
+                        continue
+                    for guild_id, gp in items.items():
+                        if not isinstance(gp, dict):
+                            continue
+                        key = _make_scoped_key(platform_key, str(guild_id))
+                        guilds[key] = GuildSettings(enabled=gp.get("enabled", True))
 
             raw_user_scopes = scopes.get("user") or {}
             if isinstance(raw_user_scopes, dict):
@@ -319,7 +342,13 @@ class SettingsStore:
                     )
                 )
 
-        self.settings = SettingsState(channels=channels, users=users, bind_codes=bind_codes)
+        self.settings = SettingsState(
+            channels=channels,
+            guilds=guilds,
+            guild_scope_platforms=guild_scope_platforms,
+            users=users,
+            bind_codes=bind_codes,
+        )
 
         if migrated_legacy_channels:
             logger.info("Migrating legacy channel settings to platform-scoped schema")
@@ -334,7 +363,7 @@ class SettingsStore:
         paths.ensure_data_dirs()
         payload: dict = {
             "schema_version": SCHEMA_VERSION,
-            "scopes": {"channel": {}, "user": {}},
+            "scopes": {"channel": {}, "guild": {}, "user": {}},
             "bind_codes": [],
         }
 
@@ -349,6 +378,17 @@ class SettingsStore:
                 "custom_cwd": s.custom_cwd,
                 "routing": _routing_to_dict(s.routing),
                 "require_mention": s.require_mention,
+            }
+
+        # Guilds / Discord servers (platform-scoped)
+        for platform in sorted(self.settings.guild_scope_platforms):
+            payload["scopes"]["guild"].setdefault(platform, {})
+        for scoped_key, s in self.settings.guilds.items():
+            platform, guild_id = _split_scoped_key(scoped_key)
+            if not platform:
+                platform = "discord"
+            payload["scopes"]["guild"].setdefault(platform, {})[guild_id] = {
+                "enabled": s.enabled,
             }
 
         # Users (platform-scoped)
@@ -407,6 +447,30 @@ class SettingsStore:
         self.settings.channels = {k: v for k, v in self.settings.channels.items() if not k.startswith(prefix)}
         for channel_id, settings in channels.items():
             self.settings.channels[self._channel_key(str(channel_id), platform)] = settings
+
+    def get_guilds_for_platform(self, platform: str) -> Dict[str, GuildSettings]:
+        result: Dict[str, GuildSettings] = {}
+        prefix = f"{platform}{SCOPED_KEY_SEP}"
+        for key, settings in self.settings.guilds.items():
+            if key.startswith(prefix):
+                result[key[len(prefix) :]] = settings
+        return result
+
+    def set_guilds_for_platform(self, platform: str, guilds: Dict[str, GuildSettings]) -> None:
+        prefix = f"{platform}{SCOPED_KEY_SEP}"
+        self.settings.guilds = {k: v for k, v in self.settings.guilds.items() if not k.startswith(prefix)}
+        self.settings.guild_scope_platforms.add(platform)
+        for guild_id, settings in guilds.items():
+            self.settings.guilds[_make_scoped_key(platform, str(guild_id))] = settings
+
+    def has_guild_scope_for_platform(self, platform: str) -> bool:
+        return platform in self.settings.guild_scope_platforms
+
+    def is_guild_enabled(self, platform: str, guild_id: str) -> bool:
+        if not self.has_guild_scope_for_platform(platform):
+            return True
+        settings = self.settings.guilds.get(_make_scoped_key(platform, str(guild_id)))
+        return bool(settings and settings.enabled)
 
     def get_users_for_platform(self, platform: str) -> Dict[str, UserSettings]:
         result: Dict[str, UserSettings] = {}
