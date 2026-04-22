@@ -154,7 +154,7 @@ class Controller:
 
         Called on every ``_t()`` invocation (guarded by mtime check).
         Refreshes: language, show_duration, ack_mode, include_user_info,
-        reply_enhancements, require_mention (global).
+        reply_enhancements, and mutable platform message filters.
         """
         try:
             config_path = paths.get_config_path()
@@ -171,13 +171,25 @@ class Controller:
                 self.config.include_user_info = v2_config.include_user_info
                 self.config.reply_enhancements = v2_config.reply_enhancements
 
+                mutable_platform_attrs = (
+                    "require_mention",
+                    "guild_allowlist",
+                    "guild_denylist",
+                    "thread_auto_archive_minutes",
+                    "allowed_chat_ids",
+                    "allowed_user_ids",
+                    "disable_link_unfurl",
+                )
                 for platform, client in self.im_clients.items():
                     im_cfg = getattr(client, "config", None)
-                    if im_cfg is None or not hasattr(im_cfg, "require_mention"):
+                    if im_cfg is None:
                         continue
                     latest_platform_config = get_platform_descriptor(platform).get_config(v2_config)
-                    if latest_platform_config is not None and hasattr(latest_platform_config, "require_mention"):
-                        im_cfg.require_mention = latest_platform_config.require_mention
+                    if latest_platform_config is None:
+                        continue
+                    for attr in mutable_platform_attrs:
+                        if hasattr(im_cfg, attr) and hasattr(latest_platform_config, attr):
+                            setattr(im_cfg, attr, getattr(latest_platform_config, attr))
 
                 self._config_mtime = mtime
         except Exception as err:
