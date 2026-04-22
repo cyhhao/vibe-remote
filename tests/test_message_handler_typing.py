@@ -484,11 +484,59 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(controller.im_client.removed_keyboards, [("chat1", "lark", "om_123")])
         self.assertEqual(controller.im_client.sent_messages, [("chat1", "Reply: 继续")])
-        self.assertEqual(controller.im_client.reactions, [("chat1", "msg-1", ":eyes:")])
+        self.assertEqual(controller.im_client.reactions, [])
         handler.handle_user_message.assert_awaited_once()
         forwarded_context, forwarded_text = handler.handle_user_message.await_args.args
         self.assertEqual(forwarded_text, "继续")
         self.assertEqual(forwarded_context.platform, "lark")
+        self.assertIsNone(forwarded_context.message_id)
+        self.assertEqual((forwarded_context.platform_specific or {}).get("processing_indicator_message_id"), "msg-1")
+
+    async def test_quick_reply_callback_reaction_uses_echo_as_indicator_target(self):
+        controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="u1",
+            channel_id="chat1",
+            message_id="prompt-msg",
+            platform="slack",
+            platform_specific={"platform": "slack", "is_dm": False},
+        )
+
+        await handler.handle_callback_query(context, "quick_reply:按钮 1")
+
+        self.assertEqual(controller.im_client.removed_keyboards, [("chat1", "slack", "prompt-msg")])
+        self.assertEqual(controller.im_client.sent_messages, [("chat1", "Reply: 按钮 1")])
+        self.assertEqual(controller.im_client.reactions, [("chat1", "msg-1", ":eyes:")])
+        _, request = controller.agent_service.requests[0]
+        self.assertIsNone(request.context.message_id)
+        self.assertEqual(request.ack_reaction_message_id, "msg-1")
+        self.assertIsNone(request.ack_message_id)
+        self.assertFalse(request.typing_indicator_active)
+
+    async def test_quick_reply_callback_typing_uses_global_indicator_strategy(self):
+        controller = _StubController(platform="telegram", ack_mode="typing", typing_result=True)
+        handler = MessageHandler(controller)
+        handler.set_session_handler(_StubSessionHandler())
+        context = MessageContext(
+            user_id="u1",
+            channel_id="chat1",
+            message_id="prompt-msg",
+            platform="telegram",
+            platform_specific={"platform": "telegram", "is_dm": False},
+        )
+
+        await handler.handle_callback_query(context, "quick_reply:按钮 2")
+
+        self.assertEqual(controller.im_client.sent_messages, [("chat1", "Reply: 按钮 2")])
+        self.assertEqual(controller.im_client.reactions, [])
+        self.assertEqual(controller.im_client.typing_calls, [("chat1", "u1")])
+        _, request = controller.agent_service.requests[0]
+        self.assertTrue(request.typing_indicator_active)
+        self.assertIsNone(request.ack_message_id)
+        self.assertIsNone(request.ack_reaction_message_id)
+        await handler._remove_ack_reaction(context, request)
 
 
 if __name__ == "__main__":
