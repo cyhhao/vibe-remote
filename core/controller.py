@@ -141,7 +141,7 @@ class Controller:
             return
         allowlist = getattr(discord_config, "guild_allowlist", None) or []
         denylist = getattr(discord_config, "guild_denylist", None) or []
-        if not allowlist:
+        if not allowlist and not denylist:
             return
         manager = self.platform_settings_managers["discord"]
         if manager.has_guild_scope():
@@ -149,10 +149,11 @@ class Controller:
         from config.v2_settings import GuildSettings
 
         store = manager.get_store()
+        default_enabled = not bool(allowlist)
         guilds = {str(guild_id): GuildSettings(enabled=True) for guild_id in allowlist if str(guild_id)}
         for guild_id in denylist:
             guilds[str(guild_id)] = GuildSettings(enabled=False)
-        store.set_guilds_for_platform("discord", guilds)
+        store.set_guilds_for_platform("discord", guilds, default_enabled=default_enabled)
         store.save()
         logger.info("Migrated Discord guild access from config to settings")
 

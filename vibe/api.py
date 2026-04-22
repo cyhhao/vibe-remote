@@ -282,17 +282,27 @@ def save_config(payload: dict) -> V2Config:
     if not isinstance(payload, dict):
         raise ValueError("Config payload must be an object")
 
-    payload = _extract_settings_scopes_from_config_payload(payload)
+    payload, guild_scope_update = _extract_settings_scopes_from_config_payload(payload)
 
     with CONFIG_LOCK:
         base_payload: dict = {}
+        base_config: Optional[V2Config] = None
         try:
-            base_payload = config_to_payload(load_config())
+            base_config = load_config()
+            base_payload = config_to_payload(base_config)
         except FileNotFoundError:
             base_payload = {}
 
         merged_payload = _deep_merge_dicts(base_payload, payload) if base_payload else payload
         config = V2Config.from_payload(merged_payload)
+        if guild_scope_update is not None:
+            _save_discord_guild_scope_update(*guild_scope_update)
+        elif base_config is not None:
+            store = SettingsStore.get_instance()
+            if not store.has_guild_scope_for_platform("discord"):
+                existing_update = _discord_guild_scope_from_config(base_config)
+                if existing_update is not None:
+                    _save_discord_guild_scope_update(*existing_update, store=store)
         config.save()
         return config
 
@@ -300,10 +310,10 @@ def save_config(payload: dict) -> V2Config:
 def config_to_payload(config: V2Config) -> dict:
     from config.platform_registry import platform_descriptors
 
-    platform_payload = {
-        descriptor.config_key: (descriptor.get_config(config).__dict__ if descriptor.get_config(config) else None)
-        for descriptor in platform_descriptors()
-    }
+    platform_payload = {}
+    for descriptor in platform_descriptors():
+        descriptor_config = descriptor.get_config(config)
+        platform_payload[descriptor.config_key] = descriptor_config.__dict__.copy() if descriptor_config else None
     if isinstance(platform_payload.get("discord"), dict):
         platform_payload["discord"].pop("guild_allowlist", None)
         platform_payload["discord"].pop("guild_denylist", None)
@@ -380,7 +390,11 @@ def save_settings(payload: dict) -> dict:
             )
         store.set_channels_for_platform(platform, channels)
     if "guilds" in payload or "guild_allowlist" in payload:
-        store.set_guilds_for_platform(platform, _guild_settings_from_payload(payload))
+        store.set_guilds_for_platform(
+            platform,
+            _guild_settings_from_payload(payload),
+            default_enabled=bool(payload.get("guild_default_enabled", False)),
+        )
     store.save()
     return _settings_to_payload(store, platform=platform)
 
@@ -414,23 +428,57 @@ def _migrate_discord_guild_scope_from_config(store: SettingsStore, config: Optio
         return
     allowlist = getattr(discord_config, "guild_allowlist", None) or []
     denylist = getattr(discord_config, "guild_denylist", None) or []
-    if not allowlist:
+    if not allowlist and not denylist:
         return
-    guilds = {str(guild_id): GuildSettings(enabled=True) for guild_id in allowlist if str(guild_id)}
-    for guild_id in denylist:
+    _save_discord_guild_scope_update(*_discord_guild_scope_from_legacy_payload(allowlist, denylist), store=store)
+
+
+def _discord_guild_scope_from_legacy_payload(
+    allowlist: list | None,
+    denylist: list | None,
+) -> tuple[dict[str, GuildSettings], bool]:
+    default_enabled = not bool(allowlist)
+    guilds = {
+        str(guild_id): GuildSettings(enabled=True)
+        for guild_id in (allowlist or [])
+        if str(guild_id)
+    }
+    for guild_id in denylist or []:
         guilds[str(guild_id)] = GuildSettings(enabled=False)
-    store.set_guilds_for_platform("discord", guilds)
-    store.save()
+    return guilds, default_enabled
 
 
-def _extract_settings_scopes_from_config_payload(payload: dict) -> dict:
+def _discord_guild_scope_from_config(config: V2Config) -> Optional[tuple[dict[str, GuildSettings], bool]]:
+    discord_config = getattr(config, "discord", None)
+    if not discord_config:
+        return None
+    allowlist = getattr(discord_config, "guild_allowlist", None) or []
+    denylist = getattr(discord_config, "guild_denylist", None) or []
+    if not allowlist and not denylist:
+        return None
+    return _discord_guild_scope_from_legacy_payload(allowlist, denylist)
+
+
+def _save_discord_guild_scope_update(
+    guilds: dict[str, GuildSettings],
+    default_enabled: bool,
+    store: Optional[SettingsStore] = None,
+) -> None:
+    target_store = store or SettingsStore.get_instance()
+    target_store.set_guilds_for_platform("discord", guilds, default_enabled=default_enabled)
+    target_store.save()
+
+
+def _extract_settings_scopes_from_config_payload(
+    payload: dict,
+) -> tuple[dict, Optional[tuple[dict[str, GuildSettings], bool]]]:
     """Move legacy Discord server access fields from config updates to settings."""
     if not isinstance(payload, dict):
-        return payload
+        return payload, None
     next_payload = dict(payload)
     discord_payload = next_payload.get("discord")
     if not isinstance(discord_payload, dict):
-        return next_payload
+        return next_payload, None
 
     discord_next = dict(discord_payload)
     has_guild_scope = "guild_allowlist" in discord_next or "guild_denylist" in discord_next
@@ -439,18 +487,9 @@ def _extract_settings_scopes_from_config_payload(payload: dict) -> dict:
     next_payload["discord"] = discord_next
 
     if has_guild_scope:
-        store = SettingsStore.get_instance()
-        guilds = {
-            str(guild_id): GuildSettings(enabled=True)
-            for guild_id in (allowlist or [])
-            if str(guild_id)
-        }
-        for guild_id in denylist or []:
-            guilds[str(guild_id)] = GuildSettings(enabled=False)
-        store.set_guilds_for_platform("discord", guilds)
-        store.save()
+        return next_payload, _discord_guild_scope_from_legacy_payload(allowlist, denylist)
 
-    return next_payload
+    return next_payload, None
 
 
 def init_sessions() -> None:
@@ -749,6 +788,7 @@ def _settings_to_payload(store: SettingsStore, platform: str) -> dict:
         "guilds": {},
         "guild_allowlist": [],
         "guild_scope_configured": False,
+        "guild_default_enabled": False,
         "users": {},
         "bind_codes": [],
     }
@@ -761,6 +801,7 @@ def _settings_to_payload(store: SettingsStore, platform: str) -> dict:
             "routing": _routing_to_dict(settings.routing),
         }
     payload["guild_scope_configured"] = store.has_guild_scope_for_platform(platform)
+    payload["guild_default_enabled"] = store.get_guild_default_enabled_for_platform(platform)
     for guild_id, settings in store.get_guilds_for_platform(platform).items():
         payload["guilds"][guild_id] = {
             "enabled": settings.enabled,

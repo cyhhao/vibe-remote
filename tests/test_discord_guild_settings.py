@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from config import paths
 from config.v2_settings import GuildSettings, SettingsStore
 from modules.settings_manager import SettingsManager
@@ -86,3 +88,81 @@ def test_save_config_moves_legacy_discord_allowlist_to_settings(tmp_path, monkey
     assert "guild_allowlist" not in saved_config["discord"]
     assert settings["guild_allowlist"] == ["guild-1", "guild-2"]
     assert settings["guilds"]["guild-1"]["enabled"] is True
+
+
+def test_save_config_moves_legacy_discord_denylist_to_settings(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+
+    saved = api.save_config(
+        {
+            **_config_payload(),
+            "discord": {
+                "bot_token": "discord-token-1234567890",
+                "guild_allowlist": [],
+                "guild_denylist": ["guild-blocked"],
+                "require_mention": False,
+            },
+        }
+    )
+    payload = api.config_to_payload(saved)
+    settings = api.get_settings("discord")
+    store = SettingsStore.get_instance()
+
+    assert "guild_denylist" not in payload["discord"]
+    assert settings["guild_scope_configured"] is True
+    assert settings["guild_default_enabled"] is True
+    assert settings["guilds"]["guild-blocked"]["enabled"] is False
+    assert store.is_guild_enabled("discord", "guild-blocked") is False
+    assert store.is_guild_enabled("discord", "guild-other") is True
+
+
+def test_partial_save_config_migrates_existing_legacy_discord_denylist(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+
+    paths.ensure_data_dirs()
+    paths.get_config_path().write_text(
+        json.dumps(
+            {
+                **_config_payload(),
+                "discord": {
+                    "bot_token": "discord-token-1234567890",
+                    "guild_allowlist": [],
+                    "guild_denylist": ["guild-blocked"],
+                    "require_mention": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    api.save_config({"show_duration": False})
+    store = SettingsStore.get_instance()
+    saved_config = json.loads(paths.get_config_path().read_text(encoding="utf-8"))
+
+    assert "guild_denylist" not in saved_config["discord"]
+    assert store.has_guild_scope_for_platform("discord") is True
+    assert store.get_guild_default_enabled_for_platform("discord") is True
+    assert store.is_guild_enabled("discord", "guild-blocked") is False
+    assert store.is_guild_enabled("discord", "guild-other") is True
+
+
+def test_save_config_validates_before_migrating_discord_guild_settings(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+
+    payload = {
+        **_config_payload(),
+        "platforms": {"enabled": ["discord", "wechat"], "primary": "discord"},
+        "discord": {
+            "bot_token": "discord-token-1234567890",
+            "guild_allowlist": ["guild-1"],
+            "require_mention": False,
+        },
+    }
+
+    with pytest.raises(ValueError, match="wechat.*must be provided"):
+        api.save_config(payload)
+
+    assert SettingsStore.get_instance().has_guild_scope_for_platform("discord") is False
