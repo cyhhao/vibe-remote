@@ -149,20 +149,7 @@ class ClaudeAgent(BaseAgent):
                 sessions_to_clear.append(composite_id)
 
         for composite_id in sessions_to_clear:
-            client = self.claude_sessions.pop(composite_id, None)
-            if client is not None:
-                await self._disconnect_client(client, composite_id)
-
-            receiver_task = self.receiver_tasks.pop(composite_id, None)
-            await self._stop_receiver_task(receiver_task)
-
-            self._last_assistant_text.pop(composite_id, None)
-            self._pending_assistant_message.pop(composite_id, None)
-            self._pending_reactions.pop(composite_id, None)
-            self._pending_requests.pop(composite_id, None)
-            clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
-            if callable(clear_tracking):
-                clear_tracking(composite_id)
+            await self._cleanup_runtime_session(composite_id)
 
         # Legacy session manager cleanup (best-effort)
         await self.session_manager.clear_session(session_key)
@@ -174,19 +161,7 @@ class ClaudeAgent(BaseAgent):
         session_ids = set(self.claude_sessions.keys()) | set(self.receiver_tasks.keys())
 
         for composite_id in session_ids:
-            receiver_task = self.receiver_tasks.pop(composite_id, None)
-            client = self.claude_sessions.pop(composite_id, None)
-            if client is not None:
-                await self._disconnect_client(client, composite_id)
-            await self._stop_receiver_task(receiver_task)
-
-            self._last_assistant_text.pop(composite_id, None)
-            self._pending_assistant_message.pop(composite_id, None)
-            self._pending_reactions.pop(composite_id, None)
-            self._pending_requests.pop(composite_id, None)
-            clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
-            if callable(clear_tracking):
-                clear_tracking(composite_id)
+            await self._cleanup_runtime_session(composite_id)
 
         logger.info("Refreshed Claude auth state across %d runtime session(s)", len(session_ids))
 
@@ -263,25 +238,28 @@ class ClaudeAgent(BaseAgent):
     ) -> None:
         """Drop Claude runtime state without canceling the current receiver task."""
 
-        receiver_task = self.receiver_tasks.pop(composite_key, None)
+        receiver_task = self.receiver_tasks.get(composite_key)
         client = self.claude_sessions.pop(composite_key, None)
-        if client is not None:
-            # Closing the SDK client first lets the receiver consume the end of
-            # stream. Cancelling it first can leave an anyio cancellation retry
-            # handle spinning in the controller loop.
-            await self._disconnect_client(client, composite_key)
+        try:
+            if client is not None:
+                # Closing the SDK client first lets the receiver consume the end
+                # of stream. Cancelling it first can leave an anyio cancellation
+                # retry handle spinning in the controller loop.
+                await self._disconnect_client(client, composite_key)
+        finally:
+            if self.receiver_tasks.get(composite_key) is receiver_task:
+                self.receiver_tasks.pop(composite_key, None)
+            if receiver_task is not current_receiver_task:
+                await self._stop_receiver_task(receiver_task)
 
-        if receiver_task is not current_receiver_task:
-            await self._stop_receiver_task(receiver_task)
-
-        self._last_assistant_text.pop(composite_key, None)
-        self._pending_assistant_message.pop(composite_key, None)
-        if not preserve_pending_request_state:
-            self._pending_reactions.pop(composite_key, None)
-            self._pending_requests.pop(composite_key, None)
-        clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
-        if callable(clear_tracking):
-            clear_tracking(composite_key)
+            self._last_assistant_text.pop(composite_key, None)
+            self._pending_assistant_message.pop(composite_key, None)
+            if not preserve_pending_request_state:
+                self._pending_reactions.pop(composite_key, None)
+                self._pending_requests.pop(composite_key, None)
+            clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
+            if callable(clear_tracking):
+                clear_tracking(composite_key)
 
     async def handle_stop(self, request: AgentRequest) -> bool:
         composite_key = request.composite_session_id

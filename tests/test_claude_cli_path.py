@@ -640,6 +640,61 @@ def test_cleanup_session_drains_finished_receiver_task_failure(monkeypatch, tmp_
     assert composite_key not in controller.claude_sessions
 
 
+def test_cleanup_session_cancels_receiver_when_disconnect_is_cancelled(monkeypatch, tmp_path: Path) -> None:
+    events = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            self.disconnects = 0
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            self.disconnects += 1
+            events["disconnect_started"].set()
+            await asyncio.Future()
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+    composite_key = f"slack_C123:{tmp_path}"
+
+    async def _exercise_cleanup() -> None:
+        events["disconnect_started"] = asyncio.Event()
+        events["receiver_cancelled"] = asyncio.Event()
+        client = await handler.get_or_create_claude_session(context)
+
+        async def _receiver():
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                events["receiver_cancelled"].set()
+                raise
+
+        receiver_task = asyncio.create_task(_receiver())
+        controller.receiver_tasks[composite_key] = receiver_task
+        cleanup_task = asyncio.create_task(handler.cleanup_session(composite_key))
+
+        await events["disconnect_started"].wait()
+        assert controller.receiver_tasks[composite_key] is receiver_task
+
+        cleanup_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cleanup_task
+
+        assert client.disconnects == 1
+        assert events["receiver_cancelled"].is_set()
+
+    asyncio.run(_exercise_cleanup())
+
+    assert composite_key not in controller.receiver_tasks
+    assert composite_key not in controller.claude_sessions
+
+
 def test_evict_idle_sessions_rechecks_active_state_before_cleanup(monkeypatch, tmp_path: Path) -> None:
     class _StubClaudeSDKClient:
         def __init__(self, options):

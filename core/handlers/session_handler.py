@@ -811,44 +811,50 @@ class SessionHandler(BaseHandler):
 
     async def cleanup_session(self, composite_key: str):
         """Clean up a specific session by composite key"""
-        receiver_task = self.receiver_tasks.pop(composite_key, None)
+        receiver_task = self.receiver_tasks.get(composite_key)
         client = self.claude_sessions.pop(composite_key, None)
 
-        # Close the SDK client first so its receive stream can finish normally.
-        # Cancelling the receiver first can leave the SDK's anyio cancel scope
-        # retrying cancellation on every event-loop tick.
-        if client is not None:
-            try:
-                await client.disconnect()
-            except Exception as e:
-                logger.error(f"Error disconnecting Claude session {composite_key}: {e}")
-            logger.info(f"Cleaned up Claude session {composite_key}")
-
-        if receiver_task is not None:
-            receiver_result_retrieved = False
-            if not receiver_task.done():
+        try:
+            # Close the SDK client first so its receive stream can finish normally.
+            # Cancelling the receiver first can leave the SDK's anyio cancel scope
+            # retrying cancellation on every event-loop tick.
+            if client is not None:
                 try:
-                    await asyncio.wait_for(asyncio.shield(receiver_task), timeout=0.1)
-                except asyncio.TimeoutError:
-                    pass
-                except asyncio.CancelledError:
-                    pass
+                    await client.disconnect()
                 except Exception as e:
-                    receiver_result_retrieved = True
-                    logger.warning("Claude receiver ended with error during cleanup: %s", e)
-            if receiver_task.done() and not receiver_result_retrieved:
-                self._drain_receiver_task_exception(receiver_task)
-            if not receiver_task.done():
-                receiver_task.cancel()
-                try:
-                    await receiver_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    pass
-            logger.info(f"Cancelled receiver task for session {composite_key}")
+                    logger.error(f"Error disconnecting Claude session {composite_key}: {e}")
+                logger.info(f"Cleaned up Claude session {composite_key}")
+        finally:
+            if self.receiver_tasks.get(composite_key) is receiver_task:
+                self.receiver_tasks.pop(composite_key, None)
+            await self._stop_receiver_task(receiver_task, composite_key)
+            self.clear_session_tracking(composite_key)
 
-        self.clear_session_tracking(composite_key)
+    async def _stop_receiver_task(self, receiver_task, composite_key: str) -> None:
+        if receiver_task is None:
+            return
+        receiver_result_retrieved = False
+        if not receiver_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(receiver_task), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                receiver_result_retrieved = True
+                logger.warning("Claude receiver ended with error during cleanup: %s", e)
+        if receiver_task.done() and not receiver_result_retrieved:
+            self._drain_receiver_task_exception(receiver_task)
+        if not receiver_task.done():
+            receiver_task.cancel()
+            try:
+                await receiver_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        logger.info(f"Cancelled receiver task for session {composite_key}")
 
     @staticmethod
     def _drain_receiver_task_exception(receiver_task) -> None:
