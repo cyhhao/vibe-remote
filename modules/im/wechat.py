@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -82,6 +83,7 @@ _MAX_CONSECUTIVE_FAILURES = 3
 _DEDUP_SET_MAX = 1000
 _DEDUP_CLEAN_INTERVAL_SECONDS = 300
 _SESSION_EXPIRED_ERRCODE = -14
+_CONTEXT_TOKEN_CACHE_VERSION = 1
 
 # Regex patterns for stripping markdown
 _MD_BOLD = re.compile(r"\*\*(.+?)\*\*")
@@ -388,6 +390,7 @@ class WeChatBot(BaseIMClient):
 
         # Context tokens per user (needed for replies)
         self._context_tokens: Dict[str, str] = {}
+        self._context_token_observed_at: Dict[str, float] = {}
         self._typing_tickets: Dict[tuple[str, str], str] = {}
 
         # getUpdates cursor
@@ -949,7 +952,7 @@ class WeChatBot(BaseIMClient):
         For WeChat, every conversation is already a DM, so we just need a
         cached context_token for the user.
         """
-        context_token = self._context_tokens.get(user_id, "")
+        context_token = self._get_context_token_for_user(user_id)
         if not context_token:
             logger.warning(
                 "No context_token cached for user %s; cannot send DM",
@@ -1003,6 +1006,7 @@ class WeChatBot(BaseIMClient):
 
             # Load persisted sync buffer
             self._load_sync_buf()
+            self._load_context_tokens()
 
             # Check login status
             logged_in = await self._auth_manager.check_login_status(
@@ -1066,6 +1070,7 @@ class WeChatBot(BaseIMClient):
     def _mark_session_expired(self, errcode: Any) -> None:
         self._auth_manager.is_logged_in = False
         self._typing_tickets.clear()
+        self._clear_context_tokens()
         if not self._session_expired_logged:
             logger.error(
                 "WeChat session expired (errcode %s); re-authentication required via the Web UI QR login",
@@ -1228,7 +1233,7 @@ class WeChatBot(BaseIMClient):
 
         # Cache context_token for replies
         if context_token:
-            self._context_tokens[from_user] = context_token
+            self._remember_context_token(from_user, context_token)
 
         # Extract text from item_list
         text = self._extract_text(msg)
@@ -1502,6 +1507,94 @@ class WeChatBot(BaseIMClient):
     # Context token helpers
     # ------------------------------------------------------------------
 
+    def _get_context_token_cache_path(self) -> Path:
+        state_dir = get_state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir / "wechat_context_tokens.json"
+
+    def _load_context_tokens(self) -> None:
+        path = self._get_context_token_cache_path()
+        if not path.is_file():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            raw_tokens = data.get("tokens") if isinstance(data, dict) else None
+            if not isinstance(raw_tokens, dict):
+                return
+
+            loaded_tokens: Dict[str, str] = {}
+            loaded_observed_at: Dict[str, float] = {}
+            for user_id, record in raw_tokens.items():
+                token = ""
+                observed_at = 0.0
+                if isinstance(record, dict):
+                    token = str(record.get("context_token") or "")
+                    try:
+                        observed_at = float(record.get("observed_at") or 0)
+                    except (TypeError, ValueError):
+                        observed_at = 0.0
+                elif isinstance(record, str):
+                    token = record
+                if not user_id or not token:
+                    continue
+                loaded_tokens[str(user_id)] = token
+                loaded_observed_at[str(user_id)] = observed_at
+
+            self._context_tokens.update(loaded_tokens)
+            self._context_token_observed_at.update(loaded_observed_at)
+            if loaded_tokens:
+                logger.info("Loaded persisted WeChat context tokens for %d user(s)", len(loaded_tokens))
+        except Exception as exc:
+            logger.warning("Failed to load WeChat context tokens: %s", exc)
+
+    def _save_context_tokens(self) -> None:
+        try:
+            path = self._get_context_token_cache_path()
+            payload = {
+                "version": _CONTEXT_TOKEN_CACHE_VERSION,
+                "tokens": {
+                    user_id: {
+                        "context_token": token,
+                        "observed_at": self._context_token_observed_at.get(user_id, 0),
+                    }
+                    for user_id, token in self._context_tokens.items()
+                    if token
+                },
+            }
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=path.parent,
+                suffix=".tmp",
+                delete=False,
+                encoding="utf-8",
+            ) as handle:
+                json.dump(payload, handle, ensure_ascii=False)
+                temp_path = Path(handle.name)
+            temp_path.replace(path)
+        except Exception as exc:
+            logger.warning("Failed to save WeChat context tokens: %s", exc)
+
+    def _remember_context_token(self, user_id: str, context_token: str) -> None:
+        if not user_id or not context_token:
+            return
+        self._context_tokens[user_id] = context_token
+        self._context_token_observed_at[user_id] = time.time()
+        self._save_context_tokens()
+
+    def _clear_context_tokens(self) -> None:
+        if not self._context_tokens and not self._context_token_observed_at:
+            return
+        self._context_tokens.clear()
+        self._context_token_observed_at.clear()
+        self._save_context_tokens()
+
+    def _get_context_token_for_user(self, user_id: str) -> str:
+        token = self._context_tokens.get(user_id, "")
+        if token:
+            return token
+        self._load_context_tokens()
+        return self._context_tokens.get(user_id, "")
+
     def _get_context_token(self, context: MessageContext) -> str:
         """Resolve the context_token for a given message context.
 
@@ -1511,7 +1604,7 @@ class WeChatBot(BaseIMClient):
         token = ps.get("context_token", "")
         if token:
             return token
-        return self._context_tokens.get(context.user_id, "")
+        return self._get_context_token_for_user(context.user_id)
 
     # ------------------------------------------------------------------
     # Reactions (unsupported)

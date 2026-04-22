@@ -1,4 +1,6 @@
 import asyncio
+import json
+import logging
 import unittest
 from unittest.mock import AsyncMock
 from pathlib import Path
@@ -221,6 +223,45 @@ class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[0].user_id, "user-1")
         self.assertEqual(args[1], "hi")
 
+    async def test_process_inbound_message_persists_context_token(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict("os.environ", {"VIBE_REMOTE_HOME": tmpdir}):
+                bot = self._make_bot()
+                bot.check_authorization = lambda **kwargs: AuthResult(allowed=True, is_dm=True)
+                bot.dispatch_text_command = AsyncMock(return_value=False)
+                bot._process_media_items = AsyncMock(return_value=None)
+
+                msg = {
+                    "message_id": "mid-token-1",
+                    "from_user_id": "user-1",
+                    "context_token": "ctx-persisted",
+                    "item_list": [{"type": 1, "text_item": {"text": "hi"}}],
+                }
+
+                await bot._process_inbound_message(msg)
+
+                cache_path = Path(tmpdir) / "state" / "wechat_context_tokens.json"
+                data = json.loads(cache_path.read_text(encoding="utf-8"))
+                self.assertEqual(data["tokens"]["user-1"]["context_token"], "ctx-persisted")
+
+                restored = self._make_bot()
+                restored._load_context_tokens()
+                self.assertEqual(restored._get_context_token_for_user("user-1"), "ctx-persisted")
+
+    async def test_send_dm_reuses_persisted_context_token(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict("os.environ", {"VIBE_REMOTE_HOME": tmpdir}):
+                bot = self._make_bot()
+                bot._remember_context_token("user-1", "ctx-persisted")
+
+                restored = self._make_bot()
+                with patch("modules.im.wechat.wechat_api.send_message", new=AsyncMock(return_value={})) as mock_send:
+                    result = await restored.send_dm("user-1", "hello")
+
+        self.assertIsNotNone(result)
+        mock_send.assert_awaited_once()
+        self.assertEqual(mock_send.await_args.args[3], "ctx-persisted")  # type: ignore[union-attr]
+
     async def test_process_inbound_message_does_not_block_commands_behind_running_callback(self):
         bot = self._make_bot()
         bot.check_authorization = lambda **kwargs: AuthResult(allowed=True, is_dm=True)
@@ -403,18 +444,29 @@ class WeChatBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.startswith("wc-"))
 
     async def test_send_message_marks_session_expired_on_explicit_error(self):
-        bot = self._make_bot()
-        context = MessageContext(user_id="user-1", channel_id="user-1", platform_specific={"context_token": "ctx-1"})
-        bot._auth_manager.is_logged_in = True
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict("os.environ", {"VIBE_REMOTE_HOME": tmpdir}):
+                bot = self._make_bot()
+                context = MessageContext(
+                    user_id="user-1",
+                    channel_id="user-1",
+                    platform_specific={"context_token": "ctx-1"},
+                )
+                bot._auth_manager.is_logged_in = True
+                bot._remember_context_token("user-1", "ctx-1")
 
-        with patch(
-            "modules.im.wechat.wechat_api.send_message",
-            new=AsyncMock(return_value={"errcode": -14, "errmsg": "session timeout"}),
-        ):
-            with self.assertRaises(RuntimeError):
-                await bot.send_message(context, "hello")
+                with patch(
+                    "modules.im.wechat.wechat_api.send_message",
+                    new=AsyncMock(return_value={"errcode": -14, "errmsg": "session timeout"}),
+                ):
+                    with self.assertRaises(RuntimeError):
+                        await bot.send_message(context, "hello")
+
+                cache_path = Path(tmpdir) / "state" / "wechat_context_tokens.json"
+                data = json.loads(cache_path.read_text(encoding="utf-8"))
 
         self.assertFalse(bot._auth_manager.is_logged_in)
+        self.assertEqual(data["tokens"], {})
 
     async def test_upload_file_from_path_uses_cdn_workflow(self):
         bot = self._make_bot()
