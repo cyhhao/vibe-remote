@@ -599,6 +599,47 @@ def test_cleanup_session_swallows_receiver_task_failure(monkeypatch, tmp_path: P
     assert composite_key not in controller.claude_sessions
 
 
+def test_cleanup_session_drains_finished_receiver_task_failure(monkeypatch, tmp_path: Path) -> None:
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            self.disconnects = 0
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            self.disconnects += 1
+
+    class _DoneReceiverTask:
+        drained = False
+
+        @staticmethod
+        def done():
+            return True
+
+        def exception(self):
+            self.drained = True
+            return RuntimeError("receiver already failed")
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+    client = _run_session(handler, context)
+    composite_key = f"slack_C123:{tmp_path}"
+    receiver_task = _DoneReceiverTask()
+    controller.receiver_tasks[composite_key] = receiver_task
+
+    asyncio.run(handler.cleanup_session(composite_key))
+
+    assert client.disconnects == 1
+    assert receiver_task.drained
+    assert composite_key not in controller.receiver_tasks
+    assert composite_key not in controller.claude_sessions
+
+
 def test_evict_idle_sessions_rechecks_active_state_before_cleanup(monkeypatch, tmp_path: Path) -> None:
     class _StubClaudeSDKClient:
         def __init__(self, options):

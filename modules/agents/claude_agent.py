@@ -214,9 +214,25 @@ class ClaudeAgent(BaseAgent):
         except Exception as exc:  # noqa: BLE001
             logger.warning("Error disconnecting Claude session %s: %s", composite_key, exc)
 
-    async def _stop_receiver_task(self, receiver_task: asyncio.Task | None) -> None:
-        if receiver_task is None or receiver_task.done():
+    @staticmethod
+    def _drain_receiver_task_exception(receiver_task: asyncio.Task) -> None:
+        try:
+            exc = receiver_task.exception()
+        except asyncio.CancelledError:
             return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Error reading Claude receiver cleanup result: %s", exc)
+            return
+        if exc is not None:
+            logger.warning("Claude receiver ended with error during cleanup: %s", exc)
+
+    async def _stop_receiver_task(self, receiver_task: asyncio.Task | None) -> None:
+        if receiver_task is None:
+            return
+        if receiver_task.done():
+            self._drain_receiver_task_exception(receiver_task)
+            return
+        receiver_result_retrieved = False
         try:
             await asyncio.wait_for(asyncio.shield(receiver_task), timeout=0.1)
         except asyncio.TimeoutError:
@@ -224,8 +240,11 @@ class ClaudeAgent(BaseAgent):
         except asyncio.CancelledError:
             pass
         except Exception as exc:  # noqa: BLE001
+            receiver_result_retrieved = True
             logger.warning("Claude receiver ended with error during cleanup: %s", exc)
         if receiver_task.done():
+            if not receiver_result_retrieved:
+                self._drain_receiver_task_exception(receiver_task)
             return
         receiver_task.cancel()
         try:

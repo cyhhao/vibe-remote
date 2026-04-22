@@ -825,6 +825,7 @@ class SessionHandler(BaseHandler):
             logger.info(f"Cleaned up Claude session {composite_key}")
 
         if receiver_task is not None:
+            receiver_result_retrieved = False
             if not receiver_task.done():
                 try:
                     await asyncio.wait_for(asyncio.shield(receiver_task), timeout=0.1)
@@ -833,7 +834,10 @@ class SessionHandler(BaseHandler):
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
+                    receiver_result_retrieved = True
                     logger.warning("Claude receiver ended with error during cleanup: %s", e)
+            if receiver_task.done() and not receiver_result_retrieved:
+                self._drain_receiver_task_exception(receiver_task)
             if not receiver_task.done():
                 receiver_task.cancel()
                 try:
@@ -845,6 +849,18 @@ class SessionHandler(BaseHandler):
             logger.info(f"Cancelled receiver task for session {composite_key}")
 
         self.clear_session_tracking(composite_key)
+
+    @staticmethod
+    def _drain_receiver_task_exception(receiver_task) -> None:
+        try:
+            exc = receiver_task.exception()
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.warning("Error reading Claude receiver cleanup result: %s", e)
+            return
+        if exc is not None:
+            logger.warning("Claude receiver ended with error during cleanup: %s", exc)
 
     async def evict_idle_sessions(self, idle_timeout: float) -> int:
         """Disconnect Claude sessions that have been idle beyond the timeout."""
