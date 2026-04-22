@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-from contextlib import suppress
 from typing import Callable, Optional
 
 from core.agent_auth_service import classify_auth_error
@@ -218,8 +217,14 @@ class ClaudeAgent(BaseAgent):
     async def _stop_receiver_task(self, receiver_task: asyncio.Task | None) -> None:
         if receiver_task is None or receiver_task.done():
             return
-        with suppress(asyncio.TimeoutError):
+        try:
             await asyncio.wait_for(asyncio.shield(receiver_task), timeout=0.1)
+        except asyncio.TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Claude receiver ended with error during cleanup: %s", exc)
         if receiver_task.done():
             return
         receiver_task.cancel()

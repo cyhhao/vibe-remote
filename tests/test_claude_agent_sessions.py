@@ -249,6 +249,35 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(session_key, controller.claude_sessions)
         self.assertEqual(controller.session_manager.cleared, ["wechat-user"])
 
+    async def test_clear_sessions_swallows_receiver_task_failure(self):
+        controller = _StubController()
+        agent = ClaudeAgent(controller)
+        session_key = "wechat_o9:/tmp/work"
+        client = _StubClient()
+        controller.claude_sessions[session_key] = client
+        disconnected = asyncio.Event()
+
+        async def _disconnect():
+            client.disconnected = True
+            disconnected.set()
+
+        client.disconnect = _disconnect
+
+        async def _receiver():
+            await disconnected.wait()
+            raise RuntimeError("receiver failed")
+
+        controller.receiver_tasks[session_key] = asyncio.create_task(_receiver())
+        await asyncio.sleep(0)
+
+        cleared = await agent.clear_sessions("wechat-user")
+
+        self.assertEqual(cleared, 1)
+        self.assertTrue(client.disconnected)
+        self.assertNotIn(session_key, controller.receiver_tasks)
+        self.assertNotIn(session_key, controller.claude_sessions)
+        self.assertEqual(controller.session_manager.cleared, ["wechat-user"])
+
     async def test_refresh_auth_state_disconnects_runtime_sessions(self):
         controller = _StubController()
         agent = ClaudeAgent(controller)

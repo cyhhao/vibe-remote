@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import time
-from contextlib import suppress
 from typing import Optional, Dict, Any, Tuple
 from uuid import uuid4
 from modules.im import MessageContext
@@ -827,8 +826,14 @@ class SessionHandler(BaseHandler):
 
         if receiver_task is not None:
             if not receiver_task.done():
-                with suppress(asyncio.TimeoutError):
+                try:
                     await asyncio.wait_for(asyncio.shield(receiver_task), timeout=0.1)
+                except asyncio.TimeoutError:
+                    pass
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.warning("Claude receiver ended with error during cleanup: %s", e)
             if not receiver_task.done():
                 receiver_task.cancel()
                 try:
