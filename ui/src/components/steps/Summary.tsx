@@ -461,6 +461,8 @@ const buildSettingsPayload = (data: any) => {
     : Array.isArray(data.discord?.guild_allowlist)
       ? data.discord.guild_allowlist
       : [];
+  const shouldPersistDiscordGuilds =
+    discordGuildAllowlist.length > 0 || data.discordGuildAllowlistTouched === true;
   return Object.fromEntries(
     Object.entries(channelConfigsByPlatform).map(([platform, channels]: any) => [
       platform,
@@ -488,7 +490,7 @@ const buildSettingsPayload = (data: any) => {
             },
           ])
         ),
-        ...(platform === 'discord' && discordGuildAllowlist.length > 0
+        ...(platform === 'discord' && shouldPersistDiscordGuilds
           ? {
               guilds: Object.fromEntries(
                 discordGuildAllowlist.map((guildId: string) => [guildId, { enabled: true }])

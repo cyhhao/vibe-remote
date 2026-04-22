@@ -26,6 +26,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   const [authResult, setAuthResult] = useState<any>(null);
   const [guilds, setGuilds] = useState<any[]>([]);
   const [selectedGuilds, setSelectedGuilds] = useState<string[]>(getDiscordGuildAllowlist(data));
+  const [guildSelectionTouched, setGuildSelectionTouched] = useState(false);
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 2: false, 3: false, 4: false });
   const [inviteCopied, setInviteCopied] = useState(false);
   const [clientId, setClientId] = useState(data.discord_client_id || '');
@@ -89,6 +90,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   };
 
   const toggleGuild = (guildId: string, checked: boolean) => {
+    setGuildSelectionTouched(true);
     setSelectedGuilds(prev => {
       if (checked) {
         return prev.includes(guildId) ? prev : [...prev, guildId];
@@ -98,6 +100,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   };
 
   const selectAllGuilds = () => {
+    setGuildSelectionTouched(true);
     setSelectedGuilds(guilds.map((g) => g.id));
   };
 
@@ -351,7 +354,10 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                         </button>
                         <button
                           type="button"
-                          onClick={() => setSelectedGuilds([])}
+                          onClick={() => {
+                            setGuildSelectionTouched(true);
+                            setSelectedGuilds([]);
+                          }}
                           className="text-xs font-medium text-muted hover:text-text"
                         >
                           {t('discordConfig.clearGuilds')}
@@ -399,6 +405,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
               bot_token: botToken,
             },
             discordGuildAllowlist: selectedGuilds,
+            discordGuildAllowlistTouched: guildSelectionTouched,
           })}
           disabled={!isValid}
           className={clsx(

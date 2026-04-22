@@ -244,7 +244,10 @@ export const Wizard: React.FC = () => {
       await api.saveConfig(buildConfigPayload(mergedData));
     }
     const discordGuildAllowlist = stepData?.discordGuildAllowlist;
-    if (Array.isArray(discordGuildAllowlist) && discordGuildAllowlist.length > 0) {
+    if (
+      Array.isArray(discordGuildAllowlist) &&
+      (discordGuildAllowlist.length > 0 || stepData?.discordGuildAllowlistTouched === true)
+    ) {
       await api.saveSettings({
         guilds: Object.fromEntries(
           discordGuildAllowlist.map((guildId: string) => [guildId, { enabled: true }])
