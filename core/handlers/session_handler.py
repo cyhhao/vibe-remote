@@ -814,6 +814,7 @@ class SessionHandler(BaseHandler):
         receiver_task = self.receiver_tasks.pop(composite_key, None)
         client = self.claude_sessions.pop(composite_key, None)
         cleanup_from_receiver = receiver_task is not None and receiver_task is current_receiver_task
+        self.clear_session_tracking(composite_key)
 
         try:
             # Close the SDK client first so its receive stream can finish normally.
@@ -827,7 +828,6 @@ class SessionHandler(BaseHandler):
         finally:
             if not cleanup_from_receiver:
                 await self._stop_receiver_task(receiver_task, composite_key)
-            self.clear_session_tracking(composite_key)
 
     async def _disconnect_client(self, client, composite_key: str) -> None:
         try:

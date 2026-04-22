@@ -259,6 +259,14 @@ class ClaudeAgent(BaseAgent):
         receiver_task = self.receiver_tasks.pop(composite_key, None)
         client = self.claude_sessions.pop(composite_key, None)
         cleanup_from_receiver = receiver_task is not None and receiver_task is current_receiver_task
+        self._last_assistant_text.pop(composite_key, None)
+        self._pending_assistant_message.pop(composite_key, None)
+        if not preserve_pending_request_state:
+            self._pending_reactions.pop(composite_key, None)
+            self._pending_requests.pop(composite_key, None)
+        clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
+        if callable(clear_tracking):
+            clear_tracking(composite_key)
         try:
             if client is not None:
                 # Closing the SDK client first lets the receiver consume the end
@@ -271,15 +279,6 @@ class ClaudeAgent(BaseAgent):
         finally:
             if not cleanup_from_receiver:
                 await self._stop_receiver_task(receiver_task)
-
-            self._last_assistant_text.pop(composite_key, None)
-            self._pending_assistant_message.pop(composite_key, None)
-            if not preserve_pending_request_state:
-                self._pending_reactions.pop(composite_key, None)
-                self._pending_requests.pop(composite_key, None)
-            clear_tracking = getattr(self.session_handler, "clear_session_tracking", None)
-            if callable(clear_tracking):
-                clear_tracking(composite_key)
 
     async def handle_stop(self, request: AgentRequest) -> bool:
         composite_key = request.composite_session_id

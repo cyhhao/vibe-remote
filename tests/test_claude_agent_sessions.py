@@ -353,6 +353,8 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
         session_key = "wechat_o9:/tmp/work"
         disconnect_started = asyncio.Event()
         old_receiver_cancelled = asyncio.Event()
+        clear_tracking_calls = []
+        controller.session_handler.clear_session_tracking = lambda key: clear_tracking_calls.append(key)
 
         class _SlowDisconnectClient(_StubClient):
             async def disconnect(self):
@@ -372,12 +374,28 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
 
         old_receiver = asyncio.create_task(_old_receiver())
         new_receiver = asyncio.create_task(asyncio.sleep(3600))
+        old_request = SimpleNamespace(name="old")
+        agent._pending_requests[session_key] = [old_request]
+        agent._pending_reactions[session_key] = [("old", ":eyes:")]
+        agent._last_assistant_text[session_key] = "old text"
+        agent._pending_assistant_message[session_key] = "old assistant"
         controller.receiver_tasks[session_key] = old_receiver
         cleanup_task = asyncio.create_task(agent._cleanup_runtime_session(session_key))
 
         await disconnect_started.wait()
         self.assertNotIn(session_key, controller.receiver_tasks)
+        self.assertNotIn(session_key, agent._pending_requests)
+        self.assertNotIn(session_key, agent._pending_reactions)
+        self.assertNotIn(session_key, agent._last_assistant_text)
+        self.assertNotIn(session_key, agent._pending_assistant_message)
+        self.assertEqual(clear_tracking_calls, [session_key])
+
+        new_request = SimpleNamespace(name="new")
         controller.receiver_tasks[session_key] = new_receiver
+        agent._pending_requests[session_key] = [new_request]
+        agent._pending_reactions[session_key] = [("new", ":eyes:")]
+        agent._last_assistant_text[session_key] = "new text"
+        agent._pending_assistant_message[session_key] = "new assistant"
 
         cleanup_task.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -385,6 +403,10 @@ class ClaudeAgentSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(old_receiver_cancelled.is_set())
         self.assertIs(controller.receiver_tasks[session_key], new_receiver)
+        self.assertEqual(agent._pending_requests[session_key], [new_request])
+        self.assertEqual(agent._pending_reactions[session_key], [("new", ":eyes:")])
+        self.assertEqual(agent._last_assistant_text[session_key], "new text")
+        self.assertEqual(agent._pending_assistant_message[session_key], "new assistant")
         new_receiver.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await new_receiver

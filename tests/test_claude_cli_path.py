@@ -733,11 +733,15 @@ def test_cleanup_session_preserves_new_receiver_during_disconnect(monkeypatch, t
         old_receiver = asyncio.create_task(_old_receiver())
         new_receiver = asyncio.create_task(asyncio.sleep(3600))
         controller.receiver_tasks[composite_key] = old_receiver
+        handler.mark_session_active(composite_key)
         cleanup_task = asyncio.create_task(handler.cleanup_session(composite_key))
 
         await events["disconnect_started"].wait()
         assert composite_key not in controller.receiver_tasks
+        assert composite_key not in handler.active_sessions
+        assert composite_key not in handler.session_last_activity
         controller.receiver_tasks[composite_key] = new_receiver
+        handler.mark_session_active(composite_key)
 
         cleanup_task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -745,6 +749,8 @@ def test_cleanup_session_preserves_new_receiver_during_disconnect(monkeypatch, t
 
         assert events["old_receiver_cancelled"].is_set()
         assert controller.receiver_tasks[composite_key] is new_receiver
+        assert composite_key in handler.active_sessions
+        assert composite_key in handler.session_last_activity
         new_receiver.cancel()
         with pytest.raises(asyncio.CancelledError):
             await new_receiver
