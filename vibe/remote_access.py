@@ -426,7 +426,7 @@ def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
 
         binary = _resolve_configured_binary(config)
         if not binary:
-            return {**status(config), "ok": False, "error": "cloudflared_not_installed"}
+            return _stop_before_start_failure(config, "cloudflared_not_installed")
 
         existing = status(config)
         if existing.get("running"):
