@@ -36,7 +36,8 @@ Follow this skill as an operations playbook for agents, not as end-user marketin
 8. Do not hand-edit `sessions.json` unless the user explicitly asks for low-level recovery work.
 9. Do not restart the service by default. Use `POST /doctor`, `GET /status`, and read-back checks first.
 10. Only start, stop, restart, or reload Vibe Remote when the user explicitly asks or when a change cannot take effect otherwise; explain why before doing it.
-11. Tell the user whether the change is global or scope-specific.
+11. If an agent must restart Vibe Remote from an active conversation, use `vibe restart --delay-seconds 60` so the current session can receive the reply before the restart lands.
+12. Tell the user whether the change is global or scope-specific.
 
 ## API First Workflow
 
@@ -459,6 +460,8 @@ WeChat QR login is special: when login is confirmed and a token is returned, the
 
 Avoid these for routine configuration. `POST /control` starts, stops, or restarts the service. `POST /ui/reload` restarts only the Web UI server to apply host or port changes. Use them only with explicit user intent or a concrete need.
 
+When the restart is initiated by an agent from an active conversation, use the CLI delayed form `vibe restart --delay-seconds 60` so the transport does not cut off the current reply.
+
 ## Scope and Precedence Rules
 
 ### Backend selection
@@ -783,6 +786,8 @@ Common cases:
 - startup failure: use `GET /status`, `POST /doctor`, then inspect logs
 
 Do not use `vibe restart`, `POST /control {"action":"restart"}`, or `POST /ui/reload` as a first response to config problems.
+
+If a restart is still required and you are replying through an active Vibe Remote conversation, use `vibe restart --delay-seconds 60` so the current reply can be delivered before the restart lands.
 
 ## Direct File Recovery Fallback
 

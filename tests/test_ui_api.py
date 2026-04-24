@@ -337,7 +337,8 @@ def test_codex_models_prefers_cli_cache_and_filters_hidden_models(monkeypatch, t
     result = api.codex_models()
 
     assert result["ok"] is True
-    assert result["models"][:3] == [
+    assert result["models"][:4] == [
+        "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.4-nano",
@@ -368,7 +369,7 @@ def test_codex_models_falls_back_when_cli_cache_missing(monkeypatch, tmp_path):
     result = api.codex_models()
 
     assert result["ok"] is True
-    assert result["models"][:3] == ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
+    assert result["models"][:4] == ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
     assert "custom-codex-model" in result["models"]
     assert "legacy-codex" in result["models"]
     assert "gpt-5.1-codex-max" in result["models"]
