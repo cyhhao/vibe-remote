@@ -713,6 +713,9 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(items[0]["text"].startswith("If you generate an image with Codex"))
         self.assertIn("![generated image](file:///absolute/path/to/image.png)", items[0]["text"])
+        self.assertIn("local absolute path readable by Vibe Remote", items[0]["text"])
+        self.assertIn("never sandbox paths like `/mnt/data/...`", items[0]["text"])
+        self.assertIn("leave the final reply empty", items[0]["text"])
         self.assertTrue(items[0]["text"].endswith("hello"))
 
     async def test_start_turn_uses_sandbox_policy_object(self):
