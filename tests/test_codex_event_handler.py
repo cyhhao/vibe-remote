@@ -341,7 +341,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
             handler.snapshot_generated_images("thread-1", "session-1")
             handler.bind_generated_image_snapshot("thread-1", "turn-1", "session-1")
 
-            new_image = thread_dir / "new.png"
+            new_image = thread_dir / "new image.png"
             new_image.write_bytes(b"new")
 
             await handler._on_turn_completed(
@@ -355,7 +355,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         agent.emit_result_message.assert_awaited_once()
         result_text = agent.emit_result_message.await_args.args[1]
         assert "Generated image:" in result_text
-        assert f"![generated image](file://{new_image.resolve()})" in result_text
+        assert f"![generated image]({new_image.resolve().as_uri()})" in result_text
         assert str(old_image.resolve()) not in result_text
 
     async def test_empty_success_result_falls_back_when_generated_image_path_is_reused(self):
@@ -384,7 +384,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         agent.emit_result_message.assert_awaited_once()
         result_text = agent.emit_result_message.await_args.args[1]
-        assert f"![generated image](file://{image.resolve()})" in result_text
+        assert f"![generated image]({image.resolve().as_uri()})" in result_text
 
     async def test_stale_interrupted_turn_does_not_clear_new_turn_image_snapshot(self):
         agent = _StubAgent()
@@ -425,7 +425,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         result_text = agent.emit_result_message.await_args.args[1]
-        assert f"![generated image](file://{new_image.resolve()})" in result_text
+        assert f"![generated image]({new_image.resolve().as_uri()})" in result_text
         assert str(before_second_turn.resolve()) not in result_text
 
     async def test_stale_turn_started_does_not_steal_pending_image_snapshot(self):
@@ -462,7 +462,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         result_text = agent.emit_result_message.await_args.args[1]
-        assert f"![generated image](file://{new_image.resolve()})" in result_text
+        assert f"![generated image]({new_image.resolve().as_uri()})" in result_text
 
     async def test_empty_success_result_does_not_guess_without_image_snapshot(self):
         agent = _StubAgent()

@@ -374,7 +374,7 @@ class CodexEventHandler:
             return None
 
         heading = self._t("info.generatedImagesFallback", request)
-        links = "\n".join(f"![generated image](file://{path})" for path in generated)
+        links = "\n".join(f"![generated image]({path.as_uri()})" for path in generated)
         return f"{heading}\n\n{links}"
 
     def _clear_generated_image_snapshot(self, params: dict[str, Any]) -> None:
