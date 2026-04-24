@@ -333,3 +333,16 @@ def test_main_retryable_startup_http_error_returns_retry_code() -> None:
         rc = module.main()
 
     assert rc == module.RETRY_EXIT_CODE
+
+
+def test_main_unexpected_startup_error_fails_fast() -> None:
+    module = _load_module()
+
+    with (
+        patch.object(module, "get_token", return_value="token"),
+        patch.object(module, "_fetch_workflow_runs", side_effect=RuntimeError("bad payload")),
+        patch("sys.argv", ["wait_action.py", "--repo", "cyhhao/sub2api", "--sha", "abc123", "--workflow", "CI"]),
+    ):
+        rc = module.main()
+
+    assert rc == 1

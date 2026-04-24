@@ -258,6 +258,8 @@ def main() -> int:
             runs = []
         except Exception as err:  # noqa: BLE001
             print(f"Polling failed: {err}", file=sys.stderr)
+            if first_poll:
+                return 1
             runs = []
             request_count = 0
 
