@@ -16,6 +16,7 @@ Extracts special syntaxes from agent reply text:
 from __future__ import annotations
 
 import logging
+import ntpath
 import os
 import re
 from dataclasses import dataclass, field
@@ -133,12 +134,25 @@ def _extract_file_links(text: str) -> List[FileLink]:
         parsed = urlparse(url)
         if parsed.scheme != "file":
             continue
-        path = unquote(parsed.path)
+        path = _file_uri_to_local_path(parsed)
         if not os.path.isabs(path):
             logger.warning("Skipping non-absolute file link: %s", url)
             continue
         results.append(FileLink(label=label, path=path, is_image=(bang == "!")))
     return results
+
+
+def _file_uri_to_local_path(parsed) -> str:
+    """Convert a parsed file URI into a local path for the current OS."""
+    path = unquote(parsed.path)
+    if os.name != "nt":
+        return path
+
+    if parsed.netloc:
+        return ntpath.normpath(f"//{parsed.netloc}{path}")
+    if re.match(r"^/[A-Za-z]:/", path):
+        path = path[1:]
+    return ntpath.normpath(path)
 
 
 def _strip_file_links(text: str) -> str:
