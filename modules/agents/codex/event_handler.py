@@ -27,12 +27,34 @@ class CodexEventHandler:
 
     def __init__(self, agent: Any) -> None:
         self._agent = agent
-        self._image_snapshots_by_thread: dict[str, set[Path]] = {}
+        self._image_snapshots_by_turn: dict[str, tuple[str, set[Path]]] = {}
+        self._pending_image_snapshots_by_session: dict[str, tuple[str, set[Path]]] = {}
 
-    def snapshot_generated_images(self, thread_id: str) -> None:
+    def snapshot_generated_images(self, thread_id: str, base_session_id: str) -> None:
         """Record generated images present before a Codex turn starts."""
-        if thread_id:
-            self._image_snapshots_by_thread[thread_id] = self._list_generated_images(thread_id)
+        if thread_id and base_session_id:
+            self._pending_image_snapshots_by_session[base_session_id] = (
+                thread_id,
+                self._list_generated_images(thread_id),
+            )
+
+    def bind_generated_image_snapshot(
+        self,
+        thread_id: str,
+        turn_id: str,
+        base_session_id: str,
+    ) -> None:
+        """Bind a pre-turn image snapshot to the concrete Codex turn id."""
+        if not thread_id or not turn_id or not base_session_id:
+            return
+        pending = self._pending_image_snapshots_by_session.get(base_session_id)
+        if not pending:
+            return
+        pending_thread_id, _ = pending
+        if pending_thread_id != thread_id:
+            return
+        self._image_snapshots_by_turn[turn_id] = pending
+        self._pending_image_snapshots_by_session.pop(base_session_id, None)
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -82,6 +104,7 @@ class CodexEventHandler:
     async def _on_turn_started(self, params: dict[str, Any], request: AgentRequest) -> None:
         turn_obj = params.get("turn", {})
         turn_id = turn_obj.get("id", "") if isinstance(turn_obj, dict) else ""
+        self._claim_generated_image_snapshot(params, request)
         logger.info(
             "Codex turn started: thread=%s turn=%s",
             params.get("threadId"),
@@ -322,13 +345,15 @@ class CodexEventHandler:
         params: dict[str, Any],
         request: AgentRequest,
     ) -> str | None:
-        thread_id = self._extract_thread_id(params)
-        if not thread_id:
+        self._claim_generated_image_snapshot(params, request)
+        turn_id = self._extract_turn_id(params)
+        if not turn_id:
             return None
 
-        before = self._image_snapshots_by_thread.pop(thread_id, None)
-        if before is None:
+        snapshot = self._image_snapshots_by_turn.pop(turn_id, None)
+        if snapshot is None:
             return None
+        thread_id, before = snapshot
 
         current = self._list_generated_images(thread_id)
         generated = sorted(
@@ -343,9 +368,16 @@ class CodexEventHandler:
         return f"{heading}\n\n{links}"
 
     def _clear_generated_image_snapshot(self, params: dict[str, Any]) -> None:
-        thread_id = self._extract_thread_id(params)
-        if thread_id:
-            self._image_snapshots_by_thread.pop(thread_id, None)
+        turn_id = self._extract_turn_id(params)
+        if turn_id:
+            self._image_snapshots_by_turn.pop(turn_id, None)
+
+    def _claim_generated_image_snapshot(self, params: dict[str, Any], request: AgentRequest) -> None:
+        self.bind_generated_image_snapshot(
+            self._extract_thread_id(params),
+            self._extract_turn_id(params),
+            request.base_session_id,
+        )
 
     def _list_generated_images(self, thread_id: str) -> set[Path]:
         thread_dir = self._generated_images_dir(thread_id)
@@ -378,6 +410,14 @@ class CodexEventHandler:
             if isinstance(thread_obj, dict):
                 thread_id = thread_obj.get("id", "")
         return thread_id
+
+    def _extract_turn_id(self, params: dict[str, Any]) -> str:
+        turn_id = params.get("turnId", "")
+        if not turn_id:
+            turn_obj = params.get("turn")
+            if isinstance(turn_obj, dict):
+                turn_id = turn_obj.get("id", "")
+        return turn_id
 
     def _t(self, key: str, request: AgentRequest) -> str:
         controller = getattr(self._agent, "controller", None)

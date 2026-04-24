@@ -568,14 +568,15 @@ class CodexAgent(BaseAgent):
         if effective_effort:
             turn_params["effort"] = effective_effort
 
+        self._turn_registry.begin_turn_start(request, thread_id)
+        event_handler = getattr(self, "_event_handler", None)
         snapshot_generated_images = getattr(
-            getattr(self, "_event_handler", None),
+            event_handler,
             "snapshot_generated_images",
             None,
         )
         if callable(snapshot_generated_images):
-            snapshot_generated_images(thread_id)
-        self._turn_registry.begin_turn_start(request, thread_id)
+            snapshot_generated_images(thread_id, request.base_session_id)
         resp = await transport.send_request("turn/start", turn_params)
 
         turn_id = resp.get("id", "")
@@ -589,6 +590,9 @@ class CodexAgent(BaseAgent):
             raise RuntimeError("Codex turn/start returned no turn id")
 
         turn_state = self._turn_registry.finalize_turn_start_response(turn_id, request)
+        bind_generated_image_snapshot = getattr(event_handler, "bind_generated_image_snapshot", None)
+        if callable(bind_generated_image_snapshot):
+            bind_generated_image_snapshot(thread_id, turn_id, request.base_session_id)
         logger.info(
             "Codex turn started: thread=%s turn=%s session=%s state=%s",
             thread_id,
