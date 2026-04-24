@@ -135,8 +135,8 @@ def _state_path() -> Path:
     return paths.get_runtime_dir() / "remote-access-cloudflared.json"
 
 
-def _status_from_pid(pid: int | None) -> dict[str, Any]:
-    running = bool(pid and _is_cloudflared_pid(pid))
+def _status_from_pid(pid: int | None, expected_binary: str | None = None) -> dict[str, Any]:
+    running = bool(pid and _is_cloudflared_pid(pid, expected_binary=expected_binary))
     command = runtime.get_process_command(pid) if running and pid else None
     return {
         "running": running,
@@ -166,23 +166,55 @@ def _read_running_state() -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _is_cloudflared_command(command: str | None) -> bool:
+def _command_executable(command: str | None) -> str | None:
     if not command or not command.strip():
-        return False
+        return None
     try:
         parts = shlex.split(command.strip(), posix=False)
     except ValueError:
         parts = command.strip().split()
     if not parts:
+        return None
+    return parts[0].strip("\"'")
+
+
+def _same_executable_path(left: str | None, right: str | None) -> bool:
+    if not left or not right:
         return False
-    executable = ntpath.basename(parts[0].strip("\"'")).lower()
-    return executable in {"cloudflared", "cloudflared.exe"}
+    normalized_left = left.strip("\"'")
+    normalized_right = right.strip("\"'")
+    return (
+        os.path.normcase(os.path.normpath(normalized_left))
+        == os.path.normcase(os.path.normpath(normalized_right))
+        or ntpath.normcase(ntpath.normpath(normalized_left))
+        == ntpath.normcase(ntpath.normpath(normalized_right))
+    )
 
 
-def _is_cloudflared_pid(pid: int | None) -> bool:
+def _runtime_binary_for_pid(pid: int) -> str | None:
+    signature = _CONNECTOR_ENV.get(pid)
+    if signature is not None:
+        return signature.get("binary_path")
+    state = _read_running_state()
+    if state is not None and state.get("pid") == pid:
+        return str(state.get("binary_path") or "")
+    return None
+
+
+def _is_cloudflared_command(command: str | None, expected_binary: str | None = None) -> bool:
+    executable = _command_executable(command)
+    if not executable:
+        return False
+    if _same_executable_path(executable, expected_binary):
+        return True
+    executable_name = ntpath.basename(executable).lower()
+    return executable_name in {"cloudflared", "cloudflared.exe"}
+
+
+def _is_cloudflared_pid(pid: int | None, expected_binary: str | None = None) -> bool:
     if not pid or not runtime.pid_alive(pid):
         return False
-    return _is_cloudflared_command(runtime.get_process_command(pid))
+    return _is_cloudflared_command(runtime.get_process_command(pid), expected_binary or _runtime_binary_for_pid(pid))
 
 
 def _clear_running_state(pid: int | None = None) -> None:
@@ -222,7 +254,7 @@ def status(config: V2Config | None = None) -> dict[str, Any]:
         except Exception:
             pid = None
 
-    process_status = _status_from_pid(pid)
+    process_status = _status_from_pid(pid, expected_binary=binary)
     if pid and not process_status["running"]:
         pid_path.unlink(missing_ok=True)
         _CONNECTOR_ENV.pop(pid, None)

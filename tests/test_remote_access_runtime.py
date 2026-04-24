@@ -79,6 +79,31 @@ def test_start_cloudflare_restarts_when_runtime_signature_changes(monkeypatch, t
     assert stopped_pids == [first["pid"]]
 
 
+def test_start_cloudflare_accepts_configured_binary_with_custom_name(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+
+    binary = str(tmp_path / "bin" / "vibe-cloudflare-connector")
+    live_pids = {5101}
+
+    def fake_spawn_background(args, pid_path, stdout_name, stderr_name, env=None):
+        pid_path.parent.mkdir(parents=True, exist_ok=True)
+        pid_path.write_text("5101", encoding="utf-8")
+        return 5101
+
+    monkeypatch.setattr(remote_access, "_resolve_configured_binary", lambda config=None: binary)
+    monkeypatch.setattr(remote_access, "_version", lambda path: None)
+    monkeypatch.setattr(runtime, "spawn_background", fake_spawn_background)
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid in live_pids)
+    monkeypatch.setattr(runtime, "get_process_command", lambda pid: f'"{binary}" tunnel --no-autoupdate run')
+
+    result = remote_access.start_cloudflare(_config(tunnel_token="token-1", cloudflared_path=binary))
+
+    assert result["ok"] is True
+    assert result["running"] is True
+    assert result["pid"] == 5101
+
+
 def test_stop_cloudflare_does_not_stop_reused_unrelated_pid(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     remote_access._CONNECTOR_ENV.clear()
@@ -115,3 +140,11 @@ def test_cloudflared_command_detection_accepts_quoted_paths_with_spaces():
     assert not remote_access._is_cloudflared_command(
         '"C:\\Users\\John Doe\\bin\\python.exe" unrelated.py'
     )
+
+
+def test_cloudflared_command_detection_accepts_configured_custom_name():
+    command = '"C:\\Users\\John Doe\\.vibe_remote\\bin\\renamed-connector.exe" tunnel run'
+    configured = "C:\\Users\\John Doe\\.vibe_remote\\bin\\renamed-connector.exe"
+
+    assert remote_access._is_cloudflared_command(command, configured)
+    assert not remote_access._is_cloudflared_command(command)
