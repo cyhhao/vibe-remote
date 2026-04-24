@@ -125,6 +125,22 @@ class _ResponseLike:
 
 
 class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_add_reaction_maps_unicode_robot_to_slack_name(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        calls = []
+
+        class _WebClient:
+            async def reactions_add(self, **kwargs):
+                calls.append(kwargs)
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+
+        ok = await slack.add_reaction(context, "1710000000.000010", "🤖")
+
+        self.assertTrue(ok)
+        self.assertEqual(calls[0]["name"], "robot_face")
+
     async def test_send_message_does_not_set_unfurl_params_by_default(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
         sent_payloads = []

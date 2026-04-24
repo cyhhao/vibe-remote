@@ -248,8 +248,8 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         _, request = controller.agent_service.requests[0]
         self.assertFalse(request.typing_indicator_active)
         self.assertEqual(request.ack_reaction_message_id, "m1")
-        self.assertEqual(request.ack_reaction_emoji, ":eyes:")
-        self.assertEqual(controller.im_client.reactions, [("C1", "m1", ":eyes:")])
+        self.assertEqual(request.ack_reaction_emoji, "👀")
+        self.assertEqual(controller.im_client.reactions, [("C1", "m1", "👀")])
 
     async def test_reply_anchor_alias_keeps_original_anchor_mapping(self):
         controller = _StubController(platform="discord", ack_mode="reaction", typing_result=True)
@@ -328,8 +328,8 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         _, request = controller.agent_service.requests[0]
         self.assertFalse(request.typing_indicator_active)
         self.assertEqual(request.ack_reaction_message_id, "m1")
-        self.assertEqual(request.ack_reaction_emoji, ":eyes:")
-        self.assertEqual(controller.im_client.reactions, [("tg-chat", "m1", ":eyes:")])
+        self.assertEqual(request.ack_reaction_emoji, "👀")
+        self.assertEqual(controller.im_client.reactions, [("tg-chat", "m1", "👀")])
 
     async def test_lark_typing_preference_uses_registry_reaction_capability(self):
         controller = _StubController(platform="lark", ack_mode="typing", typing_result=True)
@@ -343,7 +343,7 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(request.typing_indicator_active)
         self.assertEqual(controller.im_client.typing_calls, [])
         self.assertEqual(request.ack_reaction_message_id, "om_1")
-        self.assertEqual(controller.im_client.reactions, [("lark-chat", "om_1", ":eyes:")])
+        self.assertEqual(controller.im_client.reactions, [("lark-chat", "om_1", "👀")])
 
     async def test_platform_specific_client_is_used_for_user_info(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
@@ -422,6 +422,7 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.subagent_name, "reviewer")
         self.assertEqual(request.subagent_key, "reviewer")
         self.assertEqual(request.message, "[Agent Identity] Slack bot mention: <@U_BOT>\ncheck this")
+        self.assertEqual(controller.im_client.reactions, [("C1", "m1", "👀"), ("C1", "m1", "🤖")])
 
     async def test_scheduled_turn_returns_error_string_after_notifying_im(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)
@@ -508,7 +509,7 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(controller.im_client.removed_keyboards, [("chat1", "slack", "prompt-msg")])
         self.assertEqual(controller.im_client.sent_messages, [("chat1", "Reply: 按钮 1")])
-        self.assertEqual(controller.im_client.reactions, [("chat1", "msg-1", ":eyes:")])
+        self.assertEqual(controller.im_client.reactions, [("chat1", "msg-1", "👀")])
         _, request = controller.agent_service.requests[0]
         self.assertIsNone(request.context.message_id)
         self.assertEqual(request.ack_reaction_message_id, "msg-1")

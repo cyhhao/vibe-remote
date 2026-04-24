@@ -38,10 +38,15 @@ class _FakeIMClient:
     def __init__(self, message_id="msg-1"):
         self.message_id = message_id
         self.dm_calls = []
+        self.edit_calls = []
 
     async def send_dm(self, user_id: str, text: str, **kwargs):
         self.dm_calls.append((user_id, text, kwargs))
         return self.message_id
+
+    async def edit_message(self, context, message_id: str, text: str, **kwargs):
+        self.edit_calls.append((context, message_id, text, kwargs))
+        return True
 
 
 def test_get_admin_user_ids_includes_all_platforms(monkeypatch, tmp_path):
@@ -170,6 +175,24 @@ def test_update_marker_records_platform_for_non_slack_callbacks(monkeypatch, tmp
     assert data["platform"] == "telegram"
     assert data["channel_id"] == "123456"
     assert data["message_id"] == "42"
+
+
+def test_post_update_notification_uses_unicode_emoji_for_non_slack(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+    store = SettingsStore.get_instance()
+    controller = _StubController(store)
+    telegram_client = _FakeIMClient()
+    controller.im_clients = {"telegram": telegram_client}
+    checker = UpdateChecker(controller, UpdateConfig())
+    checker._write_update_marker("1.0.1", channel_id="123456", message_id="42", platform="telegram")
+
+    asyncio.run(checker.check_and_send_post_update_notification())
+
+    assert telegram_client.edit_calls
+    _, _, text, _ = telegram_client.edit_calls[0]
+    assert text == "✅ Vibe Remote has been updated to `1.0.1`"
+    assert ":white_check_mark:" not in text
 
 
 def test_stop_returns_cancellable_task(monkeypatch, tmp_path):
