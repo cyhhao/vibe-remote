@@ -17,6 +17,11 @@ from modules.agents.codex.turn_state import CodexTurnRegistry
 
 logger = logging.getLogger(__name__)
 
+_CODEX_GENERATED_IMAGE_PROMPT = (
+    "If you generate an image with Codex, include it in the final reply with Markdown image syntax: "
+    "`![generated image](file:///absolute/path/to/image.png)`"
+)
+
 
 class CodexAgent(BaseAgent):
     """Codex CLI integration via persistent ``codex app-server`` subprocess.
@@ -438,6 +443,7 @@ class CodexAgent(BaseAgent):
                     fallback_platform=platform,
                 )
             )
+            instruction_parts.append(_CODEX_GENERATED_IMAGE_PROMPT)
 
         if instruction_parts:
             params["developerInstructions"] = "\n\n".join(part for part in instruction_parts if part)

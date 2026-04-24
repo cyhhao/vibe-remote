@@ -601,7 +601,13 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
         request = SimpleNamespace(
             working_path="/tmp/work",
-            context=SimpleNamespace(platform="slack", platform_specific={}),
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={},
+                user_id="U1",
+                channel_id="C1",
+                thread_id=None,
+            ),
             base_session_id="session-1",
             session_key="channel-1",
             subagent_name=None,
@@ -632,7 +638,13 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
         request = SimpleNamespace(
             working_path="/tmp/work",
-            context=SimpleNamespace(platform="slack", platform_specific={}),
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={},
+                user_id="U1",
+                channel_id="C1",
+                thread_id=None,
+            ),
             base_session_id="session-1",
             session_key="channel-1",
             subagent_name="reviewer",
@@ -662,6 +674,36 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
                 "developerInstructions": "Focus on regressions.",
             },
         )
+
+    async def test_start_thread_adds_codex_generated_image_prompt_only_when_reply_enhancements_enabled(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
+        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={},
+                user_id="U1",
+                channel_id="C1",
+                thread_id=None,
+            ),
+            base_session_id="session-1",
+            session_key="channel-1",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-1"}}))
+
+        await agent._start_thread(transport, request)
+
+        params = transport.send_request.await_args.args[1]
+        self.assertIn("If you generate an image with Codex", params["developerInstructions"])
+        self.assertIn("![generated image](file:///absolute/path/to/image.png)", params["developerInstructions"])
 
     async def test_start_turn_uses_sandbox_policy_object(self):
         agent = object.__new__(CodexAgent)
