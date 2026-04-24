@@ -115,31 +115,34 @@ def _safe_extract_cloudflared(archive: tarfile.TarFile, target: Path) -> None:
 
 def install_cloudflared() -> dict[str, Any]:
     """Download the official cloudflared binary into the Vibe Remote data dir."""
-    paths.ensure_data_dirs()
-    _bin_dir().mkdir(parents=True, exist_ok=True)
+    try:
+        paths.ensure_data_dirs()
+        _bin_dir().mkdir(parents=True, exist_ok=True)
 
-    asset = _asset_name()
-    url = f"{CLOUDFLARED_BASE_URL}/{asset}"
-    target = _managed_cloudflared_path()
+        asset = _asset_name()
+        url = f"{CLOUDFLARED_BASE_URL}/{asset}"
+        target = _managed_cloudflared_path()
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_dir = Path(tmp)
-        download_path = tmp_dir / asset
-        urllib.request.urlretrieve(url, download_path)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            download_path = tmp_dir / asset
+            urllib.request.urlretrieve(url, download_path)
 
-        if asset.endswith(".tgz"):
-            with tarfile.open(download_path, "r:gz") as archive:
-                _safe_extract_cloudflared(archive, target)
-        else:
-            shutil.move(str(download_path), target)
+            if asset.endswith(".tgz"):
+                with tarfile.open(download_path, "r:gz") as archive:
+                    _safe_extract_cloudflared(archive, target)
+            else:
+                shutil.move(str(download_path), target)
 
-    _make_executable(target)
-    return {
-        "ok": True,
-        "path": str(target),
-        "version": _version(str(target)),
-        "source_url": url,
-    }
+        _make_executable(target)
+        return {
+            "ok": True,
+            "path": str(target),
+            "version": _version(str(target)),
+            "source_url": url,
+        }
+    except Exception as exc:
+        return {"ok": False, "error": "cloudflared_install_failed", "detail": str(exc)}
 
 
 def _pid_path() -> Path:
@@ -169,14 +172,15 @@ def _desired_runtime_signature(config: V2Config, binary: str) -> dict[str, str]:
 
 
 def _cloudflare_access_ready(cloudflare: Any) -> bool:
+    allowed_emails = [value for value in (getattr(cloudflare, "allowed_emails", None) or []) if str(value).strip()]
+    allowed_domains = [
+        value for value in (getattr(cloudflare, "allowed_email_domains", None) or []) if str(value).strip()
+    ]
     return bool(
         getattr(cloudflare, "hostname", "")
         and getattr(cloudflare, "confirmed_access_policy", False)
         and getattr(cloudflare, "confirmed_tunnel_route", False)
-        and (
-            getattr(cloudflare, "allowed_emails", None)
-            or getattr(cloudflare, "allowed_email_domains", None)
-        )
+        and (allowed_emails or allowed_domains)
     )
 
 
@@ -416,13 +420,16 @@ def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
             **os.environ,
             "TUNNEL_TOKEN": cloudflare.tunnel_token,
         }
-        pid = runtime.spawn_background(
-            [binary, "tunnel", "--no-autoupdate", "run"],
-            _pid_path(),
-            "remote_access_cloudflared_stdout.log",
-            "remote_access_cloudflared_stderr.log",
-            env=env,
-        )
+        try:
+            pid = runtime.spawn_background(
+                [binary, "tunnel", "--no-autoupdate", "run"],
+                _pid_path(),
+                "remote_access_cloudflared_stdout.log",
+                "remote_access_cloudflared_stderr.log",
+                env=env,
+            )
+        except Exception as exc:
+            return {**status(config), "ok": False, "error": "cloudflared_spawn_failed", "detail": str(exc)}
         signature = _desired_runtime_signature(config, binary)
         _CONNECTOR_ENV[pid] = signature
         _write_running_state(pid, signature)

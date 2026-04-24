@@ -611,6 +611,8 @@
       "missing_tunnel_token": "Missing Tunnel token. The connector cannot start.",
       "access_checklist_incomplete": "Complete the Cloudflare Tunnel + Access checklist before starting the connector.",
       "cloudflared_not_installed": "cloudflared was not found. Complete the install step first.",
+      "cloudflared_spawn_failed": "Failed to start cloudflared. Check that the configured binary path is still valid.",
+      "cloudflared_install_failed": "Failed to install cloudflared. Check the network connection and try again.",
       "cloudflared_exited": "cloudflared exited immediately. Check that the Tunnel token is correct.",
       "unknown": "Failed to start the connector, but the server did not return a specific reason."
     }

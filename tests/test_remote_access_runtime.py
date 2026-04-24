@@ -66,6 +66,25 @@ def test_start_cloudflare_requires_access_checklist_before_spawn(monkeypatch, tm
     assert spawn_calls == []
 
 
+def test_start_cloudflare_rejects_blank_access_allow_list_entries(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+    spawn_calls: list[list[str]] = []
+
+    config = _config()
+    config.remote_access.cloudflare.allowed_emails = ["   "]
+    config.remote_access.cloudflare.allowed_email_domains = [""]
+
+    monkeypatch.setattr(remote_access, "_resolve_configured_binary", lambda config=None: "/bin/cloudflared")
+    monkeypatch.setattr(runtime, "spawn_background", lambda args, *rest, **kwargs: spawn_calls.append(args) or 6104)
+
+    result = remote_access.start_cloudflare(config)
+
+    assert result["ok"] is False
+    assert result["error"] == "access_checklist_incomplete"
+    assert spawn_calls == []
+
+
 def test_start_cloudflare_stops_running_connector_when_access_checklist_becomes_invalid(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     remote_access._CONNECTOR_ENV.clear()
@@ -222,6 +241,23 @@ def test_start_cloudflare_returns_error_when_restart_stop_fails(monkeypatch, tmp
     assert spawn_calls == []
 
 
+def test_start_cloudflare_returns_structured_spawn_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+    binary = "/missing/cloudflared"
+
+    monkeypatch.setattr(remote_access, "_resolve_configured_binary", lambda config=None: binary)
+    monkeypatch.setattr(remote_access, "_version", lambda path: None)
+    monkeypatch.setattr(runtime, "spawn_background", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("boom")))
+
+    result = remote_access.start_cloudflare(_config(cloudflared_path=binary))
+
+    assert result["ok"] is False
+    assert result["error"] == "cloudflared_spawn_failed"
+    assert "boom" in result["detail"]
+    assert not remote_access._pid_path().exists()
+
+
 def test_start_cloudflare_accepts_configured_binary_with_custom_name(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     remote_access._CONNECTOR_ENV.clear()
@@ -370,3 +406,16 @@ def test_safe_extract_cloudflared_rejects_path_traversal(tmp_path):
             remote_access._safe_extract_cloudflared(archive, target)
 
     assert not target.exists()
+
+
+def test_install_cloudflared_returns_structured_download_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    monkeypatch.setattr(remote_access, "_asset_name", lambda: "cloudflared-linux-amd64")
+    monkeypatch.setattr(remote_access.urllib.request, "urlretrieve", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")))
+
+    result = remote_access.install_cloudflared()
+
+    assert result["ok"] is False
+    assert result["error"] == "cloudflared_install_failed"
+    assert "offline" in result["detail"]
