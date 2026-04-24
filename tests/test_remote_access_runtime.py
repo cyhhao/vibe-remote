@@ -23,8 +23,12 @@ def _config(*, enabled: bool = True, tunnel_token: str = "token-1", cloudflared_
         agents=AgentsConfig(),
     )
     config.remote_access.cloudflare.enabled = enabled
+    config.remote_access.cloudflare.hostname = "admin.example.com"
     config.remote_access.cloudflare.tunnel_token = tunnel_token
     config.remote_access.cloudflare.cloudflared_path = cloudflared_path
+    config.remote_access.cloudflare.allowed_emails = ["alex@example.com"]
+    config.remote_access.cloudflare.confirmed_access_policy = True
+    config.remote_access.cloudflare.confirmed_tunnel_route = True
     return config
 
 
@@ -40,6 +44,25 @@ def test_start_cloudflare_preserves_failed_status(monkeypatch, tmp_path):
     missing_binary = remote_access.start_cloudflare(_config(tunnel_token="token-1"))
     assert missing_binary["ok"] is False
     assert missing_binary["error"] == "cloudflared_not_installed"
+
+
+def test_start_cloudflare_requires_access_checklist_before_spawn(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+    spawn_calls: list[list[str]] = []
+
+    config = _config()
+    config.remote_access.cloudflare.allowed_emails = []
+    config.remote_access.cloudflare.allowed_email_domains = []
+
+    monkeypatch.setattr(remote_access, "_resolve_configured_binary", lambda config=None: "/bin/cloudflared")
+    monkeypatch.setattr(runtime, "spawn_background", lambda args, *rest, **kwargs: spawn_calls.append(args) or 6101)
+
+    result = remote_access.start_cloudflare(config)
+
+    assert result["ok"] is False
+    assert result["error"] == "access_checklist_incomplete"
+    assert spawn_calls == []
 
 
 def test_start_cloudflare_restarts_when_runtime_signature_changes(monkeypatch, tmp_path):

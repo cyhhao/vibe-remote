@@ -166,6 +166,18 @@ def _desired_runtime_signature(config: V2Config, binary: str) -> dict[str, str]:
     }
 
 
+def _cloudflare_access_ready(cloudflare: Any) -> bool:
+    return bool(
+        getattr(cloudflare, "hostname", "")
+        and getattr(cloudflare, "confirmed_access_policy", False)
+        and getattr(cloudflare, "confirmed_tunnel_route", False)
+        and (
+            getattr(cloudflare, "allowed_emails", None)
+            or getattr(cloudflare, "allowed_email_domains", None)
+        )
+    )
+
+
 def _write_running_state(pid: int, signature: dict[str, str]) -> None:
     paths.ensure_data_dirs()
     _state_path().write_text(json.dumps({"pid": pid, **signature}, indent=2), encoding="utf-8")
@@ -368,6 +380,8 @@ def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
         return stop_cloudflare()
     if not cloudflare.tunnel_token:
         return {**status(config), "ok": False, "error": "missing_tunnel_token"}
+    if not _cloudflare_access_ready(cloudflare):
+        return {**status(config), "ok": False, "error": "access_checklist_incomplete"}
 
     binary = _resolve_configured_binary(config)
     if not binary:

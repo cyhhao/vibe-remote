@@ -609,6 +609,7 @@
     "incompleteWarning": "You can save a draft now. Starting the connector still requires cloudflared, all required fields, and the Access safety confirmations.",
     "errors": {
       "missing_tunnel_token": "Missing Tunnel token. The connector cannot start.",
+      "access_checklist_incomplete": "Complete the Cloudflare Tunnel + Access checklist before starting the connector.",
       "cloudflared_not_installed": "cloudflared was not found. Complete the install step first.",
       "cloudflared_exited": "cloudflared exited immediately. Check that the Tunnel token is correct.",
       "unknown": "Failed to start the connector, but the server did not return a specific reason."

@@ -609,6 +609,7 @@
     "incompleteWarning": "可以先保存草稿；启动连接器前仍需安装 cloudflared、填写必填项并完成 Access 安全确认。",
     "errors": {
       "missing_tunnel_token": "缺少 Tunnel token，无法启动连接器。",
+      "access_checklist_incomplete": "请先完成 Cloudflare Tunnel + Access 核对清单，再启动连接器。",
       "cloudflared_not_installed": "未找到 cloudflared，请先完成安装步骤。",
       "cloudflared_exited": "cloudflared 启动后立即退出，请检查 Tunnel token 是否正确。",
       "unknown": "启动连接器失败，但服务端没有返回具体原因。"
