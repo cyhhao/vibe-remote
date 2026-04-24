@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -17,13 +18,17 @@ from modules.agents.codex.turn_state import CodexTurnRegistry
 
 logger = logging.getLogger(__name__)
 
-_CODEX_GENERATED_IMAGE_PROMPT = (
-    "If you generate an image with Codex, include it in the final reply with Markdown image syntax: "
-    "`![generated image](file:///$CODEX_HOME/generated_images/<thread-id>/<image-file>.png)` "
-    "or `![generated image](file:///$HOME/.codex/generated_images/<thread-id>/<image-file>.png)`. "
-    "Use only that local generated_images path, never sandbox paths like `/mnt/data/...`; "
-    "if you cannot determine the path, leave the final reply empty."
-)
+def _codex_generated_image_prompt() -> str:
+    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser().resolve()
+    example_uri = (codex_home / "generated_images" / "thread-id" / "image-file.png").as_uri()
+    return (
+        "If you generate an image with Codex, include it in the final reply with Markdown image syntax, "
+        f"using a real file URI under the local Codex generated_images directory, for example: "
+        f"`![generated image]({example_uri})`. "
+        "Replace the example thread id and filename with the actual generated image path. "
+        "Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`; "
+        "if you cannot determine the real path, leave the final reply empty."
+    )
 
 
 class CodexAgent(BaseAgent):
@@ -653,7 +658,7 @@ class CodexAgent(BaseAgent):
         config = getattr(controller, "config", None)
         if not getattr(config, "reply_enhancements", True):
             return message
-        return f"{_CODEX_GENERATED_IMAGE_PROMPT}\n\n{message}"
+        return f"{_codex_generated_image_prompt()}\n\n{message}"
 
     # ------------------------------------------------------------------
     # Callback handlers (wired to transport)

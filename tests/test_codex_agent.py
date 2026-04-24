@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import os
 import sys
 import types
 import unittest
@@ -709,13 +710,14 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         agent.controller = SimpleNamespace(config=SimpleNamespace(reply_enhancements=True))
         request = SimpleNamespace(message="hello", files=None)
 
-        items = agent._build_input(request)
+        with patch.dict(os.environ, {"CODEX_HOME": "/Users/test/.codex"}):
+            items = agent._build_input(request)
 
         self.assertTrue(items[0]["text"].startswith("If you generate an image with Codex"))
-        self.assertIn("$CODEX_HOME/generated_images/<thread-id>/<image-file>.png", items[0]["text"])
-        self.assertIn("$HOME/.codex/generated_images/<thread-id>/<image-file>.png", items[0]["text"])
-        self.assertIn("Use only that local generated_images path", items[0]["text"])
-        self.assertIn("never sandbox paths like `/mnt/data/...`", items[0]["text"])
+        self.assertIn("file:///Users/test/.codex/generated_images/thread-id/image-file.png", items[0]["text"])
+        self.assertIn("local Codex generated_images directory", items[0]["text"])
+        self.assertIn("Replace the example thread id and filename with the actual", items[0]["text"])
+        self.assertIn("Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`", items[0]["text"])
         self.assertIn("leave the final reply empty", items[0]["text"])
         self.assertTrue(items[0]["text"].endswith("hello"))
 
