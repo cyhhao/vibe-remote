@@ -675,24 +675,35 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    def test_build_input_adds_codex_generated_image_prompt_only_for_image_requests(self):
+    async def test_start_thread_adds_codex_generated_image_prompt_only_to_codex_developer_instructions(self):
         agent = object.__new__(CodexAgent)
-        agent.controller = SimpleNamespace(config=SimpleNamespace(reply_enhancements=True))
-        request = SimpleNamespace(message="生成一张小图片：白色狐狸站在绿色星球上", files=None)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
+        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={},
+                user_id="U1",
+                channel_id="C1",
+                thread_id=None,
+            ),
+            base_session_id="session-1",
+            session_key="channel-1",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-1"}}))
 
-        items = agent._build_input(request)
+        await agent._start_thread(transport, request)
 
-        self.assertIn("If you generate an image with Codex", items[0]["text"])
-        self.assertIn("![generated image](file:///absolute/path/to/image.png)", items[0]["text"])
-
-    def test_build_input_does_not_add_codex_generated_image_prompt_for_normal_requests(self):
-        agent = object.__new__(CodexAgent)
-        agent.controller = SimpleNamespace(config=SimpleNamespace(reply_enhancements=True))
-        request = SimpleNamespace(message="修复这个 Python 测试失败", files=None)
-
-        items = agent._build_input(request)
-
-        self.assertNotIn("If you generate an image with Codex", items[0]["text"])
+        params = transport.send_request.await_args.args[1]
+        self.assertIn("If you generate an image with Codex", params["developerInstructions"])
+        self.assertIn("![generated image](file:///absolute/path/to/image.png)", params["developerInstructions"])
 
     async def test_start_turn_uses_sandbox_policy_object(self):
         agent = object.__new__(CodexAgent)
