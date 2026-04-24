@@ -64,6 +64,10 @@ def _validate_cloudflare_remote_access_payload(payload: dict) -> None:
         value = payload.get(field_name)
         if value is not None and not isinstance(value, list):
             raise ValueError(f"Config 'remote_access.cloudflare.{field_name}' must be a list")
+    for field_name in ("enabled", "confirmed_access_policy", "confirmed_tunnel_route"):
+        value = payload.get(field_name)
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f"Config 'remote_access.cloudflare.{field_name}' must be a boolean")
 
 
 @dataclass

@@ -156,3 +156,17 @@ def test_from_payload_rejects_non_list_cloudflare_allow_lists() -> None:
 
     with pytest.raises(ValueError, match="remote_access.cloudflare.allowed_emails.*list"):
         V2Config.from_payload(payload)
+
+
+def test_from_payload_rejects_non_boolean_cloudflare_safety_flags() -> None:
+    payload = api.config_to_payload(_base_config())
+    payload["remote_access"] = {
+        "cloudflare": {
+            "enabled": "false",
+            "confirmed_access_policy": True,
+            "confirmed_tunnel_route": True,
+        }
+    }
+
+    with pytest.raises(ValueError, match="remote_access.cloudflare.enabled.*boolean"):
+        V2Config.from_payload(payload)
