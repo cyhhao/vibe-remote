@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from config.v2_config import (
     AgentsConfig,
+    AdminAccessConfig,
+    CloudflareAdminAccessConfig,
     DiscordConfig,
     LarkConfig,
     PlatformsConfig,
@@ -82,3 +84,28 @@ def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
     ]
     assert payload["setup_state"]["configured_platforms"] == ["slack", "discord", "telegram", "lark", "wechat"]
     assert payload["setup_state"]["needs_setup"] is False
+
+
+def test_config_payload_includes_cloudflare_admin_access() -> None:
+    config = _base_config(
+        admin_access=AdminAccessConfig(
+            cloudflare=CloudflareAdminAccessConfig(
+                enabled=True,
+                hostname="admin.example.com",
+                tunnel_id="tunnel-id",
+                tunnel_token="tunnel-token",
+                access_app_id="access-app-id",
+                access_app_aud="access-aud",
+                allowed_emails=["alex@example.com"],
+                confirmed_access_policy=True,
+                confirmed_tunnel_route=True,
+            )
+        )
+    )
+
+    payload = api.config_to_payload(config)
+
+    assert payload["admin_access"]["provider"] == "cloudflare"
+    assert payload["admin_access"]["cloudflare"]["enabled"] is True
+    assert payload["admin_access"]["cloudflare"]["hostname"] == "admin.example.com"
+    assert payload["admin_access"]["cloudflare"]["allowed_emails"] == ["alex@example.com"]

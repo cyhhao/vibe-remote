@@ -99,6 +99,33 @@ def test_save_config_merges_partial_payload(monkeypatch, tmp_path):
     assert updated.runtime.default_cwd == "/tmp/workdir"
 
 
+def test_save_config_merges_admin_access_payload(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    api.save_config(_full_config_payload())
+
+    updated = api.save_config(
+        {
+            "admin_access": {
+                "cloudflare": {
+                    "enabled": True,
+                    "hostname": "admin.example.com",
+                    "tunnel_token": "tunnel-token",
+                    "confirmed_access_policy": True,
+                    "confirmed_tunnel_route": True,
+                }
+            }
+        }
+    )
+
+    assert updated.admin_access.provider == "cloudflare"
+    assert updated.admin_access.cloudflare.enabled is True
+    assert updated.admin_access.cloudflare.hostname == "admin.example.com"
+    assert updated.admin_access.cloudflare.tunnel_token == "tunnel-token"
+    assert updated.admin_access.cloudflare.confirmed_access_policy is True
+    assert updated.platform == "discord"
+
+
 def test_save_config_defaults_show_duration_to_false_for_new_config(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 
