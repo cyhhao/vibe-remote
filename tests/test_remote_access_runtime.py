@@ -108,6 +108,32 @@ def test_start_cloudflare_accepts_configured_binary_with_custom_name(monkeypatch
     assert result["pid"] == 5101
 
 
+def test_status_prefers_recorded_binary_when_config_path_changes(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+
+    pid = 5102
+    old_binary = "/Applications/Vibe Remote/bin/renamed-connector"
+    new_binary = "/Applications/Vibe Remote/bin/cloudflared-new"
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(pid), encoding="utf-8")
+    remote_access._CONNECTOR_ENV[pid] = {
+        "binary_path": old_binary,
+        "tunnel_token_sha256": "token-hash",
+    }
+
+    monkeypatch.setattr(remote_access, "_resolve_configured_binary", lambda config=None: new_binary)
+    monkeypatch.setattr(remote_access, "_version", lambda path: None)
+    monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "get_process_command", lambda candidate: f"{old_binary} tunnel --no-autoupdate run")
+
+    result = remote_access.status(_config(cloudflared_path=new_binary))
+
+    assert result["running"] is True
+    assert result["pid"] == pid
+    assert result["binary_path"] == new_binary
+
+
 def test_stop_cloudflare_does_not_stop_reused_unrelated_pid(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     remote_access._CONNECTOR_ENV.clear()
@@ -177,6 +203,14 @@ def test_cloudflared_command_detection_accepts_quoted_paths_with_spaces():
 def test_cloudflared_command_detection_accepts_configured_custom_name():
     command = '"C:\\Users\\John Doe\\.vibe_remote\\bin\\renamed-connector.exe" tunnel run'
     configured = "C:\\Users\\John Doe\\.vibe_remote\\bin\\renamed-connector.exe"
+
+    assert remote_access._is_cloudflared_command(command, configured)
+    assert not remote_access._is_cloudflared_command(command)
+
+
+def test_cloudflared_command_detection_accepts_unquoted_expected_path_with_spaces():
+    command = "/Users/alex/Application Support/Vibe Remote/bin/renamed connector tunnel run"
+    configured = "/Users/alex/Application Support/Vibe Remote/bin/renamed connector"
 
     assert remote_access._is_cloudflared_command(command, configured)
     assert not remote_access._is_cloudflared_command(command)

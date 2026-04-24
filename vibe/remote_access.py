@@ -204,6 +204,51 @@ def _same_executable_path(left: str | None, right: str | None) -> bool:
     )
 
 
+def _has_command_boundary(command: str, executable: str) -> bool:
+    if len(command) == len(executable):
+        return True
+    return len(command) > len(executable) and command[len(executable)].isspace()
+
+
+def _command_starts_with_expected_binary(command: str | None, expected_binary: str | None) -> bool:
+    if not command or not expected_binary:
+        return False
+
+    command_text = command.strip()
+    expected = expected_binary.strip("\"'")
+    if not command_text or not expected:
+        return False
+
+    for quote in ('"', "'"):
+        quoted = f"{quote}{expected}{quote}"
+        if command_text.startswith(quoted) and _has_command_boundary(command_text, quoted):
+            return True
+
+    candidates = {
+        expected,
+        os.path.normpath(expected),
+        ntpath.normpath(expected),
+    }
+    command_variants = {
+        command_text,
+        os.path.normcase(command_text),
+        ntpath.normcase(command_text),
+    }
+    for candidate in candidates:
+        candidate_variants = {
+            candidate,
+            os.path.normcase(candidate),
+            ntpath.normcase(candidate),
+        }
+        for command_variant in command_variants:
+            for candidate_variant in candidate_variants:
+                if command_variant.startswith(candidate_variant) and _has_command_boundary(
+                    command_variant, candidate_variant
+                ):
+                    return True
+    return False
+
+
 def _runtime_binary_for_pid(pid: int) -> str | None:
     signature = _CONNECTOR_ENV.get(pid)
     if signature is not None:
@@ -215,6 +260,9 @@ def _runtime_binary_for_pid(pid: int) -> str | None:
 
 
 def _is_cloudflared_command(command: str | None, expected_binary: str | None = None) -> bool:
+    if _command_starts_with_expected_binary(command, expected_binary):
+        return True
+
     executable = _command_executable(command)
     if not executable:
         return False
@@ -227,7 +275,7 @@ def _is_cloudflared_command(command: str | None, expected_binary: str | None = N
 def _is_cloudflared_pid(pid: int | None, expected_binary: str | None = None) -> bool:
     if not pid or not runtime.pid_alive(pid):
         return False
-    return _is_cloudflared_command(runtime.get_process_command(pid), expected_binary or _runtime_binary_for_pid(pid))
+    return _is_cloudflared_command(runtime.get_process_command(pid), _runtime_binary_for_pid(pid) or expected_binary)
 
 
 def _clear_running_state(pid: int | None = None) -> None:
