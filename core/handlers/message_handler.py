@@ -11,6 +11,8 @@ from .base import BaseHandler
 
 logger = logging.getLogger(__name__)
 
+SUBAGENT_REACTION_EMOJI = "🤖"
+
 
 class MessageHandler(BaseHandler):
     """Handles message routing and Claude communication"""
@@ -227,7 +229,7 @@ class MessageHandler(BaseHandler):
 
             if is_human and subagent_name and context.message_id:
                 try:
-                    reaction = ":robot_face:"
+                    reaction = SUBAGENT_REACTION_EMOJI
                     await self._get_im_client(context).add_reaction(
                         context,
                         context.message_id,
@@ -235,8 +237,8 @@ class MessageHandler(BaseHandler):
                     )
                 except Exception as err:
                     logger.debug(f"Failed to add subagent reaction: {err}")
-                # Keep :eyes: alive — the agent will remove it on result/error
-                # via the normal ack_reaction lifecycle.  Previously :eyes: was
+                # Keep 👀 alive; the agent will remove it on result/error
+                # via the normal ack_reaction lifecycle. Previously 👀 was
                 # removed here immediately, leaving no processing indicator
                 # for the entire duration of the subagent run.
 

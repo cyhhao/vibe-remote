@@ -552,7 +552,7 @@ class ClaudeAgent(BaseAgent):
         # When the receiver ends normally (stream exhausted after a result),
         # new messages may have already queued their reactions via
         # handle_message().  Blindly clearing them here would remove the
-        # :eyes: for an in-flight request that hasn't produced a result yet.
+        # 👀 for an in-flight request that hasn't produced a result yet.
         # The except blocks above handle the cancel/error cases; the
         # normal-result case is handled by _remove_pending_reaction()
         # inside the loop.

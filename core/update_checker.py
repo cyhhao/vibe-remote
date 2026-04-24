@@ -483,7 +483,7 @@ class UpdateChecker:
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
-                                "text": f":rocket: *Vibe Remote Update Available*\n\n"
+                                "text": f"🚀 *Vibe Remote Update Available*\n\n"
                                 f"A new version is available: `{current}` → {latest_link}",
                             },
                         },
@@ -558,7 +558,7 @@ class UpdateChecker:
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f":rocket: *Vibe Remote Update Available*\n\n"
+                        "text": f"🚀 *Vibe Remote Update Available*\n\n"
                         f"A new version is available: `{current}` → {latest_link}",
                     },
                 },
@@ -770,16 +770,13 @@ class UpdateChecker:
             if channel_id:
                 platform = data.get("platform") or _infer_channel_platform(channel_id)
             im_client = self._get_im_client_for_platform(platform)
-            if platform == "discord":
-                success_text = f"✅ Vibe Remote has been updated to `{target_version}`"
-            else:
-                success_text = f":white_check_mark: Vibe Remote has been updated to `{target_version}`"
+            success_text = f"✅ Vibe Remote has been updated to `{target_version}`"
             success_blocks = [
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f":white_check_mark: *Vibe Remote Updated Successfully*\n\n"
+                        "text": f"✅ *Vibe Remote Updated Successfully*\n\n"
                         f"Now running version `{target_version}`",
                     },
                 }
@@ -854,7 +851,7 @@ async def handle_update_button_click(controller: "Controller", payload: Dict[str
                 blocks=[
                     {
                         "type": "section",
-                        "text": {"type": "mrkdwn", "text": ":warning: An upgrade is already in progress. Please wait."},
+                        "text": {"type": "mrkdwn", "text": "⚠️ An upgrade is already in progress. Please wait."},
                     }
                 ],
             )
@@ -873,7 +870,7 @@ async def handle_update_button_click(controller: "Controller", payload: Dict[str
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": ":hourglass_flowing_sand: *Updating Vibe Remote...*\n\nPlease wait, the service will restart shortly.",
+                        "text": "⏳ *Updating Vibe Remote...*\n\nPlease wait, the service will restart shortly.",
                     },
                 }
             ],
@@ -921,7 +918,7 @@ async def _do_update_from_button(controller: "Controller", channel_id: str, mess
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
-                                "text": ":x: *Upgrade Failed*\n\nPlease check the logs for details.",
+                                "text": "❌ *Upgrade Failed*\n\nPlease check the logs for details.",
                             },
                         }
                     ],
@@ -937,7 +934,7 @@ async def _do_update_from_button(controller: "Controller", channel_id: str, mess
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
-                                "text": ":white_check_mark: *Upgrade complete*\n\nPlease restart Vibe Remote to apply the update.",
+                                "text": "✅ *Upgrade complete*\n\nPlease restart Vibe Remote to apply the update.",
                             },
                         }
                     ],
@@ -951,7 +948,7 @@ async def _do_update_from_button(controller: "Controller", channel_id: str, mess
                 blocks=[
                     {
                         "type": "section",
-                        "text": {"type": "mrkdwn", "text": ":white_check_mark: Already running the latest version."},
+                        "text": {"type": "mrkdwn", "text": "✅ Already running the latest version."},
                     }
                 ],
             )

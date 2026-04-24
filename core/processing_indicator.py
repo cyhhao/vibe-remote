@@ -20,6 +20,7 @@ from vibe.i18n import t as i18n_t
 logger = logging.getLogger(__name__)
 
 _PROCESSING_INDICATOR_MODES = ("typing", "reaction", "message")
+ACK_REACTION_EMOJI = "👀"
 
 
 @dataclass
@@ -234,7 +235,7 @@ class ProcessingIndicatorService:
             return False
         im_client = self._get_im_client(context)
         try:
-            ok = await im_client.add_reaction(context, message_id, ":eyes:")
+            ok = await im_client.add_reaction(context, message_id, ACK_REACTION_EMOJI)
         except Exception as ack_err:
             logger.debug("Failed to add reaction ack: %s", ack_err)
             return False
@@ -244,7 +245,7 @@ class ProcessingIndicatorService:
             return False
 
         handle.ack_reaction_message_id = message_id
-        handle.ack_reaction_emoji = ":eyes:"
+        handle.ack_reaction_emoji = ACK_REACTION_EMOJI
         return True
 
     def _delete_context(self, handle: ProcessingIndicatorHandle, channel_id: Optional[str]) -> MessageContext:

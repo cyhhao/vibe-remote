@@ -1021,6 +1021,8 @@ class SlackBot(BaseIMClient):
             name = name[1:-1]
         if name in ["👀", "eyes", "eye"]:
             name = "eyes"
+        elif name in ["🤖", "robot_face", "robot"]:
+            name = "robot_face"
 
         if not name:
             return False
@@ -1067,6 +1069,8 @@ class SlackBot(BaseIMClient):
             name = name[1:-1]
         if name in ["👀", "eyes", "eye"]:
             name = "eyes"
+        elif name in ["🤖", "robot_face", "robot"]:
+            name = "robot_face"
 
         if not name:
             return False
