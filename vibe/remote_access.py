@@ -380,6 +380,13 @@ def stop_cloudflare() -> dict[str, Any]:
         return {**status(), "ok": True, "stopped": stopped}
 
 
+def _stop_before_start_failure(config: V2Config, error: str) -> dict[str, Any]:
+    stop_result = stop_cloudflare()
+    if stop_result.get("ok") is False:
+        return stop_result
+    return {**status(config), "ok": False, "error": error}
+
+
 def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
     with _CONNECTOR_LOCK:
         config = config or V2Config.load()
@@ -387,12 +394,9 @@ def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
         if not cloudflare.enabled:
             return stop_cloudflare()
         if not cloudflare.tunnel_token:
-            return {**status(config), "ok": False, "error": "missing_tunnel_token"}
+            return _stop_before_start_failure(config, "missing_tunnel_token")
         if not _cloudflare_access_ready(cloudflare):
-            stop_result = stop_cloudflare()
-            if stop_result.get("ok") is False:
-                return stop_result
-            return {**status(config), "ok": False, "error": "access_checklist_incomplete"}
+            return _stop_before_start_failure(config, "access_checklist_incomplete")
 
         binary = _resolve_configured_binary(config)
         if not binary:
