@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import io
 import sys
+import tarfile
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -130,6 +134,34 @@ def test_stop_cloudflare_does_not_stop_reused_unrelated_pid(monkeypatch, tmp_pat
     assert not remote_access._pid_path().exists()
 
 
+def test_stop_cloudflare_preserves_state_when_process_stop_fails(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+
+    pid = 4322
+    binary = "/bin/cloudflared"
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(pid), encoding="utf-8")
+    remote_access._CONNECTOR_ENV[pid] = {
+        "binary_path": binary,
+        "tunnel_token_sha256": "token-hash",
+    }
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "get_process_command", lambda candidate: f"{binary} tunnel run")
+    monkeypatch.setattr(runtime, "stop_process", lambda pid_path, timeout=5: False)
+    monkeypatch.setattr(remote_access, "_version", lambda path: None)
+
+    result = remote_access.stop_cloudflare()
+
+    assert result["ok"] is False
+    assert result["error"] == "cloudflared_stop_failed"
+    assert result["running"] is True
+    assert result["pid"] == pid
+    assert remote_access._pid_path().read_text(encoding="utf-8") == str(pid)
+    assert remote_access._CONNECTOR_ENV[pid]["binary_path"] == binary
+
+
 def test_cloudflared_command_detection_accepts_quoted_paths_with_spaces():
     assert remote_access._is_cloudflared_command(
         '"C:\\Users\\John Doe\\.vibe_remote\\bin\\cloudflared.exe" tunnel --no-autoupdate run'
@@ -148,3 +180,20 @@ def test_cloudflared_command_detection_accepts_configured_custom_name():
 
     assert remote_access._is_cloudflared_command(command, configured)
     assert not remote_access._is_cloudflared_command(command)
+
+
+def test_safe_extract_cloudflared_rejects_path_traversal(tmp_path):
+    archive_path = tmp_path / "cloudflared.tgz"
+    target = tmp_path / "cloudflared"
+    data = b"malicious"
+
+    with tarfile.open(archive_path, "w:gz") as archive:
+        info = tarfile.TarInfo("../../outside/cloudflared")
+        info.size = len(data)
+        archive.addfile(info, io.BytesIO(data))
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        with pytest.raises(RuntimeError, match="unsafe cloudflared path"):
+            remote_access._safe_extract_cloudflared(archive, target)
+
+    assert not target.exists()

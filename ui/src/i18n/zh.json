@@ -606,7 +606,7 @@
     "lifecycle": "生命周期",
     "lifecycleDesc": "Vibe Remote 会保存连接器 PID，在远程访问启用时启动，禁用时停止，并在 UI 服务退出前自动停止，避免残留进程。",
     "readyToSave": "Cloudflare Tunnel + Access 核对已完成。保存后再启动连接器。",
-    "incompleteWarning": "请先安装 cloudflared，填写必填的域名、tunnel token，并完成 Access 安全确认。",
+    "incompleteWarning": "可以先保存草稿；启动连接器前仍需安装 cloudflared、填写必填项并完成 Access 安全确认。",
     "errors": {
       "missing_tunnel_token": "缺少 Tunnel token，无法启动连接器。",
       "cloudflared_not_installed": "未找到 cloudflared，请先完成安装步骤。",

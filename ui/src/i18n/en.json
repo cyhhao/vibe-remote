@@ -606,7 +606,7 @@
     "lifecycle": "Lifecycle",
     "lifecycleDesc": "Vibe Remote stores the connector PID, starts it when remote access is enabled, stops it when disabled, and stops it before the UI service exits.",
     "readyToSave": "The Cloudflare Tunnel + Access checklist is complete. Save, then start the connector.",
-    "incompleteWarning": "Install cloudflared, fill in the required hostname and Tunnel token, and complete the Access safety confirmations.",
+    "incompleteWarning": "You can save a draft now. Starting the connector still requires cloudflared, all required fields, and the Access safety confirmations.",
     "errors": {
       "missing_tunnel_token": "Missing Tunnel token. The connector cannot start.",
       "cloudflared_not_installed": "cloudflared was not found. Complete the install step first.",

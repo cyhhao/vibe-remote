@@ -93,6 +93,24 @@ def _resolve_configured_binary(config: V2Config | None = None) -> str | None:
     return detected
 
 
+def _safe_extract_cloudflared(archive: tarfile.TarFile, target: Path) -> None:
+    for member in archive.getmembers():
+        member_name = Path(member.name)
+        if member_name.name != "cloudflared":
+            continue
+        if member_name.is_absolute() or ".." in member_name.parts:
+            raise RuntimeError("Downloaded cloudflared archive contained an unsafe cloudflared path")
+        if not member.isfile():
+            raise RuntimeError("Downloaded cloudflared archive did not contain a regular cloudflared binary")
+        source = archive.extractfile(member)
+        if source is None:
+            raise RuntimeError("Downloaded cloudflared archive did not contain a readable cloudflared binary")
+        with source, target.open("wb") as output:
+            shutil.copyfileobj(source, output)
+        return
+    raise RuntimeError("Downloaded cloudflared archive did not contain a cloudflared binary")
+
+
 def install_cloudflared() -> dict[str, Any]:
     """Download the official cloudflared binary into the Vibe Remote data dir."""
     paths.ensure_data_dirs()
@@ -109,12 +127,7 @@ def install_cloudflared() -> dict[str, Any]:
 
         if asset.endswith(".tgz"):
             with tarfile.open(download_path, "r:gz") as archive:
-                member = next((item for item in archive.getmembers() if Path(item.name).name == "cloudflared"), None)
-                if member is None:
-                    raise RuntimeError("Downloaded cloudflared archive did not contain a cloudflared binary")
-                archive.extract(member, tmp_dir)
-                extracted = tmp_dir / member.name
-                shutil.move(str(extracted), target)
+                _safe_extract_cloudflared(archive, target)
         else:
             shutil.move(str(download_path), target)
 
@@ -291,9 +304,12 @@ def stop_cloudflare() -> dict[str, Any]:
         return {**status(), "ok": True, "stopped": False, "stale_pid": True}
 
     stopped = runtime.stop_process(_pid_path(), timeout=8)
-    if pid is not None:
+    if pid is not None and stopped:
         _CONNECTOR_ENV.pop(pid, None)
         _clear_running_state(pid)
+    if pid is not None and not stopped and _is_cloudflared_pid(pid):
+        current = status()
+        return {**current, "ok": False, "error": "cloudflared_stop_failed", "stopped": False}
     return {**status(), "ok": True, "stopped": stopped}
 
 

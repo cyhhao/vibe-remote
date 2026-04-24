@@ -247,14 +247,10 @@ export const RemoteAccess: React.FC = () => {
         allowed_email_domains: splitList(domainsText),
       };
       const nextReady = isCloudflareChecklistReady(nextCloudflare);
-      if (!nextReady) {
-        showToast(t('remoteAccess.enableBlocked'), 'error');
-        return;
-      }
       const saved = await api.saveConfig({
         remote_access: {
           provider: 'cloudflare',
-          cloudflare: nextCloudflare,
+          cloudflare: { ...nextCloudflare, enabled: nextReady ? nextCloudflare.enabled : false },
         },
       });
       const savedCloudflare = {
@@ -638,7 +634,7 @@ export const RemoteAccess: React.FC = () => {
         </div>
         <button
           onClick={() => void save()}
-          disabled={saving || !accessReady}
+          disabled={saving}
           className="px-5 py-2 bg-accent text-white rounded-lg font-semibold disabled:opacity-50"
         >
           {saving ? t('common.saving') : t('common.save')}
