@@ -51,6 +51,9 @@ class CodexEventHandler:
         pending = self._pending_image_snapshots_by_session.get(base_session_id)
         if not pending:
             return
+        is_active_turn = getattr(self._agent._turn_registry, "is_active_turn", None)
+        if callable(is_active_turn) and not is_active_turn(turn_id):
+            return
         pending_thread_id, _ = pending
         if pending_thread_id != thread_id:
             return

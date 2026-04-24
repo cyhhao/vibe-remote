@@ -75,6 +75,12 @@ class _StubTurnRegistry:
             return False
         return state.visible_to_user and self._active_turns.get(state.request.base_session_id) == turn_id
 
+    def is_active_turn(self, turn_id: str) -> bool:
+        state = self._turns.get(turn_id)
+        if not state:
+            return False
+        return self._active_turns.get(state.request.base_session_id) == turn_id
+
 
 class _StubAgent:
     def __init__(self):
@@ -357,6 +363,42 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         result_text = agent.emit_result_message.await_args.args[1]
         assert f"![generated image](file://{new_image.resolve()})" in result_text
         assert str(before_second_turn.resolve()) not in result_text
+
+    async def test_stale_turn_started_does_not_steal_pending_image_snapshot(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+        handler.clear_pending("turn-1")
+        agent._turn_registry.register_turn("turn-2", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            handler.snapshot_generated_images("thread-1", "session-1")
+
+            await handler._on_turn_started(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1"},
+                },
+                request,
+            )
+
+            new_image = thread_dir / "new-for-turn-2.png"
+            new_image.write_bytes(b"new")
+            handler.bind_generated_image_snapshot("thread-1", "turn-2", "session-1")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-2", "status": "completed"},
+                },
+                request,
+            )
+
+        result_text = agent.emit_result_message.await_args.args[1]
+        assert f"![generated image](file://{new_image.resolve()})" in result_text
 
     async def test_empty_success_result_does_not_guess_without_image_snapshot(self):
         agent = _StubAgent()

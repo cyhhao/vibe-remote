@@ -675,7 +675,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_start_thread_adds_codex_generated_image_prompt_only_to_codex_developer_instructions(self):
+    async def test_start_thread_does_not_add_codex_generated_image_prompt_to_thread_instructions(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
         agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
@@ -702,8 +702,18 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         await agent._start_thread(transport, request)
 
         params = transport.send_request.await_args.args[1]
-        self.assertIn("If you generate an image with Codex", params["developerInstructions"])
-        self.assertIn("![generated image](file:///absolute/path/to/image.png)", params["developerInstructions"])
+        self.assertNotIn("If you generate an image with Codex", params["developerInstructions"])
+
+    def test_build_input_adds_codex_generated_image_prompt_to_each_turn(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(reply_enhancements=True))
+        request = SimpleNamespace(message="hello", files=None)
+
+        items = agent._build_input(request)
+
+        self.assertTrue(items[0]["text"].startswith("If you generate an image with Codex"))
+        self.assertIn("![generated image](file:///absolute/path/to/image.png)", items[0]["text"])
+        self.assertTrue(items[0]["text"].endswith("hello"))
 
     async def test_start_turn_uses_sandbox_policy_object(self):
         agent = object.__new__(CodexAgent)

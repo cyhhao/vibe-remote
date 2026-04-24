@@ -443,7 +443,6 @@ class CodexAgent(BaseAgent):
                     fallback_platform=platform,
                 )
             )
-            instruction_parts.append(_CODEX_GENERATED_IMAGE_PROMPT)
 
         if instruction_parts:
             params["developerInstructions"] = "\n\n".join(part for part in instruction_parts if part)
@@ -617,7 +616,7 @@ class CodexAgent(BaseAgent):
         items: list[Dict[str, Any]] = []
 
         # Text input
-        message = request.message
+        message = self._build_turn_message(request.message)
         if request.files:
             # Append file info like Claude agent does
             file_lines = ["", "[User Attachments]"]
@@ -643,6 +642,15 @@ class CodexAgent(BaseAgent):
             items.insert(0, {"type": "text", "text": message})
 
         return items
+
+    def _build_turn_message(self, message: str) -> str:
+        if not message:
+            return message
+        controller = getattr(self, "controller", None)
+        config = getattr(controller, "config", None)
+        if not getattr(config, "reply_enhancements", True):
+            return message
+        return f"{_CODEX_GENERATED_IMAGE_PROMPT}\n\n{message}"
 
     # ------------------------------------------------------------------
     # Callback handlers (wired to transport)
