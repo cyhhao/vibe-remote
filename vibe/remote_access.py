@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
 import os
 import platform
+import shlex
 import shutil
 import stat
 import subprocess
@@ -167,7 +169,13 @@ def _read_running_state() -> dict[str, Any] | None:
 def _is_cloudflared_command(command: str | None) -> bool:
     if not command or not command.strip():
         return False
-    executable = Path(command.strip().split()[0]).name.lower()
+    try:
+        parts = shlex.split(command.strip(), posix=False)
+    except ValueError:
+        parts = command.strip().split()
+    if not parts:
+        return False
+    executable = ntpath.basename(parts[0].strip("\"'")).lower()
     return executable in {"cloudflared", "cloudflared.exe"}
 
 

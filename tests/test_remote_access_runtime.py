@@ -103,3 +103,15 @@ def test_stop_cloudflare_does_not_stop_reused_unrelated_pid(monkeypatch, tmp_pat
     assert result["stale_pid"] is True
     assert stop_calls == []
     assert not remote_access._pid_path().exists()
+
+
+def test_cloudflared_command_detection_accepts_quoted_paths_with_spaces():
+    assert remote_access._is_cloudflared_command(
+        '"C:\\Users\\John Doe\\.vibe_remote\\bin\\cloudflared.exe" tunnel --no-autoupdate run'
+    )
+    assert remote_access._is_cloudflared_command(
+        '"/Users/alex/Application Support/Vibe Remote/bin/cloudflared" tunnel run'
+    )
+    assert not remote_access._is_cloudflared_command(
+        '"C:\\Users\\John Doe\\bin\\python.exe" unrelated.py'
+    )
