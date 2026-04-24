@@ -96,6 +96,9 @@ def _resolve_configured_binary(config: V2Config | None = None) -> str | None:
 
 
 def _safe_extract_cloudflared(archive: tarfile.TarFile, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_target = target.with_name(f".{target.name}.tmp")
+    temp_target.unlink(missing_ok=True)
     for member in archive.getmembers():
         member_name = Path(member.name)
         if member_name.name != "cloudflared":
@@ -107,8 +110,13 @@ def _safe_extract_cloudflared(archive: tarfile.TarFile, target: Path) -> None:
         source = archive.extractfile(member)
         if source is None:
             raise RuntimeError("Downloaded cloudflared archive did not contain a readable cloudflared binary")
-        with source, target.open("wb") as output:
-            shutil.copyfileobj(source, output)
+        try:
+            with source, temp_target.open("wb") as output:
+                shutil.copyfileobj(source, output)
+            os.replace(temp_target, target)
+        except Exception:
+            temp_target.unlink(missing_ok=True)
+            raise
         return
     raise RuntimeError("Downloaded cloudflared archive did not contain a cloudflared binary")
 
@@ -286,6 +294,8 @@ def _is_cloudflared_command(command: str | None, expected_binary: str | None = N
         return False
     if _same_executable_path(executable, expected_binary):
         return True
+    if expected_binary:
+        return False
     executable_name = ntpath.basename(executable).lower()
     return executable_name in {"cloudflared", "cloudflared.exe"}
 

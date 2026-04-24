@@ -189,7 +189,7 @@ def test_start_cloudflare_restarts_when_runtime_signature_changes(monkeypatch, t
     monkeypatch.setattr(runtime, "spawn_background", fake_spawn_background)
     monkeypatch.setattr(runtime, "stop_process", fake_stop_process)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid in live_pids)
-    monkeypatch.setattr(runtime, "get_process_command", lambda pid: "cloudflared tunnel run")
+    monkeypatch.setattr(runtime, "get_process_command", lambda pid: "/bin/cloudflared tunnel run")
 
     first = remote_access.start_cloudflare(_config(tunnel_token="token-1"))
     second = remote_access.start_cloudflare(_config(tunnel_token="token-2"))
@@ -372,6 +372,33 @@ def test_stop_cloudflare_does_not_stop_reused_unrelated_pid(monkeypatch, tmp_pat
     assert not remote_access._pid_path().exists()
 
 
+def test_stop_cloudflare_rejects_reused_cloudflared_pid_with_mismatched_binary(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+
+    pid = 4323
+    expected_binary = "/managed/bin/cloudflared"
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(pid), encoding="utf-8")
+    remote_access._CONNECTOR_ENV[pid] = {
+        "binary_path": expected_binary,
+        "tunnel_token_sha256": "token-hash",
+    }
+    stop_calls: list[int] = []
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "get_process_command", lambda candidate: "/usr/local/bin/cloudflared tunnel run")
+    monkeypatch.setattr(runtime, "stop_process", lambda pid_path, timeout=5: stop_calls.append(pid) or True)
+
+    result = remote_access.stop_cloudflare()
+
+    assert result["ok"] is True
+    assert result["stopped"] is False
+    assert result["stale_pid"] is True
+    assert stop_calls == []
+    assert not remote_access._pid_path().exists()
+
+
 def test_stop_cloudflare_preserves_state_when_process_stop_fails(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     remote_access._CONNECTOR_ENV.clear()
@@ -443,6 +470,31 @@ def test_safe_extract_cloudflared_rejects_path_traversal(tmp_path):
             remote_access._safe_extract_cloudflared(archive, target)
 
     assert not target.exists()
+
+
+def test_safe_extract_cloudflared_preserves_existing_binary_on_copy_failure(monkeypatch, tmp_path):
+    archive_path = tmp_path / "cloudflared.tgz"
+    target = tmp_path / "cloudflared"
+    data = b"replacement"
+    target.write_bytes(b"existing-binary")
+
+    with tarfile.open(archive_path, "w:gz") as archive:
+        info = tarfile.TarInfo("cloudflared")
+        info.size = len(data)
+        archive.addfile(info, io.BytesIO(data))
+
+    def fail_copyfileobj(source, target_file):
+        target_file.write(b"partial")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(remote_access.shutil, "copyfileobj", fail_copyfileobj)
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        with pytest.raises(OSError, match="disk full"):
+            remote_access._safe_extract_cloudflared(archive, target)
+
+    assert target.read_bytes() == b"existing-binary"
+    assert not (tmp_path / ".cloudflared.tmp").exists()
 
 
 def test_install_cloudflared_returns_structured_download_failure(monkeypatch, tmp_path):
