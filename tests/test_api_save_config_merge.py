@@ -315,3 +315,42 @@ def test_config_post_propagates_remote_access_reconcile_failure(monkeypatch, tmp
     assert payload["error"] == "cloudflared_stop_failed"
     assert payload["remote_access"]["running"] is True
     assert payload["config"]["remote_access"]["cloudflare"]["enabled"] is True
+
+
+def test_config_post_skips_remote_access_reconcile_when_section_is_unchanged(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    from vibe import remote_access
+    from vibe.ui_server import app
+
+    saved = api.save_config(
+        {
+            **_full_config_payload(),
+            "remote_access": {
+                "cloudflare": {
+                    "enabled": False,
+                    "hostname": "admin.example.com",
+                    "tunnel_token": "tunnel-token",
+                    "allowed_emails": ["alex@example.com"],
+                    "confirmed_access_policy": True,
+                    "confirmed_tunnel_route": True,
+                }
+            },
+        }
+    )
+    reconcile_calls: list[object] = []
+    monkeypatch.setattr(remote_access, "reconcile", lambda config: reconcile_calls.append(config) or {"ok": True})
+
+    client = app.test_client()
+    response = client.post(
+        "/config",
+        json={
+            "show_duration": False,
+            "remote_access": api.config_to_payload(saved)["remote_access"],
+        },
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["show_duration"] is False
+    assert reconcile_calls == []

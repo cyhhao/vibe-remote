@@ -435,8 +435,17 @@ def config_post():
     from vibe import remote_access
 
     payload = request.json or {}
+    remote_access_requested = "remote_access" in payload or "admin_access" in payload
+    previous_remote_access = None
+    if remote_access_requested:
+        try:
+            previous_remote_access = api.config_to_payload(api.load_config()).get("remote_access")
+        except FileNotFoundError:
+            previous_remote_access = None
     config = api.save_config(payload)
-    if "remote_access" in payload or "admin_access" in payload:
+    current_payload = api.config_to_payload(config)
+    current_remote_access = current_payload.get("remote_access")
+    if remote_access_requested and current_remote_access != previous_remote_access:
         reconcile_result = remote_access.reconcile(config)
         if reconcile_result.get("ok") is False:
             return jsonify(
@@ -444,10 +453,10 @@ def config_post():
                     "ok": False,
                     "error": reconcile_result.get("error") or "remote_access_reconcile_failed",
                     "remote_access": reconcile_result,
-                    "config": api.config_to_payload(config),
+                    "config": current_payload,
                 }
             ), 409
-    return jsonify(api.config_to_payload(config))
+    return jsonify(current_payload)
 
 
 @app.route("/remote-access/cloudflare/status", methods=["GET"])

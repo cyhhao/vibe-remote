@@ -143,3 +143,16 @@ def test_from_payload_rejects_non_object_cloudflare_remote_access() -> None:
 
     with pytest.raises(ValueError, match="remote_access.cloudflare.*object"):
         V2Config.from_payload(payload)
+
+
+def test_from_payload_rejects_non_list_cloudflare_allow_lists() -> None:
+    payload = api.config_to_payload(_base_config())
+    payload["remote_access"] = {
+        "cloudflare": {
+            "allowed_emails": "alex@example.com",
+            "allowed_email_domains": ["example.com"],
+        }
+    }
+
+    with pytest.raises(ValueError, match="remote_access.cloudflare.allowed_emails.*list"):
+        V2Config.from_payload(payload)

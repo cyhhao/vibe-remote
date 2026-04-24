@@ -59,6 +59,13 @@ def _remote_access_payload(payload: dict) -> dict:
     return remote_payload
 
 
+def _validate_cloudflare_remote_access_payload(payload: dict) -> None:
+    for field_name in ("allowed_emails", "allowed_email_domains"):
+        value = payload.get(field_name)
+        if value is not None and not isinstance(value, list):
+            raise ValueError(f"Config 'remote_access.cloudflare.{field_name}' must be a list")
+
+
 @dataclass
 class SlackConfig(BaseIMConfig):
     bot_token: str = ""
@@ -419,6 +426,7 @@ class V2Config:
             cloudflare_payload = {}
         if not isinstance(cloudflare_payload, dict):
             raise ValueError("Config 'remote_access.cloudflare' must be an object")
+        _validate_cloudflare_remote_access_payload(cloudflare_payload)
         remote_access = RemoteAccessConfig(
             provider=remote_access_provider,
             cloudflare=CloudflareRemoteAccessConfig(
