@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _GENERATED_IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
+_ImageSnapshot = dict[Path, tuple[int, int]]
 
 
 class CodexEventHandler:
@@ -27,8 +28,8 @@ class CodexEventHandler:
 
     def __init__(self, agent: Any) -> None:
         self._agent = agent
-        self._image_snapshots_by_turn: dict[str, tuple[str, set[Path]]] = {}
-        self._pending_image_snapshots_by_session: dict[str, tuple[str, set[Path]]] = {}
+        self._image_snapshots_by_turn: dict[str, tuple[str, _ImageSnapshot]] = {}
+        self._pending_image_snapshots_by_session: dict[str, tuple[str, _ImageSnapshot]] = {}
 
     def snapshot_generated_images(self, thread_id: str, base_session_id: str) -> None:
         """Record generated images present before a Codex turn starts."""
@@ -357,8 +358,8 @@ class CodexEventHandler:
 
         current = self._list_generated_images(thread_id)
         generated = sorted(
-            current - before,
-            key=lambda path: path.stat().st_mtime if path.exists() else 0,
+            (path for path, signature in current.items() if before.get(path) != signature),
+            key=lambda path: current[path][0],
         )
         if not generated:
             return None
@@ -379,21 +380,27 @@ class CodexEventHandler:
             request.base_session_id,
         )
 
-    def _list_generated_images(self, thread_id: str) -> set[Path]:
+    def _list_generated_images(self, thread_id: str) -> _ImageSnapshot:
         thread_dir = self._generated_images_dir(thread_id)
         if thread_dir is None or not thread_dir.is_dir():
-            return set()
+            return {}
 
         try:
             candidates = thread_dir.iterdir()
         except OSError as exc:
             logger.warning("Failed to list Codex generated images for %s: %s", thread_id, exc)
-            return set()
+            return {}
 
-        images: set[Path] = set()
+        images: _ImageSnapshot = {}
         for path in candidates:
             if path.is_file() and path.suffix.lower() in _GENERATED_IMAGE_EXTENSIONS:
-                images.add(path.resolve())
+                resolved = path.resolve()
+                try:
+                    stat = resolved.stat()
+                except OSError as exc:
+                    logger.warning("Failed to stat Codex generated image %s: %s", resolved, exc)
+                    continue
+                images[resolved] = (stat.st_mtime_ns, stat.st_size)
         return images
 
     def _generated_images_dir(self, thread_id: str) -> Path | None:

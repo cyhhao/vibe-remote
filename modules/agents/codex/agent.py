@@ -21,6 +21,18 @@ _CODEX_GENERATED_IMAGE_PROMPT = (
     "If you generate an image with Codex, include it in the final reply with Markdown image syntax: "
     "`![generated image](file:///absolute/path/to/image.png)`"
 )
+_IMAGE_REQUEST_MARKERS = (
+    "generate an image",
+    "generate a picture",
+    "create an image",
+    "create a picture",
+    "draw an image",
+    "draw a picture",
+    "make an image",
+    "make a picture",
+)
+_IMAGE_REQUEST_VERBS = ("生成", "画", "绘制", "绘画", "创作", "generate", "create", "draw", "make")
+_IMAGE_REQUEST_NOUNS = ("图片", "图像", "图", "插画", "海报", "照片", "image", "picture", "illustration", "poster", "photo")
 
 
 class CodexAgent(BaseAgent):
@@ -443,7 +455,6 @@ class CodexAgent(BaseAgent):
                     fallback_platform=platform,
                 )
             )
-            instruction_parts.append(_CODEX_GENERATED_IMAGE_PROMPT)
 
         if instruction_parts:
             params["developerInstructions"] = "\n\n".join(part for part in instruction_parts if part)
@@ -639,10 +650,25 @@ class CodexAgent(BaseAgent):
             if len(file_lines) > 2:
                 message = f"{message}\n" + "\n".join(file_lines)
 
+        if message and self._should_add_generated_image_prompt(message):
+            message = f"{message}\n\n{_CODEX_GENERATED_IMAGE_PROMPT}"
+
         if message:
             items.insert(0, {"type": "text", "text": message})
 
         return items
+
+    def _should_add_generated_image_prompt(self, message: str) -> bool:
+        controller = getattr(self, "controller", None)
+        config = getattr(controller, "config", None)
+        if not getattr(config, "reply_enhancements", True):
+            return False
+        normalized = " ".join((message or "").lower().split())
+        if any(marker in normalized for marker in _IMAGE_REQUEST_MARKERS):
+            return True
+        return any(verb in normalized for verb in _IMAGE_REQUEST_VERBS) and any(
+            noun in normalized for noun in _IMAGE_REQUEST_NOUNS
+        )
 
     # ------------------------------------------------------------------
     # Callback handlers (wired to transport)

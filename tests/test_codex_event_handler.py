@@ -288,6 +288,34 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         assert f"![generated image](file://{new_image.resolve()})" in result_text
         assert str(old_image.resolve()) not in result_text
 
+    async def test_empty_success_result_falls_back_when_generated_image_path_is_reused(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            image = thread_dir / "image.png"
+            image.write_bytes(b"old")
+            handler.snapshot_generated_images("thread-1", "session-1")
+            handler.bind_generated_image_snapshot("thread-1", "turn-1", "session-1")
+
+            image.write_bytes(b"new-content")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "completed"},
+                },
+                request,
+            )
+
+        agent.emit_result_message.assert_awaited_once()
+        result_text = agent.emit_result_message.await_args.args[1]
+        assert f"![generated image](file://{image.resolve()})" in result_text
+
     async def test_stale_interrupted_turn_does_not_clear_new_turn_image_snapshot(self):
         agent = _StubAgent()
         handler = CodexEventHandler(agent)
