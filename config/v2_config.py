@@ -186,13 +186,14 @@ class UiConfig:
 
 
 @dataclass
-class CloudflareAdminAccessConfig:
+class CloudflareRemoteAccessConfig:
     enabled: bool = False
     hostname: str = ""
     account_id: str = ""
     zone_id: str = ""
     tunnel_id: str = ""
     tunnel_token: str = ""
+    cloudflared_path: str = ""
     access_app_id: str = ""
     access_app_aud: str = ""
     allowed_emails: List[str] = field(default_factory=list)
@@ -202,9 +203,9 @@ class CloudflareAdminAccessConfig:
 
 
 @dataclass
-class AdminAccessConfig:
+class RemoteAccessConfig:
     provider: str = "cloudflare"
-    cloudflare: CloudflareAdminAccessConfig = field(default_factory=CloudflareAdminAccessConfig)
+    cloudflare: CloudflareRemoteAccessConfig = field(default_factory=CloudflareRemoteAccessConfig)
 
 
 @dataclass
@@ -262,7 +263,7 @@ class V2Config:
     platform_configs: dict[str, BaseIMConfig] = field(default_factory=dict)
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
-    admin_access: AdminAccessConfig = field(default_factory=AdminAccessConfig)
+    remote_access: RemoteAccessConfig = field(default_factory=RemoteAccessConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "typing"
     show_duration: bool = False  # Show task duration in result messages
@@ -383,19 +384,19 @@ class V2Config:
             raise ValueError("Config 'ui' must be an object")
         ui = UiConfig(**_filter_dataclass_fields(UiConfig, ui_payload))
 
-        admin_access_payload = payload.get("admin_access") or {}
-        if not isinstance(admin_access_payload, dict):
-            raise ValueError("Config 'admin_access' must be an object")
-        admin_access_provider = admin_access_payload.get("provider") or "cloudflare"
-        if admin_access_provider != "cloudflare":
-            raise ValueError("Config 'admin_access.provider' must be 'cloudflare'")
-        cloudflare_payload = admin_access_payload.get("cloudflare") or {}
+        remote_access_payload = payload.get("remote_access") or payload.get("admin_access") or {}
+        if not isinstance(remote_access_payload, dict):
+            raise ValueError("Config 'remote_access' must be an object")
+        remote_access_provider = remote_access_payload.get("provider") or "cloudflare"
+        if remote_access_provider != "cloudflare":
+            raise ValueError("Config 'remote_access.provider' must be 'cloudflare'")
+        cloudflare_payload = remote_access_payload.get("cloudflare") or {}
         if not isinstance(cloudflare_payload, dict):
-            raise ValueError("Config 'admin_access.cloudflare' must be an object")
-        admin_access = AdminAccessConfig(
-            provider=admin_access_provider,
-            cloudflare=CloudflareAdminAccessConfig(
-                **_filter_dataclass_fields(CloudflareAdminAccessConfig, cloudflare_payload)
+            raise ValueError("Config 'remote_access.cloudflare' must be an object")
+        remote_access = RemoteAccessConfig(
+            provider=remote_access_provider,
+            cloudflare=CloudflareRemoteAccessConfig(
+                **_filter_dataclass_fields(CloudflareRemoteAccessConfig, cloudflare_payload)
             ),
         )
 
@@ -440,7 +441,7 @@ class V2Config:
             agents=agents,
             gateway=gateway,
             ui=ui,
-            admin_access=admin_access,
+            remote_access=remote_access,
             update=update,
             ack_mode=ack_mode,
             show_duration=show_duration,
@@ -484,7 +485,7 @@ class V2Config:
             },
             "gateway": self.gateway.__dict__ if self.gateway else None,
             "ui": self.ui.__dict__,
-            "admin_access": asdict(self.admin_access),
+            "remote_access": asdict(self.remote_access),
             "update": self.update.__dict__,
             "ack_mode": self.ack_mode,
             "show_duration": self.show_duration,

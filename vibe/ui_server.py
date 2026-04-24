@@ -432,10 +432,34 @@ def control():
 @app.route("/config", methods=["POST"])
 def config_post():
     from vibe import api
+    from vibe import remote_access
 
     payload = request.json or {}
     config = api.save_config(payload)
+    if "remote_access" in payload or "admin_access" in payload:
+        remote_access.reconcile(config)
     return jsonify(api.config_to_payload(config))
+
+
+@app.route("/remote-access/cloudflare/status", methods=["GET"])
+def remote_access_cloudflare_status():
+    from vibe import remote_access
+
+    return jsonify(remote_access.status())
+
+
+@app.route("/remote-access/cloudflare/install", methods=["POST"])
+def remote_access_cloudflare_install():
+    from vibe import remote_access
+
+    return jsonify(remote_access.install_cloudflared())
+
+
+@app.route("/remote-access/cloudflare/apply", methods=["POST"])
+def remote_access_cloudflare_apply():
+    from vibe import remote_access
+
+    return jsonify(remote_access.reconcile())
 
 
 @app.route("/ui/reload", methods=["POST"])

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from config.v2_config import (
     AgentsConfig,
-    AdminAccessConfig,
-    CloudflareAdminAccessConfig,
+    CloudflareRemoteAccessConfig,
     DiscordConfig,
     LarkConfig,
     PlatformsConfig,
+    RemoteAccessConfig,
     RuntimeConfig,
     SlackConfig,
     TelegramConfig,
@@ -86,10 +86,10 @@ def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
     assert payload["setup_state"]["needs_setup"] is False
 
 
-def test_config_payload_includes_cloudflare_admin_access() -> None:
+def test_config_payload_includes_cloudflare_remote_access() -> None:
     config = _base_config(
-        admin_access=AdminAccessConfig(
-            cloudflare=CloudflareAdminAccessConfig(
+        remote_access=RemoteAccessConfig(
+            cloudflare=CloudflareRemoteAccessConfig(
                 enabled=True,
                 hostname="admin.example.com",
                 tunnel_id="tunnel-id",
@@ -105,7 +105,7 @@ def test_config_payload_includes_cloudflare_admin_access() -> None:
 
     payload = api.config_to_payload(config)
 
-    assert payload["admin_access"]["provider"] == "cloudflare"
-    assert payload["admin_access"]["cloudflare"]["enabled"] is True
-    assert payload["admin_access"]["cloudflare"]["hostname"] == "admin.example.com"
-    assert payload["admin_access"]["cloudflare"]["allowed_emails"] == ["alex@example.com"]
+    assert payload["remote_access"]["provider"] == "cloudflare"
+    assert payload["remote_access"]["cloudflare"]["enabled"] is True
+    assert payload["remote_access"]["cloudflare"]["hostname"] == "admin.example.com"
+    assert payload["remote_access"]["cloudflare"]["allowed_emails"] == ["alex@example.com"]

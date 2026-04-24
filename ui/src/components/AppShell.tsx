@@ -65,7 +65,7 @@ export const AppShell: React.FC = () => {
 
         <nav className="flex-1 p-4 space-y-1">
           <NavItem to="/dashboard" icon={LayoutDashboard}>{t('nav.dashboard')}</NavItem>
-          <NavItem to="/admin-access" icon={ShieldCheck}>{t('nav.adminAccess')}</NavItem>
+          <NavItem to="/remote-access" icon={ShieldCheck}>{t('nav.remoteAccess')}</NavItem>
           {hasChannelPlatforms && <NavItem to="/channels" icon={MessageSquare}>{t('nav.channels')}</NavItem>}
           <NavItem to="/users" icon={Users}>{t('nav.users')}</NavItem>
           <NavItem to="/doctor" icon={Activity}>{t('nav.doctor')}</NavItem>
@@ -90,7 +90,7 @@ export const AppShell: React.FC = () => {
        {/* Mobile Nav */}
        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-panel border-t border-border flex justify-around p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] z-50">
           <NavLink to="/dashboard" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><LayoutDashboard /></NavLink>
-          <NavLink to="/admin-access" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><ShieldCheck /></NavLink>
+          <NavLink to="/remote-access" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><ShieldCheck /></NavLink>
           {hasChannelPlatforms && <NavLink to="/channels" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><MessageSquare /></NavLink>}
           <NavLink to="/users" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><Users /></NavLink>
           <NavLink to="/doctor" className={({isActive}) => clsx("p-2 rounded-lg", isActive ? "text-accent" : "text-muted")}><Activity /></NavLink>

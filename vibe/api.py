@@ -340,9 +340,9 @@ def config_to_payload(config: V2Config) -> dict:
         },
         "gateway": config.gateway.__dict__ if config.gateway else None,
         "ui": config.ui.__dict__,
-        "admin_access": {
-            "provider": config.admin_access.provider,
-            "cloudflare": config.admin_access.cloudflare.__dict__.copy(),
+        "remote_access": {
+            "provider": config.remote_access.provider,
+            "cloudflare": config.remote_access.cloudflare.__dict__.copy(),
         },
         "update": config.update.__dict__,
         "ack_mode": config.ack_mode,

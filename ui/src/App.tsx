@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { Wizard } from './components/Wizard';
 import { AppShell } from './components/AppShell';
 import { Dashboard } from './components/Dashboard';
-import { AdminAccess } from './components/AdminAccess';
+import { RemoteAccess } from './components/RemoteAccess';
 import { ChannelList } from './components/steps/ChannelList';
 import { UserList } from './components/steps/UserList';
 import { DoctorPanel } from './components/steps/DoctorPanel';
@@ -62,7 +62,8 @@ function AppRoutes() {
       <Route path="/setup" element={<Wizard />} />
       <Route element={<AuthGuard><AppShell /></AuthGuard>}>
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/admin-access" element={<AdminAccess />} />
+        <Route path="/remote-access" element={<RemoteAccess />} />
+        <Route path="/admin-access" element={<Navigate to="/remote-access" replace />} />
         <Route path="/channels" element={<ChannelList isPage />} />
         <Route path="/users" element={<UserList />} />
         <Route path="/doctor" element={<DoctorPanel isPage />} />
