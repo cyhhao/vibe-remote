@@ -126,6 +126,43 @@ def test_save_config_merges_remote_access_payload(monkeypatch, tmp_path):
     assert updated.platform == "discord"
 
 
+def test_save_config_merges_legacy_admin_access_over_existing_remote_access(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    api.save_config(_full_config_payload())
+    api.save_config(
+        {
+            "remote_access": {
+                "cloudflare": {
+                    "enabled": False,
+                    "hostname": "old.example.com",
+                    "tunnel_token": "old-token",
+                }
+            }
+        }
+    )
+
+    updated = api.save_config(
+        {
+            "admin_access": {
+                "cloudflare": {
+                    "enabled": True,
+                    "hostname": "legacy.example.com",
+                    "tunnel_token": "legacy-token",
+                    "confirmed_access_policy": True,
+                    "confirmed_tunnel_route": True,
+                }
+            }
+        }
+    )
+
+    assert updated.remote_access.cloudflare.enabled is True
+    assert updated.remote_access.cloudflare.hostname == "legacy.example.com"
+    assert updated.remote_access.cloudflare.tunnel_token == "legacy-token"
+    assert updated.remote_access.cloudflare.confirmed_access_policy is True
+    assert updated.remote_access.cloudflare.confirmed_tunnel_route is True
+
+
 def test_save_config_defaults_show_duration_to_false_for_new_config(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 

@@ -33,6 +33,28 @@ def _filter_dataclass_fields(dc_class, payload: dict) -> dict:
     return {k: v for k, v in payload.items() if k in valid_fields}
 
 
+def _deep_merge_dicts(base: dict, patch: dict) -> dict:
+    merged = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _remote_access_payload(payload: dict) -> dict:
+    remote_payload = payload.get("remote_access") or {}
+    legacy_payload = payload.get("admin_access") or {}
+    if not isinstance(remote_payload, dict):
+        raise ValueError("Config 'remote_access' must be an object")
+    if not isinstance(legacy_payload, dict):
+        raise ValueError("Config 'admin_access' must be an object")
+    if legacy_payload:
+        return _deep_merge_dicts(remote_payload, legacy_payload)
+    return remote_payload
+
+
 @dataclass
 class SlackConfig(BaseIMConfig):
     bot_token: str = ""
@@ -384,9 +406,7 @@ class V2Config:
             raise ValueError("Config 'ui' must be an object")
         ui = UiConfig(**_filter_dataclass_fields(UiConfig, ui_payload))
 
-        remote_access_payload = payload.get("remote_access") or payload.get("admin_access") or {}
-        if not isinstance(remote_access_payload, dict):
-            raise ValueError("Config 'remote_access' must be an object")
+        remote_access_payload = _remote_access_payload(payload)
         remote_access_provider = remote_access_payload.get("provider") or "cloudflare"
         if remote_access_provider != "cloudflare":
             raise ValueError("Config 'remote_access.provider' must be 'cloudflare'")

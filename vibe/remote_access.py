@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import platform
 import shutil
@@ -19,6 +21,7 @@ from config.v2_config import V2Config
 from vibe import runtime
 
 CLOUDFLARED_BASE_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download"
+_CONNECTOR_ENV: dict[int, dict[str, str]] = {}
 
 
 def _bin_dir() -> Path:
@@ -126,6 +129,10 @@ def _pid_path() -> Path:
     return paths.get_runtime_remote_access_pid_path()
 
 
+def _state_path() -> Path:
+    return paths.get_runtime_dir() / "remote-access-cloudflared.json"
+
+
 def _status_from_pid(pid: int | None) -> dict[str, Any]:
     running = bool(pid and runtime.pid_alive(pid))
     command = runtime.get_process_command(pid) if running and pid else None
@@ -133,6 +140,49 @@ def _status_from_pid(pid: int | None) -> dict[str, Any]:
         "running": running,
         "pid": pid if running else None,
         "command": command,
+    }
+
+
+def _desired_runtime_signature(config: V2Config, binary: str) -> dict[str, str]:
+    cloudflare = config.remote_access.cloudflare
+    return {
+        "binary_path": str(binary),
+        "tunnel_token_sha256": hashlib.sha256((cloudflare.tunnel_token or "").encode("utf-8")).hexdigest(),
+    }
+
+
+def _write_running_state(pid: int, signature: dict[str, str]) -> None:
+    paths.ensure_data_dirs()
+    _state_path().write_text(json.dumps({"pid": pid, **signature}, indent=2), encoding="utf-8")
+
+
+def _read_running_state() -> dict[str, Any] | None:
+    try:
+        payload = json.loads(_state_path().read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _clear_running_state(pid: int | None = None) -> None:
+    state = _read_running_state()
+    if pid is not None and state is not None and state.get("pid") != pid:
+        return
+    _state_path().unlink(missing_ok=True)
+
+
+def _running_signature(pid: int | None) -> dict[str, str] | None:
+    if not pid or not runtime.pid_alive(pid):
+        return None
+    signature = _CONNECTOR_ENV.get(pid)
+    if signature is not None:
+        return signature
+    state = _read_running_state()
+    if state is None or state.get("pid") != pid:
+        return None
+    return {
+        "binary_path": str(state.get("binary_path") or ""),
+        "tunnel_token_sha256": str(state.get("tunnel_token_sha256") or ""),
     }
 
 
@@ -154,6 +204,8 @@ def status(config: V2Config | None = None) -> dict[str, Any]:
     process_status = _status_from_pid(pid)
     if pid and not process_status["running"]:
         pid_path.unlink(missing_ok=True)
+        _CONNECTOR_ENV.pop(pid, None)
+        _clear_running_state(pid)
 
     cloudflare = getattr(getattr(config, "remote_access", None), "cloudflare", None) if config is not None else None
     return {
@@ -169,8 +221,18 @@ def status(config: V2Config | None = None) -> dict[str, Any]:
 
 
 def stop_cloudflare() -> dict[str, Any]:
+    pid = None
+    pid_path = _pid_path()
+    if pid_path.exists():
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+        except Exception:
+            pid = None
     stopped = runtime.stop_process(_pid_path(), timeout=8)
-    return {"ok": True, "stopped": stopped, **status()}
+    if pid is not None:
+        _CONNECTOR_ENV.pop(pid, None)
+        _clear_running_state(pid)
+    return {**status(), "ok": True, "stopped": stopped}
 
 
 def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
@@ -179,15 +241,21 @@ def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
     if not cloudflare.enabled:
         return stop_cloudflare()
     if not cloudflare.tunnel_token:
-        return {"ok": False, "error": "missing_tunnel_token", **status(config)}
-
-    existing = status(config)
-    if existing.get("running"):
-        return {"ok": True, "started": False, **existing}
+        return {**status(config), "ok": False, "error": "missing_tunnel_token"}
 
     binary = _resolve_configured_binary(config)
     if not binary:
-        return {"ok": False, "error": "cloudflared_not_installed", **existing}
+        return {**status(config), "ok": False, "error": "cloudflared_not_installed"}
+
+    existing = status(config)
+    if existing.get("running"):
+        running_sig = _running_signature(existing.get("pid"))
+        desired_sig = _desired_runtime_signature(config, binary)
+        if running_sig != desired_sig:
+            stopped = stop_cloudflare().get("stopped", False)
+            started = start_cloudflare(config)
+            return {**started, "restarted": True, "stopped": stopped}
+        return {**existing, "ok": True, "started": False}
 
     paths.ensure_data_dirs()
     env = {
@@ -201,8 +269,16 @@ def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
         "remote_access_cloudflared_stderr.log",
         env=env,
     )
+    signature = _desired_runtime_signature(config, binary)
+    _CONNECTOR_ENV[pid] = signature
+    _write_running_state(pid, signature)
     time.sleep(0.2)
-    return {"ok": True, "started": True, "pid": pid, **status(config)}
+    current = status(config)
+    if not current.get("running"):
+        _CONNECTOR_ENV.pop(pid, None)
+        _clear_running_state(pid)
+        return {**current, "ok": False, "error": "cloudflared_exited"}
+    return {**current, "ok": True, "started": True, "pid": pid}
 
 
 def reconcile(config: V2Config | None = None) -> dict[str, Any]:

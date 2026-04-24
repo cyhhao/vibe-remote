@@ -109,3 +109,27 @@ def test_config_payload_includes_cloudflare_remote_access() -> None:
     assert payload["remote_access"]["cloudflare"]["enabled"] is True
     assert payload["remote_access"]["cloudflare"]["hostname"] == "admin.example.com"
     assert payload["remote_access"]["cloudflare"]["allowed_emails"] == ["alex@example.com"]
+
+
+def test_from_payload_merges_legacy_admin_access_over_remote_access() -> None:
+    payload = api.config_to_payload(_base_config())
+    payload["remote_access"] = {
+        "cloudflare": {
+            "enabled": False,
+            "hostname": "old.example.com",
+            "tunnel_token": "old-token",
+        }
+    }
+    payload["admin_access"] = {
+        "cloudflare": {
+            "enabled": True,
+            "hostname": "legacy.example.com",
+            "tunnel_token": "legacy-token",
+        }
+    }
+
+    config = V2Config.from_payload(payload)
+
+    assert config.remote_access.cloudflare.enabled is True
+    assert config.remote_access.cloudflare.hostname == "legacy.example.com"
+    assert config.remote_access.cloudflare.tunnel_token == "legacy-token"
