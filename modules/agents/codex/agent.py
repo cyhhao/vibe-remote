@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 
 _CODEX_GENERATED_IMAGE_PROMPT = (
     "If you generate an image with Codex, include it in the final reply with Markdown image syntax: "
-    "`![generated image](file:///absolute/path/to/image.png)`. "
-    "Use only a local absolute path readable by Vibe Remote, never sandbox paths like `/mnt/data/...`; "
-    "if no such path is available, leave the final reply empty."
+    "`![generated image](file:///$CODEX_HOME/generated_images/<thread-id>/<image-file>.png)` "
+    "or `![generated image](file:///$HOME/.codex/generated_images/<thread-id>/<image-file>.png)`. "
+    "Use only that local generated_images path, never sandbox paths like `/mnt/data/...`; "
+    "if you cannot determine the path, leave the final reply empty."
 )
 
 

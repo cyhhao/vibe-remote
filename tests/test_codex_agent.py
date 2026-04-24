@@ -712,8 +712,9 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         items = agent._build_input(request)
 
         self.assertTrue(items[0]["text"].startswith("If you generate an image with Codex"))
-        self.assertIn("![generated image](file:///absolute/path/to/image.png)", items[0]["text"])
-        self.assertIn("local absolute path readable by Vibe Remote", items[0]["text"])
+        self.assertIn("$CODEX_HOME/generated_images/<thread-id>/<image-file>.png", items[0]["text"])
+        self.assertIn("$HOME/.codex/generated_images/<thread-id>/<image-file>.png", items[0]["text"])
+        self.assertIn("Use only that local generated_images path", items[0]["text"])
         self.assertIn("never sandbox paths like `/mnt/data/...`", items[0]["text"])
         self.assertIn("leave the final reply empty", items[0]["text"])
         self.assertTrue(items[0]["text"].endswith("hello"))
