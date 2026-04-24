@@ -295,6 +295,35 @@ def test_start_cloudflare_returns_structured_spawn_failure(monkeypatch, tmp_path
     assert not remote_access._pid_path().exists()
 
 
+def test_start_cloudflare_stops_process_when_state_write_fails(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+
+    pid = 4104
+    binary = "/bin/cloudflared"
+    stopped_pids: list[int] = []
+
+    def fake_spawn_background(args, pid_path, stdout_name, stderr_name, env=None):
+        pid_path.parent.mkdir(parents=True, exist_ok=True)
+        pid_path.write_text(str(pid), encoding="utf-8")
+        return pid
+
+    monkeypatch.setattr(remote_access, "_resolve_configured_binary", lambda config=None: binary)
+    monkeypatch.setattr(remote_access, "_version", lambda path: None)
+    monkeypatch.setattr(runtime, "spawn_background", fake_spawn_background)
+    monkeypatch.setattr(runtime, "stop_pid", lambda candidate, timeout=5: stopped_pids.append(candidate) or True)
+    monkeypatch.setattr(remote_access, "_write_running_state", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")))
+
+    result = remote_access.start_cloudflare(_config())
+
+    assert result["ok"] is False
+    assert result["error"] == "cloudflared_state_write_failed"
+    assert "disk full" in result["detail"]
+    assert stopped_pids == [pid]
+    assert not remote_access._pid_path().exists()
+    assert pid not in remote_access._CONNECTOR_ENV
+
+
 def test_start_cloudflare_accepts_configured_binary_with_custom_name(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     remote_access._CONNECTOR_ENV.clear()
@@ -492,6 +521,25 @@ def test_safe_extract_cloudflared_preserves_existing_binary_on_copy_failure(monk
     with tarfile.open(archive_path, "r:gz") as archive:
         with pytest.raises(OSError, match="disk full"):
             remote_access._safe_extract_cloudflared(archive, target)
+
+    assert target.read_bytes() == b"existing-binary"
+    assert not (tmp_path / ".cloudflared.tmp").exists()
+
+
+def test_copy_file_atomically_preserves_existing_binary_on_copy_failure(monkeypatch, tmp_path):
+    source = tmp_path / "downloaded-cloudflared"
+    target = tmp_path / "cloudflared"
+    source.write_bytes(b"replacement")
+    target.write_bytes(b"existing-binary")
+
+    def fail_copyfileobj(source_file, target_file):
+        target_file.write(b"partial")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(remote_access.shutil, "copyfileobj", fail_copyfileobj)
+
+    with pytest.raises(OSError, match="disk full"):
+        remote_access._copy_file_atomically(source, target)
 
     assert target.read_bytes() == b"existing-binary"
     assert not (tmp_path / ".cloudflared.tmp").exists()

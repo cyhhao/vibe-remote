@@ -111,14 +111,30 @@ def _safe_extract_cloudflared(archive: tarfile.TarFile, target: Path) -> None:
         if source is None:
             raise RuntimeError("Downloaded cloudflared archive did not contain a readable cloudflared binary")
         try:
-            with source, temp_target.open("wb") as output:
-                shutil.copyfileobj(source, output)
-            os.replace(temp_target, target)
+            _copy_stream_atomically(source, target, temp_target)
         except Exception:
             temp_target.unlink(missing_ok=True)
             raise
         return
     raise RuntimeError("Downloaded cloudflared archive did not contain a cloudflared binary")
+
+
+def _copy_stream_atomically(source: Any, target: Path, temp_target: Path | None = None) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_target = temp_target or target.with_name(f".{target.name}.tmp")
+    temp_target.unlink(missing_ok=True)
+    try:
+        with temp_target.open("wb") as output:
+            shutil.copyfileobj(source, output)
+        os.replace(temp_target, target)
+    except Exception:
+        temp_target.unlink(missing_ok=True)
+        raise
+
+
+def _copy_file_atomically(source: Path, target: Path) -> None:
+    with source.open("rb") as source_file:
+        _copy_stream_atomically(source_file, target)
 
 
 def install_cloudflared() -> dict[str, Any]:
@@ -140,7 +156,7 @@ def install_cloudflared() -> dict[str, Any]:
                 with tarfile.open(download_path, "r:gz") as archive:
                     _safe_extract_cloudflared(archive, target)
             else:
-                shutil.move(str(download_path), target)
+                _copy_file_atomically(download_path, target)
 
         _make_executable(target)
         return {
@@ -445,8 +461,15 @@ def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
         except Exception as exc:
             return {**status(config), "ok": False, "error": "cloudflared_spawn_failed", "detail": str(exc)}
         signature = _desired_runtime_signature(config, binary)
-        _CONNECTOR_ENV[pid] = signature
-        _write_running_state(pid, signature)
+        try:
+            _CONNECTOR_ENV[pid] = signature
+            _write_running_state(pid, signature)
+        except Exception as exc:
+            _CONNECTOR_ENV.pop(pid, None)
+            runtime.stop_pid(pid, timeout=8)
+            _pid_path().unlink(missing_ok=True)
+            _clear_running_state(pid)
+            return {**status(config), "ok": False, "error": "cloudflared_state_write_failed", "detail": str(exc)}
         time.sleep(0.2)
         current = status(config)
         if not current.get("running"):
