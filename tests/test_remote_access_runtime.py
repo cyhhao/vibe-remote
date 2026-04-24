@@ -66,6 +66,45 @@ def test_start_cloudflare_requires_access_checklist_before_spawn(monkeypatch, tm
     assert spawn_calls == []
 
 
+def test_start_cloudflare_stops_running_connector_when_access_checklist_becomes_invalid(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+
+    pid = 6102
+    binary = "/bin/cloudflared"
+    live_pids = {pid}
+    stopped_pids: list[int] = []
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(pid), encoding="utf-8")
+    remote_access._CONNECTOR_ENV[pid] = {
+        "binary_path": binary,
+        "tunnel_token_sha256": "token-hash",
+    }
+    config = _config()
+    config.remote_access.cloudflare.confirmed_access_policy = False
+
+    def fake_stop_process(pid_path, timeout=5):
+        stopped_pid = int(pid_path.read_text(encoding="utf-8"))
+        stopped_pids.append(stopped_pid)
+        live_pids.discard(stopped_pid)
+        pid_path.unlink(missing_ok=True)
+        return True
+
+    monkeypatch.setattr(remote_access, "_resolve_configured_binary", lambda config=None: binary)
+    monkeypatch.setattr(remote_access, "_version", lambda path: None)
+    monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate in live_pids)
+    monkeypatch.setattr(runtime, "get_process_command", lambda candidate: f"{binary} tunnel run")
+    monkeypatch.setattr(runtime, "stop_process", fake_stop_process)
+
+    result = remote_access.start_cloudflare(config)
+
+    assert result["ok"] is False
+    assert result["error"] == "access_checklist_incomplete"
+    assert stopped_pids == [pid]
+    assert not remote_access._pid_path().exists()
+    assert pid not in remote_access._CONNECTOR_ENV
+
+
 def test_start_cloudflare_restarts_when_runtime_signature_changes(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     remote_access._CONNECTOR_ENV.clear()

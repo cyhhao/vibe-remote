@@ -385,6 +385,9 @@ def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
         if not cloudflare.tunnel_token:
             return {**status(config), "ok": False, "error": "missing_tunnel_token"}
         if not _cloudflare_access_ready(cloudflare):
+            stop_result = stop_cloudflare()
+            if stop_result.get("ok") is False:
+                return stop_result
             return {**status(config), "ok": False, "error": "access_checklist_incomplete"}
 
         binary = _resolve_configured_binary(config)

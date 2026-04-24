@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from config.v2_config import (
     AgentsConfig,
     CloudflareRemoteAccessConfig,
@@ -133,3 +135,11 @@ def test_from_payload_merges_legacy_admin_access_over_remote_access() -> None:
     assert config.remote_access.cloudflare.enabled is True
     assert config.remote_access.cloudflare.hostname == "legacy.example.com"
     assert config.remote_access.cloudflare.tunnel_token == "legacy-token"
+
+
+def test_from_payload_rejects_non_object_cloudflare_remote_access() -> None:
+    payload = api.config_to_payload(_base_config())
+    payload["remote_access"] = {"cloudflare": ""}
+
+    with pytest.raises(ValueError, match="remote_access.cloudflare.*object"):
+        V2Config.from_payload(payload)

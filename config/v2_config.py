@@ -44,8 +44,12 @@ def _deep_merge_dicts(base: dict, patch: dict) -> dict:
 
 
 def _remote_access_payload(payload: dict) -> dict:
-    remote_payload = payload.get("remote_access") or {}
-    legacy_payload = payload.get("admin_access") or {}
+    remote_payload = payload.get("remote_access")
+    legacy_payload = payload.get("admin_access")
+    if remote_payload is None:
+        remote_payload = {}
+    if legacy_payload is None:
+        legacy_payload = {}
     if not isinstance(remote_payload, dict):
         raise ValueError("Config 'remote_access' must be an object")
     if not isinstance(legacy_payload, dict):
@@ -410,7 +414,9 @@ class V2Config:
         remote_access_provider = remote_access_payload.get("provider") or "cloudflare"
         if remote_access_provider != "cloudflare":
             raise ValueError("Config 'remote_access.provider' must be 'cloudflare'")
-        cloudflare_payload = remote_access_payload.get("cloudflare") or {}
+        cloudflare_payload = remote_access_payload.get("cloudflare")
+        if cloudflare_payload is None:
+            cloudflare_payload = {}
         if not isinstance(cloudflare_payload, dict):
             raise ValueError("Config 'remote_access.cloudflare' must be an object")
         remote_access = RemoteAccessConfig(
