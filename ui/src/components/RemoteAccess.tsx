@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle, ChevronDown, Cloud, Download, ExternalLink, Globe2, KeyRound, Play, ShieldCheck, Square, Terminal } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronDown, Cloud, Download, ExternalLink, Globe2, KeyRound, Play, ShieldCheck, Square } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../context/ApiContext';
 import { useToast } from '../context/ToastContext';
@@ -45,13 +45,39 @@ const splitList = (value: string): string[] => (
 
 const joinList = (value: string[] | undefined): string => (value || []).join('\n');
 
-const FieldBadge = ({ required }: { required?: boolean }) => {
+const normalizeCloudflare = (
+  value: CloudflareRemoteAccessConfig,
+  emailsText: string,
+  domainsText: string,
+): CloudflareRemoteAccessConfig => ({
+  ...value,
+  allowed_emails: splitList(emailsText),
+  allowed_email_domains: splitList(domainsText),
+});
+
+const hasRequiredAccessPolicyScope = (value: CloudflareRemoteAccessConfig): boolean => (
+  (value.allowed_emails || []).length > 0 || (value.allowed_email_domains || []).length > 0
+);
+
+const isCloudflareChecklistReady = (value: CloudflareRemoteAccessConfig): boolean => Boolean(
+  value.hostname
+  && value.tunnel_token
+  && value.confirmed_access_policy
+  && value.confirmed_tunnel_route
+  && hasRequiredAccessPolicyScope(value)
+);
+
+const sameCloudflareConfig = (left: CloudflareRemoteAccessConfig, right: CloudflareRemoteAccessConfig): boolean => (
+  JSON.stringify(left) === JSON.stringify(right)
+);
+
+const FieldBadge = ({ required, label }: { required?: boolean; label?: string }) => {
   const { t } = useTranslation();
   return (
     <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
       required ? 'bg-danger/10 text-danger' : 'bg-neutral-100 text-muted'
     }`}>
-      {required ? t('remoteAccess.required') : t('remoteAccess.optional')}
+      {label || (required ? t('remoteAccess.required') : t('remoteAccess.optional'))}
     </span>
   );
 };
@@ -177,12 +203,20 @@ export const RemoteAccess: React.FC = () => {
 
   const targetUrl = `http://127.0.0.1:${config.ui?.setup_port || 5123}`;
   const publicUrl = cloudflare.hostname ? `https://${cloudflare.hostname}` : '';
-  const accessReady = Boolean(
-    cloudflare.hostname
-    && cloudflare.tunnel_token
-    && cloudflare.confirmed_access_policy
-    && cloudflare.confirmed_tunnel_route
-  );
+  const currentCloudflare = normalizeCloudflare(cloudflare, emailsText, domainsText);
+  const savedCloudflare = {
+    ...defaultCloudflareConfig(),
+    ...(config.remote_access?.cloudflare || config.admin_access?.cloudflare || {}),
+  };
+  const accessReady = isCloudflareChecklistReady(currentCloudflare);
+  const savedAccessReady = isCloudflareChecklistReady(savedCloudflare);
+  const hasUnsavedChanges = !sameCloudflareConfig(currentCloudflare, savedCloudflare);
+  const canStartConnector = savedAccessReady && !hasUnsavedChanges && Boolean(status?.binary_found);
+
+  const formatConnectorError = (result: any) => {
+    const error = result?.error || 'unknown';
+    return t(`remoteAccess.errors.${error}`, { defaultValue: error });
+  };
 
   const installCloudflared = async () => {
     setInstalling(true);
@@ -192,9 +226,13 @@ export const RemoteAccess: React.FC = () => {
       if (result.path) {
         updateCloudflare({ cloudflared_path: result.path });
       }
+      if (result.ok === false) {
+        showToast(formatConnectorError(result), 'error');
+        return;
+      }
       showToast(t('remoteAccess.installSucceeded'));
-    } catch {
-      showToast(t('remoteAccess.installFailed'), 'error');
+    } catch (error: any) {
+      showToast(error?.message || t('remoteAccess.installFailed'), 'error');
     } finally {
       setInstalling(false);
     }
@@ -208,18 +246,9 @@ export const RemoteAccess: React.FC = () => {
         allowed_emails: splitList(emailsText),
         allowed_email_domains: splitList(domainsText),
       };
-      const nextReady = Boolean(
-        nextCloudflare.hostname
-        && nextCloudflare.tunnel_token
-        && nextCloudflare.confirmed_access_policy
-        && nextCloudflare.confirmed_tunnel_route
-      );
-      if (nextCloudflare.enabled && !nextReady) {
+      const nextReady = isCloudflareChecklistReady(nextCloudflare);
+      if (!nextReady) {
         showToast(t('remoteAccess.enableBlocked'), 'error');
-        return;
-      }
-      if (nextCloudflare.enabled && !status?.binary_found) {
-        showToast(t('remoteAccess.installBlocked'), 'error');
         return;
       }
       const saved = await api.saveConfig({
@@ -238,21 +267,67 @@ export const RemoteAccess: React.FC = () => {
       setDomainsText(joinList(savedCloudflare.allowed_email_domains));
       setStatus(await api.remoteAccessStatus());
       showToast(t('remoteAccess.saved'));
-    } catch {
-      showToast(t('remoteAccess.saveFailed'), 'error');
+    } catch (error: any) {
+      showToast(error?.message || t('remoteAccess.saveFailed'), 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  const applyRemoteAccess = async () => {
+  const startConnector = async () => {
+    if (!canStartConnector) {
+      showToast(
+        hasUnsavedChanges
+          ? t('remoteAccess.startBlockedUnsaved')
+          : !status?.binary_found
+            ? t('remoteAccess.installBlocked')
+            : t('remoteAccess.startBlockedIncomplete'),
+        'error',
+      );
+      return;
+    }
     setApplying(true);
     try {
+      await api.saveConfig({
+        remote_access: {
+          provider: 'cloudflare',
+          cloudflare: { ...savedCloudflare, enabled: true },
+        },
+      });
       const result = await api.remoteAccessApplyCloudflare();
       setStatus(result);
-      showToast(result.running ? t('remoteAccess.connectorStarted') : t('remoteAccess.connectorStopped'));
-    } catch {
-      showToast(t('remoteAccess.applyFailed'), 'error');
+      await load();
+      if (result.ok === false || !result.running) {
+        showToast(formatConnectorError(result), 'error');
+        return;
+      }
+      showToast(t('remoteAccess.connectorStarted'));
+    } catch (error: any) {
+      showToast(error?.message || t('remoteAccess.applyFailed'), 'error');
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const stopConnector = async () => {
+    setApplying(true);
+    try {
+      await api.saveConfig({
+        remote_access: {
+          provider: 'cloudflare',
+          cloudflare: { ...savedCloudflare, enabled: false },
+        },
+      });
+      const result = await api.remoteAccessApplyCloudflare();
+      setStatus(result);
+      await load();
+      if (result.ok === false) {
+        showToast(formatConnectorError(result), 'error');
+        return;
+      }
+      showToast(t('remoteAccess.connectorStopped'));
+    } catch (error: any) {
+      showToast(error?.message || t('remoteAccess.applyFailed'), 'error');
     } finally {
       setApplying(false);
     }
@@ -279,7 +354,7 @@ export const RemoteAccess: React.FC = () => {
         <div className={`rounded-xl border px-4 py-3 text-sm ${
           status?.running
             ? 'bg-success/10 border-success/20 text-success'
-            : accessReady && cloudflare.enabled
+            : savedAccessReady
               ? 'bg-warning/10 border-warning/20 text-warning'
               : 'bg-neutral-100 border-border text-muted'
         }`}>
@@ -287,7 +362,7 @@ export const RemoteAccess: React.FC = () => {
             {status?.running ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
             {status?.running
               ? t('remoteAccess.statusRunning')
-              : accessReady && cloudflare.enabled
+              : savedAccessReady
                 ? t('remoteAccess.statusReady')
                 : t('remoteAccess.statusNeedsSetup')}
           </div>
@@ -304,22 +379,50 @@ export const RemoteAccess: React.FC = () => {
             <h3 className="text-xl font-semibold text-text">{t('remoteAccess.cloudflareTitle')}</h3>
             <p className="text-sm text-muted max-w-2xl mt-2">{t('remoteAccess.cloudflareDesc')}</p>
           </div>
-          <button
-            onClick={() => updateCloudflare({ enabled: !cloudflare.enabled })}
-            className={`px-4 py-2 rounded-lg text-sm font-semibold border ${
-              cloudflare.enabled
-                ? 'bg-success/10 text-success border-success/20'
-                : 'bg-neutral-100 text-muted border-border'
-            }`}
-          >
-            {cloudflare.enabled ? t('common.enabled') : t('common.disabled')}
-          </button>
+          <div className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
+            savedCloudflare.enabled
+              ? 'bg-success/10 text-success border-success/20'
+              : 'bg-neutral-100 text-muted border-border'
+          }`}>
+            {savedCloudflare.enabled ? t('remoteAccess.enabledAfterSave') : t('remoteAccess.disabledUntilStart')}
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_20rem] gap-6">
         <div className="space-y-4">
-          <StepCard number={1} title={t('remoteAccess.step1Title')}>
+          <StepCard number={1} title={t('remoteAccess.stepInstallTitle')}>
+            <p className="text-sm text-muted mb-4">{t('remoteAccess.stepInstallDesc')}</p>
+            <div className="rounded-lg border border-border bg-neutral-50 p-4 space-y-3">
+              <div className="flex items-center gap-2 text-sm">
+                <div className={`w-2.5 h-2.5 rounded-full ${status?.binary_found ? 'bg-success' : 'bg-warning'}`} />
+                <span className={status?.binary_found ? 'text-success' : 'text-warning'}>
+                  {status?.binary_found ? t('remoteAccess.cloudflaredFound') : t('remoteAccess.cloudflaredMissing')}
+                </span>
+              </div>
+              {status?.binary_path && (
+                <code className="block text-xs font-mono bg-white rounded p-2 text-text break-all">
+                  {status.binary_path}
+                </code>
+              )}
+              {status?.binary_version && <div className="text-xs text-muted">{status.binary_version}</div>}
+              <button
+                onClick={() => void installCloudflared()}
+                disabled={installing}
+                className="inline-flex items-center justify-center gap-2 px-3 py-2 bg-accent text-white rounded-lg text-sm font-semibold disabled:opacity-50"
+              >
+                <Download size={14} /> {installing ? t('remoteAccess.installing') : t('remoteAccess.installCloudflared')}
+              </button>
+            </div>
+            <DetailBlock>
+              <ol className="list-decimal ml-5 space-y-1">
+                <li>{t('remoteAccess.stepInstallGuide1')}</li>
+                <li>{t('remoteAccess.stepInstallGuide2')}</li>
+              </ol>
+            </DetailBlock>
+          </StepCard>
+
+          <StepCard number={2} title={t('remoteAccess.step1Title')}>
             <p className="text-sm text-muted mb-4">{t('remoteAccess.step1Desc')}</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <TextField
@@ -354,7 +457,64 @@ export const RemoteAccess: React.FC = () => {
             </DetailBlock>
           </StepCard>
 
-          <StepCard number={2} title={t('remoteAccess.step2Title')}>
+          <StepCard number={3} title={t('remoteAccess.step3Title')}>
+            <p className="text-sm text-muted mb-4">{t('remoteAccess.step3Desc')}</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <TextField
+                label={t('remoteAccess.accessAppId')}
+                value={cloudflare.access_app_id}
+                onChange={(access_app_id) => updateCloudflare({ access_app_id })}
+                placeholder={t('remoteAccess.accessAppIdPlaceholder')}
+              />
+              <TextField
+                label={t('remoteAccess.accessAud')}
+                value={cloudflare.access_app_aud}
+                onChange={(access_app_aud) => updateCloudflare({ access_app_aud })}
+                placeholder={t('remoteAccess.accessAudPlaceholder')}
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <label className="block">
+                <span className="block text-sm font-medium text-text mb-1">
+                  {t('remoteAccess.allowedEmails')}
+                  <FieldBadge required label={t('remoteAccess.oneRequired')} />
+                </span>
+                <textarea
+                  value={emailsText}
+                  onChange={(event) => setEmailsText(event.target.value)}
+                  rows={4}
+                  placeholder={t('remoteAccess.allowedEmailsPlaceholder')}
+                  className="w-full bg-neutral-100 border border-border rounded-lg px-3 py-2 text-sm font-mono text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
+                />
+              </label>
+              <label className="block">
+                <span className="block text-sm font-medium text-text mb-1">
+                  {t('remoteAccess.allowedDomains')}
+                  <FieldBadge required label={t('remoteAccess.oneRequired')} />
+                </span>
+                <textarea
+                  value={domainsText}
+                  onChange={(event) => setDomainsText(event.target.value)}
+                  rows={4}
+                  placeholder={t('remoteAccess.allowedDomainsPlaceholder')}
+                  className="w-full bg-neutral-100 border border-border rounded-lg px-3 py-2 text-sm font-mono text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
+                />
+              </label>
+            </div>
+            <DetailBlock>
+              <ol className="list-decimal ml-5 space-y-1">
+                <li>{t('remoteAccess.step3Guide1')}</li>
+                <li>{t('remoteAccess.step3Guide2', { hostname: cloudflare.hostname || t('remoteAccess.hostnamePlaceholder') })}</li>
+                <li>{t('remoteAccess.step3Guide3')}</li>
+                <li>{t('remoteAccess.step3Guide4')}</li>
+              </ol>
+              <a className="inline-flex items-center gap-2 text-accent hover:underline" href="https://one.dash.cloudflare.com/" target="_blank" rel="noreferrer">
+                {t('remoteAccess.openZeroTrustAccess')} <ExternalLink size={13} />
+              </a>
+            </DetailBlock>
+          </StepCard>
+
+          <StepCard number={4} title={t('remoteAccess.step2Title')}>
             <p className="text-sm text-muted mb-4">{t('remoteAccess.step2Desc')}</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <TextField
@@ -379,8 +539,8 @@ export const RemoteAccess: React.FC = () => {
             <DetailBlock>
               <ol className="list-decimal ml-5 space-y-1">
                 <li>{t('remoteAccess.step2Guide1')}</li>
-                <li>{t('remoteAccess.step2Guide2', { hostname: cloudflare.hostname || t('remoteAccess.hostnamePlaceholder') })}</li>
-                <li>{t('remoteAccess.step2Guide3', { target: targetUrl })}</li>
+                <li>{t('remoteAccess.step2Guide2')}</li>
+                <li>{t('remoteAccess.step2Guide3', { hostname: cloudflare.hostname || t('remoteAccess.hostnamePlaceholder'), target: targetUrl })}</li>
                 <li>{t('remoteAccess.step2Guide4')}</li>
               </ol>
               <a className="inline-flex items-center gap-2 text-accent hover:underline" href="https://one.dash.cloudflare.com/" target="_blank" rel="noreferrer">
@@ -389,64 +549,7 @@ export const RemoteAccess: React.FC = () => {
             </DetailBlock>
           </StepCard>
 
-          <StepCard number={3} title={t('remoteAccess.step3Title')}>
-            <p className="text-sm text-muted mb-4">{t('remoteAccess.step3Desc')}</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <TextField
-                label={t('remoteAccess.accessAppId')}
-                value={cloudflare.access_app_id}
-                onChange={(access_app_id) => updateCloudflare({ access_app_id })}
-                placeholder={t('remoteAccess.accessAppIdPlaceholder')}
-              />
-              <TextField
-                label={t('remoteAccess.accessAud')}
-                value={cloudflare.access_app_aud}
-                onChange={(access_app_aud) => updateCloudflare({ access_app_aud })}
-                placeholder={t('remoteAccess.accessAudPlaceholder')}
-              />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-              <label className="block">
-                <span className="block text-sm font-medium text-text mb-1">
-                  {t('remoteAccess.allowedEmails')}
-                  <FieldBadge required={false} />
-                </span>
-                <textarea
-                  value={emailsText}
-                  onChange={(event) => setEmailsText(event.target.value)}
-                  rows={4}
-                  placeholder={t('remoteAccess.allowedEmailsPlaceholder')}
-                  className="w-full bg-neutral-100 border border-border rounded-lg px-3 py-2 text-sm font-mono text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
-                />
-              </label>
-              <label className="block">
-                <span className="block text-sm font-medium text-text mb-1">
-                  {t('remoteAccess.allowedDomains')}
-                  <FieldBadge required={false} />
-                </span>
-                <textarea
-                  value={domainsText}
-                  onChange={(event) => setDomainsText(event.target.value)}
-                  rows={4}
-                  placeholder={t('remoteAccess.allowedDomainsPlaceholder')}
-                  className="w-full bg-neutral-100 border border-border rounded-lg px-3 py-2 text-sm font-mono text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
-                />
-              </label>
-            </div>
-            <DetailBlock>
-              <ol className="list-decimal ml-5 space-y-1">
-                <li>{t('remoteAccess.step3Guide1')}</li>
-                <li>{t('remoteAccess.step3Guide2', { hostname: cloudflare.hostname || t('remoteAccess.hostnamePlaceholder') })}</li>
-                <li>{t('remoteAccess.step3Guide3')}</li>
-                <li>{t('remoteAccess.step3Guide4')}</li>
-              </ol>
-              <a className="inline-flex items-center gap-2 text-accent hover:underline" href="https://one.dash.cloudflare.com/" target="_blank" rel="noreferrer">
-                {t('remoteAccess.openZeroTrustAccess')} <ExternalLink size={13} />
-              </a>
-            </DetailBlock>
-          </StepCard>
-
-          <StepCard number={4} title={t('remoteAccess.step4Title')}>
+          <StepCard number={5} title={t('remoteAccess.step4Title')}>
             <p className="text-sm text-muted mb-4">{t('remoteAccess.step4Desc')}</p>
             <div className="space-y-3">
               <label className="flex items-start gap-3 rounded-lg border border-border bg-neutral-50 p-3">
@@ -475,46 +578,32 @@ export const RemoteAccess: React.FC = () => {
               </label>
             </div>
           </StepCard>
-        </div>
 
-        <aside className="space-y-4">
-          <div className="bg-panel rounded-xl border border-border p-5 shadow-sm">
-            <h3 className="font-semibold flex items-center gap-2 text-text mb-3">
-              <Terminal size={18} /> {t('remoteAccess.localConnector')}
-            </h3>
-            <div className="space-y-3 text-sm">
-              <div className="flex items-center gap-2">
-                <div className={`w-2.5 h-2.5 rounded-full ${status?.binary_found ? 'bg-success' : 'bg-warning'}`} />
-                <span className={status?.binary_found ? 'text-success' : 'text-warning'}>
-                  {status?.binary_found ? t('remoteAccess.cloudflaredFound') : t('remoteAccess.cloudflaredMissing')}
-                </span>
-              </div>
-              {status?.binary_path && (
-                <code className="block text-xs font-mono bg-neutral-100 rounded p-2 text-text break-all">
-                  {status.binary_path}
-                </code>
-              )}
-              {status?.binary_version && <div className="text-xs text-muted">{status.binary_version}</div>}
+          {savedAccessReady && (
+            <StepCard number={6} title={t('remoteAccess.stepStartTitle')}>
+              <p className="text-sm text-muted mb-4">
+                {hasUnsavedChanges ? t('remoteAccess.startNeedsResave') : t('remoteAccess.stepStartDesc')}
+              </p>
               <button
-                onClick={() => void installCloudflared()}
-                disabled={installing}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-accent text-white rounded-lg text-sm font-semibold disabled:opacity-50"
-              >
-                <Download size={14} /> {installing ? t('remoteAccess.installing') : t('remoteAccess.installCloudflared')}
-              </button>
-              <button
-                onClick={() => void applyRemoteAccess()}
-                disabled={applying}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-border bg-white rounded-lg text-sm font-semibold text-text disabled:opacity-50"
+                onClick={() => void (status?.running ? stopConnector() : startConnector())}
+                disabled={applying || (!status?.running && !canStartConnector)}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 border border-border bg-white rounded-lg text-sm font-semibold text-text disabled:opacity-50"
               >
                 {status?.running ? <Square size={14} /> : <Play size={14} />}
                 {applying
                   ? t('remoteAccess.applying')
                   : status?.running ? t('remoteAccess.stopConnector') : t('remoteAccess.startConnector')}
               </button>
-            </div>
-          </div>
+              {!status?.running && !canStartConnector && (
+                <p className="mt-2 text-xs text-warning">
+                  {hasUnsavedChanges ? t('remoteAccess.startBlockedUnsaved') : t('remoteAccess.installBlocked')}
+                </p>
+              )}
+            </StepCard>
+          )}
+        </div>
 
+        <aside className="space-y-4">
           <div className="bg-panel rounded-xl border border-border p-5 shadow-sm">
             <h3 className="font-semibold flex items-center gap-2 text-text mb-3">
               <Globe2 size={18} /> {t('remoteAccess.publicUrl')}
@@ -545,10 +634,11 @@ export const RemoteAccess: React.FC = () => {
       <div className="sticky bottom-4 bg-panel/95 backdrop-blur rounded-xl border border-border p-4 shadow-lg flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="text-sm text-muted">
           {accessReady ? t('remoteAccess.readyToSave') : t('remoteAccess.incompleteWarning')}
+          {savedAccessReady && !hasUnsavedChanges && !status?.running ? ` ${t('remoteAccess.startAppearsAfterSave')}` : ''}
         </div>
         <button
           onClick={() => void save()}
-          disabled={saving}
+          disabled={saving || !accessReady}
           className="px-5 py-2 bg-accent text-white rounded-lg font-semibold disabled:opacity-50"
         >
           {saving ? t('common.saving') : t('common.save')}

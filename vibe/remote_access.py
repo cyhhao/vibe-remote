@@ -134,7 +134,7 @@ def _state_path() -> Path:
 
 
 def _status_from_pid(pid: int | None) -> dict[str, Any]:
-    running = bool(pid and runtime.pid_alive(pid))
+    running = bool(pid and _is_cloudflared_pid(pid))
     command = runtime.get_process_command(pid) if running and pid else None
     return {
         "running": running,
@@ -164,6 +164,19 @@ def _read_running_state() -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _is_cloudflared_command(command: str | None) -> bool:
+    if not command or not command.strip():
+        return False
+    executable = Path(command.strip().split()[0]).name.lower()
+    return executable in {"cloudflared", "cloudflared.exe"}
+
+
+def _is_cloudflared_pid(pid: int | None) -> bool:
+    if not pid or not runtime.pid_alive(pid):
+        return False
+    return _is_cloudflared_command(runtime.get_process_command(pid))
+
+
 def _clear_running_state(pid: int | None = None) -> None:
     state = _read_running_state()
     if pid is not None and state is not None and state.get("pid") != pid:
@@ -172,7 +185,7 @@ def _clear_running_state(pid: int | None = None) -> None:
 
 
 def _running_signature(pid: int | None) -> dict[str, str] | None:
-    if not pid or not runtime.pid_alive(pid):
+    if not _is_cloudflared_pid(pid):
         return None
     signature = _CONNECTOR_ENV.get(pid)
     if signature is not None:
@@ -228,6 +241,15 @@ def stop_cloudflare() -> dict[str, Any]:
             pid = int(pid_path.read_text(encoding="utf-8").strip())
         except Exception:
             pid = None
+    if pid_path.exists() and pid is None:
+        pid_path.unlink(missing_ok=True)
+        return {**status(), "ok": True, "stopped": False, "stale_pid": True}
+    if pid is not None and not _is_cloudflared_pid(pid):
+        pid_path.unlink(missing_ok=True)
+        _CONNECTOR_ENV.pop(pid, None)
+        _clear_running_state(pid)
+        return {**status(), "ok": True, "stopped": False, "stale_pid": True}
+
     stopped = runtime.stop_process(_pid_path(), timeout=8)
     if pid is not None:
         _CONNECTOR_ENV.pop(pid, None)

@@ -77,3 +77,29 @@ def test_start_cloudflare_restarts_when_runtime_signature_changes(monkeypatch, t
     assert second["restarted"] is True
     assert second["pid"] != first["pid"]
     assert stopped_pids == [first["pid"]]
+
+
+def test_stop_cloudflare_does_not_stop_reused_unrelated_pid(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+
+    pid = 4321
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(pid), encoding="utf-8")
+    stop_calls: list[int] = []
+
+    def fake_stop_process(pid_path, timeout=5):
+        stop_calls.append(int(pid_path.read_text(encoding="utf-8")))
+        return True
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "get_process_command", lambda candidate: "/usr/bin/python unrelated.py")
+    monkeypatch.setattr(runtime, "stop_process", fake_stop_process)
+
+    result = remote_access.stop_cloudflare()
+
+    assert result["ok"] is True
+    assert result["stopped"] is False
+    assert result["stale_pid"] is True
+    assert stop_calls == []
+    assert not remote_access._pid_path().exists()
