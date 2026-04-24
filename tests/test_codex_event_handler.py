@@ -423,6 +423,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         agent.emit_result_message.assert_awaited_once()
         assert agent.emit_result_message.await_args.args[1] is None
+        assert handler._image_snapshots_by_turn == {}
 
     async def test_generated_image_fallback_respects_reply_enhancements_setting(self):
         agent = _StubAgent()

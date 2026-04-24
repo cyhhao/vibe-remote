@@ -351,9 +351,6 @@ class CodexEventHandler:
         params: dict[str, Any],
         request: AgentRequest,
     ) -> str | None:
-        if not self._reply_enhancements_enabled():
-            return None
-
         self._claim_generated_image_snapshot(params, request)
         turn_id = self._extract_turn_id(params)
         if not turn_id:
@@ -361,6 +358,8 @@ class CodexEventHandler:
 
         snapshot = self._image_snapshots_by_turn.pop(turn_id, None)
         if snapshot is None:
+            return None
+        if not self._reply_enhancements_enabled():
             return None
         thread_id, before = snapshot
 
