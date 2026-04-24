@@ -262,7 +262,7 @@ export const AdminAccess: React.FC = () => {
                 label={t('adminAccess.hostname')}
                 value={cloudflare.hostname}
                 onChange={(hostname) => updateCloudflare({ hostname })}
-                placeholder="admin.example.com"
+                placeholder={t('adminAccess.hostnamePlaceholder')}
               />
               <TextField
                 label={t('adminAccess.accountId')}
@@ -319,7 +319,7 @@ export const AdminAccess: React.FC = () => {
                   value={emailsText}
                   onChange={(event) => setEmailsText(event.target.value)}
                   rows={4}
-                  placeholder="alex@example.com"
+                  placeholder={t('adminAccess.allowedEmailsPlaceholder')}
                   className="w-full bg-neutral-100 border border-border rounded-lg px-3 py-2 text-sm font-mono text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
                 />
               </label>
@@ -329,7 +329,7 @@ export const AdminAccess: React.FC = () => {
                   value={domainsText}
                   onChange={(event) => setDomainsText(event.target.value)}
                   rows={4}
-                  placeholder="example.com"
+                  placeholder={t('adminAccess.allowedDomainsPlaceholder')}
                   className="w-full bg-neutral-100 border border-border rounded-lg px-3 py-2 text-sm font-mono text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
                 />
               </label>
