@@ -141,6 +141,7 @@ class CodexEventHandler:
                 return
             error_msg = turn_state.terminal_error if turn_state else None
             already_notified = turn_state.terminal_error_notified if turn_state else False
+            error_was_user_visible = already_notified
             if not error_msg:
                 error_obj = turn_obj.get("error", {}) if isinstance(turn_obj, dict) else {}
                 error_msg = self._extract_error_message(error_obj)
@@ -158,12 +159,14 @@ class CodexEventHandler:
                         "notify",
                         message,
                     )
+                error_was_user_visible = True
             else:
                 logger.info("Suppressing inactive Codex turn failure for %s: %s", turn_id, error_msg)
 
             self._clear_generated_image_snapshot(params)
             self._agent._turn_registry.pop_turn(turn_id)
-            await self._agent._remove_ack_reaction(tracked_request)
+            if error_was_user_visible:
+                await self._agent._remove_ack_reaction(tracked_request)
             return
 
         if not should_emit_result:
@@ -173,7 +176,6 @@ class CodexEventHandler:
             self._clear_generated_image_snapshot(params)
             self._agent._turn_registry.pop_turn(turn_id)
             logger.debug("Ignoring inactive turn/completed for turn %s", turn_id)
-            await self._agent._remove_ack_reaction(tracked_request)
             return
 
         pending = turn_state.pending_assistant if turn_state else None

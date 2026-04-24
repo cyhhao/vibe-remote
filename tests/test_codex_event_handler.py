@@ -228,6 +228,48 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         agent.controller.emit_agent_message.assert_not_awaited()
 
+    async def test_hidden_turn_failure_completion_does_not_clear_reaction_without_user_message(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+        handler.clear_pending("turn-1")
+
+        await handler._on_turn_completed(
+            {
+                "turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "error": {"message": "hidden failure"},
+                }
+            },
+            request,
+        )
+
+        agent.controller.emit_agent_message.assert_not_awaited()
+        agent._remove_ack_reaction.assert_not_awaited()
+
+    async def test_inactive_completion_does_not_clear_reaction_without_result_message(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        stale_request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        active_request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", stale_request)
+        agent._turn_registry.register_turn("turn-2", active_request)
+
+        await handler._on_turn_completed(
+            {
+                "turn": {
+                    "id": "turn-1",
+                    "status": "completed",
+                }
+            },
+            stale_request,
+        )
+
+        agent.emit_result_message.assert_not_awaited()
+        agent._remove_ack_reaction.assert_not_awaited()
+
     async def test_auth_recovery_message_suppresses_plain_notify(self):
         agent = _StubAgent()
         agent.controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
@@ -245,6 +287,27 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         agent.controller.emit_agent_message.assert_not_awaited()
+
+    async def test_auth_recovery_completion_still_clears_reaction(self):
+        agent = _StubAgent()
+        agent.controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        await handler._on_turn_completed(
+            {
+                "turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "error": {"message": "unexpected status 401 Unauthorized:"},
+                }
+            },
+            request,
+        )
+
+        agent.controller.emit_agent_message.assert_not_awaited()
+        agent._remove_ack_reaction.assert_awaited_once_with(request)
 
     async def test_inactive_turn_item_is_ignored(self):
         agent = _StubAgent()
