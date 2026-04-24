@@ -106,6 +106,37 @@ def test_start_cloudflare_restarts_when_runtime_signature_changes(monkeypatch, t
     assert stopped_pids == [first["pid"]]
 
 
+def test_start_cloudflare_returns_error_when_restart_stop_fails(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+
+    pid = 4102
+    binary = "/bin/cloudflared"
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(pid), encoding="utf-8")
+    remote_access._CONNECTOR_ENV[pid] = {
+        "binary_path": binary,
+        "tunnel_token_sha256": "old-token-hash",
+    }
+    spawn_calls: list[list[str]] = []
+
+    monkeypatch.setattr(remote_access, "_resolve_configured_binary", lambda config=None: binary)
+    monkeypatch.setattr(remote_access, "_version", lambda path: None)
+    monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "get_process_command", lambda candidate: f"{binary} tunnel run")
+    monkeypatch.setattr(runtime, "stop_process", lambda pid_path, timeout=5: False)
+    monkeypatch.setattr(runtime, "spawn_background", lambda args, *rest, **kwargs: spawn_calls.append(args) or 4103)
+
+    result = remote_access.start_cloudflare(_config(tunnel_token="token-2"))
+
+    assert result["ok"] is False
+    assert result["error"] == "cloudflared_stop_failed"
+    assert result["restarted"] is False
+    assert result["running"] is True
+    assert result["pid"] == pid
+    assert spawn_calls == []
+
+
 def test_start_cloudflare_accepts_configured_binary_with_custom_name(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     remote_access._CONNECTOR_ENV.clear()

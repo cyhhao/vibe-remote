@@ -392,9 +392,16 @@ def start_cloudflare(config: V2Config | None = None) -> dict[str, Any]:
         running_sig = _running_signature(existing.get("pid"))
         desired_sig = _desired_runtime_signature(config, binary)
         if running_sig != desired_sig:
-            stopped = stop_cloudflare().get("stopped", False)
+            stop_result = stop_cloudflare()
+            if stop_result.get("ok") is False or stop_result.get("running"):
+                return {
+                    **stop_result,
+                    "ok": False,
+                    "error": stop_result.get("error") or "cloudflared_stop_failed",
+                    "restarted": False,
+                }
             started = start_cloudflare(config)
-            return {**started, "restarted": True, "stopped": stopped}
+            return {**started, "restarted": True, "stopped": stop_result.get("stopped", False)}
         return {**existing, "ok": True, "started": False}
 
     paths.ensure_data_dirs()
