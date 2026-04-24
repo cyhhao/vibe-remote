@@ -208,6 +208,9 @@ Vibe Remote will automatically send the file as an attachment.
 ### Image syntax
 If you want it sent as an image attachment rather than a regular file, use Markdown image syntax:
 Example: ![Page screenshot](file:///tmp/screenshot.jpg)
+
+If you generate an image with Codex, include it in the final reply with Markdown image syntax:
+`![generated image](file:///absolute/path/to/image.png)`
 """
 
 _QUICK_REPLIES_PROMPT = """\

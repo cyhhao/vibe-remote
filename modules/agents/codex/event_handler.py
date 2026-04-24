@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from vibe.i18n import t as i18n_t
 
 if TYPE_CHECKING:
     from modules.agents.base import AgentRequest
 
 logger = logging.getLogger(__name__)
+
+_GENERATED_IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 
 
 class CodexEventHandler:
@@ -21,6 +27,12 @@ class CodexEventHandler:
 
     def __init__(self, agent: Any) -> None:
         self._agent = agent
+        self._image_snapshots_by_thread: dict[str, set[Path]] = {}
+
+    def snapshot_generated_images(self, thread_id: str) -> None:
+        """Record generated images present before a Codex turn starts."""
+        if thread_id:
+            self._image_snapshots_by_thread[thread_id] = self._list_generated_images(thread_id)
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -89,6 +101,7 @@ class CodexEventHandler:
             if not turn_state:
                 logger.debug("Ignoring interrupted completion for unknown turn %s", turn_id)
                 return
+            self._clear_generated_image_snapshot(params)
             self._agent._turn_registry.pop_turn(turn_id)
             await self._agent._remove_ack_reaction(tracked_request)
             return
@@ -119,6 +132,7 @@ class CodexEventHandler:
             else:
                 logger.info("Suppressing inactive Codex turn failure for %s: %s", turn_id, error_msg)
 
+            self._clear_generated_image_snapshot(params)
             self._agent._turn_registry.pop_turn(turn_id)
             await self._agent._remove_ack_reaction(tracked_request)
             return
@@ -127,14 +141,20 @@ class CodexEventHandler:
             if not turn_state:
                 logger.debug("Ignoring completion for unknown turn %s", turn_id)
                 return
+            self._clear_generated_image_snapshot(params)
             self._agent._turn_registry.pop_turn(turn_id)
             logger.debug("Ignoring inactive turn/completed for turn %s", turn_id)
             await self._agent._remove_ack_reaction(tracked_request)
             return
 
         pending = turn_state.pending_assistant if turn_state else None
+        generated_image_fallback = None
+        if not pending or not (pending[0] or "").strip():
+            generated_image_fallback = self._build_generated_image_fallback(params, tracked_request)
+        else:
+            self._clear_generated_image_snapshot(params)
         self._agent._turn_registry.pop_turn(turn_id)
-        if pending:
+        if pending and (pending[0] or "").strip():
             pending_text, pending_parse_mode = pending
             await self._agent.emit_result_message(
                 tracked_request.context,
@@ -147,7 +167,7 @@ class CodexEventHandler:
         else:
             await self._agent.emit_result_message(
                 tracked_request.context,
-                None,
+                generated_image_fallback,
                 subtype="success",
                 started_at=tracked_request.started_at,
                 parse_mode="markdown",
@@ -296,6 +316,77 @@ class CodexEventHandler:
         if isinstance(error, dict):
             return error.get("message", "Unknown error")
         return str(error)
+
+    def _build_generated_image_fallback(
+        self,
+        params: dict[str, Any],
+        request: AgentRequest,
+    ) -> str | None:
+        thread_id = self._extract_thread_id(params)
+        if not thread_id:
+            return None
+
+        before = self._image_snapshots_by_thread.pop(thread_id, None)
+        if before is None:
+            return None
+
+        current = self._list_generated_images(thread_id)
+        generated = sorted(
+            current - before,
+            key=lambda path: path.stat().st_mtime if path.exists() else 0,
+        )
+        if not generated:
+            return None
+
+        heading = self._t("info.generatedImagesFallback", request)
+        links = "\n".join(f"![generated image](file://{path})" for path in generated)
+        return f"{heading}\n\n{links}"
+
+    def _clear_generated_image_snapshot(self, params: dict[str, Any]) -> None:
+        thread_id = self._extract_thread_id(params)
+        if thread_id:
+            self._image_snapshots_by_thread.pop(thread_id, None)
+
+    def _list_generated_images(self, thread_id: str) -> set[Path]:
+        thread_dir = self._generated_images_dir(thread_id)
+        if thread_dir is None or not thread_dir.is_dir():
+            return set()
+
+        try:
+            candidates = thread_dir.iterdir()
+        except OSError as exc:
+            logger.warning("Failed to list Codex generated images for %s: %s", thread_id, exc)
+            return set()
+
+        images: set[Path] = set()
+        for path in candidates:
+            if path.is_file() and path.suffix.lower() in _GENERATED_IMAGE_EXTENSIONS:
+                images.add(path.resolve())
+        return images
+
+    def _generated_images_dir(self, thread_id: str) -> Path | None:
+        if Path(thread_id).name != thread_id:
+            logger.warning("Ignoring unsafe Codex thread id for generated images: %s", thread_id)
+            return None
+        codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+        return codex_home / "generated_images" / thread_id
+
+    def _extract_thread_id(self, params: dict[str, Any]) -> str:
+        thread_id = params.get("threadId", "")
+        if not thread_id:
+            thread_obj = params.get("thread")
+            if isinstance(thread_obj, dict):
+                thread_id = thread_obj.get("id", "")
+        return thread_id
+
+    def _t(self, key: str, request: AgentRequest) -> str:
+        controller = getattr(self._agent, "controller", None)
+        translate = getattr(controller, "_t", None)
+        if callable(translate):
+            return translate(key)
+        config = getattr(controller, "config", None)
+        lang = getattr(config, "language", "en")
+        return i18n_t(key, lang)
 
     async def _on_agent_message_delta(self, params: dict[str, Any], request: AgentRequest) -> None:
         # Streaming delta — currently we accumulate at item/completed level,

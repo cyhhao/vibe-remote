@@ -568,6 +568,13 @@ class CodexAgent(BaseAgent):
         if effective_effort:
             turn_params["effort"] = effective_effort
 
+        snapshot_generated_images = getattr(
+            getattr(self, "_event_handler", None),
+            "snapshot_generated_images",
+            None,
+        )
+        if callable(snapshot_generated_images):
+            snapshot_generated_images(thread_id)
         self._turn_registry.begin_turn_start(request, thread_id)
         resp = await transport.send_request("turn/start", turn_params)
 

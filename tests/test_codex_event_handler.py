@@ -1,9 +1,11 @@
 import importlib.util
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -254,6 +256,59 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         agent.controller.emit_agent_message.assert_not_awaited()
+
+    async def test_empty_success_result_falls_back_to_new_thread_generated_images(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            old_image = thread_dir / "old.png"
+            old_image.write_bytes(b"old")
+            handler.snapshot_generated_images("thread-1")
+
+            new_image = thread_dir / "new.png"
+            new_image.write_bytes(b"new")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "completed"},
+                },
+                request,
+            )
+
+        agent.emit_result_message.assert_awaited_once()
+        result_text = agent.emit_result_message.await_args.args[1]
+        assert "Generated image:" in result_text
+        assert f"![generated image](file://{new_image.resolve()})" in result_text
+        assert str(old_image.resolve()) not in result_text
+
+    async def test_empty_success_result_does_not_guess_without_image_snapshot(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            image = thread_dir / "new.png"
+            image.write_bytes(b"new")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "completed"},
+                },
+                request,
+            )
+
+        agent.emit_result_message.assert_awaited_once()
+        assert agent.emit_result_message.await_args.args[1] is None
 
 
 if __name__ == "__main__":

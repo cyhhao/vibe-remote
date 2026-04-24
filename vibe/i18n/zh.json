@@ -107,7 +107,8 @@
     "howItWorksFooter": "直接输入消息即可与 {agent} 对话，无需特殊命令！",
     "genericTitle": "信息：{topic}",
     "genericFooter": "该功能即将上线！",
-    "resultDeliveredAsAttachment": "⚠️ 这条消息无法以内联形式发送，所以我已将完整内容作为 `result.md` 发在上方。"
+    "resultDeliveredAsAttachment": "⚠️ 这条消息无法以内联形式发送，所以我已将完整内容作为 `result.md` 发在上方。",
+    "generatedImagesFallback": "已生成图片："
   },
   "modal": {
     "settings": {
