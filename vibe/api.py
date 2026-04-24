@@ -1451,6 +1451,7 @@ def codex_models() -> dict:
         options.append(model)
 
     built_in_options: list[str] = [
+        "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.4-nano",
