@@ -437,7 +437,16 @@ def config_post():
     payload = request.json or {}
     config = api.save_config(payload)
     if "remote_access" in payload or "admin_access" in payload:
-        remote_access.reconcile(config)
+        reconcile_result = remote_access.reconcile(config)
+        if reconcile_result.get("ok") is False:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": reconcile_result.get("error") or "remote_access_reconcile_failed",
+                    "remote_access": reconcile_result,
+                    "config": api.config_to_payload(config),
+                }
+            ), 409
     return jsonify(api.config_to_payload(config))
 
 

@@ -4,9 +4,11 @@ import ast
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vibe import api
+from ui_server_test_helpers import csrf_headers
 
 
 def _full_config_payload() -> dict:
@@ -274,3 +276,42 @@ def test_config_post_does_not_call_init_sessions():
                 break
 
     assert calls_init_sessions is False
+
+
+def test_config_post_propagates_remote_access_reconcile_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    from vibe import remote_access
+    from vibe.ui_server import app
+
+    api.save_config(_full_config_payload())
+    monkeypatch.setattr(
+        remote_access,
+        "reconcile",
+        lambda config: {"ok": False, "error": "cloudflared_stop_failed", "running": True},
+    )
+
+    client = app.test_client()
+    response = client.post(
+        "/config",
+        json={
+            "remote_access": {
+                "cloudflare": {
+                    "enabled": True,
+                    "hostname": "admin.example.com",
+                    "tunnel_token": "tunnel-token",
+                    "allowed_emails": ["alex@example.com"],
+                    "confirmed_access_policy": True,
+                    "confirmed_tunnel_route": True,
+                }
+            }
+        },
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 409
+    payload = response.get_json()
+    assert payload["ok"] is False
+    assert payload["error"] == "cloudflared_stop_failed"
+    assert payload["remote_access"]["running"] is True
+    assert payload["config"]["remote_access"]["cloudflare"]["enabled"] is True

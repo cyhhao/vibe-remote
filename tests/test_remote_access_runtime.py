@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import sys
 import tarfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -104,6 +105,51 @@ def test_start_cloudflare_restarts_when_runtime_signature_changes(monkeypatch, t
     assert second["restarted"] is True
     assert second["pid"] != first["pid"]
     assert stopped_pids == [first["pid"]]
+
+
+def test_start_cloudflare_serializes_concurrent_starts(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._CONNECTOR_ENV.clear()
+
+    binary = "/bin/cloudflared"
+    live_pids: set[int] = set()
+    spawn_calls: list[int] = []
+    spawned = threading.Event()
+    release_spawn = threading.Event()
+
+    def fake_spawn_background(args, pid_path, stdout_name, stderr_name, env=None):
+        pid = 4201 + len(spawn_calls)
+        spawn_calls.append(pid)
+        spawned.set()
+        assert release_spawn.wait(timeout=2)
+        live_pids.add(pid)
+        pid_path.parent.mkdir(parents=True, exist_ok=True)
+        pid_path.write_text(str(pid), encoding="utf-8")
+        return pid
+
+    monkeypatch.setattr(remote_access, "_resolve_configured_binary", lambda config=None: binary)
+    monkeypatch.setattr(remote_access, "_version", lambda path: None)
+    monkeypatch.setattr(runtime, "spawn_background", fake_spawn_background)
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid in live_pids)
+    monkeypatch.setattr(runtime, "get_process_command", lambda pid: f"{binary} tunnel run")
+
+    results: list[dict] = []
+    first = threading.Thread(target=lambda: results.append(remote_access.start_cloudflare(_config())), daemon=True)
+    second = threading.Thread(target=lambda: results.append(remote_access.start_cloudflare(_config())), daemon=True)
+
+    first.start()
+    assert spawned.wait(timeout=2)
+    second.start()
+    release_spawn.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert spawn_calls == [4201]
+    assert len(results) == 2
+    assert sum(1 for result in results if result.get("started") is True) == 1
+    assert sum(1 for result in results if result.get("started") is False) == 1
 
 
 def test_start_cloudflare_returns_error_when_restart_stop_fails(monkeypatch, tmp_path):
