@@ -1,9 +1,11 @@
 import importlib.util
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -73,11 +75,18 @@ class _StubTurnRegistry:
             return False
         return state.visible_to_user and self._active_turns.get(state.request.base_session_id) == turn_id
 
+    def is_active_turn(self, turn_id: str) -> bool:
+        state = self._turns.get(turn_id)
+        if not state:
+            return False
+        return self._active_turns.get(state.request.base_session_id) == turn_id
+
 
 class _StubAgent:
     def __init__(self):
         self._turn_registry = _StubTurnRegistry()
         self.controller = SimpleNamespace(
+            config=SimpleNamespace(reply_enhancements=True),
             emit_agent_message=AsyncMock(),
             agent_auth_service=SimpleNamespace(maybe_emit_auth_recovery_message=AsyncMock(return_value=False)),
         )
@@ -219,6 +228,48 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         agent.controller.emit_agent_message.assert_not_awaited()
 
+    async def test_hidden_turn_failure_completion_does_not_clear_reaction_without_user_message(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+        handler.clear_pending("turn-1")
+
+        await handler._on_turn_completed(
+            {
+                "turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "error": {"message": "hidden failure"},
+                }
+            },
+            request,
+        )
+
+        agent.controller.emit_agent_message.assert_not_awaited()
+        agent._remove_ack_reaction.assert_not_awaited()
+
+    async def test_inactive_completion_does_not_clear_reaction_without_result_message(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        stale_request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        active_request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", stale_request)
+        agent._turn_registry.register_turn("turn-2", active_request)
+
+        await handler._on_turn_completed(
+            {
+                "turn": {
+                    "id": "turn-1",
+                    "status": "completed",
+                }
+            },
+            stale_request,
+        )
+
+        agent.emit_result_message.assert_not_awaited()
+        agent._remove_ack_reaction.assert_not_awaited()
+
     async def test_auth_recovery_message_suppresses_plain_notify(self):
         agent = _StubAgent()
         agent.controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
@@ -237,6 +288,27 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         agent.controller.emit_agent_message.assert_not_awaited()
 
+    async def test_auth_recovery_completion_still_clears_reaction(self):
+        agent = _StubAgent()
+        agent.controller.agent_auth_service.maybe_emit_auth_recovery_message = AsyncMock(return_value=True)
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        await handler._on_turn_completed(
+            {
+                "turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "error": {"message": "unexpected status 401 Unauthorized:"},
+                }
+            },
+            request,
+        )
+
+        agent.controller.emit_agent_message.assert_not_awaited()
+        agent._remove_ack_reaction.assert_awaited_once_with(request)
+
     async def test_inactive_turn_item_is_ignored(self):
         agent = _StubAgent()
         handler = CodexEventHandler(agent)
@@ -254,6 +326,201 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         agent.controller.emit_agent_message.assert_not_awaited()
+
+    async def test_empty_success_result_falls_back_to_new_thread_generated_images(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            old_image = thread_dir / "old.png"
+            old_image.write_bytes(b"old")
+            handler.snapshot_generated_images("thread-1", "session-1")
+            handler.bind_generated_image_snapshot("thread-1", "turn-1", "session-1")
+
+            new_image = thread_dir / "new image.png"
+            new_image.write_bytes(b"new")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "completed"},
+                },
+                request,
+            )
+
+        agent.emit_result_message.assert_awaited_once()
+        result_text = agent.emit_result_message.await_args.args[1]
+        assert "Generated image:" in result_text
+        assert f"![generated image]({new_image.resolve().as_uri()})" in result_text
+        assert str(old_image.resolve()) not in result_text
+
+    async def test_empty_success_result_falls_back_when_generated_image_path_is_reused(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            image = thread_dir / "image.png"
+            image.write_bytes(b"old")
+            handler.snapshot_generated_images("thread-1", "session-1")
+            handler.bind_generated_image_snapshot("thread-1", "turn-1", "session-1")
+
+            image.write_bytes(b"new-content")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "completed"},
+                },
+                request,
+            )
+
+        agent.emit_result_message.assert_awaited_once()
+        result_text = agent.emit_result_message.await_args.args[1]
+        assert f"![generated image]({image.resolve().as_uri()})" in result_text
+
+    async def test_stale_interrupted_turn_does_not_clear_new_turn_image_snapshot(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            before_second_turn = thread_dir / "before-second-turn.png"
+            before_second_turn.write_bytes(b"old")
+
+            handler.snapshot_generated_images("thread-1", "session-1")
+            handler.bind_generated_image_snapshot("thread-1", "turn-1", "session-1")
+
+            agent._turn_registry.register_turn("turn-2", request)
+            handler.snapshot_generated_images("thread-1", "session-1")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "interrupted"},
+                },
+                request,
+            )
+
+            new_image = thread_dir / "new-for-turn-2.png"
+            new_image.write_bytes(b"new")
+            handler.bind_generated_image_snapshot("thread-1", "turn-2", "session-1")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-2", "status": "completed"},
+                },
+                request,
+            )
+
+        result_text = agent.emit_result_message.await_args.args[1]
+        assert f"![generated image]({new_image.resolve().as_uri()})" in result_text
+        assert str(before_second_turn.resolve()) not in result_text
+
+    async def test_stale_turn_started_does_not_steal_pending_image_snapshot(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+        handler.clear_pending("turn-1")
+        agent._turn_registry.register_turn("turn-2", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            handler.snapshot_generated_images("thread-1", "session-1")
+
+            await handler._on_turn_started(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1"},
+                },
+                request,
+            )
+
+            new_image = thread_dir / "new-for-turn-2.png"
+            new_image.write_bytes(b"new")
+            handler.bind_generated_image_snapshot("thread-1", "turn-2", "session-1")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-2", "status": "completed"},
+                },
+                request,
+            )
+
+        result_text = agent.emit_result_message.await_args.args[1]
+        assert f"![generated image]({new_image.resolve().as_uri()})" in result_text
+
+    async def test_empty_success_result_does_not_guess_without_image_snapshot(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            image = thread_dir / "new.png"
+            image.write_bytes(b"new")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "completed"},
+                },
+                request,
+            )
+
+        agent.emit_result_message.assert_awaited_once()
+        assert agent.emit_result_message.await_args.args[1] is None
+        assert handler._image_snapshots_by_turn == {}
+
+    async def test_generated_image_fallback_respects_reply_enhancements_setting(self):
+        agent = _StubAgent()
+        agent.controller.config.reply_enhancements = False
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            handler.snapshot_generated_images("thread-1", "session-1")
+            handler.bind_generated_image_snapshot("thread-1", "turn-1", "session-1")
+            image = thread_dir / "new.png"
+            image.write_bytes(b"new")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "completed"},
+                },
+                request,
+            )
+
+        agent.emit_result_message.assert_awaited_once()
+        assert agent.emit_result_message.await_args.args[1] is None
+
+    def test_generated_images_dir_rejects_dot_segment_thread_ids(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+
+        assert handler._generated_images_dir(".") is None
+        assert handler._generated_images_dir("..") is None
+        assert handler._generated_images_dir("../other") is None
 
 
 if __name__ == "__main__":

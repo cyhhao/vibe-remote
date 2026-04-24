@@ -84,6 +84,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("## 1. Send files", prompt)
         self.assertIn("Vibe Remote provides optional capabilities:", prompt)
+        self.assertNotIn("If you generate an image with Codex", prompt)
         self.assertNotIn("## 2. Quick-reply buttons", prompt)
         self.assertIn("## 4. User Context and Preferences", prompt)
         self.assertIn("`/tmp/user_preferences.md`", prompt)
@@ -199,6 +200,14 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             enhanced.files[0].path,
             "/Users/test/SaveTwitter.Net_GABV3XNWYAARAZz(gif).mp4",
         )
+
+    def test_windows_file_uri_is_normalized_before_absolute_check(self):
+        with patch("core.reply_enhancer.os.name", "nt"), patch("core.reply_enhancer.os.path.isabs") as isabs:
+            isabs.side_effect = lambda value: value == r"C:\Users\test\generated image.png"
+            enhanced = process_reply("![generated image](file:///C:/Users/test/generated%20image.png)")
+
+        self.assertEqual(len(enhanced.files), 1)
+        self.assertEqual(enhanced.files[0].path, r"C:\Users\test\generated image.png")
 
     async def test_wechat_result_ignores_quick_reply_buttons(self):
         controller = _StubController("wechat")

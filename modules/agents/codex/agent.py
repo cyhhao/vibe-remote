@@ -17,6 +17,11 @@ from modules.agents.codex.turn_state import CodexTurnRegistry
 
 logger = logging.getLogger(__name__)
 
+_CODEX_GENERATED_IMAGE_PROMPT = (
+    "If you generate an image with Codex, include it in the final reply with Markdown image syntax: "
+    "`![generated image](file:///absolute/path/to/image.png)`"
+)
+
 
 class CodexAgent(BaseAgent):
     """Codex CLI integration via persistent ``codex app-server`` subprocess.
@@ -569,6 +574,14 @@ class CodexAgent(BaseAgent):
             turn_params["effort"] = effective_effort
 
         self._turn_registry.begin_turn_start(request, thread_id)
+        event_handler = getattr(self, "_event_handler", None)
+        snapshot_generated_images = getattr(
+            event_handler,
+            "snapshot_generated_images",
+            None,
+        )
+        if callable(snapshot_generated_images):
+            snapshot_generated_images(thread_id, request.base_session_id)
         resp = await transport.send_request("turn/start", turn_params)
 
         turn_id = resp.get("id", "")
@@ -582,6 +595,9 @@ class CodexAgent(BaseAgent):
             raise RuntimeError("Codex turn/start returned no turn id")
 
         turn_state = self._turn_registry.finalize_turn_start_response(turn_id, request)
+        bind_generated_image_snapshot = getattr(event_handler, "bind_generated_image_snapshot", None)
+        if callable(bind_generated_image_snapshot):
+            bind_generated_image_snapshot(thread_id, turn_id, request.base_session_id)
         logger.info(
             "Codex turn started: thread=%s turn=%s session=%s state=%s",
             thread_id,
@@ -600,7 +616,7 @@ class CodexAgent(BaseAgent):
         items: list[Dict[str, Any]] = []
 
         # Text input
-        message = request.message
+        message = self._build_turn_message(request.message)
         if request.files:
             # Append file info like Claude agent does
             file_lines = ["", "[User Attachments]"]
@@ -626,6 +642,15 @@ class CodexAgent(BaseAgent):
             items.insert(0, {"type": "text", "text": message})
 
         return items
+
+    def _build_turn_message(self, message: str) -> str:
+        if not message:
+            return message
+        controller = getattr(self, "controller", None)
+        config = getattr(controller, "config", None)
+        if not getattr(config, "reply_enhancements", True):
+            return message
+        return f"{_CODEX_GENERATED_IMAGE_PROMPT}\n\n{message}"
 
     # ------------------------------------------------------------------
     # Callback handlers (wired to transport)
