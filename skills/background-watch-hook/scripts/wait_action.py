@@ -214,19 +214,7 @@ def main() -> int:
     success_conclusions = _parse_success_conclusions(args.success_conclusion)
     start = time.monotonic()
     selected: dict[str, dict[str, Any] | None] = {workflow: None for workflow in args.workflow}
-
-    if token is None:
-        unauthenticated_min = min_interval_for_unauthenticated(1, bootstrap_requests=1)
-        if effective_interval < unauthenticated_min:
-            print(
-                (
-                    "No GitHub token detected; clamping polling interval from %.1fs to %.1fs "
-                    "to avoid unauthenticated rate-limit lockout."
-                )
-                % (effective_interval, unauthenticated_min),
-                file=sys.stderr,
-            )
-            effective_interval = unauthenticated_min
+    first_successful_fetch = True
 
     print(
         (
@@ -241,7 +229,7 @@ def main() -> int:
         first_poll = poll_attempt == 0
         poll_attempt += 1
         try:
-            runs, _request_count = _fetch_workflow_runs(
+            runs, request_count = _fetch_workflow_runs(
                 args.repo,
                 token,
                 branch=args.branch,
@@ -271,6 +259,33 @@ def main() -> int:
         except Exception as err:  # noqa: BLE001
             print(f"Polling failed: {err}", file=sys.stderr)
             runs = []
+            request_count = 0
+
+        if token is None and request_count > 0:
+            bootstrap_requests = request_count if first_successful_fetch else 0
+            unauthenticated_min = min_interval_for_unauthenticated(
+                request_count,
+                bootstrap_requests=bootstrap_requests,
+            )
+            target_interval = max(base_interval, unauthenticated_min)
+            if target_interval != effective_interval:
+                direction = "increasing" if target_interval > effective_interval else "reducing"
+                print(
+                    (
+                        "GitHub unauthenticated polling uses %s request(s) per poll plus "
+                        "%s bootstrap request(s); %s interval from %.1fs to %.1fs."
+                    )
+                    % (
+                        request_count,
+                        bootstrap_requests,
+                        direction,
+                        effective_interval,
+                        target_interval,
+                    ),
+                    file=sys.stderr,
+                )
+                effective_interval = target_interval
+            first_successful_fetch = False
 
         if runs:
             selected = _select_latest_runs_by_workflow(

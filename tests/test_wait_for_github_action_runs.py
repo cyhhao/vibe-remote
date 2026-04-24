@@ -242,6 +242,79 @@ def test_main_requires_authentication_by_default() -> None:
     assert rc == 2
 
 
+def test_main_uses_real_request_count_for_unauthenticated_interval() -> None:
+    module = _load_module()
+    calls = 0
+    sleep_intervals: list[float] = []
+
+    def _fake_fetch_workflow_runs(repo, token, *, branch=None, head_sha=None, max_pages=3):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return (
+                [
+                    {
+                        "id": 1,
+                        "name": "CI",
+                        "head_sha": "abc123",
+                        "head_branch": "main",
+                        "status": "in_progress",
+                        "conclusion": None,
+                    }
+                ],
+                3,
+            )
+        return (
+            [
+                {
+                    "id": 1,
+                    "name": "CI",
+                    "head_sha": "abc123",
+                    "head_branch": "main",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "html_url": "https://github.com/example/actions/runs/1",
+                }
+            ],
+            3,
+        )
+
+    def _fake_sleep(seconds):
+        sleep_intervals.append(seconds)
+
+    stdout = io.StringIO()
+    with (
+        patch.object(module, "get_token", return_value=None),
+        patch.object(module, "_fetch_workflow_runs", side_effect=_fake_fetch_workflow_runs),
+        patch.object(module, "min_interval_for_unauthenticated", return_value=240.0) as min_interval,
+        patch.object(module.time, "sleep", side_effect=_fake_sleep),
+        patch(
+            "sys.argv",
+            [
+                "wait_action.py",
+                "--repo",
+                "cyhhao/sub2api",
+                "--branch",
+                "main",
+                "--sha",
+                "abc123",
+                "--workflow",
+                "CI",
+                "--interval",
+                "1",
+                "--allow-unauthenticated",
+            ],
+        ),
+        redirect_stdout(stdout),
+    ):
+        rc = module.main()
+
+    assert rc == 0
+    min_interval.assert_any_call(3, bootstrap_requests=3)
+    assert sleep_intervals == [240.0]
+    assert "GitHub Actions success" in stdout.getvalue()
+
+
 def test_main_retryable_startup_http_error_returns_retry_code() -> None:
     module = _load_module()
     err = urllib.error.HTTPError(
