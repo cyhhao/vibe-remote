@@ -41,8 +41,7 @@ def test_receive_messages_skips_rate_limit_event():
     assert messages[0].subtype == "init"
 
 
-def test_receive_messages_still_raises_for_other_unknown_types():
-    from claude_agent_sdk._errors import MessageParseError
+def test_receive_messages_skips_unknown_types_returning_none():
+    messages = asyncio.run(_collect_messages([{"type": "mystery_event"}]))
 
-    with pytest.raises(MessageParseError, match="Unknown message type: mystery_event"):
-        asyncio.run(_collect_messages([{"type": "mystery_event"}]))
+    assert messages == []

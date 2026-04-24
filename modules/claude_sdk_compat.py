@@ -36,7 +36,7 @@ try:
 
             async for data in self._query.receive_messages():
                 try:
-                    yield parse_message(data)
+                    message = parse_message(data)
                 except MessageParseError:
                     if _should_ignore_message_parse_error(data):
                         logger.info(
@@ -45,6 +45,13 @@ try:
                         )
                         continue
                     raise
+                if message is None:
+                    logger.info(
+                        "Ignoring unsupported Claude SDK message type from CLI: %s",
+                        data.get("type") if isinstance(data, dict) else type(data),
+                    )
+                    continue
+                yield message
 except ModuleNotFoundError:  # pragma: no cover - exercised only in minimal test envs
     CLAUDE_SDK_AVAILABLE = False
 
