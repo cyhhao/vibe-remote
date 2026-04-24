@@ -537,6 +537,7 @@
     "statusNeedsSetup": "Setup incomplete",
     "enabledAfterSave": "Enabled",
     "disabledUntilStart": "Save, then start",
+    "cloudflareProvider": "Cloudflare",
     "cloudflareTitle": "Cloudflare Tunnel + Access",
     "cloudflareDesc": "Keep the Vibe Remote UI bound to localhost, expose it through Cloudflare Tunnel, and require Access authentication before any request reaches the origin.",
     "showDetailedGuide": "Show step-by-step guide",

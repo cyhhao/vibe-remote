@@ -370,7 +370,7 @@ export const RemoteAccess: React.FC = () => {
         <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold text-accent mb-2">
-              <Cloud size={16} /> Cloudflare
+              <Cloud size={16} /> {t('remoteAccess.cloudflareProvider')}
             </div>
             <h3 className="text-xl font-semibold text-text">{t('remoteAccess.cloudflareTitle')}</h3>
             <p className="text-sm text-muted max-w-2xl mt-2">{t('remoteAccess.cloudflareDesc')}</p>

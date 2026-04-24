@@ -537,6 +537,7 @@
     "statusNeedsSetup": "配置未完成",
     "enabledAfterSave": "已启用",
     "disabledUntilStart": "保存后再启动",
+    "cloudflareProvider": "Cloudflare",
     "cloudflareTitle": "Cloudflare Tunnel + Access",
     "cloudflareDesc": "保持 Vibe Remote UI 只监听 localhost，通过 Cloudflare Tunnel 暴露公网地址，并要求所有请求先通过 Access 认证。",
     "showDetailedGuide": "展开详细操作步骤",
