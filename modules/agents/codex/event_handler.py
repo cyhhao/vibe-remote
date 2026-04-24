@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _GENERATED_IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
+_SAFE_THREAD_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _ImageSnapshot = dict[Path, tuple[int, int]]
 
 
@@ -349,6 +351,9 @@ class CodexEventHandler:
         params: dict[str, Any],
         request: AgentRequest,
     ) -> str | None:
+        if not self._reply_enhancements_enabled():
+            return None
+
         self._claim_generated_image_snapshot(params, request)
         turn_id = self._extract_turn_id(params)
         if not turn_id:
@@ -407,11 +412,16 @@ class CodexEventHandler:
         return images
 
     def _generated_images_dir(self, thread_id: str) -> Path | None:
-        if Path(thread_id).name != thread_id:
+        if not _SAFE_THREAD_ID_RE.fullmatch(thread_id):
             logger.warning("Ignoring unsafe Codex thread id for generated images: %s", thread_id)
             return None
         codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
         return codex_home / "generated_images" / thread_id
+
+    def _reply_enhancements_enabled(self) -> bool:
+        controller = getattr(self._agent, "controller", None)
+        config = getattr(controller, "config", None)
+        return getattr(config, "reply_enhancements", True)
 
     def _extract_thread_id(self, params: dict[str, Any]) -> str:
         thread_id = params.get("threadId", "")

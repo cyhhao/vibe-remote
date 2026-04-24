@@ -86,6 +86,7 @@ class _StubAgent:
     def __init__(self):
         self._turn_registry = _StubTurnRegistry()
         self.controller = SimpleNamespace(
+            config=SimpleNamespace(reply_enhancements=True),
             emit_agent_message=AsyncMock(),
             agent_auth_service=SimpleNamespace(maybe_emit_auth_recovery_message=AsyncMock(return_value=False)),
         )
@@ -422,6 +423,40 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         agent.emit_result_message.assert_awaited_once()
         assert agent.emit_result_message.await_args.args[1] is None
+
+    async def test_generated_image_fallback_respects_reply_enhancements_setting(self):
+        agent = _StubAgent()
+        agent.controller.config.reply_enhancements = False
+        handler = CodexEventHandler(agent)
+        request = SimpleNamespace(base_session_id="session-1", context=object(), started_at=0)
+        agent._turn_registry.register_turn("turn-1", request)
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, {"CODEX_HOME": tmpdir}):
+            thread_dir = Path(tmpdir) / "generated_images" / "thread-1"
+            thread_dir.mkdir(parents=True)
+            handler.snapshot_generated_images("thread-1", "session-1")
+            handler.bind_generated_image_snapshot("thread-1", "turn-1", "session-1")
+            image = thread_dir / "new.png"
+            image.write_bytes(b"new")
+
+            await handler._on_turn_completed(
+                {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "completed"},
+                },
+                request,
+            )
+
+        agent.emit_result_message.assert_awaited_once()
+        assert agent.emit_result_message.await_args.args[1] is None
+
+    def test_generated_images_dir_rejects_dot_segment_thread_ids(self):
+        agent = _StubAgent()
+        handler = CodexEventHandler(agent)
+
+        assert handler._generated_images_dir(".") is None
+        assert handler._generated_images_dir("..") is None
+        assert handler._generated_images_dir("../other") is None
 
 
 if __name__ == "__main__":
