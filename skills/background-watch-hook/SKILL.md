@@ -159,6 +159,8 @@ This skill ships bundled GitHub waiters:
   Waits for GitHub PR review activity, including reviews, inline review comments, PR conversation comments, PR status transitions such as `draft -> open`, `open -> merged`, or `open -> closed`, and the special Codex `+1` reaction on the PR body. It can also wait for newly opened PRs in a repository.
 - `scripts/wait_issue.py`
   Waits for GitHub issue activity, either newly opened issues in a repository or new comments on a single issue.
+- `scripts/wait_action.py`
+  Waits for selected GitHub Actions workflow runs on a specific commit SHA to finish. Workflow failures are reported as an event so the follow-up turn can inspect and handle them.
 
 Use bundled waiters as examples or as ready-to-run building blocks. The main skill is still `vibe watch`; the waiter is only the thing that blocks until the condition is met.
 When running a bundled script through `uv`, prefer `uv run --no-project ...` so the script does not accidentally attach itself to an unrelated parent project.
@@ -241,6 +243,23 @@ New issues or issue comments:
 ```bash
 uv run --no-project scripts/wait_issue.py --repo cyhhao/vibe-remote --new-issues --interval 60
 uv run --no-project scripts/wait_issue.py --repo cyhhao/vibe-remote --issue 157 --interval 60
+```
+
+GitHub Actions for a pushed commit:
+
+```bash
+vibe watch add \
+  --session-key "slack::channel::C123::thread::171717.123" \
+  --name "Watch CI" \
+  --prefix "GitHub Actions finished. Inspect the result below and continue with the deployment or fix failures." \
+  -- \
+  uv run --no-project scripts/wait_action.py \
+    --repo cyhhao/sub2api \
+    --branch main \
+    --sha "$HEAD_SHA" \
+    --workflow CI \
+    --workflow "Security Scan" \
+    --interval 60
 ```
 
 ## Practical Advice
