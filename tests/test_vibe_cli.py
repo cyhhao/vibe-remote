@@ -93,6 +93,30 @@ def test_cli_stop_opencode_server_uses_runtime_helpers(tmp_path, monkeypatch):
     assert not pid_file.exists()
 
 
+def test_stop_ui_propagates_remote_access_stop_failure(monkeypatch):
+    from vibe import remote_access
+
+    stop_calls = []
+    monkeypatch.setattr(remote_access, "stop_cloudflare", lambda: {"ok": False, "error": "cloudflared_stop_failed"})
+    monkeypatch.setattr(runtime, "stop_process", lambda pid_path: stop_calls.append(pid_path) or True)
+
+    assert runtime.stop_ui() is False
+    assert stop_calls == []
+
+
+def test_cmd_stop_reports_failure_when_remote_access_cannot_stop(monkeypatch, capsys):
+    statuses = []
+
+    monkeypatch.setattr(runtime, "stop_service", lambda: True)
+    monkeypatch.setattr(runtime, "stop_ui", lambda: False)
+    monkeypatch.setattr(cli, "_stop_opencode_server", lambda: False)
+    monkeypatch.setattr(cli, "_write_status", lambda state, detail=None: statuses.append((state, detail)))
+
+    assert cli.cmd_stop() == 1
+    assert statuses == [("error", "failed to stop UI or remote access")]
+    assert "Failed to stop Web UI or remote access" in capsys.readouterr().out
+
+
 def test_cmd_restart_schedules_delayed_restart(monkeypatch, capsys):
     scheduled = {}
     stop_called = []

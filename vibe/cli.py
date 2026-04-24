@@ -1852,11 +1852,16 @@ def _stop_opencode_server():
 
 def cmd_stop():
     runtime.stop_service()
-    runtime.stop_ui()
+    ui_stopped = runtime.stop_ui()
 
     # Also terminate OpenCode server on full stop
     if _stop_opencode_server():
         print("OpenCode server stopped")
+
+    if not ui_stopped:
+        _write_status("error", "failed to stop UI or remote access")
+        print("Failed to stop Web UI or remote access. Check logs for details.")
+        return 1
 
     _write_status("stopped")
     return 0

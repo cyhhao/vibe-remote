@@ -170,3 +170,15 @@ def test_from_payload_rejects_non_boolean_cloudflare_safety_flags() -> None:
 
     with pytest.raises(ValueError, match="remote_access.cloudflare.enabled.*boolean"):
         V2Config.from_payload(payload)
+
+
+def test_from_payload_rejects_non_string_cloudflare_text_fields() -> None:
+    payload = api.config_to_payload(_base_config())
+    payload["remote_access"] = {
+        "cloudflare": {
+            "tunnel_token": 123,
+        }
+    }
+
+    with pytest.raises(ValueError, match="remote_access.cloudflare.tunnel_token.*string"):
+        V2Config.from_payload(payload)

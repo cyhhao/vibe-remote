@@ -60,6 +60,19 @@ def _remote_access_payload(payload: dict) -> dict:
 
 
 def _validate_cloudflare_remote_access_payload(payload: dict) -> None:
+    for field_name in (
+        "hostname",
+        "account_id",
+        "zone_id",
+        "tunnel_id",
+        "tunnel_token",
+        "cloudflared_path",
+        "access_app_id",
+        "access_app_aud",
+    ):
+        value = payload.get(field_name)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"Config 'remote_access.cloudflare.{field_name}' must be a string")
     for field_name in ("allowed_emails", "allowed_email_domains"):
         value = payload.get(field_name)
         if value is not None and not isinstance(value, list):

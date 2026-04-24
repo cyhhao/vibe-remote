@@ -387,7 +387,14 @@ def stop_ui():
     try:
         from vibe import remote_access
 
-        remote_access.stop_cloudflare()
+        result = remote_access.stop_cloudflare()
+        if isinstance(result, dict) and result.get("ok") is False:
+            logger.warning("Failed to stop remote access before UI stop: %s", result.get("error"))
+            return False
     except Exception:
         logger.warning("Failed to stop remote access before UI stop", exc_info=True)
-    return stop_process(paths.get_runtime_ui_pid_path())
+        return False
+    pid_path = paths.get_runtime_ui_pid_path()
+    if not pid_path.exists():
+        return True
+    return stop_process(pid_path)
