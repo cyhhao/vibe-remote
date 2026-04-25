@@ -340,13 +340,19 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
 @app.before_request
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
+    local_request = _is_local_request_host()
     if config is None:
-        if _is_local_request_host():
+        if local_request:
             return None
         return jsonify({"ok": False, "error": "remote_access_config_unavailable"}), 503
-    if _remote_access_public_url_invalid(config) and not _is_local_request_host():
+    if _remote_access_public_url_invalid(config) and not local_request:
         return jsonify({"ok": False, "error": "remote_access_public_url_invalid"}), 503
-    if not _is_remote_access_request(config) or _remote_auth_exempt_path():
+    remote_request = _is_remote_access_request(config)
+    if not remote_request:
+        if config.remote_access.vibe_cloud.enabled and not local_request:
+            return jsonify({"ok": False, "error": "remote_access_host_mismatch"}), 503
+        return None
+    if _remote_auth_exempt_path():
         return None
     from vibe import remote_access
 

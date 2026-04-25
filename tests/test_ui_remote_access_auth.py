@@ -71,6 +71,16 @@ def test_localhost_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
     assert response.status_code == 200
 
 
+def test_unmatched_non_local_host_fails_closed_when_remote_access_enabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get("/dashboard", base_url="https://old-alex.avibe.bot", follow_redirects=False)
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
 def test_remote_host_allows_valid_remote_session(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)
