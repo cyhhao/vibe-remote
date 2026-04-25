@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -33,6 +34,13 @@ CLOUDFLARED_BASE_URL = "https://github.com/cloudflare/cloudflared/releases/lates
 SESSION_COOKIE_NAME = "__Host-vibe_remote_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
 _CONNECTOR_LOCK = threading.RLock()
+
+
+class BackendRequestError(Exception):
+    def __init__(self, status: int, payload: dict[str, Any]):
+        super().__init__(payload.get("detail") or payload.get("error") or f"HTTP {status}")
+        self.status = status
+        self.payload = payload
 
 
 def _bin_dir() -> Path:
@@ -326,9 +334,31 @@ def reconcile(config: V2Config | None = None) -> dict[str, Any]:
 
 def _json_request(url: str, payload: dict[str, Any], timeout: float = 20.0) -> dict[str, Any]:
     data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Vibe Remote/dev",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        try:
+            parsed = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            parsed = {}
+        if not isinstance(parsed, dict):
+            parsed = {}
+        parsed.setdefault("error", "backend_http_error")
+        if body and "detail" not in parsed:
+            parsed["detail"] = body
+        raise BackendRequestError(exc.code, parsed) from exc
 
 
 def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -> dict[str, Any]:
@@ -341,6 +371,8 @@ def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -
             f"{backend_url}/api/v1/pairing/redeem",
             {"pairing_key": pairing_key, "device_name": device_name, "local_version": "dev"},
         )
+    except BackendRequestError as exc:
+        return {"ok": False, **exc.payload, "status": exc.status}
     except Exception as exc:
         return {"ok": False, "error": "pairing_request_failed", "detail": str(exc)}
     required = ("instance_id", "client_id", "issuer", "authorization_endpoint", "token_endpoint", "jwks_uri", "public_url", "redirect_uri", "tunnel_token", "instance_secret")

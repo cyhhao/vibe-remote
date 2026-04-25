@@ -138,6 +138,17 @@ def test_pair_returns_structured_error_when_backend_request_fails(monkeypatch) -
     assert "offline" in result["detail"]
 
 
+def test_pair_preserves_backend_error_response(monkeypatch) -> None:
+    def fake_request(*args, **kwargs):
+        raise remote_access.BackendRequestError(400, {"error": "invalid_pairing_key"})
+
+    monkeypatch.setattr(remote_access, "_json_request", fake_request)
+
+    result = remote_access.pair("vrp_test", "https://backend.test")
+
+    assert result == {"ok": False, "error": "invalid_pairing_key", "status": 400}
+
+
 def test_stop_ui_continues_when_remote_access_stop_fails(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     stop_calls = []
