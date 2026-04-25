@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { useApi } from '../context/ApiContext';
 import { useToast } from '../context/ToastContext';
 
+const VIBE_CLOUD_URL = 'https://avibe.bot';
+
 export const RemoteAccess: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
@@ -11,8 +13,8 @@ export const RemoteAccess: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [pairing, setPairing] = useState(false);
   const [status, setStatus] = useState<any>(null);
-  const [backendUrl, setBackendUrl] = useState('https://avibe.bot');
   const [pairingKey, setPairingKey] = useState('');
+  const [reconfiguring, setReconfiguring] = useState(false);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const describeError = (payload: any) => {
@@ -26,9 +28,8 @@ export const RemoteAccess: React.FC = () => {
   const refresh = async () => {
     setLoading(true);
     try {
-      const [config, remoteStatus] = await Promise.all([api.getConfig(), api.remoteAccessStatus()]);
+      const remoteStatus = await api.remoteAccessStatus();
       setStatus(remoteStatus);
-      setBackendUrl(config?.remote_access?.vibe_cloud?.backend_url || 'https://avibe.bot');
     } finally {
       setLoading(false);
     }
@@ -43,7 +44,7 @@ export const RemoteAccess: React.FC = () => {
     setActionMessage(null);
     try {
       const result = await api.pairVibeCloudRemoteAccess({
-        backend_url: backendUrl.trim(),
+        backend_url: VIBE_CLOUD_URL,
         pairing_key: pairingKey.trim(),
         device_name: 'Vibe Remote',
       });
@@ -55,6 +56,7 @@ export const RemoteAccess: React.FC = () => {
         showToast(message, 'error');
       } else {
         const message = t('remoteAccess.pairSuccess');
+        setReconfiguring(false);
         setActionMessage({ type: 'success', text: message });
         showToast(message, 'success');
       }
@@ -110,6 +112,7 @@ export const RemoteAccess: React.FC = () => {
   const publicUrl = status?.public_url;
   const paired = Boolean(status?.paired);
   const running = Boolean(status?.running);
+  const showPairingForm = !paired || reconfiguring;
   const connectorState = status?.pid_state === 'unknown'
     ? t('remoteAccess.stateNeedsAttention')
     : running
@@ -135,40 +138,77 @@ export const RemoteAccess: React.FC = () => {
           <div>
             <h2 className="text-xl font-semibold flex items-center gap-2">
               <KeyRound className="w-5 h-5 text-accent" />
-              {t('remoteAccess.connectTitle')}
+              {paired && !reconfiguring ? t('remoteAccess.configuredTitle') : t('remoteAccess.connectTitle')}
             </h2>
-            <p className="text-sm text-muted mt-1">{t('remoteAccess.connectDesc')}</p>
+            <p className="text-sm text-muted mt-1">
+              {paired && !reconfiguring ? t('remoteAccess.configuredDesc') : t('remoteAccess.connectDesc')}
+            </p>
           </div>
 
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">{t('remoteAccess.backendUrl')}</span>
-            <input
-              className="w-full rounded-lg border border-border bg-bg px-3 py-2"
-              value={backendUrl}
-              onChange={(event) => setBackendUrl(event.target.value)}
-              placeholder="https://avibe.bot"
-            />
-          </label>
+          <div className="rounded-xl border border-border bg-neutral-50 p-4 text-sm">
+            <div className="text-muted">{t('remoteAccess.vibeCloudService')}</div>
+            <a className="mt-1 inline-flex items-center gap-2 font-medium text-accent" href={VIBE_CLOUD_URL} target="_blank" rel="noreferrer">
+              {VIBE_CLOUD_URL}
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          </div>
 
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">{t('remoteAccess.pairingKey')}</span>
-            <input
-              className="w-full rounded-lg border border-border bg-bg px-3 py-2 font-mono"
-              value={pairingKey}
-              onChange={(event) => setPairingKey(event.target.value)}
-              placeholder="vrp_xxxxxxxxxxxxxxxxx"
-            />
-          </label>
+          {showPairingForm ? (
+            <>
+              <label className="block space-y-2">
+                <span className="text-sm font-medium">{t('remoteAccess.pairingKey')}</span>
+                <input
+                  className="w-full rounded-lg border border-border bg-bg px-3 py-2 font-mono"
+                  value={pairingKey}
+                  onChange={(event) => setPairingKey(event.target.value)}
+                  placeholder="vrp_xxxxxxxxxxxxxxxxx"
+                />
+                <span className="block text-xs text-muted">{t('remoteAccess.pairingKeyHelp')}</span>
+              </label>
 
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-white font-medium disabled:opacity-50"
-            disabled={pairing || !pairingKey.trim() || !backendUrl.trim()}
-            onClick={pair}
-          >
-            <Link2 className="w-4 h-4" />
-            {pairing ? t('remoteAccess.pairing') : t('remoteAccess.pair')}
-          </button>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-white font-medium disabled:opacity-50"
+                  disabled={pairing || !pairingKey.trim()}
+                  onClick={pair}
+                >
+                  <Link2 className="w-4 h-4" />
+                  {pairing ? t('remoteAccess.pairing') : t('remoteAccess.pair')}
+                </button>
+                {paired && (
+                  <button
+                    type="button"
+                    className="rounded-lg border border-border px-4 py-2"
+                    onClick={() => {
+                      setReconfiguring(false);
+                      setPairingKey('');
+                    }}
+                  >
+                    {t('common.cancel')}
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold">{t('remoteAccess.configuredBadge')}</div>
+                  <div className="mt-1">{t('remoteAccess.configuredHelp')}</div>
+                  {publicUrl && <div className="mt-2 truncate font-mono text-xs">{publicUrl}</div>}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="mt-4 rounded-lg border border-emerald-300 px-3 py-2 font-medium"
+                onClick={() => setReconfiguring(true)}
+              >
+                {t('remoteAccess.repair')}
+              </button>
+            </div>
+          )}
 
           <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-950">
             <div className="font-semibold">{t('remoteAccess.flowTitle')}</div>

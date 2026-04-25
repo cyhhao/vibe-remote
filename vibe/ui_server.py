@@ -18,7 +18,7 @@ from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 from flask import Flask, request, jsonify, send_file, Response
 
 from config import paths
-from config.v2_config import V2Config
+from config.v2_config import CONFIG_LOCK, V2Config
 from vibe.runtime import get_ui_dist_path, get_working_dir
 from vibe.sentry_integration import init_sentry
 
@@ -618,13 +618,14 @@ def config_post():
     from vibe import remote_access
 
     payload = request.json or {}
-    previous_config = _load_remote_access_config() if "remote_access" in payload else None
-    config = api.save_config(payload)
     remote_access_runtime = None
-    if _remote_access_settings_changed(previous_config, config, payload):
-        if _should_rotate_remote_session_secret(previous_config, config, payload):
-            remote_access.rotate_session_secret(config)
-        remote_access_runtime = remote_access.reconcile(config)
+    with CONFIG_LOCK:
+        previous_config = _load_remote_access_config() if "remote_access" in payload else None
+        config = api.save_config(payload)
+        if _remote_access_settings_changed(previous_config, config, payload):
+            if _should_rotate_remote_session_secret(previous_config, config, payload):
+                remote_access.rotate_session_secret(config)
+            remote_access_runtime = remote_access.reconcile(config)
     response_payload = api.config_to_payload(config)
     if remote_access_runtime is not None:
         response_payload["remote_access_runtime"] = remote_access_runtime
