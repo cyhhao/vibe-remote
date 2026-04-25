@@ -260,6 +260,7 @@ def test_start_refuses_duplicate_connector_when_process_command_is_unknown(monke
     pid = 123
     config = _config()
     config.remote_access.vibe_cloud.tunnel_token = "tunnel-token"
+    config.save()
     remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
     remote_access._pid_path().write_text(str(pid), encoding="utf-8")
     remote_access._state_path().write_text('{"pid": 123}', encoding="utf-8")
@@ -284,6 +285,7 @@ def test_start_returns_failure_when_remote_access_is_disabled(monkeypatch, tmp_p
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()
     config.remote_access.vibe_cloud.enabled = False
+    config.save()
 
     monkeypatch.setattr(remote_access, "stop", lambda config=None: {"ok": True, "stopped": False})
 
@@ -293,7 +295,7 @@ def test_start_returns_failure_when_remote_access_is_disabled(monkeypatch, tmp_p
     assert result["error"] == "remote_access_disabled"
 
 
-def test_start_loads_config_before_connector_lock(monkeypatch, tmp_path) -> None:
+def test_start_revalidates_config_after_connector_lock(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()
     config.remote_access.vibe_cloud.enabled = False
@@ -310,7 +312,29 @@ def test_start_loads_config_before_connector_lock(monkeypatch, tmp_path) -> None
 
     assert result["ok"] is False
     assert result["error"] == "remote_access_disabled"
-    assert load_lock_states == [False]
+    assert load_lock_states == [False, True]
+
+
+def test_start_uses_current_persisted_config_over_stale_argument(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    stale_config = _config()
+    stale_config.remote_access.vibe_cloud.tunnel_token = "stale-token"
+    persisted_config = _config()
+    persisted_config.remote_access.vibe_cloud.enabled = False
+    persisted_config.remote_access.vibe_cloud.tunnel_token = ""
+    persisted_config.save()
+
+    monkeypatch.setattr(remote_access, "stop", lambda config=None: {"ok": True, "stopped": False})
+    monkeypatch.setattr(
+        remote_access.runtime,
+        "spawn_background",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stale config should not start cloudflared")),
+    )
+
+    result = remote_access.start(stale_config)
+
+    assert result["ok"] is False
+    assert result["error"] == "remote_access_disabled"
 
 
 def test_stop_loads_config_before_connector_lock(monkeypatch, tmp_path) -> None:
@@ -346,6 +370,7 @@ def test_start_restarts_when_runtime_signature_changes(monkeypatch, tmp_path) ->
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()
     config.remote_access.vibe_cloud.tunnel_token = "new-token"
+    config.save()
     binary = "/usr/local/bin/cloudflared"
     old_pid = 111
     new_pid = 222

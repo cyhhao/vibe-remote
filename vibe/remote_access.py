@@ -288,6 +288,11 @@ def rotate_session_secret(config: V2Config) -> None:
 def start(config: V2Config | None = None) -> dict[str, Any]:
     config = config or V2Config.load()
     with _CONNECTOR_LOCK:
+        try:
+            config = V2Config.load()
+        except Exception as exc:
+            stop_result = stop(config)
+            return {**stop_result, "ok": False, "error": "remote_access_config_load_failed", "detail": str(exc)}
         cloud = config.remote_access.vibe_cloud
         if not cloud.enabled:
             stop_result = stop(config)
