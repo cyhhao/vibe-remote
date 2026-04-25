@@ -38,6 +38,23 @@ def test_session_cookie_roundtrip() -> None:
     assert remote_access.validate_session_cookie(config, cookie + "x") is False
 
 
+def test_session_cookie_rejects_empty_session_secret() -> None:
+    config = _config()
+    config.remote_access.vibe_cloud.session_secret = ""
+
+    assert remote_access.validate_session_cookie(config, "payload.signature") is False
+
+
+def test_make_session_cookie_requires_session_secret() -> None:
+    config = _config()
+    config.remote_access.vibe_cloud.session_secret = ""
+
+    import pytest
+
+    with pytest.raises(ValueError, match="session secret"):
+        remote_access.make_session_cookie(config, "alex@example.com", "user-1")
+
+
 def test_pair_redeems_key_and_starts_connector(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()

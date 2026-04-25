@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import mimetypes
@@ -193,7 +194,12 @@ def _load_remote_access_config() -> V2Config | None:
 
 def _is_local_request_host() -> bool:
     host = _normalized_host(request.host)
-    return host in {"localhost", "127.0.0.1", "::1"} or host.startswith("127.")
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _normalized_host(value: str | None) -> str:
@@ -346,6 +352,8 @@ def enforce_remote_access_cookie():
 
     if not config.remote_access.vibe_cloud.enabled:
         return jsonify({"ok": False, "error": "remote_access_disabled"}), 503
+    if not config.remote_access.vibe_cloud.session_secret:
+        return jsonify({"ok": False, "error": "remote_access_session_secret_missing"}), 503
     if remote_access.validate_session_cookie(config, request.cookies.get(remote_access.SESSION_COOKIE_NAME)):
         return None
     if request.method == "GET":

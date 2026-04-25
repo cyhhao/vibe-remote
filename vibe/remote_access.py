@@ -373,6 +373,8 @@ def _session_signature(secret: str, payload: str) -> str:
 
 def make_session_cookie(config: V2Config, email: str, subject: str) -> str:
     cloud = config.remote_access.vibe_cloud
+    if not cloud.session_secret:
+        raise ValueError("Remote access session secret is not configured")
     issued_at = int(time.time())
     payload = {
         "email": email,
@@ -390,6 +392,8 @@ def validate_session_cookie(config: V2Config, cookie_value: str | None) -> bool:
     if not cookie_value or "." not in cookie_value:
         return False
     cloud = config.remote_access.vibe_cloud
+    if not cloud.session_secret:
+        return False
     payload_text, signature = cookie_value.rsplit(".", 1)
     expected = _session_signature(cloud.session_secret, payload_text)
     if not hmac.compare_digest(signature, expected):
