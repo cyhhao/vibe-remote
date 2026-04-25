@@ -188,7 +188,7 @@ class UiConfig:
 @dataclass
 class VibeCloudRemoteAccessConfig:
     enabled: bool = False
-    backend_url: str = "https://vibe.io"
+    backend_url: str = "https://avibe.bot"
     public_url: str = ""
     instance_id: str = ""
     client_id: str = ""

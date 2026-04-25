@@ -11,7 +11,7 @@ export const RemoteAccess: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [pairing, setPairing] = useState(false);
   const [status, setStatus] = useState<any>(null);
-  const [backendUrl, setBackendUrl] = useState('https://vibe.io');
+  const [backendUrl, setBackendUrl] = useState('https://avibe.bot');
   const [pairingKey, setPairingKey] = useState('');
 
   const refresh = async () => {
@@ -19,7 +19,7 @@ export const RemoteAccess: React.FC = () => {
     try {
       const [config, remoteStatus] = await Promise.all([api.getConfig(), api.remoteAccessStatus()]);
       setStatus(remoteStatus);
-      setBackendUrl(config?.remote_access?.vibe_cloud?.backend_url || 'https://vibe.io');
+      setBackendUrl(config?.remote_access?.vibe_cloud?.backend_url || 'https://avibe.bot');
     } finally {
       setLoading(false);
     }
@@ -92,7 +92,7 @@ export const RemoteAccess: React.FC = () => {
               className="w-full rounded-lg border border-border bg-bg px-3 py-2"
               value={backendUrl}
               onChange={(event) => setBackendUrl(event.target.value)}
-              placeholder="https://vibe.io"
+              placeholder="https://avibe.bot"
             />
           </label>
 

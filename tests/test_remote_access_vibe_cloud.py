@@ -24,7 +24,7 @@ def _config() -> V2Config:
     cloud.enabled = True
     cloud.instance_id = "inst_123"
     cloud.client_id = "vr_client_123"
-    cloud.public_url = "https://alex.vibe.io"
+    cloud.public_url = "https://alex.avibe.bot"
     cloud.session_secret = "session-secret"
     return config
 
@@ -55,8 +55,8 @@ def test_pair_redeems_key_and_starts_connector(monkeypatch, tmp_path) -> None:
             "authorization_endpoint": "https://backend.test/oauth/authorize",
             "token_endpoint": "https://backend.test/oauth/token",
             "jwks_uri": "https://backend.test/oauth/jwks.json",
-            "public_url": "https://alex.vibe.io",
-            "redirect_uri": "https://alex.vibe.io/auth/callback",
+            "public_url": "https://alex.avibe.bot",
+            "redirect_uri": "https://alex.avibe.bot/auth/callback",
             "tunnel_token": "tunnel-token",
             "instance_secret": "instance-secret",
         }
@@ -92,8 +92,8 @@ def test_pair_reports_success_when_connector_start_fails(monkeypatch, tmp_path) 
             "authorization_endpoint": "https://backend.test/oauth/authorize",
             "token_endpoint": "https://backend.test/oauth/token",
             "jwks_uri": "https://backend.test/oauth/jwks.json",
-            "public_url": "https://alex.vibe.io",
-            "redirect_uri": "https://alex.vibe.io/auth/callback",
+            "public_url": "https://alex.avibe.bot",
+            "redirect_uri": "https://alex.avibe.bot/auth/callback",
             "tunnel_token": "tunnel-token",
             "instance_secret": "instance-secret",
         },
@@ -201,7 +201,7 @@ def test_start_restarts_when_runtime_signature_changes(monkeypatch, tmp_path) ->
                 "pid": old_pid,
                 "provider": "vibe_cloud",
                 "binary_path": binary,
-                "public_url": "https://alex.vibe.io",
+                "public_url": "https://alex.avibe.bot",
                 "tunnel_token_sha256": "old-token-hash",
             }
         ),

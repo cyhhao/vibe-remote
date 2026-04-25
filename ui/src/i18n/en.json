@@ -50,7 +50,7 @@
     "title": "Remote Access",
     "subtitle": "Expose this local admin UI at your Vibe Cloud hostname. Vibe Cloud handles OAuth; traffic goes directly through Cloudflare Tunnel to this machine.",
     "connectTitle": "Connect to Vibe Cloud",
-    "connectDesc": "Create an instance in vibe.io, copy the pairing key, then paste it here. Vibe Remote will save the OAuth metadata and start cloudflared.",
+    "connectDesc": "Create an instance in avibe.bot, copy the pairing key, then paste it here. Vibe Remote will save the OAuth metadata and start cloudflared.",
     "backendUrl": "Vibe Cloud URL",
     "pairingKey": "Pairing key",
     "pair": "Pair and start",

@@ -87,11 +87,11 @@ def test_config_payload_includes_platform_catalog_and_setup_state() -> None:
 def test_config_payload_includes_vibe_cloud_remote_access() -> None:
     config = _base_config()
     config.remote_access.vibe_cloud.enabled = True
-    config.remote_access.vibe_cloud.public_url = "https://alex.vibe.io"
+    config.remote_access.vibe_cloud.public_url = "https://alex.avibe.bot"
     config.remote_access.vibe_cloud.instance_id = "inst_123"
 
     payload = api.config_to_payload(config)
 
     assert payload["remote_access"]["provider"] == "vibe_cloud"
     assert payload["remote_access"]["vibe_cloud"]["enabled"] is True
-    assert payload["remote_access"]["vibe_cloud"]["public_url"] == "https://alex.vibe.io"
+    assert payload["remote_access"]["vibe_cloud"]["public_url"] == "https://alex.avibe.bot"

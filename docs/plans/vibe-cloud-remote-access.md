@@ -20,7 +20,7 @@ remote-access product.
 
 ## Goals
 
-- Let a user expose a local Vibe Remote admin UI at `https://<slug>.vibe.io`
+- Let a user expose a local Vibe Remote admin UI at `https://<slug>.avibe.bot`
   without manually configuring Cloudflare.
 - Keep Vibe Cloud out of the data path after OAuth authorization.
 - Require authentication for every remotely accessed Web UI request.
@@ -39,7 +39,7 @@ remote-access product.
 
 ```text
 Browser
-  -> https://<slug>.vibe.io
+  -> https://<slug>.avibe.bot
   -> Cloudflare edge
   -> Cloudflare Tunnel
   -> cloudflared on the user's machine
@@ -76,17 +76,17 @@ Vibe Remote local Web UI
 
 ### 1. Instance Creation
 
-1. The user signs in to `vibe.io`.
+1. The user signs in to `avibe.bot`.
 2. The user creates a Remote Access instance.
 3. Vibe Cloud allocates:
    - `instance_id`
    - `client_id`
-   - a public hostname such as `alex-dev.vibe.io`
+   - a public hostname such as `alex-dev.avibe.bot`
    - an internal tunnel hostname, if needed by the provisioning layer
    - a one-time pairing key
 4. Vibe Cloud provisions Cloudflare:
    - creates a remote-managed Tunnel
-   - creates a DNS route for `alex-dev.vibe.io`
+   - creates a DNS route for `alex-dev.avibe.bot`
    - stores the tunnel token encrypted at rest
 5. The user configures an allow-list for the instance:
    - individual emails
@@ -117,12 +117,12 @@ Content-Type: application/json
 {
   "instance_id": "inst_...",
   "client_id": "vr_client_...",
-  "issuer": "https://vibe.io",
-  "authorization_endpoint": "https://vibe.io/oauth/authorize",
-  "token_endpoint": "https://vibe.io/oauth/token",
-  "jwks_uri": "https://vibe.io/oauth/jwks.json",
-  "public_url": "https://alex-dev.vibe.io",
-  "redirect_uri": "https://alex-dev.vibe.io/auth/callback",
+  "issuer": "https://avibe.bot",
+  "authorization_endpoint": "https://avibe.bot/oauth/authorize",
+  "token_endpoint": "https://avibe.bot/oauth/token",
+  "jwks_uri": "https://avibe.bot/oauth/jwks.json",
+  "public_url": "https://alex-dev.avibe.bot",
+  "redirect_uri": "https://alex-dev.avibe.bot/auth/callback",
   "tunnel_token": "eyJh...",
   "instance_secret": "vrs_..."
 }
@@ -139,15 +139,15 @@ cloudflared tunnel --no-autoupdate run --token <tunnel_token>
 
 ### 3. Browser Login
 
-1. A browser opens `https://alex-dev.vibe.io`.
+1. A browser opens `https://alex-dev.avibe.bot`.
 2. Traffic goes directly through Cloudflare Tunnel to the local Web UI.
 3. The local Web UI checks for a valid remote-access session cookie.
 4. If no valid cookie exists, it redirects to Vibe Cloud OAuth:
 
 ```text
-https://vibe.io/oauth/authorize
+https://avibe.bot/oauth/authorize
   ?client_id=vr_client_...
-  &redirect_uri=https%3A%2F%2Falex-dev.vibe.io%2Fauth%2Fcallback
+  &redirect_uri=https%3A%2F%2Falex-dev.avibe.bot%2Fauth%2Fcallback
   &response_type=code
   &scope=openid%20email
   &state=<random>
@@ -160,25 +160,25 @@ https://vibe.io/oauth/authorize
 6. If allowed, Vibe Cloud redirects back:
 
 ```text
-https://alex-dev.vibe.io/auth/callback?code=<code>&state=<state>
+https://alex-dev.avibe.bot/auth/callback?code=<code>&state=<state>
 ```
 
 7. The local Web UI exchanges the code:
 
 ```http
-POST https://vibe.io/oauth/token
+POST https://avibe.bot/oauth/token
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=authorization_code
 &client_id=vr_client_...
 &code=<code>
-&redirect_uri=https%3A%2F%2Falex-dev.vibe.io%2Fauth%2Fcallback
+&redirect_uri=https%3A%2F%2Falex-dev.avibe.bot%2Fauth%2Fcallback
 &code_verifier=<pkce_verifier>
 ```
 
 8. Vibe Cloud returns an ID token and optional access token.
 9. The local Web UI validates the ID token:
-   - `iss == https://vibe.io`
+   - `iss == https://avibe.bot`
    - `aud == client_id`
    - `sub` is present
    - `email_verified == true`
@@ -201,7 +201,7 @@ Set-Cookie: __Host-vibe_remote_session=<opaque>; Path=/; Secure; HttpOnly; SameS
 - Vibe Cloud is trusted for identity, allow-list decisions, tunnel provisioning,
   and signing OIDC ID tokens.
 - Cloudflare is trusted for Tunnel connectivity and TLS termination for
-  `*.vibe.io`.
+  `*.avibe.bot`.
 - The local Vibe Remote instance is trusted to enforce admin UI sessions.
 - Browsers and arbitrary request headers are not trusted.
 
@@ -211,7 +211,7 @@ Vibe Cloud owns the OIDC signing private keys. It publishes public keys through
 JWKS:
 
 ```text
-GET https://vibe.io/oauth/jwks.json
+GET https://avibe.bot/oauth/jwks.json
 ```
 
 The local Vibe Remote instance must never store the Vibe Cloud OIDC private key.
@@ -240,7 +240,7 @@ When managed remote access is enabled:
   they are explicitly part of the auth callback or health path
 - state-changing API calls require CSRF protection
 - the cookie must be `Secure`, `HttpOnly`, host-only, and `SameSite=Lax`
-- the cookie must not use `Domain=.vibe.io`
+- the cookie must not use `Domain=.avibe.bot`
 - disabling remote access clears active remote sessions
 
 ### Revocation
@@ -343,9 +343,9 @@ audit_events
       "enabled": true,
       "instance_id": "inst_...",
       "client_id": "vr_client_...",
-      "issuer": "https://vibe.io",
-      "public_url": "https://alex-dev.vibe.io",
-      "redirect_uri": "https://alex-dev.vibe.io/auth/callback",
+      "issuer": "https://avibe.bot",
+      "public_url": "https://alex-dev.avibe.bot",
+      "redirect_uri": "https://alex-dev.avibe.bot/auth/callback",
       "tunnel_token": "<secret>",
       "instance_secret": "<secret>",
       "jwks_cache": {
@@ -381,7 +381,7 @@ Response:
 ```json
 {
   "instance_id": "inst_...",
-  "public_url": "https://alex-dev.vibe.io",
+  "public_url": "https://alex-dev.avibe.bot",
   "pairing_key": "vrp_...",
   "status": "pending"
 }
@@ -448,7 +448,7 @@ GET /oauth/jwks.json
 
 - Add Cloudflare API client.
 - Create remote-managed Tunnel.
-- Create DNS CNAME route for `<slug>.vibe.io`.
+- Create DNS CNAME route for `<slug>.avibe.bot`.
 - Store tunnel token encrypted at rest.
 - Add deletion, disable, and token rotation flows.
 
@@ -479,4 +479,4 @@ GET /oauth/jwks.json
   asymmetric device credentials?
 - Should Vibe Cloud host all OAuth UI, or delegate login UI to a managed IdP and
   keep only OIDC issuance and allow-list decisions?
-- How should we bill and rate-limit `*.vibe.io` remote instances?
+- How should we bill and rate-limit `*.avibe.bot` remote instances?

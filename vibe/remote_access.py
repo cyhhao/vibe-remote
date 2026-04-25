@@ -315,7 +315,7 @@ def _json_request(url: str, payload: dict[str, Any], timeout: float = 20.0) -> d
 
 def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -> dict[str, Any]:
     pairing_key = (pairing_key or "").strip()
-    backend_url = (backend_url or "https://vibe.io").strip().rstrip("/")
+    backend_url = (backend_url or "https://avibe.bot").strip().rstrip("/")
     if not pairing_key:
         return {"ok": False, "error": "missing_pairing_key"}
     try:

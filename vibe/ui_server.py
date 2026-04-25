@@ -621,7 +621,7 @@ def remote_access_vibe_cloud_pair():
     payload = request.json or {}
     result = remote_access.pair(
         payload.get("pairing_key", ""),
-        payload.get("backend_url", "https://vibe.io"),
+        payload.get("backend_url", "https://avibe.bot"),
         payload.get("device_name", "Vibe Remote"),
     )
     return jsonify(result), 200 if result.get("ok") else 400
