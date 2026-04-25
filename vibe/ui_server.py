@@ -226,7 +226,7 @@ def _remote_access_public_host(config: V2Config) -> str | None:
 
 def _remote_access_public_url_invalid(config: V2Config) -> bool:
     cloud = config.remote_access.vibe_cloud
-    return bool(cloud.enabled and cloud.public_url and _remote_access_public_host(config) is None)
+    return bool(cloud.enabled and not _remote_access_public_host(config))
 
 
 def _remote_access_snapshot(config: V2Config) -> dict[str, Any]:

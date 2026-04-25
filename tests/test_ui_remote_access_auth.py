@@ -118,6 +118,18 @@ def test_remote_host_fails_closed_when_public_url_is_invalid(monkeypatch, tmp_pa
     assert response.get_json()["error"] == "remote_access_public_url_invalid"
 
 
+def test_remote_host_fails_closed_when_public_url_is_empty(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    config.remote_access.vibe_cloud.public_url = ""
+    config.save()
+
+    response = app.test_client().get("/dashboard", base_url="https://alex.avibe.bot", follow_redirects=False)
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_public_url_invalid"
+
+
 def test_config_post_rotates_session_secret_when_remote_access_is_disabled(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)
