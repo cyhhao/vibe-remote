@@ -218,8 +218,18 @@ def _is_loopback_peer() -> bool:
     return bool(mapped and mapped.is_loopback)
 
 
+def _is_loopback_host(value: str | None) -> bool:
+    host = _normalized_host(value)
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _is_local_request() -> bool:
-    return _is_loopback_peer() and not _has_cloudflare_forwarded_metadata()
+    return _is_loopback_peer() and _is_loopback_host(request.host) and not _has_cloudflare_forwarded_metadata()
 
 
 def _normalized_host(value: str | None) -> str:
@@ -245,7 +255,7 @@ def _remote_access_public_host(config: V2Config) -> str | None:
     if not public_url:
         return ""
     parsed = urlparse(public_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
         return None
     return _normalized_host(parsed.hostname)
 

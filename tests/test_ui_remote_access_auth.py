@@ -100,6 +100,20 @@ def test_unmatched_non_local_host_fails_closed_when_remote_access_enabled(monkey
     assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
+def test_loopback_proxy_with_public_host_mismatch_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://old-alex.avibe.bot",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
 def test_remote_host_allows_valid_remote_session(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)
@@ -215,6 +229,23 @@ def test_remote_host_fails_closed_when_public_url_is_invalid(monkeypatch, tmp_pa
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)
     config.remote_access.vibe_cloud.public_url = "alex.avibe.bot"
+    config.save()
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_public_url_invalid"
+
+
+def test_remote_host_fails_closed_when_public_url_is_http(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    config.remote_access.vibe_cloud.public_url = "http://alex.avibe.bot"
     config.save()
 
     response = app.test_client().get(
