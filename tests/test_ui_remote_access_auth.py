@@ -33,11 +33,24 @@ def _save_config(tmp_path) -> V2Config:
     return config
 
 
+def _remote_peer() -> dict[str, str]:
+    return {"REMOTE_ADDR": "203.0.113.10"}
+
+
+def _cloudflare_headers() -> dict[str, str]:
+    return {"CF-Connecting-IP": "198.51.100.10", "CF-Ray": "test-ray"}
+
+
 def test_remote_host_redirects_to_vibe_cloud_login(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
 
-    response = app.test_client().get("/dashboard", base_url="https://alex.avibe.bot", follow_redirects=False)
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 302
     assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
@@ -76,7 +89,12 @@ def test_unmatched_non_local_host_fails_closed_when_remote_access_enabled(monkey
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
 
-    response = app.test_client().get("/dashboard", base_url="https://old-alex.avibe.bot", follow_redirects=False)
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://old-alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_host_mismatch"
@@ -99,7 +117,12 @@ def test_remote_host_fails_closed_when_config_load_fails(monkeypatch):
 
     monkeypatch.setattr(ui_server.V2Config, "load", fail_load)
 
-    response = app.test_client().get("/dashboard", base_url="https://alex.avibe.bot", follow_redirects=False)
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_config_unavailable"
@@ -111,10 +134,47 @@ def test_host_starting_with_127_but_not_ip_is_not_local_when_config_load_fails(m
 
     monkeypatch.setattr(ui_server.V2Config, "load", fail_load)
 
-    response = app.test_client().get("/dashboard", base_url="https://127.attacker.example", follow_redirects=False)
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://127.attacker.example",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_config_unavailable"
+
+
+def test_spoofed_loopback_host_is_not_local_when_peer_is_remote(monkeypatch):
+    def fail_load():
+        raise ValueError("corrupt config")
+
+    monkeypatch.setattr(ui_server.V2Config, "load", fail_load)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://127.0.0.1",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_config_unavailable"
+
+
+def test_cloudflare_forwarded_request_with_loopback_host_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://127.0.0.1",
+        headers=_cloudflare_headers(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
 def test_remote_host_fails_closed_when_disabled_but_hostname_still_matches(monkeypatch, tmp_path):
@@ -123,7 +183,12 @@ def test_remote_host_fails_closed_when_disabled_but_hostname_still_matches(monke
     config.remote_access.vibe_cloud.enabled = False
     config.save()
 
-    response = app.test_client().get("/dashboard", base_url="https://alex.avibe.bot", follow_redirects=False)
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_disabled"
@@ -135,7 +200,12 @@ def test_remote_host_fails_closed_when_public_url_is_invalid(monkeypatch, tmp_pa
     config.remote_access.vibe_cloud.public_url = "alex.avibe.bot"
     config.save()
 
-    response = app.test_client().get("/dashboard", base_url="https://alex.avibe.bot", follow_redirects=False)
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_public_url_invalid"
@@ -147,7 +217,12 @@ def test_remote_host_fails_closed_when_public_url_contains_userinfo(monkeypatch,
     config.remote_access.vibe_cloud.public_url = "https://user:pass@alex.avibe.bot"
     config.save()
 
-    response = app.test_client().get("/dashboard", base_url="https://alex.avibe.bot", follow_redirects=False)
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_public_url_invalid"
@@ -159,7 +234,12 @@ def test_remote_host_fails_closed_when_public_url_is_empty(monkeypatch, tmp_path
     config.remote_access.vibe_cloud.public_url = ""
     config.save()
 
-    response = app.test_client().get("/dashboard", base_url="https://alex.avibe.bot", follow_redirects=False)
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="https://alex.avibe.bot",
+        environ_base=_remote_peer(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_public_url_invalid"

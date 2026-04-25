@@ -192,14 +192,34 @@ def _load_remote_access_config() -> V2Config | None:
         return None
 
 
-def _is_local_request_host() -> bool:
-    host = _normalized_host(request.host)
-    if host == "localhost":
+def _has_cloudflare_forwarded_metadata() -> bool:
+    return any(
+        request.headers.get(header)
+        for header in (
+            "CF-Connecting-IP",
+            "CF-Ray",
+            "CF-Visitor",
+            "CF-IPCountry",
+        )
+    )
+
+
+def _is_loopback_peer() -> bool:
+    remote_addr = (request.remote_addr or "").strip()
+    if remote_addr == "localhost":
         return True
     try:
-        return ipaddress.ip_address(host).is_loopback
+        address = ipaddress.ip_address(remote_addr)
     except ValueError:
         return False
+    if address.is_loopback:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    return bool(mapped and mapped.is_loopback)
+
+
+def _is_local_request() -> bool:
+    return _is_loopback_peer() and not _has_cloudflare_forwarded_metadata()
 
 
 def _normalized_host(value: str | None) -> str:
@@ -340,7 +360,7 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
 @app.before_request
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
-    local_request = _is_local_request_host()
+    local_request = _is_local_request()
     if config is None:
         if local_request:
             return None
