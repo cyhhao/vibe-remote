@@ -183,7 +183,7 @@ def test_config_post_rotates_session_secret_when_remote_access_is_disabled(monke
     old_secret = config.remote_access.vibe_cloud.session_secret
     client = app.test_client()
 
-    monkeypatch.setattr(remote_access, "reconcile", lambda next_config: {"ok": True, "stopped": True})
+    monkeypatch.setattr(remote_access, "reconcile", lambda: {"ok": True, "stopped": True})
 
     response = client.post(
         "/config",
@@ -205,7 +205,7 @@ def test_config_post_skips_reconcile_when_remote_access_is_unchanged(monkeypatch
     client = app.test_client()
     reconcile_calls = []
 
-    monkeypatch.setattr(remote_access, "reconcile", lambda next_config: reconcile_calls.append(next_config) or {"ok": True})
+    monkeypatch.setattr(remote_access, "reconcile", lambda: reconcile_calls.append(True) or {"ok": True})
 
     response = client.post(
         "/config",
@@ -224,7 +224,7 @@ def test_config_post_returns_saved_config_when_remote_reconcile_fails(monkeypatc
     old_secret = config.remote_access.vibe_cloud.session_secret
     client = app.test_client()
 
-    monkeypatch.setattr(remote_access, "reconcile", lambda next_config: {"ok": False, "error": "cloudflared_stop_failed"})
+    monkeypatch.setattr(remote_access, "reconcile", lambda: {"ok": False, "error": "cloudflared_stop_failed"})
 
     response = client.post(
         "/config",
@@ -248,7 +248,7 @@ def test_config_post_reconciles_after_releasing_config_lock(monkeypatch, tmp_pat
     client = app.test_client()
     lock_states = []
 
-    def reconcile(next_config):
+    def reconcile():
         lock_states.append(CONFIG_LOCK._is_owned())
         return {"ok": True, "stopped": True}
 
@@ -263,6 +263,29 @@ def test_config_post_reconciles_after_releasing_config_lock(monkeypatch, tmp_pat
 
     assert response.status_code == 200
     assert lock_states == [False]
+
+
+def test_config_post_reconciles_from_fresh_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    client = app.test_client()
+    reconcile_args = []
+
+    def reconcile(*args):
+        reconcile_args.append(args)
+        return {"ok": True, "stopped": True}
+
+    monkeypatch.setattr(remote_access, "reconcile", reconcile)
+
+    response = client.post(
+        "/config",
+        json={"remote_access": {"vibe_cloud": {"enabled": False}}},
+        headers=csrf_headers(client, "http://127.0.0.1:5123"),
+        base_url="http://127.0.0.1:5123",
+    )
+
+    assert response.status_code == 200
+    assert reconcile_args == [()]
 
 
 def test_remote_callback_rejects_nonce_mismatch(monkeypatch, tmp_path):

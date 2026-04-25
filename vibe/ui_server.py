@@ -634,7 +634,7 @@ def config_post():
                 remote_access.rotate_session_secret(config)
             should_reconcile_remote_access = True
     if should_reconcile_remote_access:
-        remote_access_runtime = remote_access.reconcile(config)
+        remote_access_runtime = remote_access.reconcile()
     response_payload = api.config_to_payload(config)
     if remote_access_runtime is not None:
         response_payload["remote_access_runtime"] = remote_access_runtime

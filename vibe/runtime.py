@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import signal
+import shlex
 import subprocess
 import sys
 import threading
@@ -207,6 +208,11 @@ def _get_process_command_windows(pid: int) -> str | None:
     return None
 
 
+def _decode_proc_cmdline(raw: bytes) -> str | None:
+    argv = [part.decode("utf-8", "replace") for part in raw.split(b"\x00") if part]
+    return shlex.join(argv) if argv else None
+
+
 def get_process_command(pid: int) -> str | None:
     if not isinstance(pid, int) or pid <= 0:
         return None
@@ -216,9 +222,9 @@ def get_process_command(pid: int) -> str | None:
 
     proc_cmdline = Path(f"/proc/{pid}/cmdline")
     try:
-        command = proc_cmdline.read_bytes().replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+        command = _decode_proc_cmdline(proc_cmdline.read_bytes())
     except Exception:
-        command = ""
+        command = None
     if command:
         return command
 
