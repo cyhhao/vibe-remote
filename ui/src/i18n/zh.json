@@ -42,7 +42,26 @@
     "dashboard": "仪表盘",
     "channels": "群组",
     "users": "用户",
+    "remoteAccess": "远程访问",
     "doctor": "诊断"
+  },
+  "remoteAccess": {
+    "badge": "Vibe Cloud Provider",
+    "title": "远程访问",
+    "subtitle": "把本地管理后台发布到 Vibe Cloud 分配的访问地址。Vibe Cloud 只负责 OAuth 授权，业务流量通过 Cloudflare Tunnel 直达本机。",
+    "connectTitle": "连接 Vibe Cloud",
+    "connectDesc": "在 vibe.io 创建实例后复制 Pairing Key，粘贴到这里。Vibe Remote 会保存 OAuth 元数据并启动 cloudflared。",
+    "backendUrl": "Vibe Cloud 地址",
+    "pairingKey": "Pairing Key",
+    "pair": "配对并启动",
+    "pairing": "配对中...",
+    "pairSuccess": "远程访问已配对",
+    "startSuccess": "远程访问已启动",
+    "stopSuccess": "远程访问已停止",
+    "statusTitle": "运行状态",
+    "statusDesc": "查看连接器和公网访问地址状态。",
+    "paired": "配对状态",
+    "connector": "连接器"
   },
   "appShell": {
     "title": "Vibe Remote"

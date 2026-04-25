@@ -43,6 +43,10 @@ export type ApiContextType = {
   getVersion: () => Promise<VersionInfo>;
   doUpgrade: () => Promise<UpgradeResult>;
   browseDirectory: (path: string, showHidden?: boolean) => Promise<{ ok: boolean; path?: string; parent?: string | null; dirs?: { name: string; path: string }[]; error?: string }>;
+  remoteAccessStatus: () => Promise<any>;
+  pairVibeCloudRemoteAccess: (payload: { backend_url: string; pairing_key: string; device_name?: string }) => Promise<any>;
+  startRemoteAccess: () => Promise<any>;
+  stopRemoteAccess: () => Promise<any>;
 };
 
 export type LogEntry = {
@@ -183,6 +187,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getVersion: () => getJson('/version'),
     doUpgrade: () => postJson('/upgrade', {}),
     browseDirectory: (path, showHidden) => postJson('/browse', { path, show_hidden: showHidden || false }),
+    remoteAccessStatus: () => getJson('/remote-access/status'),
+    pairVibeCloudRemoteAccess: (payload) => postJson('/remote-access/vibe-cloud/pair', payload),
+    startRemoteAccess: () => postJson('/remote-access/start', {}),
+    stopRemoteAccess: () => postJson('/remote-access/stop', {}),
   };
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;

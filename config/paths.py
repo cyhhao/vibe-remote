@@ -37,6 +37,10 @@ def get_runtime_ui_pid_path() -> Path:
     return get_runtime_dir() / "vibe-ui.pid"
 
 
+def get_runtime_remote_access_pid_path() -> Path:
+    return get_runtime_dir() / "remote-access-cloudflared.pid"
+
+
 def get_runtime_status_path() -> Path:
     return get_runtime_dir() / "status.json"
 

@@ -363,12 +363,19 @@ def start_service():
 
 def start_ui(host, port):
     command = "from vibe.ui_server import run_ui_server; run_ui_server('{}', {})".format(host, port)
-    return spawn_background(
+    pid = spawn_background(
         [sys.executable, "-c", command],
         paths.get_runtime_ui_pid_path(),
         "ui_stdout.log",
         "ui_stderr.log",
     )
+    try:
+        from vibe import remote_access
+
+        remote_access.reconcile()
+    except Exception:
+        logger.warning("Failed to reconcile remote access after UI start", exc_info=True)
+    return pid
 
 
 def stop_service():
@@ -377,4 +384,14 @@ def stop_service():
 
 
 def stop_ui():
+    try:
+        from vibe import remote_access
+
+        result = remote_access.stop()
+        if isinstance(result, dict) and result.get("ok") is False:
+            logger.warning("Failed to stop remote access before UI stop: %s", result.get("error"))
+            return False
+    except Exception:
+        logger.warning("Failed to stop remote access before UI stop", exc_info=True)
+        return False
     return stop_process(paths.get_runtime_ui_pid_path())

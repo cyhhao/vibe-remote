@@ -340,6 +340,10 @@ def config_to_payload(config: V2Config) -> dict:
         },
         "gateway": config.gateway.__dict__ if config.gateway else None,
         "ui": config.ui.__dict__,
+        "remote_access": {
+            "provider": config.remote_access.provider,
+            "vibe_cloud": config.remote_access.vibe_cloud.__dict__,
+        },
         "update": config.update.__dict__,
         "ack_mode": config.ack_mode,
         "language": config.language,
