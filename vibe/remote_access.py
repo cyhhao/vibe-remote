@@ -17,13 +17,12 @@ import tarfile
 import tempfile
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 import jwt
+import requests
 from jwt import PyJWKClient
 
 from config import paths
@@ -127,7 +126,12 @@ def install_cloudflared() -> dict[str, Any]:
         target = _managed_cloudflared_path()
         with tempfile.TemporaryDirectory() as tmp:
             download_path = Path(tmp) / asset
-            urllib.request.urlretrieve(url, download_path)
+            with requests.get(url, stream=True, timeout=60) as response:
+                response.raise_for_status()
+                with download_path.open("wb") as output:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            output.write(chunk)
             if asset.endswith(".tgz"):
                 with tarfile.open(download_path, "r:gz") as archive:
                     _safe_extract_cloudflared(archive, target)
@@ -333,32 +337,33 @@ def reconcile(config: V2Config | None = None) -> dict[str, Any]:
 
 
 def _json_request(url: str, payload: dict[str, Any], timeout: float = 20.0) -> dict[str, Any]:
-    data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=data,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "Vibe Remote/dev",
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", "replace")
+        response = requests.post(
+            url,
+            json=payload,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "Vibe Remote/dev",
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.HTTPError as exc:
+        response = exc.response
         try:
-            parsed = json.loads(body) if body else {}
-        except json.JSONDecodeError:
+            parsed = response.json() if response is not None else {}
+        except ValueError:
             parsed = {}
         if not isinstance(parsed, dict):
             parsed = {}
         parsed.setdefault("error", "backend_http_error")
-        if body and "detail" not in parsed:
-            parsed["detail"] = body
-        raise BackendRequestError(exc.code, parsed) from exc
+        if response is not None and response.text and "detail" not in parsed:
+            parsed["detail"] = response.text
+        status = response.status_code if response is not None else 0
+        raise BackendRequestError(status, parsed) from exc
+    except requests.RequestException as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -> dict[str, Any]:
@@ -379,22 +384,28 @@ def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -
     missing = [field for field in required if not result.get(field)]
     if missing:
         return {"ok": False, "error": "invalid_pairing_response", "missing": missing}
-    config = api.load_config()
-    cloud = config.remote_access.vibe_cloud
-    cloud.enabled = True
-    cloud.backend_url = backend_url
-    cloud.instance_id = result["instance_id"]
-    cloud.client_id = result["client_id"]
-    cloud.issuer = result["issuer"]
-    cloud.authorization_endpoint = result["authorization_endpoint"]
-    cloud.token_endpoint = result["token_endpoint"]
-    cloud.jwks_uri = result["jwks_uri"]
-    cloud.public_url = result["public_url"]
-    cloud.redirect_uri = result["redirect_uri"]
-    cloud.tunnel_token = result["tunnel_token"]
-    cloud.instance_secret = result["instance_secret"]
-    cloud.session_secret = cloud.session_secret or secrets.token_urlsafe(32)
-    config.save()
+    config = api.save_config(
+        {
+            "remote_access": {
+                "provider": "vibe_cloud",
+                "vibe_cloud": {
+                    "enabled": True,
+                    "backend_url": backend_url,
+                    "instance_id": result["instance_id"],
+                    "client_id": result["client_id"],
+                    "issuer": result["issuer"],
+                    "authorization_endpoint": result["authorization_endpoint"],
+                    "token_endpoint": result["token_endpoint"],
+                    "jwks_uri": result["jwks_uri"],
+                    "public_url": result["public_url"],
+                    "redirect_uri": result["redirect_uri"],
+                    "tunnel_token": result["tunnel_token"],
+                    "instance_secret": result["instance_secret"],
+                    "session_secret": secrets.token_urlsafe(32),
+                },
+            }
+        }
+    )
     start_result = start(config)
     return {**status(config), "ok": True, "pairing": {"ok": True}, "start": start_result}
 
@@ -456,23 +467,20 @@ def authorization_url(config: V2Config, state: str, nonce: str, code_challenge: 
 
 def exchange_oauth_code(config: V2Config, code: str, code_verifier: str) -> dict[str, Any]:
     cloud = config.remote_access.vibe_cloud
-    data = urllib.parse.urlencode(
-        {
+    response = requests.post(
+        cloud.token_endpoint,
+        data={
             "grant_type": "authorization_code",
             "client_id": cloud.client_id,
             "redirect_uri": cloud.redirect_uri,
             "code": code,
             "code_verifier": code_verifier,
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        cloud.token_endpoint,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
+        },
+        headers={"Accept": "application/json", "User-Agent": "Vibe Remote/dev"},
+        timeout=20,
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        token_payload = json.loads(response.read().decode("utf-8"))
+    response.raise_for_status()
+    token_payload = response.json()
     id_token = token_payload.get("id_token")
     if not id_token:
         raise ValueError("missing_id_token")

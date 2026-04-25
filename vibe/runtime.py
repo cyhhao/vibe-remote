@@ -214,6 +214,14 @@ def get_process_command(pid: int) -> str | None:
     if os.name == "nt":
         return _get_process_command_windows(pid)
 
+    proc_cmdline = Path(f"/proc/{pid}/cmdline")
+    try:
+        command = proc_cmdline.read_bytes().replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+    except Exception:
+        command = ""
+    if command:
+        return command
+
     try:
         result = subprocess.run(
             ["ps", "-p", str(pid), "-o", "command="],

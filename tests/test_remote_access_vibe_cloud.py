@@ -93,6 +93,41 @@ def test_pair_redeems_key_and_starts_connector(monkeypatch, tmp_path) -> None:
     assert saved_payload["remote_access"]["vibe_cloud"]["session_secret"]
 
 
+def test_pair_persists_with_locked_incremental_config_save(monkeypatch) -> None:
+    config = _config()
+    save_payloads = []
+
+    monkeypatch.setattr(
+        remote_access,
+        "_json_request",
+        lambda *args, **kwargs: {
+            "instance_id": "inst_123",
+            "client_id": "vr_client_123",
+            "issuer": "https://backend.test",
+            "authorization_endpoint": "https://backend.test/oauth/authorize",
+            "token_endpoint": "https://backend.test/oauth/token",
+            "jwks_uri": "https://backend.test/oauth/jwks.json",
+            "public_url": "https://alex.avibe.bot",
+            "redirect_uri": "https://alex.avibe.bot/auth/callback",
+            "tunnel_token": "tunnel-token",
+            "instance_secret": "instance-secret",
+        },
+    )
+    monkeypatch.setattr(remote_access.api, "save_config", lambda payload: save_payloads.append(payload) or config)
+    monkeypatch.setattr(remote_access, "start", lambda next_config: {"ok": True, "running": True})
+    monkeypatch.setattr(remote_access, "status", lambda next_config=None: {"ok": True, "running": True, "paired": True})
+
+    result = remote_access.pair("vrp_test", "https://backend.test")
+
+    assert result["ok"] is True
+    assert save_payloads
+    assert set(save_payloads[0]) == {"remote_access"}
+    cloud_payload = save_payloads[0]["remote_access"]["vibe_cloud"]
+    assert cloud_payload["enabled"] is True
+    assert cloud_payload["tunnel_token"] == "tunnel-token"
+    assert cloud_payload["session_secret"]
+
+
 def test_pair_reports_success_when_connector_start_fails(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()

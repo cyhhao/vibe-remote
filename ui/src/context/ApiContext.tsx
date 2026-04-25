@@ -1,4 +1,5 @@
 import React, { createContext, useContext } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useToast } from './ToastContext';
 import { apiFetch } from '../lib/apiFetch';
 
@@ -99,6 +100,7 @@ export const useApi = () => {
 
 export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { showToast } = useToast();
+  const { t } = useTranslation();
 
   const handleApiError = async (res: Response, path: string) => {
     let errorMessage = `Request failed: ${path} (${res.status})`;
@@ -106,7 +108,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const data = await res.json();
       if (data.error) {
-        errorMessage = data.error;
+        errorMessage = t(`errors.${data.error}`, { defaultValue: data.error });
       }
     } catch {
       // Response is not JSON, use status text

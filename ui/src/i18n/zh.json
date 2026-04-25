@@ -61,7 +61,29 @@
     "statusTitle": "运行状态",
     "statusDesc": "查看连接器和公网访问地址状态。",
     "paired": "配对状态",
-    "connector": "连接器"
+    "connector": "连接器",
+    "flowTitle": "使用流程",
+    "flowStep1": "先在 avibe.bot 后台创建一个远程访问实例。",
+    "flowStep2": "复制一次性的 Pairing Key，粘贴到这里完成绑定。",
+    "flowStep3": "绑定成功后，本机连接器会自动启动，并生成可访问地址。",
+    "actionNeeded": "需要处理",
+    "ready": "已就绪",
+    "stateNeedsAttention": "需要检查"
+  },
+  "errors": {
+    "remote_access_unknown": "操作没有完成。请刷新状态后再试一次；如果仍然失败，请查看远程访问运行日志。",
+    "invalid_pairing_key": "Pairing Key 无效或已过期。请回到 avibe.bot 重新生成一个新的 Pairing Key。",
+    "missing_pairing_key": "请先粘贴 Pairing Key。",
+    "pairing_request_failed": "无法连接到 avibe.bot。请检查网络连接，或确认 Vibe Cloud 地址填写正确。",
+    "backend_http_error": "avibe.bot 暂时拒绝了这次请求。请稍后重试，或重新生成 Pairing Key。",
+    "invalid_pairing_response": "avibe.bot 返回的信息不完整。请刷新页面后重新生成 Pairing Key 再试。",
+    "remote_access_disabled": "远程访问还没有启用。请先完成配对。",
+    "missing_tunnel_token": "配对信息不完整，缺少 Tunnel 凭证。请重新配对。",
+    "cloudflared_install_failed": "连接器安装失败。请检查当前机器的网络连接和写入权限后重试。",
+    "cloudflared_spawn_failed": "连接器启动失败。请检查 cloudflared 是否可执行，或查看运行日志。",
+    "cloudflared_exited": "连接器启动后立即退出。通常是 Tunnel 凭证无效或 Cloudflare 配置未生效，请重新配对后再试。",
+    "cloudflared_stop_failed": "连接器暂时无法停止。请稍后重试，或在系统进程里手动结束 cloudflared。",
+    "cloudflared_process_unknown": "检测到一个无法确认归属的连接器进程。为避免误杀其它进程，Vibe Remote 没有自动处理。请手动检查 cloudflared 进程后再启动。"
   },
   "appShell": {
     "title": "Vibe Remote"

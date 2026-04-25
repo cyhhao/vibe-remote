@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ExternalLink, KeyRound, Link2, Power, RefreshCcw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ExternalLink, KeyRound, Link2, Power, RefreshCcw, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../context/ApiContext';
 import { useToast } from '../context/ToastContext';
@@ -13,6 +13,15 @@ export const RemoteAccess: React.FC = () => {
   const [status, setStatus] = useState<any>(null);
   const [backendUrl, setBackendUrl] = useState('https://avibe.bot');
   const [pairingKey, setPairingKey] = useState('');
+  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const describeError = (payload: any) => {
+    const code = typeof payload?.error === 'string' ? payload.error : '';
+    if (!code) {
+      return t('errors.remote_access_unknown');
+    }
+    return t(`errors.${code}`, { defaultValue: t('errors.remote_access_unknown') });
+  };
 
   const refresh = async () => {
     setLoading(true);
@@ -31,6 +40,7 @@ export const RemoteAccess: React.FC = () => {
 
   const pair = async () => {
     setPairing(true);
+    setActionMessage(null);
     try {
       const result = await api.pairVibeCloudRemoteAccess({
         backend_url: backendUrl.trim(),
@@ -39,28 +49,72 @@ export const RemoteAccess: React.FC = () => {
       });
       setStatus(result);
       setPairingKey('');
-      showToast(t('remoteAccess.pairSuccess'), 'success');
+      if (result?.start?.ok === false) {
+        const message = describeError(result.start);
+        setActionMessage({ type: 'error', text: message });
+        showToast(message, 'error');
+      } else {
+        const message = t('remoteAccess.pairSuccess');
+        setActionMessage({ type: 'success', text: message });
+        showToast(message, 'success');
+      }
       await refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('errors.remote_access_unknown');
+      setActionMessage({ type: 'error', text: message });
     } finally {
       setPairing(false);
     }
   };
 
   const stop = async () => {
-    const result = await api.stopRemoteAccess();
-    setStatus(result);
-    showToast(t('remoteAccess.stopSuccess'), 'success');
+    setActionMessage(null);
+    try {
+      const result = await api.stopRemoteAccess();
+      setStatus(result);
+      if (result?.ok === false) {
+        const message = describeError(result);
+        setActionMessage({ type: 'error', text: message });
+        showToast(message, 'error');
+        return;
+      }
+      const message = t('remoteAccess.stopSuccess');
+      setActionMessage({ type: 'success', text: message });
+      showToast(message, 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('errors.remote_access_unknown');
+      setActionMessage({ type: 'error', text: message });
+    }
   };
 
   const start = async () => {
-    const result = await api.startRemoteAccess();
-    setStatus(result);
-    showToast(t('remoteAccess.startSuccess'), 'success');
+    setActionMessage(null);
+    try {
+      const result = await api.startRemoteAccess();
+      setStatus(result);
+      if (result?.ok === false) {
+        const message = describeError(result);
+        setActionMessage({ type: 'error', text: message });
+        showToast(message, 'error');
+        return;
+      }
+      const message = t('remoteAccess.startSuccess');
+      setActionMessage({ type: 'success', text: message });
+      showToast(message, 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('errors.remote_access_unknown');
+      setActionMessage({ type: 'error', text: message });
+    }
   };
 
   const publicUrl = status?.public_url;
   const paired = Boolean(status?.paired);
   const running = Boolean(status?.running);
+  const connectorState = status?.pid_state === 'unknown'
+    ? t('remoteAccess.stateNeedsAttention')
+    : running
+      ? t('common.running')
+      : t('common.stopped');
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -115,6 +169,15 @@ export const RemoteAccess: React.FC = () => {
             <Link2 className="w-4 h-4" />
             {pairing ? t('remoteAccess.pairing') : t('remoteAccess.pair')}
           </button>
+
+          <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-950">
+            <div className="font-semibold">{t('remoteAccess.flowTitle')}</div>
+            <ol className="mt-2 list-decimal space-y-1 pl-5">
+              <li>{t('remoteAccess.flowStep1')}</li>
+              <li>{t('remoteAccess.flowStep2')}</li>
+              <li>{t('remoteAccess.flowStep3')}</li>
+            </ol>
+          </div>
         </section>
 
         <section className="rounded-2xl border border-border bg-panel p-6 space-y-5">
@@ -135,9 +198,27 @@ export const RemoteAccess: React.FC = () => {
             </div>
             <div className="rounded-xl bg-neutral-50 p-4 border border-border">
               <div className="text-muted">{t('remoteAccess.connector')}</div>
-              <div className="font-semibold mt-1">{running ? t('common.running') : t('common.stopped')}</div>
+              <div className="font-semibold mt-1">{connectorState}</div>
             </div>
           </div>
+
+          {actionMessage && (
+            <div className={`rounded-xl border p-4 text-sm ${
+              actionMessage.type === 'error'
+                ? 'border-amber-200 bg-amber-50 text-amber-950'
+                : 'border-emerald-200 bg-emerald-50 text-emerald-950'
+            }`}>
+              <div className="flex items-start gap-3">
+                {actionMessage.type === 'error' ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />}
+                <div>
+                  <div className="font-semibold">
+                    {actionMessage.type === 'error' ? t('remoteAccess.actionNeeded') : t('remoteAccess.ready')}
+                  </div>
+                  <div className="mt-1">{actionMessage.text}</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {publicUrl && (
             <a className="flex items-center justify-between rounded-xl border border-border p-4 hover:bg-neutral-50" href={publicUrl} target="_blank" rel="noreferrer">
