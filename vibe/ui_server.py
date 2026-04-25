@@ -225,9 +225,9 @@ def _remote_access_public_host(config: V2Config) -> str | None:
     if not public_url:
         return ""
     parsed = urlparse(public_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
         return None
-    return _normalized_host(parsed.netloc)
+    return _normalized_host(parsed.hostname)
 
 
 def _remote_access_public_url_invalid(config: V2Config) -> bool:
