@@ -397,6 +397,38 @@ def test_remote_callback_rejects_nonce_mismatch(monkeypatch, tmp_path):
     assert response.get_json()["error"] == "invalid_oauth_nonce"
 
 
+def test_remote_callback_rejects_when_remote_access_is_disabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    client = app.test_client()
+    oauth_cookie = ui_server._make_oauth_cookie(
+        config.remote_access.vibe_cloud.session_secret,
+        {
+            "state": "state-1",
+            "nonce": "nonce-1",
+            "code_verifier": "verifier-1",
+            "next": "/dashboard",
+            "exp": int(ui_server.datetime.now().timestamp()) + 300,
+        },
+    )
+    config.remote_access.vibe_cloud.enabled = False
+    config.save()
+    exchange_calls = []
+    client.set_cookie(ui_server.REMOTE_OAUTH_COOKIE_NAME, oauth_cookie, domain="alex.avibe.bot")
+
+    monkeypatch.setattr(
+        remote_access,
+        "exchange_oauth_code",
+        lambda *args, **kwargs: exchange_calls.append(args) or {"claims": {"nonce": "nonce-1"}},
+    )
+
+    response = client.get("/auth/callback?code=test-code&state=state-1", base_url="https://alex.avibe.bot")
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "remote_access_disabled"
+    assert exchange_calls == []
+
+
 def test_remote_callback_sanitizes_protocol_relative_next(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)

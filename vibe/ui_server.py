@@ -705,6 +705,8 @@ def remote_access_auth_callback():
     if config is None or not _is_remote_access_request(config):
         return jsonify({"error": "remote_access_not_enabled"}), 400
     cloud = config.remote_access.vibe_cloud
+    if not cloud.enabled:
+        return jsonify({"error": "remote_access_disabled"}), 400
     oauth_state = _read_oauth_cookie(cloud.session_secret, request.cookies.get(REMOTE_OAUTH_COOKIE_NAME))
     if not oauth_state or oauth_state.get("state") != request.args.get("state"):
         return jsonify({"error": "invalid_oauth_state"}), 400

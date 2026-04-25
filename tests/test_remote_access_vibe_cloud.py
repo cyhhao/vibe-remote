@@ -315,6 +315,22 @@ def test_start_revalidates_config_after_connector_lock(monkeypatch, tmp_path) ->
     assert load_lock_states == [False, True]
 
 
+def test_start_returns_structured_error_when_initial_config_load_fails(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    def fail_load():
+        raise ValueError("corrupt config")
+
+    monkeypatch.setattr(remote_access.V2Config, "load", fail_load)
+
+    result = remote_access.start()
+
+    assert result["ok"] is False
+    assert result["error"] == "remote_access_config_load_failed"
+    assert result["started"] is False
+    assert "corrupt config" in result["detail"]
+
+
 def test_start_uses_current_persisted_config_over_stale_argument(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     stale_config = _config()
