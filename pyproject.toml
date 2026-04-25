@@ -42,6 +42,7 @@ dependencies = [
     "sentry-sdk>=2.0.0",
     "python-socks[asyncio]>=2.0.0",
     "aiohttp-socks>=0.8.0",
+    "httpx[socks]>=0.27",
 ]
 
 [project.urls]
