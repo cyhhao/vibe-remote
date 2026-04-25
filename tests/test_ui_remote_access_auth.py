@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
+from tests.ui_server_test_helpers import csrf_headers
 from vibe import remote_access
 from vibe import ui_server
 from vibe.ui_server import app
@@ -50,6 +51,16 @@ def test_remote_host_with_explicit_port_still_requires_login(monkeypatch, tmp_pa
     assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
 
 
+def test_remote_host_with_trailing_dot_still_requires_login(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get("/dashboard", base_url="https://alex.vibe.io.", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
+
+
 def test_localhost_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
@@ -92,6 +103,28 @@ def test_remote_host_fails_closed_when_disabled_but_hostname_still_matches(monke
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_disabled"
+
+
+def test_config_post_rotates_session_secret_when_remote_access_is_disabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    old_secret = config.remote_access.vibe_cloud.session_secret
+    client = app.test_client()
+
+    monkeypatch.setattr(remote_access, "reconcile", lambda next_config: {"ok": True, "stopped": True})
+
+    response = client.post(
+        "/config",
+        json={"remote_access": {"vibe_cloud": {"enabled": False}}},
+        headers=csrf_headers(client, "http://127.0.0.1:5123"),
+        base_url="http://127.0.0.1:5123",
+    )
+    saved = V2Config.load()
+
+    assert response.status_code == 200
+    assert saved.remote_access.vibe_cloud.enabled is False
+    assert saved.remote_access.vibe_cloud.session_secret
+    assert saved.remote_access.vibe_cloud.session_secret != old_secret
 
 
 def test_remote_callback_rejects_nonce_mismatch(monkeypatch, tmp_path):

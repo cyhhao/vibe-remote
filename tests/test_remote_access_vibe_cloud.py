@@ -124,6 +124,31 @@ def test_stop_preserves_pid_file_when_process_stop_fails(monkeypatch, tmp_path) 
     assert remote_access._state_path().exists()
 
 
+def test_start_returns_failure_when_remote_access_is_disabled(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.remote_access.vibe_cloud.enabled = False
+
+    monkeypatch.setattr(remote_access, "stop", lambda: {"ok": True, "stopped": False})
+
+    result = remote_access.start(config)
+
+    assert result["ok"] is False
+    assert result["error"] == "remote_access_disabled"
+
+
+def test_reconcile_stops_when_remote_access_is_disabled(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.remote_access.vibe_cloud.enabled = False
+
+    monkeypatch.setattr(remote_access, "stop", lambda: {"ok": True, "stopped": True})
+
+    result = remote_access.reconcile(config)
+
+    assert result == {"ok": True, "stopped": True}
+
+
 def test_start_restarts_when_runtime_signature_changes(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()

@@ -197,10 +197,14 @@ def _is_local_request_host() -> bool:
 
 
 def _normalized_host(value: str | None) -> str:
-    raw_host = (value or "").lower()
+    raw_host = (value or "").lower().strip()
     if raw_host.startswith("[") and "]" in raw_host:
-        return raw_host[1 : raw_host.index("]")]
-    return raw_host.split(":", 1)[0]
+        host = raw_host[1 : raw_host.index("]")]
+    elif raw_host.count(":") > 1:
+        host = raw_host
+    else:
+        host = raw_host.split(":", 1)[0]
+    return host.rstrip(".")
 
 
 def _is_remote_access_request(config: V2Config) -> bool:
@@ -209,6 +213,14 @@ def _is_remote_access_request(config: V2Config) -> bool:
         return False
     public_host = _normalized_host(urlparse(cloud.public_url).netloc)
     return bool(public_host and _normalized_host(request.host) == public_host)
+
+
+def _should_rotate_remote_session_secret(previous: V2Config | None, current: V2Config, payload: dict) -> bool:
+    if "remote_access" not in payload or previous is None:
+        return False
+    previous_cloud = previous.remote_access.vibe_cloud
+    current_cloud = current.remote_access.vibe_cloud
+    return bool(previous_cloud.enabled and not current_cloud.enabled and current_cloud.session_secret)
 
 
 def _remote_auth_exempt_path() -> bool:
@@ -555,8 +567,11 @@ def config_post():
     from vibe import remote_access
 
     payload = request.json or {}
+    previous_config = _load_remote_access_config() if "remote_access" in payload else None
     config = api.save_config(payload)
     if "remote_access" in payload:
+        if _should_rotate_remote_session_secret(previous_config, config, payload):
+            remote_access.rotate_session_secret(config)
         result = remote_access.reconcile(config)
         if result.get("ok") is False:
             return jsonify({"ok": False, "error": result.get("error", "remote_access_reconcile_failed"), "remote_access": result, "config": api.config_to_payload(config)}), 500

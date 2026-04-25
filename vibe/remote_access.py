@@ -245,12 +245,18 @@ def stop() -> dict[str, Any]:
         return {**status(), "ok": True, "stopped": stopped}
 
 
+def rotate_session_secret(config: V2Config) -> None:
+    config.remote_access.vibe_cloud.session_secret = secrets.token_urlsafe(32)
+    config.save()
+
+
 def start(config: V2Config | None = None) -> dict[str, Any]:
     with _CONNECTOR_LOCK:
         config = config or V2Config.load()
         cloud = config.remote_access.vibe_cloud
         if not cloud.enabled:
-            return stop()
+            stop_result = stop()
+            return {**stop_result, "ok": False, "error": "remote_access_disabled"}
         if not cloud.tunnel_token:
             stop_result = stop()
             return {**stop_result, "ok": False, "error": "missing_tunnel_token"}
