@@ -169,6 +169,31 @@ def _is_cloudflared_pid(pid: int | None) -> bool:
     return _cloudflared_pid_state(pid) == "cloudflared"
 
 
+def _is_cloudflared_executable(value: str) -> bool:
+    executable = value.strip().strip("\"'")
+    executable_name = Path(executable).name.lower()
+    windows_name = ntpath.basename(executable).lower()
+    return executable_name in {"cloudflared", "cloudflared.exe"} or windows_name in {"cloudflared", "cloudflared.exe"}
+
+
+def _command_starts_with_cloudflared(command: str) -> bool:
+    command = command.strip()
+    for posix in (True, False):
+        try:
+            parts = shlex.split(command, posix=posix)
+        except ValueError:
+            continue
+        if parts and _is_cloudflared_executable(parts[0]):
+            return True
+
+    lower_command = command.lower()
+    for marker in (" tunnel ", " tunnel", " --", " access ", " service ", " update ", " version"):
+        marker_index = lower_command.find(marker)
+        if marker_index > 0 and _is_cloudflared_executable(command[:marker_index]):
+            return True
+    return _is_cloudflared_executable(command)
+
+
 def _cloudflared_pid_state(pid: int | None) -> str:
     if not pid or not runtime.pid_alive(pid):
         return "dead"
@@ -178,17 +203,7 @@ def _cloudflared_pid_state(pid: int | None) -> str:
         return "unknown"
     if not command:
         return "unknown"
-    try:
-        parts = shlex.split(command.strip(), posix=True)
-    except ValueError:
-        try:
-            parts = shlex.split(command.strip(), posix=False)
-        except ValueError:
-            parts = command.strip().split()
-    executable = parts[0].strip("\"'") if parts else ""
-    executable_name = Path(executable).name.lower()
-    windows_name = ntpath.basename(executable).lower()
-    if executable_name in {"cloudflared", "cloudflared.exe"} or windows_name in {"cloudflared", "cloudflared.exe"}:
+    if _command_starts_with_cloudflared(command):
         return "cloudflared"
     return "other"
 
@@ -273,6 +288,9 @@ def stop(config: V2Config | None = None) -> dict[str, Any]:
             return {**status(config), "ok": True, "stopped": False, "stale_pid": True}
         stopped = runtime.stop_pid(pid, timeout=8) if pid is not None else False
         if stopped:
+            post_stop_state = _cloudflared_pid_state(pid)
+            if post_stop_state in {"cloudflared", "unknown"}:
+                return {**status(config), "ok": False, "error": "cloudflared_stop_failed", "stopped": False}
             _pid_path().unlink(missing_ok=True)
             _state_path().unlink(missing_ok=True)
         if pid is not None and not stopped and _is_cloudflared_pid(pid):

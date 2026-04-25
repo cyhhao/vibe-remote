@@ -217,6 +217,28 @@ def test_cloudflared_pid_detection_handles_posix_quoted_paths_with_single_quotes
     assert remote_access._is_cloudflared_pid(123) is True
 
 
+def test_cloudflared_pid_detection_handles_unquoted_paths_with_spaces(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 123)
+    monkeypatch.setattr(
+        runtime,
+        "get_process_command",
+        lambda pid: "/tmp/Vibe Tools/cloudflared tunnel --no-autoupdate run",
+    )
+
+    assert remote_access._is_cloudflared_pid(123) is True
+
+
+def test_cloudflared_pid_detection_rejects_non_cloudflared_paths(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 123)
+    monkeypatch.setattr(
+        runtime,
+        "get_process_command",
+        lambda pid: "/tmp/Vibe Tools/not-cloudflared tunnel --no-autoupdate run",
+    )
+
+    assert remote_access._cloudflared_pid_state(123) == "other"
+
+
 def test_stop_preserves_pid_file_when_process_stop_fails(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     pid = 123
@@ -227,6 +249,25 @@ def test_stop_preserves_pid_file_when_process_stop_fails(monkeypatch, tmp_path) 
     monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
     monkeypatch.setattr(runtime, "get_process_command", lambda candidate: "cloudflared tunnel run")
     monkeypatch.setattr(runtime, "stop_pid", lambda candidate, timeout=8: False)
+
+    result = remote_access.stop()
+
+    assert result["ok"] is False
+    assert result["error"] == "cloudflared_stop_failed"
+    assert remote_access._pid_path().read_text(encoding="utf-8") == str(pid)
+    assert remote_access._state_path().exists()
+
+
+def test_stop_preserves_pid_file_when_stop_reports_success_but_process_survives(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    pid = 123
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(pid), encoding="utf-8")
+    remote_access._state_path().write_text('{"pid": 123}', encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "get_process_command", lambda candidate: "cloudflared tunnel run")
+    monkeypatch.setattr(runtime, "stop_pid", lambda candidate, timeout=8: True)
 
     result = remote_access.stop()
 
