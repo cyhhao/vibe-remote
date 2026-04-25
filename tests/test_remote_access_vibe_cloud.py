@@ -206,6 +206,17 @@ def test_cloudflared_pid_detection_handles_quoted_paths_with_spaces(monkeypatch)
     assert remote_access._is_cloudflared_pid(123) is True
 
 
+def test_cloudflared_pid_detection_handles_posix_quoted_paths_with_single_quotes(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 123)
+    monkeypatch.setattr(
+        runtime,
+        "get_process_command",
+        lambda pid: "'/tmp/O'\"'\"'Reilly/cloudflared' tunnel --no-autoupdate run",
+    )
+
+    assert remote_access._is_cloudflared_pid(123) is True
+
+
 def test_stop_preserves_pid_file_when_process_stop_fails(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     pid = 123

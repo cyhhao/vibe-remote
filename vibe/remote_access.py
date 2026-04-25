@@ -179,9 +179,12 @@ def _cloudflared_pid_state(pid: int | None) -> str:
     if not command:
         return "unknown"
     try:
-        parts = shlex.split(command.strip(), posix=False)
+        parts = shlex.split(command.strip(), posix=True)
     except ValueError:
-        parts = command.strip().split()
+        try:
+            parts = shlex.split(command.strip(), posix=False)
+        except ValueError:
+            parts = command.strip().split()
     executable = parts[0].strip("\"'") if parts else ""
     executable_name = Path(executable).name.lower()
     windows_name = ntpath.basename(executable).lower()
