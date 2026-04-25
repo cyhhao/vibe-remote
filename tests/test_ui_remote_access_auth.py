@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
+from config.v2_config import CONFIG_LOCK
 from tests.ui_server_test_helpers import csrf_headers
 from vibe import api
 from vibe import remote_access
@@ -239,6 +240,29 @@ def test_config_post_returns_saved_config_when_remote_reconcile_fails(monkeypatc
     assert body["remote_access_runtime"]["error"] == "cloudflared_stop_failed"
     assert saved.remote_access.vibe_cloud.enabled is False
     assert saved.remote_access.vibe_cloud.session_secret != old_secret
+
+
+def test_config_post_reconciles_after_releasing_config_lock(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+    client = app.test_client()
+    lock_states = []
+
+    def reconcile(next_config):
+        lock_states.append(CONFIG_LOCK._is_owned())
+        return {"ok": True, "stopped": True}
+
+    monkeypatch.setattr(remote_access, "reconcile", reconcile)
+
+    response = client.post(
+        "/config",
+        json={"remote_access": {"vibe_cloud": {"enabled": False}}},
+        headers=csrf_headers(client, "http://127.0.0.1:5123"),
+        base_url="http://127.0.0.1:5123",
+    )
+
+    assert response.status_code == 200
+    assert lock_states == [False]
 
 
 def test_remote_callback_rejects_nonce_mismatch(monkeypatch, tmp_path):

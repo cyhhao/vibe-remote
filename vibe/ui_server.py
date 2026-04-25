@@ -625,13 +625,16 @@ def config_post():
 
     payload = request.json or {}
     remote_access_runtime = None
+    should_reconcile_remote_access = False
     with CONFIG_LOCK:
         previous_config = _load_remote_access_config() if "remote_access" in payload else None
         config = api.save_config(payload)
         if _remote_access_settings_changed(previous_config, config, payload):
             if _should_rotate_remote_session_secret(previous_config, config, payload):
                 remote_access.rotate_session_secret(config)
-            remote_access_runtime = remote_access.reconcile(config)
+            should_reconcile_remote_access = True
+    if should_reconcile_remote_access:
+        remote_access_runtime = remote_access.reconcile(config)
     response_payload = api.config_to_payload(config)
     if remote_access_runtime is not None:
         response_payload["remote_access_runtime"] = remote_access_runtime
