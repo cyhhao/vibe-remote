@@ -274,7 +274,7 @@ def test_start_returns_failure_when_remote_access_is_disabled(monkeypatch, tmp_p
     config = _config()
     config.remote_access.vibe_cloud.enabled = False
 
-    monkeypatch.setattr(remote_access, "stop", lambda: {"ok": True, "stopped": False})
+    monkeypatch.setattr(remote_access, "stop", lambda config=None: {"ok": True, "stopped": False})
 
     result = remote_access.start(config)
 
@@ -282,12 +282,49 @@ def test_start_returns_failure_when_remote_access_is_disabled(monkeypatch, tmp_p
     assert result["error"] == "remote_access_disabled"
 
 
+def test_start_loads_config_before_connector_lock(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.remote_access.vibe_cloud.enabled = False
+    load_lock_states = []
+
+    def load_config():
+        load_lock_states.append(remote_access._CONNECTOR_LOCK._is_owned())
+        return config
+
+    monkeypatch.setattr(remote_access.V2Config, "load", load_config)
+    monkeypatch.setattr(remote_access, "stop", lambda loaded_config=None: {"ok": True, "stopped": False})
+
+    result = remote_access.start()
+
+    assert result["ok"] is False
+    assert result["error"] == "remote_access_disabled"
+    assert load_lock_states == [False]
+
+
+def test_stop_loads_config_before_connector_lock(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    load_lock_states = []
+
+    def load_config():
+        load_lock_states.append(remote_access._CONNECTOR_LOCK._is_owned())
+        return config
+
+    monkeypatch.setattr(remote_access.V2Config, "load", load_config)
+
+    result = remote_access.stop()
+
+    assert result["ok"] is True
+    assert load_lock_states == [False]
+
+
 def test_reconcile_stops_when_remote_access_is_disabled(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()
     config.remote_access.vibe_cloud.enabled = False
 
-    monkeypatch.setattr(remote_access, "stop", lambda: {"ok": True, "stopped": True})
+    monkeypatch.setattr(remote_access, "stop", lambda next_config=None: {"ok": True, "stopped": True})
 
     result = remote_access.reconcile(config)
 

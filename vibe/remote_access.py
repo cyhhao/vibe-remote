@@ -254,23 +254,27 @@ def status(config: V2Config | None = None) -> dict[str, Any]:
     }
 
 
-def stop() -> dict[str, Any]:
+def stop(config: V2Config | None = None) -> dict[str, Any]:
+    try:
+        config = config or V2Config.load()
+    except Exception:
+        config = None
     with _CONNECTOR_LOCK:
         pid = _read_pid()
         pid_state = _cloudflared_pid_state(pid)
         if pid is not None and pid_state == "unknown":
-            return {**status(), "ok": False, "error": "cloudflared_process_unknown", "stopped": False}
+            return {**status(config), "ok": False, "error": "cloudflared_process_unknown", "stopped": False}
         if pid is not None and pid_state in {"dead", "other"}:
             _pid_path().unlink(missing_ok=True)
             _state_path().unlink(missing_ok=True)
-            return {**status(), "ok": True, "stopped": False, "stale_pid": True}
+            return {**status(config), "ok": True, "stopped": False, "stale_pid": True}
         stopped = runtime.stop_pid(pid, timeout=8) if pid is not None else False
         if stopped:
             _pid_path().unlink(missing_ok=True)
             _state_path().unlink(missing_ok=True)
         if pid is not None and not stopped and _is_cloudflared_pid(pid):
-            return {**status(), "ok": False, "error": "cloudflared_stop_failed", "stopped": False}
-        return {**status(), "ok": True, "stopped": stopped}
+            return {**status(config), "ok": False, "error": "cloudflared_stop_failed", "stopped": False}
+        return {**status(config), "ok": True, "stopped": stopped}
 
 
 def rotate_session_secret(config: V2Config) -> None:
@@ -279,14 +283,14 @@ def rotate_session_secret(config: V2Config) -> None:
 
 
 def start(config: V2Config | None = None) -> dict[str, Any]:
+    config = config or V2Config.load()
     with _CONNECTOR_LOCK:
-        config = config or V2Config.load()
         cloud = config.remote_access.vibe_cloud
         if not cloud.enabled:
-            stop_result = stop()
+            stop_result = stop(config)
             return {**stop_result, "ok": False, "error": "remote_access_disabled"}
         if not cloud.tunnel_token:
-            stop_result = stop()
+            stop_result = stop(config)
             return {**stop_result, "ok": False, "error": "missing_tunnel_token"}
         binary = _resolve_binary(config)
         if not binary:
@@ -302,7 +306,7 @@ def start(config: V2Config | None = None) -> dict[str, Any]:
             desired_sig = _runtime_signature(config, binary)
             if running_sig == desired_sig:
                 return {**current, "ok": True, "started": False}
-            stop_result = stop()
+            stop_result = stop(config)
             if stop_result.get("ok") is False or stop_result.get("running"):
                 return {
                     **stop_result,
@@ -333,7 +337,7 @@ def reconcile(config: V2Config | None = None) -> dict[str, Any]:
     config = config or V2Config.load()
     if config.remote_access.provider == "vibe_cloud" and config.remote_access.vibe_cloud.enabled:
         return start(config)
-    return stop()
+    return stop(config)
 
 
 def _json_request(url: str, payload: dict[str, Any], timeout: float = 20.0) -> dict[str, Any]:
