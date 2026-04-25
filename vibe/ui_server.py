@@ -369,7 +369,7 @@ def enforce_remote_access_cookie():
         return jsonify({"ok": False, "error": "remote_access_public_url_invalid"}), 503
     remote_request = _is_remote_access_request(config)
     if not remote_request:
-        if config.remote_access.vibe_cloud.enabled and not local_request:
+        if not local_request:
             return jsonify({"ok": False, "error": "remote_access_host_mismatch"}), 503
         return None
     if _remote_auth_exempt_path():
