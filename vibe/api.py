@@ -287,7 +287,7 @@ def save_config(payload: dict) -> V2Config:
         base_config: Optional[V2Config] = None
         try:
             base_config = load_config()
-            base_payload = config_to_payload(base_config)
+            base_payload = config_to_payload(base_config, include_secrets=True)
         except FileNotFoundError:
             base_payload = {}
 
@@ -307,7 +307,15 @@ def save_config(payload: dict) -> V2Config:
         return config
 
 
-def config_to_payload(config: V2Config) -> dict:
+def _vibe_cloud_payload(config: V2Config, include_secrets: bool) -> dict:
+    payload = config.remote_access.vibe_cloud.__dict__.copy()
+    if not include_secrets:
+        for key in ("tunnel_token", "instance_secret", "session_secret"):
+            payload.pop(key, None)
+    return payload
+
+
+def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dict:
     from config.platform_registry import platform_descriptors
 
     platform_payload = {}
@@ -342,7 +350,7 @@ def config_to_payload(config: V2Config) -> dict:
         "ui": config.ui.__dict__,
         "remote_access": {
             "provider": config.remote_access.provider,
-            "vibe_cloud": config.remote_access.vibe_cloud.__dict__,
+            "vibe_cloud": _vibe_cloud_payload(config, include_secrets),
         },
         "update": config.update.__dict__,
         "ack_mode": config.ack_mode,

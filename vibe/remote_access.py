@@ -346,7 +346,7 @@ def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -
     cloud.session_secret = cloud.session_secret or secrets.token_urlsafe(32)
     config.save()
     start_result = start(config)
-    return {**status(config), "ok": start_result.get("ok", False), "pairing": "ok", "start": start_result}
+    return {**status(config), "ok": True, "pairing": {"ok": True}, "start": start_result}
 
 
 def _session_signature(secret: str, payload: str) -> str:

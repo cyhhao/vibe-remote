@@ -69,9 +69,46 @@ def test_pair_redeems_key_and_starts_connector(monkeypatch, tmp_path) -> None:
     saved_payload = json.loads((tmp_path / "config" / "config.json").read_text(encoding="utf-8"))
 
     assert result["ok"] is True
+    assert result["pairing"]["ok"] is True
+    assert result["start"]["ok"] is True
     assert saved_payload["remote_access"]["vibe_cloud"]["enabled"] is True
     assert saved_payload["remote_access"]["vibe_cloud"]["tunnel_token"] == "tunnel-token"
     assert saved_payload["remote_access"]["vibe_cloud"]["session_secret"]
+
+
+def test_pair_reports_success_when_connector_start_fails(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.remote_access.vibe_cloud.enabled = False
+    config.save()
+
+    monkeypatch.setattr(
+        remote_access,
+        "_json_request",
+        lambda *args, **kwargs: {
+            "instance_id": "inst_123",
+            "client_id": "vr_client_123",
+            "issuer": "https://backend.test",
+            "authorization_endpoint": "https://backend.test/oauth/authorize",
+            "token_endpoint": "https://backend.test/oauth/token",
+            "jwks_uri": "https://backend.test/oauth/jwks.json",
+            "public_url": "https://alex.vibe.io",
+            "redirect_uri": "https://alex.vibe.io/auth/callback",
+            "tunnel_token": "tunnel-token",
+            "instance_secret": "instance-secret",
+        },
+    )
+    monkeypatch.setattr(remote_access, "start", lambda next_config: {"ok": False, "error": "cloudflared_spawn_failed"})
+    monkeypatch.setattr(remote_access, "status", lambda next_config=None: {"ok": True, "running": False, "paired": True})
+
+    result = remote_access.pair("vrp_test", "https://backend.test")
+    saved_payload = json.loads((tmp_path / "config" / "config.json").read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["pairing"]["ok"] is True
+    assert result["start"]["ok"] is False
+    assert result["start"]["error"] == "cloudflared_spawn_failed"
+    assert saved_payload["remote_access"]["vibe_cloud"]["tunnel_token"] == "tunnel-token"
 
 
 def test_pair_returns_structured_error_when_backend_request_fails(monkeypatch) -> None:
