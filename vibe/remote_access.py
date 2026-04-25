@@ -168,20 +168,39 @@ def _is_cloudflared_pid(pid: int | None) -> bool:
 
 
 def _write_state(pid: int, config: V2Config, binary: str) -> None:
+    _state_path().write_text(json.dumps({"pid": pid, **_runtime_signature(config, binary)}, indent=2), encoding="utf-8")
+
+
+def _runtime_signature(config: V2Config, binary: str) -> dict[str, str]:
     cloud = config.remote_access.vibe_cloud
-    _state_path().write_text(
-        json.dumps(
-            {
-                "pid": pid,
-                "provider": "vibe_cloud",
-                "binary_path": binary,
-                "public_url": cloud.public_url,
-                "tunnel_token_sha256": hashlib.sha256((cloud.tunnel_token or "").encode("utf-8")).hexdigest(),
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    return {
+        "provider": "vibe_cloud",
+        "binary_path": binary,
+        "public_url": cloud.public_url,
+        "tunnel_token_sha256": hashlib.sha256((cloud.tunnel_token or "").encode("utf-8")).hexdigest(),
+    }
+
+
+def _read_state() -> dict[str, Any] | None:
+    try:
+        payload = json.loads(_state_path().read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _running_signature(pid: int | None) -> dict[str, str] | None:
+    if not _is_cloudflared_pid(pid):
+        return None
+    state = _read_state()
+    if state is None or state.get("pid") != pid:
+        return None
+    return {
+        "provider": str(state.get("provider") or ""),
+        "binary_path": str(state.get("binary_path") or ""),
+        "public_url": str(state.get("public_url") or ""),
+        "tunnel_token_sha256": str(state.get("tunnel_token_sha256") or ""),
+    }
 
 
 def status(config: V2Config | None = None) -> dict[str, Any]:
@@ -217,8 +236,9 @@ def stop() -> dict[str, Any]:
             _pid_path().unlink(missing_ok=True)
             _state_path().unlink(missing_ok=True)
             return {**status(), "ok": True, "stopped": False, "stale_pid": True}
-        stopped = runtime.stop_process(_pid_path(), timeout=8)
+        stopped = runtime.stop_pid(pid, timeout=8) if pid is not None else False
         if stopped:
+            _pid_path().unlink(missing_ok=True)
             _state_path().unlink(missing_ok=True)
         if pid is not None and not stopped and _is_cloudflared_pid(pid):
             return {**status(), "ok": False, "error": "cloudflared_stop_failed", "stopped": False}
@@ -242,7 +262,18 @@ def start(config: V2Config | None = None) -> dict[str, Any]:
             binary = str(install_result["path"])
         current = status(config)
         if current.get("running"):
-            return {**current, "ok": True, "started": False}
+            running_sig = _running_signature(current.get("pid"))
+            desired_sig = _runtime_signature(config, binary)
+            if running_sig == desired_sig:
+                return {**current, "ok": True, "started": False}
+            stop_result = stop()
+            if stop_result.get("ok") is False or stop_result.get("running"):
+                return {
+                    **stop_result,
+                    "ok": False,
+                    "error": stop_result.get("error") or "cloudflared_stop_failed",
+                    "restarted": False,
+                }
         env = {**os.environ, "TUNNEL_TOKEN": cloud.tunnel_token}
         try:
             pid = runtime.spawn_background(

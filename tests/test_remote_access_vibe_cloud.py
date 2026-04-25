@@ -104,3 +104,70 @@ def test_cloudflared_pid_detection_handles_quoted_paths_with_spaces(monkeypatch)
     )
 
     assert remote_access._is_cloudflared_pid(123) is True
+
+
+def test_stop_preserves_pid_file_when_process_stop_fails(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    pid = 123
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(pid), encoding="utf-8")
+    remote_access._state_path().write_text('{"pid": 123}', encoding="utf-8")
+
+    monkeypatch.setattr(remote_access, "_is_cloudflared_pid", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "stop_pid", lambda candidate, timeout=8: False)
+
+    result = remote_access.stop()
+
+    assert result["ok"] is False
+    assert result["error"] == "cloudflared_stop_failed"
+    assert remote_access._pid_path().read_text(encoding="utf-8") == str(pid)
+    assert remote_access._state_path().exists()
+
+
+def test_start_restarts_when_runtime_signature_changes(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.remote_access.vibe_cloud.tunnel_token = "new-token"
+    binary = "/usr/local/bin/cloudflared"
+    old_pid = 111
+    new_pid = 222
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(old_pid), encoding="utf-8")
+    remote_access._state_path().write_text(
+        json.dumps(
+            {
+                "pid": old_pid,
+                "provider": "vibe_cloud",
+                "binary_path": binary,
+                "public_url": "https://alex.vibe.io",
+                "tunnel_token_sha256": "old-token-hash",
+            }
+        ),
+        encoding="utf-8",
+    )
+    alive = {old_pid, new_pid}
+
+    monkeypatch.setattr(remote_access, "_resolve_binary", lambda cfg: binary)
+    monkeypatch.setattr(remote_access, "_version", lambda path: "cloudflared test")
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid in alive)
+    monkeypatch.setattr(runtime, "get_process_command", lambda pid: f"{binary} tunnel run")
+
+    def stop_pid(pid, timeout=8):
+        alive.discard(pid)
+        return True
+
+    monkeypatch.setattr(runtime, "stop_pid", stop_pid)
+    def spawn_background(args, pid_path, stdout_name, stderr_name, env=None):
+        pid_path.write_text(str(new_pid), encoding="utf-8")
+        return new_pid
+
+    monkeypatch.setattr(runtime, "spawn_background", spawn_background)
+
+    result = remote_access.start(config)
+    state = json.loads(remote_access._state_path().read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["started"] is True
+    assert result["pid"] == new_pid
+    assert old_pid not in alive
+    assert state["tunnel_token_sha256"] == "348e9df2a42bd6e3c6356ca9c95c5f1fe9a6b3e5cd25f4ae58df0f09049c3209"
