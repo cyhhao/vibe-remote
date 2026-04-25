@@ -205,7 +205,7 @@ def _normalized_host(value: str | None) -> str:
 
 def _is_remote_access_request(config: V2Config) -> bool:
     cloud = config.remote_access.vibe_cloud
-    if not cloud.enabled or not cloud.public_url:
+    if not cloud.public_url:
         return False
     public_host = _normalized_host(urlparse(cloud.public_url).netloc)
     return bool(public_host and _normalized_host(request.host) == public_host)
@@ -289,6 +289,8 @@ def enforce_remote_access_cookie():
         return None
     from vibe import remote_access
 
+    if not config.remote_access.vibe_cloud.enabled:
+        return jsonify({"ok": False, "error": "remote_access_disabled"}), 503
     if remote_access.validate_session_cookie(config, request.cookies.get(remote_access.SESSION_COOKIE_NAME)):
         return None
     if request.method == "GET":
@@ -613,6 +615,8 @@ def remote_access_auth_callback():
         claims = result["claims"]
     except Exception as exc:
         return jsonify({"error": "oauth_exchange_failed", "detail": str(exc)}), 400
+    if claims.get("nonce") != oauth_state.get("nonce"):
+        return jsonify({"error": "invalid_oauth_nonce"}), 400
     response = Response(status=302)
     response.headers["Location"] = str(oauth_state.get("next") or "/")
     response.set_cookie(
