@@ -12,7 +12,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 
 from flask import Flask, request, jsonify, send_file, Response
 
@@ -271,6 +271,18 @@ def _read_oauth_cookie(secret: str, value: str | None) -> dict[str, Any] | None:
     if int(payload.get("exp", 0)) <= int(datetime.now().timestamp()):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _safe_remote_redirect_target(value: Any) -> str:
+    if not isinstance(value, str):
+        return "/"
+    target = value.strip()
+    if not target.startswith("/") or target.startswith(("//", "/\\")):
+        return "/"
+    parsed = urlsplit(target)
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+        return "/"
+    return urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
 
 
 def _redirect_to_vibe_cloud_login(config: V2Config):
@@ -650,7 +662,7 @@ def remote_access_auth_callback():
     if claims.get("nonce") != oauth_state.get("nonce"):
         return jsonify({"error": "invalid_oauth_nonce"}), 400
     response = Response(status=302)
-    response.headers["Location"] = str(oauth_state.get("next") or "/")
+    response.headers["Location"] = _safe_remote_redirect_target(oauth_state.get("next"))
     response.set_cookie(
         remote_access.SESSION_COOKIE_NAME,
         remote_access.make_session_cookie(config, str(claims.get("email", "")), str(claims.get("sub", ""))),
