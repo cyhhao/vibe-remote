@@ -40,6 +40,16 @@ def test_remote_host_redirects_to_vibe_cloud_login(monkeypatch, tmp_path):
     assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
 
 
+def test_remote_host_with_explicit_port_still_requires_login(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get("/dashboard", base_url="https://alex.vibe.io:443", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("https://backend.test/oauth/authorize?")
+
+
 def test_localhost_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)

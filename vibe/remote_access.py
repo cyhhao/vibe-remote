@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import ntpath
 import os
 import platform
+import shlex
 import secrets
 import shutil
 import stat
@@ -155,8 +157,14 @@ def _is_cloudflared_pid(pid: int | None) -> bool:
     if not pid or not runtime.pid_alive(pid):
         return False
     command = runtime.get_process_command(pid) or ""
-    executable = command.strip().split(" ", 1)[0].strip("\"'")
-    return Path(executable).name.lower() in {"cloudflared", "cloudflared.exe"}
+    try:
+        parts = shlex.split(command.strip(), posix=False)
+    except ValueError:
+        parts = command.strip().split()
+    executable = parts[0].strip("\"'") if parts else ""
+    executable_name = Path(executable).name.lower()
+    windows_name = ntpath.basename(executable).lower()
+    return executable_name in {"cloudflared", "cloudflared.exe"} or windows_name in {"cloudflared", "cloudflared.exe"}
 
 
 def _write_state(pid: int, config: V2Config, binary: str) -> None:

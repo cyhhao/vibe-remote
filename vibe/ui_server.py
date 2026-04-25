@@ -192,20 +192,23 @@ def _load_remote_access_config() -> V2Config | None:
 
 
 def _is_local_request_host() -> bool:
-    raw_host = (request.host or "").lower()
-    if raw_host.startswith("[") and "]" in raw_host:
-        host = raw_host[1 : raw_host.index("]")]
-    else:
-        host = raw_host.split(":", 1)[0]
+    host = _normalized_host(request.host)
     return host in {"localhost", "127.0.0.1", "::1"} or host.startswith("127.")
+
+
+def _normalized_host(value: str | None) -> str:
+    raw_host = (value or "").lower()
+    if raw_host.startswith("[") and "]" in raw_host:
+        return raw_host[1 : raw_host.index("]")]
+    return raw_host.split(":", 1)[0]
 
 
 def _is_remote_access_request(config: V2Config) -> bool:
     cloud = config.remote_access.vibe_cloud
     if not cloud.enabled or not cloud.public_url:
         return False
-    public_host = urlparse(cloud.public_url).netloc.lower()
-    return bool(public_host and request.host.lower() == public_host)
+    public_host = _normalized_host(urlparse(cloud.public_url).netloc)
+    return bool(public_host and _normalized_host(request.host) == public_host)
 
 
 def _remote_auth_exempt_path() -> bool:

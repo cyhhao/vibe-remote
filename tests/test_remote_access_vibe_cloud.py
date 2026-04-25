@@ -93,3 +93,14 @@ def test_stop_ui_continues_when_remote_access_stop_fails(monkeypatch, tmp_path) 
 
     assert runtime.stop_ui() is False
     assert stop_calls == [paths.get_runtime_ui_pid_path()]
+
+
+def test_cloudflared_pid_detection_handles_quoted_paths_with_spaces(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 123)
+    monkeypatch.setattr(
+        runtime,
+        "get_process_command",
+        lambda pid: '"C:\\Program Files\\Cloudflare\\cloudflared.exe" tunnel --no-autoupdate run',
+    )
+
+    assert remote_access._is_cloudflared_pid(123) is True
