@@ -154,9 +154,18 @@ def _read_pid() -> int | None:
 
 
 def _is_cloudflared_pid(pid: int | None) -> bool:
+    return _cloudflared_pid_state(pid) == "cloudflared"
+
+
+def _cloudflared_pid_state(pid: int | None) -> str:
     if not pid or not runtime.pid_alive(pid):
-        return False
-    command = runtime.get_process_command(pid) or ""
+        return "dead"
+    try:
+        command = runtime.get_process_command(pid)
+    except Exception:
+        return "unknown"
+    if not command:
+        return "unknown"
     try:
         parts = shlex.split(command.strip(), posix=False)
     except ValueError:
@@ -164,7 +173,9 @@ def _is_cloudflared_pid(pid: int | None) -> bool:
     executable = parts[0].strip("\"'") if parts else ""
     executable_name = Path(executable).name.lower()
     windows_name = ntpath.basename(executable).lower()
-    return executable_name in {"cloudflared", "cloudflared.exe"} or windows_name in {"cloudflared", "cloudflared.exe"}
+    if executable_name in {"cloudflared", "cloudflared.exe"} or windows_name in {"cloudflared", "cloudflared.exe"}:
+        return "cloudflared"
+    return "other"
 
 
 def _write_state(pid: int, config: V2Config, binary: str) -> None:
@@ -209,8 +220,9 @@ def status(config: V2Config | None = None) -> dict[str, Any]:
     except Exception:
         config = None
     pid = _read_pid()
-    running = _is_cloudflared_pid(pid)
-    if pid and not running:
+    pid_state = _cloudflared_pid_state(pid)
+    running = pid_state == "cloudflared"
+    if pid and pid_state in {"dead", "other"}:
         _pid_path().unlink(missing_ok=True)
         _state_path().unlink(missing_ok=True)
     cloud = getattr(getattr(config, "remote_access", None), "vibe_cloud", None) if config else None
@@ -222,7 +234,8 @@ def status(config: V2Config | None = None) -> dict[str, Any]:
         "public_url": getattr(cloud, "public_url", "") if cloud else "",
         "paired": bool(getattr(cloud, "instance_id", "") and getattr(cloud, "tunnel_token", "")) if cloud else False,
         "running": running,
-        "pid": pid if running else None,
+        "pid": pid if running or pid_state == "unknown" else None,
+        "pid_state": pid_state,
         "binary_found": bool(binary),
         "binary_path": binary,
         "binary_version": _version(binary) if binary else None,
@@ -232,7 +245,10 @@ def status(config: V2Config | None = None) -> dict[str, Any]:
 def stop() -> dict[str, Any]:
     with _CONNECTOR_LOCK:
         pid = _read_pid()
-        if pid is not None and not _is_cloudflared_pid(pid):
+        pid_state = _cloudflared_pid_state(pid)
+        if pid is not None and pid_state == "unknown":
+            return {**status(), "ok": False, "error": "cloudflared_process_unknown", "stopped": False}
+        if pid is not None and pid_state in {"dead", "other"}:
             _pid_path().unlink(missing_ok=True)
             _state_path().unlink(missing_ok=True)
             return {**status(), "ok": True, "stopped": False, "stale_pid": True}
@@ -267,6 +283,8 @@ def start(config: V2Config | None = None) -> dict[str, Any]:
                 return {**status(config), **install_result}
             binary = str(install_result["path"])
         current = status(config)
+        if current.get("pid_state") == "unknown":
+            return {**current, "ok": False, "error": "cloudflared_process_unknown", "started": False}
         if current.get("running"):
             running_sig = _running_signature(current.get("pid"))
             desired_sig = _runtime_signature(config, binary)

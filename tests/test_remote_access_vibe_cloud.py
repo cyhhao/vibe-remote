@@ -150,13 +150,58 @@ def test_stop_preserves_pid_file_when_process_stop_fails(monkeypatch, tmp_path) 
     remote_access._pid_path().write_text(str(pid), encoding="utf-8")
     remote_access._state_path().write_text('{"pid": 123}', encoding="utf-8")
 
-    monkeypatch.setattr(remote_access, "_is_cloudflared_pid", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "get_process_command", lambda candidate: "cloudflared tunnel run")
     monkeypatch.setattr(runtime, "stop_pid", lambda candidate, timeout=8: False)
 
     result = remote_access.stop()
 
     assert result["ok"] is False
     assert result["error"] == "cloudflared_stop_failed"
+    assert remote_access._pid_path().read_text(encoding="utf-8") == str(pid)
+    assert remote_access._state_path().exists()
+
+
+def test_status_preserves_pid_file_when_process_command_is_unknown(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    pid = 123
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(pid), encoding="utf-8")
+    remote_access._state_path().write_text('{"pid": 123}', encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "get_process_command", lambda candidate: None)
+
+    result = remote_access.status(_config())
+
+    assert result["running"] is False
+    assert result["pid"] == pid
+    assert result["pid_state"] == "unknown"
+    assert remote_access._pid_path().read_text(encoding="utf-8") == str(pid)
+    assert remote_access._state_path().exists()
+
+
+def test_start_refuses_duplicate_connector_when_process_command_is_unknown(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    pid = 123
+    config = _config()
+    config.remote_access.vibe_cloud.tunnel_token = "tunnel-token"
+    remote_access._pid_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._pid_path().write_text(str(pid), encoding="utf-8")
+    remote_access._state_path().write_text('{"pid": 123}', encoding="utf-8")
+    spawn_calls = []
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
+    monkeypatch.setattr(runtime, "get_process_command", lambda candidate: None)
+    monkeypatch.setattr(remote_access, "_resolve_binary", lambda cfg: "/usr/local/bin/cloudflared")
+    monkeypatch.setattr(remote_access, "_version", lambda path: "cloudflared test")
+    monkeypatch.setattr(runtime, "spawn_background", lambda *args, **kwargs: spawn_calls.append(args) or 456)
+
+    result = remote_access.start(config)
+
+    assert result["ok"] is False
+    assert result["error"] == "cloudflared_process_unknown"
+    assert spawn_calls == []
     assert remote_access._pid_path().read_text(encoding="utf-8") == str(pid)
     assert remote_access._state_path().exists()
 

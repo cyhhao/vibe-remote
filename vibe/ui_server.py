@@ -208,11 +208,25 @@ def _normalized_host(value: str | None) -> str:
 
 
 def _is_remote_access_request(config: V2Config) -> bool:
-    cloud = config.remote_access.vibe_cloud
-    if not cloud.public_url:
+    public_host = _remote_access_public_host(config)
+    if not public_host:
         return False
-    public_host = _normalized_host(urlparse(cloud.public_url).netloc)
-    return bool(public_host and _normalized_host(request.host) == public_host)
+    return _normalized_host(request.host) == public_host
+
+
+def _remote_access_public_host(config: V2Config) -> str | None:
+    public_url = (config.remote_access.vibe_cloud.public_url or "").strip()
+    if not public_url:
+        return ""
+    parsed = urlparse(public_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return _normalized_host(parsed.netloc)
+
+
+def _remote_access_public_url_invalid(config: V2Config) -> bool:
+    cloud = config.remote_access.vibe_cloud
+    return bool(cloud.enabled and cloud.public_url and _remote_access_public_host(config) is None)
 
 
 def _remote_access_snapshot(config: V2Config) -> dict[str, Any]:
@@ -324,6 +338,8 @@ def enforce_remote_access_cookie():
         if _is_local_request_host():
             return None
         return jsonify({"ok": False, "error": "remote_access_config_unavailable"}), 503
+    if _remote_access_public_url_invalid(config) and not _is_local_request_host():
+        return jsonify({"ok": False, "error": "remote_access_public_url_invalid"}), 503
     if not _is_remote_access_request(config) or _remote_auth_exempt_path():
         return None
     from vibe import remote_access
