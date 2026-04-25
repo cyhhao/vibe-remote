@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
 from tests.ui_server_test_helpers import csrf_headers
+from vibe import api
 from vibe import remote_access
 from vibe import ui_server
 from vibe.ui_server import app
@@ -124,6 +125,49 @@ def test_config_post_rotates_session_secret_when_remote_access_is_disabled(monke
     assert response.status_code == 200
     assert saved.remote_access.vibe_cloud.enabled is False
     assert saved.remote_access.vibe_cloud.session_secret
+    assert saved.remote_access.vibe_cloud.session_secret != old_secret
+
+
+def test_config_post_skips_reconcile_when_remote_access_is_unchanged(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    client = app.test_client()
+    reconcile_calls = []
+
+    monkeypatch.setattr(remote_access, "reconcile", lambda next_config: reconcile_calls.append(next_config) or {"ok": True})
+
+    response = client.post(
+        "/config",
+        json=api.config_to_payload(config),
+        headers=csrf_headers(client, "http://127.0.0.1:5123"),
+        base_url="http://127.0.0.1:5123",
+    )
+
+    assert response.status_code == 200
+    assert reconcile_calls == []
+
+
+def test_config_post_returns_saved_config_when_remote_reconcile_fails(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    old_secret = config.remote_access.vibe_cloud.session_secret
+    client = app.test_client()
+
+    monkeypatch.setattr(remote_access, "reconcile", lambda next_config: {"ok": False, "error": "cloudflared_stop_failed"})
+
+    response = client.post(
+        "/config",
+        json={"remote_access": {"vibe_cloud": {"enabled": False}}},
+        headers=csrf_headers(client, "http://127.0.0.1:5123"),
+        base_url="http://127.0.0.1:5123",
+    )
+    saved = V2Config.load()
+    body = response.get_json()
+
+    assert response.status_code == 200
+    assert body["remote_access_runtime"]["ok"] is False
+    assert body["remote_access_runtime"]["error"] == "cloudflared_stop_failed"
+    assert saved.remote_access.vibe_cloud.enabled is False
     assert saved.remote_access.vibe_cloud.session_secret != old_secret
 
 
