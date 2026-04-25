@@ -384,14 +384,16 @@ def stop_service():
 
 
 def stop_ui():
+    remote_access_stopped = True
     try:
         from vibe import remote_access
 
         result = remote_access.stop()
         if isinstance(result, dict) and result.get("ok") is False:
             logger.warning("Failed to stop remote access before UI stop: %s", result.get("error"))
-            return False
+            remote_access_stopped = False
     except Exception:
         logger.warning("Failed to stop remote access before UI stop", exc_info=True)
-        return False
-    return stop_process(paths.get_runtime_ui_pid_path())
+        remote_access_stopped = False
+    ui_stopped = stop_process(paths.get_runtime_ui_pid_path())
+    return bool(ui_stopped and remote_access_stopped)

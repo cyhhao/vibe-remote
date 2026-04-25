@@ -187,7 +187,17 @@ def _load_remote_access_config() -> V2Config | None:
     try:
         return V2Config.load()
     except Exception:
+        logger.warning("Failed to load remote access config", exc_info=True)
         return None
+
+
+def _is_local_request_host() -> bool:
+    raw_host = (request.host or "").lower()
+    if raw_host.startswith("[") and "]" in raw_host:
+        host = raw_host[1 : raw_host.index("]")]
+    else:
+        host = raw_host.split(":", 1)[0]
+    return host in {"localhost", "127.0.0.1", "::1"} or host.startswith("127.")
 
 
 def _is_remote_access_request(config: V2Config) -> bool:
@@ -268,7 +278,11 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
 @app.before_request
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
-    if config is None or not _is_remote_access_request(config) or _remote_auth_exempt_path():
+    if config is None:
+        if _is_local_request_host():
+            return None
+        return jsonify({"ok": False, "error": "remote_access_config_unavailable"}), 503
+    if not _is_remote_access_request(config) or _remote_auth_exempt_path():
         return None
     from vibe import remote_access
 

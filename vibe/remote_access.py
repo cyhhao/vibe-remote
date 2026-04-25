@@ -273,10 +273,13 @@ def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -
     backend_url = (backend_url or "https://vibe.io").strip().rstrip("/")
     if not pairing_key:
         return {"ok": False, "error": "missing_pairing_key"}
-    result = _json_request(
-        f"{backend_url}/api/v1/pairing/redeem",
-        {"pairing_key": pairing_key, "device_name": device_name, "local_version": "dev"},
-    )
+    try:
+        result = _json_request(
+            f"{backend_url}/api/v1/pairing/redeem",
+            {"pairing_key": pairing_key, "device_name": device_name, "local_version": "dev"},
+        )
+    except Exception as exc:
+        return {"ok": False, "error": "pairing_request_failed", "detail": str(exc)}
     required = ("instance_id", "client_id", "issuer", "authorization_endpoint", "token_endpoint", "jwks_uri", "public_url", "redirect_uri", "tunnel_token", "instance_secret")
     missing = [field for field in required if not result.get(field)]
     if missing:

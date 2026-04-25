@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
 from vibe import remote_access
+from vibe import ui_server
 from vibe.ui_server import app
 
 
@@ -57,3 +58,15 @@ def test_remote_host_allows_valid_remote_session(monkeypatch, tmp_path):
     response = client.get("/dashboard", base_url="https://alex.vibe.io", follow_redirects=False)
 
     assert response.status_code != 302
+
+
+def test_remote_host_fails_closed_when_config_load_fails(monkeypatch):
+    def fail_load():
+        raise ValueError("corrupt config")
+
+    monkeypatch.setattr(ui_server.V2Config, "load", fail_load)
+
+    response = app.test_client().get("/dashboard", base_url="https://alex.vibe.io", follow_redirects=False)
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_config_unavailable"
