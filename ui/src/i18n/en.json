@@ -55,6 +55,8 @@
     "configuredDesc": "This machine has saved the remote-access credentials. The Pairing Key is a one-time code and is not stored; after restart, Vibe Remote uses the saved connection credentials.",
     "configuredBadge": "Connected to Vibe Cloud",
     "configuredHelp": "Use re-pair only when switching account, switching instance, or regenerating the Tunnel.",
+    "legacyHostnameTitle": "This remote address needs to be replaced",
+    "legacyHostnameDesc": "Older instances used *.remote.avibe.bot. That is a nested hostname and may fail TLS on Cloudflare Universal SSL. Create a new Vibe Bot in avibe.bot, then re-pair here to receive a *.avibe.bot address.",
     "vibeCloudService": "Vibe Cloud service",
     "backendUrl": "Vibe Cloud URL",
     "pairingKey": "Pairing key",

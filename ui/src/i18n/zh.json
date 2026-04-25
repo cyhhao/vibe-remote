@@ -55,6 +55,8 @@
     "configuredDesc": "本机已经保存了远程访问凭证。Pairing Key 是一次性兑换码，不会长期保存；重启后会使用已保存的连接凭证自动恢复。",
     "configuredBadge": "已连接到 Vibe Cloud",
     "configuredHelp": "如果要换账号、换实例或重新生成 Tunnel，再点击重新配对。",
+    "legacyHostnameTitle": "这个远程地址需要更换",
+    "legacyHostnameDesc": "旧实例使用的是 *.remote.avibe.bot，这属于多级子域名，Cloudflare 免费通用证书可能无法覆盖。请在 avibe.bot 重新创建 Vibe Bot，然后回到这里重新配对，拿到新的 *.avibe.bot 地址。",
     "vibeCloudService": "Vibe Cloud 服务",
     "backendUrl": "Vibe Cloud 地址",
     "pairingKey": "Pairing Key",

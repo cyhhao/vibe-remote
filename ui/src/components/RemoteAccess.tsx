@@ -113,6 +113,7 @@ export const RemoteAccess: React.FC = () => {
   const paired = Boolean(status?.paired);
   const running = Boolean(status?.running);
   const showPairingForm = !paired || reconfiguring;
+  const legacyNestedHostname = typeof publicUrl === 'string' && publicUrl.includes('.remote.avibe.bot');
   const connectorState = status?.pid_state === 'unknown'
     ? t('remoteAccess.stateNeedsAttention')
     : running
@@ -218,6 +219,18 @@ export const RemoteAccess: React.FC = () => {
               <li>{t('remoteAccess.flowStep3')}</li>
             </ol>
           </div>
+
+          {legacyNestedHostname && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <div className="font-semibold">{t('remoteAccess.legacyHostnameTitle')}</div>
+                  <div className="mt-1">{t('remoteAccess.legacyHostnameDesc')}</div>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="rounded-2xl border border-border bg-panel p-6 space-y-5">
