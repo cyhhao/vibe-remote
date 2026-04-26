@@ -392,6 +392,27 @@ class MessageHandler(BaseHandler):
             elif callback_data == "cmd_routing":
                 await settings_handler.handle_routing(context)
 
+            elif callback_data == "cmd_screenshot":
+                await command_handlers.handle_screenshot(context)
+
+            elif callback_data == "cmd_screenshot_window":
+                await command_handlers.handle_screenshot(context, args="pick")
+
+            elif callback_data.startswith("cmd_screenshot_hwnd:"):
+                hwnd_str = callback_data.split(":", 1)[1]
+                try:
+                    hwnd = int(hwnd_str)
+                except ValueError:
+                    hwnd = 0
+                await command_handlers.handle_screenshot(context, args=f"hwnd:{hwnd}")
+
+            elif callback_data.startswith("cmd_screenshot_title:"):
+                title = callback_data.split(":", 1)[1]
+                await command_handlers.handle_screenshot(context, args=title)
+
+            elif callback_data == "cmd_screenshot_cancel":
+                pass
+
             elif callback_data.startswith("vibe_update_now"):
                 # Discord update button handler
                 target_version = None

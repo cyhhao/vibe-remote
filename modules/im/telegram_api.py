@@ -98,6 +98,24 @@ async def clear_message_reaction(bot_token: str, chat_id: str, message_id: str) 
     return await call_api(bot_token, "setMessageReaction", payload)
 
 
+async def set_my_commands(
+    bot_token: str,
+    commands: list[dict[str, str]],
+) -> dict[str, Any]:
+    return await call_api(bot_token, "setMyCommands", {"commands": commands})
+
+
+async def set_chat_menu_button(
+    bot_token: str,
+    *,
+    menu_button: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if menu_button is not None:
+        payload["menu_button"] = menu_button
+    return await call_api(bot_token, "setChatMenuButton", payload)
+
+
 async def send_multipart_file(
     bot_token: str,
     method: str,

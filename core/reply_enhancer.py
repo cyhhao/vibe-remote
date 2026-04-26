@@ -222,6 +222,26 @@ Vibe Remote will automatically send the file as an attachment.
 ### Image syntax
 If you want it sent as an image attachment rather than a regular file, use Markdown image syntax:
 Example: ![Page screenshot](file:///tmp/screenshot.jpg)
+
+## 1b. Screenshots
+When the user asks you to take a screenshot or show them what's on screen, you MUST take the screenshot yourself using Bash — do NOT tell the user to use a /screenshot command.
+
+Use the vibe-screenshot CLI script (works from any working directory):
+
+- **Full screen**: `python {screenshot_cli_path}`
+- **Active (foreground) window**: `python {screenshot_cli_path} window`
+- **Window by title** (partial match): `python {screenshot_cli_path} title Chrome`
+- **Window by HWND** (most reliable): `python {screenshot_cli_path} hwnd 12345`
+- **List visible windows** (shows hwnd + title): `python {screenshot_cli_path} list`
+
+The command prints the saved file path. Use that path in the image syntax:
+![Screenshot](file:///THE_PRINTED_PATH)
+
+Tips:
+- After launching a program, wait a moment for its window to appear before capturing.
+- If you just launched a program and want to screenshot it, use `title <name>` or `window` after a short delay.
+- Prefer `hwnd` over `title` when the HWND is known — window titles can change dynamically (e.g. spinner animations).
+- If `title` doesn't find a match, use `list` to see what's available, then retry with the correct title or hwnd.
 """
 
 _QUICK_REPLIES_PROMPT = """\
@@ -331,6 +351,29 @@ def _build_user_preferences_prompt(
     )
 
 
+def _resolve_screenshot_cli_path() -> str:
+    """Resolve the path to vibe_screenshot_cli.py at runtime."""
+    try:
+        from vibe.runtime import get_project_root
+        cli_path = get_project_root() / "vibe_screenshot_cli.py"
+        if cli_path.is_file():
+            return str(cli_path).replace("\\", "/")
+    except Exception:
+        pass
+    # Fallback: search sys.path for the package
+    import importlib
+    try:
+        spec = importlib.util.find_spec("vibe")
+        if spec and spec.origin:
+            pkg_dir = os.path.dirname(spec.origin)
+            cli_path = os.path.join(os.path.dirname(pkg_dir), "vibe_screenshot_cli.py")
+            if os.path.isfile(cli_path):
+                return cli_path.replace("\\", "/")
+    except Exception:
+        pass
+    return "vibe_screenshot_cli.py"
+
+
 def build_reply_enhancements_prompt(
     *,
     include_quick_replies: bool = True,
@@ -339,7 +382,7 @@ def build_reply_enhancements_prompt(
 ) -> str:
     """Build the reply-enhancement prompt for the current platform/backend."""
 
-    prompt = _FILES_PROMPT
+    prompt = _FILES_PROMPT.format(screenshot_cli_path=_resolve_screenshot_cli_path())
     if include_quick_replies:
         prompt += _QUICK_REPLIES_PROMPT
     if context is not None:

@@ -42,6 +42,8 @@ dependencies = [
     "sentry-sdk>=2.0.0",
     "python-socks[asyncio]>=2.0.0",
     "aiohttp-socks>=0.8.0",
+    "mss>=0.9.0",  # screen capture (Windows & Linux)
+    "pyxdg>=0.28; sys_platform == 'linux'",  # Linux: XDG base directory support
 ]
 
 [project.urls]

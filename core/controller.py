@@ -343,6 +343,10 @@ class Controller:
             "settings": self._dispatch_to_controller_loop(self.settings_handler.handle_settings),
             "stop": self._dispatch_to_controller_loop(self.command_handler.handle_stop),
             "bind": self._dispatch_to_controller_loop(self.command_handler.handle_bind),
+            "screenshot": self._dispatch_to_controller_loop(self.command_handler.handle_screenshot),
+            "window": self._dispatch_to_controller_loop(
+                lambda ctx, args="pick": self.command_handler.handle_screenshot(ctx, args or "pick")
+            ),
         }
 
         # Register callbacks with the IM client

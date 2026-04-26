@@ -169,6 +169,7 @@ class TelegramBot(BaseIMClient):
         try:
             self._bot_user = (await telegram_api.get_me(self.config.bot_token)).get("result")
             logger.info("Telegram bot connected as @%s", self._bot_user.get("username") if self._bot_user else "unknown")
+            await self._register_bot_menu()
             if self._on_ready:
                 await self._on_ready()
 
@@ -236,6 +237,35 @@ class TelegramBot(BaseIMClient):
             return
         pending = tuple(tasks)
         await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _register_bot_menu(self) -> None:
+        """Register bot commands and menu button via Telegram Bot API."""
+        try:
+            commands = [
+                {"command": "start", "description": "显示主菜单"},
+                {"command": "new", "description": "开始新会话"},
+                {"command": "screenshot", "description": "截取全屏截图"},
+                {"command": "window", "description": "选择窗口截图"},
+                {"command": "cwd", "description": "查看当前工作目录"},
+                {"command": "setcwd", "description": "切换工作目录"},
+                {"command": "resume", "description": "恢复历史会话"},
+                {"command": "settings", "description": "打开设置"},
+                {"command": "routing", "description": "Agent/模型设置"},
+                {"command": "stop", "description": "停止当前任务"},
+            ]
+            await telegram_api.set_my_commands(self.config.bot_token, commands)
+            logger.info("Registered %d bot commands", len(commands))
+        except Exception as e:
+            logger.warning("Failed to register bot commands: %s", e)
+
+        try:
+            menu_button = {
+                "type": "commands",
+            }
+            await telegram_api.set_chat_menu_button(self.config.bot_token, menu_button=menu_button)
+            logger.info("Set chat menu button to commands")
+        except Exception as e:
+            logger.warning("Failed to set chat menu button: %s", e)
 
     async def _drain_background_tasks(self) -> None:
         await self._drain_task_set(self._update_tasks)
@@ -491,7 +521,7 @@ class TelegramBot(BaseIMClient):
         }
         callback_data = str(payload.get("data", ""))
         primary_action = self._resolve_callback_action(callback_data)
-        is_internal_callback = callback_data.startswith(("tg_cwd:", "tg_resume:", "tg_route:", "tg_question:", "tg_settings:"))
+        is_internal_callback = callback_data.startswith(("tg_cwd:", "tg_resume:", "tg_route:", "tg_question:", "tg_settings:", "tg_screenshot:"))
         if is_internal_callback:
             auth_result = self.check_authorization(
                 user_id=context.user_id,
@@ -545,6 +575,9 @@ class TelegramBot(BaseIMClient):
             return True
         if callback_data.startswith("tg_question:"):
             await self._handle_question_callback(context, callback_data)
+            return True
+        if callback_data.startswith("tg_screenshot:"):
+            await self._handle_screenshot_callback(context, callback_data)
             return True
         return False
 
@@ -716,6 +749,8 @@ class TelegramBot(BaseIMClient):
             "set_cwd",
             "bind",
             "stop",
+            "screenshot",
+            "window",
         }
         parsed_command = self.parse_text_command(stripped, allow_plain_bind=True)
         if parsed_command and parsed_command[0] in known_commands:
@@ -1791,6 +1826,66 @@ class TelegramBot(BaseIMClient):
             ]
         )
         return "\n".join(lines), InlineKeyboard(buttons=rows)
+
+    async def _handle_screenshot_callback(self, context: MessageContext, callback_data: str) -> None:
+        """Handle tg_screenshot:... callback actions."""
+        from modules.tools.screenshot import (
+            capture_screenshot, capture_active_window,
+            capture_window_by_title, capture_window_by_hwnd,
+            list_windows, cleanup_old_screenshots, ScreenshotError,
+        )
+        action = callback_data.split(":", 1)[1] if ":" in callback_data else "fullscreen"
+        try:
+            cleanup_old_screenshots()
+            filepath = None
+            caption = ""
+
+            if action == "fullscreen":
+                filepath = capture_screenshot()
+                caption = "🖥 Full Screen"
+            elif action == "window":
+                filepath = capture_active_window()
+                caption = "🪟 Active Window"
+            elif action.startswith("hwnd:"):
+                hwnd = int(action.split(":", 1)[1])
+                filepath = capture_window_by_hwnd(hwnd)
+                caption = "🪟 Window"
+            elif action.startswith("title:"):
+                title = action.split(":", 1)[1]
+                filepath = capture_window_by_title(title)
+                caption = f"🪟 {title}"
+            elif action == "pick":
+                windows = list_windows()
+                visible = [w for w in windows if w.get("title") and w.get("width", 0) > 0][:10]
+                if not visible:
+                    await self.send_message(context, "No visible windows found.")
+                    return
+                rows = []
+                for w in visible:
+                    label = w["title"][:30]
+                    rows.append([InlineButton(text=f"🪟 {label}", callback_data=f"tg_screenshot:hwnd:{w['hwnd']}")])
+                rows.append([
+                    InlineButton(text="🖥 Full Screen", callback_data="tg_screenshot:fullscreen"),
+                    InlineButton(text="✖️ Cancel", callback_data="tg_screenshot:cancel"),
+                ])
+                keyboard = InlineKeyboard(buttons=rows)
+                await self.send_message_with_buttons(context, "📸 Select a window to capture:", keyboard)
+                return
+            elif action == "cancel":
+                return
+
+            if filepath is None:
+                await self.send_message(context, "❌ Screenshot capture failed.")
+                return
+            await self.upload_image_from_path(context, file_path=filepath, title=caption)
+            logger.info("Screenshot sent via callback: %s", filepath)
+
+        except ScreenshotError as e:
+            logger.warning("Screenshot capture failed: %s", e)
+            await self.send_message(context, f"❌ {e}")
+        except Exception as e:
+            logger.error("Error handling screenshot callback: %s", e, exc_info=True)
+            await self.send_message(context, f"❌ Screenshot failed: {e}")
 
     async def _handle_settings_callback(self, context: MessageContext, callback_data: str) -> None:
         scope_key = self._interaction_scope_key(context)
