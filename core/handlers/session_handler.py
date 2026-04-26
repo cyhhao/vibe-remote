@@ -404,6 +404,13 @@ class SessionHandler(BaseHandler):
         session_key = self._get_session_key(context)
         stored_claude_session_id = self.sessions.get_claude_session_id(session_key, base_session_id)
 
+        # For cross-project resumed sessions, use the stored working_path
+        # as cwd so Claude Code can find the session file.
+        stored_working_path = self.sessions.get_agent_session_working_path(session_key, base_session_id, agent_name="claude")
+        if stored_working_path and stored_claude_session_id:
+            logger.info(f"Using stored working_path for resumed session: {stored_working_path} (current: {working_path})")
+            working_path = stored_working_path
+
         # Read routing overrides via get_channel_routing which correctly
         # resolves DM users from the users store (not the stale channels store).
         routing = self._get_settings_manager(context).get_channel_routing(settings_key)
@@ -666,6 +673,7 @@ class SessionHandler(BaseHandler):
         host_message_ts: Optional[str] = None,
         is_dm: bool = False,
         platform: Optional[str] = None,
+        session_working_path: Optional[str] = None,
     ) -> None:
         """Bind a provided session_id to the current thread for the chosen agent."""
         from modules.settings_manager import ChannelRouting
@@ -793,7 +801,7 @@ class SessionHandler(BaseHandler):
             if agent == "opencode":
                 mapping_key = f"{base_session_id}:{working_path}"
 
-            self.sessions.set_agent_session_mapping(session_key, agent, mapping_key, session_id)
+            self.sessions.set_agent_session_mapping(session_key, agent, mapping_key, session_id, session_working_path=session_working_path)
             self.sessions.mark_thread_active(user_id, context.channel_id, mapped_thread)
         except Exception as e:
             logger.error(f"Error resuming session: {e}", exc_info=True)

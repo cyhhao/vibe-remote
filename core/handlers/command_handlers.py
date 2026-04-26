@@ -119,9 +119,6 @@ class CommandHandlers(BaseHandler):
         if time.time() - float(snapshot.get("stored_at", 0.0)) > self._resume_snapshot_ttl_seconds:
             self._resume_snapshots.pop(self._get_resume_snapshot_key(context), None)
             return None
-        if snapshot.get("working_path") != self.controller.get_cwd(context):
-            self._resume_snapshots.pop(self._get_resume_snapshot_key(context), None)
-            return None
         return snapshot
 
     def _list_recent_native_sessions(
@@ -138,7 +135,7 @@ class CommandHandlers(BaseHandler):
             native_session_service = getattr(self.controller, "native_session_service", None)
         if native_session_service is None:
             return working_path, []
-        sessions = native_session_service.list_recent_sessions(working_path, limit=limit)
+        sessions = native_session_service.list_all_recent_sessions(limit=limit)
         agent_service = getattr(self.controller, "agent_service", None)
         registered_agents = getattr(agent_service, "agents", None)
         if isinstance(registered_agents, dict) and registered_agents:
@@ -272,6 +269,7 @@ class CommandHandlers(BaseHandler):
             host_message_ts=context.message_id,
             is_dm=bool((context.platform_specific or {}).get("is_dm", False)),
             platform=context.platform or (context.platform_specific or {}).get("platform") or self.config.platform,
+            session_working_path=item.working_path,
         )
 
     async def _handle_wechat_resume_latest(self, context: MessageContext, *, agent: Optional[str] = None) -> None:
@@ -298,6 +296,7 @@ class CommandHandlers(BaseHandler):
             host_message_ts=context.message_id,
             is_dm=bool((context.platform_specific or {}).get("is_dm", False)),
             platform=context.platform or (context.platform_specific or {}).get("platform") or self.config.platform,
+            session_working_path=item.working_path,
         )
 
     async def _handle_wechat_resume(self, context: MessageContext, args: str) -> None:
@@ -457,7 +456,9 @@ class CommandHandlers(BaseHandler):
                 InlineButton(text=f"🤖 {self._t('button.agentSettings')}", callback_data="cmd_routing"),
             ],
             # Row 4: Features
-            [InlineButton(text=f"✨ {self._t('button.howItWorks')}", callback_data="info_how_it_works")],
+            [
+                InlineButton(text=f"✨ {self._t('button.howItWorks')}", callback_data="info_how_it_works"),
+            ],
         ]
 
         keyboard = InlineKeyboard(buttons=buttons)
