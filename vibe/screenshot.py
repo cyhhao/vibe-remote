@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -42,19 +44,30 @@ def capture_screenshot(output: str | Path | None = None) -> ScreenshotResult:
     try:
         output_path = _resolve_output_path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        capture_path = _temporary_output_path(output_path)
     except OSError as exc:
         raise ScreenshotError(f"failed to prepare screenshot output path: {exc}") from exc
 
-    if sys.platform == "darwin":
-        backend = _capture_macos(output_path)
-    elif sys.platform.startswith("win"):
-        backend = _capture_windows(output_path)
-    elif sys.platform.startswith("linux"):
-        backend = _capture_linux(output_path)
-    else:
-        raise ScreenshotError(f"screenshots are not supported on this platform: {sys.platform}")
+    try:
+        if sys.platform == "darwin":
+            backend = _capture_macos(capture_path)
+        elif sys.platform.startswith("win"):
+            backend = _capture_windows(capture_path)
+        elif sys.platform.startswith("linux"):
+            backend = _capture_linux(capture_path)
+        else:
+            raise ScreenshotError(f"screenshots are not supported on this platform: {sys.platform}")
 
-    _verify_output(output_path)
+        _verify_output(capture_path)
+        try:
+            capture_path.replace(output_path)
+        except OSError as exc:
+            raise ScreenshotError(f"failed to finalize screenshot output: {exc}") from exc
+    finally:
+        try:
+            capture_path.unlink(missing_ok=True)
+        except OSError:
+            pass
     return ScreenshotResult(path=output_path, backend=backend)
 
 
@@ -65,6 +78,20 @@ def _resolve_output_path(output: str | Path | None) -> Path:
     if path.suffix.lower() != ".png":
         path = path.with_suffix(".png")
     return path.resolve()
+
+
+def _temporary_output_path(output: Path) -> Path:
+    fd, raw_path = tempfile.mkstemp(
+        prefix=f".{output.name}.",
+        suffix=".tmp.png",
+        dir=output.parent,
+    )
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    Path(raw_path).unlink()
+    return Path(raw_path)
 
 
 def _capture_macos(output: Path) -> str:
@@ -116,11 +143,7 @@ def _capture_linux(output: Path) -> str:
             _run_capture_command(command, name)
             return name
         except ScreenshotError:
-            try:
-                if output.exists():
-                    output.unlink()
-            except OSError:
-                pass
+            pass
 
     if attempted:
         raise ScreenshotError(f"installed screenshot tools failed: {', '.join(attempted)}")

@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import vibe.screenshot as screenshot
 from vibe import cli
 from vibe.screenshot import ScreenshotError, ScreenshotResult, capture_screenshot
 
@@ -77,3 +78,52 @@ def test_capture_screenshot_wraps_output_preparation_errors(tmp_path: Path) -> N
         assert "failed to prepare screenshot output path" in str(exc)
     else:
         raise AssertionError("expected ScreenshotError")
+
+
+def test_capture_screenshot_preserves_existing_output_when_linux_backend_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output = tmp_path / "screen.png"
+    output.write_bytes(b"existing")
+
+    monkeypatch.setattr(screenshot.sys, "platform", "linux")
+    monkeypatch.setattr(screenshot, "which", lambda name: f"/usr/bin/{name}" if name == "grim" else None)
+
+    def fail_capture(command, label):
+        Path(command[-1]).write_bytes(b"partial")
+        raise ScreenshotError("backend failed")
+
+    monkeypatch.setattr(screenshot, "_run_capture_command", fail_capture)
+
+    try:
+        capture_screenshot(output)
+    except ScreenshotError:
+        pass
+    else:
+        raise AssertionError("expected ScreenshotError")
+
+    assert output.read_bytes() == b"existing"
+
+
+def test_capture_screenshot_replaces_existing_output_only_after_success(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "screen.png"
+    output.write_bytes(b"existing")
+    capture_paths: list[Path] = []
+
+    monkeypatch.setattr(screenshot.sys, "platform", "linux")
+    monkeypatch.setattr(screenshot, "which", lambda name: f"/usr/bin/{name}" if name == "grim" else None)
+
+    def successful_capture(command, label):
+        capture_path = Path(command[-1])
+        capture_paths.append(capture_path)
+        capture_path.write_bytes(b"new screenshot")
+
+    monkeypatch.setattr(screenshot, "_run_capture_command", successful_capture)
+
+    result = capture_screenshot(output)
+
+    assert result.path == output
+    assert output.read_bytes() == b"new screenshot"
+    assert capture_paths
+    assert output not in capture_paths
+    assert all(not path.exists() for path in capture_paths)
