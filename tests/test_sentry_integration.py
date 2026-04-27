@@ -339,6 +339,23 @@ def test_event_rate_state_enforces_cache_limit(monkeypatch):
     assert len(sentry_integration._EVENT_RATE_STATE) == 2
 
 
+def test_event_rate_state_evicts_oldest_entries(monkeypatch):
+    monkeypatch.setattr(sentry_integration, "_EVENT_RATE_CACHE_LIMIT", 2)
+    sentry_integration._EVENT_RATE_STATE.clear()
+    sentry_integration._EVENT_RATE_STATE.update(
+        {
+            "z-oldest": (1.0, 1),
+            "a-middle": (2.0, 1),
+            "m-newest": (3.0, 1),
+        }
+    )
+
+    sentry_integration._prune_event_rate_state(now=3.0, window_seconds=10.0)
+
+    assert "z-oldest" not in sentry_integration._EVENT_RATE_STATE
+    assert set(sentry_integration._EVENT_RATE_STATE) == {"a-middle", "m-newest"}
+
+
 def test_before_send_rate_state_is_thread_safe(monkeypatch):
     monkeypatch.setattr(sentry_integration, "_EVENT_RATE_CACHE_LIMIT", 8)
     sentry_integration._EVENT_RATE_STATE.clear()

@@ -365,7 +365,11 @@ def _prune_event_rate_state(now: float, window_seconds: float) -> None:
     if overflow <= 0:
         return
     oldest_keys = [
-        key for key, _timestamp in sorted((key, value[0]) for key, value in _EVENT_RATE_STATE.items())[:overflow]
+        key
+        for key, _timestamp in sorted(
+            ((key, value[0]) for key, value in _EVENT_RATE_STATE.items()),
+            key=lambda item: item[1],
+        )[:overflow]
     ]
     for key in oldest_keys:
         _EVENT_RATE_STATE.pop(key, None)
