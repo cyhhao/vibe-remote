@@ -4,6 +4,7 @@ import sys
 import types
 import importlib
 import ast
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -336,3 +337,21 @@ def test_event_rate_state_enforces_cache_limit(monkeypatch):
         assert sentry_integration.before_send(event, {}) is not None
 
     assert len(sentry_integration._EVENT_RATE_STATE) == 2
+
+
+def test_before_send_rate_state_is_thread_safe(monkeypatch):
+    monkeypatch.setattr(sentry_integration, "_EVENT_RATE_CACHE_LIMIT", 8)
+    sentry_integration._EVENT_RATE_STATE.clear()
+
+    def send_event(index: int) -> bool:
+        event = {
+            "logger": "core.message_dispatcher",
+            "logentry": {"formatted": f"concurrent application bug {index}"},
+        }
+        return sentry_integration.before_send(event, {}) is not None
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(send_event, range(64)))
+
+    assert all(results)
+    assert len(sentry_integration._EVENT_RATE_STATE) <= 8

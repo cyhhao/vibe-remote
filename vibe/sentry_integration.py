@@ -6,6 +6,7 @@ import platform
 import re
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -48,6 +49,7 @@ _ONE_DAY_SECONDS = 60 * 60 * 24
 _NOISY_EVENT_TTL_SECONDS = _ONE_DAY_SECONDS
 _NOISY_EVENT_CACHE_LIMIT = 128
 _NOISY_EVENT_LAST_SEEN: dict[str, float] = {}
+_SENTRY_EVENT_CACHE_LOCK = threading.RLock()
 _EVENT_RATE_WINDOW_SECONDS = _ONE_DAY_SECONDS * 2
 _EVENT_RATE_LIMIT_PER_WINDOW = 1
 _EVENT_RATE_CACHE_LIMIT = 2048
@@ -302,14 +304,15 @@ def _should_drop_noisy_event(event: dict[str, Any]) -> bool:
         return False
 
     now = time.monotonic()
-    last_seen = _NOISY_EVENT_LAST_SEEN.get(fingerprint)
-    _NOISY_EVENT_LAST_SEEN[fingerprint] = now
+    with _SENTRY_EVENT_CACHE_LOCK:
+        last_seen = _NOISY_EVENT_LAST_SEEN.get(fingerprint)
+        _NOISY_EVENT_LAST_SEEN[fingerprint] = now
 
-    if len(_NOISY_EVENT_LAST_SEEN) > _NOISY_EVENT_CACHE_LIMIT:
-        expired_before = now - ttl_seconds
-        for key, timestamp in list(_NOISY_EVENT_LAST_SEEN.items()):
-            if timestamp < expired_before:
-                _NOISY_EVENT_LAST_SEEN.pop(key, None)
+        if len(_NOISY_EVENT_LAST_SEEN) > _NOISY_EVENT_CACHE_LIMIT:
+            expired_before = now - ttl_seconds
+            for key, timestamp in list(_NOISY_EVENT_LAST_SEEN.items()):
+                if timestamp < expired_before:
+                    _NOISY_EVENT_LAST_SEEN.pop(key, None)
 
     return last_seen is not None and now - last_seen < ttl_seconds
 
@@ -361,7 +364,9 @@ def _prune_event_rate_state(now: float, window_seconds: float) -> None:
     overflow = len(_EVENT_RATE_STATE) - _EVENT_RATE_CACHE_LIMIT
     if overflow <= 0:
         return
-    oldest_keys = sorted(_EVENT_RATE_STATE, key=lambda key: _EVENT_RATE_STATE[key][0])[:overflow]
+    oldest_keys = [
+        key for key, _timestamp in sorted((key, value[0]) for key, value in _EVENT_RATE_STATE.items())[:overflow]
+    ]
     for key in oldest_keys:
         _EVENT_RATE_STATE.pop(key, None)
 
@@ -377,14 +382,15 @@ def _should_drop_repeated_event(event: dict[str, Any]) -> bool:
 
     now = time.monotonic()
     fingerprint = _event_rate_fingerprint(event)
-    window_started_at, count = _EVENT_RATE_STATE.get(fingerprint, (now, 0))
-    if now - window_started_at >= window_seconds:
-        window_started_at = now
-        count = 0
+    with _SENTRY_EVENT_CACHE_LOCK:
+        window_started_at, count = _EVENT_RATE_STATE.get(fingerprint, (now, 0))
+        if now - window_started_at >= window_seconds:
+            window_started_at = now
+            count = 0
 
-    count += 1
-    _EVENT_RATE_STATE[fingerprint] = (window_started_at, count)
-    _prune_event_rate_state(now, window_seconds)
+        count += 1
+        _EVENT_RATE_STATE[fingerprint] = (window_started_at, count)
+        _prune_event_rate_state(now, window_seconds)
     return count > limit
 
 
