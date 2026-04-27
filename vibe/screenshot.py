@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import subprocess
+import os
 import sys
 import tempfile
-import os
+import subprocess
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -29,14 +30,9 @@ def default_screenshot_dir() -> Path:
 
 
 def default_screenshot_path() -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     directory = default_screenshot_dir()
-    candidate = directory / f"screenshot_{timestamp}.png"
-    counter = 1
-    while candidate.exists():
-        candidate = directory / f"screenshot_{timestamp}_{counter}.png"
-        counter += 1
-    return candidate
+    return directory / f"screenshot_{timestamp}_{uuid.uuid4().hex[:8]}.png"
 
 
 def capture_screenshot(output: str | Path | None = None) -> ScreenshotResult:

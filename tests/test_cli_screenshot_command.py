@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import vibe.screenshot as screenshot
 from vibe import cli
-from vibe.screenshot import ScreenshotError, ScreenshotResult, capture_screenshot
+from vibe.screenshot import ScreenshotError, ScreenshotResult, capture_screenshot, default_screenshot_path
 
 
 def test_screenshot_parser_accepts_output_and_json() -> None:
@@ -78,6 +78,18 @@ def test_capture_screenshot_wraps_output_preparation_errors(tmp_path: Path) -> N
         assert "failed to prepare screenshot output path" in str(exc)
     else:
         raise AssertionError("expected ScreenshotError")
+
+
+def test_default_screenshot_paths_are_unique(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(screenshot.paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+
+    first = default_screenshot_path()
+    second = default_screenshot_path()
+
+    assert first != second
+    assert first.parent == second.parent == tmp_path / ".vibe_remote" / "screenshots"
+    assert first.name.startswith("screenshot_")
+    assert first.suffix == ".png"
 
 
 def test_capture_screenshot_preserves_existing_output_when_linux_backend_fails(
