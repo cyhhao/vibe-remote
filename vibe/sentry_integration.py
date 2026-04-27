@@ -358,6 +358,12 @@ def _prune_event_rate_state(now: float, window_seconds: float) -> None:
     for key, (window_started_at, _count) in list(_EVENT_RATE_STATE.items()):
         if window_started_at < expired_before:
             _EVENT_RATE_STATE.pop(key, None)
+    overflow = len(_EVENT_RATE_STATE) - _EVENT_RATE_CACHE_LIMIT
+    if overflow <= 0:
+        return
+    oldest_keys = sorted(_EVENT_RATE_STATE, key=lambda key: _EVENT_RATE_STATE[key][0])[:overflow]
+    for key in oldest_keys:
+        _EVENT_RATE_STATE.pop(key, None)
 
 
 def _should_drop_repeated_event(event: dict[str, Any]) -> bool:

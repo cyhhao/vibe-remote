@@ -322,3 +322,17 @@ def test_before_send_rate_limit_can_be_raised(monkeypatch):
     assert sentry_integration.before_send(dict(event), {}) is not None
     assert sentry_integration.before_send(dict(event), {}) is not None
     assert sentry_integration.before_send(dict(event), {}) is None
+
+
+def test_event_rate_state_enforces_cache_limit(monkeypatch):
+    monkeypatch.setattr(sentry_integration, "_EVENT_RATE_CACHE_LIMIT", 2)
+    sentry_integration._EVENT_RATE_STATE.clear()
+
+    for index in range(4):
+        event = {
+            "logger": "core.message_dispatcher",
+            "logentry": {"formatted": f"unique application bug {index}"},
+        }
+        assert sentry_integration.before_send(event, {}) is not None
+
+    assert len(sentry_integration._EVENT_RATE_STATE) == 2
