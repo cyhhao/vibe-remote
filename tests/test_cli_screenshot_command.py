@@ -117,6 +117,35 @@ def test_capture_screenshot_preserves_existing_output_when_linux_backend_fails(
     assert output.read_bytes() == b"existing"
 
 
+def test_linux_fallback_clears_partial_capture_before_next_backend(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "screen.png"
+    output.write_bytes(b"existing")
+    available = {"grim", "gnome-screenshot"}
+
+    monkeypatch.setattr(screenshot.sys, "platform", "linux")
+    monkeypatch.setattr(screenshot, "which", lambda name: f"/usr/bin/{name}" if name in available else None)
+
+    def capture_with_partial_then_empty_success(command, label):
+        capture_path = Path(command[-1])
+        if label == "grim":
+            capture_path.write_bytes(b"partial")
+            raise ScreenshotError("backend failed")
+        if label == "gnome-screenshot":
+            return
+        raise AssertionError(f"unexpected backend: {label}")
+
+    monkeypatch.setattr(screenshot, "_run_capture_command", capture_with_partial_then_empty_success)
+
+    try:
+        capture_screenshot(output)
+    except ScreenshotError as exc:
+        assert "screenshot file was not created" in str(exc)
+    else:
+        raise AssertionError("expected ScreenshotError")
+
+    assert output.read_bytes() == b"existing"
+
+
 def test_capture_screenshot_replaces_existing_output_only_after_success(tmp_path: Path, monkeypatch) -> None:
     output = tmp_path / "screen.png"
     output.write_bytes(b"existing")

@@ -135,15 +135,23 @@ def _capture_linux(output: Path) -> str:
         if which(name) is None:
             continue
         attempted.append(name)
+        _remove_output_if_exists(output)
         try:
             _run_capture_command(command, name)
             return name
         except ScreenshotError:
-            pass
+            _remove_output_if_exists(output)
 
     if attempted:
         raise ScreenshotError(f"installed screenshot tools failed: {', '.join(attempted)}")
     raise ScreenshotError("no Linux screenshot tool found; install grim, gnome-screenshot, spectacle, scrot, or ImageMagick")
+
+
+def _remove_output_if_exists(output: Path) -> None:
+    try:
+        output.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _run_capture_command(command: list[str], label: str) -> None:
