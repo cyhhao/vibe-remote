@@ -5,6 +5,7 @@
 ```bash
 vibe              # 启动 Vibe Remote（打开 Web UI）
 vibe status       # 查看服务状态
+vibe screenshot   # 截取本机桌面截图
 vibe stop         # 停止所有服务
 ```
 
@@ -116,6 +117,21 @@ vibe doctor
 - Slack token 配置
 - Agent CLI 可用性（Claude Code、OpenCode、Codex）
 - 运行时环境
+
+### `vibe screenshot`
+
+截取本机桌面并保存为 PNG 文件。
+
+```bash
+vibe screenshot
+vibe screenshot --output /tmp/screen.png
+vibe screenshot --json
+```
+
+**行为：**
+- 默认保存到 `~/.vibe_remote/screenshots/`
+- 默认输出保存路径；加 `--json` 时输出机器可读的 JSON
+- 只作为 CLI 层能力存在；不新增 IM 命令、bot 按钮，也不注入 Agent prompt
 
 ### `vibe task`
 

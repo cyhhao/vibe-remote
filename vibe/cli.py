@@ -37,6 +37,7 @@ from core.watches import (
     WatchRuntimeStateStore,
 )
 from vibe import __version__, api, runtime
+from vibe.screenshot import ScreenshotError, capture_screenshot
 from vibe.upgrade import (
     build_upgrade_plan,
     cache_running_vibe_path,
@@ -1902,6 +1903,37 @@ def cmd_doctor():
     return 0 if result["ok"] else 1
 
 
+def cmd_screenshot(args):
+    try:
+        result = capture_screenshot(getattr(args, "output", None))
+    except ScreenshotError as exc:
+        payload = {
+            "ok": False,
+            "code": "screenshot_failed",
+            "error": str(exc),
+        }
+        if getattr(args, "json", False):
+            print(json.dumps(payload, indent=2), file=sys.stderr)
+        else:
+            print(f"Screenshot failed: {exc}", file=sys.stderr)
+        return 1
+
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "path": str(result.path),
+                    "backend": result.backend,
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(str(result.path))
+    return 0
+
+
 def cmd_version():
     """Show current version."""
     print(f"vibe-remote {__version__}")
@@ -2039,6 +2071,24 @@ def build_parser():
     subparsers.add_parser("version", help="Show version")
     subparsers.add_parser("check-update", help="Check for updates")
     subparsers.add_parser("upgrade", help="Upgrade to latest version")
+    screenshot_parser = subparsers.add_parser(
+        "screenshot",
+        help="Capture a local desktop screenshot",
+        description=(
+            "Capture the local desktop as a PNG file. This is a CLI primitive; "
+            "it does not add IM commands, bot buttons, or agent prompt injection."
+        ),
+    )
+    screenshot_parser.add_argument(
+        "-o",
+        "--output",
+        help="PNG output path. Defaults to ~/.vibe_remote/screenshots/screenshot_<timestamp>.png.",
+    )
+    screenshot_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print a machine-readable result with the output path and capture backend.",
+    )
 
     task_parser = subparsers.add_parser(
         "task",
@@ -2396,6 +2446,8 @@ def main():
         sys.exit(cmd_status())
     if args.command == "doctor":
         sys.exit(cmd_doctor())
+    if args.command == "screenshot":
+        sys.exit(cmd_screenshot(args))
     if args.command == "version":
         sys.exit(cmd_version())
     if args.command == "check-update":
