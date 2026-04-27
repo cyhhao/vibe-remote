@@ -94,6 +94,9 @@ class ActivePollInfo:
 class SessionState:
     # session_mappings: user_id -> agent_name -> thread_id -> session_id
     session_mappings: Dict[str, Dict[str, Dict[str, str]]] = field(default_factory=dict)
+    # session_working_paths: user_id -> agent_name -> thread_id -> working_path
+    # Stores the original working_path for cross-project resumed sessions
+    session_working_paths: Dict[str, Dict[str, Dict[str, str]]] = field(default_factory=dict)
     active_slack_threads: Dict[str, Dict[str, Dict[str, float]]] = field(default_factory=dict)
     # active_polls: opencode_session_id -> ActivePollInfo
     active_polls: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -118,6 +121,7 @@ class SessionsStore:
             return
         self.state = SessionState(
             session_mappings=payload.get("session_mappings", {}),
+            session_working_paths=payload.get("session_working_paths", {}),
             active_slack_threads=payload.get("active_slack_threads", {}),
             active_polls=payload.get("active_polls", {}),
             processed_message_ts=payload.get("processed_message_ts", {}),
@@ -353,6 +357,7 @@ class SessionsStore:
         paths.ensure_data_dirs()
         payload = {
             "session_mappings": self.state.session_mappings,
+            "session_working_paths": self.state.session_working_paths,
             "active_slack_threads": self.state.active_slack_threads,
             "active_polls": self.state.active_polls,
             "processed_message_ts": self.state.processed_message_ts,

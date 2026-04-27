@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -18,8 +19,13 @@ from .types import NativeResumeSession
 logger = logging.getLogger(__name__)
 
 
+def _norm_path(p: str) -> str:
+    """Normalize path for comparison: resolve case and separators."""
+    return os.path.normcase(os.path.normpath(p))
+
+
 def encode_project_path(working_path: str) -> str:
-    return working_path.replace("/", "-")
+    return re.sub(r"[^A-Za-z0-9]", "-", working_path)
 
 
 class ClaudeNativeSessionProvider(NativeSessionProvider):
@@ -35,12 +41,20 @@ class ClaudeNativeSessionProvider(NativeSessionProvider):
     @staticmethod
     def _candidate_project_names(working_path: str) -> set[str]:
         collapsed = re.sub(r"[^A-Za-z0-9]+", "-", working_path).strip("-")
-        names = {
+        names: set[str] = {
             encode_project_path(working_path),
             encode_project_path(working_path).replace("_", "-"),
         }
         if collapsed:
             names.add(f"-{collapsed}")
+        # On Windows, backslashes and colons are each replaced with a
+        # separate dash by Claude Code (e.g. "C:\Users" → "C--Users"),
+        # whereas the collapsed regex above merges consecutive non-alnum
+        # chars into one dash ("C:\Users" → "C-Users").  Add the
+        # per-character encoding so the actual directory name is found.
+        per_char = re.sub(r"[^A-Za-z0-9]", "-", working_path)
+        names.add(per_char)
+        names.add(per_char.replace("_", "-"))
         return names
 
     @staticmethod
@@ -104,7 +118,7 @@ class ClaudeNativeSessionProvider(NativeSessionProvider):
     ) -> str | None:
         session_id = str(entry.get("sessionId") or "").strip()
         project_path = str(entry.get("projectPath") or "").strip()
-        if not session_id or project_path != working_path:
+        if not session_id or _norm_path(project_path) != _norm_path(working_path):
             return None
         created_at = self._parse_iso(entry.get("created"))
         updated_at = self._parse_iso(entry.get("modified"))
@@ -191,7 +205,7 @@ class ClaudeNativeSessionProvider(NativeSessionProvider):
             row_cwd = str(row.get("cwd") or row.get("projectPath") or "").strip()
             if row_cwd:
                 inferred_working_path = row_cwd
-            if row_cwd == working_path:
+            if _norm_path(row_cwd) == _norm_path(working_path):
                 matched_working_path = True
             if row.get("type") == "user" and not first_prompt:
                 first_prompt = str((row.get("message") or {}).get("content") or "")
@@ -200,7 +214,7 @@ class ClaudeNativeSessionProvider(NativeSessionProvider):
                 created_at = timestamp
             if timestamp:
                 updated_at = timestamp
-        if not matched_working_path and inferred_working_path and inferred_working_path != working_path:
+        if not matched_working_path and inferred_working_path and _norm_path(inferred_working_path) != _norm_path(working_path):
             return False
         if not (created_at or updated_at):
             stat = jsonl_path.stat()
@@ -274,10 +288,109 @@ class ClaudeNativeSessionProvider(NativeSessionProvider):
                 continue
             self._merge_session_file(results, working_path=working_path, jsonl_path=jsonl_path)
 
-        if not results:
-            for project_dir in candidate_dirs:
-                for jsonl_path in sorted(project_dir.glob("*.jsonl")):
+        # Always scan candidate dirs for .jsonl files not yet discovered
+        # via index or history (e.g. sessions created by SDK/agent that
+        # don't write to sessions-index.json or history.jsonl).
+        known_ids = set(results)
+        for project_dir in candidate_dirs:
+            for jsonl_path in sorted(project_dir.glob("*.jsonl")):
+                if jsonl_path.stem not in known_ids:
                     self._merge_session_file(results, working_path=working_path, jsonl_path=jsonl_path)
+
+        items = list(results.values())
+        items.sort(key=lambda item: (-item.sort_ts, item.native_session_id))
+        return items
+
+    def _merge_session_file_unfiltered(
+        self,
+        results: dict[str, NativeResumeSession],
+        *,
+        jsonl_path: Path,
+    ) -> bool:
+        """Merge a session file without filtering by working_path.
+        The session's working_path is inferred from the file's cwd/projectPath fields."""
+        rows = read_json_lines(jsonl_path)
+        if not rows:
+            return False
+        created_at = None
+        updated_at = None
+        first_prompt = ""
+        inferred_working_path = ""
+        for row in rows:
+            row_cwd = str(row.get("cwd") or row.get("projectPath") or "").strip()
+            if row_cwd:
+                inferred_working_path = row_cwd
+            if row.get("type") == "user" and not first_prompt:
+                first_prompt = str((row.get("message") or {}).get("content") or "")
+            timestamp = self._parse_iso(row.get("timestamp"))
+            if timestamp and created_at is None:
+                created_at = timestamp
+            if timestamp:
+                updated_at = timestamp
+        if not inferred_working_path:
+            return False
+        if not (created_at or updated_at):
+            stat = jsonl_path.stat()
+            created_at = datetime.fromtimestamp(stat.st_ctime)
+            updated_at = datetime.fromtimestamp(stat.st_mtime)
+        self._merge_session(
+            results,
+            NativeResumeSession(
+                agent="claude",
+                agent_prefix="cc",
+                native_session_id=jsonl_path.stem,
+                working_path=inferred_working_path,
+                created_at=created_at,
+                updated_at=updated_at,
+                sort_ts=(updated_at or created_at).timestamp() if (updated_at or created_at) else 0.0,
+                locator={"full_path": str(jsonl_path), "first_prompt": first_prompt},
+            ),
+        )
+        return True
+
+    def list_all_metadata(self) -> list[NativeResumeSession]:
+        """List sessions across all project directories."""
+        results: dict[str, NativeResumeSession] = {}
+
+        # Scan all project directories under ~/.claude/projects/
+        if not self.root.exists():
+            return []
+
+        for project_dir in sorted(self.root.iterdir()):
+            if not project_dir.is_dir():
+                continue
+            # Scan all .jsonl session files in each project dir
+            for jsonl_path in sorted(project_dir.glob("*.jsonl")):
+                self._merge_session_file_unfiltered(results, jsonl_path=jsonl_path)
+
+        # Also scan history.jsonl for sessions not found in files
+        if self.history_path.exists():
+            for row in read_json_lines(self.history_path):
+                session_id = str(row.get("sessionId") or "").strip()
+                project_path = str(row.get("project") or "").strip()
+                if not session_id or not project_path:
+                    continue
+                if session_id in results:
+                    # Already discovered from file; just enrich with display
+                    display = str(row.get("display") or "").strip()
+                    if display and not results[session_id].locator.get("history_display"):
+                        results[session_id].locator["history_display"] = display
+                    continue
+                updated_at = dt_from_ts(row.get("timestamp"), millis=True)
+                sort_ts = updated_at.timestamp() if updated_at else 0.0
+                self._merge_session(
+                    results,
+                    NativeResumeSession(
+                        agent="claude",
+                        agent_prefix="cc",
+                        native_session_id=session_id,
+                        working_path=project_path,
+                        created_at=updated_at if isinstance(updated_at, datetime) else None,
+                        updated_at=updated_at if isinstance(updated_at, datetime) else None,
+                        sort_ts=sort_ts,
+                        locator={"history_display": str(row.get("display") or "").strip()},
+                    ),
+                )
 
         items = list(results.values())
         items.sort(key=lambda item: (-item.sort_ts, item.native_session_id))

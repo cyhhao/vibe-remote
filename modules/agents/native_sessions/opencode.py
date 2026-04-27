@@ -53,6 +53,42 @@ class OpenCodeNativeSessionProvider(NativeSessionProvider):
             logger.warning("Failed to list OpenCode sessions for %s: %s", working_path, exc)
         return rows
 
+    def list_all_metadata(self) -> list[NativeResumeSession]:
+        """List sessions across all project directories."""
+        if not self.db_path.exists():
+            return []
+        rows: list[NativeResumeSession] = []
+        try:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    """
+                    SELECT id, title, directory, time_created, time_updated
+                    FROM session
+                    ORDER BY time_updated DESC, id DESC
+                    """,
+                )
+                for session_id, title, directory, created_ms, updated_ms in cursor.fetchall():
+                    if not directory:
+                        continue
+                    created_at = dt_from_ts(created_ms, millis=True)
+                    updated_at = dt_from_ts(updated_ms, millis=True)
+                    rows.append(
+                        NativeResumeSession(
+                            agent="opencode",
+                            agent_prefix="oc",
+                            native_session_id=session_id,
+                            working_path=directory,
+                            created_at=created_at,
+                            updated_at=updated_at,
+                            sort_ts=(updated_at or created_at).timestamp() if (updated_at or created_at) else 0.0,
+                            locator={"title": title or ""},
+                        )
+                    )
+        except Exception as exc:
+            logger.warning("Failed to list all OpenCode sessions: %s", exc)
+        rows.sort(key=lambda item: (-item.sort_ts, item.native_session_id))
+        return rows
+
     def hydrate_preview(self, item: NativeResumeSession) -> NativeResumeSession:
         preview = ""
         if not self.db_path.exists():
