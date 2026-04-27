@@ -5,6 +5,7 @@
 ```bash
 vibe              # Start Vibe Remote (opens web UI)
 vibe status       # Check service status
+vibe screenshot   # Capture a local desktop screenshot
 vibe stop         # Stop all services
 ```
 
@@ -116,6 +117,21 @@ vibe doctor
 - Slack token configuration
 - Agent CLI availability (Claude Code, OpenCode, Codex)
 - Runtime environment
+
+### `vibe screenshot`
+
+Capture the local desktop as a PNG file.
+
+```bash
+vibe screenshot
+vibe screenshot --output /tmp/screen.png
+vibe screenshot --json
+```
+
+**Behavior:**
+- Saves to `~/.vibe_remote/screenshots/` by default
+- Prints the saved file path, or a JSON payload with `--json`
+- Stays at the CLI layer only; it does not add IM commands, bot buttons, or agent prompt injection
 
 ### `vibe task`
 

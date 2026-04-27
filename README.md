@@ -239,6 +239,7 @@ vibe          # Start everything
 vibe status   # Check if running
 vibe stop     # Stop everything
 vibe doctor   # Diagnose issues
+vibe screenshot # Capture a local desktop screenshot
 vibe task     # Create and manage scheduled tasks
 vibe hook     # Queue one-shot async sends
 ```

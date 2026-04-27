@@ -239,6 +239,7 @@ vibe          # 启动一切
 vibe status   # 检查运行状态
 vibe stop     # 停止一切
 vibe doctor   # 诊断问题
+vibe screenshot # 截取本机桌面截图
 vibe task     # 创建和管理定时任务
 vibe hook     # 队列化一次性异步发送
 ```
