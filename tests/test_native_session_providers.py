@@ -42,6 +42,40 @@ def test_claude_provider_falls_back_to_history_jsonl(tmp_path: Path) -> None:
     assert hydrated.last_agent_tail == "latest prompt"
 
 
+def test_claude_project_path_encoding_handles_windows_paths() -> None:
+    assert encode_project_path("C:\\Users\\cyh\\vibe-remote") == "C--Users-cyh-vibe-remote"
+
+
+def test_claude_provider_scans_candidate_jsonl_when_history_has_results(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    history_path = tmp_path / "history.jsonl"
+    projects_root.mkdir(parents=True, exist_ok=True)
+
+    working_path = "/Users/cyh/vibe-remote"
+    history_path.write_text(
+        '{"display":"history prompt","timestamp":1766079000000,"project":"/Users/cyh/vibe-remote","sessionId":"sess_history"}',
+        encoding="utf-8",
+    )
+
+    candidate_dir = projects_root / encode_project_path(working_path)
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    (candidate_dir / "sess_sdk.jsonl").write_text(
+        "\n".join(
+            [
+                '{"type":"user","timestamp":"2026-03-27T09:59:00Z","cwd":"/Users/cyh/vibe-remote","message":{"content":"sdk prompt"}}',
+                '{"type":"assistant","timestamp":"2026-03-27T10:00:00Z","message":{"content":"sdk reply"}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    provider = ClaudeNativeSessionProvider(root=str(projects_root), history_path=str(history_path))
+
+    items = provider.list_metadata(working_path)
+
+    assert {item.native_session_id for item in items} == {"sess_history", "sess_sdk"}
+
+
 def test_claude_provider_does_not_scan_unrelated_project_jsonl(tmp_path: Path, monkeypatch) -> None:
     projects_root = tmp_path / "projects"
     history_path = tmp_path / "history.jsonl"

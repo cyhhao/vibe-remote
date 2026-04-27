@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -32,7 +31,7 @@ class _TelegramCwdPrompt:
 @dataclass
 class _TelegramResumeSessionState:
     message_id: str
-    options: list[tuple[str, str, str]]  # (agent, session_id, working_path)
+    options: list[tuple[str, str]]
     is_dm: bool
 
 
@@ -1053,26 +1052,16 @@ class TelegramBot(BaseIMClient):
         if context is None:
             raise ValueError("Telegram resume flow requires a message context")
 
-        options: list[tuple[str, str, str]] = []  # (agent, session_id, working_path)
+        options: list[tuple[str, str]] = []
         rows: list[list[InlineButton]] = []
         summary_lines = [
             f"⏮️ {self._t('telegram.resumeTitle')}",
             self._t("telegram.resumeBody"),
         ]
-        current_cwd = ""
-        if self._controller and hasattr(self._controller, "get_cwd"):
-            try:
-                current_cwd = self._controller.get_cwd(context)
-            except Exception:
-                pass
         for item in list(sessions)[:12]:
             idx = len(options)
-            options.append((item.agent, item.native_session_id, item.working_path))
+            options.append((item.agent, item.native_session_id))
             label = AgentNativeSessionService.format_display_summary(item)
-            # Show project name when session is from a different project
-            if current_cwd and item.working_path and os.path.normcase(os.path.normpath(item.working_path)) != os.path.normcase(os.path.normpath(current_cwd)):
-                project_name = os.path.basename(item.working_path)
-                label = f"{label} [{project_name}]"
             rows.append([InlineButton(text=label[:40], callback_data=f"tg_resume:{idx}")])
             summary_lines.append(
                 f"{idx + 1}. {label} ({AgentNativeSessionService.format_display_time(item)})"
@@ -1108,7 +1097,7 @@ class TelegramBot(BaseIMClient):
         if option_index < 0 or option_index >= len(state.options):
             return
 
-        agent, session_id, working_path = state.options[option_index]
+        agent, session_id = state.options[option_index]
         self._resume_states.pop(scope_key, None)
         if self._controller is None or not hasattr(self._controller, "session_handler"):
             await self.send_message(context, f"❌ {self._t('error.resumeFailed')}")
@@ -1122,7 +1111,6 @@ class TelegramBot(BaseIMClient):
             session_id=session_id,
             is_dm=state.is_dm,
             platform="telegram",
-            session_working_path=working_path or None,
         )
 
     async def open_routing_modal(self, trigger_id: Any, channel_id: str, **kwargs):

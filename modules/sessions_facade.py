@@ -34,35 +34,11 @@ class SessionsFacade:
         agent_name: str,
         thread_id: str,
         session_id: str,
-        session_working_path: Optional[str] = None,
     ) -> None:
         agent_map = self._ensure_agent_namespace(user_id, agent_name)
         agent_map[thread_id] = session_id
-        if session_working_path:
-            self._set_agent_session_working_path(user_id, agent_name, thread_id, session_working_path)
         self.sessions_store.save()
-        logger.info("Stored %s session mapping for %s: %s -> %s (working_path=%s)", agent_name, user_id, thread_id, session_id, session_working_path)
-
-    def _set_agent_session_working_path(
-        self,
-        user_id: Union[int, str],
-        agent_name: str,
-        thread_id: str,
-        working_path: str,
-    ) -> None:
-        user_key = self._normalize_user_id(user_id)
-        wp_map = self.sessions_store.state.session_working_paths.setdefault(user_key, {}).setdefault(agent_name, {})
-        wp_map[thread_id] = working_path
-
-    def get_agent_session_working_path(
-        self,
-        user_id: Union[int, str],
-        thread_id: str,
-        agent_name: str,
-    ) -> Optional[str]:
-        user_key = self._normalize_user_id(user_id)
-        wp_map = self.sessions_store.state.session_working_paths.get(user_key, {}).get(agent_name, {})
-        return wp_map.get(thread_id)
+        logger.info("Stored %s session mapping for %s: %s -> %s", agent_name, user_id, thread_id, session_id)
 
     def get_agent_session_id(
         self,
@@ -84,8 +60,6 @@ class SessionsFacade:
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         if thread_id in agent_map:
             del agent_map[thread_id]
-            wp_map = self.sessions_store.state.session_working_paths.get(user_key, {}).get(agent_name, {})
-            wp_map.pop(thread_id, None)
             self.sessions_store.save()
             logger.info("Cleared %s session mapping for user %s: %s", agent_name, user_id, thread_id)
 
@@ -94,9 +68,6 @@ class SessionsFacade:
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         if agent_map:
             self.sessions_store.state.session_mappings[user_key][agent_name] = {}
-            wp_map = self.sessions_store.state.session_working_paths.get(user_key, {}).get(agent_name, {})
-            if wp_map:
-                wp_map.clear()
             self.sessions_store.save()
             logger.info("Cleared all %s session namespaces for user %s", agent_name, user_id)
 
@@ -106,7 +77,6 @@ class SessionsFacade:
         if agent_maps:
             count = sum(len(agent_map) for agent_map in agent_maps.values())
             self.sessions_store.state.session_mappings[user_key] = {}
-            self.sessions_store.state.session_working_paths.pop(user_key, None)
             self.sessions_store.save()
             logger.info("Cleared all session mappings (%s bases) for user %s", count, user_id)
 
@@ -230,8 +200,6 @@ class SessionsFacade:
                 continue
             for mapping_key in keys_to_remove:
                 del agent_map[mapping_key]
-                wp_map = self.sessions_store.state.session_working_paths.get(user_key, {}).get(agent_name, {})
-                wp_map.pop(mapping_key, None)
                 cleared += 1
             logger.info(
                 "Cleared %s session base for %s: %s (%s keys)",

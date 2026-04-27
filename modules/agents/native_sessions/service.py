@@ -104,32 +104,6 @@ class AgentNativeSessionService:
         selected.sort(key=lambda item: (-item.sort_ts, item.agent_prefix, item.native_session_id))
         return selected
 
-    def list_all_recent_sessions(self, limit: int = 100) -> list[NativeResumeSession]:
-        """List recent sessions across all project directories."""
-        items: list[NativeResumeSession] = []
-        for provider in self.providers:
-            try:
-                items.extend(provider.list_all_metadata())
-            except Exception as exc:
-                logger.warning("Failed to list all %s sessions: %s", provider.agent_name, exc)
-
-        items.sort(key=lambda item: (-item.sort_ts, item.agent_prefix, item.native_session_id))
-        items = self._apply_limit(items, max(limit, 0))
-
-        provider_by_name = {provider.agent_name: provider for provider in self.providers}
-        hydrated: list[NativeResumeSession] = []
-        for item in items:
-            provider = provider_by_name.get(item.agent)
-            if not provider:
-                hydrated.append(item)
-                continue
-            try:
-                hydrated.append(provider.hydrate_preview(item))
-            except Exception as exc:
-                logger.warning("Failed to hydrate %s session %s: %s", item.agent, item.native_session_id, exc)
-                hydrated.append(item)
-        return hydrated
-
     def get_session(
         self,
         working_path: str,

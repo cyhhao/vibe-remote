@@ -57,47 +57,6 @@ class CodexNativeSessionProvider(NativeSessionProvider):
             logger.warning("Failed to list Codex sessions for %s: %s", working_path, exc)
         return items
 
-    def list_all_metadata(self) -> list[NativeResumeSession]:
-        """List sessions across all project directories."""
-        if not self.db_path.exists():
-            return []
-        items: list[NativeResumeSession] = []
-        try:
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    """
-                    SELECT id, cwd, created_at, updated_at, title, first_user_message, rollout_path
-                    FROM threads
-                    WHERE archived = 0
-                    ORDER BY updated_at DESC, id DESC
-                    """,
-                )
-                for session_id, cwd, created_ts, updated_ts, title, first_user_message, rollout_path in cursor.fetchall():
-                    if not cwd:
-                        continue
-                    created_at = dt_from_ts(created_ts)
-                    updated_at = dt_from_ts(updated_ts)
-                    items.append(
-                        NativeResumeSession(
-                            agent="codex",
-                            agent_prefix="cx",
-                            native_session_id=session_id,
-                            working_path=cwd,
-                            created_at=created_at,
-                            updated_at=updated_at,
-                            sort_ts=(updated_at or created_at).timestamp() if (updated_at or created_at) else 0.0,
-                            locator={
-                                "title": title or "",
-                                "first_user_message": first_user_message or "",
-                                "rollout_path": rollout_path or "",
-                            },
-                        )
-                    )
-        except Exception as exc:
-            logger.warning("Failed to list all Codex sessions: %s", exc)
-        items.sort(key=lambda item: (-item.sort_ts, item.native_session_id))
-        return items
-
     def hydrate_preview(self, item: NativeResumeSession) -> NativeResumeSession:
         preview = ""
         rollout_path_raw = str(item.locator.get("rollout_path") or "").strip()
