@@ -4,6 +4,7 @@ import sys
 import types
 import importlib
 import ast
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -114,6 +115,31 @@ def test_init_sentry_returns_false_when_sdk_init_raises(monkeypatch):
     assert sentry_integration.init_sentry(_config(), component="service") is False
 
 
+def test_init_sentry_disables_client_discard_reports(monkeypatch):
+    monkeypatch.setenv("VIBE_SENTRY_DSN", "https://env@example.ingest.sentry.io/2")
+    init_kwargs = {}
+
+    sentry_sdk = types.ModuleType("sentry_sdk")
+    sentry_sdk.init = lambda **kwargs: init_kwargs.update(kwargs)
+    sentry_sdk.set_tag = lambda *args, **kwargs: None
+    sentry_sdk.set_context = lambda *args, **kwargs: None
+
+    logging_integration_module = types.ModuleType("sentry_sdk.integrations.logging")
+
+    class FakeLoggingIntegration:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    logging_integration_module.LoggingIntegration = FakeLoggingIntegration
+
+    monkeypatch.setitem(sys.modules, "sentry_sdk", sentry_sdk)
+    monkeypatch.setitem(sys.modules, "sentry_sdk.integrations.logging", logging_integration_module)
+
+    assert sentry_integration.init_sentry(_config(), component="service") is True
+    assert init_kwargs["send_client_reports"] is False
+
+
 def test_run_ui_server_skips_sentry_when_config_load_fails(monkeypatch):
     fake_flask = types.ModuleType("flask")
 
@@ -127,6 +153,12 @@ def test_run_ui_server_skips_sentry_when_config_load_fails(monkeypatch):
                 return func
 
             return decorator
+
+        def before_request(self, func):
+            return func
+
+        def after_request(self, func):
+            return func
 
         def errorhandler(self, *args, **kwargs):
             def decorator(func):
@@ -201,3 +233,142 @@ def test_scrub_data_redacts_sensitive_values():
     assert scrubbed["request"]["data"]["bot_token"] == "[Filtered]"
     assert scrubbed["request"]["data"]["nested"][0]["client_secret"] == "[Filtered]"
     assert "[Filtered]" in scrubbed["message"]
+
+
+def test_before_send_throttles_repeated_noisy_slack_socket_events(monkeypatch):
+    monkeypatch.delenv("VIBE_SENTRY_NOISE_FILTERS", raising=False)
+    monkeypatch.delenv("VIBE_SENTRY_NOISE_TTL_SECONDS", raising=False)
+    sentry_integration._NOISY_EVENT_LAST_SEEN.clear()
+    sentry_integration._EVENT_RATE_STATE.clear()
+    event = {
+        "logger": "slack_sdk.socket_mode.aiohttp",
+        "logentry": {
+            "formatted": (
+                "Failed to retrieve WSS URL: The request to the Slack API failed. "
+                "(url: https://slack.com/api/apps.connections.open, status: 200)"
+            )
+        },
+    }
+
+    assert sentry_integration.before_send(dict(event), {}) is not None
+    assert sentry_integration.before_send(dict(event), {}) is None
+
+
+def test_before_send_throttles_repeated_normal_errors(monkeypatch):
+    monkeypatch.delenv("VIBE_SENTRY_NOISE_FILTERS", raising=False)
+    monkeypatch.delenv("VIBE_SENTRY_EVENT_RATE_LIMIT_PER_WINDOW", raising=False)
+    sentry_integration._NOISY_EVENT_LAST_SEEN.clear()
+    sentry_integration._EVENT_RATE_STATE.clear()
+    event = {
+        "logger": "core.message_dispatcher",
+        "logentry": {"formatted": "Failed to send result message: unexpected application bug"},
+    }
+
+    assert sentry_integration.before_send(dict(event), {}) is not None
+    assert sentry_integration.before_send(dict(event), {}) is None
+
+
+def test_before_send_allows_distinct_normal_errors(monkeypatch):
+    monkeypatch.delenv("VIBE_SENTRY_EVENT_RATE_LIMIT_PER_WINDOW", raising=False)
+    sentry_integration._NOISY_EVENT_LAST_SEEN.clear()
+    sentry_integration._EVENT_RATE_STATE.clear()
+    first_event = {
+        "logger": "core.message_dispatcher",
+        "logentry": {"formatted": "Failed to send result message: unexpected application bug"},
+    }
+    second_event = {
+        "logger": "core.message_dispatcher",
+        "logentry": {"formatted": "Failed to send result message: different application bug"},
+    }
+
+    assert sentry_integration.before_send(dict(first_event), {}) is not None
+    assert sentry_integration.before_send(dict(second_event), {}) is not None
+
+
+def test_before_send_allows_distinct_exception_values(monkeypatch):
+    monkeypatch.delenv("VIBE_SENTRY_EVENT_RATE_LIMIT_PER_WINDOW", raising=False)
+    sentry_integration._NOISY_EVENT_LAST_SEEN.clear()
+    sentry_integration._EVENT_RATE_STATE.clear()
+    first_event = {"exception": {"values": [{"type": "ValueError", "value": "invalid channel C123456789"}]}}
+    second_event = {"exception": {"values": [{"type": "ValueError", "value": "invalid channel C987654321"}]}}
+
+    assert sentry_integration.before_send(dict(first_event), {}) is not None
+    assert sentry_integration.before_send(dict(second_event), {}) is not None
+    assert sentry_integration.before_send(dict(first_event), {}) is None
+
+
+def test_before_send_noise_filter_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("VIBE_SENTRY_NOISE_FILTERS", "0")
+    monkeypatch.setenv("VIBE_SENTRY_EVENT_RATE_LIMIT_PER_WINDOW", "0")
+    sentry_integration._NOISY_EVENT_LAST_SEEN.clear()
+    sentry_integration._EVENT_RATE_STATE.clear()
+    event = {
+        "logger": "core.watches",
+        "logentry": {"formatted": "Managed watch reconcile failed: [Errno 28] No space left on device"},
+    }
+
+    assert sentry_integration.before_send(dict(event), {}) is not None
+    assert sentry_integration.before_send(dict(event), {}) is not None
+
+
+def test_before_send_rate_limit_can_be_raised(monkeypatch):
+    monkeypatch.setenv("VIBE_SENTRY_EVENT_RATE_LIMIT_PER_WINDOW", "2")
+    sentry_integration._NOISY_EVENT_LAST_SEEN.clear()
+    sentry_integration._EVENT_RATE_STATE.clear()
+    event = {
+        "logger": "core.message_dispatcher",
+        "logentry": {"formatted": "Failed to send result message: recurring application bug"},
+    }
+
+    assert sentry_integration.before_send(dict(event), {}) is not None
+    assert sentry_integration.before_send(dict(event), {}) is not None
+    assert sentry_integration.before_send(dict(event), {}) is None
+
+
+def test_event_rate_state_enforces_cache_limit(monkeypatch):
+    monkeypatch.setattr(sentry_integration, "_EVENT_RATE_CACHE_LIMIT", 2)
+    sentry_integration._EVENT_RATE_STATE.clear()
+
+    for index in range(4):
+        event = {
+            "logger": "core.message_dispatcher",
+            "logentry": {"formatted": f"unique application bug {index}"},
+        }
+        assert sentry_integration.before_send(event, {}) is not None
+
+    assert len(sentry_integration._EVENT_RATE_STATE) == 2
+
+
+def test_event_rate_state_evicts_oldest_entries(monkeypatch):
+    monkeypatch.setattr(sentry_integration, "_EVENT_RATE_CACHE_LIMIT", 2)
+    sentry_integration._EVENT_RATE_STATE.clear()
+    sentry_integration._EVENT_RATE_STATE.update(
+        {
+            "z-oldest": (1.0, 1),
+            "a-middle": (2.0, 1),
+            "m-newest": (3.0, 1),
+        }
+    )
+
+    sentry_integration._prune_event_rate_state(now=3.0, window_seconds=10.0)
+
+    assert "z-oldest" not in sentry_integration._EVENT_RATE_STATE
+    assert set(sentry_integration._EVENT_RATE_STATE) == {"a-middle", "m-newest"}
+
+
+def test_before_send_rate_state_is_thread_safe(monkeypatch):
+    monkeypatch.setattr(sentry_integration, "_EVENT_RATE_CACHE_LIMIT", 8)
+    sentry_integration._EVENT_RATE_STATE.clear()
+
+    def send_event(index: int) -> bool:
+        event = {
+            "logger": "core.message_dispatcher",
+            "logentry": {"formatted": f"concurrent application bug {index}"},
+        }
+        return sentry_integration.before_send(event, {}) is not None
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(send_event, range(64)))
+
+    assert all(results)
+    assert len(sentry_integration._EVENT_RATE_STATE) <= 8
