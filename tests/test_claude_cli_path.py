@@ -163,6 +163,29 @@ def test_session_handler_keeps_sdk_default_for_default_claude_binary(monkeypatch
     assert captured["options"].cli_path is None
 
 
+def test_session_handler_disallows_remote_unsafe_claude_tools(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    _run_session(handler, context)
+
+    assert captured["connected"] is True
+    assert captured["options"].disallowed_tools == ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"]
+
+
 def test_session_handler_does_not_repeat_claude_model_control_request(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, Any] = {"clients": []}
 
