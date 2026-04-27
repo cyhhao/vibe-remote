@@ -248,6 +248,11 @@ def _exception_types(event: dict[str, Any]) -> set[str]:
     return {value.get("type") for value in values if isinstance(value, dict) and isinstance(value.get("type"), str)}
 
 
+def _exception_values(event: dict[str, Any]) -> list[str]:
+    values = ((event.get("exception") or {}).get("values") or []) if isinstance(event.get("exception"), dict) else []
+    return [value.get("value") for value in values if isinstance(value, dict) and isinstance(value.get("value"), str)]
+
+
 def _noisy_event_fingerprint(event: dict[str, Any]) -> Optional[str]:
     logger_name = str(event.get("logger") or "")
     text = _event_text(event)
@@ -320,9 +325,7 @@ def _event_rate_limit_per_window() -> int:
     )
 
 
-def _normalized_event_text(event: dict[str, Any]) -> str:
-    event_text = _event_text(event)
-    text = event_text.splitlines()[0] if event_text else ""
+def _normalize_fingerprint_text(text: str) -> str:
     text = re.sub(r"\b[0-9a-f]{16,}\b", "<hex>", text, flags=re.IGNORECASE)
     text = re.sub(r"\b[0-9a-f]{8}-[0-9a-f-]{27,}\b", "<uuid>", text, flags=re.IGNORECASE)
     text = re.sub(r"\bs_\d+\b", "s_<id>", text)
@@ -331,10 +334,21 @@ def _normalized_event_text(event: dict[str, Any]) -> str:
     return text[:240]
 
 
+def _normalized_event_text(event: dict[str, Any]) -> str:
+    event_text = _event_text(event)
+    text = event_text.splitlines()[0] if event_text else ""
+    return _normalize_fingerprint_text(text)
+
+
+def _normalized_exception_values(event: dict[str, Any]) -> str:
+    return "|".join(_normalize_fingerprint_text(value) for value in _exception_values(event))
+
+
 def _event_rate_fingerprint(event: dict[str, Any]) -> str:
     logger_name = str(event.get("logger") or "")
     exception_types = ",".join(sorted(_exception_types(event)))
-    return f"{logger_name}|{exception_types}|{_normalized_event_text(event)}"
+    exception_values = _normalized_exception_values(event)
+    return f"{logger_name}|{exception_types}|{exception_values}|{_normalized_event_text(event)}"
 
 
 def _prune_event_rate_state(now: float, window_seconds: float) -> None:

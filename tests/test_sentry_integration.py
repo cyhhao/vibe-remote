@@ -284,6 +284,18 @@ def test_before_send_allows_distinct_normal_errors(monkeypatch):
     assert sentry_integration.before_send(dict(second_event), {}) is not None
 
 
+def test_before_send_allows_distinct_exception_values(monkeypatch):
+    monkeypatch.delenv("VIBE_SENTRY_EVENT_RATE_LIMIT_PER_WINDOW", raising=False)
+    sentry_integration._NOISY_EVENT_LAST_SEEN.clear()
+    sentry_integration._EVENT_RATE_STATE.clear()
+    first_event = {"exception": {"values": [{"type": "ValueError", "value": "invalid channel C123456789"}]}}
+    second_event = {"exception": {"values": [{"type": "ValueError", "value": "invalid channel C987654321"}]}}
+
+    assert sentry_integration.before_send(dict(first_event), {}) is not None
+    assert sentry_integration.before_send(dict(second_event), {}) is not None
+    assert sentry_integration.before_send(dict(first_event), {}) is None
+
+
 def test_before_send_noise_filter_can_be_disabled(monkeypatch):
     monkeypatch.setenv("VIBE_SENTRY_NOISE_FILTERS", "0")
     monkeypatch.setenv("VIBE_SENTRY_EVENT_RATE_LIMIT_PER_WINDOW", "0")
