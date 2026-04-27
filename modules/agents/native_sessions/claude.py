@@ -28,6 +28,10 @@ def encode_project_path(working_path: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "-", working_path)
 
 
+def _legacy_project_path(working_path: str) -> str:
+    return working_path.replace("/", "-")
+
+
 class ClaudeNativeSessionProvider(NativeSessionProvider):
     agent_name = "claude"
 
@@ -41,7 +45,10 @@ class ClaudeNativeSessionProvider(NativeSessionProvider):
     @staticmethod
     def _candidate_project_names(working_path: str) -> set[str]:
         collapsed = re.sub(r"[^A-Za-z0-9]+", "-", working_path).strip("-")
+        legacy = _legacy_project_path(working_path)
         names: set[str] = {
+            legacy,
+            legacy.replace("_", "-"),
             encode_project_path(working_path),
             encode_project_path(working_path).replace("_", "-"),
         }
