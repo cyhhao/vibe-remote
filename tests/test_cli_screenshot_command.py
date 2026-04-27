@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vibe import cli
-from vibe.screenshot import ScreenshotError, ScreenshotResult
+from vibe.screenshot import ScreenshotError, ScreenshotResult, capture_screenshot
 
 
 def test_screenshot_parser_accepts_output_and_json() -> None:
@@ -65,3 +65,15 @@ def test_cmd_screenshot_reports_errors(capsys, monkeypatch) -> None:
     assert payload["ok"] is False
     assert payload["code"] == "screenshot_failed"
     assert payload["error"] == "display is unavailable"
+
+
+def test_capture_screenshot_wraps_output_preparation_errors(tmp_path: Path) -> None:
+    blocked_parent = tmp_path / "not-a-directory"
+    blocked_parent.write_text("blocked", encoding="utf-8")
+
+    try:
+        capture_screenshot(blocked_parent / "screen.png")
+    except ScreenshotError as exc:
+        assert "failed to prepare screenshot output path" in str(exc)
+    else:
+        raise AssertionError("expected ScreenshotError")

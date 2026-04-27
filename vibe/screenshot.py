@@ -39,8 +39,11 @@ def default_screenshot_path() -> Path:
 
 def capture_screenshot(output: str | Path | None = None) -> ScreenshotResult:
     """Capture the local desktop to a PNG file."""
-    output_path = _resolve_output_path(output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        output_path = _resolve_output_path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ScreenshotError(f"failed to prepare screenshot output path: {exc}") from exc
 
     if sys.platform == "darwin":
         backend = _capture_macos(output_path)
@@ -113,8 +116,11 @@ def _capture_linux(output: Path) -> str:
             _run_capture_command(command, name)
             return name
         except ScreenshotError:
-            if output.exists():
-                output.unlink()
+            try:
+                if output.exists():
+                    output.unlink()
+            except OSError:
+                pass
 
     if attempted:
         raise ScreenshotError(f"installed screenshot tools failed: {', '.join(attempted)}")
@@ -135,8 +141,14 @@ def _run_capture_command(command: list[str], label: str) -> None:
 
 
 def _verify_output(output: Path) -> None:
-    if not output.is_file():
-        raise ScreenshotError(f"screenshot file was not created: {output}")
-    if output.stat().st_size <= 0:
+    try:
+        if not output.is_file():
+            raise ScreenshotError(f"screenshot file was not created: {output}")
+        if output.stat().st_size > 0:
+            return
         output.unlink(missing_ok=True)
-        raise ScreenshotError("screenshot file was empty")
+    except ScreenshotError:
+        raise
+    except OSError as exc:
+        raise ScreenshotError(f"failed to inspect screenshot output: {exc}") from exc
+    raise ScreenshotError("screenshot file was empty")
