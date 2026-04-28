@@ -16,6 +16,7 @@ from .base import BaseHandler
 logger = logging.getLogger(__name__)
 
 CLAUDE_NO_CONVERSATION_RE = re.compile(r"No conversation found with session ID:\s*(\S+)")
+CLAUDE_REMOTE_DISALLOWED_TOOLS = ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"]
 
 
 class ClaudeSessionNotFoundError(RuntimeError):
@@ -564,9 +565,9 @@ class SessionHandler(BaseHandler):
             "resume": stored_claude_session_id if stored_claude_session_id else None,
             "extra_args": extra_args,
             "setting_sources": ["user", "project", "local"],  # Load all setting sources (user, project CLAUDE.md, local overrides)
-            # Disable AskUserQuestion tool - SDK cannot respond to it programmatically
-            # See: https://github.com/anthropics/claude-code/issues/10168
-            "disallowed_tools": ["AskUserQuestion"],
+            # Disable interactive-only Claude Code tools that remote IM sessions
+            # cannot answer programmatically.
+            "disallowed_tools": CLAUDE_REMOTE_DISALLOWED_TOOLS,
             "env": claude_env,  # Pass Anthropic/Claude env vars
             "stderr": _capture_claude_stderr,
         }

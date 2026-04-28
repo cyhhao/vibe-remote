@@ -501,6 +501,7 @@ bind vr-a3x9k2
 | `vibe restart` | 停止后重新启动 |
 | `vibe status` | 输出运行状态 JSON |
 | `vibe doctor` | 运行诊断 |
+| `vibe screenshot` | 截取本机桌面截图 |
 | `vibe version` | 查看当前版本 |
 | `vibe check-update` | 检查是否有新版本 |
 | `vibe upgrade` | 升级到最新版 |
@@ -571,6 +572,20 @@ vibe doctor
 - 检查平台凭据
 - 检查 backend CLI 是否可用
 - 检查运行环境
+
+### `vibe screenshot`
+
+```bash
+vibe screenshot
+vibe screenshot --output /tmp/screen.png
+vibe screenshot --json
+```
+
+- 截取本机桌面并保存为 PNG 文件
+- 默认保存到 `~/.vibe_remote/screenshots/`
+- 默认输出保存路径
+- 加 `--json` 时输出机器可读的 JSON
+- 只停留在宿主机 CLI 层；不新增聊天命令、bot 按钮，也不注入 Agent prompt
 
 ### `vibe version`
 

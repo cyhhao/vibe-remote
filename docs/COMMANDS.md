@@ -522,6 +522,7 @@ The `vibe` executable controls the local service and async automation features.
 | `vibe restart` | Stop then start again |
 | `vibe status` | Print runtime status JSON |
 | `vibe doctor` | Run diagnostics |
+| `vibe screenshot` | Capture a local desktop screenshot |
 | `vibe version` | Show installed version |
 | `vibe check-update` | Check for new version |
 | `vibe upgrade` | Upgrade to latest version |
@@ -592,6 +593,20 @@ vibe doctor
 - checks platform credentials
 - checks backend CLI availability
 - checks runtime environment
+
+### `vibe screenshot`
+
+```bash
+vibe screenshot
+vibe screenshot --output /tmp/screen.png
+vibe screenshot --json
+```
+
+- captures the local desktop as a PNG file
+- saves to `~/.vibe_remote/screenshots/` by default
+- prints the saved file path by default
+- prints a machine-readable payload with `--json`
+- stays at the host CLI layer; it does not expose in-chat commands, bot buttons, or agent prompt injection
 
 ### `vibe version`
 
