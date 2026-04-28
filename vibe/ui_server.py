@@ -1,5 +1,8 @@
 import asyncio
+import base64
+import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import mimetypes
@@ -10,12 +13,12 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 
 from flask import Flask, request, jsonify, send_file, Response
 
 from config import paths
-from config.v2_config import V2Config
+from config.v2_config import CONFIG_LOCK, V2Config
 from vibe.runtime import get_ui_dist_path, get_working_dir
 from vibe.sentry_integration import init_sentry
 
@@ -37,6 +40,7 @@ TRACEBACK_EXCEPTION_PATTERN = re.compile(
 )
 CSRF_COOKIE_NAME = "vibe_csrf_token"
 CSRF_HEADER_NAME = "X-Vibe-CSRF-Token"
+REMOTE_OAUTH_COOKIE_NAME = "__Host-vibe_remote_oauth"
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 LOG_SOURCES = (
     ("service", "vibe_remote.log", lambda: paths.get_logs_dir() / "vibe_remote.log"),
@@ -153,6 +157,8 @@ def _current_origin() -> str:
 
 
 def _is_mutation_guard_exempt() -> bool:
+    if request.path in {"/auth/callback"}:
+        return True
     return (
         request.path == "/e2e/simulate-interaction"
         and os.environ.get("E2E_TEST_MODE", "").lower() in ("true", "1", "yes")
@@ -176,6 +182,219 @@ def _ensure_csrf_cookie(response: Response) -> Response:
             path="/",
         )
     return response
+
+
+def _load_remote_access_config() -> V2Config | None:
+    try:
+        return V2Config.load()
+    except Exception:
+        logger.warning("Failed to load remote access config", exc_info=True)
+        return None
+
+
+def _has_cloudflare_forwarded_metadata() -> bool:
+    return any(
+        request.headers.get(header)
+        for header in (
+            "CF-Connecting-IP",
+            "CF-Ray",
+            "CF-Visitor",
+            "CF-IPCountry",
+        )
+    )
+
+
+def _is_loopback_peer() -> bool:
+    remote_addr = (request.remote_addr or "").strip()
+    if remote_addr == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    return bool(mapped and mapped.is_loopback)
+
+
+def _is_loopback_host(value: str | None) -> bool:
+    host = _normalized_host(value)
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_local_request() -> bool:
+    return _is_loopback_peer() and _is_loopback_host(request.host) and not _has_cloudflare_forwarded_metadata()
+
+
+def _normalized_host(value: str | None) -> str:
+    raw_host = (value or "").lower().strip()
+    if raw_host.startswith("[") and "]" in raw_host:
+        host = raw_host[1 : raw_host.index("]")]
+    elif raw_host.count(":") > 1:
+        host = raw_host
+    else:
+        host = raw_host.split(":", 1)[0]
+    return host.rstrip(".")
+
+
+def _is_remote_access_request(config: V2Config) -> bool:
+    public_host = _remote_access_public_host(config)
+    if not public_host:
+        return False
+    return _normalized_host(request.host) == public_host
+
+
+def _remote_access_public_host(config: V2Config) -> str | None:
+    public_url = (config.remote_access.vibe_cloud.public_url or "").strip()
+    if not public_url:
+        return ""
+    parsed = urlparse(public_url)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    return _normalized_host(parsed.hostname)
+
+
+def _remote_access_public_url_invalid(config: V2Config) -> bool:
+    cloud = config.remote_access.vibe_cloud
+    return bool(cloud.enabled and not _remote_access_public_host(config))
+
+
+def _remote_access_snapshot(config: V2Config) -> dict[str, Any]:
+    return {
+        "provider": config.remote_access.provider,
+        "vibe_cloud": config.remote_access.vibe_cloud.__dict__.copy(),
+    }
+
+
+def _remote_access_settings_changed(previous: V2Config | None, current: V2Config, payload: dict) -> bool:
+    if "remote_access" not in payload:
+        return False
+    if previous is None:
+        return bool(_remote_access_snapshot(current)["vibe_cloud"].get("enabled"))
+    return _remote_access_snapshot(previous) != _remote_access_snapshot(current)
+
+
+def _should_rotate_remote_session_secret(previous: V2Config | None, current: V2Config, payload: dict) -> bool:
+    if "remote_access" not in payload or previous is None:
+        return False
+    previous_cloud = previous.remote_access.vibe_cloud
+    current_cloud = current.remote_access.vibe_cloud
+    return bool(previous_cloud.enabled and not current_cloud.enabled and current_cloud.session_secret)
+
+
+def _remote_auth_exempt_path() -> bool:
+    path = request.path
+    return (
+        path == "/health"
+        or path == "/auth/callback"
+        or path.startswith("/assets/")
+        or path == "/favicon.ico"
+    )
+
+
+def _oauth_cookie_signature(secret: str, payload: str) -> str:
+    return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _make_oauth_cookie(secret: str, payload: dict[str, Any]) -> str:
+    payload_text = quote(json.dumps(payload, separators=(",", ":")), safe="")
+    signature = _oauth_cookie_signature(secret, payload_text)
+    return f"{payload_text}.{signature}"
+
+
+def _read_oauth_cookie(secret: str, value: str | None) -> dict[str, Any] | None:
+    if not value or "." not in value:
+        return None
+    payload_text, signature = value.rsplit(".", 1)
+    if not hmac.compare_digest(signature, _oauth_cookie_signature(secret, payload_text)):
+        return None
+    try:
+        payload = json.loads(unquote(payload_text))
+    except Exception:
+        return None
+    if int(payload.get("exp", 0)) <= int(datetime.now().timestamp()):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _safe_remote_redirect_target(value: Any) -> str:
+    if not isinstance(value, str):
+        return "/"
+    target = value.strip()
+    if not target.startswith("/") or target.startswith(("//", "/\\")):
+        return "/"
+    parsed = urlsplit(target)
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+        return "/"
+    return urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+
+
+def _redirect_to_vibe_cloud_login(config: V2Config):
+    from vibe import remote_access
+
+    cloud = config.remote_access.vibe_cloud
+    code_verifier = secrets.token_urlsafe(48)
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(24)
+    oauth_cookie = _make_oauth_cookie(
+        cloud.session_secret,
+        {
+            "state": state,
+            "nonce": nonce,
+            "code_verifier": code_verifier,
+            "next": request.full_path if request.query_string else request.path,
+            "exp": int(datetime.now().timestamp()) + 300,
+        },
+    )
+    response = Response(status=302)
+    response.headers["Location"] = remote_access.authorization_url(config, state, nonce, code_challenge)
+    response.set_cookie(
+        REMOTE_OAUTH_COOKIE_NAME,
+        oauth_cookie,
+        httponly=True,
+        secure=True,
+        samesite="Lax",
+        path="/",
+    )
+    return response
+
+
+@app.before_request
+def enforce_remote_access_cookie():
+    config = _load_remote_access_config()
+    local_request = _is_local_request()
+    if config is None:
+        if local_request:
+            return None
+        return jsonify({"ok": False, "error": "remote_access_config_unavailable"}), 503
+    if _remote_access_public_url_invalid(config) and not local_request:
+        return jsonify({"ok": False, "error": "remote_access_public_url_invalid"}), 503
+    remote_request = _is_remote_access_request(config)
+    if not remote_request:
+        if not local_request:
+            return jsonify({"ok": False, "error": "remote_access_host_mismatch"}), 503
+        return None
+    if _remote_auth_exempt_path():
+        return None
+    from vibe import remote_access
+
+    if not config.remote_access.vibe_cloud.enabled:
+        return jsonify({"ok": False, "error": "remote_access_disabled"}), 503
+    if not config.remote_access.vibe_cloud.session_secret:
+        return jsonify({"ok": False, "error": "remote_access_session_secret_missing"}), 503
+    if remote_access.validate_session_cookie(config, request.cookies.get(remote_access.SESSION_COOKIE_NAME)):
+        return None
+    if request.method == "GET":
+        return _redirect_to_vibe_cloud_login(config)
+    return jsonify({"ok": False, "error": "remote_access_login_required"}), 401
 
 
 @app.before_request
@@ -432,10 +651,95 @@ def control():
 @app.route("/config", methods=["POST"])
 def config_post():
     from vibe import api
+    from vibe import remote_access
 
     payload = request.json or {}
-    config = api.save_config(payload)
-    return jsonify(api.config_to_payload(config))
+    remote_access_runtime = None
+    should_reconcile_remote_access = False
+    with CONFIG_LOCK:
+        previous_config = _load_remote_access_config() if "remote_access" in payload else None
+        config = api.save_config(payload)
+        if _remote_access_settings_changed(previous_config, config, payload):
+            if _should_rotate_remote_session_secret(previous_config, config, payload):
+                remote_access.rotate_session_secret(config)
+            should_reconcile_remote_access = True
+    if should_reconcile_remote_access:
+        remote_access_runtime = remote_access.reconcile()
+    response_payload = api.config_to_payload(config)
+    if remote_access_runtime is not None:
+        response_payload["remote_access_runtime"] = remote_access_runtime
+    return jsonify(response_payload)
+
+
+@app.route("/remote-access/status", methods=["GET"])
+def remote_access_status():
+    from vibe import remote_access
+
+    return jsonify(remote_access.status())
+
+
+@app.route("/remote-access/vibe-cloud/pair", methods=["POST"])
+def remote_access_vibe_cloud_pair():
+    from vibe import remote_access
+
+    payload = request.json or {}
+    result = remote_access.pair(
+        payload.get("pairing_key", ""),
+        payload.get("backend_url", "https://avibe.bot"),
+        payload.get("device_name", "Vibe Remote"),
+    )
+    return jsonify(result), 200 if result.get("ok") else 400
+
+
+@app.route("/remote-access/start", methods=["POST"])
+def remote_access_start():
+    from vibe import remote_access
+
+    result = remote_access.start()
+    return jsonify(result), 200 if result.get("ok") else 400
+
+
+@app.route("/remote-access/stop", methods=["POST"])
+def remote_access_stop():
+    from vibe import remote_access
+
+    result = remote_access.stop()
+    return jsonify(result), 200 if result.get("ok") else 400
+
+
+@app.route("/auth/callback", methods=["GET"])
+def remote_access_auth_callback():
+    from vibe import remote_access
+
+    config = _load_remote_access_config()
+    if config is None or not _is_remote_access_request(config):
+        return jsonify({"error": "remote_access_not_enabled"}), 400
+    cloud = config.remote_access.vibe_cloud
+    if not cloud.enabled:
+        return jsonify({"error": "remote_access_disabled"}), 400
+    oauth_state = _read_oauth_cookie(cloud.session_secret, request.cookies.get(REMOTE_OAUTH_COOKIE_NAME))
+    if not oauth_state or oauth_state.get("state") != request.args.get("state"):
+        return jsonify({"error": "invalid_oauth_state"}), 400
+    try:
+        result = remote_access.exchange_oauth_code(config, request.args.get("code", ""), oauth_state["code_verifier"])
+        claims = result["claims"]
+    except Exception as exc:
+        return jsonify({"error": "oauth_exchange_failed", "detail": str(exc)}), 400
+    if claims.get("nonce") != oauth_state.get("nonce"):
+        return jsonify({"error": "invalid_oauth_nonce"}), 400
+    response = Response(status=302)
+    response.headers["Location"] = _safe_remote_redirect_target(oauth_state.get("next"))
+    response.set_cookie(
+        remote_access.SESSION_COOKIE_NAME,
+        remote_access.make_session_cookie(config, str(claims.get("email", "")), str(claims.get("sub", ""))),
+        httponly=True,
+        secure=True,
+        samesite="Lax",
+        path="/",
+        max_age=remote_access.SESSION_TTL_SECONDS,
+    )
+    response.delete_cookie(REMOTE_OAUTH_COOKIE_NAME, path="/", secure=True, samesite="Lax")
+    return response
 
 
 @app.route("/ui/reload", methods=["POST"])

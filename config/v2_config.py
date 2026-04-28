@@ -186,6 +186,31 @@ class UiConfig:
 
 
 @dataclass
+class VibeCloudRemoteAccessConfig:
+    enabled: bool = False
+    backend_url: str = "https://avibe.bot"
+    public_url: str = ""
+    instance_id: str = ""
+    client_id: str = ""
+    issuer: str = ""
+    authorization_endpoint: str = ""
+    token_endpoint: str = ""
+    jwks_uri: str = ""
+    redirect_uri: str = ""
+    tunnel_token: str = ""
+    instance_secret: str = ""
+    session_secret: str = ""
+    cloudflared_path: str = ""
+    dev_login_hint: str = ""
+
+
+@dataclass
+class RemoteAccessConfig:
+    provider: str = "vibe_cloud"
+    vibe_cloud: VibeCloudRemoteAccessConfig = field(default_factory=VibeCloudRemoteAccessConfig)
+
+
+@dataclass
 class UpdateConfig:
     """Configuration for automatic update checking and installation."""
 
@@ -240,6 +265,7 @@ class V2Config:
     platform_configs: dict[str, BaseIMConfig] = field(default_factory=dict)
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
+    remote_access: RemoteAccessConfig = field(default_factory=RemoteAccessConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "typing"
     show_duration: bool = False  # Show task duration in result messages
@@ -360,6 +386,22 @@ class V2Config:
             raise ValueError("Config 'ui' must be an object")
         ui = UiConfig(**_filter_dataclass_fields(UiConfig, ui_payload))
 
+        remote_access_payload = payload.get("remote_access") or {}
+        if not isinstance(remote_access_payload, dict):
+            raise ValueError("Config 'remote_access' must be an object")
+        remote_access_provider = remote_access_payload.get("provider") or "vibe_cloud"
+        if remote_access_provider != "vibe_cloud":
+            raise ValueError("Config 'remote_access.provider' must be 'vibe_cloud'")
+        vibe_cloud_payload = remote_access_payload.get("vibe_cloud") or {}
+        if not isinstance(vibe_cloud_payload, dict):
+            raise ValueError("Config 'remote_access.vibe_cloud' must be an object")
+        remote_access = RemoteAccessConfig(
+            provider=remote_access_provider,
+            vibe_cloud=VibeCloudRemoteAccessConfig(
+                **_filter_dataclass_fields(VibeCloudRemoteAccessConfig, vibe_cloud_payload)
+            ),
+        )
+
         update_payload = payload.get("update") or {}
         if not isinstance(update_payload, dict):
             raise ValueError("Config 'update' must be an object")
@@ -401,6 +443,7 @@ class V2Config:
             agents=agents,
             gateway=gateway,
             ui=ui,
+            remote_access=remote_access,
             update=update,
             ack_mode=ack_mode,
             show_duration=show_duration,
@@ -444,6 +487,10 @@ class V2Config:
             },
             "gateway": self.gateway.__dict__ if self.gateway else None,
             "ui": self.ui.__dict__,
+            "remote_access": {
+                "provider": self.remote_access.provider,
+                "vibe_cloud": self.remote_access.vibe_cloud.__dict__,
+            },
             "update": self.update.__dict__,
             "ack_mode": self.ack_mode,
             "show_duration": self.show_duration,

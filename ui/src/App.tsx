@@ -6,6 +6,7 @@ import { ChannelList } from './components/steps/ChannelList';
 import { UserList } from './components/steps/UserList';
 import { DoctorPanel } from './components/steps/DoctorPanel';
 import { LogsPanel } from './components/steps/LogsPanel';
+import { RemoteAccess } from './components/RemoteAccess';
 import { StatusProvider } from './context/StatusContext';
 import { ApiProvider, useApi } from './context/ApiContext';
 import { ToastProvider } from './context/ToastContext';
@@ -63,6 +64,7 @@ function AppRoutes() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/channels" element={<ChannelList isPage />} />
         <Route path="/users" element={<UserList />} />
+        <Route path="/remote-access" element={<RemoteAccess />} />
         <Route path="/doctor" element={<DoctorPanel isPage />} />
         <Route path="/doctor/logs" element={<LogsPanel />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import signal
+import shlex
 import subprocess
 import sys
 import threading
@@ -207,12 +208,25 @@ def _get_process_command_windows(pid: int) -> str | None:
     return None
 
 
+def _decode_proc_cmdline(raw: bytes) -> str | None:
+    argv = [part.decode("utf-8", "replace") for part in raw.split(b"\x00") if part]
+    return shlex.join(argv) if argv else None
+
+
 def get_process_command(pid: int) -> str | None:
     if not isinstance(pid, int) or pid <= 0:
         return None
 
     if os.name == "nt":
         return _get_process_command_windows(pid)
+
+    proc_cmdline = Path(f"/proc/{pid}/cmdline")
+    try:
+        command = _decode_proc_cmdline(proc_cmdline.read_bytes())
+    except Exception:
+        command = None
+    if command:
+        return command
 
     try:
         result = subprocess.run(
@@ -363,12 +377,19 @@ def start_service():
 
 def start_ui(host, port):
     command = "from vibe.ui_server import run_ui_server; run_ui_server('{}', {})".format(host, port)
-    return spawn_background(
+    pid = spawn_background(
         [sys.executable, "-c", command],
         paths.get_runtime_ui_pid_path(),
         "ui_stdout.log",
         "ui_stderr.log",
     )
+    try:
+        from vibe import remote_access
+
+        remote_access.reconcile()
+    except Exception:
+        logger.warning("Failed to reconcile remote access after UI start", exc_info=True)
+    return pid
 
 
 def stop_service():
@@ -377,4 +398,16 @@ def stop_service():
 
 
 def stop_ui():
-    return stop_process(paths.get_runtime_ui_pid_path())
+    remote_access_stopped = True
+    try:
+        from vibe import remote_access
+
+        result = remote_access.stop()
+        if isinstance(result, dict) and result.get("ok") is False:
+            logger.warning("Failed to stop remote access before UI stop: %s", result.get("error"))
+            remote_access_stopped = False
+    except Exception:
+        logger.warning("Failed to stop remote access before UI stop", exc_info=True)
+        remote_access_stopped = False
+    ui_stopped = stop_process(paths.get_runtime_ui_pid_path())
+    return bool(ui_stopped and remote_access_stopped)

@@ -39,10 +39,12 @@ dependencies = [
     "tomli>=2.0.1; python_version < '3.11'",
     "flask>=3.0.0",
     "lark-oapi>=1.4.0",
+    "requests>=2.31.0",
     "sentry-sdk>=2.0.0",
     "python-socks[asyncio]>=2.0.0",
     "aiohttp-socks>=0.8.0",
     "httpx[socks]>=0.27",
+    "PyJWT[crypto]>=2.9.0",
 ]
 
 [project.urls]

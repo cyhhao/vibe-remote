@@ -1,4 +1,5 @@
 import React, { createContext, useContext } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useToast } from './ToastContext';
 import { apiFetch } from '../lib/apiFetch';
 
@@ -43,6 +44,10 @@ export type ApiContextType = {
   getVersion: () => Promise<VersionInfo>;
   doUpgrade: () => Promise<UpgradeResult>;
   browseDirectory: (path: string, showHidden?: boolean) => Promise<{ ok: boolean; path?: string; parent?: string | null; dirs?: { name: string; path: string }[]; error?: string }>;
+  remoteAccessStatus: () => Promise<any>;
+  pairVibeCloudRemoteAccess: (payload: { backend_url: string; pairing_key: string; device_name?: string }) => Promise<any>;
+  startRemoteAccess: () => Promise<any>;
+  stopRemoteAccess: () => Promise<any>;
 };
 
 export type LogEntry = {
@@ -95,6 +100,7 @@ export const useApi = () => {
 
 export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { showToast } = useToast();
+  const { t } = useTranslation();
 
   const handleApiError = async (res: Response, path: string) => {
     let errorMessage = `Request failed: ${path} (${res.status})`;
@@ -102,7 +108,7 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const data = await res.json();
       if (data.error) {
-        errorMessage = data.error;
+        errorMessage = t(`errors.${data.error}`, { defaultValue: data.error });
       }
     } catch {
       // Response is not JSON, use status text
@@ -183,6 +189,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getVersion: () => getJson('/version'),
     doUpgrade: () => postJson('/upgrade', {}),
     browseDirectory: (path, showHidden) => postJson('/browse', { path, show_hidden: showHidden || false }),
+    remoteAccessStatus: () => getJson('/remote-access/status'),
+    pairVibeCloudRemoteAccess: (payload) => postJson('/remote-access/vibe-cloud/pair', payload),
+    startRemoteAccess: () => postJson('/remote-access/start', {}),
+    stopRemoteAccess: () => postJson('/remote-access/stop', {}),
   };
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;

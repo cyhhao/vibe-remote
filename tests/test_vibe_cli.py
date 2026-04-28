@@ -2,6 +2,7 @@ import json
 import os
 import pytest
 import signal
+import shlex
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -91,6 +92,13 @@ def test_cli_stop_opencode_server_uses_runtime_helpers(tmp_path, monkeypatch):
 
     assert cli._stop_opencode_server() is True
     assert not pid_file.exists()
+
+
+def test_proc_cmdline_decode_preserves_argv_boundaries():
+    command = runtime._decode_proc_cmdline(b"/tmp/Vibe Tools/cloudflared\x00tunnel\x00run\x00")
+
+    assert command is not None
+    assert shlex.split(command)[0] == "/tmp/Vibe Tools/cloudflared"
 
 
 def test_cmd_restart_schedules_delayed_restart(monkeypatch, capsys):

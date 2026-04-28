@@ -118,6 +118,41 @@ def test_save_config_accepts_typing_ack_mode(monkeypatch, tmp_path):
     assert updated.ack_mode == "typing"
 
 
+def test_config_to_payload_redacts_remote_access_secrets_and_save_preserves_them(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    payload = _full_config_payload()
+    payload["remote_access"] = {
+        "provider": "vibe_cloud",
+        "vibe_cloud": {
+            "enabled": True,
+            "backend_url": "https://avibe.bot",
+            "public_url": "https://alex.avibe.bot",
+            "instance_id": "inst_123",
+            "client_id": "vr_client_123",
+            "issuer": "https://avibe.bot",
+            "authorization_endpoint": "https://avibe.bot/oauth/authorize",
+            "token_endpoint": "https://avibe.bot/oauth/token",
+            "jwks_uri": "https://avibe.bot/oauth/jwks.json",
+            "redirect_uri": "https://alex.avibe.bot/auth/callback",
+            "tunnel_token": "tunnel-token",
+            "instance_secret": "instance-secret",
+            "session_secret": "session-secret",
+        },
+    }
+    created = api.save_config(payload)
+
+    redacted = api.config_to_payload(created)
+    cloud_payload = redacted["remote_access"]["vibe_cloud"]
+    updated = api.save_config({**redacted, "show_duration": False})
+
+    assert "tunnel_token" not in cloud_payload
+    assert "instance_secret" not in cloud_payload
+    assert "session_secret" not in cloud_payload
+    assert updated.remote_access.vibe_cloud.tunnel_token == "tunnel-token"
+    assert updated.remote_access.vibe_cloud.instance_secret == "instance-secret"
+    assert updated.remote_access.vibe_cloud.session_secret == "session-secret"
+
+
 def test_save_config_accepts_slack_disable_link_unfurl(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
 
