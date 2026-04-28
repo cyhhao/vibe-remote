@@ -4,9 +4,11 @@ import ast
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vibe import api
+from ui_server_test_helpers import csrf_headers
 
 
 def _full_config_payload() -> dict:
@@ -97,6 +99,70 @@ def test_save_config_merges_partial_payload(monkeypatch, tmp_path):
     assert updated.discord is not None
     assert updated.discord.bot_token == "discord-token-1234567890"
     assert updated.runtime.default_cwd == "/tmp/workdir"
+
+
+def test_save_config_merges_remote_access_payload(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    api.save_config(_full_config_payload())
+
+    updated = api.save_config(
+        {
+            "remote_access": {
+                "cloudflare": {
+                    "enabled": True,
+                    "hostname": "admin.example.com",
+                    "tunnel_token": "tunnel-token",
+                    "confirmed_access_policy": True,
+                    "confirmed_tunnel_route": True,
+                }
+            }
+        }
+    )
+
+    assert updated.remote_access.provider == "cloudflare"
+    assert updated.remote_access.cloudflare.enabled is True
+    assert updated.remote_access.cloudflare.hostname == "admin.example.com"
+    assert updated.remote_access.cloudflare.tunnel_token == "tunnel-token"
+    assert updated.remote_access.cloudflare.confirmed_access_policy is True
+    assert updated.platform == "discord"
+
+
+def test_save_config_merges_legacy_admin_access_over_existing_remote_access(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    api.save_config(_full_config_payload())
+    api.save_config(
+        {
+            "remote_access": {
+                "cloudflare": {
+                    "enabled": False,
+                    "hostname": "old.example.com",
+                    "tunnel_token": "old-token",
+                }
+            }
+        }
+    )
+
+    updated = api.save_config(
+        {
+            "admin_access": {
+                "cloudflare": {
+                    "enabled": True,
+                    "hostname": "legacy.example.com",
+                    "tunnel_token": "legacy-token",
+                    "confirmed_access_policy": True,
+                    "confirmed_tunnel_route": True,
+                }
+            }
+        }
+    )
+
+    assert updated.remote_access.cloudflare.enabled is True
+    assert updated.remote_access.cloudflare.hostname == "legacy.example.com"
+    assert updated.remote_access.cloudflare.tunnel_token == "legacy-token"
+    assert updated.remote_access.cloudflare.confirmed_access_policy is True
+    assert updated.remote_access.cloudflare.confirmed_tunnel_route is True
 
 
 def test_save_config_defaults_show_duration_to_false_for_new_config(monkeypatch, tmp_path):
@@ -210,3 +276,81 @@ def test_config_post_does_not_call_init_sessions():
                 break
 
     assert calls_init_sessions is False
+
+
+def test_config_post_propagates_remote_access_reconcile_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    from vibe import remote_access
+    from vibe.ui_server import app
+
+    api.save_config(_full_config_payload())
+    monkeypatch.setattr(
+        remote_access,
+        "reconcile",
+        lambda config: {"ok": False, "error": "cloudflared_stop_failed", "running": True},
+    )
+
+    client = app.test_client()
+    response = client.post(
+        "/config",
+        json={
+            "remote_access": {
+                "cloudflare": {
+                    "enabled": True,
+                    "hostname": "admin.example.com",
+                    "tunnel_token": "tunnel-token",
+                    "allowed_emails": ["alex@example.com"],
+                    "confirmed_access_policy": True,
+                    "confirmed_tunnel_route": True,
+                }
+            }
+        },
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 409
+    payload = response.get_json()
+    assert payload["ok"] is False
+    assert payload["error"] == "cloudflared_stop_failed"
+    assert payload["remote_access"]["running"] is True
+    assert payload["config"]["remote_access"]["cloudflare"]["enabled"] is True
+
+
+def test_config_post_skips_remote_access_reconcile_when_section_is_unchanged(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    from vibe import remote_access
+    from vibe.ui_server import app
+
+    saved = api.save_config(
+        {
+            **_full_config_payload(),
+            "remote_access": {
+                "cloudflare": {
+                    "enabled": False,
+                    "hostname": "admin.example.com",
+                    "tunnel_token": "tunnel-token",
+                    "allowed_emails": ["alex@example.com"],
+                    "confirmed_access_policy": True,
+                    "confirmed_tunnel_route": True,
+                }
+            },
+        }
+    )
+    reconcile_calls: list[object] = []
+    monkeypatch.setattr(remote_access, "reconcile", lambda config: reconcile_calls.append(config) or {"ok": True})
+
+    client = app.test_client()
+    response = client.post(
+        "/config",
+        json={
+            "show_duration": False,
+            "remote_access": api.config_to_payload(saved)["remote_access"],
+        },
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["show_duration"] is False
+    assert reconcile_calls == []

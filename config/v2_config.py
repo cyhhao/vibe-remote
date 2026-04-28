@@ -3,7 +3,7 @@ import logging
 import os
 import tempfile
 import threading
-from dataclasses import dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -31,6 +31,56 @@ def _filter_dataclass_fields(dc_class, payload: dict) -> dict:
     """Filter payload to only include fields defined in dataclass."""
     valid_fields = {f.name for f in fields(dc_class)}
     return {k: v for k, v in payload.items() if k in valid_fields}
+
+
+def _deep_merge_dicts(base: dict, patch: dict) -> dict:
+    merged = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _remote_access_payload(payload: dict) -> dict:
+    remote_payload = payload.get("remote_access")
+    legacy_payload = payload.get("admin_access")
+    if remote_payload is None:
+        remote_payload = {}
+    if legacy_payload is None:
+        legacy_payload = {}
+    if not isinstance(remote_payload, dict):
+        raise ValueError("Config 'remote_access' must be an object")
+    if not isinstance(legacy_payload, dict):
+        raise ValueError("Config 'admin_access' must be an object")
+    if legacy_payload:
+        return _deep_merge_dicts(remote_payload, legacy_payload)
+    return remote_payload
+
+
+def _validate_cloudflare_remote_access_payload(payload: dict) -> None:
+    for field_name in (
+        "hostname",
+        "account_id",
+        "zone_id",
+        "tunnel_id",
+        "tunnel_token",
+        "cloudflared_path",
+        "access_app_id",
+        "access_app_aud",
+    ):
+        value = payload.get(field_name)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"Config 'remote_access.cloudflare.{field_name}' must be a string")
+    for field_name in ("allowed_emails", "allowed_email_domains"):
+        value = payload.get(field_name)
+        if value is not None and not isinstance(value, list):
+            raise ValueError(f"Config 'remote_access.cloudflare.{field_name}' must be a list")
+    for field_name in ("enabled", "confirmed_access_policy", "confirmed_tunnel_route"):
+        value = payload.get(field_name)
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f"Config 'remote_access.cloudflare.{field_name}' must be a boolean")
 
 
 @dataclass
@@ -186,6 +236,29 @@ class UiConfig:
 
 
 @dataclass
+class CloudflareRemoteAccessConfig:
+    enabled: bool = False
+    hostname: str = ""
+    account_id: str = ""
+    zone_id: str = ""
+    tunnel_id: str = ""
+    tunnel_token: str = ""
+    cloudflared_path: str = ""
+    access_app_id: str = ""
+    access_app_aud: str = ""
+    allowed_emails: List[str] = field(default_factory=list)
+    allowed_email_domains: List[str] = field(default_factory=list)
+    confirmed_access_policy: bool = False
+    confirmed_tunnel_route: bool = False
+
+
+@dataclass
+class RemoteAccessConfig:
+    provider: str = "cloudflare"
+    cloudflare: CloudflareRemoteAccessConfig = field(default_factory=CloudflareRemoteAccessConfig)
+
+
+@dataclass
 class UpdateConfig:
     """Configuration for automatic update checking and installation."""
 
@@ -240,6 +313,7 @@ class V2Config:
     platform_configs: dict[str, BaseIMConfig] = field(default_factory=dict)
     gateway: Optional[GatewayConfig] = None
     ui: UiConfig = field(default_factory=UiConfig)
+    remote_access: RemoteAccessConfig = field(default_factory=RemoteAccessConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "typing"
     show_duration: bool = False  # Show task duration in result messages
@@ -360,6 +434,23 @@ class V2Config:
             raise ValueError("Config 'ui' must be an object")
         ui = UiConfig(**_filter_dataclass_fields(UiConfig, ui_payload))
 
+        remote_access_payload = _remote_access_payload(payload)
+        remote_access_provider = remote_access_payload.get("provider") or "cloudflare"
+        if remote_access_provider != "cloudflare":
+            raise ValueError("Config 'remote_access.provider' must be 'cloudflare'")
+        cloudflare_payload = remote_access_payload.get("cloudflare")
+        if cloudflare_payload is None:
+            cloudflare_payload = {}
+        if not isinstance(cloudflare_payload, dict):
+            raise ValueError("Config 'remote_access.cloudflare' must be an object")
+        _validate_cloudflare_remote_access_payload(cloudflare_payload)
+        remote_access = RemoteAccessConfig(
+            provider=remote_access_provider,
+            cloudflare=CloudflareRemoteAccessConfig(
+                **_filter_dataclass_fields(CloudflareRemoteAccessConfig, cloudflare_payload)
+            ),
+        )
+
         update_payload = payload.get("update") or {}
         if not isinstance(update_payload, dict):
             raise ValueError("Config 'update' must be an object")
@@ -401,6 +492,7 @@ class V2Config:
             agents=agents,
             gateway=gateway,
             ui=ui,
+            remote_access=remote_access,
             update=update,
             ack_mode=ack_mode,
             show_duration=show_duration,
@@ -444,6 +536,7 @@ class V2Config:
             },
             "gateway": self.gateway.__dict__ if self.gateway else None,
             "ui": self.ui.__dict__,
+            "remote_access": asdict(self.remote_access),
             "update": self.update.__dict__,
             "ack_mode": self.ack_mode,
             "show_duration": self.show_duration,

@@ -6,6 +6,9 @@ export type ApiContextType = {
   getConfig: () => Promise<any>;
   getPlatformCatalog: () => Promise<any>;
   saveConfig: (payload: any) => Promise<any>;
+  remoteAccessStatus: () => Promise<any>;
+  remoteAccessInstallCloudflared: () => Promise<any>;
+  remoteAccessApplyCloudflare: () => Promise<any>;
   getSettings: (platform?: string) => Promise<any>;
   saveSettings: (payload: any, platform?: string) => Promise<any>;
   getUsers: (platform?: string) => Promise<any>;
@@ -146,6 +149,9 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getConfig: () => getJson('/config'),
     getPlatformCatalog: () => getJson('/platforms'),
     saveConfig: (payload) => postJson('/config', payload),
+    remoteAccessStatus: () => getJson('/remote-access/cloudflare/status'),
+    remoteAccessInstallCloudflared: () => postJson('/remote-access/cloudflare/install', {}),
+    remoteAccessApplyCloudflare: () => postJson('/remote-access/cloudflare/apply', {}),
     getSettings: (platform) => getJson(platform ? `/settings?platform=${encodeURIComponent(platform)}` : '/settings'),
     saveSettings: (payload, platform) => postJson('/settings', platform ? { ...payload, platform } : payload),
     getUsers: (platform) => getJson(platform ? `/api/users?platform=${encodeURIComponent(platform)}` : '/api/users'),

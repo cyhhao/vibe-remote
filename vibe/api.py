@@ -278,6 +278,23 @@ def _deep_merge_dicts(base: dict, patch: dict) -> dict:
     return merged
 
 
+def _merge_legacy_admin_access_payload(merged_payload: dict, request_payload: dict) -> dict:
+    legacy_payload = request_payload.get("admin_access")
+    if legacy_payload is None:
+        return merged_payload
+    if not isinstance(legacy_payload, dict):
+        return merged_payload
+
+    next_payload = dict(merged_payload)
+    current_remote = next_payload.get("remote_access")
+    if isinstance(current_remote, dict):
+        next_payload["remote_access"] = _deep_merge_dicts(current_remote, legacy_payload)
+    else:
+        next_payload["remote_access"] = legacy_payload
+    next_payload.pop("admin_access", None)
+    return next_payload
+
+
 def save_config(payload: dict) -> V2Config:
     if not isinstance(payload, dict):
         raise ValueError("Config payload must be an object")
@@ -292,6 +309,7 @@ def save_config(payload: dict) -> V2Config:
             base_payload = {}
 
         merged_payload = _deep_merge_dicts(base_payload, payload) if base_payload else payload
+        merged_payload = _merge_legacy_admin_access_payload(merged_payload, payload)
         merged_payload = _merge_legacy_discord_guild_scope_fields(merged_payload, payload, base_config)
         sanitized_payload, guild_scope_update = _extract_settings_scopes_from_config_payload(merged_payload)
         config = V2Config.from_payload(sanitized_payload)
@@ -340,6 +358,10 @@ def config_to_payload(config: V2Config) -> dict:
         },
         "gateway": config.gateway.__dict__ if config.gateway else None,
         "ui": config.ui.__dict__,
+        "remote_access": {
+            "provider": config.remote_access.provider,
+            "cloudflare": config.remote_access.cloudflare.__dict__.copy(),
+        },
         "update": config.update.__dict__,
         "ack_mode": config.ack_mode,
         "language": config.language,

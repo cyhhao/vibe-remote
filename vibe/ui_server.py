@@ -432,10 +432,52 @@ def control():
 @app.route("/config", methods=["POST"])
 def config_post():
     from vibe import api
+    from vibe import remote_access
 
     payload = request.json or {}
+    remote_access_requested = "remote_access" in payload or "admin_access" in payload
+    previous_remote_access = None
+    if remote_access_requested:
+        try:
+            previous_remote_access = api.config_to_payload(api.load_config()).get("remote_access")
+        except FileNotFoundError:
+            previous_remote_access = None
     config = api.save_config(payload)
-    return jsonify(api.config_to_payload(config))
+    current_payload = api.config_to_payload(config)
+    current_remote_access = current_payload.get("remote_access")
+    if remote_access_requested and current_remote_access != previous_remote_access:
+        reconcile_result = remote_access.reconcile(config)
+        if reconcile_result.get("ok") is False:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": reconcile_result.get("error") or "remote_access_reconcile_failed",
+                    "remote_access": reconcile_result,
+                    "config": current_payload,
+                }
+            ), 409
+    return jsonify(current_payload)
+
+
+@app.route("/remote-access/cloudflare/status", methods=["GET"])
+def remote_access_cloudflare_status():
+    from vibe import remote_access
+
+    return jsonify(remote_access.status())
+
+
+@app.route("/remote-access/cloudflare/install", methods=["POST"])
+def remote_access_cloudflare_install():
+    from vibe import remote_access
+
+    return jsonify(remote_access.install_cloudflared())
+
+
+@app.route("/remote-access/cloudflare/apply", methods=["POST"])
+def remote_access_cloudflare_apply():
+    from vibe import remote_access
+
+    return jsonify(remote_access.reconcile())
 
 
 @app.route("/ui/reload", methods=["POST"])
