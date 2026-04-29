@@ -1,12 +1,24 @@
 import React, { useState } from 'react';
-import { CheckCircle2, MessageSquare, Zap, Terminal, Copy, Check, Key } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Copy,
+  Key,
+  MessageSquare,
+  Sparkles,
+  Terminal,
+  Zap,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
+import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useStatus } from '../../context/StatusContext';
-import { useNavigate } from 'react-router-dom';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
 import { getEnabledPlatforms, getPrimaryPlatform } from '../../lib/platforms';
+import { EyebrowBadge, WizardCard } from '../visual';
 
 interface SummaryProps {
   data: any;
@@ -16,6 +28,8 @@ interface SummaryProps {
   isLast: boolean;
 }
 
+// Mirrors design.pen X9wTM (Summary): mint-accented WizardCard with 72×72 check
+// halo, 38px title, recap rows, then secondary toggles and quick-start tips.
 export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
@@ -40,11 +54,11 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
           ? (data.discord?.require_mention || false)
           : platform === 'telegram'
             ? (data.telegram?.require_mention ?? true)
-          : platform === 'lark'
-            ? (data.lark?.require_mention || false)
-            : platform === 'wechat'
-              ? (data.wechat?.require_mention || false)
-              : (data.slack?.require_mention || false),
+            : platform === 'lark'
+              ? (data.lark?.require_mention || false)
+              : platform === 'wechat'
+                ? (data.wechat?.require_mention || false)
+                : (data.slack?.require_mention || false),
       ])
     )
   );
@@ -58,7 +72,6 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
       showToast(t('common.copyFailed'), 'error');
       return;
     }
-
     setCodeCopied(true);
     setTimeout(() => setCodeCopied(false), 2000);
   };
@@ -105,11 +118,9 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
       await Promise.all(
         Object.entries(settingsByPlatform).map(([platform, payload]) => api.saveSettings(payload, platform))
       );
-      
-      // Start service
+
       await control('start');
 
-      // WeChat: skip bind code, auto-bind happens on QR login
       if (enabledPlatforms.every((platform) => platform === 'wechat')) {
         setSaving(false);
         showToast(t('wechat.setupComplete'));
@@ -119,23 +130,20 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         return;
       }
 
-      // Fetch first bind code (auto-generated on first access)
       try {
         const resp = await api.getFirstBindCode();
         if (resp?.code) {
           setBindCode(resp.code);
           setSaving(false);
-          return; // Don't navigate yet — show bind code first
+          return;
         }
       } catch {
-        // Non-critical: skip bind code display
+        /* non-critical */
       }
 
-      // No bind code — redirect immediately
       setTimeout(() => {
-           navigate('/dashboard');
+        navigate('/dashboard');
       }, 1000);
-
     } catch (exc: any) {
       const message = exc && exc.message ? exc.message : 'Failed to save configuration';
       setError(message);
@@ -144,205 +152,267 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
     }
   };
 
-  // If bind code is available, show the bind code screen
+  const recapRows: Array<{ label: string; value: string }> = [
+    { label: t('summary.platform'), value: enabledPlatforms.map((p) => titleCase(p)).join(', ') || '—' },
+    {
+      label: t('summary.enabledAgents'),
+      value: enabledAgents(data).map(titleCase).join(', ') || '—',
+    },
+    {
+      label: t('summary.channelsConfigured'),
+      value: String(countConfiguredChannels(data.channelConfigsByPlatform)),
+    },
+  ];
+
+  if (enabledPlatforms.includes('slack')) {
+    recapRows.push({ label: t('summary.slackBotToken'), value: mask(data.slack?.bot_token || '') });
+  }
+  if (enabledPlatforms.includes('discord')) {
+    recapRows.push({ label: t('summary.discordBotToken'), value: mask(data.discord?.bot_token || '') });
+    recapRows.push({
+      label: t('summary.discordGuild'),
+      value: discordGuildAllowlist.join(', ') || t('summary.notSet'),
+    });
+  }
+  if (enabledPlatforms.includes('telegram')) {
+    recapRows.push({ label: t('summary.telegramBotToken'), value: mask(data.telegram?.bot_token || '') });
+  }
+  if (enabledPlatforms.includes('lark')) {
+    recapRows.push({ label: t('summary.larkAppId'), value: mask(data.lark?.app_id || '') });
+  }
+  if (enabledPlatforms.includes('wechat')) {
+    recapRows.push({ label: t('summary.wechatBotToken'), value: mask(data.wechat?.bot_token || '') });
+  }
+
   if (bindCode) {
     return (
-      <div className="flex flex-col h-full max-w-2xl mx-auto items-center justify-center">
-        <div className="w-16 h-16 bg-success/10 text-success rounded-full flex items-center justify-center border border-success/20 mb-6">
-          <CheckCircle2 size={40} />
-        </div>
-        <h2 className="text-2xl font-display font-bold text-text mb-2">{t('summary.title')}</h2>
-        <p className="text-muted mb-8">{t('summary.serviceRunning')}</p>
-
-        <div className="bg-panel border border-border rounded-lg p-6 shadow-sm w-full max-w-md">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-warning/10 text-warning rounded-lg flex items-center justify-center flex-shrink-0">
-              <Key size={20} />
-            </div>
-            <div>
-              <h3 className="text-base font-semibold text-text">{t('summary.bindCodeTitle')}</h3>
-              <p className="text-xs text-muted">{t('summary.bindCodeDesc')}</p>
-            </div>
+      <div className="flex w-full justify-center">
+        <WizardCard accent size="hero" className="items-center gap-6 text-center">
+          <div className="flex size-[72px] items-center justify-center rounded-full border-2 border-mint/40 bg-mint/[0.08] text-mint shadow-[0_0_48px_-6px_rgba(91,255,160,0.7)]">
+            <Check size={36} strokeWidth={2.4} />
           </div>
-          <div className="flex items-center gap-2 bg-bg border border-border rounded-md p-3">
-            <code className="flex-1 text-sm font-mono text-text select-all">bind {bindCode}</code>
-            <button
-              onClick={copyBindCode}
-              className="p-2 text-muted hover:text-text transition-colors rounded-md hover:bg-panel"
-              title="Copy"
-            >
-              {codeCopied ? <Check size={16} className="text-success" /> : <Copy size={16} />}
-            </button>
+          <div className="space-y-2">
+            <h2 className="text-[38px] font-bold leading-tight tracking-[-0.7px] text-foreground">
+              {t('summary.title')}
+            </h2>
+            <p className="mx-auto max-w-[600px] text-[15px] leading-[1.55] text-muted">
+              {t('summary.serviceRunning')}
+            </p>
           </div>
-          {codeCopied && (
-            <p className="text-xs text-success mt-2">{t('summary.bindCodeCopied')}</p>
-          )}
-        </div>
-
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="mt-8 px-8 py-3 bg-accent hover:bg-accent/90 text-white rounded-lg font-bold transition-colors shadow-sm"
-        >
-          {t('summary.goToDashboard')}
-        </button>
+          <div className="w-full max-w-md rounded-xl border border-gold/30 bg-gold/[0.06] px-5 py-4 text-left">
+            <div className="mb-3 flex items-center gap-3">
+              <div className="flex size-10 items-center justify-center rounded-lg border border-gold/30 bg-gold/15 text-gold">
+                <Key size={18} />
+              </div>
+              <div>
+                <h3 className="text-[14px] font-semibold text-foreground">{t('summary.bindCodeTitle')}</h3>
+                <p className="text-[11px] text-muted">{t('summary.bindCodeDesc')}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2.5">
+              <code className="flex-1 select-all font-mono text-[13px] text-foreground">bind {bindCode}</code>
+              <button
+                onClick={copyBindCode}
+                className="rounded-md p-1.5 text-muted transition hover:bg-white/[0.04] hover:text-foreground"
+                title="Copy"
+                aria-label={t('common.copy') as string}
+              >
+                {codeCopied ? <Check size={16} className="text-mint" /> : <Copy size={16} />}
+              </button>
+            </div>
+            {codeCopied && (
+              <p className="mt-2 text-[11px] text-mint">{t('summary.bindCodeCopied')}</p>
+            )}
+          </div>
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="inline-flex items-center gap-2 rounded-lg bg-mint px-7 py-3 text-[14px] font-bold text-[#080812] shadow-[0_0_48px_-8px_rgba(91,255,160,0.7)] transition hover:brightness-105"
+          >
+            {t('summary.goToDashboard')}
+            <ArrowRight size={16} strokeWidth={2.25} />
+          </button>
+        </WizardCard>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full max-w-2xl mx-auto">
-      <div className="flex items-center gap-4 mb-8">
-        <div className="w-12 h-12 bg-success/10 text-success rounded-full flex items-center justify-center border border-success/20">
-          <CheckCircle2 size={32} />
-        </div>
-        <div>
-          <h2 className="text-2xl font-display font-bold text-text">{t('summary.title')}</h2>
-          <p className="text-muted">{t('summary.subtitle')}</p>
-        </div>
-      </div>
-
-      <div className="flex-1 space-y-4 overflow-y-auto mb-6">
-        <Section title={t('summary.mode')} value={data.mode} />
-        <Section title={t('summary.platform')} value={enabledPlatforms.join(', ')} />
-        {enabledPlatforms.includes('slack') && (
-          <>
-            <Section title={t('summary.slackBotToken')} value={mask(data.slack?.bot_token || '')} />
-            <Section title={t('summary.slackAppToken')} value={mask(data.slack?.app_token || '')} />
-          </>
-        )}
-        {enabledPlatforms.includes('discord') && (
-          <>
-            <Section title={t('summary.discordBotToken')} value={mask(data.discord?.bot_token || '')} />
-            <Section
-              title={t('summary.discordGuild')}
-              value={discordGuildAllowlist.join(', ') || t('summary.notSet')}
-            />
-          </>
-        )}
-        {enabledPlatforms.includes('telegram') && (
-          <Section title={t('summary.telegramBotToken')} value={mask(data.telegram?.bot_token || '')} />
-        )}
-        {enabledPlatforms.includes('lark') && (
-          <Section title={t('summary.larkAppId')} value={mask(data.lark?.app_id || '')} />
-        )}
-        {enabledPlatforms.includes('wechat') && (
-          <Section title={t('summary.wechatBotToken')} value={mask(data.wechat?.bot_token || '')} />
-        )}
-        <Section title={t('summary.enabledAgents')} value={enabledAgents(data).join(', ')} />
-        <Section title={t('summary.channelsConfigured')} value={countConfiguredChannels(data.channelConfigsByPlatform)} />
-        
-        {/* Require Mention Setting */}
-        <div className="bg-panel border border-border rounded-lg p-4 shadow-sm space-y-4">
-          <div>
-            <h3 className="text-sm font-medium text-text">{t('summary.requireMention')}</h3>
-            <p className="text-xs text-muted mt-1">{t('summary.requireMentionHint')}</p>
+    <div className="flex w-full justify-center">
+      <WizardCard accent size="hero" className="gap-6">
+        <div className="flex flex-col items-center gap-5 text-center">
+          <div className="flex size-[72px] items-center justify-center rounded-full border-2 border-mint/40 bg-mint/[0.08] text-mint shadow-[0_0_48px_-6px_rgba(91,255,160,0.7)]">
+            <Check size={36} strokeWidth={2.4} />
           </div>
-          {enabledPlatforms.map((platform) => (
-            <div key={platform} className="flex justify-between items-center border-t border-border pt-3 first:border-t-0 first:pt-0">
-              <span className="text-sm text-text capitalize">{platform}</span>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={requireMentionByPlatform[platform] || false}
-                  onChange={(e) =>
-                    setRequireMentionByPlatform((current) => ({
-                      ...current,
-                      [platform]: e.target.checked,
-                    }))
-                  }
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-border rounded-full peer peer-checked:bg-success peer-focus:ring-2 peer-focus:ring-success/20 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-              </label>
+          <div className="space-y-2">
+            <EyebrowBadge tone="mint">Summary</EyebrowBadge>
+            <h2 className="text-[38px] font-bold leading-tight tracking-[-0.7px] text-foreground">
+              {t('summary.title')}
+            </h2>
+            <p className="mx-auto max-w-[600px] text-[15px] leading-[1.55] text-muted">
+              {t('summary.subtitle')}
+            </p>
+          </div>
+        </div>
+
+        {/* Recap card */}
+        <div className="overflow-hidden rounded-xl border border-border bg-background">
+          {recapRows.map((row, idx) => (
+            <div
+              key={row.label}
+              className={clsx(
+                'flex items-center justify-between gap-4 px-5 py-3.5',
+                idx < recapRows.length - 1 && 'border-b border-border'
+              )}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">{row.label}</span>
+              <span className="truncate font-mono text-[12px] text-foreground" title={row.value}>
+                {row.value}
+              </span>
             </div>
           ))}
         </div>
 
-        {/* Auto Update Setting */}
-        <div className="bg-panel border border-border rounded-lg p-4 shadow-sm">
-          <div className="flex justify-between items-center">
-            <div>
-              <h3 className="text-sm font-medium text-text">{t('summary.autoUpdate')}</h3>
-              <p className="text-xs text-muted mt-1">{t('summary.autoUpdateHint')}</p>
+        {/* Require Mention */}
+        {enabledPlatforms.length > 0 && (
+          <div className="rounded-xl border border-border bg-background px-5 py-4">
+            <div className="mb-3">
+              <h3 className="text-[13px] font-semibold text-foreground">{t('summary.requireMention')}</h3>
+              <p className="mt-0.5 text-[11px] text-muted">{t('summary.requireMentionHint')}</p>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoUpdate}
-                onChange={(e) => setAutoUpdate(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-border rounded-full peer peer-checked:bg-success peer-focus:ring-2 peer-focus:ring-success/20 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-            </label>
+            <div className="flex flex-col gap-2.5">
+              {enabledPlatforms.map((platform) => (
+                <div
+                  key={platform}
+                  className="flex items-center justify-between rounded-lg border border-border bg-surface-2 px-3 py-2"
+                >
+                  <span className="text-[12px] font-medium text-foreground">{titleCase(platform)}</span>
+                  <Switch
+                    checked={!!requireMentionByPlatform[platform]}
+                    onChange={(value) =>
+                      setRequireMentionByPlatform((current) => ({ ...current, [platform]: value }))
+                    }
+                  />
+                </div>
+              ))}
+            </div>
           </div>
+        )}
+
+        {/* Auto Update */}
+        <div className="flex items-center justify-between rounded-xl border border-border bg-background px-5 py-4">
+          <div>
+            <h3 className="text-[13px] font-semibold text-foreground">{t('summary.autoUpdate')}</h3>
+            <p className="mt-0.5 text-[11px] text-muted">{t('summary.autoUpdateHint')}</p>
+          </div>
+          <Switch checked={autoUpdate} onChange={setAutoUpdate} />
         </div>
 
-        {/* Usage Tips */}
-        <div className="bg-panel border border-border rounded-lg p-4 shadow-sm">
-          <h3 className="text-sm font-medium text-text mb-3">{t('summary.usageTips')}</h3>
+        {/* Quick start tips */}
+        <div className="rounded-xl border border-cyan/30 bg-cyan/[0.05] px-5 py-4">
+          <div className="mb-3 flex items-center gap-2">
+            <Sparkles size={14} className="text-cyan" />
+            <h3 className="text-[13px] font-semibold text-foreground">{t('summary.usageTips')}</h3>
+          </div>
           <div className="space-y-3">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 bg-accent/10 text-accent rounded-lg flex items-center justify-center flex-shrink-0">
-                <Terminal size={16} />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-text">{t('summary.tipStartCommand')}</p>
-                <p className="text-xs text-muted">{t('summary.tipStartCommandDesc')}</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 bg-warning/10 text-warning rounded-lg flex items-center justify-center flex-shrink-0">
-                <Zap size={16} />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-text">{t('summary.tipAgentSwitch')}</p>
-                <p className="text-xs text-muted">{t('summary.tipAgentSwitchDesc')}</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 bg-success/10 text-success rounded-lg flex items-center justify-center flex-shrink-0">
-                <MessageSquare size={16} />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-text">{t('summary.tipThread')}</p>
-                <p className="text-xs text-muted">{t('summary.tipThreadDesc')}</p>
-              </div>
-            </div>
+            <Tip
+              icon={<Terminal size={14} />}
+              tone="cyan"
+              title={t('summary.tipStartCommand')}
+              description={t('summary.tipStartCommandDesc')}
+            />
+            <Tip
+              icon={<Zap size={14} />}
+              tone="gold"
+              title={t('summary.tipAgentSwitch')}
+              description={t('summary.tipAgentSwitchDesc')}
+            />
+            <Tip
+              icon={<MessageSquare size={14} />}
+              tone="mint"
+              title={t('summary.tipThread')}
+              description={t('summary.tipThreadDesc')}
+            />
           </div>
         </div>
-      </div>
 
-      {error && (
-        <div className="p-4 bg-danger/10 text-danger border border-danger/20 rounded-lg mb-4 text-sm">
+        {error && (
+          <div className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-[12px] text-danger">
             {error}
-        </div>
-      )}
+          </div>
+        )}
 
-      <div className="mt-auto flex justify-between">
-        <button
-          onClick={onBack}
-          className="px-6 py-2 text-muted hover:text-text font-medium transition-colors"
-        >
-          {t('common.back')}
-        </button>
-        <button
-          onClick={saveAll}
-          disabled={saving}
-          className="px-8 py-3 bg-success hover:bg-success/90 text-white rounded-lg font-bold transition-colors shadow-sm"
-        >
-          {saving ? t('common.saving') : t('summary.finishAndStart')}
-        </button>
+        <div className="flex items-center justify-between border-t border-border pt-4">
+          <button
+            type="button"
+            onClick={onBack}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong disabled:opacity-50"
+          >
+            <ArrowLeft size={14} strokeWidth={2.25} />
+            {t('common.back')}
+          </button>
+          <button
+            type="button"
+            onClick={saveAll}
+            disabled={saving}
+            className="inline-flex items-center gap-2 rounded-lg bg-mint px-7 py-3 text-[14px] font-bold text-[#080812] shadow-[0_0_48px_-8px_rgba(91,255,160,0.7)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+          >
+            {saving ? t('common.saving') : t('summary.finishAndStart')}
+            {!saving && <ArrowRight size={16} strokeWidth={2.25} />}
+          </button>
+        </div>
+      </WizardCard>
+    </div>
+  );
+};
+
+const Switch: React.FC<{ checked: boolean; onChange: (next: boolean) => void }> = ({ checked, onChange }) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    onClick={() => onChange(!checked)}
+    className={clsx(
+      'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-mint/40',
+      checked
+        ? 'border-mint/50 bg-mint shadow-[0_0_12px_-2px_rgba(91,255,160,0.6)]'
+        : 'border-border bg-surface-2'
+    )}
+  >
+    <span
+      className={clsx(
+        'inline-block size-3.5 rounded-full bg-background shadow transition-transform',
+        checked ? 'translate-x-[18px]' : 'translate-x-1'
+      )}
+    />
+  </button>
+);
+
+const Tip: React.FC<{
+  icon: React.ReactNode;
+  tone: 'cyan' | 'gold' | 'mint';
+  title: string;
+  description: string;
+}> = ({ icon, tone, title, description }) => {
+  const toneClasses = {
+    cyan: 'border-cyan/30 bg-cyan/[0.08] text-cyan',
+    gold: 'border-gold/30 bg-gold/10 text-gold',
+    mint: 'border-mint/30 bg-mint/[0.08] text-mint',
+  }[tone];
+  return (
+    <div className="flex items-start gap-3">
+      <div className={clsx('flex size-8 shrink-0 items-center justify-center rounded-lg border', toneClasses)}>
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <p className="text-[12px] font-semibold text-foreground">{title}</p>
+        <p className="mt-0.5 text-[11px] leading-[1.5] text-muted">{description}</p>
       </div>
     </div>
   );
 };
 
-const Section = ({ title, value }: { title: string; value: any }) => (
-  <div className="bg-panel border border-border rounded-lg p-4 shadow-sm flex justify-between items-center">
-    <h3 className="text-sm font-medium text-muted uppercase tracking-wider">{title}</h3>
-    <div className="text-text font-medium text-sm">{String(value)}</div>
-  </div>
-);
+const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 const mask = (value: string) => (value ? `${value.slice(0, 6)}...${value.slice(-4)}` : 'Not set');
 
@@ -354,7 +424,7 @@ const enabledAgents = (data: any) => {
 const countConfiguredChannels = (channelConfigsByPlatform: Record<string, Record<string, any>> = {}) =>
   Object.values(channelConfigsByPlatform).reduce(
     (count, channels) => count + Object.values(channels || {}).filter((config: any) => config?.enabled).length,
-    0,
+    0
   );
 
 const buildConfigPayload = (data: any) => {
@@ -370,9 +440,7 @@ const buildConfigPayload = (data: any) => {
     mode: data.mode || 'self_host',
     version: 'v2',
     slack: {
-      // Preserve all existing slack fields
       ...data.slack,
-      // Override only the fields that setup modifies
       bot_token: data.slack?.bot_token || '',
       app_token: data.slack?.app_token || '',
       require_mention: data.slack?.require_mention || false,
@@ -403,53 +471,47 @@ const buildConfigPayload = (data: any) => {
       require_mention: data.wechat?.require_mention || false,
     },
     runtime: {
-      // Preserve existing runtime config
       ...data.runtime,
       default_cwd: data.default_cwd || data.runtime?.default_cwd || '_tmp',
     },
     agents: {
       default_backend: data.default_backend || 'opencode',
       opencode: {
-        // Preserve existing opencode config
         ...agents.opencode,
         enabled: agents.opencode?.enabled ?? true,
         cli_path: agents.opencode?.cli_path || 'opencode',
         default_agent: data.opencode_default_agent ?? agents.opencode?.default_agent ?? null,
         default_model: data.opencode_default_model ?? agents.opencode?.default_model ?? null,
-        default_reasoning_effort: data.opencode_default_reasoning_effort ?? agents.opencode?.default_reasoning_effort ?? null,
+        default_reasoning_effort:
+          data.opencode_default_reasoning_effort ?? agents.opencode?.default_reasoning_effort ?? null,
       },
       claude: {
-        // Preserve existing claude config
         ...agents.claude,
         enabled: agents.claude?.enabled ?? true,
         cli_path: agents.claude?.cli_path || 'claude',
         default_model: data.claude_default_model ?? agents.claude?.default_model ?? null,
       },
       codex: {
-        // Preserve existing codex config
         ...agents.codex,
         enabled: agents.codex?.enabled ?? false,
         cli_path: agents.codex?.cli_path || 'codex',
         default_model: data.codex_default_model ?? agents.codex?.default_model ?? null,
       },
     },
-    // Preserve gateway config entirely
     gateway: data.gateway,
     ui: {
-      // Preserve existing ui config
       ...data.ui,
       setup_host: data.ui?.setup_host || '127.0.0.1',
       setup_port: data.ui?.setup_port || 5123,
     },
-    // Preserve existing update config, only override auto_update from UI toggle
-    update: data.update ? {
-      ...data.update,
-      auto_update: data.update.auto_update,
-    } : undefined,
-    // Preserve ack_mode
+    update: data.update
+      ? {
+          ...data.update,
+          auto_update: data.update.auto_update,
+        }
+      : undefined,
     ack_mode: data.ack_mode,
     show_duration: data.show_duration ?? false,
-    // Preserve language
     language: data.language,
   };
 };

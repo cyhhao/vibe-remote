@@ -1,31 +1,42 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Hash, CheckSquare, Square, RefreshCw, HelpCircle, Globe, FolderOpen, MessageSquare, Users, AtSign } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  AtSign,
+  CheckSquare,
+  ChevronDown,
+  ChevronUp,
+  Globe,
+  Hash,
+  HelpCircle,
+  MessageSquare,
+  RefreshCw,
+  Search,
+  Square,
+  Users,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
-import { Combobox } from '../ui/combobox';
 import { DirectoryBrowser } from '../ui/directory-browser';
 import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import { getEnabledPlatforms, platformSupportsChannels } from '../../lib/platforms';
+import { EyebrowBadge, PlatformIcon, WizardCard } from '../visual';
+import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
 
-/** Input that only commits value on blur */
-function BlurInput({
-  value,
-  onCommit,
-  ...props
-}: { value: string; onCommit: (v: string) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'onBlur'>) {
-  const [local, setLocal] = useState(value);
-  useEffect(() => setLocal(value), [value]);
-  return (
-    <input
-      {...props}
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={() => { if (local !== value) onCommit(local); }}
-    />
-  );
-}
+const PLATFORM_BRAND_COLORS: Record<string, string> = {
+  slack: '#4A154B',
+  discord: '#5865F2',
+  telegram: '#0088CC',
+  lark: '#4C6EB5',
+  wechat: '#07C160',
+};
+
+const platformBoxStyle = (platformId: string): React.CSSProperties => {
+  const base = PLATFORM_BRAND_COLORS[platformId] || '#5BFFA0';
+  return { backgroundColor: `${base}26`, borderColor: `${base}66` };
+};
 
 interface ChannelListProps {
   data?: any;
@@ -103,7 +114,6 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [claudeModels, setClaudeModels] = useState<string[]>([]);
   const [claudeReasoningOptions, setClaudeReasoningOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [codexModels, setCodexModels] = useState<string[]>([]);
-  const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
   const [guilds, setGuilds] = useState<any[]>([]);
   const [selectedGuildIds, setSelectedGuildIds] = useState<string[]>(getDiscordGuildAllowlist(data));
   const [selectedGuild, setSelectedGuild] = useState<string>(getDiscordGuildAllowlist(data)[0] || '');
@@ -117,6 +127,15 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [telegramSummary, setTelegramSummary] = useState<TelegramDiscoverySummary | null>(null);
   // Directory browser state — tracks which channel's cwd picker is open
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
+  // Page-mode tab/search/collapse state (only used when isPage is true)
+  const [pageTab, setPageTab] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [expandedChannelId, setExpandedChannelId] = useState<string | null>(null);
+  const [showInactive, setShowInactive] = useState(true);
+  // All-channels aggregation: keyed by platform
+  const [allChannelsByPlatform, setAllChannelsByPlatform] = useState<Record<string, any[]>>({});
+  const [allConfigsByPlatform, setAllConfigsByPlatform] = useState<Record<string, Record<string, ChannelConfig>>>({});
+  const [allLoading, setAllLoading] = useState(false);
 
   const applySelectedGuildIds = (allowlist: string[]) => {
     const normalized = [...allowlist];
@@ -500,20 +519,6 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     });
   }, [channels, configs, config.runtime?.default_cwd, config.agents?.default_backend, config.agents?.opencode?.enabled, config.agents?.claude?.enabled, config.agents?.codex?.enabled]);
 
-  useEffect(() => {
-    if (!channels.length) return;
-    setSelectedModels((prev) => {
-      const next = { ...prev };
-      channels.forEach((channel) => {
-        const model = configs[channel.id]?.routing?.opencode_model || '';
-        if (next[channel.id] !== model) {
-          next[channel.id] = model;
-        }
-      });
-      return next;
-    });
-  }, [channels, configs]);
-
   const isChannelEnabled = (channelId: string) => {
     const channel = configs[channelId];
     return channel ? channel.enabled !== false : false;
@@ -569,58 +574,156 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     require_mention: null,
   });
 
-  const getReasoningOptions = (cwd: string, modelKey: string) => {
-    const lookup = opencodeOptionsByCwd[cwd]?.reasoning_options || {};
-    if (lookup && typeof lookup === 'object') {
-      return (lookup as Record<string, { value: string; label: string }[]>)[modelKey] || [];
-    }
-    return [];
-  };
-
-  const getClaudeReasoningOptions = (model: string) => {
-    const modelKey = model || '';
-    const cached = claudeReasoningOptions[modelKey];
-    if (cached?.length) return cached;
-
-    const fallback = claudeReasoningOptions[''] || [];
-    const normalizedModel = modelKey.toLowerCase();
-    if (normalizedModel.includes('claude-opus-4-7') || normalizedModel === 'opus' || normalizedModel === 'opus[1m]') {
-      const options = [...fallback];
-      if (!options.some((option) => option.value === 'xhigh')) {
-        options.push({ value: 'xhigh', label: 'Extra High' });
-      }
-      if (!options.some((option) => option.value === 'max')) {
-        options.push({ value: 'max', label: 'Max' });
-      }
-      return options;
-    }
-    if (normalizedModel.includes('claude-opus-4-6') || normalizedModel.includes('claude-sonnet-4-6')) {
-      return fallback.some((option) => option.value === 'max')
-        ? fallback
-        : [...fallback, { value: 'max', label: 'Max' }];
-    }
-
-    return fallback;
-  };
-
-  const getReasoningLabel = (value: string, fallback: string) => {
-    switch (value) {
-      case 'low':
-        return t('channelList.reasoningLow');
-      case 'medium':
-        return t('channelList.reasoningMedium');
-      case 'high':
-        return t('channelList.reasoningHigh');
-      case 'xhigh':
-        return t('channelList.reasoningXHigh');
-      case 'max':
-        return t('channelList.reasoningMax');
-      default:
-        return fallback;
-    }
-  };
-
   const selectedCount = channels.filter((channel) => isChannelEnabled(channel.id)).length;
+
+  // ---- Page-mode all-platforms aggregation ----
+  const updateConfigForPlatform = async (
+    platformId: string,
+    channelId: string,
+    patch: Partial<ChannelConfig>
+  ) => {
+    const platformConfigs = (allConfigsByPlatform[platformId] || (platformId === platform ? configs : {})) as Record<
+      string,
+      ChannelConfig
+    >;
+    const base = platformConfigs[channelId] || defaultConfig();
+    const next = { ...base, ...patch };
+    if (!next.show_message_types) {
+      next.show_message_types = defaultConfig().show_message_types;
+    }
+    if (!next.routing || typeof next.routing !== 'object') {
+      next.routing = { agent_backend: config.agents?.default_backend || 'opencode' };
+    }
+    const nextPlatformConfigs = { ...platformConfigs, [channelId]: next };
+    setAllConfigsByPlatform((prev) => ({ ...prev, [platformId]: nextPlatformConfigs }));
+    if (platformId === platform) {
+      setConfigs(nextPlatformConfigs);
+    }
+    if (!isPage) return;
+    try {
+      await api.saveSettings({ channels: nextPlatformConfigs }, platformId);
+      showToast(t('channelList.settingsSaved'));
+    } catch {
+      showToast(t('channelList.settingsSaveFailed'), 'error');
+    }
+  };
+
+  const loadAllPlatformsData = async () => {
+    if (!isPage) return;
+    const platforms = getEnabledPlatforms(config).filter((p) => platformSupportsChannels(config, p));
+    if (platforms.length === 0) return;
+    setAllLoading(true);
+    try {
+      const results = await Promise.all(
+        platforms.map(async (p) => {
+          let channelsList: any[] = [];
+          let configsMap: Record<string, ChannelConfig> = {};
+          try {
+            const settings = await api.getSettings(p);
+            configsMap = (settings.channels || {}) as Record<string, ChannelConfig>;
+            if (p === 'lark') {
+              const appId = config.lark?.app_id || '';
+              const appSecret = config.lark?.app_secret || '';
+              const domain = config.lark?.domain || 'feishu';
+              if (appId && appSecret) {
+                const result = await api.larkChats(appId, appSecret, domain);
+                if (result.ok) channelsList = result.channels || [];
+              }
+            } else if (p === 'telegram') {
+              if (config.telegram?.bot_token) {
+                const result = await api.telegramChats(false);
+                if (result.ok) channelsList = result.channels || [];
+              }
+            } else if (p === 'discord') {
+              const allowlist = getDiscordGuildAllowlist(settings);
+              const guildId = allowlist[0] || selectedGuildIdsRef.current[0] || selectedGuild;
+              const token = config.discord?.bot_token || '';
+              if (guildId && token) {
+                const result = await api.discordChannels(token, guildId);
+                if (result.ok) {
+                  channelsList = (result.channels || []).filter((c: any) => c.type === 0 || c.type === 5);
+                }
+              }
+            } else if (p === 'slack') {
+              if (config.slack?.bot_token) {
+                const result = await api.slackChannels(config.slack.bot_token, false);
+                if (result.ok) channelsList = result.channels || [];
+              }
+            }
+          } catch {
+            // ignore individual platform failures
+          }
+          return { platform: p, channels: channelsList, configs: configsMap };
+        })
+      );
+      const channelsByPlatform: Record<string, any[]> = {};
+      const configsByPlatform: Record<string, Record<string, ChannelConfig>> = {};
+      for (const r of results) {
+        channelsByPlatform[r.platform] = r.channels;
+        configsByPlatform[r.platform] = r.configs;
+      }
+      setAllChannelsByPlatform(channelsByPlatform);
+      setAllConfigsByPlatform(configsByPlatform);
+    } finally {
+      setAllLoading(false);
+    }
+  };
+
+  // Load aggregated data on first All-tab activation, and refresh when config keys change
+  useEffect(() => {
+    if (!isPage) return;
+    if (pageTab !== 'all') return;
+    void loadAllPlatformsData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isPage,
+    pageTab,
+    config.slack?.bot_token,
+    config.discord?.bot_token,
+    config.telegram?.bot_token,
+    config.lark?.app_id,
+    config.lark?.app_secret,
+  ]);
+
+  // When the user picks a per-platform tab, sync pagePlatform so existing flow loads it
+  useEffect(() => {
+    if (!isPage) return;
+    if (pageTab === 'all') return;
+    if (pageTab !== pagePlatform) {
+      setPagePlatform(pageTab);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPage, pageTab]);
+
+  type AggregatedRow = {
+    platform: string;
+    channel: any;
+    config: ChannelConfig;
+  };
+
+  const platformChannelCounts = useMemo(() => {
+    const counts: Record<string, { total: number; active: number }> = {};
+    const platforms = getEnabledPlatforms(config).filter((p) => platformSupportsChannels(config, p));
+    for (const p of platforms) {
+      const channelList = p === platform ? channels : allChannelsByPlatform[p] || [];
+      const configMap = p === platform ? configs : allConfigsByPlatform[p] || {};
+      const total = channelList.length;
+      const active = channelList.filter((c: any) => configMap[c.id]?.enabled !== false && configMap[c.id]?.enabled !== undefined && configMap[c.id]?.enabled).length;
+      counts[p] = { total, active };
+    }
+    return counts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config, platform, channels, configs, allChannelsByPlatform, allConfigsByPlatform]);
+
+  const allTabCounts = useMemo(() => {
+    let total = 0;
+    let active = 0;
+    for (const key of Object.keys(platformChannelCounts)) {
+      total += platformChannelCounts[key].total;
+      active += platformChannelCounts[key].active;
+    }
+    return { total, active };
+  }, [platformChannelCounts]);
 
   // Sort channels: enabled channels first
   const sortedChannels = React.useMemo(() => {
@@ -663,23 +766,40 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     // In wizard mode, skip channel step entirely
     if (!isPage) {
       return (
-        <div className="flex flex-col h-full items-center justify-center">
-          <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center border border-accent/20 mb-6">
-            <MessageSquare size={32} />
-          </div>
-          <h2 className="text-2xl font-display font-bold text-text mb-2">{t('channelList.title')}</h2>
-          <p className="text-muted mb-8">{t('wechat.noChannels')}</p>
-          <div className="mt-auto flex justify-between w-full">
-            <button onClick={onBack} className="px-6 py-2 text-muted hover:text-text font-medium">
-              {t('common.back')}
-            </button>
-            <button
-              onClick={() => onNext && onNext({})}
-              className="px-6 py-2 bg-accent hover:bg-accent/90 text-white rounded-lg font-medium shadow-sm"
-            >
-              {t('common.continue')}
-            </button>
-          </div>
+        <div className="flex w-full justify-center">
+          <WizardCard className="gap-6">
+            <div className="space-y-2">
+              <EyebrowBadge tone="mint">Groups</EyebrowBadge>
+              <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
+                {t('channelList.title')}
+              </h2>
+              <p className="text-[14px] leading-[1.55] text-muted">{t('wechat.noChannels')}</p>
+            </div>
+            <div className="flex flex-col items-center gap-3 rounded-xl border border-cyan/30 bg-cyan/[0.06] px-6 py-10 text-center">
+              <div className="flex size-14 items-center justify-center rounded-full border border-cyan/30 bg-cyan/[0.08] text-cyan">
+                <MessageSquare size={26} />
+              </div>
+              <p className="text-[12px] text-muted">{t('wechat.noChannels')}</p>
+            </div>
+            <div className="flex items-center justify-between border-t border-border pt-4">
+              <button
+                type="button"
+                onClick={onBack}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+              >
+                <ArrowLeft size={14} strokeWidth={2.25} />
+                {t('common.back')}
+              </button>
+              <button
+                type="button"
+                onClick={() => onNext && onNext({})}
+                className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105"
+              >
+                {t('common.continue')}
+                <ArrowRight size={14} strokeWidth={2.25} />
+              </button>
+            </div>
+          </WizardCard>
         </div>
       );
     }
@@ -693,7 +813,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             <p className="text-muted">{t('wechat.noChannels')}</p>
           </div>
         </div>
-        <div className="bg-panel border border-border rounded-xl p-8 text-center shadow-sm">
+        <div className="rounded-2xl border border-border bg-surface-2/40 p-8 text-center shadow-[0_18px_40px_-30px_rgba(0,0,0,0.8)]">
           <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center border border-accent/20 mx-auto mb-4">
             <MessageSquare size={32} />
           </div>
@@ -710,25 +830,519 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     );
   }
 
+  // ====================================================================
+  // PAGE MODE: redesigned layout (matches design.pen frame A7h8Wv)
+  // - Header with title + 240px search + Rescan
+  // - Tabs row (All channels + per-platform with PlatformIcon + counts)
+  // - Per-tab notes (Discord guild picker, Telegram discovery info)
+  // - List header (count summary + Show inactive toggle)
+  // - Collapsible channel rows with platform-colored icon box + status badge
+  // ====================================================================
+  if (isPage) {
+    const tabPlatforms = getEnabledPlatforms(config).filter((p) => platformSupportsChannels(config, p));
+
+    const buildRowsForPlatform = (p: string): AggregatedRow[] => {
+      const channelList = p === platform ? channels : (allChannelsByPlatform[p] || []);
+      const configsMap = p === platform ? configs : (allConfigsByPlatform[p] || {});
+      return channelList.map((c: any) => ({
+        platform: p,
+        channel: c,
+        config: configsMap[c.id] || defaultConfig(),
+      }));
+    };
+
+    const rawRows: AggregatedRow[] = pageTab === 'all'
+      ? tabPlatforms.flatMap(buildRowsForPlatform)
+      : buildRowsForPlatform(pageTab);
+
+    const lowerQuery = searchQuery.trim().toLowerCase();
+    const visibleRows = rawRows
+      .filter((r) => {
+        const enabled = r.config.enabled === true;
+        if (!showInactive && !enabled) return false;
+        if (!lowerQuery) return true;
+        const name = String(r.channel.name || r.channel.id || '').toLowerCase();
+        const id = String(r.channel.id || '').toLowerCase();
+        return name.includes(lowerQuery) || id.includes(lowerQuery);
+      })
+      .sort((a, b) => {
+        const aOn = a.config.enabled === true;
+        const bOn = b.config.enabled === true;
+        if (aOn !== bOn) return aOn ? -1 : 1;
+        return String(a.channel.name || a.channel.id).localeCompare(String(b.channel.name || b.channel.id));
+      });
+
+    const handleRescan = () => {
+      if (pageTab === 'all') {
+        void loadAllPlatformsData();
+      } else {
+        void loadChannels(false);
+      }
+    };
+
+    const summary = pageTab === 'all'
+      ? { active: allTabCounts.active, total: allTabCounts.total }
+      : platformChannelCounts[pageTab] || { active: 0, total: 0 };
+
+    const isRescanLoading = pageTab === 'all' ? allLoading : (loading || loadingAll);
+
+    return (
+      <>
+        <div className="flex h-full flex-col gap-5">
+          {/* Page header — design.pen iXX59 */}
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-col gap-1.5">
+              <h1 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
+                {t('channelList.title')}
+              </h1>
+              <p className="text-[14px] leading-[1.55] text-muted">{t('channelList.subtitle')}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={t('channelList.filterPlaceholder')}
+                  className="h-9 w-[240px] rounded-lg border border-border bg-surface pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted focus:border-mint/50 focus:outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleRescan}
+                disabled={isRescanLoading}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={isRescanLoading ? 'animate-spin' : ''} />
+                {t('channelList.rescan')}
+              </button>
+            </div>
+          </div>
+
+          {/* Platform Tabs — design.pen O2hb2M */}
+          <div className="flex flex-wrap items-end gap-1 border-b border-border">
+            <button
+              type="button"
+              onClick={() => setPageTab('all')}
+              className={clsx(
+                '-mb-px flex items-center gap-2 border-b-2 px-3 pb-2.5 pt-2 text-[13px] font-medium transition-colors',
+                pageTab === 'all'
+                  ? 'border-mint text-foreground'
+                  : 'border-transparent text-muted hover:text-foreground'
+              )}
+            >
+              <Globe size={16} className={pageTab === 'all' ? 'text-mint' : 'text-muted'} />
+              <span>{t('channelList.allChannelsTab')}</span>
+              <span
+                className={clsx(
+                  'rounded-full px-1.5 py-0.5 font-mono text-[10px]',
+                  pageTab === 'all' ? 'bg-mint-soft text-mint' : 'bg-white/[0.06] text-muted'
+                )}
+              >
+                {allTabCounts.active}
+              </span>
+            </button>
+            {tabPlatforms.map((p) => {
+              const counts = platformChannelCounts[p] || { active: 0, total: 0 };
+              const active = pageTab === p;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPageTab(p)}
+                  className={clsx(
+                    '-mb-px flex items-center gap-2 border-b-2 px-3 pb-2.5 pt-2 text-[13px] font-medium transition-colors',
+                    active
+                      ? 'border-mint text-foreground'
+                      : 'border-transparent text-muted hover:text-foreground'
+                  )}
+                >
+                  <PlatformIcon platform={p} size={16} />
+                  <span>{t(`platform.${p}.title`)}</span>
+                  <span
+                    className={clsx(
+                      'rounded-full px-1.5 py-0.5 font-mono text-[10px]',
+                      active ? 'bg-mint-soft text-mint' : 'bg-white/[0.06] text-muted'
+                    )}
+                  >
+                    {counts.active}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Discord guild picker — only on Discord tab */}
+          {pageTab === 'discord' && (
+            <div className="rounded-xl border border-border bg-surface-2/40 p-3 text-sm shadow-[0_18px_40px_-30px_rgba(0,0,0,0.8)]">
+              <div className="grid gap-3 md:grid-cols-[minmax(220px,280px)_1fr]">
+                <div className="space-y-1">
+                  <label className="font-medium text-foreground">{t('channelList.guildBrowse')}</label>
+                  <select
+                    value={selectedGuild}
+                    onChange={(e) => updateSelectedGuild(e.target.value)}
+                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-cyan focus:outline-none"
+                  >
+                    <option value="">{t('channelList.guildPlaceholder')}</option>
+                    {knownDiscordGuilds.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium text-foreground">{t('channelList.guildAccess')}</span>
+                    <span className="text-xs text-muted">
+                      {t('channelList.guildAccessCount', { count: selectedGuildIds.length })}
+                    </span>
+                  </div>
+                  {knownDiscordGuilds.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {knownDiscordGuilds.map((g) => (
+                        <label
+                          key={g.id}
+                          className={clsx(
+                            'inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-xs transition-colors',
+                            selectedGuildIds.includes(g.id)
+                              ? 'border-mint/40 bg-mint-soft text-foreground'
+                              : 'border-border bg-surface text-muted hover:text-foreground'
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedGuildIds.includes(g.id)}
+                            onChange={(e) => toggleAllowedGuild(g.id, e.target.checked)}
+                            className="h-3.5 w-3.5 accent-accent"
+                          />
+                          <span>{g.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Telegram discovery info — only on Telegram tab */}
+          {pageTab === 'telegram' && (
+            <div className="rounded-xl border border-cyan/30 bg-cyan-soft/20 p-3">
+              <div className="text-sm font-medium text-foreground">{t('channelList.telegramDiscoveryTitle')}</div>
+              <div className="mt-1 text-sm text-muted">{t('channelList.telegramDiscoveryInfo')}</div>
+              <div className="mt-2 text-xs text-muted">
+                {t('channelList.telegramDiscoveryStats', {
+                  visible: telegramSummary?.visible_count || 0,
+                  forum: telegramSummary?.forum_count || 0,
+                  hidden: telegramSummary?.hidden_private_count || 0,
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Browse all + Can't find hint — per-platform tabs only */}
+          {pageTab !== 'all' && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-0.5">
+              {!['lark', 'telegram'].includes(pageTab) && (
+                <button
+                  type="button"
+                  onClick={() => loadChannels(true)}
+                  disabled={loadingAll}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:border-cyan/40 disabled:opacity-50"
+                >
+                  <Globe size={13} className={loadingAll ? 'animate-spin' : ''} />
+                  {loadingAll ? t('common.loading') : t('channelList.browseAll')}
+                </button>
+              )}
+              {browseAll && pageTab === platform && (
+                <span className="text-[11px] text-muted">{t('channelList.showingAll')}</span>
+              )}
+              <span className="group relative inline-flex">
+                <span className="flex cursor-help items-center gap-1 text-[12px] text-muted">
+                  <HelpCircle size={13} />
+                  {t('channelList.cantFindChannel')}
+                </span>
+                <span className="pointer-events-none absolute bottom-full left-0 z-10 mb-2 w-64 whitespace-normal rounded bg-text px-3 py-2 text-xs text-bg opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                  {pageTab === 'discord'
+                    ? t('channelList.discordInviteBotHint')
+                    : pageTab === 'lark'
+                      ? t('channelList.larkInviteBotHint')
+                      : pageTab === 'telegram'
+                        ? t('channelList.telegramInviteBotHint')
+                        : t('channelList.inviteBotHint')}
+                </span>
+              </span>
+            </div>
+          )}
+
+          {/* List header — design.pen xQq1G */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-[13px] text-muted">
+              {pageTab === 'all'
+                ? t('channelList.headerSummary', { active: summary.active, discovered: summary.total })
+                : t('channelList.headerSummaryPlatform', {
+                    platform: t(`platform.${pageTab}.title`),
+                    active: summary.active,
+                    discovered: summary.total,
+                  })}
+            </div>
+            <label className="inline-flex cursor-pointer items-center gap-2">
+              <span className="text-[12px] text-muted">{t('channelList.showInactive')}</span>
+              <input
+                type="checkbox"
+                checked={showInactive}
+                onChange={(e) => setShowInactive(e.target.checked)}
+                className="sr-only"
+              />
+              <span
+                className={clsx(
+                  'relative inline-flex h-[18px] w-[30px] items-center rounded-full transition-colors',
+                  showInactive ? 'bg-mint' : 'bg-neutral-300'
+                )}
+              >
+                <span
+                  className={clsx(
+                    'inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform',
+                    showInactive ? 'translate-x-[14px]' : 'translate-x-0.5'
+                  )}
+                />
+              </span>
+            </label>
+          </div>
+
+          {/* Channel rows — design.pen JrNBe / M8FRiG / KywfU */}
+          <div className="flex-1 space-y-3 overflow-y-auto">
+            {visibleRows.length === 0 && (
+              <div className="rounded-xl border border-dashed border-border bg-surface-3/60 p-8 text-center text-muted">
+                {searchQuery
+                  ? t('channelList.noChannelsForSearch')
+                  : pageTab === 'discord' && !selectedGuild
+                    ? t('channelList.discordNeedsGuild')
+                    : t('channelList.noChannelsLoaded')}
+              </div>
+            )}
+            {visibleRows.map((row) => {
+              const channel = row.channel;
+              const channelPlatform = row.platform;
+              const rawConfig = row.config;
+              const def = defaultConfig();
+              const defaultBackend = config.agents?.default_backend || 'opencode';
+              const channelEnabled = rawConfig.enabled === true;
+              const channelConfig = {
+                ...def,
+                ...rawConfig,
+                enabled: channelEnabled,
+                show_message_types: rawConfig.show_message_types || def.show_message_types,
+                custom_cwd: rawConfig.custom_cwd ?? def.custom_cwd,
+                routing: { ...def.routing, ...(rawConfig.routing || {}) },
+                require_mention: rawConfig.require_mention !== undefined ? rawConfig.require_mention : def.require_mention,
+              };
+              const rowKey = `${channelPlatform}::${channel.id}`;
+              const expanded = expandedChannelId === rowKey;
+              const effectiveBackend = channelConfig.routing.agent_backend || defaultBackend;
+              const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
+              const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
+              const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
+              const codexAgents = codexAgentsByCwd[effectiveCwd] || [];
+
+              const updateRow = (patch: Partial<ChannelConfig>) => {
+                void updateConfigForPlatform(channelPlatform, channel.id, patch);
+              };
+
+              const backendModel = effectiveBackend === 'claude'
+                ? channelConfig.routing.claude_model
+                : effectiveBackend === 'codex'
+                  ? channelConfig.routing.codex_model
+                  : channelConfig.routing.opencode_model;
+
+              return (
+                <div
+                  key={rowKey}
+                  className={clsx(
+                    'rounded-xl border transition-colors',
+                    expanded
+                      ? 'border-mint/30 bg-surface-2/70 shadow-[0_0_32px_-8px_rgba(91,255,160,0.45)]'
+                      : 'border-border bg-background hover:border-border-strong'
+                  )}
+                >
+                  {/* Top row */}
+                  <button
+                    type="button"
+                    onClick={() => setExpandedChannelId(expanded ? null : rowKey)}
+                    className="flex w-full items-center gap-3.5 px-5 py-3.5 text-left"
+                  >
+                    {/* Toggle */}
+                    <span
+                      role="switch"
+                      aria-checked={channelEnabled}
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        updateRow({ enabled: !channelEnabled });
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === ' ' || e.key === 'Enter') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          updateRow({ enabled: !channelEnabled });
+                        }
+                      }}
+                      className={clsx(
+                        'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors',
+                        channelEnabled ? 'bg-mint' : 'bg-neutral-300'
+                      )}
+                    >
+                      <span
+                        className={clsx(
+                          'inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform',
+                          channelEnabled ? 'translate-x-[14px]' : 'translate-x-0.5'
+                        )}
+                      />
+                    </span>
+
+                    {/* Platform-tinted icon box */}
+                    <span
+                      className="flex size-[34px] shrink-0 items-center justify-center rounded-md border"
+                      style={platformBoxStyle(channelPlatform)}
+                    >
+                      <PlatformIcon platform={channelPlatform} size={18} />
+                    </span>
+
+                    {/* Name + meta */}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-mono text-[13px] font-semibold text-foreground">
+                        {channel.name || channel.id}
+                      </span>
+                      <span className="block truncate text-[11px] text-muted">
+                        {channelEnabled
+                          ? `${effectiveBackend === 'claude' ? 'Claude' : effectiveBackend === 'codex' ? 'Codex' : 'OpenCode'}${backendModel ? ` / ${backendModel}` : ''} · ID: ${channel.id}`
+                          : `ID: ${channel.id}`}
+                      </span>
+                    </span>
+
+                    {/* Status badge */}
+                    <span
+                      className={clsx(
+                        'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                        channelEnabled
+                          ? 'border-mint/40 bg-mint-soft text-mint'
+                          : 'border-border bg-white/[0.04] text-muted'
+                      )}
+                    >
+                      <span
+                        className={clsx(
+                          'size-1.5 rounded-full',
+                          channelEnabled ? 'bg-mint shadow-[0_0_6px_rgba(91,255,160,0.7)]' : 'bg-muted'
+                        )}
+                      />
+                      {channelEnabled ? t('common.enabled') : t('common.disabled')}
+                    </span>
+
+                    {/* Chevron */}
+                    {expanded ? (
+                      <ChevronUp size={18} className="shrink-0 text-muted" />
+                    ) : (
+                      <ChevronDown size={18} className="shrink-0 text-muted" />
+                    )}
+                  </button>
+
+                  {/* Expanded body — design.pen asPXu (VR/RoutingConfig) — shared with /users */}
+                  {expanded && (
+                    <RoutingConfigPanel
+                      value={channelConfig}
+                      onChange={(patch) => updateRow(patch)}
+                      onBrowseDirectory={() => setBrowsingCwdFor(rowKey)}
+                      globalConfig={config}
+                      showRequireMention={true}
+                      inheritsFromKey={channelPlatform}
+                      opencodeOptions={opencodeOptions}
+                      claudeAgents={claudeAgents}
+                      claudeModels={claudeModels}
+                      claudeReasoningOptions={claudeReasoningOptions}
+                      codexAgents={codexAgents}
+                      codexModels={codexModels}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Directory browser modal — page mode keys by `${platform}::${channelId}` */}
+        {browsingCwdFor && (() => {
+          const sep = browsingCwdFor.indexOf('::');
+          if (sep < 0) return null;
+          const browsePlatform = browsingCwdFor.slice(0, sep);
+          const browseChannelId = browsingCwdFor.slice(sep + 2);
+          const platformConfigs = browsePlatform === platform ? configs : (allConfigsByPlatform[browsePlatform] || {});
+          return (
+            <DirectoryBrowser
+              initialPath={platformConfigs[browseChannelId]?.custom_cwd || config.runtime?.default_cwd || '~/work'}
+              onSelect={(path) => {
+                void updateConfigForPlatform(browsePlatform, browseChannelId, { custom_cwd: path });
+                setBrowsingCwdFor(null);
+              }}
+              onClose={() => setBrowsingCwdFor(null)}
+            />
+          );
+        })()}
+      </>
+    );
+  }
+
+  const Wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) =>
+    isPage ? (
+      <div className="flex h-full flex-col mx-auto max-w-6xl">{children}</div>
+    ) : (
+      <div className="flex w-full justify-center">
+        <WizardCard className="gap-6">{children}</WizardCard>
+      </div>
+    );
+
   return (
     <>
-    <div className={clsx('flex flex-col h-full', isPage ? 'max-w-5xl mx-auto' : '')}>
-      <div className="flex justify-between items-center mb-6">
+    <Wrapper>
+      <div className={clsx('space-y-4', !isPage && 'space-y-2')}>
         <div>
-          <h2 className={clsx('font-display font-bold', isPage ? 'text-3xl' : 'text-2xl')}>{t('channelList.title')}</h2>
-          <p className="text-muted">{t('channelList.subtitle')}</p>
+          {!isPage && <EyebrowBadge tone="mint">Groups</EyebrowBadge>}
+          <h2
+            className={clsx(
+              'font-bold tracking-[-0.4px] text-foreground',
+              isPage ? 'text-3xl font-semibold tracking-tight' : 'mt-2 text-[28px] leading-tight'
+            )}
+          >
+            {t('channelList.title')}
+          </h2>
+          <p className={clsx('text-muted', isPage ? '' : 'mt-2 max-w-[560px] text-[14px] leading-[1.55]')}>
+            {t('channelList.subtitle')}
+          </p>
         </div>
+
+        {isPage && (
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-surface-2/40 px-4 py-3 text-sm text-muted shadow-[0_18px_40px_-30px_rgba(0,0,0,0.8)]">
+            <span className="rounded-full border border-mint/40 bg-mint-soft px-2.5 py-1 text-xs font-medium text-mint">
+              {t('channelList.enabledCount', { count: selectedCount })}
+            </span>
+            <span>{t('dashboard.metricGroupsHint', { count: channels.length })}</span>
+            <span className="hidden h-1 w-1 rounded-full bg-border md:inline-block" />
+            <span className="font-mono text-xs uppercase tracking-[0.18em]">{t(`platform.${platform}.title`)}</span>
+          </div>
+        )}
       </div>
 
       {((isPage && channelPlatforms.length > 1) || isWizardMultiPlatform) && (
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
           {(isWizardMultiPlatform ? wizardPlatforms! : channelPlatforms).map((candidate) => (
             <button
               key={candidate}
+              type="button"
               onClick={() => isWizardMultiPlatform ? switchWizardPlatform(candidate) : setPagePlatform(candidate)}
               className={clsx(
-                'px-3 py-1.5 rounded-full text-sm border transition-colors',
-                platform === candidate ? 'bg-accent text-white border-accent' : 'bg-panel text-text border-border hover:border-accent/60'
+                'rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors',
+                platform === candidate
+                  ? 'border-mint/50 bg-mint/[0.16] text-mint shadow-[0_0_20px_-4px_rgba(91,255,160,0.4)]'
+                  : 'border-border bg-white/[0.04] text-foreground hover:border-border-strong'
               )}
             >
               {t(`platform.${candidate}.title`)}
@@ -739,10 +1353,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
       {/* Platform-level require @mention toggle (page mode only) */}
       {isPage && (
-        <div className="mb-4 bg-panel border border-border p-3 rounded-lg flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border border-border bg-surface-2/40 p-3 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.8)]">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
             <AtSign size={14} className="text-accent" />
-            <span className="font-medium text-text">{t('dashboard.requireMention')}</span>
+            <span className="font-medium text-foreground">{t('dashboard.requireMention')}</span>
             <span className="text-xs text-muted">{t('dashboard.requireMentionHint')}</span>
           </div>
           <button
@@ -780,12 +1394,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         </div>
       )}
 
-      <div className="mb-4 bg-panel border border-border p-4 rounded-lg space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+      <div className="mb-4 space-y-3 rounded-2xl border border-border bg-surface-2/40 p-4 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.8)]">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <button
               onClick={() => loadChannels(browseAll)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-text rounded text-sm font-medium transition-colors"
+              className="flex items-center gap-2 rounded-lg border border-border bg-surface-3/60 px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:border-cyan/40 hover:bg-surface-2/70"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('channelList.refreshList')}
             </button>
@@ -793,7 +1407,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               <button
                 onClick={() => loadChannels(true)}
                 disabled={loadingAll}
-                className="flex items-center gap-2 px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-text rounded text-sm font-medium transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg border border-border bg-surface-3/60 px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:border-cyan/40 hover:bg-surface-2/70 disabled:opacity-50"
               >
                 <Globe size={14} className={loadingAll ? 'animate-spin' : ''} />
                 {loadingAll ? t('common.loading') : t('channelList.browseAll')}
@@ -824,14 +1438,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           <span className="text-sm text-muted font-mono">{t('channelList.enabledCount', { count: selectedCount })}</span>
         </div>
         {platform === 'discord' && (
-          <div className="rounded-lg border border-border bg-panel p-3 text-sm">
+          <div className="rounded-xl border border-border bg-surface-3/60 p-3 text-sm">
             <div className="grid gap-3 md:grid-cols-[minmax(220px,280px)_1fr]">
               <div className="space-y-1">
-                <label className="font-medium text-text">{t('channelList.guildBrowse')}</label>
+                <label className="font-medium text-foreground">{t('channelList.guildBrowse')}</label>
                 <select
                   value={selectedGuild}
                   onChange={(e) => updateSelectedGuild(e.target.value)}
-                  className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
+                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan"
                 >
                   <option value="">{t('channelList.guildPlaceholder')}</option>
                   {knownDiscordGuilds.map((g) => (
@@ -841,7 +1455,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               </div>
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium text-text">{t('channelList.guildAccess')}</span>
+                  <span className="font-medium text-foreground">{t('channelList.guildAccess')}</span>
                   <span className="text-xs text-muted">
                     {t('channelList.guildAccessCount', { count: selectedGuildIds.length })}
                   </span>
@@ -852,11 +1466,11 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                       <label
                         key={g.id}
                         className={clsx(
-                          'inline-flex items-center gap-2 rounded border px-2 py-1 text-xs transition-colors',
-                          selectedGuildIds.includes(g.id)
-                            ? 'border-accent bg-accent/10 text-text'
-                            : 'border-border bg-bg text-muted hover:text-text'
-                        )}
+                           'inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-xs transition-colors',
+                           selectedGuildIds.includes(g.id)
+                             ? 'border-mint/40 bg-mint-soft text-foreground'
+                             : 'border-border bg-surface text-muted hover:text-foreground'
+                         )}
                       >
                         <input
                           type="checkbox"
@@ -884,8 +1498,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           </div>
         )}
         {platform === 'telegram' && (
-          <div className="rounded-lg border border-accent/20 bg-accent/5 p-3">
-            <div className="text-sm font-medium text-text">{t('channelList.telegramDiscoveryTitle')}</div>
+          <div className="rounded-xl border border-cyan/30 bg-cyan-soft/20 p-3">
+            <div className="text-sm font-medium text-foreground">{t('channelList.telegramDiscoveryTitle')}</div>
             <div className="mt-1 text-sm text-muted">{t('channelList.telegramDiscoveryInfo')}</div>
             <div className="mt-2 text-xs text-muted">
               {t('channelList.telegramDiscoveryStats', {
@@ -898,22 +1512,21 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto border border-border rounded-xl divide-y divide-border bg-panel shadow-sm">
+      <div className="flex-1 overflow-y-auto rounded-2xl border border-border bg-surface-2/40 p-3 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.8)] space-y-3">
         {!loading && channels.length === 0 && !botToken && platform !== 'lark' && (
-          <div className="p-8 text-center text-muted">
+          <div className="rounded-xl border border-dashed border-border bg-surface-3/60 p-8 text-center text-muted">
             {t('channelList.addTokenFirst')}
           </div>
         )}
         {!loading && channels.length === 0 && platform === 'telegram' && !!botToken && (
-          <div className="p-8 text-center">
-            <div className="text-sm font-medium text-text">{t('channelList.telegramDiscoveryEmptyTitle')}</div>
+          <div className="rounded-xl border border-dashed border-border bg-surface-3/60 p-8 text-center">
+            <div className="text-sm font-medium text-foreground">{t('channelList.telegramDiscoveryEmptyTitle')}</div>
             <div className="mt-2 text-sm text-muted">{t('channelList.telegramDiscoveryEmptyDesc')}</div>
           </div>
         )}
         {sortedChannels.map((channel) => {
           const rawConfig = configs[channel.id] || {};
           const def = defaultConfig();
-          const defaultBackend = config.agents?.default_backend || 'opencode';
           const channelConfig = {
             ...def,
             ...rawConfig,
@@ -927,14 +1540,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             // Preserve require_mention from rawConfig (can be null, true, or false)
             require_mention: rawConfig.require_mention !== undefined ? rawConfig.require_mention : def.require_mention,
           };
-          const effectiveBackend = channelConfig.routing.agent_backend || defaultBackend;
-
           const effectiveCwd = channelConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
           const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
           const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
           const codexAgents = codexAgentsByCwd[effectiveCwd] || [];
           return (
-            <div key={channel.id} className="p-4 hover:bg-neutral-50/50 transition-colors">
+            <div key={channel.id} className="rounded-xl border border-border bg-surface-3/60 p-4 transition-colors hover:border-border-strong hover:bg-surface-2/70">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <button
@@ -944,7 +1555,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     {channelConfig.enabled ? <CheckSquare size={20} /> : <Square size={20} />}
                   </button>
                   <div>
-                    <div className="font-medium flex items-center gap-1 text-text">
+                    <div className="flex items-center gap-1 font-medium text-foreground">
                       <Hash size={14} className="text-muted" /> {channel.name}
                     </div>
                     <div className="text-xs text-muted font-mono">ID: {channel.id}</div>
@@ -962,7 +1573,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   className={clsx(
                     'text-xs px-2 py-0.5 rounded-full border',
                     platform === 'discord'
-                      ? 'bg-neutral-100 text-text border-border'
+                      ? 'bg-surface text-foreground border-border'
                       : platform === 'telegram'
                         ? channel.supports_topics
                           ? 'bg-accent/10 text-accent border-accent/20'
@@ -970,7 +1581,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                             ? 'bg-success/10 text-success border-success/20'
                             : channel.is_private
                               ? 'bg-warning/10 text-warning border-warning/20'
-                              : 'bg-neutral-100 text-text border-border'
+                              : 'bg-surface text-foreground border-border'
                       : channel.is_private
                         ? 'bg-warning/10 text-warning border-warning/20'
                         : 'bg-success/10 text-success border-success/20'
@@ -993,338 +1604,21 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               </div>
 
               {channelConfig.enabled && (
-                <div className="mt-4 pl-8 space-y-4">
-                  {/* Basic Settings */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-muted uppercase">{t('channelList.workingDirectory')}</label>
-                      <div className="flex gap-1.5">
-                        <BlurInput
-                          type="text"
-                          placeholder={config.runtime?.default_cwd || t('channelList.useGlobalDefault')}
-                          value={channelConfig.custom_cwd}
-                          onCommit={(v) => updateConfig(channel.id, { custom_cwd: v })}
-                          className="flex-1 bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text placeholder:text-muted/50 font-mono"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setBrowsingCwdFor(channel.id)}
-                          title={t('directoryBrowser.title')}
-                          className="px-2 py-2 bg-neutral-100 hover:bg-neutral-200 border border-border rounded text-muted hover:text-text transition-colors shrink-0"
-                        >
-                          <FolderOpen size={14} />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-muted uppercase">{t('channelList.backend')}</label>
-                      <select
-                        value={effectiveBackend}
-                        onChange={(e) =>
-                          updateConfig(channel.id, {
-                            routing: { ...channelConfig.routing, agent_backend: e.target.value },
-                          })
-                        }
-                        className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
-                      >
-                        <option value="opencode">OpenCode</option>
-                        <option value="claude">ClaudeCode</option>
-                        <option value="codex">Codex</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-muted uppercase">{t('channelList.requireMention')}</label>
-                      <select
-                        value={channelConfig.require_mention === null || channelConfig.require_mention === undefined ? '' : channelConfig.require_mention ? 'true' : 'false'}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          updateConfig(channel.id, {
-                            require_mention: val === '' ? null : val === 'true',
-                          });
-                        }}
-                        className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
-                      >
-                        <option value="">
-                          {t('common.default')} ({platform === 'discord'
-                            ? (config.discord?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))
-                            : platform === 'telegram'
-                              ? (config.telegram?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))
-                            : platform === 'lark'
-                              ? (config.lark?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))
-                              : (config.slack?.require_mention ? t('channelList.mentionStatusOn') : t('channelList.mentionStatusOff'))})
-                        </option>
-                        <option value="true">{t('channelList.requireMentionOn')}</option>
-                        <option value="false">{t('channelList.requireMentionOff')}</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Show Message Types */}
-                  <div className="space-y-2">
-                    <div className="text-xs font-medium text-muted uppercase flex items-center gap-1">
-                      {t('channelList.showMessageTypes')}
-                      <span className="relative group">
-                        <HelpCircle size={12} className="text-muted/50 cursor-help" />
-                        <span className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-text text-bg text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-64 whitespace-normal font-normal normal-case">
-                          {t('channelList.showMessageTypesHint')}
-                        </span>
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-3 text-sm">
-                      {['system', 'assistant', 'toolcall'].map((msgType) => {
-                        const checked = channelConfig.show_message_types.includes(msgType);
-                        return (
-                          <label key={msgType} className="flex items-center gap-2 text-text">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => {
-                                const next = checked
-                                  ? channelConfig.show_message_types.filter((value) => value !== msgType)
-                                  : [...channelConfig.show_message_types, msgType];
-                                updateConfig(channel.id, { show_message_types: next });
-                              }}
-                              className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
-                            />
-                            <span className="capitalize">{msgType === 'toolcall' ? 'Toolcall' : msgType}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* OpenCode Settings */}
-                  {effectiveBackend === 'opencode' && (
-                    <div className="space-y-3">
-                      <div className="text-xs font-medium text-muted uppercase">{t('channelList.opencodeSettings')}</div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted">{t('channelList.agent')}</label>
-                          <select
-                            value={channelConfig.routing.opencode_agent || ''}
-                            onChange={(e) =>
-                              updateConfig(channel.id, {
-                                routing: { ...channelConfig.routing, opencode_agent: e.target.value || null },
-                              })
-                            }
-                            className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                          >
-                            <option value="">{t('common.default')}</option>
-                            {(opencodeOptions?.agents || []).map((agent: any) => (
-                              <option key={agent.name} value={agent.name}>{agent.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted">{t('channelList.model')}</label>
-                          <select
-                            value={channelConfig.routing.opencode_model || ''}
-                            onChange={(e) => {
-                              const modelKey = e.target.value || '';
-                              setSelectedModels((prev) => ({ ...prev, [channel.id]: modelKey }));
-                              updateConfig(channel.id, {
-                                routing: {
-                                  ...channelConfig.routing,
-                                  opencode_model: modelKey || null,
-                                  opencode_reasoning_effort: null,
-                                },
-                              });
-                            }}
-                            className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                          >
-                            <option value="">{t('common.default')}</option>
-                            {(opencodeOptions?.models?.providers || []).flatMap((provider: any) => {
-                              const providerId = provider.id || provider.provider_id || provider.name;
-                              const providerLabel = provider.name || providerId;
-                              const models = provider.models || {};
-                              if (Array.isArray(models)) {
-                                return models.map((model: any) => {
-                                  const modelId = typeof model === 'string' ? model : model.id;
-                                  return (
-                                    <option key={`${providerId}:${modelId}`} value={`${providerId}/${modelId}`}>
-                                      {providerLabel}/{modelId}
-                                    </option>
-                                  );
-                                });
-                              }
-                              return Object.keys(models).map((modelId) => (
-                                <option key={`${providerId}:${modelId}`} value={`${providerId}/${modelId}`}>
-                                  {providerLabel}/{modelId}
-                                </option>
-                              ));
-                            })}
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-                          <select
-                            value={channelConfig.routing.opencode_reasoning_effort || ''}
-                            onChange={(e) =>
-                              updateConfig(channel.id, {
-                                routing: {
-                                  ...channelConfig.routing,
-                                  opencode_reasoning_effort: e.target.value || null,
-                                },
-                              })
-                            }
-                            disabled={!getReasoningOptions(
-                              effectiveCwd,
-                              selectedModels[channel.id] || channelConfig.routing.opencode_model || ''
-                            ).length}
-                            className="w-full bg-panel border border-border rounded px-3 py-2 text-sm disabled:opacity-50"
-                          >
-                            <option value="">{t('common.default')}</option>
-                            {getReasoningOptions(
-                              effectiveCwd,
-                              selectedModels[channel.id] || channelConfig.routing.opencode_model || ''
-                            ).map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Claude Settings */}
-                  {effectiveBackend === 'claude' && (
-                    <div className="space-y-3">
-                      <div className="text-xs font-medium text-muted uppercase">{t('channelList.claudeSettings')}</div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted">{t('channelList.agent')}</label>
-                          <select
-                            value={channelConfig.routing.claude_agent || ''}
-                            onChange={(e) =>
-                              updateConfig(channel.id, {
-                                routing: { ...channelConfig.routing, claude_agent: e.target.value || null },
-                              })
-                            }
-                            className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                          >
-                            <option value="">{t('common.default')}</option>
-                            {claudeAgents.map((agent) => (
-                              <option key={agent.id} value={agent.id}>{agent.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted">{t('channelList.model')}</label>
-                          <Combobox
-                            options={[
-                              { value: '', label: t('common.default') },
-                              ...claudeModels.map(m => ({ value: m, label: m }))
-                            ]}
-                            value={channelConfig.routing.claude_model || ''}
-                            onValueChange={(v) =>
-                              updateConfig(channel.id, {
-                                routing: {
-                                  ...channelConfig.routing,
-                                  claude_model: v || null,
-                                  claude_reasoning_effort: null,
-                                },
-                              })
-                            }
-                            placeholder={t('channelList.claudeModelPlaceholder')}
-                            searchPlaceholder={t('channelList.searchModel')}
-                            allowCustomValue={true}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-                          <select
-                            value={channelConfig.routing.claude_reasoning_effort || ''}
-                            onChange={(e) =>
-                              updateConfig(channel.id, {
-                                routing: {
-                                  ...channelConfig.routing,
-                                  claude_reasoning_effort: e.target.value || null,
-                                },
-                              })
-                            }
-                            className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                          >
-                            <option value="">{t('common.default')}</option>
-                            {getClaudeReasoningOptions(channelConfig.routing.claude_model || '')
-                              .filter((option) => option.value !== '__default__')
-                              .map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {getReasoningLabel(option.value, option.label)}
-                                </option>
-                              ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Codex Settings */}
-                  {effectiveBackend === 'codex' && (
-                    <div className="space-y-3">
-                      <div className="text-xs font-medium text-muted uppercase">{t('channelList.codexSettings')}</div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted">{t('channelList.agent')}</label>
-                          <select
-                            value={channelConfig.routing.codex_agent || ''}
-                            onChange={(e) =>
-                              updateConfig(channel.id, {
-                                routing: { ...channelConfig.routing, codex_agent: e.target.value || null },
-                              })
-                            }
-                            className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                          >
-                            <option value="">{t('common.default')}</option>
-                            {codexAgents.map((agent) => (
-                              <option key={agent.id} value={agent.id}>{agent.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted">{t('channelList.model')}</label>
-                          <Combobox
-                            options={[
-                              { value: '', label: t('common.default') },
-                              ...codexModels.map(m => ({ value: m, label: m }))
-                            ]}
-                            value={channelConfig.routing.codex_model || ''}
-                            onValueChange={(v) =>
-                              updateConfig(channel.id, {
-                                routing: { ...channelConfig.routing, codex_model: v || null },
-                              })
-                            }
-                            placeholder={t('channelList.codexModelPlaceholder')}
-                            searchPlaceholder={t('channelList.searchModel')}
-                            allowCustomValue={true}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-                          <select
-                            value={channelConfig.routing.codex_reasoning_effort || ''}
-                            onChange={(e) =>
-                              updateConfig(channel.id, {
-                                routing: {
-                                  ...channelConfig.routing,
-                                  codex_reasoning_effort: e.target.value || null,
-                                },
-                              })
-                            }
-                            className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                          >
-                            <option value="">{t('common.default')}</option>
-                            <option value="low">{t('channelList.reasoningLow')}</option>
-                            <option value="medium">{t('channelList.reasoningMedium')}</option>
-                            <option value="high">{t('channelList.reasoningHigh')}</option>
-                            <option value="xhigh">{t('channelList.reasoningXHigh')}</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <RoutingConfigPanel
+                  value={channelConfig}
+                  onChange={(patch) => updateConfig(channel.id, patch)}
+                  onBrowseDirectory={() => setBrowsingCwdFor(channel.id)}
+                  globalConfig={config}
+                  showRequireMention={true}
+                  inheritsFromKey={platform}
+                  opencodeOptions={opencodeOptions}
+                  claudeAgents={claudeAgents}
+                  claudeModels={claudeModels}
+                  claudeReasoningOptions={claudeReasoningOptions}
+                  codexAgents={codexAgents}
+                  codexModels={codexModels}
+                  containerClass="mt-4 pl-8"
+                />
               )}
             </div>
           );
@@ -1337,11 +1631,17 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       </div>
 
       {!isPage && (
-        <div className="mt-6 flex justify-between">
-          <button onClick={onBack} className="px-6 py-2 text-muted hover:text-text font-medium">
+        <div className="flex items-center justify-between border-t border-border pt-4">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+          >
+            <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
           </button>
           <button
+            type="button"
             onClick={() => {
               const discordGuildAllowlist = selectedGuildIds;
               if (isWizardMultiPlatform) {
@@ -1365,13 +1665,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 });
               }
             }}
-            className="px-6 py-2 bg-accent hover:bg-accent/90 text-white rounded-lg font-medium shadow-sm"
+            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105"
           >
             {t('common.continue')}
+            <ArrowRight size={14} strokeWidth={2.25} />
           </button>
         </div>
       )}
-    </div>
+    </Wrapper>
 
     {/* Directory browser modal */}
     {browsingCwdFor && (

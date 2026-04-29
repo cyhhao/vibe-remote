@@ -1,28 +1,42 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { FileText, RefreshCw, Search, Filter, ArrowDown, Pause, Play } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowDown,
+  FileText,
+  Filter,
+  Pause,
+  Play,
+  RefreshCw,
+  Search,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useApi, type LogEntry, type LogSource } from '../../context/ApiContext';
 import clsx from 'clsx';
+
+import { useApi, type LogEntry, type LogSource } from '../../context/ApiContext';
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'ALL';
 
-const LOG_LEVEL_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  DEBUG: { bg: 'bg-neutral-100', text: 'text-neutral-500', border: 'border-neutral-200' },
-  INFO: { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-200' },
-  WARNING: { bg: 'bg-yellow-50', text: 'text-yellow-600', border: 'border-yellow-200' },
-  ERROR: { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-200' },
+const LEVEL_PILL: Record<string, string> = {
+  DEBUG: 'border-border bg-white/[0.04] text-muted',
+  INFO: 'border-cyan/30 bg-cyan/[0.08] text-cyan',
+  WARNING: 'border-gold/30 bg-gold/[0.08] text-gold',
+  ERROR: 'border-danger/30 bg-danger/[0.08] text-danger',
 };
 
-// Parse file location from message like "[__init__.py:246] - actual message"
 const parseLogMessage = (message: string): { location?: string; content: string } => {
   const match = message.match(/^\[([^\]]+)\]\s*-?\s*(.*)$/s);
-  if (match) {
-    return { location: match[1], content: match[2] };
-  }
+  if (match) return { location: match[1], content: match[2] };
   return { content: message };
 };
 
-export const LogsPanel: React.FC = () => {
+interface LogsPanelProps {
+  titleKey?: string;
+  compactHeader?: boolean;
+}
+
+export const LogsPanel: React.FC<LogsPanelProps> = ({
+  titleKey = 'logs.title',
+  compactHeader = false,
+}) => {
   const { t } = useTranslation();
   const api = useApi();
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -51,9 +65,9 @@ export const LogsPanel: React.FC = () => {
 
   useEffect(() => {
     void loadLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-refresh logic
   useEffect(() => {
     if (autoRefresh) {
       autoRefreshRef.current = setInterval(() => {
@@ -68,34 +82,33 @@ export const LogsPanel: React.FC = () => {
         clearInterval(autoRefreshRef.current);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRefresh, selectedSource]);
 
-  // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
     if (logsContainerRef.current) {
-      logsContainerRef.current.scrollTop = 0; // Since we reverse the list, top is newest
+      logsContainerRef.current.scrollTop = 0;
     }
   }, [logs]);
 
-  // Filter logs based on search and level
-  const filteredLogs = useMemo(() => {
-    return logs.filter((log) => {
-      const matchesLevel = levelFilter === 'ALL' || log.level === levelFilter;
-      const matchesSearch = !searchQuery || 
-        log.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        log.logger.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        log.timestamp.includes(searchQuery);
-      return matchesLevel && matchesSearch;
-    });
-  }, [logs, levelFilter, searchQuery]);
+  const filteredLogs = useMemo(
+    () =>
+      logs.filter((log) => {
+        const matchesLevel = levelFilter === 'ALL' || log.level === levelFilter;
+        const matchesSearch =
+          !searchQuery ||
+          log.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          log.logger.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          log.timestamp.includes(searchQuery);
+        return matchesLevel && matchesSearch;
+      }),
+    [logs, levelFilter, searchQuery]
+  );
 
-  // Count logs by level
   const levelCounts = useMemo(() => {
     const counts: Record<string, number> = { DEBUG: 0, INFO: 0, WARNING: 0, ERROR: 0 };
     logs.forEach((log) => {
-      if (counts[log.level] !== undefined) {
-        counts[log.level]++;
-      }
+      if (counts[log.level] !== undefined) counts[log.level]++;
     });
     return counts;
   }, [logs]);
@@ -124,199 +137,207 @@ export const LogsPanel: React.FC = () => {
     }
   };
 
-  const LogLevelBadge = ({ level }: { level: string }) => {
-    const colors = LOG_LEVEL_COLORS[level] || LOG_LEVEL_COLORS.INFO;
-    return (
-      <span className={clsx(
-        'px-1.5 py-0.5 rounded text-xs font-medium border min-w-[60px] text-center inline-block',
-        colors.bg, colors.text, colors.border
-      )}>
-        {level}
-      </span>
-    );
-  };
-
-  const scrollToBottom = () => {
-    if (logsContainerRef.current) {
-      logsContainerRef.current.scrollTop = 0;
-    }
+  const scrollToTop = () => {
+    if (logsContainerRef.current) logsContainerRef.current.scrollTop = 0;
   };
 
   return (
-    <div className="max-w-6xl mx-auto flex flex-col h-full">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-3xl font-display font-bold flex items-center gap-2">
-          <FileText className="text-accent" />
-          {t('logs.title')}
-        </h2>
-        <div className="flex gap-2">
+    <div className="flex h-full flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {!compactHeader && (
+          <h2 className="inline-flex items-center gap-2 text-[24px] font-bold tracking-[-0.3px] text-foreground">
+            <FileText className="size-5 text-cyan" />
+            {t(titleKey)}
+          </h2>
+        )}
+        <div className="flex flex-wrap gap-2">
           <button
+            type="button"
             onClick={() => setAutoRefresh(!autoRefresh)}
             className={clsx(
-              'flex items-center gap-2 px-3 py-2 border rounded-lg text-sm transition-colors',
-              autoRefresh 
-                ? 'bg-accent/10 border-accent text-accent' 
-                : 'border-border text-muted hover:bg-neutral-50 hover:text-text'
+              'inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-medium transition',
+              autoRefresh
+                ? 'border-cyan/40 bg-cyan/[0.08] text-cyan'
+                : 'border-border bg-white/[0.04] text-foreground hover:border-border-strong'
             )}
           >
-            {autoRefresh ? <Pause size={16} /> : <Play size={16} />}
+            {autoRefresh ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
             {autoRefresh ? t('logs.autoRefreshOn') : t('logs.autoRefresh')}
           </button>
           <button
+            type="button"
             onClick={() => void loadLogs(selectedSource)}
             disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 disabled:opacity-50 transition-colors font-medium shadow-sm"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-mint px-3 text-[12px] font-bold text-[#080812] shadow-[0_0_18px_-4px_rgba(91,255,160,0.55)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> 
+            <RefreshCw className={clsx('size-3.5', loading && 'animate-spin')} strokeWidth={2.5} />
             {t('common.refresh')}
           </button>
         </div>
       </div>
 
-      <div className="space-y-4 flex-1 flex flex-col min-h-0">
-        {/* Search and Filter Bar */}
-        <div className="flex gap-3 items-center flex-wrap">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-            <input
-              type="text"
-              placeholder={t('logs.searchPlaceholder')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Filter size={16} className="text-muted" />
-            <select
-              value={levelFilter}
-              onChange={(e) => setLevelFilter(e.target.value as LogLevel)}
-              className="px-3 py-2 border border-border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-accent/20"
-            >
-              <option value="ALL">{t('logs.allLevels')}</option>
-              <option value="ERROR">{t('logs.error')} ({levelCounts.ERROR})</option>
-              <option value="WARNING">{t('logs.warning')} ({levelCounts.WARNING})</option>
-              <option value="INFO">{t('logs.info')} ({levelCounts.INFO})</option>
-              <option value="DEBUG">{t('logs.debug')} ({levelCounts.DEBUG})</option>
-            </select>
-          </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+          <input
+            type="text"
+            placeholder={t('logs.searchPlaceholder')}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="h-9 w-full rounded-lg border border-border bg-white/[0.04] pl-9 pr-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+          />
         </div>
+        <div className="flex items-center gap-2">
+          <Filter className="size-3.5 text-muted" />
+          <select
+            value={levelFilter}
+            onChange={(e) => setLevelFilter(e.target.value as LogLevel)}
+            className="h-9 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+          >
+            <option value="ALL">{t('logs.allLevels')}</option>
+            <option value="ERROR">{t('logs.error')} ({levelCounts.ERROR})</option>
+            <option value="WARNING">{t('logs.warning')} ({levelCounts.WARNING})</option>
+            <option value="INFO">{t('logs.info')} ({levelCounts.INFO})</option>
+            <option value="DEBUG">{t('logs.debug')} ({levelCounts.DEBUG})</option>
+          </select>
+        </div>
+      </div>
 
-        {/* Level Quick Filters */}
-        <div className="flex gap-2 flex-wrap">
+      {sources.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
           {sources.map((source) => (
             <button
               key={source.key}
+              type="button"
               onClick={() => void loadLogs(source.key)}
               className={clsx(
-                'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
+                'inline-flex h-7 items-center gap-1 rounded-full border px-3 text-[11px] font-medium transition-colors',
                 selectedSource === source.key
-                  ? 'bg-accent text-white border-accent'
-                  : 'bg-white text-muted border-border hover:border-accent/50'
+                  ? 'border-mint/35 bg-mint/[0.08] text-mint shadow-[0_0_12px_-4px_rgba(91,255,160,0.5)]'
+                  : 'border-border bg-white/[0.04] text-muted hover:border-border-strong hover:text-foreground'
               )}
             >
               {getSourceLabel(source.key)}
-              {source.total > 0 && ` (${source.total})`}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex gap-2 flex-wrap">
-          {(['ALL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'] as LogLevel[]).map((level) => (
-            <button
-              key={level}
-              onClick={() => setLevelFilter(level)}
-              className={clsx(
-                'px-3 py-1 rounded-full text-xs font-medium border transition-colors',
-                levelFilter === level
-                  ? 'bg-accent text-white border-accent'
-                  : 'bg-white text-muted border-border hover:border-accent/50'
+              {source.total > 0 && (
+                <span className="font-mono text-[10px] opacity-70">{source.total}</span>
               )}
-            >
-              {level === 'ALL' ? t('logs.all') : level}
-              {level !== 'ALL' && ` (${levelCounts[level]})`}
             </button>
           ))}
         </div>
+      )}
 
-        {/* Logs List */}
-        <div className="bg-panel border border-border rounded-xl overflow-hidden shadow-sm flex-1 flex flex-col min-h-0">
-          <div className="px-4 py-3 bg-neutral-50 border-b border-border flex justify-between items-center flex-shrink-0">
-            <span className="font-semibold text-sm text-muted">
-              {t('logs.entriesCount', { filtered: filteredLogs.length, total: logs.length })}
-              {logsTotal > logs.length && ` ${t('logs.totalInFile', { total: logsTotal })}`}
-            </span>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={scrollToBottom}
-                className="text-xs text-accent hover:underline flex items-center gap-1"
-              >
-                <ArrowDown size={12} /> {t('logs.jumpToLatest')}
-              </button>
-              <code className="text-xs text-muted bg-neutral-100 px-2 py-1 rounded">
-                {selectedSourceMeta?.path || t('logs.allFiles')}
-              </code>
+      <div className="flex flex-wrap gap-1.5">
+        {(['ALL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'] as LogLevel[]).map((level) => (
+          <button
+            key={level}
+            type="button"
+            onClick={() => setLevelFilter(level)}
+            className={clsx(
+              'inline-flex h-7 items-center gap-1 rounded-full border px-3 text-[11px] font-medium transition-colors',
+              levelFilter === level
+                ? 'border-cyan/40 bg-cyan/[0.08] text-cyan'
+                : 'border-border bg-white/[0.04] text-muted hover:border-border-strong hover:text-foreground'
+            )}
+          >
+            {level === 'ALL' ? t('logs.all') : level}
+            {level !== 'ALL' && (
+              <span className="font-mono text-[10px] opacity-70">{levelCounts[level]}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-white/[0.02] px-4 py-2.5">
+          <span className="font-mono text-[11px] font-medium text-muted">
+            {t('logs.entriesCount', { filtered: filteredLogs.length, total: logs.length })}
+            {logsTotal > logs.length && ` · ${t('logs.totalInFile', { total: logsTotal })}`}
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={scrollToTop}
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-cyan transition hover:text-cyan/80"
+            >
+              <ArrowDown className="size-3" /> {t('logs.jumpToLatest')}
+            </button>
+            <code className="rounded border border-border bg-background px-2 py-0.5 font-mono text-[10px] text-muted">
+              {selectedSourceMeta?.path || t('logs.allFiles')}
+            </code>
+          </div>
+        </div>
+
+        {loading && logs.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center p-8 text-[12px] text-muted">
+            <div className="flex flex-col items-center gap-2">
+              <RefreshCw className="size-5 animate-spin" />
+              {t('logs.loadingLogs')}
             </div>
           </div>
-          
-          {loading && logs.length === 0 ? (
-            <div className="p-8 text-center text-muted flex-1 flex items-center justify-center">
-              <div>
-                <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
-                {t('logs.loadingLogs')}
-              </div>
-            </div>
-          ) : filteredLogs.length === 0 ? (
-            <div className="p-8 text-center text-muted flex-1 flex items-center justify-center">
-              {logs.length === 0 ? t('logs.noLogsAvailable') : t('logs.noLogsMatch')}
-            </div>
-          ) : (
-            <div 
-              ref={logsContainerRef}
-              className="divide-y divide-border overflow-y-auto flex-1 font-mono text-sm"
-              style={{ minHeight: '500px', maxHeight: 'calc(100vh - 380px)' }}
-            >
-              {filteredLogs.slice().reverse().map((log, i) => {
+        ) : filteredLogs.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center p-8 text-[12px] text-muted">
+            {logs.length === 0 ? t('logs.noLogsAvailable') : t('logs.noLogsMatch')}
+          </div>
+        ) : (
+          <div
+            ref={logsContainerRef}
+            className="flex-1 divide-y divide-border overflow-y-auto"
+            style={{ minHeight: '500px', maxHeight: 'calc(100vh - 380px)' }}
+          >
+            {filteredLogs
+              .slice()
+              .reverse()
+              .map((log, i) => {
                 const { location, content } = parseLogMessage(log.message);
                 return (
-                  <div 
-                    key={i} 
+                  <div
+                    key={i}
                     className={clsx(
-                      'p-3 hover:bg-neutral-50/50 transition-colors',
-                      log.level === 'ERROR' && 'bg-red-50/30',
-                      log.level === 'WARNING' && 'bg-yellow-50/30'
+                      'px-4 py-2.5 transition-colors hover:bg-white/[0.02]',
+                      log.level === 'ERROR' && 'bg-danger/[0.04]',
+                      log.level === 'WARNING' && 'bg-gold/[0.04]'
                     )}
                   >
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-muted text-xs whitespace-nowrap">
-                        {log.timestamp}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[10px] text-muted">{log.timestamp}</span>
+                      <span
+                        className={clsx(
+                          'inline-block min-w-[60px] rounded border px-1.5 py-0.5 text-center font-mono text-[10px] font-bold',
+                          LEVEL_PILL[log.level] || LEVEL_PILL.INFO
+                        )}
+                      >
+                        {log.level}
                       </span>
-                      <LogLevelBadge level={log.level} />
-                      <span className="text-muted text-xs truncate max-w-[200px]" title={log.logger}>
+                      <span
+                        className="max-w-[220px] truncate font-mono text-[10px] text-muted"
+                        title={log.logger}
+                      >
                         {log.logger}
                       </span>
-                      <span className="text-muted/60 text-xs font-normal">
+                      <span className="font-mono text-[10px] text-muted/70">
                         {getSourceLabel(log.source)}
                       </span>
                       {location && (
-                        <span className="text-muted/60 text-xs font-normal">
-                          [{location}]
-                        </span>
+                        <span className="font-mono text-[10px] text-muted/70">[{location}]</span>
                       )}
                     </div>
-                    <div className={clsx(
-                      'mt-1.5 whitespace-pre-wrap break-words leading-relaxed',
-                      log.level === 'ERROR' ? 'text-red-700' : 
-                      log.level === 'WARNING' ? 'text-yellow-700' : 'text-text'
-                    )}>
+                    <div
+                      className={clsx(
+                        'mt-1.5 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed',
+                        log.level === 'ERROR'
+                          ? 'text-danger'
+                          : log.level === 'WARNING'
+                            ? 'text-gold'
+                            : 'text-foreground'
+                      )}
+                    >
                       {content}
                     </div>
                   </div>
                 );
               })}
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -509,3 +509,97 @@ def test_remote_callback_sanitizes_protocol_relative_next(monkeypatch, tmp_path)
 
     assert response.status_code == 302
     assert response.headers["Location"] == "/"
+
+
+def _save_config_with_setup_host(tmp_path, host: str) -> V2Config:
+    config = _save_config(tmp_path)
+    config.ui.setup_host = host
+    config.save()
+    return config
+
+
+def test_setup_host_lan_request_is_treated_as_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.2.3")
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://192.168.2.3:5123",
+        environ_base={"REMOTE_ADDR": "192.168.2.5"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_request_from_self_is_treated_as_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.2.3")
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://192.168.2.3:5123",
+        environ_base={"REMOTE_ADDR": "192.168.2.3"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_with_public_peer_is_not_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.2.3")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://192.168.2.3:5123",
+        environ_base={"REMOTE_ADDR": "8.8.8.8"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_mismatched_host_header_is_not_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.2.3")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://10.0.0.5:5123",
+        environ_base={"REMOTE_ADDR": "192.168.2.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_wildcard_does_not_grant_local_trust(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "0.0.0.0")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://192.168.2.3:5123",
+        environ_base={"REMOTE_ADDR": "192.168.2.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_with_cloudflare_metadata_is_not_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.2.3")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://192.168.2.3:5123",
+        environ_base={"REMOTE_ADDR": "192.168.2.5"},
+        headers=_cloudflare_headers(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"

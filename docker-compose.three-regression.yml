@@ -6,10 +6,11 @@ services:
       dockerfile: Dockerfile
       target: integration
     command: ["full"]
+    network_mode: host
     environment:
       VIBE_REMOTE_HOME: /data/vibe_remote
       VIBE_DEPLOYMENT_ENV: regression
-      VIBE_UI_PORT: 5123
+      VIBE_UI_PORT: ${THREE_REGRESSION_PORT:-15130}
       PYTHONUNBUFFERED: "1"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
@@ -17,13 +18,11 @@ services:
       CLAUDE_CODE_ATTRIBUTION_HEADER: ${THREE_REGRESSION_CLAUDE_ATTRIBUTION_HEADER:-0}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5123/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request, os; urllib.request.urlopen(f\"http://localhost:{os.environ['VIBE_UI_PORT']}/health\", timeout=3)"]
       interval: 3s
       timeout: 5s
       retries: 20
       start_period: 30s
-    ports:
-      - "${THREE_REGRESSION_PORT:-15130}:5123"
     volumes:
       - ./_tmp/three-regression/vibe:/data/vibe_remote
       - ./_tmp/three-regression/shared-home/.claude:/root/.claude

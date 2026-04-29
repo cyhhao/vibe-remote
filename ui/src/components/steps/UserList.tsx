@@ -1,31 +1,27 @@
-import React, { useEffect, useState } from 'react';
-import { User, Shield, ShieldOff, Copy, Check, Plus, Trash2, FolderOpen, HelpCircle, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  KeyRound,
+  Plus,
+  RefreshCw,
+  Search,
+  Shield,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { getEnabledPlatforms } from '../../lib/platforms';
-import { Combobox } from '../ui/combobox';
 import { DirectoryBrowser } from '../ui/directory-browser';
-import clsx from 'clsx';
 import { copyTextToClipboard } from '../../lib/utils';
-
-/** Input that only commits value on blur */
-function BlurInput({
-  value,
-  onCommit,
-  ...props
-}: { value: string; onCommit: (v: string) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'onBlur'>) {
-  const [local, setLocal] = useState(value);
-  useEffect(() => setLocal(value), [value]);
-  return (
-    <input
-      {...props}
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={() => { if (local !== value) onCommit(local); }}
-    />
-  );
-}
+import { PlatformIcon } from '../visual';
+import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
 
 interface UserConfig {
   display_name: string;
@@ -57,19 +53,68 @@ interface BindCodeItem {
   used_by: string[];
 }
 
+interface AggregatedUser {
+  key: string; // `${platform}::${userId}`
+  platform: string;
+  userId: string;
+  config: UserConfig;
+}
+
+const AVATAR_TONES = [
+  { textCls: 'text-mint', bg: 'rgba(91,255,160,0.12)', border: 'rgba(91,255,160,0.33)' },
+  { textCls: 'text-cyan', bg: 'rgba(63,224,229,0.12)', border: 'rgba(63,224,229,0.33)' },
+  { textCls: 'text-violet', bg: 'rgba(124,91,255,0.12)', border: 'rgba(124,91,255,0.33)' },
+  { textCls: 'text-gold', bg: 'rgba(255,200,87,0.12)', border: 'rgba(255,200,87,0.33)' },
+];
+
+const hashCode = (s: string) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+};
+
+const getInitials = (name: string, fallback: string): string => {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return (fallback || '??').slice(0, 2).toUpperCase();
+  const parts = trimmed.split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  const onlyAlpha = trimmed.replace(/[^a-zA-Z]/g, '');
+  return (onlyAlpha || trimmed).slice(0, 2).toUpperCase();
+};
+
+const formatExpiry = (expiresAt: string | null): string => {
+  if (!expiresAt) return '';
+  const ms = new Date(expiresAt).getTime() - Date.now();
+  if (ms <= 0) return '00:00';
+  const totalSeconds = Math.floor(ms / 1000);
+  const days = Math.floor(totalSeconds / 86_400);
+  if (days > 0) return `${days}d`;
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+};
+
 // ─── Bind Code Section ───────────────────────────────────────────────────
 
-const BindCodeSection: React.FC = () => {
+interface BindCodeCardProps {
+  refreshTrigger: number;
+  onCodesChanged: () => void;
+}
+
+const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChanged }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
   const [codes, setCodes] = useState<BindCodeItem[]>([]);
-  const [showForm, setShowForm] = useState(false);
+  const [showFormModal, setShowFormModal] = useState(false);
+  const [showAllModal, setShowAllModal] = useState(false);
   const [newType, setNewType] = useState<'one_time' | 'expiring'>('one_time');
   const [newExpiry, setNewExpiry] = useState('');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showUnavailableModal, setShowUnavailableModal] = useState(false);
+  const [tick, setTick] = useState(0);
 
   const loadCodes = async () => {
     try {
@@ -80,7 +125,24 @@ const BindCodeSection: React.FC = () => {
     }
   };
 
-  useEffect(() => { loadCodes(); }, []);
+  useEffect(() => { loadCodes(); }, [refreshTrigger]);
+
+  // Tick every second to refresh the countdown for expiring codes
+  useEffect(() => {
+    const id = setInterval(() => setTick((v) => v + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const getCodeStatus = (bc: BindCodeItem) => {
+    if (!bc.is_active) return bc.type === 'one_time' && bc.used_by.length > 0 ? 'used' : 'inactive';
+    if (bc.type === 'expiring' && bc.expires_at && new Date(bc.expires_at) < new Date()) return 'expired';
+    return 'active';
+  };
+
+  const activeCodes = useMemo(() => codes.filter((bc) => getCodeStatus(bc) === 'active'), [codes, tick]);
+  const otherCodes = useMemo(() => codes.filter((bc) => getCodeStatus(bc) !== 'active'), [codes, tick]);
+  const primary = activeCodes[0];
+  const moreCount = Math.max(0, activeCodes.length - 1);
 
   const handleCreate = async () => {
     setLoading(true);
@@ -88,10 +150,11 @@ const BindCodeSection: React.FC = () => {
       const result = await api.createBindCode(newType, newType === 'expiring' ? newExpiry : undefined);
       if (result.ok) {
         showToast(t('bindCode.created'));
-        setShowForm(false);
+        setShowFormModal(false);
         setNewType('one_time');
         setNewExpiry('');
         loadCodes();
+        onCodesChanged();
       }
     } catch (e) {
       console.error('Failed to create bind code:', e);
@@ -106,6 +169,7 @@ const BindCodeSection: React.FC = () => {
       if (result.ok) {
         showToast(t('bindCode.deleted'));
         loadCodes();
+        onCodesChanged();
       }
     } catch (e) {
       console.error('Failed to delete bind code:', e);
@@ -118,185 +182,254 @@ const BindCodeSection: React.FC = () => {
       showToast(t('common.copyFailed'), 'error');
       return;
     }
-
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
-  const getCodeStatus = (bc: BindCodeItem) => {
-    if (!bc.is_active) {
-      return bc.type === 'one_time' && bc.used_by.length > 0 ? 'used' : 'inactive';
-    }
-    if (bc.type === 'expiring' && bc.expires_at) {
-      if (new Date(bc.expires_at) < new Date()) return 'expired';
-    }
-    return 'active';
-  };
-
-  const statusColors: Record<string, string> = {
-    active: 'bg-success/10 text-success border-success/20',
-    used: 'bg-neutral-100 text-muted border-border',
-    expired: 'bg-warning/10 text-warning border-warning/20',
-    inactive: 'bg-neutral-100 text-muted border-border',
-  };
-
-  const activeCodes = codes.filter((bc) => getCodeStatus(bc) === 'active');
-  const unavailableCodes = codes.filter((bc) => getCodeStatus(bc) !== 'active');
-
-  const renderCodeRow = (bc: BindCodeItem) => {
-    const status = getCodeStatus(bc);
-    return (
-      <div key={bc.code} className="flex items-center justify-between py-2.5">
-        <div className="flex items-center gap-3 flex-wrap">
-          <code className="font-mono text-sm bg-bg px-2 py-0.5 rounded border border-border">{bc.code}</code>
-          <span className={clsx('text-xs px-2 py-0.5 rounded-full border', statusColors[status])}>
-            {t(`bindCode.${status}`)}
-          </span>
-          <span className="text-xs text-muted">
-            {bc.type === 'one_time' ? t('bindCode.oneTime') : t('bindCode.expiring')}
-          </span>
-          {bc.used_by.length > 0 && (
-            <span className="text-xs text-muted">{t('bindCode.usedBy', { count: bc.used_by.length })}</span>
-          )}
-          {bc.type === 'expiring' && bc.expires_at && (
-            <span className="text-xs text-muted">
-              {t('bindCode.expiresAt', { date: new Date(bc.expires_at).toLocaleDateString() })}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => handleCopy(bc.code)}
-            className="p-1.5 text-muted hover:text-text transition-colors"
-            title={t('bindCode.copy')}
-          >
-            {copiedCode === bc.code ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-          </button>
-          {bc.is_active && (
-            <button
-              onClick={() => handleDelete(bc.code)}
-              className="p-1.5 text-muted hover:text-danger transition-colors"
-              title={t('bindCode.delete')}
-            >
-              <Trash2 size={14} />
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <>
-      <div className="mb-6 bg-panel border border-border rounded-xl p-4 shadow-sm">
-        <div className="flex items-center justify-between mb-3 gap-2">
-          <h3 className="text-lg font-semibold font-display">{t('bindCode.title')}</h3>
-          <div className="flex items-center gap-2">
-            {unavailableCodes.length > 0 && (
+      <div
+        className="flex flex-col gap-5 rounded-2xl border bg-surface-2/40 p-5 shadow-[0_24px_48px_-30px_rgba(91,255,160,0.20)] md:flex-row md:flex-wrap md:items-stretch md:justify-between md:gap-6 md:p-6"
+        style={{ borderColor: 'rgba(91,255,160,0.33)' }}
+      >
+        {/* Actions area — appears first on mobile, right on desktop */}
+        <div className="-order-1 flex flex-col items-stretch gap-3 md:order-none md:shrink-0 md:items-end">
+          {primary ? (
+            <ActiveCodeBox
+              code={primary}
+              onCopy={() => handleCopy(primary.code)}
+              copied={copiedCode === primary.code}
+              t={t}
+            />
+          ) : (
+            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold tracking-[0.12em] text-muted">
+              <span className="size-1.5 rounded-full bg-muted" />
+              {t('bindCode.noActiveCode')}
+            </span>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {moreCount > 0 || otherCodes.length > 0 ? (
               <button
-                onClick={() => setShowUnavailableModal(true)}
-                className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-text rounded text-sm font-medium transition-colors"
+                type="button"
+                onClick={() => setShowAllModal(true)}
+                className="rounded-md border border-border bg-white/[0.04] px-3.5 py-2 text-[12px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
               >
-                {t('bindCode.viewUnavailable', { count: unavailableCodes.length })}
+                {moreCount > 0
+                  ? t('bindCode.viewMore', { count: moreCount })
+                  : t('bindCode.viewUnavailable', { count: otherCodes.length })}
+              </button>
+            ) : null}
+            {primary && (
+              <button
+                type="button"
+                onClick={() => handleDelete(primary.code)}
+                className="rounded-md border border-border bg-white/[0.04] px-3.5 py-2 text-[12px] font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger"
+              >
+                {t('bindCode.revoke')}
               </button>
             )}
             <button
-              onClick={() => setShowForm(!showForm)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent/90 text-white rounded text-sm font-medium transition-colors"
+              type="button"
+              onClick={() => setShowFormModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-mint px-3.5 py-2 text-[12px] font-bold text-background shadow-[0_0_16px_rgba(91,255,160,0.35)] transition hover:brightness-110"
             >
-              <Plus size={14} /> {t('bindCode.newCode')}
+              <Plus size={14} strokeWidth={2.4} />
+              {primary ? t('bindCode.newCode') : t('bindCode.createCode')}
             </button>
           </div>
         </div>
 
-        <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-          <div className="flex items-center gap-2 font-medium text-blue-800">
-            <HelpCircle size={14} /> {t('bindCode.usageTitle')}
-          </div>
-          <p className="mt-1 text-blue-900">{t('bindCode.usageHint')}</p>
+        {/* Invite copy — appears below actions on mobile, left on desktop */}
+        <div className="flex min-w-0 flex-col gap-2.5 md:flex-1">
+          <span className="inline-flex w-max items-center gap-1.5 rounded-full border border-mint/40 bg-mint-soft px-2.5 py-1 font-mono text-[10px] font-bold tracking-[0.12em] text-mint">
+            <KeyRound size={11} strokeWidth={2.4} />
+            {t('bindCode.badge')}
+          </span>
+          <h3 className="text-[18px] font-bold leading-tight tracking-[-0.3px] text-foreground">
+            {t('bindCode.inviteTitle')}
+          </h3>
+          <p className="max-w-[560px] text-[13px] leading-[1.55] text-muted">
+            {t('bindCode.inviteDescription')}
+          </p>
         </div>
+      </div>
 
-        {showForm && (
-          <div className="mb-4 p-3 bg-bg border border-border rounded-lg space-y-3">
+      {showFormModal && (
+        <Modal title={t('bindCode.newCode')} onClose={() => setShowFormModal(false)}>
+          <div className="space-y-4 p-4 text-sm">
             <div className="flex items-center gap-4">
-              <label className="text-sm text-muted">{t('bindCode.codeType')}</label>
-              <label className="flex items-center gap-1.5 text-sm">
-                <input type="radio" checked={newType === 'one_time'} onChange={() => setNewType('one_time')} className="text-accent" />
+              <span className="text-muted">{t('bindCode.codeType')}</span>
+              <label className="flex items-center gap-1.5 text-foreground">
+                <input
+                  type="radio"
+                  checked={newType === 'one_time'}
+                  onChange={() => setNewType('one_time')}
+                  className="text-mint"
+                />
                 {t('bindCode.oneTime')}
               </label>
-              <label className="flex items-center gap-1.5 text-sm">
-                <input type="radio" checked={newType === 'expiring'} onChange={() => setNewType('expiring')} className="text-accent" />
+              <label className="flex items-center gap-1.5 text-foreground">
+                <input
+                  type="radio"
+                  checked={newType === 'expiring'}
+                  onChange={() => setNewType('expiring')}
+                  className="text-mint"
+                />
                 {t('bindCode.expiring')}
               </label>
             </div>
             {newType === 'expiring' && (
               <div className="flex items-center gap-3">
-                <label className="text-sm text-muted">{t('bindCode.expirationDate')}</label>
+                <label className="text-muted">{t('bindCode.expirationDate')}</label>
                 <input
                   type="date"
                   value={newExpiry}
                   onChange={(e) => setNewExpiry(e.target.value)}
                   min={new Date().toISOString().split('T')[0]}
-                  className="bg-bg border border-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent text-text"
+                  className="rounded-lg border border-border bg-surface px-3 py-1.5 text-foreground focus:border-cyan focus:outline-none"
                 />
               </div>
             )}
             <button
+              type="button"
               onClick={handleCreate}
               disabled={loading || (newType === 'expiring' && !newExpiry)}
-              className="px-4 py-1.5 bg-accent hover:bg-accent/90 text-white rounded text-sm font-medium disabled:opacity-50 transition-colors"
+              className="rounded-md bg-mint px-4 py-1.5 text-[12px] font-bold text-background shadow-[0_0_16px_rgba(91,255,160,0.35)] transition hover:brightness-110 disabled:opacity-50"
             >
               {t('bindCode.generate')}
             </button>
           </div>
-        )}
+        </Modal>
+      )}
 
-        {codes.length === 0 ? (
-          <p className="text-sm text-muted">{t('bindCode.noCodes')}</p>
-        ) : activeCodes.length === 0 ? (
-          <p className="text-sm text-muted">{t('bindCode.noAvailableCodes')}</p>
-        ) : (
-          <div className="divide-y divide-border">
-            {activeCodes.map(renderCodeRow)}
+      {showAllModal && (
+        <Modal title={t('bindCode.allCodesTitle')} onClose={() => setShowAllModal(false)}>
+          <div className="max-h-[60vh] overflow-y-auto p-2">
+            {codes.length === 0 ? (
+              <p className="p-4 text-sm text-muted">{t('bindCode.noCodes')}</p>
+            ) : (
+              <div className="divide-y divide-border">
+                {codes.map((bc) => {
+                  const status = getCodeStatus(bc);
+                  return (
+                    <div key={bc.code} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <code className="rounded border border-border bg-surface px-2 py-0.5 font-mono text-[12px] text-foreground">{bc.code}</code>
+                        <span
+                          className={clsx(
+                            'rounded-full border px-2 py-0.5 text-[10px] font-mono font-bold tracking-[0.12em]',
+                            status === 'active' && 'border-mint/40 bg-mint-soft text-mint',
+                            status === 'used' && 'border-border bg-white/[0.04] text-muted',
+                            status === 'expired' && 'border-gold/40 bg-gold/10 text-gold',
+                            status === 'inactive' && 'border-border bg-white/[0.04] text-muted',
+                          )}
+                        >
+                          {t(`bindCode.${status}`)}
+                        </span>
+                        <span className="text-[11px] text-muted">
+                          {bc.type === 'one_time' ? t('bindCode.oneTime') : t('bindCode.expiring')}
+                        </span>
+                        {bc.used_by.length > 0 && (
+                          <span className="text-[11px] text-muted">{t('bindCode.usedBy', { count: bc.used_by.length })}</span>
+                        )}
+                        {bc.expires_at && (
+                          <span className="text-[11px] text-muted">
+                            {t('bindCode.expiresAt', { date: new Date(bc.expires_at).toLocaleDateString() })}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(bc.code)}
+                          title={t('bindCode.copy')}
+                          className="rounded p-1.5 text-muted transition-colors hover:text-foreground"
+                        >
+                          {copiedCode === bc.code ? <Check size={14} className="text-mint" /> : <Copy size={14} />}
+                        </button>
+                        {bc.is_active && (
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(bc.code)}
+                            title={t('bindCode.delete')}
+                            className="rounded p-1.5 text-muted transition-colors hover:text-danger"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-
-      {showUnavailableModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-          role="dialog"
-          aria-modal="true"
-          aria-label={t('bindCode.unavailableTitle')}
-          onClick={() => setShowUnavailableModal(false)}
-        >
-          <div
-            className="bg-panel border border-border rounded-xl shadow-xl w-full max-w-2xl max-h-[75vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <h4 className="text-base font-semibold text-text">{t('bindCode.unavailableTitle')}</h4>
-              <button
-                onClick={() => setShowUnavailableModal(false)}
-                className="text-muted hover:text-text transition-colors"
-                title={t('bindCode.close')}
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="px-4 py-2 overflow-y-auto">
-              {unavailableCodes.length === 0 ? (
-                <p className="text-sm text-muted py-4">{t('bindCode.noUnavailableCodes')}</p>
-              ) : (
-                <div className="divide-y divide-border">{unavailableCodes.map(renderCodeRow)}</div>
-              )}
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </>
   );
 };
+
+const ActiveCodeBox: React.FC<{
+  code: BindCodeItem;
+  onCopy: () => void;
+  copied: boolean;
+  t: (k: string, opts?: any) => string;
+}> = ({ code, onCopy, copied, t }) => {
+  const expiryLabel = code.type === 'expiring' && code.expires_at
+    ? t('bindCode.expiresIn', { time: formatExpiry(code.expires_at) })
+    : t('bindCode.noExpiry');
+
+  return (
+    <div className="flex flex-col items-stretch gap-1 md:items-end">
+      <span className="font-mono text-[10px] font-bold tracking-[0.12em] text-gold">
+        {t('bindCode.activeCodeLabel')} · {expiryLabel}
+      </span>
+      <button
+        type="button"
+        onClick={onCopy}
+        className="inline-flex items-center justify-between gap-2.5 rounded-lg border bg-background px-4 py-2.5 transition-colors hover:brightness-110 md:justify-start"
+        style={{ borderColor: 'rgba(255,200,87,0.33)' }}
+        title={t('bindCode.copy')}
+      >
+        <span className="font-mono text-[18px] font-bold tracking-[0.12em] text-gold">{code.code}</span>
+        {copied ? (
+          <Check size={14} className="shrink-0 text-mint" />
+        ) : (
+          <Copy size={14} className="shrink-0 text-muted" />
+        )}
+      </button>
+    </div>
+  );
+};
+
+const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode }> = ({ title, onClose, children }) => (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+    role="dialog"
+    aria-modal="true"
+    aria-label={title}
+    onClick={onClose}
+  >
+    <div
+      className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-surface-2 shadow-[0_42px_80px_-42px_rgba(0,0,0,0.85)]"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <h4 className="text-base font-semibold text-foreground">{title}</h4>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded text-muted transition-colors hover:text-foreground"
+          title={title}
+        >
+          <X size={16} />
+        </button>
+      </div>
+      {children}
+    </div>
+  </div>
+);
 
 // ─── User List Page ──────────────────────────────────────────────────────
 
@@ -305,7 +438,7 @@ export const UserList: React.FC = () => {
   const api = useApi();
   const { showToast } = useToast();
   const [, setLoading] = useState(false);
-  const [users, setUsers] = useState<Record<string, UserConfig>>({});
+  const [usersByPlatform, setUsersByPlatform] = useState<Record<string, Record<string, UserConfig>>>({});
   const [config, setConfig] = useState<any>({});
   const [opencodeOptionsByCwd, setOpencodeOptionsByCwd] = useState<Record<string, any>>({});
   const [claudeAgentsByCwd, setClaudeAgentsByCwd] = useState<Record<string, any[]>>({});
@@ -314,29 +447,35 @@ export const UserList: React.FC = () => {
   const [claudeReasoningOptions, setClaudeReasoningOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [codexModels, setCodexModels] = useState<string[]>([]);
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
-  const [selectedPlatform, setSelectedPlatform] = useState<string>('slack');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showDisabled, setShowDisabled] = useState(false);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  const enabledPlatforms = useMemo(() => getEnabledPlatforms(config), [config]);
 
   useEffect(() => {
-    api.getConfig().then((loadedConfig) => {
-      setConfig(loadedConfig);
-      const enabled = getEnabledPlatforms(loadedConfig);
-      setSelectedPlatform(enabled[0] || 'slack');
-    });
+    api.getConfig().then((loadedConfig) => setConfig(loadedConfig));
   }, []);
 
-  useEffect(() => {
-    if (!selectedPlatform) return;
-    loadUsers(selectedPlatform);
-  }, [selectedPlatform]);
-
-  const loadUsers = async (platform: string) => {
-    try {
-      const result = await api.getUsers(platform);
-      if (result.ok) setUsers(result.users || {});
-    } catch (e) {
-      console.error('Failed to load users:', e);
-    }
+  const loadAllUsers = async () => {
+    if (!enabledPlatforms.length) return;
+    const results = await Promise.all(
+      enabledPlatforms.map(async (p) => {
+        try {
+          const r = await api.getUsers(p);
+          return [p, r.ok ? (r.users || {}) : {}] as const;
+        } catch {
+          return [p, {}] as const;
+        }
+      })
+    );
+    const next: Record<string, Record<string, UserConfig>> = {};
+    for (const [p, u] of results) next[p] = u as Record<string, UserConfig>;
+    setUsersByPlatform(next);
   };
+
+  useEffect(() => { loadAllUsers(); }, [enabledPlatforms.join(','), refreshTrigger]);
 
   const loadOpenCodeOptions = async (cwd: string) => {
     try {
@@ -374,24 +513,52 @@ export const UserList: React.FC = () => {
     if (config.agents?.codex?.enabled) api.codexModels().then(r => r.ok && setCodexModels(r.models || []));
   }, [config.agents?.codex?.enabled]);
 
-  // Load agent options for enabled users
+  // Aggregate users
+  const aggregated = useMemo<AggregatedUser[]>(() => {
+    const flat: AggregatedUser[] = [];
+    for (const [platform, users] of Object.entries(usersByPlatform)) {
+      for (const [userId, cfg] of Object.entries(users)) {
+        flat.push({ key: `${platform}::${userId}`, platform, userId, config: cfg });
+      }
+    }
+    return flat.sort(
+      (a, b) =>
+        Number(b.config.is_admin) - Number(a.config.is_admin) ||
+        a.config.display_name.localeCompare(b.config.display_name) ||
+        a.userId.localeCompare(b.userId)
+    );
+  }, [usersByPlatform]);
+
+  // Filtered and search-applied list
+  const visibleUsers = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return aggregated.filter((u) => {
+      if (!showDisabled && !u.config.enabled) return false;
+      if (!q) return true;
+      const name = (u.config.display_name || '').toLowerCase();
+      const id = u.userId.toLowerCase();
+      return name.includes(q) || id.includes(q);
+    });
+  }, [aggregated, searchQuery, showDisabled]);
+
+  // Load agent options for visible enabled users
   useEffect(() => {
     const defaultCwd = config.runtime?.default_cwd || '~/work';
     const defaultBackend = config.agents?.default_backend || 'opencode';
-    Object.values(users).forEach((u) => {
-      if (!u.enabled) return;
-      const cwd = u.custom_cwd || defaultCwd;
-      const backend = u.routing?.agent_backend || defaultBackend;
+    aggregated.forEach((u) => {
+      if (!u.config.enabled) return;
+      const cwd = u.config.custom_cwd || defaultCwd;
+      const backend = u.config.routing?.agent_backend || defaultBackend;
       if (backend === 'opencode' && config.agents?.opencode?.enabled && !opencodeOptionsByCwd[cwd]) loadOpenCodeOptions(cwd);
       if (backend === 'claude' && config.agents?.claude?.enabled && !claudeAgentsByCwd[cwd]) loadClaudeAgents(cwd);
       if (backend === 'codex' && config.agents?.codex?.enabled && !codexAgentsByCwd[cwd]) loadCodexAgents(cwd);
     });
-  }, [users, config]);
+  }, [aggregated, config]);
 
-  const persistUsers = async (next: Record<string, UserConfig>) => {
+  const persistUsers = async (platform: string, next: Record<string, UserConfig>) => {
     setLoading(true);
     try {
-      await api.saveUsers({ users: next }, selectedPlatform);
+      await api.saveUsers({ users: next }, platform);
       showToast(t('userList.settingsSaved'));
     } catch {
       showToast(t('userList.settingsSaveFailed'), 'error');
@@ -400,28 +567,30 @@ export const UserList: React.FC = () => {
     }
   };
 
-  const updateUser = (userId: string, patch: Partial<UserConfig>) => {
-    const base = users[userId] || defaultUserConfig();
+  const updateUser = (platform: string, userId: string, patch: Partial<UserConfig>) => {
+    const platformUsers = usersByPlatform[platform] || {};
+    const base = platformUsers[userId] || defaultUserConfig();
     const next = { ...base, ...patch };
     if (!next.routing || typeof next.routing !== 'object') {
       next.routing = { agent_backend: config.agents?.default_backend || 'opencode' };
     }
-    const nextUsers = { ...users, [userId]: next };
-    setUsers(nextUsers);
-    void persistUsers(nextUsers);
+    const nextPlatformUsers = { ...platformUsers, [userId]: next };
+    setUsersByPlatform((prev) => ({ ...prev, [platform]: nextPlatformUsers }));
+    void persistUsers(platform, nextPlatformUsers);
   };
 
-  const handleToggleAdmin = async (userId: string, isAdmin: boolean) => {
-    const current = users[userId];
-    const currentAdminCount = Object.values(users).filter((u) => u.is_admin).length;
-    if (current?.is_admin && !isAdmin && currentAdminCount <= 1) {
+  const handleToggleAdmin = async (platform: string, userId: string, isAdmin: boolean) => {
+    const platformUsers = usersByPlatform[platform] || {};
+    const current = platformUsers[userId];
+    const adminCount = Object.values(platformUsers).filter((u) => u.is_admin).length;
+    if (current?.is_admin && !isAdmin && adminCount <= 1) {
       if (!confirm(t('userList.lastAdminDemoteWarning'))) return;
     }
     try {
-      const result = await api.toggleAdmin(userId, isAdmin, selectedPlatform);
+      const result = await api.toggleAdmin(userId, isAdmin, platform);
       if (result.ok) {
         showToast(t('userList.adminToggled'));
-        loadUsers(selectedPlatform);
+        loadAllUsers();
       } else {
         showToast(result.error || t('userList.cannotRemoveLastAdmin'), 'error');
       }
@@ -430,16 +599,17 @@ export const UserList: React.FC = () => {
     }
   };
 
-  const handleRemoveUser = async (userId: string) => {
-    const current = users[userId];
-    const currentAdminCount = Object.values(users).filter((u) => u.is_admin).length;
-    const warningKey = current?.is_admin && currentAdminCount <= 1 ? 'userList.lastAdminRemoveWarning' : 'userList.removeConfirm';
+  const handleRemoveUser = async (platform: string, userId: string) => {
+    const platformUsers = usersByPlatform[platform] || {};
+    const current = platformUsers[userId];
+    const adminCount = Object.values(platformUsers).filter((u) => u.is_admin).length;
+    const warningKey = current?.is_admin && adminCount <= 1 ? 'userList.lastAdminRemoveWarning' : 'userList.removeConfirm';
     if (!confirm(t(warningKey))) return;
     try {
-      const result = await api.removeUser(userId, selectedPlatform);
+      const result = await api.removeUser(userId, platform);
       if (result.ok) {
         showToast(t('userList.userRemoved'));
-        loadUsers(selectedPlatform);
+        loadAllUsers();
       } else {
         showToast(result.error || '', 'error');
       }
@@ -469,394 +639,281 @@ export const UserList: React.FC = () => {
     },
   });
 
-  const getReasoningOptions = (cwd: string, modelKey: string) => {
-    const lookup = opencodeOptionsByCwd[cwd]?.reasoning_options || {};
-    return (lookup as Record<string, { value: string; label: string }[]>)[modelKey] || [];
+  const totalCount = aggregated.length;
+
+  // Backend label helper
+  const backendLabel = (backend: string) => {
+    if (backend === 'claude') return 'Claude';
+    if (backend === 'codex') return 'Codex';
+    return 'OpenCode';
   };
-
-  const getClaudeReasoningOptions = (model: string) => {
-    const modelKey = model || '';
-    const cached = claudeReasoningOptions[modelKey];
-    if (cached?.length) return cached;
-
-    const fallback = claudeReasoningOptions[''] || [];
-    const normalizedModel = modelKey.toLowerCase();
-    if (normalizedModel.includes('claude-opus-4-7') || normalizedModel === 'opus' || normalizedModel === 'opus[1m]') {
-      const options = [...fallback];
-      if (!options.some((option) => option.value === 'xhigh')) {
-        options.push({ value: 'xhigh', label: 'Extra High' });
-      }
-      if (!options.some((option) => option.value === 'max')) {
-        options.push({ value: 'max', label: 'Max' });
-      }
-      return options;
-    }
-    if (normalizedModel.includes('claude-opus-4-6') || normalizedModel.includes('claude-sonnet-4-6')) {
-      return fallback.some((option) => option.value === 'max')
-        ? fallback
-        : [...fallback, { value: 'max', label: 'Max' }];
-    }
-
-    return fallback;
-  };
-
-  const getReasoningLabel = (value: string, fallback: string) => {
-    switch (value) {
-      case 'low':
-        return t('channelList.reasoningLow');
-      case 'medium':
-        return t('channelList.reasoningMedium');
-      case 'high':
-        return t('channelList.reasoningHigh');
-      case 'xhigh':
-        return t('channelList.reasoningXHigh');
-      case 'max':
-        return t('channelList.reasoningMax');
-      default:
-        return fallback;
-    }
-  };
-
-  const userEntries = Object.entries(users).sort(
-    (a, b) => Number(b[1].is_admin) - Number(a[1].is_admin) || a[1].display_name.localeCompare(b[1].display_name)
-  );
-  const enabledPlatforms = getEnabledPlatforms(config);
 
   return (
     <>
-    <div className="max-w-5xl mx-auto flex flex-col h-full">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h2 className="text-3xl font-display font-bold">{t('userList.title')}</h2>
-          <p className="text-muted">{t('userList.subtitle')}</p>
+      <div className="flex h-full flex-col gap-5">
+        {/* Page header */}
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-col gap-1.5">
+            <h1 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
+              {t('userList.title')}
+            </h1>
+            <p className="text-[14px] leading-[1.55] text-muted">{t('userList.subtitle')}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={t('userList.filterPlaceholder')}
+                className="h-9 w-[280px] rounded-lg border border-border bg-surface pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted focus:border-mint/50 focus:outline-none"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setRefreshTrigger((v) => v + 1)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong"
+              title={t('common.refresh', { defaultValue: 'Refresh' })}
+            >
+              <RefreshCw size={14} />
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div className="mb-4 flex flex-wrap gap-2">
-        {enabledPlatforms.map((platform) => (
-          <button
-            key={platform}
-            onClick={() => setSelectedPlatform(platform)}
-            className={clsx(
-              'px-3 py-1.5 rounded-full text-sm border transition-colors',
-              selectedPlatform === platform ? 'bg-accent text-white border-accent' : 'bg-panel text-text border-border hover:border-accent/60'
-            )}
-          >
-            {t(`platform.${platform}.title`)}
-          </button>
-        ))}
-      </div>
+        {/* Bind code card */}
+        <BindCodeCard
+          refreshTrigger={refreshTrigger}
+          onCodesChanged={() => setRefreshTrigger((v) => v + 1)}
+        />
 
-      {selectedPlatform === 'wechat' ? (
-        <div className="mb-6 bg-panel border border-border rounded-xl p-4 shadow-sm">
-          <p className="text-sm text-muted">{t('wechat.userBound')}</p>
-        </div>
-      ) : (
-        <BindCodeSection />
-      )}
-
-      <div className="flex-1 overflow-y-auto border border-border rounded-xl divide-y divide-border bg-panel shadow-sm">
-        {userEntries.length === 0 ? (
-          <div className="p-8 text-center text-muted">{t('userList.noUsers')}</div>
-        ) : (
-          userEntries.map(([userId, userConfig]) => {
-            const effectiveCwd = userConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
-            const effectiveBackend = userConfig.routing?.agent_backend || config.agents?.default_backend || 'opencode';
-            const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
-            const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
-            const codexAgents = codexAgentsByCwd[effectiveCwd] || [];
-            return (
-              <div key={userId} className="p-4 hover:bg-neutral-50/50 transition-colors">
-                {/* User header row */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <User size={20} className="text-muted" />
-                    <div>
-                      <div className="font-medium flex items-center gap-2 text-text">
-                        {userConfig.display_name || userId}
-                        {userConfig.is_admin && (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 font-medium">{t('userList.admin')}</span>
-                        )}
-                      </div>
-                      <div className="text-xs text-muted font-mono">ID: {userId}</div>
-                      {userConfig.bound_at && (
-                        <div className="text-xs text-muted">
-                          {t('userList.boundAt')}: {new Date(userConfig.bound_at).toLocaleDateString()}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {/* Admin toggle */}
-                    <button
-                      onClick={() => handleToggleAdmin(userId, !userConfig.is_admin)}
-                      className={clsx(
-                        'flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors border',
-                        userConfig.is_admin
-                          ? 'bg-accent/10 text-accent border-accent/20 hover:bg-accent/20'
-                          : 'bg-neutral-100 text-muted border-border hover:bg-neutral-200'
-                      )}
-                      title={userConfig.is_admin ? 'Remove admin' : 'Make admin'}
-                    >
-                      {userConfig.is_admin ? <Shield size={12} /> : <ShieldOff size={12} />}
-                      {userConfig.is_admin ? t('userList.admin') : t('userList.user')}
-                    </button>
-                    {/* Remove */}
-                    <button
-                      onClick={() => handleRemoveUser(userId)}
-                      className="p-1.5 text-muted hover:text-danger transition-colors"
-                      title={t('userList.removeUser')}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* User settings (always shown for enabled users) */}
-                {userConfig.enabled && (
-                  <div className="mt-4 pl-8 space-y-4">
-                    {/* Basic Settings */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-xs font-medium text-muted uppercase">{t('channelList.workingDirectory')}</label>
-                        <div className="flex gap-1.5">
-                          <BlurInput
-                            type="text"
-                            placeholder={config.runtime?.default_cwd || t('channelList.useGlobalDefault')}
-                            value={userConfig.custom_cwd}
-                            onCommit={(v) => updateUser(userId, { custom_cwd: v })}
-                            className="flex-1 bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text placeholder:text-muted/50 font-mono"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setBrowsingCwdFor(userId)}
-                            title={t('directoryBrowser.title')}
-                            className="px-2 py-2 bg-neutral-100 hover:bg-neutral-200 border border-border rounded text-muted hover:text-text transition-colors shrink-0"
-                          >
-                            <FolderOpen size={14} />
-                          </button>
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-medium text-muted uppercase">{t('channelList.backend')}</label>
-                        <select
-                          value={effectiveBackend}
-                          onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, agent_backend: e.target.value } })}
-                          className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent text-text"
-                        >
-                          <option value="opencode">OpenCode</option>
-                          <option value="claude">ClaudeCode</option>
-                          <option value="codex">Codex</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* Show Message Types */}
-                    <div className="space-y-2">
-                      <div className="text-xs font-medium text-muted uppercase flex items-center gap-1">
-                        {t('channelList.showMessageTypes')}
-                        <span className="relative group">
-                          <HelpCircle size={12} className="text-muted/50 cursor-help" />
-                          <span className="absolute bottom-full left-0 mb-2 px-3 py-2 bg-text text-bg text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-64 whitespace-normal font-normal normal-case">
-                            {t('channelList.showMessageTypesHint')}
-                          </span>
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-3 text-sm">
-                        {['system', 'assistant', 'toolcall'].map((msgType) => {
-                          const checked = (userConfig.show_message_types || []).includes(msgType);
-                          return (
-                            <label key={msgType} className="flex items-center gap-2 text-text">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => {
-                                  const next = checked
-                                    ? userConfig.show_message_types.filter((v) => v !== msgType)
-                                    : [...(userConfig.show_message_types || []), msgType];
-                                  updateUser(userId, { show_message_types: next });
-                                }}
-                                className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
-                              />
-                              <span className="capitalize">{msgType === 'toolcall' ? 'Toolcall' : msgType}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* OpenCode Settings */}
-                    {effectiveBackend === 'opencode' && (
-                      <div className="space-y-3">
-                        <div className="text-xs font-medium text-muted uppercase">{t('channelList.opencodeSettings')}</div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
-                          <div className="space-y-1">
-                            <label className="text-xs text-muted">{t('channelList.agent')}</label>
-                            <select
-                              value={userConfig.routing.opencode_agent || ''}
-                              onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, opencode_agent: e.target.value || null } })}
-                              className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                            >
-                              <option value="">{t('common.default')}</option>
-                              {(opencodeOptions?.agents || []).map((a: any) => (
-                                <option key={a.name} value={a.name}>{a.name}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs text-muted">{t('channelList.model')}</label>
-                            <select
-                              value={userConfig.routing.opencode_model || ''}
-                              onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, opencode_model: e.target.value || null, opencode_reasoning_effort: null } })}
-                              className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                            >
-                              <option value="">{t('common.default')}</option>
-                              {(opencodeOptions?.models?.providers || []).flatMap((provider: any) => {
-                                const pid = provider.id || provider.provider_id || provider.name;
-                                const pLabel = provider.name || pid;
-                                const models = provider.models || {};
-                                if (Array.isArray(models)) {
-                                  return models.map((m: any) => {
-                                    const mid = typeof m === 'string' ? m : m.id;
-                                    return <option key={`${pid}:${mid}`} value={`${pid}/${mid}`}>{pLabel}/{mid}</option>;
-                                  });
-                                }
-                                return Object.keys(models).map((mid) => (
-                                  <option key={`${pid}:${mid}`} value={`${pid}/${mid}`}>{pLabel}/{mid}</option>
-                                ));
-                              })}
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-                            <select
-                              value={userConfig.routing.opencode_reasoning_effort || ''}
-                              onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, opencode_reasoning_effort: e.target.value || null } })}
-                              disabled={!getReasoningOptions(effectiveCwd, userConfig.routing.opencode_model || '').length}
-                              className="w-full bg-panel border border-border rounded px-3 py-2 text-sm disabled:opacity-50"
-                            >
-                              <option value="">{t('common.default')}</option>
-                              {getReasoningOptions(effectiveCwd, userConfig.routing.opencode_model || '').map((opt) => (
-                                <option key={opt.value} value={opt.value}>{opt.label}</option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Claude Settings */}
-                    {effectiveBackend === 'claude' && (
-                      <div className="space-y-3">
-                        <div className="text-xs font-medium text-muted uppercase">{t('channelList.claudeSettings')}</div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
-                          <div className="space-y-1">
-                            <label className="text-xs text-muted">{t('channelList.agent')}</label>
-                            <select
-                              value={userConfig.routing.claude_agent || ''}
-                              onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, claude_agent: e.target.value || null } })}
-                              className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                            >
-                              <option value="">{t('common.default')}</option>
-                              {claudeAgents.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs text-muted">{t('channelList.model')}</label>
-                            <Combobox
-                              options={[{ value: '', label: t('common.default') }, ...claudeModels.map(m => ({ value: m, label: m }))]}
-                              value={userConfig.routing.claude_model || ''}
-                              onValueChange={(v) => updateUser(userId, { routing: { ...userConfig.routing, claude_model: v || null, claude_reasoning_effort: null } })}
-                              placeholder={t('channelList.claudeModelPlaceholder')}
-                              searchPlaceholder={t('channelList.searchModel')}
-                              allowCustomValue={true}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-                            <select
-                              value={userConfig.routing.claude_reasoning_effort || ''}
-                              onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, claude_reasoning_effort: e.target.value || null } })}
-                              className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                            >
-                              <option value="">{t('common.default')}</option>
-                              {getClaudeReasoningOptions(userConfig.routing.claude_model || '')
-                                .filter((option) => option.value !== '__default__')
-                                .map((option) => (
-                                  <option key={option.value} value={option.value}>
-                                    {getReasoningLabel(option.value, option.label)}
-                                  </option>
-                                ))}
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Codex Settings */}
-                    {effectiveBackend === 'codex' && (
-                      <div className="space-y-3">
-                        <div className="text-xs font-medium text-muted uppercase">{t('channelList.codexSettings')}</div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-bg/50 p-3 rounded border border-border">
-                          <div className="space-y-1">
-                            <label className="text-xs text-muted">{t('channelList.agent')}</label>
-                            <select
-                              value={userConfig.routing.codex_agent || ''}
-                              onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, codex_agent: e.target.value || null } })}
-                              className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                            >
-                              <option value="">{t('common.default')}</option>
-                              {codexAgents.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs text-muted">{t('channelList.model')}</label>
-                            <Combobox
-                              options={[{ value: '', label: t('common.default') }, ...codexModels.map(m => ({ value: m, label: m }))]}
-                              value={userConfig.routing.codex_model || ''}
-                              onValueChange={(v) => updateUser(userId, { routing: { ...userConfig.routing, codex_model: v || null } })}
-                              placeholder={t('channelList.codexModelPlaceholder')}
-                              searchPlaceholder={t('channelList.searchModel')}
-                              allowCustomValue={true}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-                            <select
-                              value={userConfig.routing.codex_reasoning_effort || ''}
-                              onChange={(e) => updateUser(userId, { routing: { ...userConfig.routing, codex_reasoning_effort: e.target.value || null } })}
-                              className="w-full bg-panel border border-border rounded px-3 py-2 text-sm"
-                            >
-                              <option value="">{t('common.default')}</option>
-                              <option value="low">{t('channelList.reasoningLow')}</option>
-                              <option value="medium">{t('channelList.reasoningMedium')}</option>
-                              <option value="high">{t('channelList.reasoningHigh')}</option>
-                              <option value="xhigh">{t('channelList.reasoningXHigh')}</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+        {/* List header */}
+        <div className="flex items-center justify-between px-1 py-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[15px] font-semibold text-foreground">{t('userList.allUsers')}</span>
+            <span className="rounded-full bg-white/[0.08] px-1.5 py-0.5 font-mono text-[11px] font-bold text-muted">
+              {totalCount}
+            </span>
+          </div>
+          <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-muted">
+            <span>{t('userList.showDisabled')}</span>
+            <input
+              type="checkbox"
+              checked={showDisabled}
+              onChange={(e) => setShowDisabled(e.target.checked)}
+              className="sr-only"
+            />
+            <span
+              className={clsx(
+                'relative inline-flex h-[18px] w-[30px] items-center rounded-full transition-colors',
+                showDisabled ? 'bg-mint' : 'bg-white/[0.08]'
+              )}
+            >
+              <span
+                className={clsx(
+                  'inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform',
+                  showDisabled ? 'translate-x-[14px]' : 'translate-x-0.5'
                 )}
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
+              />
+            </span>
+          </label>
+        </div>
 
-    {/* Directory browser modal */}
-    {browsingCwdFor && (
-      <DirectoryBrowser
-        initialPath={users[browsingCwdFor]?.custom_cwd || config.runtime?.default_cwd || '~/work'}
-        onSelect={(path) => {
-          updateUser(browsingCwdFor, { custom_cwd: path });
-          setBrowsingCwdFor(null);
-        }}
-        onClose={() => setBrowsingCwdFor(null)}
-      />
-    )}
+        {/* User cards — design.pen asPXu (VR/RoutingConfig) shared with /groups */}
+        <div className="flex-1 space-y-3 overflow-y-auto">
+          {visibleUsers.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border bg-surface-3/60 p-8 text-center text-[13px] text-muted">
+              {searchQuery ? t('userList.noUsersForSearch') : t('userList.noUsers')}
+            </div>
+          ) : (
+            visibleUsers.map((u) => {
+              const expanded = expandedKey === u.key;
+              const userConfig = u.config;
+              const defaultBackend = config.agents?.default_backend || 'opencode';
+              const effectiveBackend = userConfig.routing?.agent_backend || defaultBackend;
+              const effectiveCwd = userConfig.custom_cwd || config.runtime?.default_cwd || '~/work';
+              const opencodeOptions = opencodeOptionsByCwd[effectiveCwd];
+              const claudeAgents = claudeAgentsByCwd[effectiveCwd] || [];
+              const codexAgents = codexAgentsByCwd[effectiveCwd] || [];
+              const isBot = !userConfig.is_admin && (userConfig.display_name || u.userId).toLowerCase().includes('bot');
+              const tone = AVATAR_TONES[hashCode(u.userId) % AVATAR_TONES.length];
+              const initials = getInitials(userConfig.display_name, u.userId);
+              const backendModel = effectiveBackend === 'claude'
+                ? userConfig.routing.claude_model
+                : effectiveBackend === 'codex'
+                  ? userConfig.routing.codex_model
+                  : userConfig.routing.opencode_model;
+
+              const updateRow = (patch: Partial<UserConfig>) => updateUser(u.platform, u.userId, patch);
+              const toggleEnabled = () => updateRow({ enabled: !userConfig.enabled });
+              const toggleAdmin = () => handleToggleAdmin(u.platform, u.userId, !userConfig.is_admin);
+
+              return (
+                <div
+                  key={u.key}
+                  className={clsx(
+                    'rounded-xl border transition-colors',
+                    expanded
+                      ? 'border-mint/30 bg-surface-2/70 shadow-[0_0_32px_-8px_rgba(91,255,160,0.45)]'
+                      : userConfig.enabled
+                        ? 'border-border bg-background hover:border-border-strong'
+                        : 'border-border bg-background/60 opacity-70'
+                  )}
+                >
+                  {/* Master row — matches /groups layout */}
+                  <button
+                    type="button"
+                    onClick={() => setExpandedKey(expanded ? null : u.key)}
+                    className="flex w-full items-center gap-3.5 px-5 py-3.5 text-left"
+                  >
+                    {/* Enabled toggle */}
+                    <span
+                      role="switch"
+                      aria-checked={userConfig.enabled}
+                      tabIndex={0}
+                      onClick={(e) => { e.stopPropagation(); toggleEnabled(); }}
+                      onKeyDown={(e) => {
+                        if (e.key === ' ' || e.key === 'Enter') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleEnabled();
+                        }
+                      }}
+                      className={clsx(
+                        'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors',
+                        userConfig.enabled ? 'bg-mint' : 'bg-neutral-300'
+                      )}
+                    >
+                      <span
+                        className={clsx(
+                          'inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform',
+                          userConfig.enabled ? 'translate-x-[14px]' : 'translate-x-0.5'
+                        )}
+                      />
+                    </span>
+
+                    {/* Avatar — tone-colored ring with platform corner badge */}
+                    <span className="relative shrink-0">
+                      <span
+                        className="flex size-[34px] items-center justify-center rounded-full border font-mono text-[12px] font-bold"
+                        style={{ backgroundColor: tone.bg, borderColor: tone.border }}
+                      >
+                        {isBot ? (
+                          <Bot size={14} className="text-muted" />
+                        ) : (
+                          <span className={tone.textCls}>{initials}</span>
+                        )}
+                      </span>
+                      <span
+                        className="absolute -bottom-0.5 -right-0.5 flex size-[14px] items-center justify-center rounded-full border border-border bg-background"
+                        title={t(`platform.${u.platform}.title`)}
+                      >
+                        <PlatformIcon platform={u.platform} size={9} />
+                      </span>
+                    </span>
+
+                    {/* Name + meta */}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold text-foreground">
+                        {userConfig.display_name || u.userId}
+                      </span>
+                      <span className="block truncate font-mono text-[11px] text-muted">
+                        {userConfig.enabled
+                          ? `${backendLabel(effectiveBackend)}${backendModel ? `/${backendModel}` : ''} · ${u.userId}`
+                          : u.userId}
+                      </span>
+                    </span>
+
+                    {/* Admin badge — clickable; bot renders as static label */}
+                    {isBot ? (
+                      <span className="inline-flex shrink-0 items-center rounded-full border border-border bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-muted">
+                        {t('userList.bot')}
+                      </span>
+                    ) : (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={userConfig.is_admin}
+                        onClick={(e) => { e.stopPropagation(); toggleAdmin(); }}
+                        onKeyDown={(e) => {
+                          if (e.key === ' ' || e.key === 'Enter') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleAdmin();
+                          }
+                        }}
+                        title={userConfig.is_admin
+                          ? t('userList.demoteAdminTitle', { defaultValue: 'Demote admin' })
+                          : t('userList.promoteAdminTitle', { defaultValue: 'Promote to admin' })}
+                        className={clsx(
+                          'inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                          userConfig.is_admin
+                            ? 'border-gold/40 bg-gold/10 font-bold text-gold hover:bg-gold/15'
+                            : 'border-border bg-white/[0.04] text-muted hover:border-border-strong hover:text-foreground'
+                        )}
+                      >
+                        <Shield size={11} strokeWidth={2.4} />
+                        {userConfig.is_admin ? t('userList.admin') : t('userList.user')}
+                      </span>
+                    )}
+
+                    {/* Chevron */}
+                    {expanded ? (
+                      <ChevronUp size={18} className="shrink-0 text-muted" />
+                    ) : (
+                      <ChevronDown size={18} className="shrink-0 text-muted" />
+                    )}
+                  </button>
+
+                  {/* Expanded body — design.pen asPXu (VR/RoutingConfig) shared with /groups, no @mention toggle */}
+                  {expanded && (
+                    <RoutingConfigPanel
+                      value={userConfig}
+                      onChange={(patch) => updateRow(patch)}
+                      onBrowseDirectory={() => setBrowsingCwdFor(u.key)}
+                      globalConfig={config}
+                      showRequireMention={false}
+                      opencodeOptions={opencodeOptions}
+                      claudeAgents={claudeAgents}
+                      claudeModels={claudeModels}
+                      claudeReasoningOptions={claudeReasoningOptions}
+                      codexAgents={codexAgents}
+                      codexModels={codexModels}
+                      footerActions={
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveUser(u.platform, u.userId)}
+                          title={t('userList.removeUser')}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-white/[0.04] px-3 py-1.5 text-[12px] font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger"
+                        >
+                          <Trash2 size={12} />
+                          {t('userList.removeUser')}
+                        </button>
+                      }
+                    />
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Directory browser modal */}
+      {browsingCwdFor && (() => {
+        const found = aggregated.find((u) => u.key === browsingCwdFor);
+        if (!found) return null;
+        return (
+          <DirectoryBrowser
+            initialPath={found.config.custom_cwd || config.runtime?.default_cwd || '~/work'}
+            onSelect={(path) => {
+              updateUser(found.platform, found.userId, { custom_cwd: path });
+              setBrowsingCwdFor(null);
+            }}
+            onClose={() => setBrowsingCwdFor(null)}
+          />
+        );
+      })()}
     </>
   );
 };

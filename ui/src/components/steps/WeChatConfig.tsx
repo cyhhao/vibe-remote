@@ -1,9 +1,20 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Check, RefreshCw, Smartphone, Wifi, AlertTriangle, Loader2, KeyRound } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  KeyRound,
+  Loader2,
+  RefreshCw,
+  Smartphone,
+  Wifi,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
+import { EyebrowBadge, WizardCard } from '../visual';
 
 interface WeChatConfigProps {
   data: Record<string, any>;
@@ -13,11 +24,15 @@ interface WeChatConfigProps {
 
 const QR_POLL_INTERVAL_MS = 5000;
 
+// Mirrors design.pen XCWAT visual treatment for the QR-driven WeChat onboarding.
+// Three-stop horizontal stepper, mint-bordered QR card, mint primary actions.
 export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
 
-  const [loginState, setLoginState] = useState<'idle' | 'qr_ready' | 'scanning' | 'confirming' | 'connected' | 'error'>('idle');
+  const [loginState, setLoginState] = useState<
+    'idle' | 'qr_ready' | 'scanning' | 'confirming' | 'connected' | 'error'
+  >('idle');
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const [message, setMessage] = useState<string>('');
   const [botToken, setBotToken] = useState<string>(data.wechat?.bot_token || '');
@@ -35,7 +50,6 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     }
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopPolling();
@@ -67,7 +81,6 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
       setMessage(result.message || '');
       setLoginState('qr_ready');
 
-      // Start polling
       if (result.session_key) {
         activeSessionKeyRef.current = result.session_key;
         startPolling(result.session_key);
@@ -101,7 +114,6 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     if (autoStartedRef.current) return;
     if (starting) return;
     if (loginState !== 'idle') return;
-    // Don't auto-start QR flow if we already have a token from previous config
     if (data.wechat?.bot_token) return;
 
     autoStartedRef.current = true;
@@ -144,7 +156,6 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
           stopPolling();
           return;
         }
-        // status === 'wait' — schedule next poll after the server-side long poll window
         pollTimerRef.current = setTimeout(() => {
           void pollOnce();
         }, QR_POLL_INTERVAL_MS);
@@ -159,24 +170,8 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     void pollOnce();
   };
 
-  // Allow proceeding if we have a token (either freshly scanned or from existing config)
   const canProceed = !!botToken;
-  // Whether we're showing the "already bound" idle state (existing token, QR not started)
   const isAlreadyBound = loginState === 'idle' && !!botToken;
-
-  const stepIndicator = (stepNum: number, label: string, active: boolean, completed: boolean) => (
-    <div className="flex items-center gap-2">
-      <span
-        className={clsx(
-          'w-7 h-7 rounded-full text-sm font-bold flex items-center justify-center transition-colors',
-          completed ? 'bg-success text-white' : active ? 'bg-accent text-white' : 'bg-neutral-200 text-muted'
-        )}
-      >
-        {completed ? <Check size={14} /> : stepNum}
-      </span>
-      <span className={clsx('text-sm font-medium', active || completed ? 'text-text' : 'text-muted')}>{label}</span>
-    </div>
-  );
 
   const getStepState = () => {
     if (isAlreadyBound) return { step: 3, scanning: false, connected: true };
@@ -184,182 +179,241 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
     if (loginState === 'qr_ready') return { step: 2, scanning: false, connected: false };
     if (loginState === 'scanning' || loginState === 'confirming') return { step: 2, scanning: true, connected: false };
     if (loginState === 'connected') return { step: 3, scanning: false, connected: true };
-    return { step: 1, scanning: false, connected: false }; // error
+    return { step: 1, scanning: false, connected: false };
   };
 
   const { step, connected } = getStepState();
 
+  const completedDots = connected ? 3 : step;
+
+  const stepLabels = [t('wechatConfig.stepStart'), t('wechatConfig.stepScan'), t('wechatConfig.stepDone')];
+
   return (
-    <div className="flex flex-col h-full max-w-2xl mx-auto">
-      <div className="mb-4">
-        <h2 className="text-3xl font-display font-bold text-text">{t('wechatConfig.title')}</h2>
-        <p className="text-muted mt-1">{t('wechatConfig.subtitle')}</p>
-      </div>
-
-      {/* Step indicators */}
-      <div className="mb-6 bg-panel border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between">
-          {stepIndicator(1, t('wechatConfig.stepStart'), step === 1 && loginState !== 'error', step > 1)}
-          <div className="flex-1 h-px bg-border mx-3" />
-          {stepIndicator(2, t('wechatConfig.stepScan'), step === 2, step > 2)}
-          <div className="flex-1 h-px bg-border mx-3" />
-          {stepIndicator(3, t('wechatConfig.stepDone'), false, connected)}
-        </div>
-      </div>
-
-      <div className="flex-1 space-y-4 overflow-y-auto pr-1">
-        {/* Already bound — existing token, no QR needed */}
-        {isAlreadyBound && (
-          <div className="bg-panel border border-border rounded-xl p-6 space-y-4">
-            <div className="flex flex-col items-center space-y-4">
-              <div className="w-20 h-20 bg-success/10 text-success rounded-full flex items-center justify-center">
-                <Check size={40} />
-              </div>
-              <div className="text-center">
-                <h3 className="text-lg font-semibold text-text">{t('wechatConfig.alreadyBound')}</h3>
-                <p className="text-sm text-muted mt-1">{t('wechatConfig.alreadyBoundDesc')}</p>
-              </div>
-              <div className="w-full bg-bg border border-border rounded-lg p-3">
-                <div className="text-xs text-muted mb-1 flex items-center gap-1"><KeyRound size={12} /> Token</div>
-                <div className="text-sm font-mono text-text truncate">{botToken.slice(0, 12)}{'•'.repeat(16)}</div>
-              </div>
-              <button
-                onClick={() => {
-                  autoStartedRef.current = true;
-                  void startLogin();
-                }}
-                disabled={starting}
-                className="px-4 py-2 bg-panel border border-border text-text rounded-lg flex items-center gap-2 text-sm font-medium hover:bg-neutral-50 transition-colors disabled:opacity-50"
-              >
-                <RefreshCw size={14} className={starting ? 'animate-spin' : ''} />
-                {t('wechatConfig.rebind')}
-              </button>
-            </div>
+    <div className="flex w-full justify-center">
+      <WizardCard className="gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-2">
+            <EyebrowBadge tone="mint">WeChat</EyebrowBadge>
+            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
+              {t('wechatConfig.title')}
+            </h2>
+            <p className="max-w-[560px] text-[14px] leading-[1.55] text-muted">
+              {t('wechatConfig.subtitle')}
+            </p>
           </div>
-        )}
-
-        {/* Start Login — only when no existing token */}
-        {loginState === 'idle' && !botToken && (
-          <div className="bg-panel border border-border rounded-xl p-6 text-center space-y-4">
-            <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto">
-              <Loader2 size={32} className="animate-spin" />
-            </div>
-            <p className="text-sm text-muted">{starting ? t('wechatConfig.starting') : t('wechatConfig.startDescription')}</p>
-          </div>
-        )}
-
-        {/* QR Code Display */}
-        {(loginState === 'qr_ready' || loginState === 'scanning' || loginState === 'confirming') && (
-          <div className="bg-panel border border-border rounded-xl p-6 space-y-4">
-            <div className="flex flex-col items-center space-y-4">
-              {/* QR Code */}
-              <div className="bg-white p-4 rounded-xl shadow-sm border border-neutral-100">
-                <QRCodeSVG
-                  value={qrCodeUrl}
-                  size={256}
-                  level="M"
-                  includeMargin={false}
+          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
+            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
+              {completedDots} / 3
+            </span>
+            <div className="flex gap-1">
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  className={clsx(
+                    'h-1 w-6 rounded-full',
+                    i < completedDots ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
+                  )}
                 />
-              </div>
-
-              {/* Status indicator */}
-              <div className={clsx(
-                'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border',
-                loginState === 'qr_ready' && 'bg-blue-50 border-blue-200 text-blue-800',
-                loginState === 'scanning' && 'bg-amber-50 border-amber-200 text-amber-800',
-                loginState === 'confirming' && 'bg-amber-50 border-amber-200 text-amber-800',
-              )}>
-                {loginState === 'qr_ready' && (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    {t('wechatConfig.waitingForScan')}
-                  </>
-                )}
-                {(loginState === 'scanning' || loginState === 'confirming') && (
-                  <>
-                    <Smartphone size={16} />
-                    {t('wechatConfig.confirmOnPhone')}
-                  </>
-                )}
-              </div>
-
-              <p className="text-xs text-muted text-center">{t('wechatConfig.scanHint')}</p>
+              ))}
             </div>
           </div>
-        )}
+        </div>
 
-        {/* Connected */}
-        {loginState === 'connected' && (
-          <div className="bg-panel border border-border rounded-xl p-6 space-y-4">
-            <div className="flex flex-col items-center space-y-4">
-              <div className="w-20 h-20 bg-success/10 text-success rounded-full flex items-center justify-center animate-in fade-in zoom-in duration-300">
-                <Check size={40} />
-              </div>
-              <div className="text-center">
-                <h3 className="text-lg font-semibold text-text">{t('wechatConfig.connectedTitle')}</h3>
-                <p className="text-sm text-muted mt-1">{message}</p>
-              </div>
-              <div className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-success/10 border border-success/20 text-success">
-                <Wifi size={16} />
-                {t('wechatConfig.connectionEstablished')}
-              </div>
+        {/* Horizontal stepper */}
+        <div className="rounded-xl border border-border bg-background px-5 py-4">
+          <div className="flex items-center justify-between gap-3">
+            {stepLabels.map((label, idx) => {
+              const num = idx + 1;
+              const isCompleted = num < step || (connected && num <= 3);
+              const isActive = !connected && num === step && loginState !== 'error';
+              return (
+                <React.Fragment key={label}>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={clsx(
+                        'flex size-7 items-center justify-center rounded-full text-[12px] font-bold transition-colors',
+                        isCompleted
+                          ? 'bg-mint text-[#080812]'
+                          : isActive
+                            ? 'bg-cyan/15 text-cyan'
+                            : 'bg-white/[0.06] text-muted'
+                      )}
+                    >
+                      {isCompleted ? <Check size={14} /> : num}
+                    </span>
+                    <span
+                      className={clsx(
+                        'text-[12px] font-semibold',
+                        isCompleted || isActive ? 'text-foreground' : 'text-muted'
+                      )}
+                    >
+                      {label}
+                    </span>
+                  </div>
+                  {idx < stepLabels.length - 1 && <span className="mx-2 h-px flex-1 bg-border" />}
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
 
-              <div className="w-full rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-left">
-                <div className="text-sm font-semibold text-text">{t('wechatConfig.nextStepTitle')}</div>
-                <p className="mt-1 text-sm text-muted">{t('wechatConfig.nextStepDesc')}</p>
+        <div className="space-y-4">
+          {/* Already bound */}
+          {isAlreadyBound && (
+            <div className="rounded-xl border border-border bg-background px-6 py-6">
+              <div className="flex flex-col items-center gap-4 text-center">
+                <div className="flex size-16 items-center justify-center rounded-full border border-mint/30 bg-mint/[0.08] text-mint shadow-[0_0_32px_-6px_rgba(91,255,160,0.5)]">
+                  <Check size={32} />
+                </div>
+                <div>
+                  <h3 className="text-[16px] font-semibold text-foreground">{t('wechatConfig.alreadyBound')}</h3>
+                  <p className="mt-1 text-[12px] text-muted">{t('wechatConfig.alreadyBoundDesc')}</p>
+                </div>
+                <div className="w-full max-w-md rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-left">
+                  <div className="mb-1 flex items-center gap-1 text-[11px] text-muted">
+                    <KeyRound size={12} /> Token
+                  </div>
+                  <div className="truncate font-mono text-[12px] text-foreground">
+                    {botToken.slice(0, 12)}
+                    {'•'.repeat(16)}
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    autoStartedRef.current = true;
+                    void startLogin();
+                  }}
+                  disabled={starting}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:opacity-50"
+                >
+                  <RefreshCw size={14} className={starting ? 'animate-spin' : ''} />
+                  {t('wechatConfig.rebind')}
+                </button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Error / Retry */}
-        {loginState === 'error' && (
-          <div className="bg-panel border border-border rounded-xl p-6 space-y-4">
-            <div className="flex flex-col items-center space-y-4">
-              <div className="w-16 h-16 bg-danger/10 text-danger rounded-full flex items-center justify-center">
-                <AlertTriangle size={32} />
-              </div>
-              <div className="text-center">
-                <h3 className="text-lg font-semibold text-text">{t('wechatConfig.errorTitle')}</h3>
-                <p className="text-sm text-danger mt-1">{message}</p>
-              </div>
-              <button
-                onClick={startLogin}
-                disabled={starting}
-                className="px-6 py-3 bg-accent text-white rounded-lg flex items-center gap-2 font-medium shadow-sm hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <RefreshCw size={16} />
-                {t('wechatConfig.retry')}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="mt-auto flex justify-between pt-6 border-t border-border">
-        <button onClick={onBack} className="px-6 py-2 text-muted hover:text-text font-medium transition-colors">
-          {t('common.back')}
-        </button>
-        <button
-          onClick={() => {
-            onNext({
-              platform: 'wechat',
-              wechat: {
-                ...(data.wechat || {}),
-                bot_token: botToken,
-                base_url: baseUrl,
-              },
-            });
-          }}
-          disabled={!canProceed}
-          className={clsx(
-            'px-8 py-3 rounded-lg font-medium transition-colors shadow-sm',
-            canProceed ? 'bg-accent hover:bg-accent/90 text-white' : 'bg-neutral-200 text-muted cursor-not-allowed'
           )}
-        >
-          {t('common.continue')}
-        </button>
-      </div>
+
+          {/* Starting */}
+          {loginState === 'idle' && !botToken && (
+            <div className="rounded-xl border border-border bg-background px-6 py-8 text-center">
+              <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-cyan/30 bg-cyan/[0.06] text-cyan">
+                <Loader2 size={26} className="animate-spin" />
+              </div>
+              <p className="mt-3 text-[13px] text-muted">
+                {starting ? t('wechatConfig.starting') : t('wechatConfig.startDescription')}
+              </p>
+            </div>
+          )}
+
+          {/* QR */}
+          {(loginState === 'qr_ready' || loginState === 'scanning' || loginState === 'confirming') && (
+            <div className="rounded-xl border border-mint/35 bg-surface-2 px-6 py-6 shadow-[0_8px_32px_-8px_rgba(91,255,160,0.078)]">
+              <div className="flex flex-col items-center gap-4">
+                <div className="rounded-xl border border-border bg-white p-4 shadow-[0_0_24px_-4px_rgba(91,255,160,0.4)]">
+                  <QRCodeSVG value={qrCodeUrl} size={224} level="M" includeMargin={false} />
+                </div>
+                <div
+                  className={clsx(
+                    'inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[12px] font-medium',
+                    loginState === 'qr_ready' && 'border-cyan/30 bg-cyan/[0.06] text-cyan',
+                    (loginState === 'scanning' || loginState === 'confirming') &&
+                      'border-gold/30 bg-gold/10 text-gold'
+                  )}
+                >
+                  {loginState === 'qr_ready' && (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      {t('wechatConfig.waitingForScan')}
+                    </>
+                  )}
+                  {(loginState === 'scanning' || loginState === 'confirming') && (
+                    <>
+                      <Smartphone size={14} />
+                      {t('wechatConfig.confirmOnPhone')}
+                    </>
+                  )}
+                </div>
+                <p className="text-center text-[11px] text-muted">{t('wechatConfig.scanHint')}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Connected */}
+          {loginState === 'connected' && (
+            <div className="rounded-xl border border-mint/35 bg-surface-2 px-6 py-6 shadow-[0_8px_32px_-8px_rgba(91,255,160,0.078)]">
+              <div className="flex flex-col items-center gap-4 text-center">
+                <div className="flex size-16 items-center justify-center rounded-full border border-mint/30 bg-mint/[0.08] text-mint shadow-[0_0_32px_-6px_rgba(91,255,160,0.5)]">
+                  <Check size={32} />
+                </div>
+                <div>
+                  <h3 className="text-[16px] font-semibold text-foreground">{t('wechatConfig.connectedTitle')}</h3>
+                  <p className="mt-1 text-[12px] text-muted">{message}</p>
+                </div>
+                <div className="inline-flex items-center gap-2 rounded-lg border border-mint/30 bg-mint/[0.08] px-3 py-1.5 text-[12px] font-medium text-mint">
+                  <Wifi size={14} />
+                  {t('wechatConfig.connectionEstablished')}
+                </div>
+                <div className="w-full max-w-md rounded-lg border border-cyan/30 bg-cyan/[0.06] px-3 py-2.5 text-left">
+                  <div className="text-[12px] font-semibold text-foreground">{t('wechatConfig.nextStepTitle')}</div>
+                  <p className="mt-0.5 text-[11px] text-muted">{t('wechatConfig.nextStepDesc')}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Error */}
+          {loginState === 'error' && (
+            <div className="rounded-xl border border-danger/30 bg-danger/10 px-6 py-6">
+              <div className="flex flex-col items-center gap-4 text-center">
+                <div className="flex size-14 items-center justify-center rounded-full border border-danger/30 bg-danger/15 text-danger">
+                  <AlertTriangle size={28} />
+                </div>
+                <div>
+                  <h3 className="text-[14px] font-semibold text-foreground">{t('wechatConfig.errorTitle')}</h3>
+                  <p className="mt-1 text-[12px] text-danger">{message}</p>
+                </div>
+                <button
+                  onClick={startLogin}
+                  disabled={starting}
+                  className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <RefreshCw size={14} strokeWidth={2.25} />
+                  {t('wechatConfig.retry')}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-border pt-4">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+          >
+            <ArrowLeft size={14} strokeWidth={2.25} />
+            {t('common.back')}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              onNext({
+                platform: 'wechat',
+                wechat: {
+                  ...(data.wechat || {}),
+                  bot_token: botToken,
+                  base_url: baseUrl,
+                },
+              })
+            }
+            disabled={!canProceed}
+            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+          >
+            {t('common.continue')}
+            <ArrowRight size={14} strokeWidth={2.25} />
+          </button>
+        </div>
+      </WizardCard>
     </div>
   );
 };

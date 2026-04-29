@@ -1,589 +1,443 @@
-import React from 'react';
-import { useTranslation } from 'react-i18next';
-import { useStatus } from '../context/StatusContext';
-import { Play, Square, RotateCw, Activity, Terminal, CheckCircle, MessageSquare, Server, Settings, Info } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  ArrowRight,
+  Clock,
+  Cpu,
+  Gauge,
+  Hash,
+  MessageSquare,
+  Play,
+  PlugZap,
+  RotateCw,
+  Square,
+  Zap,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { getEnabledPlatforms, getPrimaryPlatform } from '../lib/platforms';
-import { apiFetch } from '../lib/apiFetch';
+import { useTranslation } from 'react-i18next';
+import clsx from 'clsx';
+
+import { useApi, type LogEntry } from '@/context/ApiContext';
+import { useStatus } from '@/context/StatusContext';
+import { PlatformIcon } from '@/components/visual';
+import { getEnabledPlatforms, getPlatformCatalog, platformSupportsChannels } from '@/lib/platforms';
+
+function relativeFromIso(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const diffMs = date.getTime() - Date.now();
+  const diffSec = Math.round(diffMs / 1000);
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  if (Math.abs(diffSec) < 60) return rtf.format(diffSec, 'second');
+  const diffMin = Math.round(diffSec / 60);
+  if (Math.abs(diffMin) < 60) return rtf.format(diffMin, 'minute');
+  const diffHour = Math.round(diffMin / 60);
+  return rtf.format(diffHour, 'hour');
+}
+
+function absoluteFromIso(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function summarizeLog(message: string) {
+  return message.replace(/^\[[^\]]+\]\s*-?\s*/, '');
+}
+
+// Mirrors design.pen NbtYJ (Card/Stat): cornerRadius 12, fill --background,
+// stroke --border 1px, padding 20, gap 6. Top row (justify space-between)
+// label 13px + icon 16px muted; value 28px bold -0.4 tracking; trend 12px muted.
+const StatCard: React.FC<{
+  label: string;
+  value: string;
+  hint: string;
+  icon: React.ReactNode;
+}> = ({ label, value, hint, icon }) => (
+  <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-background p-5">
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[13px] font-medium text-muted">{label}</span>
+      <span className="text-muted">{icon}</span>
+    </div>
+    <div className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">{value}</div>
+    <div className="text-[12px] font-medium text-muted">{hint}</div>
+  </div>
+);
 
 export const Dashboard: React.FC = () => {
-    const { t } = useTranslation();
-    const { status, control } = useStatus();
-    const [loading, setLoading] = React.useState(false);
-    const [config, setConfig] = React.useState<any>({});
-    const [doctor, setDoctor] = React.useState<any>(null);
-    const [settingsMessage, setSettingsMessage] = React.useState<string | null>(null);
-    const [uiSaving, setUiSaving] = React.useState(false);
-    const [uiMessage, setUiMessage] = React.useState<string | null>(null);
-    const [diagnosticsSaving, setDiagnosticsSaving] = React.useState(false);
-    const [diagnosticsMessage, setDiagnosticsMessage] = React.useState<string | null>(null);
+  const { t } = useTranslation();
+  const api = useApi();
+  const { status, control } = useStatus();
+  const [config, setConfig] = useState<any>(null);
+  const [doctor, setDoctor] = useState<any>(null);
+  const [settingsByPlatform, setSettingsByPlatform] = useState<Record<string, any>>({});
+  const [usersCount, setUsersCount] = useState(0);
+  const [recentLogs, setRecentLogs] = useState<LogEntry[]>([]);
+  const [loading, setLoading] = useState(false);
 
-    const handleAction = async (action: string) => {
-        setLoading(true);
-        try {
-            await control(action);
-        } finally {
-            setLoading(false);
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const nextConfig = await api.getConfig();
+        if (cancelled) return;
+        setConfig(nextConfig);
+
+        const enabledPlatforms = getEnabledPlatforms(nextConfig);
+        const [doctorRes, logsRes, settingsEntries, usersEntries] = await Promise.all([
+          api.doctor(),
+          api.getLogs(8, 'service'),
+          Promise.all(enabledPlatforms.map(async (platform) => [platform, await api.getSettings(platform)] as const)),
+          Promise.all(enabledPlatforms.map(async (platform) => [platform, await api.getUsers(platform)] as const)),
+        ]);
+
+        if (cancelled) return;
+        setDoctor(doctorRes);
+        setRecentLogs((logsRes.logs || []).slice(-5).reverse());
+        setSettingsByPlatform(Object.fromEntries(settingsEntries));
+        setUsersCount(
+          usersEntries.reduce((sum, [, payload]) => sum + Object.keys(payload?.users || {}).length, 0)
+        );
+      } catch {
+        if (!cancelled) {
+          setRecentLogs([]);
         }
+      }
     };
 
-    // Auto-save Message Handling config (no restart needed)
-    const autoSaveMessageConfig = async (newConfig: any) => {
-        try {
-            const patch = {
-                platform: getPrimaryPlatform(newConfig),
-                platforms: newConfig.platforms,
-                ack_mode: newConfig.ack_mode,
-                show_duration: newConfig.show_duration,
-                include_user_info: newConfig.include_user_info,
-                reply_enhancements: newConfig.reply_enhancements,
-                slack: newConfig.slack,
-                discord: newConfig.discord,
-                telegram: newConfig.telegram,
-                lark: newConfig.lark,
-                wechat: newConfig.wechat,
-                agents: newConfig.agents,
-            };
-            await apiFetch('/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(patch),
-            });
-            setSettingsMessage(t('common.saved'));
-        } catch {
-            setSettingsMessage(t('common.saveFailed'));
-        }
+    void load();
+    return () => {
+      cancelled = true;
     };
+  }, [api]);
 
-    // Save Console Server config and restart UI service
-    const handleUiSaveRestart = async () => {
-        setUiSaving(true);
-        setUiMessage(null);
-        try {
-            const uiPayload = {
-                setup_host: config.ui?.setup_host || '127.0.0.1',
-                setup_port: config.ui?.setup_port || 5123,
-            };
-            const configPayload = {
-                ui: { ...(config.ui || {}), ...uiPayload },
-            };
-            // Save config first
-            await apiFetch('/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(configPayload),
-            });
-            // Restart UI service
-            await apiFetch('/ui/reload', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ host: uiPayload.setup_host, port: uiPayload.setup_port }),
-            });
-            setUiMessage(t('dashboard.uiRestartMessage'));
-            const newUrl = `http://${uiPayload.setup_host}:${uiPayload.setup_port}`;
-            window.setTimeout(() => {
-                window.location.href = newUrl;
-            }, 2000);
-        } catch {
-            setUiMessage(t('common.saveFailed'));
-        } finally {
-            setUiSaving(false);
-        }
+  const handleAction = async (action: string) => {
+    setLoading(true);
+    try {
+      await control(action);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const platformCatalog = useMemo(() => getPlatformCatalog(config), [config]);
+  const enabledPlatforms = useMemo(() => getEnabledPlatforms(config), [config]);
+  const lastUpdated = relativeFromIso(status.updated_at);
+  const startedAtRelative = relativeFromIso(status.started_at);
+  const startedAtAbsolute = absoluteFromIso(status.started_at);
+  const totalActiveGroups = useMemo(
+    () =>
+      Object.values(settingsByPlatform).reduce(
+        (sum, payload: any) =>
+          sum + Object.values(payload?.channels || {}).filter((item: any) => item?.enabled).length,
+        0
+      ),
+    [settingsByPlatform]
+  );
+  const totalDiscoveredGroups = useMemo(
+    () =>
+      Object.values(settingsByPlatform).reduce(
+        (sum, payload: any) => sum + Object.keys(payload?.channels || {}).length,
+        0
+      ),
+    [settingsByPlatform]
+  );
+
+  const platformCards = platformCatalog.map((platform) => {
+    const platformSettings = settingsByPlatform[platform.id] || {};
+    const groups = platformSettings.channels || {};
+    const activeGroups = Object.values(groups).filter((item: any) => item?.enabled).length;
+    const discoveredGroups = Object.keys(groups).length;
+    const enabled = enabledPlatforms.includes(platform.id);
+    const supportsGroups = platformSupportsChannels(config, platform.id);
+
+    return {
+      id: platform.id,
+      title: t(platform.title_key || `platform.${platform.id}.title`),
+      enabled,
+      supportsGroups,
+      activeGroups,
+      discoveredGroups,
+      actionHref: supportsGroups ? '/groups' : '/settings/platforms',
+      actionLabel: supportsGroups ? t('dashboard.manageRoute') : t('dashboard.configure'),
     };
+  });
 
-    // Save Diagnostics config and restart main service
-    const handleDiagnosticsSaveRestart = async () => {
-        setDiagnosticsSaving(true);
-        setDiagnosticsMessage(null);
-        try {
-            const runtimePayload = {
-                log_level: config.runtime?.log_level || 'INFO',
-            };
-            const configPayload = {
-                runtime: runtimePayload,
-            };
-            await apiFetch('/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(configPayload),
-            });
-            await control('restart');
-            setDiagnosticsMessage(t('dashboard.mainServiceRestarted'));
-        } catch {
-            setDiagnosticsMessage(t('common.saveFailed'));
-        } finally {
-            setDiagnosticsSaving(false);
-        }
-    };
+  const isRunning = status.state === 'running';
+  const issuesCount = (doctor?.summary?.fail || 0) + (doctor?.summary?.warn || 0);
 
+  const enabledPlatformTitles = platformCards
+    .filter((p) => p.enabled)
+    .map((p) => p.title)
+    .join(' · ');
 
-    React.useEffect(() => {
-        const load = async () => {
-            try {
-                const res = await fetch('/config');
-                if (res.ok) {
-                    const nextConfig = await res.json();
-                    setConfig(nextConfig);
-                }
-                const doctorRes = await apiFetch('/doctor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-                if (doctorRes.ok) {
-                    setDoctor(await doctorRes.json());
-                }
-            } catch {
-                // ignore
-            }
-        };
-        load();
-    }, []);
+  return (
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-1.5">
+        <h1 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
+          {t('dashboard.title')}
+        </h1>
+        <p className="text-[14px] text-muted">{t('dashboard.subtitle')}</p>
+      </div>
 
-    React.useEffect(() => {
-        if (!settingsMessage) return;
-        const timer = window.setTimeout(() => {
-            setSettingsMessage(null);
-        }, 4000);
-        return () => window.clearTimeout(timer);
-    }, [settingsMessage]);
-
-    React.useEffect(() => {
-        if (!diagnosticsMessage) return;
-        const timer = window.setTimeout(() => {
-            setDiagnosticsMessage(null);
-        }, 4000);
-        return () => window.clearTimeout(timer);
-    }, [diagnosticsMessage]);
-
-    const enabledPlatforms = getEnabledPlatforms(config);
-    const primaryPlatform = getPrimaryPlatform(config);
-    const showWorkspaceGateway = config.mode !== 'self_host' && enabledPlatforms.includes('slack');
-
-    return (
-        <div className="max-w-5xl mx-auto space-y-8">
-            <header className="flex items-center justify-between">
-                <div>
-                    <h2 className="text-3xl font-display font-bold mb-2 text-text">{t('dashboard.title')}</h2>
-                    <p className="text-muted">{t('dashboard.subtitle')}</p>
-                </div>
-            </header>
-
-            {/* Overview Card */}
-            <div className="bg-panel rounded-xl border border-border p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-6">
-                    <div>
-                         <h3 className="text-lg font-semibold flex items-center gap-2">
-                            {t('dashboard.serviceStatus')}
-                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                 status.state === 'running' ? 'bg-success/10 text-success' : 'bg-muted/10 text-muted'
-                             }`}>
-                                 {status.state?.toUpperCase() || t('common.unknown').toUpperCase()}
-                             </span>
-                         </h3>
-                         <p className="text-sm text-muted mt-1">PID: {status.service_pid || status.pid || '-'}</p>
-                    </div>
-                    <div className="flex gap-2">
-                        {status.state !== 'running' && (
-                             <button
-                                onClick={() => handleAction('start')}
-                                disabled={loading}
-                                className="flex items-center gap-2 px-4 py-2 bg-success text-white rounded-lg hover:bg-success/90 disabled:opacity-50 font-medium shadow-sm transition-colors"
-                             >
-                                <Play size={16} /> {t('common.start')}
-                             </button>
-                        )}
-                        {status.state === 'running' && (
-                            <button
-                                onClick={() => handleAction('stop')}
-                                disabled={loading}
-                                className="flex items-center gap-2 px-4 py-2 bg-danger text-white rounded-lg hover:bg-danger/90 disabled:opacity-50 font-medium shadow-sm transition-colors"
-                            >
-                                <Square size={16} /> {t('common.stop')}
-                            </button>
-                        )}
-                        <button
-                             onClick={() => handleAction('restart')}
-                             disabled={loading}
-                             className="flex items-center gap-2 px-4 py-2 border border-border bg-white hover:bg-neutral-50 rounded-lg disabled:opacity-50 text-text font-medium transition-colors"
-                        >
-                            <RotateCw size={16} /> {t('common.restart')}
-                        </button>
-                    </div>
-                </div>
-
-                <div className={`grid grid-cols-1 gap-6 border-t border-border pt-6 ${showWorkspaceGateway ? 'md:grid-cols-3' : 'md:grid-cols-1'}`}>
-                    <div>
-                        <div className="text-sm text-muted mb-1">{t('dashboard.mode')}</div>
-                        <div className="font-mono font-medium text-text capitalize">{config.mode || '-'}</div>
-                    </div>
-                    {showWorkspaceGateway && (
-                        <div>
-                            <div className="text-sm text-muted mb-1">{t('dashboard.workspace')}</div>
-                            <div className="font-medium text-text">{config.slack?.team_name || '-'}</div>
-                            <div className="text-xs text-muted font-mono">{config.slack?.team_id || ''}</div>
-                        </div>
-                    )}
-                    {showWorkspaceGateway && (
-                        <div>
-                            <div className="text-sm text-muted mb-1">{t('dashboard.gateway')}</div>
-                            <div className="flex items-center gap-2">
-                                 <div className={`w-2 h-2 rounded-full ${config.gateway?.relay_url ? 'bg-success' : 'bg-danger'}`}></div>
-                                 <span className="text-text">{config.gateway?.relay_url ? t('common.online') : t('common.offline')}</span>
-                            </div>
-                        </div>
-                    )}
-                </div>
+      {/* Mirrors design.pen kgGuL (heroStatus): cornerRadius 16, fill --surface-2,
+          mint stroke 33%, padding [28, 32], shadow blur 48 #5BFFA014 y24 spread -12 */}
+      <div
+        className={clsx(
+          'flex flex-wrap items-center justify-between gap-6 rounded-2xl border bg-surface-2 px-6 py-7 md:px-8',
+          'shadow-[0_24px_48px_-12px_rgba(91,255,160,0.078)]',
+          isRunning ? 'border-mint/30' : 'border-border'
+        )}
+      >
+        <div className="flex min-w-0 items-center gap-5">
+          {/* heroPulse: 52×52 mint-soft circle, blur 24 spread -6 #5BFFA070 glow */}
+          <div
+            className={clsx(
+              'flex size-[52px] shrink-0 items-center justify-center rounded-full border',
+              isRunning
+                ? 'border-mint/35 bg-mint/[0.08] shadow-[0_0_24px_-6px_rgba(91,255,160,0.44)]'
+                : 'border-border bg-white/[0.04]'
+            )}
+          >
+            <Zap
+              className={clsx('size-5', isRunning ? 'text-mint' : 'text-muted')}
+              strokeWidth={2.25}
+            />
+          </div>
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={clsx(
+                  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em]',
+                  isRunning
+                    ? 'border-mint/30 bg-mint/[0.08] text-mint'
+                    : 'border-border bg-white/[0.04] text-muted'
+                )}
+              >
+                <span
+                  className={clsx(
+                    'size-1.5 rounded-full',
+                    isRunning ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.9)]' : 'bg-muted'
+                  )}
+                />
+                {isRunning ? t('dashboard.runningTitle') : t('dashboard.stoppedTitle')}
+              </span>
+              {!doctor?.ok && (
+                <span className="inline-flex items-center rounded-full border border-gold/30 bg-gold/10 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-gold">
+                  {t('dashboard.levelAttention')}
+                </span>
+              )}
             </div>
-
-            {/* Quick Actions / Snapshots */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-panel rounded-xl border border-border p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold flex items-center gap-2 text-text"><Activity size={18} /> {t('dashboard.health')}</h3>
-                    <Link to="/doctor" className="text-sm text-accent hover:underline font-medium">{t('common.viewDetails')}</Link>
-                </div>
-                <div className={`flex items-center gap-2 font-medium ${doctor?.ok ? 'text-success' : 'text-warning'}`}>
-                    <CheckCircle size={16} /> {doctor?.ok ? t('dashboard.allSystemsOperational') : t('dashboard.issuesDetected')}
-                </div>
+            <div className="text-[18px] font-semibold leading-snug text-foreground">
+              {t('dashboard.heroTitle')}
             </div>
-
-            <div className="bg-panel rounded-xl border border-border p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold flex items-center gap-2 text-text"><Settings size={18} /> {t('dashboard.globalPolicy')}</h3>
-                    <Link to="/setup" className="text-sm text-accent hover:underline font-medium">{t('common.editSetup')}</Link>
-                </div>
-                    <div className="space-y-3 text-sm">
-                        <div className="flex justify-between items-center">
-                            <span className="text-muted">{t('dashboard.mode')}</span>
-                            <span className="font-mono text-xs text-text capitalize">{config.mode || '-'}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                            <span className="text-muted">{t('dashboard.platform')}</span>
-                            <span className="font-mono text-xs text-text capitalize">{enabledPlatforms.join(', ') || primaryPlatform}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                            <span className="text-muted">{t('dashboard.defaultBackend')}</span>
-                            <span className="font-mono text-xs text-text">{config.agents?.default_backend || '-'}</span>
-                        </div>
-                    {showWorkspaceGateway && (
-                        <div className="flex justify-between items-center">
-                            <span className="text-muted">{t('dashboard.slackWorkspace')}</span>
-                            <span className="text-xs text-text">{config.slack?.team_name || t('common.notLinked')}</span>
-                        </div>
-                    )}
-                    {showWorkspaceGateway && (
-                        <div className="flex justify-between items-center">
-                            <span className="text-muted">{t('dashboard.gateway')}</span>
-                            <span className="text-xs text-text">{config.gateway?.relay_url ? t('common.online') : t('common.offline')}</span>
-                        </div>
-                    )}
-                </div>
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px] leading-none text-muted">
+              <span className="inline-flex items-center gap-1">
+                <Cpu className="size-3 shrink-0" strokeWidth={2} />
+                {status.service_pid || status.pid
+                  ? `PID ${status.service_pid || status.pid}`
+                  : t('common.unknown')}
+              </span>
+              {isRunning && startedAtAbsolute && (
+                <span
+                  className="inline-flex items-center gap-1"
+                  title={status.started_at as string | undefined}
+                >
+                  <Clock className="size-3 shrink-0" strokeWidth={2} />
+                  {t('dashboard.startedAt', {
+                    time: startedAtAbsolute,
+                    relative: startedAtRelative ?? '',
+                  })}
+                </span>
+              )}
+              {!isRunning && lastUpdated && (
+                <span className="inline-flex items-center gap-1">
+                  <Clock className="size-3 shrink-0" strokeWidth={2} />
+                  {lastUpdated}
+                </span>
+              )}
+              {status.last_action && <span>· {status.last_action}</span>}
             </div>
-
-            <div className="bg-panel rounded-xl border border-border p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold flex items-center gap-2 text-text"><MessageSquare size={18} /> {t('dashboard.messageHandling')}</h3>
-                </div>
-                <div className="space-y-3 text-sm">
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted flex items-center gap-1">
-                            {t('dashboard.ackMode')}
-                            <span className="relative group">
-                                <Info size={12} className="text-muted/50 cursor-help" />
-                                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                    {t('dashboard.ackModeHint')}
-                                </span>
-                            </span>
-                        </span>
-                        <select
-                            value={config.ack_mode || 'typing'}
-                            onChange={(e) => {
-                                const mode = e.target.value || 'typing';
-                                setSettingsMessage(null);
-                                const newConfig = {
-                                    ...config,
-                                    ack_mode: mode,
-                                };
-                                setConfig(newConfig);
-                                autoSaveMessageConfig(newConfig);
-                            }}
-                            className="w-36 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono"
-                        >
-                            <option value="typing">{t('dashboard.ackTyping')}</option>
-                            <option value="reaction">{t('dashboard.ackReaction')}</option>
-                            <option value="message">{t('dashboard.ackMessage')}</option>
-                        </select>
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted flex items-center gap-1">
-                            {t('dashboard.errorRetryLimit')}
-                            <span className="relative group">
-                                <Info size={12} className="text-muted/50 cursor-help" />
-                                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-56 text-center">
-                                    {t('dashboard.errorRetryLimitHint')}
-                                </span>
-                            </span>
-                        </span>
-                        <input
-                            type="number"
-                            min={0}
-                            max={10}
-                            value={config.agents?.opencode?.error_retry_limit ?? 1}
-                            onChange={(e) => {
-                                const limit = Math.max(0, Math.min(10, Number(e.target.value) || 0));
-                                setSettingsMessage(null);
-                                const newConfig = {
-                                    ...config,
-                                    agents: {
-                                        ...(config.agents || {}),
-                                        opencode: {
-                                            ...(config.agents?.opencode || {}),
-                                            error_retry_limit: limit,
-                                        },
-                                    },
-                                };
-                                setConfig(newConfig);
-                                autoSaveMessageConfig(newConfig);
-                            }}
-                            className="w-16 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono text-center"
-                        />
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted flex items-center gap-1">
-                            {t('dashboard.showDuration')}
-                            <span className="relative group">
-                                <Info size={12} className="text-muted/50 cursor-help" />
-                                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                    {t('dashboard.showDurationHint')}
-                                </span>
-                            </span>
-                        </span>
-                        <button
-                            onClick={() => {
-                                setSettingsMessage(null);
-                                const newConfig = {
-                                    ...config,
-                                    show_duration: !config.show_duration,
-                                };
-                                setConfig(newConfig);
-                                autoSaveMessageConfig(newConfig);
-                            }}
-                            className={`px-2 py-1 rounded text-xs font-semibold border ${
-                                config.show_duration !== false
-                                    ? 'bg-success/10 text-success border-success/20'
-                                    : 'bg-neutral-100 text-muted border-border'
-                            }`}
-                        >
-                            {config.show_duration !== false
-                                ? t('common.enabled')
-                                : t('common.disabled')}
-                        </button>
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted flex items-center gap-1">
-                            {t('dashboard.includeUserInfo')}
-                            <span className="relative group">
-                                <Info size={12} className="text-muted/50 cursor-help" />
-                                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                    {t('dashboard.includeUserInfoHint')}
-                                </span>
-                            </span>
-                        </span>
-                        <button
-                            onClick={() => {
-                                setSettingsMessage(null);
-                                const newConfig = {
-                                    ...config,
-                                    include_user_info: !config.include_user_info,
-                                };
-                                setConfig(newConfig);
-                                autoSaveMessageConfig(newConfig);
-                            }}
-                            className={`px-2 py-1 rounded text-xs font-semibold border ${
-                                config.include_user_info
-                                    ? 'bg-success/10 text-success border-success/20'
-                                    : 'bg-neutral-100 text-muted border-border'
-                            }`}
-                        >
-                            {config.include_user_info
-                                ? t('common.enabled')
-                                : t('common.disabled')}
-                        </button>
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted flex items-center gap-1">
-                            {t('dashboard.replyEnhancements')}
-                            <span className="relative group">
-                                <Info size={12} className="text-muted/50 cursor-help" />
-                                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                    {t('dashboard.replyEnhancementsHint')}
-                                </span>
-                            </span>
-                        </span>
-                        <button
-                            onClick={() => {
-                                setSettingsMessage(null);
-                                const newConfig = {
-                                    ...config,
-                                    reply_enhancements: !config.reply_enhancements,
-                                };
-                                setConfig(newConfig);
-                                autoSaveMessageConfig(newConfig);
-                            }}
-                            className={`px-2 py-1 rounded text-xs font-semibold border ${
-                                config.reply_enhancements !== false
-                                    ? 'bg-success/10 text-success border-success/20'
-                                    : 'bg-neutral-100 text-muted border-border'
-                            }`}
-                        >
-                            {config.reply_enhancements !== false
-                                ? t('common.enabled')
-                                : t('common.disabled')}
-                        </button>
-                    </div>
-                    {enabledPlatforms.includes('slack') && (
-                        <div className="flex justify-between items-center">
-                            <span className="text-muted flex items-center gap-1">
-                                {t('dashboard.slackLinkPreviews')}
-                                <span className="relative group">
-                                    <Info size={12} className="text-muted/50 cursor-help" />
-                                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-text text-bg text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 w-60 text-center">
-                                        {t('dashboard.slackLinkPreviewsHint')}
-                                    </span>
-                                </span>
-                            </span>
-                            <button
-                                onClick={() => {
-                                    setSettingsMessage(null);
-                                    const newConfig = {
-                                        ...config,
-                                        slack: {
-                                            ...(config.slack || {}),
-                                            disable_link_unfurl: !config.slack?.disable_link_unfurl,
-                                        },
-                                    };
-                                    setConfig(newConfig);
-                                    autoSaveMessageConfig(newConfig);
-                                }}
-                                className={`px-2 py-1 rounded text-xs font-semibold border ${
-                                    config.slack?.disable_link_unfurl
-                                        ? 'bg-success/10 text-success border-success/20'
-                                        : 'bg-neutral-100 text-muted border-border'
-                                }`}
-                            >
-                                {config.slack?.disable_link_unfurl
-                                    ? t('common.enabled')
-                                    : t('common.disabled')}
-                            </button>
-                        </div>
-                    )}
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.allowedChannels')}</span>
-                        <Link to="/channels" className="text-xs text-accent hover:underline font-medium">{t('common.manageChannels')}</Link>
-                    </div>
-                </div>
-            </div>
-
-            <div className="bg-panel rounded-xl border border-border p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold flex items-center gap-2 text-text"><Server size={18} /> {t('dashboard.consoleServer')}</h3>
-                </div>
-                <div className="space-y-3 text-sm">
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.host')}</span>
-                        <input
-                            type="text"
-                            value={config.ui?.setup_host || '127.0.0.1'}
-                            onChange={(e) => {
-                                const host = e.target.value || '127.0.0.1';
-                                setUiMessage(null);
-                                setConfig((prev: any) => ({
-                                    ...prev,
-                                    ui: { ...(prev.ui || {}), setup_host: host },
-                                }));
-                            }}
-                            className="w-40 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono"
-                        />
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.port')}</span>
-                        <input
-                            type="number"
-                            min={1024}
-                            max={65535}
-                            value={config.ui?.setup_port || 5123}
-                            onChange={(e) => {
-                                const port = Number(e.target.value) || 5123;
-                                setUiMessage(null);
-                                setConfig((prev: any) => ({
-                                    ...prev,
-                                    ui: { ...(prev.ui || {}), setup_port: port },
-                                }));
-                            }}
-                            className="w-24 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono"
-                        />
-                    </div>
-                </div>
-                <div className="flex justify-between items-center mt-4 pt-4 border-t border-border">
-                    {uiMessage && <span className="text-xs text-muted">{uiMessage}</span>}
-                    {!uiMessage && <span />}
-                    <button
-                        onClick={handleUiSaveRestart}
-                        disabled={uiSaving}
-                        className="px-3 py-1.5 bg-accent text-white rounded-md text-xs font-semibold disabled:opacity-50 flex items-center gap-1"
-                    >
-                        <RotateCw size={12} /> {uiSaving ? t('common.saving') : t('common.saveAndRestart')}
-                    </button>
-                </div>
-            </div>
-
-            <div className="bg-panel rounded-xl border border-border p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold flex items-center gap-2 text-text"><Terminal size={18} /> {t('dashboard.diagnostics')}</h3>
-                    <Link to="/doctor/logs" className="text-sm text-accent hover:underline font-medium">{t('common.viewLogs')}</Link>
-                </div>
-                <div className="space-y-3 text-sm">
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.logLevel')}</span>
-                        <select
-                            value={config.runtime?.log_level || 'INFO'}
-                            onChange={(e) => {
-                                const level = e.target.value || 'INFO';
-                                setDiagnosticsMessage(null);
-                                setConfig((prev: any) => ({
-                                    ...prev,
-                                    runtime: { ...(prev.runtime || {}), log_level: level },
-                                }));
-                            }}
-                            className="w-28 bg-neutral-100 border border-border rounded px-2 py-1 text-xs font-mono"
-                        >
-                            {['DEBUG', 'INFO', 'WARNING', 'ERROR'].map((level) => (
-                                <option key={level} value={level}>{level}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.configFile')}</span>
-                        <code className="font-mono text-xs bg-neutral-100 px-2 py-1 rounded text-text">~/.vibe_remote/config/config.json</code>
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-muted">{t('dashboard.logs')}</span>
-                        <code className="font-mono text-xs bg-neutral-100 px-2 py-1 rounded text-text">~/.vibe_remote/logs/vibe_remote.log</code>
-                    </div>
-                </div>
-                <div className="flex justify-between items-center mt-4 pt-4 border-t border-border">
-                    {diagnosticsMessage && <span className="text-xs text-muted">{diagnosticsMessage}</span>}
-                    {!diagnosticsMessage && <span />}
-                    <button
-                        onClick={handleDiagnosticsSaveRestart}
-                        disabled={diagnosticsSaving}
-                        className="px-3 py-1.5 bg-accent text-white rounded-md text-xs font-semibold disabled:opacity-50 flex items-center gap-1"
-                    >
-                        <RotateCw size={12} /> {diagnosticsSaving ? t('common.saving') : t('common.saveAndRestart')}
-                    </button>
-                </div>
-            </div>
-       </div>
-
-
-
+          </div>
         </div>
-    );
+
+        <div className="flex flex-wrap items-center gap-2">
+          {!isRunning && (
+            <button
+              type="button"
+              onClick={() => void handleAction('start')}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-mint px-4 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-6px_rgba(91,255,160,0.44)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Play className="size-3.5" strokeWidth={2.5} />
+              {t('common.start')}
+            </button>
+          )}
+          {isRunning && (
+            <button
+              type="button"
+              onClick={() => void handleAction('stop')}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2.5 text-[13px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Square className="size-3.5" strokeWidth={2.5} />
+              {t('common.stop')}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleAction('restart')}
+            disabled={loading}
+            className={clsx(
+              'inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-[13px] font-bold transition disabled:cursor-not-allowed disabled:opacity-50',
+              isRunning
+                ? 'bg-mint text-[#080812] shadow-[0_0_24px_-6px_rgba(91,255,160,0.44)] hover:brightness-105'
+                : 'border border-border bg-white/[0.04] text-foreground hover:border-border-strong'
+            )}
+          >
+            <RotateCw className="size-3.5" strokeWidth={2.5} />
+            {t('common.restart')}
+          </button>
+        </div>
+      </div>
+
+      {/* Mirrors design.pen statsRow + NbtYJ Card/Stat */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label={t('dashboard.metricPlatforms')}
+          value={`${enabledPlatforms.length} / ${platformCatalog.length}`}
+          hint={enabledPlatformTitles || t('dashboard.metricPlatformsHint')}
+          icon={<PlugZap className="size-4" />}
+        />
+        <StatCard
+          label={t('dashboard.metricGroups')}
+          value={String(totalActiveGroups)}
+          hint={t('dashboard.metricGroupsHint').replace('{{count}}', String(totalDiscoveredGroups))}
+          icon={<Hash className="size-4" />}
+        />
+        <StatCard
+          label={t('dashboard.metricUsers')}
+          value={String(usersCount)}
+          hint={t('dashboard.metricUsersHint')}
+          icon={<MessageSquare className="size-4" />}
+        />
+        <StatCard
+          label={t('dashboard.metricHealth')}
+          value={String(issuesCount)}
+          hint={doctor?.ok ? t('dashboard.metricHealthHealthy') : t('dashboard.metricHealthIssues')}
+          icon={<Gauge className="size-4" />}
+        />
+      </div>
+
+      {/* Mirrors design.pen l0yMzY (twoCol) — platformsCard 1.2fr / activityCard 420px.
+          Both: cornerRadius 12, fill --background, stroke --border 1px,
+          head padding [20, 24] with bottom border, body fill_container. */}
+      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+        <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-background">
+          <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-5">
+            <div className="flex flex-col gap-0.5">
+              <h2 className="text-[15px] font-semibold text-foreground">
+                {t('dashboard.platformOverviewTitle')}
+              </h2>
+              <p className="text-[12px] text-muted">{t('dashboard.platformOverviewSubtitle')}</p>
+            </div>
+            <Link
+              to="/settings/platforms"
+              className="inline-flex items-center gap-1 rounded-lg border border-border bg-white/[0.04] px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-border-strong"
+            >
+              {t('dashboard.manageAll')}
+              <ArrowRight className="size-3.5" strokeWidth={2.25} />
+            </Link>
+          </div>
+          <div className="flex flex-col divide-y divide-border">
+            {platformCards.map((platform) => (
+              <div key={platform.id} className="flex items-center justify-between gap-4 px-6 py-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-2">
+                    <PlatformIcon platform={platform.id as any} size={18} />
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <div className="text-[13px] font-semibold text-foreground">{platform.title}</div>
+                    <div className="text-[11px] text-muted">
+                      {platform.supportsGroups
+                        ? t('dashboard.platformGroupsHint')
+                            .replace('{{active}}', String(platform.activeGroups))
+                            .replace('{{discovered}}', String(platform.discoveredGroups))
+                        : t('dashboard.platformNoGroupsHint')}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={clsx(
+                      'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium',
+                      platform.enabled
+                        ? 'border-mint/30 bg-mint/[0.08] text-mint'
+                        : 'border-border bg-white/[0.04] text-muted'
+                    )}
+                  >
+                    {platform.enabled ? t('dashboard.connected') : t('dashboard.notConfigured')}
+                  </span>
+                  <Link
+                    to={platform.actionHref}
+                    className="inline-flex items-center gap-1 text-[12px] font-medium text-foreground transition hover:text-mint"
+                  >
+                    {platform.actionLabel}
+                    <ArrowRight className="size-3.5" strokeWidth={2.25} />
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-background">
+          <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-5">
+            <div className="flex flex-col gap-0.5">
+              <h2 className="text-[15px] font-semibold text-foreground">
+                {t('dashboard.recentActivityTitle')}
+              </h2>
+              <p className="text-[12px] text-muted">{t('dashboard.recentActivitySubtitle')}</p>
+            </div>
+            <Link
+              to="/logs"
+              className="inline-flex items-center gap-1 text-[12px] font-medium text-foreground transition hover:text-mint"
+            >
+              {t('common.viewLogs')}
+              <ArrowRight className="size-3.5" strokeWidth={2.25} />
+            </Link>
+          </div>
+          <div className="flex flex-col divide-y divide-border">
+            {recentLogs.length === 0 ? (
+              <div className="px-6 py-8 text-center text-[12px] text-muted">
+                {t('dashboard.recentActivityEmpty')}
+              </div>
+            ) : (
+              recentLogs.map((entry, index) => (
+                <div
+                  key={`${entry.timestamp}-${index}`}
+                  className="flex items-start gap-3 px-6 py-3.5"
+                >
+                  <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-cyan/30 bg-cyan/[0.08] text-cyan">
+                    <Activity className="size-3.5" strokeWidth={2.25} />
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="line-clamp-2 text-[12px] font-medium text-foreground">
+                      {summarizeLog(entry.message)}
+                    </div>
+                    <div className="font-mono text-[10px] text-muted">
+                      {relativeFromIso(entry.timestamp) || entry.timestamp} · {entry.logger}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };

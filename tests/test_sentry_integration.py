@@ -200,6 +200,29 @@ def test_run_ui_server_skips_sentry_when_config_load_fails(monkeypatch):
     assert sentry_calls == []
 
 
+def test_run_ui_server_reconciles_remote_access_after_binding(monkeypatch):
+    from vibe import ui_server
+    from vibe import remote_access
+    from werkzeug import serving
+
+    class DummyServer:
+        def serve_forever(self):
+            return None
+
+    reconcile_calls = []
+    config = _config()
+
+    monkeypatch.setattr(ui_server.paths, "ensure_data_dirs", lambda: None)
+    monkeypatch.setattr(ui_server.V2Config, "load", lambda *args, **kwargs: config)
+    monkeypatch.setattr(ui_server, "init_sentry", lambda *args, **kwargs: None)
+    monkeypatch.setattr(serving, "make_server", lambda *args, **kwargs: DummyServer())
+    monkeypatch.setattr(remote_access, "reconcile", lambda next_config=None: reconcile_calls.append(next_config) or {"ok": True})
+
+    ui_server.run_ui_server("127.0.0.1", 0)
+
+    assert reconcile_calls == [config]
+
+
 def test_ui_error_handler_does_not_explicitly_capture_exceptions():
     source = Path("vibe/ui_server.py").read_text(encoding="utf-8")
     module = ast.parse(source)

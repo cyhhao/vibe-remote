@@ -228,8 +228,43 @@ def _is_loopback_host(value: str | None) -> bool:
         return False
 
 
-def _is_local_request() -> bool:
-    return _is_loopback_peer() and _is_loopback_host(request.host) and not _has_cloudflare_forwarded_metadata()
+def _is_private_peer() -> bool:
+    remote_addr = (request.remote_addr or "").strip()
+    if not remote_addr or remote_addr == "localhost":
+        return False
+    try:
+        address = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return False
+    if address.is_loopback or address.is_private or address.is_link_local:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        return mapped.is_loopback or mapped.is_private or mapped.is_link_local
+    return False
+
+
+def _is_setup_host_request(config: V2Config | None) -> bool:
+    if config is None:
+        return False
+    setup_host = _normalized_host(getattr(config.ui, "setup_host", ""))
+    if not setup_host or setup_host in {"0.0.0.0", "::", "*"}:
+        return False
+    if _is_loopback_host(setup_host):
+        return False
+    if _normalized_host(request.host) != setup_host:
+        return False
+    if _has_cloudflare_forwarded_metadata():
+        return False
+    return _is_private_peer()
+
+
+def _is_local_request(config: V2Config | None = None) -> bool:
+    if _has_cloudflare_forwarded_metadata():
+        return False
+    if _is_loopback_peer() and _is_loopback_host(request.host):
+        return True
+    return _is_setup_host_request(config)
 
 
 def _normalized_host(value: str | None) -> str:
@@ -370,7 +405,7 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
 @app.before_request
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
-    local_request = _is_local_request()
+    local_request = _is_local_request(config)
     if config is None:
         if local_request:
             return None
@@ -1428,6 +1463,19 @@ def serve_static(path):
 # =============================================================================
 
 
+def _reconcile_remote_access_for_ui_start(config: V2Config | None) -> None:
+    if config is None:
+        return
+    try:
+        from vibe import remote_access
+
+        result = remote_access.reconcile(config)
+        if isinstance(result, dict) and result.get("ok") is False:
+            logger.warning("Remote access reconcile after UI start failed: %s", result.get("error"))
+    except Exception:
+        logger.warning("Failed to reconcile remote access after UI start", exc_info=True)
+
+
 def run_ui_server(host: str, port: int) -> None:
     """Start the Flask UI server."""
     global _server
@@ -1452,6 +1500,7 @@ def run_ui_server(host: str, port: int) -> None:
     for attempt in range(10):
         try:
             _server = make_server(host, port, app, threaded=True)
+            _reconcile_remote_access_for_ui_start(config)
             _server.serve_forever()
             break
         except OSError as e:

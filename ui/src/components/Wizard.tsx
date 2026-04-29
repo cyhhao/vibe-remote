@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { Welcome } from './steps/Welcome';
-// import { ModeSelection } from './steps/ModeSelection'; // temporarily hidden — SaaS mode not yet available
 import { PlatformSelection } from './steps/PlatformSelection';
 import { AgentDetection } from './steps/AgentDetection';
 import { SlackConfig } from './steps/SlackConfig';
@@ -13,9 +12,9 @@ import { WeChatConfig } from './steps/WeChatConfig';
 import { ChannelList } from './steps/ChannelList';
 import { Summary } from './steps/Summary';
 import { useApi } from '../context/ApiContext';
-import { LanguageSwitcher } from './LanguageSwitcher';
 import clsx from 'clsx';
 import { getEnabledPlatforms, getPrimaryPlatform, platformSupportsChannels } from '../lib/platforms';
+import { WizardChrome } from './visual';
 
 const buildConfigPayload = (data: any) => {
   const enabledPlatforms = getEnabledPlatforms(data);
@@ -266,49 +265,46 @@ export const Wizard: React.FC = () => {
   };
 
   const CurrentComponent = steps[currentStep].component;
+  const stepId = steps[currentStep].id;
+  const wizardGlowClass =
+    stepId === 'welcome' ? 'page-glow-wizard-welcome'
+    : stepId === 'agents' ? 'page-glow-wizard-backends'
+    : stepId === 'platform' ? 'page-glow-wizard-platforms'
+    : stepId === 'platform-slack' ? 'page-glow-wizard-slack'
+    : stepId === 'summary' ? 'page-glow-wizard-summary'
+    : 'page-glow-wizard-platforms';
 
-  if (!loaded) return <div className="min-h-screen flex items-center justify-center bg-bg text-muted">{t('common.loading')}</div>;
+  if (!loaded) return <div className="min-h-screen flex items-center justify-center bg-background text-muted">{t('common.loading')}</div>;
+
+  // Welcome step omits the segmented progress and the skip button (matches design.pen Kebr6).
+  // Summary step keeps the rail but disables skip (already at the end).
+  const isWelcome = stepId === 'welcome';
+  const isSummary = stepId === 'summary';
+  // Include welcome in the count so the counter ("Step X / N") matches the
+  // step eyebrows (03 — PLATFORMS, etc.). The progress bar itself still
+  // skips welcome via showProgress to keep the welcome screen clean.
+  const progressTotal = steps.length;
+  const progressIndex = steps.findIndex((step) => step.id === stepId);
 
   return (
-    <div className="min-h-screen bg-bg flex flex-col items-center justify-center p-4 md:p-8">
-      <div className="w-full max-w-4xl bg-panel rounded-2xl border border-border shadow-xl overflow-hidden flex flex-col min-h-[600px] max-h-[90vh]">
-        {/* Header */}
-        <div className="bg-panel border-b border-border p-6 flex justify-between items-center relative z-10">
-          <div>
-            <h1 className="text-xl font-bold text-text font-display">{t('wizard.title')}</h1>
-          </div>
-          <div className="flex items-center gap-4">
-            <LanguageSwitcher />
-            <div className="flex gap-2">
-              {steps.map((s, i) => {
-                  if (s.id === 'welcome') return null; // Skip welcome dot
-                  const isCompleted = i < currentStep;
-                  const isCurrent = i === currentStep;
-                  return (
-                      <div key={s.id} className="flex flex-col items-center gap-1">
-                          <div
-                            className={clsx(
-                              "w-8 h-1 rounded-full transition-all duration-300",
-                              isCompleted ? 'bg-success' : isCurrent ? 'bg-accent' : 'bg-neutral-200'
-                            )}
-                          />
-                      </div>
-                  );
-              })}
-            </div>
-          </div>
-        </div>
+    <div className={clsx('min-h-screen px-4 py-6 text-foreground md:px-10 md:py-10', wizardGlowClass)}>
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-[1280px] flex-col gap-8">
+        <WizardChrome
+          current={Math.max(0, progressIndex)}
+          total={Math.max(progressTotal, 1)}
+          showProgress={!isWelcome}
+          onSkip={!isWelcome && !isSummary ? () => setCurrentStep(steps.length - 1) : undefined}
+        />
 
-        {/* Content */}
-        <div className="flex-1 p-8 relative overflow-y-auto">
+        <div className="flex flex-1 flex-col items-center justify-start">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentStep}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.2 }}
-              className="h-full"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.18 }}
+              className="w-full"
             >
               <CurrentComponent
                 data={data}

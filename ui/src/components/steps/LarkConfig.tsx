@@ -1,10 +1,29 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Shield, RefreshCw, Check, MessageSquare, KeyRound, Plus, ExternalLink, ChevronDown, ChevronUp, BookOpen, Copy, AlertTriangle, Radio, Globe, Wifi } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  ExternalLink,
+  Globe,
+  KeyRound,
+  MessageSquare,
+  Plus,
+  Radio,
+  RefreshCw,
+  Shield,
+  Wifi,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
+import { EyebrowBadge, WizardCard } from '../visual';
 
 const LARK_PERMISSIONS_JSON = `{
   "scopes": {
@@ -35,6 +54,8 @@ interface LarkConfigProps {
   onBack: () => void;
 }
 
+// Mirrors design.pen XCWAT (Slack creds wizard step) adapted for Lark/Feishu.
+// Adds a domain selector ahead of the 5-step accordion. WizardCard 920, mint eyebrow.
 export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) => {
   const { t } = useTranslation();
   const api = useApi();
@@ -46,11 +67,16 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
   const [authResult, setAuthResult] = useState<any>(null);
   const [wsStatus, setWsStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [chats, setChats] = useState<any[]>([]);
-  const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 2: false, 3: false, 4: false, 5: false });
+  const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({
+    1: true,
+    2: false,
+    3: false,
+    4: false,
+    5: false,
+  });
   const [copiedJson, setCopiedJson] = useState(false);
 
   const platformBase = domain === 'lark' ? 'https://open.larksuite.com' : 'https://open.feishu.cn';
-  // Dynamic links based on appId — only useful after credentials are entered
   const appBase = appId ? `${platformBase}/app/${appId}` : '';
   const permissionsUrl = appBase ? `${appBase}/auth` : '';
   const eventsUrl = appBase ? `${appBase}/event` : '';
@@ -63,22 +89,27 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
 
   useEffect(() => {
     if (appId && appSecret && !expandedSteps[2]) {
-      setExpandedSteps(prev => ({ ...prev, 2: true }));
+      setExpandedSteps((prev) => ({ ...prev, 2: true }));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId, appSecret]);
 
-  // Stop temp WS on unmount
   useEffect(() => {
     return () => {
       api.larkTempWsStop().catch(() => {});
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const isValid = useMemo(() => {
     if (!appId || !appSecret) return false;
     if (authResult?.ok) return true;
-    // Allow proceeding if credentials match previously saved config (already validated before)
-    return Boolean(data.lark?.app_id && data.lark?.app_secret && appId === data.lark?.app_id && appSecret === data.lark?.app_secret);
+    return Boolean(
+      data.lark?.app_id &&
+        data.lark?.app_secret &&
+        appId === data.lark?.app_id &&
+        appSecret === data.lark?.app_secret
+    );
   }, [appId, appSecret, authResult, data.lark?.app_id, data.lark?.app_secret]);
 
   const runAuthTest = async () => {
@@ -88,12 +119,11 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
       const result = await api.larkAuthTest(appId, appSecret, domain);
       setAuthResult(result);
 
-      // On success, start temp WS so the Feishu console shows "Use Long Connection"
       if (result.ok) {
         setWsStatus('connecting');
         try {
           await api.larkTempWsStart(appId, appSecret, domain);
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 2000));
           setWsStatus('connected');
         } catch {
           setWsStatus('error');
@@ -122,20 +152,20 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
     if (authResult?.ok) {
       loadChats();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authResult?.ok]);
 
   const toggleStep = (step: number) => {
-    setExpandedSteps(prev => ({ ...prev, [step]: !prev[step] }));
+    setExpandedSteps((prev) => ({ ...prev, [step]: !prev[step] }));
   };
 
   const copyPermissionsJson = async () => {
-    const copiedToClipboard = await copyTextToClipboard(LARK_PERMISSIONS_JSON);
-    if (copiedToClipboard) {
+    const ok = await copyTextToClipboard(LARK_PERMISSIONS_JSON);
+    if (ok) {
       setCopiedJson(true);
       setTimeout(() => setCopiedJson(false), 2000);
       return;
     }
-
     showToast(t('common.copyFailed'), 'error');
   };
 
@@ -143,9 +173,9 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
     <button
       onClick={() => window.open(url, '_blank')}
       disabled={!url}
-      className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+      className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
     >
-      <ExternalLink size={16} />
+      <ExternalLink size={14} strokeWidth={2.25} />
       {label}
     </button>
   );
@@ -158,18 +188,18 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
   }) => (
     <button
       onClick={() => toggleStep(step)}
-      className="w-full px-4 py-3 flex items-center justify-between bg-neutral-50 hover:bg-neutral-100 transition-colors"
+      className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-white/[0.02]"
     >
       <div className="flex items-center gap-3">
         <span
           className={clsx(
-            'w-7 h-7 rounded-full text-sm font-bold flex items-center justify-center transition-colors',
-            completed ? 'bg-success text-white' : 'bg-accent text-white'
+            'flex size-7 items-center justify-center rounded-full text-[12px] font-bold transition-colors',
+            completed ? 'bg-mint text-[#080812]' : 'bg-cyan/15 text-cyan'
           )}
         >
           {completed ? <Check size={14} /> : step}
         </span>
-        <span className="flex items-center gap-2 font-semibold text-text">
+        <span className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
           {icon}
           {title}
         </span>
@@ -178,299 +208,348 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
     </button>
   );
 
+  const StepShell: React.FC<{ active: boolean; children: React.ReactNode }> = ({ active, children }) => (
+    <div
+      className={clsx(
+        'overflow-hidden rounded-xl border transition-colors',
+        active
+          ? 'border-mint/35 bg-surface-2 shadow-[0_8px_32px_-8px_rgba(91,255,160,0.078)]'
+          : 'border-border bg-background'
+      )}
+    >
+      {children}
+    </div>
+  );
+
+  const completedCount = [
+    Boolean(appId),
+    isValid,
+    Boolean(authResult?.ok),
+    expandedSteps[4],
+    expandedSteps[5],
+  ].filter(Boolean).length;
+
   return (
-    <div className="flex flex-col h-full max-w-2xl mx-auto">
-      <div className="mb-4">
-        <h2 className="text-3xl font-display font-bold text-text">{t('larkConfig.title')}</h2>
-        <p className="text-muted mt-1">{t('larkConfig.subtitle')}</p>
-      </div>
-
-      {/* Domain selector */}
-      <div className="mb-4 bg-panel border border-border rounded-xl p-4 space-y-2">
-        <label className="text-sm font-medium text-text flex items-center gap-2">
-          <Globe size={16} className="text-accent" /> {t('larkConfig.domainLabel')}
-        </label>
-        <div className="flex gap-3">
-          <button
-            onClick={() => { setDomain('feishu'); setAuthResult(null); setWsStatus('idle'); }}
-            className={clsx(
-              'flex-1 px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all',
-              domain === 'feishu'
-                ? 'border-accent bg-accent/10 text-accent'
-                : 'border-border bg-bg text-muted hover:border-accent/30'
-            )}
-          >
-            {t('larkConfig.domainFeishu')}
-          </button>
-          <button
-            onClick={() => { setDomain('lark'); setAuthResult(null); setWsStatus('idle'); }}
-            className={clsx(
-              'flex-1 px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all',
-              domain === 'lark'
-                ? 'border-accent bg-accent/10 text-accent'
-                : 'border-border bg-bg text-muted hover:border-accent/30'
-            )}
-          >
-            {t('larkConfig.domainLark')}
-          </button>
-        </div>
-        <p className="text-xs text-muted">{t('larkConfig.domainHint')}</p>
-      </div>
-
-      <div className="space-y-3 overflow-y-auto flex-1 pr-1">
-        {/* Step 1: Create App */}
-        <div className="bg-panel border border-border rounded-xl overflow-hidden">
-          <StepHeader step={1} title={t('larkConfig.step1Title')} icon={<Plus size={16} className="text-accent" />} />
-          {expandedSteps[1] && (
-            <div className="p-4 space-y-4 border-t border-border">
-              <p className="text-sm text-muted">{t('larkConfig.step1Description')}</p>
-              <ol className="list-decimal list-inside space-y-1.5 text-sm text-muted pl-1">
-                <li>{t('larkConfig.step1Item1')}</li>
-                <li>{t('larkConfig.step1Item2')}</li>
-                <li>{t('larkConfig.step1Item3')}</li>
-              </ol>
-              <LinkButton url={`${platformBase}/app`} label={t('larkConfig.openPlatform')} />
+    <div className="flex w-full justify-center">
+      <WizardCard className="gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-2">
+            <EyebrowBadge tone="mint">Lark / Feishu</EyebrowBadge>
+            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
+              {t('larkConfig.title')}
+            </h2>
+            <p className="max-w-[560px] text-[14px] leading-[1.55] text-muted">
+              {t('larkConfig.subtitle')}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
+            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
+              {completedCount} / 5
+            </span>
+            <div className="flex gap-1">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <span
+                  key={i}
+                  className={clsx(
+                    'h-1 w-4 rounded-full',
+                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
+                  )}
+                />
+              ))}
             </div>
-          )}
+          </div>
         </div>
 
-        {/* Step 2: Enter Credentials & Validate */}
-        <div className="bg-panel border border-border rounded-xl overflow-hidden">
-          <StepHeader step={2} title={t('larkConfig.step2Title')} icon={<KeyRound size={16} className="text-accent" />} completed={isValid} />
-          {expandedSteps[2] && (
-            <div className="p-4 space-y-4 border-t border-border">
-              <p className="text-sm text-muted">{t('larkConfig.step2Description')}</p>
+        {/* Domain selector */}
+        <div className="space-y-2 rounded-xl border border-border bg-background px-5 py-4">
+          <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+            <Globe size={14} className="text-cyan" /> {t('larkConfig.domainLabel')}
+          </label>
+          <div className="flex gap-2">
+            {(['feishu', 'lark'] as const).map((opt) => (
+              <button
+                key={opt}
+                onClick={() => {
+                  setDomain(opt);
+                  setAuthResult(null);
+                  setWsStatus('idle');
+                }}
+                className={clsx(
+                  'flex-1 rounded-lg border px-3 py-2 text-[12px] font-semibold transition',
+                  domain === opt
+                    ? 'border-mint/45 bg-mint/[0.08] text-mint shadow-[0_0_24px_-4px_rgba(91,255,160,0.4)]'
+                    : 'border-border bg-white/[0.04] text-muted hover:border-border-strong hover:text-foreground'
+                )}
+              >
+                {opt === 'feishu' ? t('larkConfig.domainFeishu') : t('larkConfig.domainLark')}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted">{t('larkConfig.domainHint')}</p>
+        </div>
 
-              <div className="space-y-2 pt-2">
-                <label className="text-sm font-medium text-text flex items-center gap-2">
-                  <KeyRound size={16} className="text-accent" /> {t('larkConfig.appId')}
-                </label>
-                <input
-                  type="text"
-                  value={appId}
-                  onChange={(e) => setAppId(e.target.value)}
-                  placeholder={t('larkConfig.appIdPlaceholder')}
-                  className="w-full bg-bg border border-border rounded-lg p-3 text-text focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent font-mono transition-colors"
-                />
-                <p className="text-xs text-muted">{t('larkConfig.appIdHint')}</p>
+        <div className="flex flex-col gap-3">
+          {/* Step 1 — Create app */}
+          <StepShell active={expandedSteps[1]}>
+            <StepHeader step={1} title={t('larkConfig.step1Title')} icon={<Plus size={16} className="text-cyan" />} />
+            {expandedSteps[1] && (
+              <div className="space-y-4 border-t border-border px-5 py-4">
+                <p className="text-[13px] leading-[1.55] text-muted">{t('larkConfig.step1Description')}</p>
+                <ol className="list-inside list-decimal space-y-1.5 pl-1 text-[12px] leading-[1.55] text-muted">
+                  <li>{t('larkConfig.step1Item1')}</li>
+                  <li>{t('larkConfig.step1Item2')}</li>
+                  <li>{t('larkConfig.step1Item3')}</li>
+                </ol>
+                <LinkButton url={`${platformBase}/app`} label={t('larkConfig.openPlatform')} />
               </div>
+            )}
+          </StepShell>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-text flex items-center gap-2">
-                  <KeyRound size={16} className="text-accent" /> {t('larkConfig.appSecret')}
-                </label>
-                <input
-                  type="password"
-                  value={appSecret}
-                  onChange={(e) => setAppSecret(e.target.value)}
-                  placeholder={t('larkConfig.appSecretPlaceholder')}
-                  className="w-full bg-bg border border-border rounded-lg p-3 text-text focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent font-mono transition-colors"
-                />
-                <p className="text-xs text-muted">{t('larkConfig.appSecretHint')}</p>
-              </div>
+          {/* Step 2 — Credentials */}
+          <StepShell active={expandedSteps[2]}>
+            <StepHeader
+              step={2}
+              title={t('larkConfig.step2Title')}
+              icon={<KeyRound size={16} className="text-cyan" />}
+              completed={isValid}
+            />
+            {expandedSteps[2] && (
+              <div className="space-y-4 border-t border-border px-5 py-4">
+                <p className="text-[13px] leading-[1.55] text-muted">{t('larkConfig.step2Description')}</p>
 
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={runAuthTest}
-                  disabled={!appId || !appSecret || checking}
-                  className="px-4 py-2 bg-accent text-white rounded-lg flex items-center gap-2 transition-colors font-medium shadow-sm hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {checking ? <RefreshCw size={16} className="animate-spin" /> : <Shield size={16} />}
-                  {t('larkConfig.validateCredentials')}
-                </button>
-                {authResult && (
-                  <span
+                <div className="space-y-2 pt-1">
+                  <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+                    <KeyRound size={14} className="text-cyan" /> {t('larkConfig.appId')}
+                  </label>
+                  <input
+                    type="text"
+                    value={appId}
+                    onChange={(e) => setAppId(e.target.value)}
+                    placeholder={t('larkConfig.appIdPlaceholder')}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                  />
+                  <p className="text-[11px] text-muted">{t('larkConfig.appIdHint')}</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+                    <KeyRound size={14} className="text-cyan" /> {t('larkConfig.appSecret')}
+                  </label>
+                  <input
+                    type="password"
+                    value={appSecret}
+                    onChange={(e) => setAppSecret(e.target.value)}
+                    placeholder={t('larkConfig.appSecretPlaceholder')}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                  />
+                  <p className="text-[11px] text-muted">{t('larkConfig.appSecretHint')}</p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={runAuthTest}
+                    disabled={!appId || !appSecret || checking}
+                    className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {checking ? <RefreshCw size={14} className="animate-spin" /> : <Shield size={14} strokeWidth={2.25} />}
+                    {t('larkConfig.validateCredentials')}
+                  </button>
+                  {authResult && (
+                    <span
+                      className={clsx(
+                        'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-medium',
+                        authResult.ok
+                          ? 'border-mint/30 bg-mint/[0.08] text-mint'
+                          : 'border-danger/30 bg-danger/10 text-danger'
+                      )}
+                    >
+                      {authResult.ok ? <Check size={14} /> : null}
+                      {authResult.ok
+                        ? t('larkConfig.credentialsValidated')
+                        : `${t('larkConfig.authFailed')}: ${authResult.error}`}
+                    </span>
+                  )}
+                </div>
+
+                {wsStatus !== 'idle' && (
+                  <div
                     className={clsx(
-                      'flex items-center gap-2 text-sm font-medium px-3 py-1.5 rounded-lg border',
-                      authResult.ok ? 'text-success bg-success/10 border-success/20' : 'text-danger bg-danger/10 border-danger/20'
+                      'inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[12px]',
+                      wsStatus === 'connecting' && 'border-cyan/30 bg-cyan/[0.06] text-cyan',
+                      wsStatus === 'connected' && 'border-mint/30 bg-mint/[0.08] text-mint',
+                      wsStatus === 'error' && 'border-danger/30 bg-danger/10 text-danger'
                     )}
                   >
-                    {authResult.ok ? (
-                      <><Check size={14} /><span>{t('larkConfig.credentialsValidated')}</span></>
-                    ) : (
-                      <span>{t('larkConfig.authFailed')}: {authResult.error}</span>
-                    )}
-                  </span>
+                    {wsStatus === 'connecting' && <RefreshCw size={14} className="animate-spin" />}
+                    {wsStatus === 'connected' && <Wifi size={14} />}
+                    {wsStatus === 'connecting' && t('larkConfig.step2ConnectingWs')}
+                    {wsStatus === 'connected' && t('larkConfig.step2WsConnected')}
+                  </div>
+                )}
+
+                {authResult?.ok && chats.length > 0 && (
+                  <div className="space-y-2 pt-1">
+                    <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+                      <MessageSquare size={14} className="text-cyan" /> {t('larkConfig.chatListLabel')}
+                    </label>
+                    <p className="text-[11px] text-muted">{t('larkConfig.chatListHint')}</p>
+                    <div className="max-h-32 overflow-y-auto rounded-lg border border-border bg-background px-3 py-2.5">
+                      <ul className="space-y-1 text-[12px] text-foreground">
+                        {chats.map((c: any) => (
+                          <li key={c.id} className="flex items-center gap-2">
+                            <Check size={12} className="shrink-0 text-mint" />
+                            <span>{c.name}</span>
+                            <span className="font-mono text-[11px] text-muted">({c.id})</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
                 )}
               </div>
+            )}
+          </StepShell>
 
-              {/* WS connection status */}
-              {wsStatus !== 'idle' && (
-                <div className={clsx(
-                  'rounded-lg p-3 text-sm flex items-center gap-2 border',
-                  wsStatus === 'connecting' ? 'bg-blue-50 border-blue-200 text-blue-800' :
-                  wsStatus === 'connected' ? 'bg-success/10 border-success/20 text-success' :
-                  'bg-danger/10 border-danger/20 text-danger'
-                )}>
-                  {wsStatus === 'connecting' && <RefreshCw size={14} className="animate-spin" />}
-                  {wsStatus === 'connected' && <Wifi size={14} />}
-                  {wsStatus === 'connecting' && t('larkConfig.step2ConnectingWs')}
-                  {wsStatus === 'connected' && t('larkConfig.step2WsConnected')}
-                </div>
-              )}
+          {/* Step 3 — Permissions */}
+          <StepShell active={expandedSteps[3]}>
+            <StepHeader step={3} title={t('larkConfig.step3Title')} icon={<Shield size={16} className="text-cyan" />} />
+            {expandedSteps[3] && (
+              <div className="space-y-4 border-t border-border px-5 py-4">
+                <p className="text-[13px] leading-[1.55] text-muted">{t('larkConfig.step3Description')}</p>
 
-              {authResult?.ok && chats.length > 0 && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-text flex items-center gap-2">
-                    <MessageSquare size={16} className="text-accent" /> {t('larkConfig.chatListLabel')}
-                  </label>
-                  <p className="text-xs text-muted">{t('larkConfig.chatListHint')}</p>
-                  <div className="bg-bg border border-border rounded-lg p-3 max-h-32 overflow-y-auto">
-                    <ul className="space-y-1 text-sm text-text">
-                      {chats.map((c: any) => (
-                        <li key={c.id} className="flex items-center gap-2">
-                          <Check size={12} className="text-success shrink-0" />
-                          <span>{c.name}</span>
-                          <span className="text-xs text-muted font-mono">({c.id})</span>
-                        </li>
-                      ))}
-                    </ul>
+                {permissionsUrl && <LinkButton url={permissionsUrl} label={t('larkConfig.step3OpenLink')} />}
+
+                <div className="space-y-2 rounded-lg border border-cyan/30 bg-cyan/[0.06] px-3 py-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12px] font-semibold text-cyan">{t('larkConfig.step3BatchImport')}</span>
+                    <button
+                      onClick={copyPermissionsJson}
+                      className="inline-flex items-center gap-1.5 rounded border border-cyan/30 bg-cyan/[0.08] px-2 py-0.5 text-[11px] font-medium text-cyan transition hover:bg-cyan/[0.16]"
+                    >
+                      {copiedJson ? <Check size={12} /> : <Copy size={12} />}
+                      {copiedJson ? t('larkConfig.step3Copied') : t('larkConfig.step3CopyJson')}
+                    </button>
                   </div>
+                  <pre className="overflow-x-auto whitespace-pre rounded bg-background/80 px-3 py-2 font-mono text-[11px] text-foreground">
+                    {LARK_PERMISSIONS_JSON}
+                  </pre>
+                  <p className="text-[11px] text-cyan/85">{t('larkConfig.step3BatchImportHint')}</p>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
 
-        {/* Step 3: Configure Permissions */}
-        <div className="bg-panel border border-border rounded-xl overflow-hidden">
-          <StepHeader step={3} title={t('larkConfig.step3Title')} icon={<Shield size={16} className="text-accent" />} />
-          {expandedSteps[3] && (
-            <div className="p-4 space-y-4 border-t border-border">
-              <p className="text-sm text-muted">{t('larkConfig.step3Description')}</p>
-
-              {permissionsUrl && (
-                <LinkButton url={permissionsUrl} label={t('larkConfig.step3OpenLink')} />
-              )}
-
-              {/* Batch import JSON */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-blue-800">{t('larkConfig.step3BatchImport')}</span>
-                  <button
-                    onClick={copyPermissionsJson}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs font-medium transition-colors"
-                  >
-                    {copiedJson ? <Check size={12} /> : <Copy size={12} />}
-                    {copiedJson ? t('larkConfig.step3Copied') : t('larkConfig.step3CopyJson')}
-                  </button>
-                </div>
-                <pre className="text-xs bg-white/70 rounded p-2 overflow-x-auto font-mono text-blue-900 whitespace-pre">{LARK_PERMISSIONS_JSON}</pre>
-                <p className="text-xs text-blue-700">{t('larkConfig.step3BatchImportHint')}</p>
+                <details className="text-[12px] text-muted">
+                  <summary className="cursor-pointer font-medium text-foreground transition hover:text-cyan">
+                    {t('larkConfig.step3ManualList')}
+                  </summary>
+                  <ul className="mt-2 space-y-1.5 pl-1">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map((i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <code className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+                          {i}
+                        </code>
+                        {t(`larkConfig.step3Item${i}`)}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               </div>
+            )}
+          </StepShell>
 
-              <details className="text-sm text-muted">
-                <summary className="cursor-pointer font-medium text-text hover:text-accent transition-colors">{t('larkConfig.step3ManualList')}</summary>
-                <ul className="space-y-1.5 mt-2 pl-1">
-                  {[1,2,3,4,5,6,7,8,9,10,11,12,13,14].map(i => (
-                    <li key={i} className="flex items-start gap-2">
-                      <code className="text-xs bg-neutral-100 px-1.5 py-0.5 rounded font-mono shrink-0">{i}</code>
-                      {t(`larkConfig.step3Item${i}`)}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </div>
-          )}
-        </div>
+          {/* Step 4 — Events / callbacks / WS */}
+          <StepShell active={expandedSteps[4]}>
+            <StepHeader step={4} title={t('larkConfig.step4Title')} icon={<Radio size={16} className="text-cyan" />} />
+            {expandedSteps[4] && (
+              <div className="space-y-4 border-t border-border px-5 py-4">
+                <p className="text-[13px] leading-[1.55] text-muted">{t('larkConfig.step4Description')}</p>
 
-        {/* Step 4: Configure Events, Callbacks & Long Connection */}
-        <div className="bg-panel border border-border rounded-xl overflow-hidden">
-          <StepHeader step={4} title={t('larkConfig.step4Title')} icon={<Radio size={16} className="text-accent" />} />
-          {expandedSteps[4] && (
-            <div className="p-4 space-y-4 border-t border-border">
-              <p className="text-sm text-muted">{t('larkConfig.step4Description')}</p>
+                {eventsUrl && <LinkButton url={eventsUrl} label={t('larkConfig.step4OpenLink')} />}
 
-              {eventsUrl && (
-                <LinkButton url={eventsUrl} label={t('larkConfig.step4OpenLink')} />
-              )}
+                <div className="space-y-2">
+                  <h4 className="text-[12px] font-semibold text-foreground">{t('larkConfig.step4EventTitle')}</h4>
+                  <ol className="list-inside list-decimal space-y-1.5 pl-1 text-[12px] leading-[1.55] text-muted">
+                    <li>{t('larkConfig.step4Item1')}</li>
+                    <li>{t('larkConfig.step4Item2')}</li>
+                    <li>{t('larkConfig.step4Item3')}</li>
+                  </ol>
+                </div>
 
-              {/* Part A: Event subscription */}
-              <div className="space-y-2">
-                <h4 className="text-sm font-semibold text-text">{t('larkConfig.step4EventTitle')}</h4>
-                <ol className="list-decimal list-inside space-y-1.5 text-sm text-muted pl-1">
-                  <li>{t('larkConfig.step4Item1')}</li>
-                  <li>{t('larkConfig.step4Item2')}</li>
-                  <li>{t('larkConfig.step4Item3')}</li>
+                <div className="space-y-2">
+                  <h4 className="text-[12px] font-semibold text-foreground">{t('larkConfig.step4CallbackTitle')}</h4>
+                  <p className="text-[12px] text-muted">{t('larkConfig.step4CallbackDesc')}</p>
+                  <ol className="list-inside list-decimal space-y-1.5 pl-1 text-[12px] leading-[1.55] text-muted">
+                    <li>{t('larkConfig.step4CallbackItem1')}</li>
+                    <li>{t('larkConfig.step4CallbackItem2')}</li>
+                    <li>{t('larkConfig.step4CallbackItem3')}</li>
+                  </ol>
+                </div>
+
+                <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-2 text-[12px] leading-[1.55] text-gold">
+                  <strong>{t('slackConfig.important')}:</strong> {t('larkConfig.step4Tip')}
+                </div>
+
+                <div className="space-y-1.5 rounded-lg border border-cyan/30 bg-cyan/[0.06] px-3 py-2.5">
+                  <div className="flex items-center gap-2 text-[12px] font-semibold text-cyan">
+                    <AlertTriangle size={14} />
+                    {t('larkConfig.step4LongConnFaqTitle')}
+                  </div>
+                  <p className="text-[11px] text-cyan/85">{t('larkConfig.step4LongConnFaqDesc')}</p>
+                  <p className="text-[11px] font-medium text-cyan">{t('larkConfig.step4LarkWsWarning')}</p>
+                </div>
+              </div>
+            )}
+          </StepShell>
+
+          {/* Step 5 — Publish */}
+          <StepShell active={expandedSteps[5]}>
+            <StepHeader step={5} title={t('larkConfig.step5Title')} icon={<BookOpen size={16} className="text-cyan" />} />
+            {expandedSteps[5] && (
+              <div className="space-y-4 border-t border-border px-5 py-4">
+                <p className="text-[13px] leading-[1.55] text-muted">{t('larkConfig.step5Description')}</p>
+
+                {versionUrl && <LinkButton url={versionUrl} label={t('larkConfig.step5OpenLink')} />}
+
+                <ol className="list-inside list-decimal space-y-1.5 pl-1 text-[12px] leading-[1.55] text-muted">
+                  <li>{t('larkConfig.step5Item1')}</li>
                 </ol>
-              </div>
-
-              {/* Part B: Callback subscription */}
-              <div className="space-y-2">
-                <h4 className="text-sm font-semibold text-text">{t('larkConfig.step4CallbackTitle')}</h4>
-                <p className="text-sm text-muted">{t('larkConfig.step4CallbackDesc')}</p>
-                <ol className="list-decimal list-inside space-y-1.5 text-sm text-muted pl-1">
-                  <li>{t('larkConfig.step4CallbackItem1')}</li>
-                  <li>{t('larkConfig.step4CallbackItem2')}</li>
-                  <li>{t('larkConfig.step4CallbackItem3')}</li>
-                </ol>
-              </div>
-
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
-                <strong>{t('slackConfig.important')}:</strong> {t('larkConfig.step4Tip')}
-              </div>
-
-              {/* FAQ callout */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-1.5">
-                <div className="flex items-center gap-2 text-sm font-medium text-blue-800">
-                  <AlertTriangle size={14} className="text-blue-600" />
-                  {t('larkConfig.step4LongConnFaqTitle')}
+                <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-2 text-[12px] leading-[1.55] text-gold">
+                  <strong>{t('slackConfig.important')}:</strong> {t('larkConfig.step5Tip')}
                 </div>
-                <p className="text-xs text-blue-700">{t('larkConfig.step4LongConnFaqDesc')}</p>
-                <p className="text-xs text-blue-700 font-medium">{t('larkConfig.step4LarkWsWarning')}</p>
               </div>
-            </div>
-          )}
+            )}
+          </StepShell>
         </div>
 
-        {/* Step 5: Publish App */}
-        <div className="bg-panel border border-border rounded-xl overflow-hidden">
-          <StepHeader step={5} title={t('larkConfig.step5Title')} icon={<BookOpen size={16} className="text-accent" />} />
-          {expandedSteps[5] && (
-            <div className="p-4 space-y-4 border-t border-border">
-              <p className="text-sm text-muted">{t('larkConfig.step5Description')}</p>
-
-              {versionUrl && (
-                <LinkButton url={versionUrl} label={t('larkConfig.step5OpenLink')} />
-              )}
-
-              <ol className="list-decimal list-inside space-y-1.5 text-sm text-muted pl-1">
-                <li>{t('larkConfig.step5Item1')}</li>
-              </ol>
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
-                <strong>{t('slackConfig.important')}:</strong> {t('larkConfig.step5Tip')}
-              </div>
-            </div>
-          )}
+        <div className="flex items-center justify-between border-t border-border pt-4">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+          >
+            <ArrowLeft size={14} strokeWidth={2.25} />
+            {t('common.back')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              api.larkTempWsStop().catch(() => {});
+              onNext({
+                platform: 'lark',
+                lark: {
+                  ...(data.lark || {}),
+                  app_id: appId,
+                  app_secret: appSecret,
+                  domain,
+                },
+              });
+            }}
+            disabled={!isValid}
+            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+          >
+            {t('common.continue')}
+            <ArrowRight size={14} strokeWidth={2.25} />
+          </button>
         </div>
-      </div>
-
-      <div className="mt-auto flex justify-between pt-6 border-t border-border">
-        <button onClick={onBack} className="px-6 py-2 text-muted hover:text-text font-medium transition-colors">
-          {t('common.back')}
-        </button>
-        <button
-          onClick={() => {
-            api.larkTempWsStop().catch(() => {});
-            onNext({
-              platform: 'lark',
-              lark: {
-                ...(data.lark || {}),
-                app_id: appId,
-                app_secret: appSecret,
-                domain: domain,
-              },
-            });
-          }}
-          disabled={!isValid}
-          className={clsx(
-            'px-8 py-3 rounded-lg font-medium transition-colors shadow-sm',
-            isValid ? 'bg-accent hover:bg-accent/90 text-white' : 'bg-neutral-200 text-muted cursor-not-allowed'
-          )}
-        >
-          {t('common.continue')}
-        </button>
-      </div>
+      </WizardCard>
     </div>
   );
 };

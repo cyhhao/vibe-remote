@@ -4,12 +4,17 @@ import { AppShell } from './components/AppShell';
 import { Dashboard } from './components/Dashboard';
 import { ChannelList } from './components/steps/ChannelList';
 import { UserList } from './components/steps/UserList';
-import { DoctorPanel } from './components/steps/DoctorPanel';
-import { LogsPanel } from './components/steps/LogsPanel';
-import { RemoteAccess } from './components/RemoteAccess';
+import { SettingsDiagnosticsPage } from './components/settings/SettingsDiagnosticsPage';
+import { SettingsBackendsPage } from './components/settings/SettingsBackendsPage';
+import { SettingsLogsPage } from './components/settings/SettingsLogsPage';
+import { SettingsMessagingPage } from './components/settings/SettingsMessagingPage';
+import { SettingsPlatformsPage } from './components/settings/SettingsPlatformsPage';
+import { SettingsServicePage } from './components/settings/SettingsServicePage';
 import { StatusProvider } from './context/StatusContext';
 import { ApiProvider, useApi } from './context/ApiContext';
 import { ToastProvider } from './context/ToastContext';
+import { ThemeProvider } from './context/ThemeContext';
+import { AgentationToggle } from './components/AgentationToggle';
 import { useEffect, useState } from 'react';
 import { hasConfiguredPlatformCredentials } from './lib/platforms';
 
@@ -62,11 +67,20 @@ function AppRoutes() {
       <Route path="/setup" element={<Wizard />} />
       <Route element={<AuthGuard><AppShell /></AuthGuard>}>
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/channels" element={<ChannelList isPage />} />
+        <Route path="/groups" element={<ChannelList isPage />} />
+        <Route path="/channels" element={<Navigate to="/groups" replace />} />
         <Route path="/users" element={<UserList />} />
-        <Route path="/remote-access" element={<RemoteAccess />} />
-        <Route path="/doctor" element={<DoctorPanel isPage />} />
-        <Route path="/doctor/logs" element={<LogsPanel />} />
+        <Route path="/logs" element={<SettingsLogsPage standalone />} />
+        <Route path="/settings" element={<Navigate to="/settings/service" replace />} />
+        <Route path="/settings/service" element={<SettingsServicePage />} />
+        <Route path="/settings/platforms" element={<SettingsPlatformsPage />} />
+        <Route path="/settings/backends" element={<SettingsBackendsPage />} />
+        <Route path="/settings/messaging" element={<SettingsMessagingPage />} />
+        <Route path="/settings/diagnostics" element={<SettingsDiagnosticsPage />} />
+        <Route path="/settings/logs" element={<SettingsLogsPage />} />
+        <Route path="/remote-access" element={<Navigate to="/settings/service" replace />} />
+        <Route path="/doctor" element={<Navigate to="/settings/diagnostics" replace />} />
+        <Route path="/doctor/logs" element={<Navigate to="/logs" replace />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
@@ -75,15 +89,18 @@ function AppRoutes() {
 
 function App() {
   return (
-    <StatusProvider>
-      <ToastProvider>
-        <ApiProvider>
-          <BrowserRouter>
-             <AppRoutes />
-          </BrowserRouter>
-        </ApiProvider>
-      </ToastProvider>
-    </StatusProvider>
+    <ThemeProvider>
+      <StatusProvider>
+        <ToastProvider>
+          <ApiProvider>
+            <BrowserRouter>
+               <AppRoutes />
+            </BrowserRouter>
+            <AgentationToggle />
+          </ApiProvider>
+        </ToastProvider>
+      </StatusProvider>
+    </ThemeProvider>
   );
 }
 
