@@ -401,15 +401,49 @@ def _json_request(url: str, payload: dict[str, Any], timeout: float = 20.0) -> d
         raise RuntimeError(str(exc)) from exc
 
 
+def _effective_ui_port(config: V2Config) -> int:
+    raw_port = os.environ.get("VIBE_UI_PORT") or config.ui.setup_port
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError):
+        port = int(config.ui.setup_port)
+    if port < 1 or port > 65535:
+        return int(config.ui.setup_port)
+    return port
+
+
+def _origin_host_for_ui(config: V2Config) -> str:
+    host = (config.ui.setup_host or "127.0.0.1").strip()
+    if not host or host in {"0.0.0.0", "::", "[::]"}:
+        return "127.0.0.1"
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
+def origin_service_for_pairing(config: V2Config | None = None) -> str:
+    config = config or V2Config.load()
+    return f"http://{_origin_host_for_ui(config)}:{_effective_ui_port(config)}"
+
+
 def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -> dict[str, Any]:
     pairing_key = (pairing_key or "").strip()
     backend_url = (backend_url or "https://avibe.bot").strip().rstrip("/")
     if not pairing_key:
         return {"ok": False, "error": "missing_pairing_key"}
     try:
+        origin_service = origin_service_for_pairing()
+    except Exception:
+        origin_service = "http://127.0.0.1:5123"
+    try:
         result = _json_request(
             f"{backend_url}/api/v1/pairing/redeem",
-            {"pairing_key": pairing_key, "device_name": device_name, "local_version": "dev"},
+            {
+                "pairing_key": pairing_key,
+                "device_name": device_name,
+                "local_version": "dev",
+                "origin_service": origin_service,
+            },
         )
     except BackendRequestError as exc:
         return {"ok": False, **exc.payload, "status": exc.status}
