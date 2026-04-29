@@ -65,6 +65,7 @@ def test_pair_redeems_key_and_starts_connector(monkeypatch, tmp_path) -> None:
     def fake_request(url: str, payload: dict, timeout: float = 20.0):
         assert url == "https://backend.test/api/v1/pairing/redeem"
         assert payload["pairing_key"] == "vrp_test"
+        assert payload["origin_service"] == "http://127.0.0.1:5123"
         return {
             "instance_id": "inst_123",
             "client_id": "vr_client_123",
@@ -91,6 +92,27 @@ def test_pair_redeems_key_and_starts_connector(monkeypatch, tmp_path) -> None:
     assert saved_payload["remote_access"]["vibe_cloud"]["enabled"] is True
     assert saved_payload["remote_access"]["vibe_cloud"]["tunnel_token"] == "tunnel-token"
     assert saved_payload["remote_access"]["vibe_cloud"]["session_secret"]
+
+
+def test_pair_origin_service_follows_effective_ui_port(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_UI_PORT", "15130")
+    config = _config()
+    config.ui.setup_host = "0.0.0.0"
+    config.ui.setup_port = 5123
+    config.save()
+
+    assert remote_access.origin_service_for_pairing() == "http://127.0.0.1:15130"
+
+
+def test_pair_origin_service_uses_configured_ui_host(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.ui.setup_host = "192.168.2.3"
+    config.ui.setup_port = 15130
+    config.save()
+
+    assert remote_access.origin_service_for_pairing() == "http://192.168.2.3:15130"
 
 
 def test_pair_persists_with_locked_incremental_config_save(monkeypatch) -> None:
