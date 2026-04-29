@@ -8,7 +8,11 @@ import time
 from typing import Optional, Dict, Any, Tuple
 from uuid import uuid4
 from modules.im import MessageContext
-from modules.claude_sdk_compat import ClaudeSDKClient, ClaudeAgentOptions
+from modules.claude_sdk_compat import (
+    CLAUDE_SDK_MAX_BUFFER_SIZE,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+)
 from modules.agents.native_sessions.base import build_resume_preview
 
 from .base import BaseHandler
@@ -570,6 +574,7 @@ class SessionHandler(BaseHandler):
             "disallowed_tools": CLAUDE_REMOTE_DISALLOWED_TOOLS,
             "env": claude_env,  # Pass Anthropic/Claude env vars
             "stderr": _capture_claude_stderr,
+            "max_buffer_size": CLAUDE_SDK_MAX_BUFFER_SIZE,
         }
         cli_path_override = self._get_claude_cli_path_override()
         if cli_path_override:
@@ -955,6 +960,8 @@ class SessionHandler(BaseHandler):
                 context,
                 self._get_formatter(context).format_error(self._t("error.sessionReset")),
             )
+        # TODO: Consider treating Claude SDK oversized JSON buffer failures as
+        # broken sessions once the recovery behavior is validated in production.
         elif "Session is broken" in error_msg or "Connection closed" in error_msg or "Connection lost" in error_msg:
             logger.error(f"Session {composite_key} is broken - cleaning up")
             await self.cleanup_session(composite_key, current_receiver_task=asyncio.current_task())

@@ -2,6 +2,7 @@ import logging
 import os
 from typing import Optional, Callable
 from modules.claude_sdk_compat import (
+    CLAUDE_SDK_MAX_BUFFER_SIZE,
     ClaudeAgentOptions,
     SystemMessage,
     AssistantMessage,
@@ -26,6 +27,7 @@ class ClaudeClient:
             permission_mode=config.permission_mode,  # type: ignore[arg-type]
             cwd=config.cwd,
             system_prompt=config.system_prompt,
+            max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE,
         )  # type: ignore[arg-type]
 
     def format_message(

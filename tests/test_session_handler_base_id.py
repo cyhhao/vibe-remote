@@ -345,3 +345,29 @@ def test_claude_session_not_found_error_is_reported_without_cleanup() -> None:
     assert message.startswith("ERR:Claude Code could not find the historical session")
     assert "11111111-1111-1111-1111-111111111111" in message
     assert "/tmp/other" in message
+
+
+def test_claude_sdk_buffer_error_is_reported_without_cleanup_for_now() -> None:
+    controller = _Controller(platform="slack", dm_threads=False)
+    controller.im_client = _FakeIM()
+    handler = SessionHandler(controller)
+    cleanup_calls = []
+
+    async def _cleanup_session(composite_key: str) -> None:
+        cleanup_calls.append(composite_key)
+
+    handler.cleanup_session = _cleanup_session
+    context = MessageContext(user_id="U123", channel_id="C123", platform="slack")
+
+    asyncio.run(
+        handler.handle_session_error(
+            "slack_C123:/tmp/workdir",
+            context,
+            RuntimeError("Failed to decode JSON: JSON message exceeded maximum buffer size of 1048576 bytes"),
+        )
+    )
+
+    assert cleanup_calls == []
+    assert len(controller.im_client.sent_messages) == 1
+    _, message = controller.im_client.sent_messages[0]
+    assert "JSON message exceeded maximum buffer size" in message

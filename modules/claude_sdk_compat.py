@@ -6,6 +6,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+CLAUDE_SDK_MAX_BUFFER_SIZE = 16 * 1024 * 1024
+CLAUDE_SDK_BUFFER_ERROR_TEXT = "JSON message exceeded maximum buffer size"
+
+
+def is_claude_sdk_buffer_error(error: object) -> bool:
+    """Return True when Claude SDK failed on a single oversized JSON message."""
+    return CLAUDE_SDK_BUFFER_ERROR_TEXT in str(error)
+
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
