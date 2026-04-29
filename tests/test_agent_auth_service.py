@@ -15,6 +15,7 @@ from core.agent_auth_service import (
     classify_auth_error,
     verify_opencode_auth_list_output,
 )
+from modules.claude_sdk_compat import CLAUDE_SDK_MAX_BUFFER_SIZE
 from modules.im import MessageContext
 
 
@@ -877,6 +878,33 @@ class AgentAuthServiceTests(unittest.IsolatedAsyncioTestCase):
         controller.agent_service.agents["codex"].refresh_auth_state.assert_awaited_once()
         controller.agent_service.agents["claude"].refresh_auth_state.assert_awaited_once()
         service._refresh_opencode_server.assert_awaited_once()
+
+    async def test_create_claude_control_client_sets_large_sdk_buffer(self):
+        controller = _StubController()
+        service = AgentAuthService(controller)
+        context = MessageContext(user_id="U1", channel_id="C1")
+        captured = {}
+
+        class _StubClaudeAgentOptions:
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        class _StubClaudeSDKClient:
+            def __init__(self, options):
+                captured["options"] = options
+
+            async def connect(self):
+                captured["connected"] = True
+
+        with (
+            patch("core.agent_auth_service.ClaudeAgentOptions", _StubClaudeAgentOptions),
+            patch("core.agent_auth_service.ClaudeSDKClient", _StubClaudeSDKClient),
+        ):
+            await service._create_claude_control_client(context)
+
+        self.assertTrue(captured["connected"])
+        self.assertEqual(captured["options"].max_buffer_size, CLAUDE_SDK_MAX_BUFFER_SIZE)
 
     async def test_verify_login_reports_opencode_segmentation_fault(self):
         controller = _StubController()

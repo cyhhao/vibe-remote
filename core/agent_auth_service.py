@@ -13,7 +13,12 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from modules.claude_sdk_compat import CLAUDE_SDK_AVAILABLE, ClaudeAgentOptions, ClaudeSDKClient
+from modules.claude_sdk_compat import (
+    CLAUDE_SDK_AVAILABLE,
+    CLAUDE_SDK_MAX_BUFFER_SIZE,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+)
 from modules.im import InlineButton, InlineKeyboard, MessageContext
 from vibe.i18n import t as i18n_t
 from vibe.opencode_config import remove_opencode_provider_api_key
@@ -647,6 +652,7 @@ class AgentAuthService:
             "cwd": working_path,
             "env": claude_env,
             "setting_sources": ["user", "project", "local"],
+            "max_buffer_size": CLAUDE_SDK_MAX_BUFFER_SIZE,
         }
         permission_mode = getattr(getattr(self.controller.config, "claude", None), "permission_mode", None)
         if permission_mode:
