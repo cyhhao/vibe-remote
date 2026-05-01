@@ -12,7 +12,12 @@ from sqlalchemy import Connection, Engine, func, select
 
 from config import paths
 from config.discovered_chats import DiscoveredChatsStore
-from config.v2_sessions import SessionsStore
+from config.v2_sessions import (
+    SessionState,
+    load_session_state_from_json,
+    migrate_session_state_active_polls,
+    migrate_session_state_mappings,
+)
 from config.v2_settings import SettingsState, _split_scoped_key, load_settings_state_from_json
 from storage.db import create_sqlite_engine
 from storage.lock import MigrationFileLock
@@ -32,6 +37,7 @@ from storage.models import (
     scopes,
     user_settings,
 )
+from storage.sessions_service import encode_session_value
 
 JSON_IMPORT_MARKER = "json_import_completed_at"
 
@@ -138,7 +144,7 @@ def _backup_json_state(state_dir: Path) -> Path:
 @dataclass
 class _ParsedState:
     settings: SettingsState
-    sessions: SessionsStore
+    sessions: SessionState
     discovered: DiscoveredChatsStore
 
 
@@ -158,16 +164,15 @@ def _load_settings_from_copy(source: Path) -> SettingsState:
         return state
 
 
-def _load_sessions_from_copy(source: Path, *, primary_platform: str) -> SessionsStore:
+def _load_sessions_from_copy(source: Path, *, primary_platform: str) -> SessionState:
     with tempfile.TemporaryDirectory() as tmpdir:
         target = Path(tmpdir) / "sessions.json"
         if source.exists():
             shutil.copy2(source, target)
-        store = SessionsStore(target)
-        store.load()
-        store.migrate_active_polls(primary_platform)
-        store.migrate_session_mappings(primary_platform)
-        return store
+        state = load_session_state_from_json(target)
+        migrate_session_state_active_polls(state, primary_platform)
+        migrate_session_state_mappings(state, primary_platform)
+        return state
 
 
 def _clear_imported_state(conn: Connection) -> None:
@@ -273,7 +278,7 @@ def _import_parsed_state(conn: Connection, parsed: _ParsedState) -> dict[str, in
         )
         counts["bind_codes"] += 1
 
-    session_state = parsed.sessions.state
+    session_state = parsed.sessions
     for scope_key, agent_maps in session_state.session_mappings.items():
         for agent_name, thread_map in agent_maps.items():
             for thread_id, session_id in thread_map.items():
@@ -282,7 +287,7 @@ def _import_parsed_state(conn: Connection, parsed: _ParsedState) -> dict[str, in
                         scope_key=str(scope_key),
                         agent_name=str(agent_name),
                         thread_id=str(thread_id),
-                        session_id=str(session_id),
+                        session_id=encode_session_value(session_id),
                         created_at=now,
                         updated_at=now,
                     )
