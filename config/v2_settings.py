@@ -352,10 +352,14 @@ class SettingsStore:
         self.settings: SettingsState = SettingsState()
         self._bind_lock = threading.Lock()  # Guards atomic bind operations
         self._file_mtime: float = 0
-        from storage.importer import ensure_sqlite_state
+        from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
         from storage.settings_service import SQLiteSettingsService
 
-        ensure_sqlite_state(db_path=self.db_path, state_dir=self.settings_path.parent)
+        ensure_sqlite_state(
+            db_path=self.db_path,
+            state_dir=self.settings_path.parent,
+            primary_platform=resolve_primary_platform_from_config(),
+        )
         self._service = SQLiteSettingsService(self.db_path)
         self._load()
         self._service.has_external_write()

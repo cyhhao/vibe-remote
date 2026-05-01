@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from config import paths
 from config.v2_sessions import ActivePollInfo, SessionState, SessionsStore
 from storage.sessions_service import SQLiteSessionsService
 
@@ -93,6 +94,40 @@ def test_sessions_store_reloads_external_sqlite_writes(tmp_path: Path) -> None:
         assert poll.channel_id == "C1"
     finally:
         external.close()
+        store.close()
+
+
+def test_sessions_store_bootstrap_uses_config_primary_platform(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    paths.get_config_path().write_text(
+        json.dumps({"platform": "lark", "platforms": {"enabled": ["lark"], "primary": "lark"}}),
+        encoding="utf-8",
+    )
+    paths.get_sessions_path().write_text(
+        json.dumps(
+            {
+                "session_mappings": {"chat-1": {"codex": {"1774074591.762089:/repo": "session-1"}}},
+                "active_polls": {
+                    "oc-1": {
+                        "opencode_session_id": "oc-1",
+                        "base_session_id": "base-1",
+                        "channel_id": "chat-1",
+                        "thread_id": "1774074591.762089",
+                        "settings_key": "chat-1",
+                        "working_path": "/repo",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store = SessionsStore(paths.get_sessions_path())
+    try:
+        assert "lark::chat-1" in store.state.session_mappings
+        assert store.state.active_polls["oc-1"]["platform"] == "lark"
+    finally:
         store.close()
 
 

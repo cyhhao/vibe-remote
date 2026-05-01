@@ -94,6 +94,31 @@ def ensure_sqlite_state(
             engine.dispose()
 
 
+def resolve_primary_platform_from_config() -> str | None:
+    """Best-effort primary platform lookup for store-level SQLite bootstrap."""
+    try:
+        config_path = paths.get_config_path()
+        if not config_path.exists():
+            return None
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    platforms = payload.get("platforms")
+    if isinstance(platforms, dict):
+        primary = platforms.get("primary")
+        if isinstance(primary, str) and primary.strip():
+            return primary.strip()
+
+    platform = payload.get("platform")
+    if isinstance(platform, str) and platform.strip():
+        return platform.strip()
+    return None
+
+
 def _has_import_marker(conn: Connection) -> bool:
     return (
         conn.execute(select(schema_meta.c.value).where(schema_meta.c.key == JSON_IMPORT_MARKER)).scalar_one_or_none()
@@ -178,9 +203,28 @@ def _load_sessions_from_copy(source: Path, *, primary_platform: str | None) -> S
 def _load_discovered_chats_strict(source: Path) -> DiscoveredChatsStore:
     if source.exists():
         payload = json.loads(source.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("discovered_chats.json must contain a JSON object")
+        _validate_discovered_chats_payload(payload)
     return DiscoveredChatsStore(source)
+
+
+def _validate_discovered_chats_payload(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("discovered_chats.json must contain a JSON object")
+
+    raw_platforms = payload.get("platforms", {})
+    if raw_platforms is None:
+        return
+    if not isinstance(raw_platforms, dict):
+        raise ValueError("discovered_chats.json platforms must contain a JSON object")
+
+    for platform, chats in raw_platforms.items():
+        if not isinstance(chats, dict):
+            raise ValueError(f"discovered_chats.json platform {platform!r} must contain a JSON object")
+        for chat_id, chat_payload in chats.items():
+            if not isinstance(chat_payload, dict):
+                raise ValueError(
+                    f"discovered_chats.json chat {platform!r}/{chat_id!r} must contain a JSON object"
+                )
 
 
 def _migrate_session_state_for_import(state: SessionState, *, primary_platform: str | None) -> None:

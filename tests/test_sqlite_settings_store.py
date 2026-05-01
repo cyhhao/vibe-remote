@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from config import paths
 from config.v2_settings import ChannelSettings, SettingsState, SettingsStore, UserSettings
+from storage.sessions_service import SQLiteSessionsService
 from storage.settings_service import SQLiteSettingsService
 
 
@@ -58,4 +60,42 @@ def test_settings_store_reloads_external_sqlite_writes(tmp_path: Path) -> None:
         assert user.is_admin is True
     finally:
         external.close()
+        store.close()
+
+
+def test_settings_store_bootstrap_uses_config_primary_platform(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    paths.get_config_path().write_text(
+        json.dumps({"platform": "discord", "platforms": {"enabled": ["discord"], "primary": "discord"}}),
+        encoding="utf-8",
+    )
+    sessions_path = paths.get_sessions_path()
+    sessions_path.write_text(
+        json.dumps(
+            {
+                "session_mappings": {"G123": {"codex": {"1774074591.762089:/repo": "session-1"}}},
+                "active_polls": {
+                    "oc-1": {
+                        "opencode_session_id": "oc-1",
+                        "base_session_id": "base-1",
+                        "channel_id": "G123",
+                        "thread_id": "1774074591.762089",
+                        "settings_key": "G123",
+                        "working_path": "/repo",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store = SettingsStore(paths.get_settings_path())
+    sessions = SQLiteSessionsService(paths.get_sqlite_state_path())
+    try:
+        state = sessions.load_state()
+        assert "discord::G123" in state.session_mappings
+        assert state.active_polls["oc-1"]["platform"] == "discord"
+    finally:
+        sessions.close()
         store.close()

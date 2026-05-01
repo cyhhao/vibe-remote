@@ -223,10 +223,14 @@ class SessionsStore:
             return
         if self._service is not None:
             self._service.close()
-        from storage.importer import ensure_sqlite_state
+        from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
         from storage.sessions_service import SQLiteSessionsService
 
-        ensure_sqlite_state(db_path=target_db, state_dir=Path(self.sessions_path).parent)
+        ensure_sqlite_state(
+            db_path=target_db,
+            state_dir=Path(self.sessions_path).parent,
+            primary_platform=resolve_primary_platform_from_config(),
+        )
         self.db_path = target_db
         self._service = SQLiteSessionsService(target_db)
 
