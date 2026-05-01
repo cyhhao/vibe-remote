@@ -35,10 +35,12 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.begin() as connection:
+    with connectable.connect() as connection:
         connection.exec_driver_sql("PRAGMA journal_mode = WAL")
         connection.exec_driver_sql("PRAGMA foreign_keys = ON")
         connection.exec_driver_sql("PRAGMA busy_timeout = 5000")
+        connection.commit()
+
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():

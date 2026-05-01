@@ -42,6 +42,16 @@ def test_initial_migration_is_schema_snapshot() -> None:
     assert "metadata.create_all" not in source
 
 
+def test_alembic_env_sets_wal_before_transaction() -> None:
+    env_path = Path("storage/alembic/env.py")
+
+    source = env_path.read_text(encoding="utf-8")
+
+    assert "with connectable.begin()" not in source
+    assert "with connectable.connect()" in source
+    assert "PRAGMA journal_mode = WAL" in source
+
+
 def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     engine = create_sqlite_engine(db_path)
