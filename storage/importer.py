@@ -149,10 +149,10 @@ class _ParsedState:
     discovered: DiscoveredChatsStore
 
 
-def _parse_json_state(state_dir: Path, *, primary_platform: str) -> _ParsedState:
+def _parse_json_state(state_dir: Path, *, primary_platform: str | None) -> _ParsedState:
     settings = _load_settings_from_copy(state_dir / "settings.json")
     sessions = _load_sessions_from_copy(state_dir / "sessions.json", primary_platform=primary_platform)
-    discovered = DiscoveredChatsStore(state_dir / "discovered_chats.json")
+    discovered = _load_discovered_chats_strict(state_dir / "discovered_chats.json")
     return _ParsedState(settings=settings, sessions=sessions, discovered=discovered)
 
 
@@ -173,6 +173,14 @@ def _load_sessions_from_copy(source: Path, *, primary_platform: str | None) -> S
         state = load_session_state_from_json(target)
         _migrate_session_state_for_import(state, primary_platform=primary_platform)
         return state
+
+
+def _load_discovered_chats_strict(source: Path) -> DiscoveredChatsStore:
+    if source.exists():
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("discovered_chats.json must contain a JSON object")
+    return DiscoveredChatsStore(source)
 
 
 def _migrate_session_state_for_import(state: SessionState, *, primary_platform: str | None) -> None:

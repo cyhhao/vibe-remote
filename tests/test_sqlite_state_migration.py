@@ -149,6 +149,30 @@ def test_failed_json_import_does_not_mark_complete_and_can_retry(tmp_path: Path)
     assert report.counts["channel_settings"] == 1
 
 
+def test_invalid_discovered_chats_import_does_not_mark_complete_and_can_retry(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    _write_current_settings(state_dir / "settings.json")
+    _write_current_sessions(state_dir / "sessions.json")
+    (state_dir / "discovered_chats.json").write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        marker = conn.execute(
+            "select value from schema_meta where key = 'json_import_completed_at'",
+        ).fetchone()
+    assert marker is None
+
+    _write_discovered_chats(state_dir / "discovered_chats.json")
+    report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    assert report.imported is True
+    assert report.counts["discovered_chats"] == 1
+
+
 def test_data_version_probe_detects_external_write(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     run_migrations(db_path)
