@@ -52,10 +52,54 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
     assert first.counts["active_polls"] == 1
     assert first.counts["processed_messages"] == 2
     assert first.counts["discovered_chats"] == 1
+    with sqlite3.connect(db_path) as conn:
+        last_activity = conn.execute(
+            "select value from schema_meta where key = 'sessions_last_activity'",
+        ).fetchone()
+    assert last_activity == ("2026-05-01T00:00:00+00:00",)
 
     assert second.imported is False
     assert second.backup_path is None
     assert second.counts == first.counts
+
+
+def test_legacy_sessions_import_requires_platform_when_not_inferable(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    (state_dir / "sessions.json").write_text(
+        json.dumps(
+            {
+                "session_mappings": {
+                    "C123": {
+                        "codex": {
+                            "1774074591.762089:/repo": "codex-session-1",
+                        }
+                    }
+                },
+                "active_polls": {
+                    "opencode-session-1": {
+                        "opencode_session_id": "opencode-session-1",
+                        "base_session_id": "base-1",
+                        "channel_id": "C123",
+                        "thread_id": "1774074591.762089",
+                        "settings_key": "C123",
+                        "working_path": "/repo",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="primary_platform is required"):
+        ensure_sqlite_state(db_path=db_path, state_dir=state_dir)
+
+    with sqlite3.connect(db_path) as conn:
+        marker = conn.execute(
+            "select value from schema_meta where key = 'json_import_completed_at'",
+        ).fetchone()
+    assert marker is None
 
 
 def test_legacy_settings_import_does_not_rewrite_source_json(tmp_path: Path) -> None:

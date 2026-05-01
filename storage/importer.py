@@ -14,6 +14,7 @@ from config import paths
 from config.discovered_chats import DiscoveredChatsStore
 from config.v2_sessions import (
     SessionState,
+    infer_platform_from_thread_ids,
     load_session_state_from_json,
     migrate_session_state_active_polls,
     migrate_session_state_mappings,
@@ -37,7 +38,7 @@ from storage.models import (
     scopes,
     user_settings,
 )
-from storage.sessions_service import encode_session_value
+from storage.sessions_service import SESSIONS_LAST_ACTIVITY_KEY, encode_session_value
 
 JSON_IMPORT_MARKER = "json_import_completed_at"
 
@@ -54,7 +55,7 @@ def ensure_sqlite_state(
     *,
     db_path: Path | None = None,
     state_dir: Path | None = None,
-    primary_platform: str = "slack",
+    primary_platform: str | None = None,
 ) -> MigrationImportReport:
     """Create/migrate the SQLite DB and import existing JSON state once."""
 
@@ -164,21 +165,52 @@ def _load_settings_from_copy(source: Path) -> SettingsState:
         return state
 
 
-def _load_sessions_from_copy(source: Path, *, primary_platform: str) -> SessionState:
+def _load_sessions_from_copy(source: Path, *, primary_platform: str | None) -> SessionState:
     with tempfile.TemporaryDirectory() as tmpdir:
         target = Path(tmpdir) / "sessions.json"
         if source.exists():
             shutil.copy2(source, target)
         state = load_session_state_from_json(target)
-        migrate_session_state_active_polls(state, primary_platform)
-        migrate_session_state_mappings(state, primary_platform)
+        _migrate_session_state_for_import(state, primary_platform=primary_platform)
         return state
+
+
+def _migrate_session_state_for_import(state: SessionState, *, primary_platform: str | None) -> None:
+    if primary_platform is not None and not primary_platform.strip():
+        raise ValueError("primary_platform must be non-empty when provided")
+
+    needs_default_platform = False
+    for data in state.active_polls.values():
+        if not isinstance(data, dict) or data.get("platform"):
+            continue
+        settings_key = data.get("settings_key", "")
+        if not isinstance(settings_key, str) or "::" not in settings_key or not settings_key.split("::", 1)[0]:
+            needs_default_platform = True
+            break
+
+    if not needs_default_platform:
+        for scope_key, agent_maps in state.session_mappings.items():
+            if "::" in str(scope_key) or not agent_maps:
+                continue
+            if not infer_platform_from_thread_ids(agent_maps):
+                needs_default_platform = True
+                break
+
+    if needs_default_platform and primary_platform is None:
+        raise ValueError(
+            "primary_platform is required to import legacy sessions.json entries that do not encode a platform"
+        )
+
+    default_platform = primary_platform or ""
+    migrate_session_state_active_polls(state, default_platform)
+    migrate_session_state_mappings(state, default_platform)
 
 
 def _clear_imported_state(conn: Connection) -> None:
     for table in imported_state_tables:
         conn.execute(table.delete())
     conn.execute(schema_meta.delete().where(schema_meta.c.key == JSON_IMPORT_MARKER))
+    conn.execute(schema_meta.delete().where(schema_meta.c.key == SESSIONS_LAST_ACTIVITY_KEY))
 
 
 def _import_parsed_state(conn: Connection, parsed: _ParsedState) -> dict[str, int]:
@@ -279,6 +311,8 @@ def _import_parsed_state(conn: Connection, parsed: _ParsedState) -> dict[str, in
         counts["bind_codes"] += 1
 
     session_state = parsed.sessions
+    _import_sessions_last_activity(conn, session_state, now=now)
+
     for scope_key, agent_maps in session_state.session_mappings.items():
         for agent_name, thread_map in agent_maps.items():
             for thread_id, session_id in thread_map.items():
@@ -368,6 +402,18 @@ def _import_parsed_state(conn: Connection, parsed: _ParsedState) -> dict[str, in
             counts["discovered_chats"] += 1
 
     return counts
+
+
+def _import_sessions_last_activity(conn: Connection, session_state: SessionState, *, now: str) -> None:
+    if session_state.last_activity is None:
+        return
+    conn.execute(
+        schema_meta.insert().values(
+            key=SESSIONS_LAST_ACTIVITY_KEY,
+            value=str(session_state.last_activity),
+            updated_at=now,
+        )
+    )
 
 
 def _get_or_create_scope(
