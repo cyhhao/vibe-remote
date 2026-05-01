@@ -29,6 +29,15 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "session_messages" in tables
 
 
+def test_initial_migration_is_schema_snapshot() -> None:
+    migration_path = Path("storage/alembic/versions/20260501_0001_initial_sqlite_state.py")
+
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert "from storage.models" not in source
+    assert "metadata.create_all" not in source
+
+
 def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
