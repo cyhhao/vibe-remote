@@ -15,6 +15,7 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
 
     run_migrations(db_path)
+    run_migrations(db_path)
 
     with sqlite3.connect(db_path) as conn:
         tables = {
@@ -27,6 +28,8 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "channel_settings" in tables
         assert "agent_session_bindings" in tables
         assert "session_messages" in tables
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        assert version == ("20260501_0001",)
 
 
 def test_initial_migration_is_schema_snapshot() -> None:
