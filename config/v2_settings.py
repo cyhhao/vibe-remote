@@ -174,6 +174,149 @@ def _routing_to_dict(routing: RoutingSettings) -> dict:
     }
 
 
+def parse_settings_payload(payload: dict) -> tuple[SettingsState, bool]:
+    """Parse current or legacy settings JSON into normalized SettingsState."""
+    if not isinstance(payload, dict):
+        raise ValueError("settings payload must be an object")
+
+    channels: Dict[str, ChannelSettings] = {}
+    guilds: Dict[str, GuildSettings] = {}
+    guild_scope_platforms: set[str] = set()
+    guild_default_enabled: Dict[str, bool] = {}
+    users: Dict[str, UserSettings] = {}
+    migrated_legacy_channels = False
+
+    scopes = payload.get("scopes")
+    if isinstance(scopes, dict):
+        raw_channel_scopes = scopes.get("channel") or {}
+        if isinstance(raw_channel_scopes, dict):
+            for platform, items in raw_channel_scopes.items():
+                if not isinstance(items, dict):
+                    continue
+                for channel_id, cp in items.items():
+                    if not isinstance(cp, dict):
+                        continue
+                    key = _make_scoped_key(str(platform), str(channel_id))
+                    channels[key] = ChannelSettings(
+                        enabled=cp.get("enabled", False),
+                        show_message_types=normalize_show_message_types(cp.get("show_message_types")),
+                        custom_cwd=cp.get("custom_cwd"),
+                        routing=_parse_routing(cp.get("routing") or {}),
+                        require_mention=cp.get("require_mention"),
+                    )
+
+        raw_guild_scopes = scopes.get("guild") or {}
+        if isinstance(raw_guild_scopes, dict):
+            raw_guild_policy = scopes.get("guild_policy") or {}
+            for platform, items in raw_guild_scopes.items():
+                platform_key = str(platform)
+                guild_scope_platforms.add(platform_key)
+                policy = raw_guild_policy.get(platform_key) if isinstance(raw_guild_policy, dict) else None
+                if isinstance(policy, dict):
+                    guild_default_enabled[platform_key] = bool(policy.get("default_enabled", False))
+                else:
+                    guild_default_enabled[platform_key] = False
+                if not isinstance(items, dict):
+                    continue
+                for guild_id, gp in items.items():
+                    if not isinstance(gp, dict):
+                        continue
+                    key = _make_scoped_key(platform_key, str(guild_id))
+                    guilds[key] = GuildSettings(enabled=gp.get("enabled", True))
+
+        raw_user_scopes = scopes.get("user") or {}
+        if isinstance(raw_user_scopes, dict):
+            for platform, items in raw_user_scopes.items():
+                if not isinstance(items, dict):
+                    continue
+                for user_id, up in items.items():
+                    if not isinstance(up, dict):
+                        continue
+                    key = _make_scoped_key(str(platform), str(user_id))
+                    users[key] = UserSettings(
+                        display_name=up.get("display_name", ""),
+                        is_admin=up.get("is_admin", False),
+                        bound_at=up.get("bound_at", ""),
+                        enabled=up.get("enabled", True),
+                        show_message_types=normalize_show_message_types(up.get("show_message_types")),
+                        custom_cwd=up.get("custom_cwd"),
+                        routing=_parse_routing(up.get("routing") or {}),
+                        dm_chat_id=up.get("dm_chat_id", ""),
+                    )
+    else:
+        raw_channels = payload.get("channels") or {}
+        if not isinstance(raw_channels, dict):
+            logger.error("Failed to load settings: channels must be an object")
+            raw_channels = {}
+        for channel_id, cp in raw_channels.items():
+            if not isinstance(cp, dict):
+                continue
+            platform = _infer_channel_platform(str(channel_id))
+            scoped_key = _make_scoped_key(platform, str(channel_id))
+            channels[scoped_key] = ChannelSettings(
+                enabled=cp.get("enabled", False),
+                show_message_types=normalize_show_message_types(cp.get("show_message_types")),
+                custom_cwd=cp.get("custom_cwd"),
+                routing=_parse_routing(cp.get("routing") or {}),
+                require_mention=cp.get("require_mention"),
+            )
+            migrated_legacy_channels = True
+
+        raw_users = payload.get("users") or {}
+        if isinstance(raw_users, dict):
+            for user_id, up in raw_users.items():
+                if not isinstance(up, dict):
+                    continue
+                platform = _infer_user_platform(str(user_id))
+                scoped_key = _make_scoped_key(platform, str(user_id))
+                users[scoped_key] = UserSettings(
+                    display_name=up.get("display_name", ""),
+                    is_admin=up.get("is_admin", False),
+                    bound_at=up.get("bound_at", ""),
+                    enabled=up.get("enabled", True),
+                    show_message_types=normalize_show_message_types(up.get("show_message_types")),
+                    custom_cwd=up.get("custom_cwd"),
+                    routing=_parse_routing(up.get("routing") or {}),
+                    dm_chat_id=up.get("dm_chat_id", ""),
+                )
+
+    raw_codes = payload.get("bind_codes") or []
+    bind_codes: List[BindCode] = []
+    if isinstance(raw_codes, list):
+        for bc in raw_codes:
+            if not isinstance(bc, dict):
+                continue
+            bind_codes.append(
+                BindCode(
+                    code=bc.get("code", ""),
+                    type=bc.get("type", "one_time"),
+                    created_at=bc.get("created_at", ""),
+                    expires_at=bc.get("expires_at"),
+                    is_active=bc.get("is_active", True),
+                    used_by=bc.get("used_by") or [],
+                )
+            )
+
+    return (
+        SettingsState(
+            channels=channels,
+            guilds=guilds,
+            guild_scope_platforms=guild_scope_platforms,
+            guild_default_enabled=guild_default_enabled,
+            users=users,
+            bind_codes=bind_codes,
+        ),
+        migrated_legacy_channels,
+    )
+
+
+def load_settings_state_from_json(settings_path: Path) -> tuple[SettingsState, bool]:
+    if not settings_path.exists():
+        return SettingsState(), False
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    return parse_settings_payload(payload)
+
+
 class SettingsStore:
     # ------------------------------------------------------------------
     # Singleton: one store shared by bot process AND UI API handlers.
@@ -199,248 +342,42 @@ class SettingsStore:
     def reset_instance(cls) -> None:
         """Reset singleton (for tests only)."""
         with cls._instance_lock:
+            if cls._instance is not None:
+                cls._instance.close()
             cls._instance = None
 
     def __init__(self, settings_path: Optional[Path] = None):
-        self.settings_path = settings_path or paths.get_settings_path()
+        self.settings_path = Path(settings_path) if settings_path else paths.get_settings_path()
+        self.db_path = self.settings_path.with_name("vibe.sqlite")
         self.settings: SettingsState = SettingsState()
         self._bind_lock = threading.Lock()  # Guards atomic bind operations
         self._file_mtime: float = 0
+        from storage.importer import ensure_sqlite_state
+        from storage.settings_service import SQLiteSettingsService
+
+        ensure_sqlite_state(db_path=self.db_path, state_dir=self.settings_path.parent)
+        self._service = SQLiteSettingsService(self.db_path)
         self._load()
+        self._service.has_external_write()
+
+    def close(self) -> None:
+        service = getattr(self, "_service", None)
+        if service is not None:
+            service.close()
 
     def maybe_reload(self) -> None:
-        """Reload from disk if the file has been modified since last load."""
-        try:
-            mtime = self.settings_path.stat().st_mtime
-            if mtime > self._file_mtime:
-                self._load()
-        except FileNotFoundError:
-            pass
+        """Reload from SQLite if another connection has committed changes."""
+        if self._service.has_external_write():
+            self._load()
 
     def _load(self) -> None:
-        if not self.settings_path.exists():
-            return
-        try:
-            payload = json.loads(self.settings_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.error("Failed to load settings: %s", exc)
-            return
-        if not isinstance(payload, dict):
-            logger.error("Failed to load settings: invalid format")
-            return
-
-        channels: Dict[str, ChannelSettings] = {}
-        guilds: Dict[str, GuildSettings] = {}
-        guild_scope_platforms: set[str] = set()
-        guild_default_enabled: Dict[str, bool] = {}
-        users: Dict[str, UserSettings] = {}
-        migrated_legacy_channels = False
-
-        # --- New schema (v3): payload["scopes"]["channel"|"user"][platform][id] ---
-        scopes = payload.get("scopes")
-        if isinstance(scopes, dict):
-            raw_channel_scopes = scopes.get("channel") or {}
-            if isinstance(raw_channel_scopes, dict):
-                for platform, items in raw_channel_scopes.items():
-                    if not isinstance(items, dict):
-                        continue
-                    for channel_id, cp in items.items():
-                        if not isinstance(cp, dict):
-                            continue
-                        key = _make_scoped_key(str(platform), str(channel_id))
-                        channels[key] = ChannelSettings(
-                            enabled=cp.get("enabled", False),
-                            show_message_types=normalize_show_message_types(cp.get("show_message_types")),
-                            custom_cwd=cp.get("custom_cwd"),
-                            routing=_parse_routing(cp.get("routing") or {}),
-                            require_mention=cp.get("require_mention"),
-                        )
-
-            raw_guild_scopes = scopes.get("guild") or {}
-            if isinstance(raw_guild_scopes, dict):
-                raw_guild_policy = scopes.get("guild_policy") or {}
-                for platform, items in raw_guild_scopes.items():
-                    platform_key = str(platform)
-                    guild_scope_platforms.add(platform_key)
-                    policy = raw_guild_policy.get(platform_key) if isinstance(raw_guild_policy, dict) else None
-                    if isinstance(policy, dict):
-                        guild_default_enabled[platform_key] = bool(policy.get("default_enabled", False))
-                    else:
-                        guild_default_enabled[platform_key] = False
-                    if not isinstance(items, dict):
-                        continue
-                    for guild_id, gp in items.items():
-                        if not isinstance(gp, dict):
-                            continue
-                        key = _make_scoped_key(platform_key, str(guild_id))
-                        guilds[key] = GuildSettings(enabled=gp.get("enabled", True))
-
-            raw_user_scopes = scopes.get("user") or {}
-            if isinstance(raw_user_scopes, dict):
-                for platform, items in raw_user_scopes.items():
-                    if not isinstance(items, dict):
-                        continue
-                    for user_id, up in items.items():
-                        if not isinstance(up, dict):
-                            continue
-                        key = _make_scoped_key(str(platform), str(user_id))
-                        users[key] = UserSettings(
-                            display_name=up.get("display_name", ""),
-                            is_admin=up.get("is_admin", False),
-                            bound_at=up.get("bound_at", ""),
-                            enabled=up.get("enabled", True),
-                            show_message_types=normalize_show_message_types(up.get("show_message_types")),
-                            custom_cwd=up.get("custom_cwd"),
-                            routing=_parse_routing(up.get("routing") or {}),
-                            dm_chat_id=up.get("dm_chat_id", ""),
-                        )
-        else:
-            # --- Legacy schema: flat payload["channels"] / payload["users"] ---
-            raw_channels = payload.get("channels") or {}
-            if not isinstance(raw_channels, dict):
-                logger.error("Failed to load settings: channels must be an object")
-                raw_channels = {}
-            for channel_id, cp in raw_channels.items():
-                if not isinstance(cp, dict):
-                    continue
-                platform = _infer_channel_platform(str(channel_id))
-                scoped_key = _make_scoped_key(platform, str(channel_id))
-                channels[scoped_key] = ChannelSettings(
-                    enabled=cp.get("enabled", False),
-                    show_message_types=normalize_show_message_types(cp.get("show_message_types")),
-                    custom_cwd=cp.get("custom_cwd"),
-                    routing=_parse_routing(cp.get("routing") or {}),
-                    require_mention=cp.get("require_mention"),
-                )
-                migrated_legacy_channels = True
-
-            raw_users = payload.get("users") or {}
-            if isinstance(raw_users, dict):
-                for user_id, up in raw_users.items():
-                    if not isinstance(up, dict):
-                        continue
-                    platform = _infer_user_platform(str(user_id))
-                    scoped_key = _make_scoped_key(platform, str(user_id))
-                    users[scoped_key] = UserSettings(
-                        display_name=up.get("display_name", ""),
-                        is_admin=up.get("is_admin", False),
-                        bound_at=up.get("bound_at", ""),
-                        enabled=up.get("enabled", True),
-                        show_message_types=normalize_show_message_types(up.get("show_message_types")),
-                        custom_cwd=up.get("custom_cwd"),
-                        routing=_parse_routing(up.get("routing") or {}),
-                        dm_chat_id=up.get("dm_chat_id", ""),
-                    )
-
-        # --- Bind Codes ---
-        raw_codes = payload.get("bind_codes") or []
-        bind_codes: List[BindCode] = []
-        if isinstance(raw_codes, list):
-            for bc in raw_codes:
-                if not isinstance(bc, dict):
-                    continue
-                bind_codes.append(
-                    BindCode(
-                        code=bc.get("code", ""),
-                        type=bc.get("type", "one_time"),
-                        created_at=bc.get("created_at", ""),
-                        expires_at=bc.get("expires_at"),
-                        is_active=bc.get("is_active", True),
-                        used_by=bc.get("used_by") or [],
-                    )
-                )
-
-        self.settings = SettingsState(
-            channels=channels,
-            guilds=guilds,
-            guild_scope_platforms=guild_scope_platforms,
-            guild_default_enabled=guild_default_enabled,
-            users=users,
-            bind_codes=bind_codes,
-        )
-
-        if migrated_legacy_channels:
-            logger.info("Migrating legacy channel settings to platform-scoped schema")
-            self.save()
-
-        try:
-            self._file_mtime = self.settings_path.stat().st_mtime
-        except FileNotFoundError:
-            self._file_mtime = 0
+        self.settings = self._service.load_state()
+        self._file_mtime += 1
 
     def save(self) -> None:
-        paths.ensure_data_dirs()
-        payload: dict = {
-            "schema_version": SCHEMA_VERSION,
-            "scopes": {"channel": {}, "guild": {}, "guild_policy": {}, "user": {}},
-            "bind_codes": [],
-        }
-
-        # Channels (platform-scoped)
-        for scoped_key, s in self.settings.channels.items():
-            platform, channel_id = _split_scoped_key(scoped_key)
-            if not platform:
-                platform = _infer_channel_platform(channel_id)
-            payload["scopes"]["channel"].setdefault(platform, {})[channel_id] = {
-                "enabled": s.enabled,
-                "show_message_types": s.show_message_types,
-                "custom_cwd": s.custom_cwd,
-                "routing": _routing_to_dict(s.routing),
-                "require_mention": s.require_mention,
-            }
-
-        # Guilds / Discord servers (platform-scoped)
-        for platform in sorted(self.settings.guild_scope_platforms):
-            payload["scopes"]["guild"].setdefault(platform, {})
-            payload["scopes"]["guild_policy"][platform] = {
-                "default_enabled": bool(self.settings.guild_default_enabled.get(platform, False)),
-            }
-        for scoped_key, s in self.settings.guilds.items():
-            platform, guild_id = _split_scoped_key(scoped_key)
-            if not platform:
-                platform = "discord"
-            payload["scopes"]["guild"].setdefault(platform, {})[guild_id] = {
-                "enabled": s.enabled,
-            }
-            payload["scopes"]["guild_policy"].setdefault(
-                platform,
-                {"default_enabled": bool(self.settings.guild_default_enabled.get(platform, False))},
-            )
-
-        # Users (platform-scoped)
-        for scoped_key, u in self.settings.users.items():
-            platform, user_id = _split_scoped_key(scoped_key)
-            if not platform:
-                platform = _infer_user_platform(user_id)
-            payload["scopes"]["user"].setdefault(platform, {})[user_id] = {
-                "display_name": u.display_name,
-                "is_admin": u.is_admin,
-                "bound_at": u.bound_at,
-                "enabled": u.enabled,
-                "show_message_types": u.show_message_types,
-                "custom_cwd": u.custom_cwd,
-                "routing": _routing_to_dict(u.routing),
-                "dm_chat_id": u.dm_chat_id,
-            }
-
-        # Bind codes
-        for bc in self.settings.bind_codes:
-            payload["bind_codes"].append(
-                {
-                    "code": bc.code,
-                    "type": bc.type,
-                    "created_at": bc.created_at,
-                    "expires_at": bc.expires_at,
-                    "is_active": bc.is_active,
-                    "used_by": bc.used_by,
-                }
-            )
-
-        self.settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        try:
-            self._file_mtime = self.settings_path.stat().st_mtime
-        except FileNotFoundError:
-            self._file_mtime = 0
+        self._service.save_state(self.settings)
+        self._service.has_external_write()
+        self._file_mtime += 1
 
     # --- Channel helpers ---
 

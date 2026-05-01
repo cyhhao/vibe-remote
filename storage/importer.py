@@ -13,7 +13,7 @@ from sqlalchemy import Connection, Engine, func, select
 from config import paths
 from config.discovered_chats import DiscoveredChatsStore
 from config.v2_sessions import SessionsStore
-from config.v2_settings import SettingsStore, _split_scoped_key
+from config.v2_settings import SettingsState, _split_scoped_key, load_settings_state_from_json
 from storage.db import create_sqlite_engine
 from storage.lock import MigrationFileLock
 from storage.migrations import run_migrations
@@ -137,7 +137,7 @@ def _backup_json_state(state_dir: Path) -> Path:
 
 @dataclass
 class _ParsedState:
-    settings: SettingsStore
+    settings: SettingsState
     sessions: SessionsStore
     discovered: DiscoveredChatsStore
 
@@ -149,12 +149,13 @@ def _parse_json_state(state_dir: Path, *, primary_platform: str) -> _ParsedState
     return _ParsedState(settings=settings, sessions=sessions, discovered=discovered)
 
 
-def _load_settings_from_copy(source: Path) -> SettingsStore:
+def _load_settings_from_copy(source: Path) -> SettingsState:
     with tempfile.TemporaryDirectory() as tmpdir:
         target = Path(tmpdir) / "settings.json"
         if source.exists():
             shutil.copy2(source, target)
-        return SettingsStore(target)
+        state, _migrated = load_settings_state_from_json(target)
+        return state
 
 
 def _load_sessions_from_copy(source: Path, *, primary_platform: str) -> SessionsStore:
@@ -190,7 +191,7 @@ def _import_parsed_state(conn: Connection, parsed: _ParsedState) -> dict[str, in
         "discovered_chats": 0,
     }
 
-    settings_state = parsed.settings.settings
+    settings_state = parsed.settings
 
     for scoped_key, item in settings_state.channels.items():
         platform, channel_id = _split_scoped_key(scoped_key)
