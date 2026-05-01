@@ -45,6 +45,8 @@ dependencies = [
     "aiohttp-socks>=0.8.0",
     "httpx[socks]>=0.27",
     "PyJWT[crypto]>=2.9.0",
+    "SQLAlchemy>=2.0.0",
+    "alembic>=1.13.0",
 ]
 
 [project.urls]
@@ -67,7 +69,7 @@ version-file = "vibe/_version.py"
 artifacts = ["ui/dist/**"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["vibe", "config", "core", "modules"]
+packages = ["vibe", "config", "core", "modules", "storage"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "main.py" = "vibe/service_main.py"
@@ -80,6 +82,7 @@ include = [
     "config/**",
     "core/**",
     "modules/**",
+    "storage/**",
     "main.py",
     "ui/dist/**",
     "README.md",
