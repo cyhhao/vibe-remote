@@ -9,6 +9,7 @@ import pytest
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
 from storage.importer import ensure_sqlite_state
 from storage.migrations import run_migrations
+from storage.models import metadata
 
 
 def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
@@ -39,6 +40,45 @@ def test_initial_migration_is_schema_snapshot() -> None:
 
     assert "from storage.models" not in source
     assert "metadata.create_all" not in source
+
+
+def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("select name from sqlite_master where name = 'alembic_version'").fetchone() is None
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+    assert version == ("20260501_0001",)
+
+
+def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("create table alembic_version (version_num varchar(32) not null)")
+        conn.commit()
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+    assert version == ("20260501_0001",)
 
 
 def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
