@@ -358,7 +358,7 @@ class SettingsStore:
         ensure_sqlite_state(
             db_path=self.db_path,
             state_dir=self.settings_path.parent,
-            primary_platform=resolve_primary_platform_from_config(),
+            primary_platform=resolve_primary_platform_from_config(self.settings_path.parent),
         )
         self._service = SQLiteSettingsService(self.db_path)
         self._load()

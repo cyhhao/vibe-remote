@@ -59,9 +59,13 @@ def ensure_sqlite_state(
 ) -> MigrationImportReport:
     """Create/migrate the SQLite DB and import existing JSON state once."""
 
-    paths.ensure_data_dirs()
     target_db = (db_path or paths.get_sqlite_state_path()).expanduser().resolve()
     target_state_dir = (state_dir or paths.get_state_dir()).expanduser().resolve()
+    _ensure_sqlite_target_dirs(
+        target_state_dir=target_state_dir,
+        target_db=target_db,
+        use_default_dirs=db_path is None and state_dir is None,
+    )
     lock_path = target_state_dir / "migration.lock"
 
     with MigrationFileLock(lock_path):
@@ -94,10 +98,38 @@ def ensure_sqlite_state(
             engine.dispose()
 
 
-def resolve_primary_platform_from_config() -> str | None:
+def _ensure_sqlite_target_dirs(*, target_state_dir: Path, target_db: Path, use_default_dirs: bool) -> None:
+    if use_default_dirs:
+        paths.ensure_data_dirs()
+        return
+    target_state_dir.mkdir(parents=True, exist_ok=True)
+    target_db.parent.mkdir(parents=True, exist_ok=True)
+
+
+def resolve_primary_platform_from_config(state_dir: Path | None = None) -> str | None:
     """Best-effort primary platform lookup for store-level SQLite bootstrap."""
+    config_paths = _candidate_config_paths(state_dir)
+    for config_path in config_paths:
+        platform = _resolve_primary_platform_from_config_path(config_path)
+        if platform is not None:
+            return platform
+    return None
+
+
+def _candidate_config_paths(state_dir: Path | None) -> list[Path]:
+    if state_dir is None:
+        return [paths.get_config_path()]
+
+    state_path = Path(state_dir).expanduser().resolve()
+    candidates: list[Path] = []
+    if state_path.name == "state":
+        candidates.append(state_path.parent / "config" / "config.json")
+    candidates.append(state_path / "config.json")
+    return candidates
+
+
+def _resolve_primary_platform_from_config_path(config_path: Path) -> str | None:
     try:
-        config_path = paths.get_config_path()
         if not config_path.exists():
             return None
         payload = json.loads(config_path.read_text(encoding="utf-8"))

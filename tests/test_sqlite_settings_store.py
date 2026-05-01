@@ -99,3 +99,43 @@ def test_settings_store_bootstrap_uses_config_primary_platform(tmp_path: Path, m
     finally:
         sessions.close()
         store.close()
+
+
+def test_settings_store_custom_path_uses_sibling_config_primary_platform(tmp_path: Path) -> None:
+    root = tmp_path / "custom-home"
+    state_dir = root / "state"
+    config_dir = root / "config"
+    state_dir.mkdir(parents=True)
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps({"platform": "discord", "platforms": {"enabled": ["discord"], "primary": "discord"}}),
+        encoding="utf-8",
+    )
+    (state_dir / "sessions.json").write_text(
+        json.dumps(
+            {
+                "session_mappings": {"G456": {"codex": {"1774074591.762089:/repo": "session-1"}}},
+                "active_polls": {
+                    "oc-2": {
+                        "opencode_session_id": "oc-2",
+                        "base_session_id": "base-2",
+                        "channel_id": "G456",
+                        "thread_id": "1774074591.762089",
+                        "settings_key": "G456",
+                        "working_path": "/repo",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store = SettingsStore(state_dir / "settings.json")
+    sessions = SQLiteSessionsService(state_dir / "vibe.sqlite")
+    try:
+        state = sessions.load_state()
+        assert "discord::G456" in state.session_mappings
+        assert state.active_polls["oc-2"]["platform"] == "discord"
+    finally:
+        sessions.close()
+        store.close()

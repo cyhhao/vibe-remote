@@ -229,7 +229,7 @@ class SessionsStore:
         ensure_sqlite_state(
             db_path=target_db,
             state_dir=Path(self.sessions_path).parent,
-            primary_platform=resolve_primary_platform_from_config(),
+            primary_platform=resolve_primary_platform_from_config(Path(self.sessions_path).parent),
         )
         self.db_path = target_db
         self._service = SQLiteSessionsService(target_db)

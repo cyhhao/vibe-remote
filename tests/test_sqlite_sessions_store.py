@@ -131,6 +131,44 @@ def test_sessions_store_bootstrap_uses_config_primary_platform(tmp_path: Path, m
         store.close()
 
 
+def test_sessions_store_custom_path_uses_sibling_config_primary_platform(tmp_path: Path) -> None:
+    root = tmp_path / "custom-home"
+    state_dir = root / "state"
+    config_dir = root / "config"
+    state_dir.mkdir(parents=True)
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps({"platform": "lark", "platforms": {"enabled": ["lark"], "primary": "lark"}}),
+        encoding="utf-8",
+    )
+    sessions_path = state_dir / "sessions.json"
+    sessions_path.write_text(
+        json.dumps(
+            {
+                "session_mappings": {"chat-2": {"codex": {"1774074591.762089:/repo": "session-2"}}},
+                "active_polls": {
+                    "oc-2": {
+                        "opencode_session_id": "oc-2",
+                        "base_session_id": "base-2",
+                        "channel_id": "chat-2",
+                        "thread_id": "1774074591.762089",
+                        "settings_key": "chat-2",
+                        "working_path": "/repo",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store = SessionsStore(sessions_path)
+    try:
+        assert "lark::chat-2" in store.state.session_mappings
+        assert store.state.active_polls["oc-2"]["platform"] == "lark"
+    finally:
+        store.close()
+
+
 def test_sessions_store_preserves_legacy_non_string_session_values(tmp_path: Path) -> None:
     sessions_path = tmp_path / "sessions.json"
     store = SessionsStore(sessions_path)

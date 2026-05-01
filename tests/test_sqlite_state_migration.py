@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from config import paths
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
 from storage.importer import ensure_sqlite_state
 from storage.migrations import run_migrations
@@ -123,6 +124,20 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
     assert second.imported is False
     assert second.backup_path is None
     assert second.counts == first.counts
+
+
+def test_custom_state_paths_do_not_bootstrap_default_home(tmp_path: Path, monkeypatch) -> None:
+    state_dir = tmp_path / "isolated-state"
+
+    def fail_default_bootstrap() -> None:
+        raise AssertionError("default Vibe home should not be bootstrapped for custom state paths")
+
+    monkeypatch.setattr(paths, "ensure_data_dirs", fail_default_bootstrap)
+
+    report = ensure_sqlite_state(db_path=state_dir / "vibe.sqlite", state_dir=state_dir)
+
+    assert report.imported is True
+    assert (state_dir / "vibe.sqlite").exists()
 
 
 def test_legacy_sessions_import_requires_platform_when_not_inferable(tmp_path: Path) -> None:
