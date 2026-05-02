@@ -228,8 +228,27 @@ def _is_loopback_host(value: str | None) -> bool:
         return False
 
 
-def _is_local_request() -> bool:
-    return _is_loopback_peer() and _is_loopback_host(request.host) and not _has_cloudflare_forwarded_metadata()
+def _are_docker_local_hosts_allowed() -> bool:
+    return os.environ.get("VIBE_REMOTE_ALLOW_DOCKER_LOCAL_HOSTS", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _is_configured_local_host(config: V2Config | None) -> bool:
+    if config is None:
+        return False
+    setup_host = _normalized_host(config.ui.setup_host)
+    if not setup_host or setup_host in {"0.0.0.0", "::"}:
+        return False
+    return _normalized_host(request.host) == setup_host
+
+
+def _is_local_request(config: V2Config | None = None) -> bool:
+    if _has_cloudflare_forwarded_metadata():
+        return False
+    if not (_is_loopback_host(request.host) or _is_configured_local_host(config)):
+        return False
+    if _is_loopback_peer():
+        return True
+    return _are_docker_local_hosts_allowed()
 
 
 def _normalized_host(value: str | None) -> str:
@@ -370,7 +389,7 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
 @app.before_request
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
-    local_request = _is_local_request()
+    local_request = _is_local_request(config)
     if config is None:
         if local_request:
             return None

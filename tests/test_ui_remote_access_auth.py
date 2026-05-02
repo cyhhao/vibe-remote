@@ -85,6 +85,82 @@ def test_localhost_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
     assert response.status_code == 200
 
 
+def test_docker_loopback_host_requires_explicit_trust(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.delenv("VIBE_REMOTE_ALLOW_DOCKER_LOCAL_HOSTS", raising=False)
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "203.0.113.10"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_docker_loopback_host_is_local_when_explicitly_trusted(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOCAL_HOSTS", "1")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "203.0.113.10"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_docker_loopback_trust_still_rejects_non_local_host(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOCAL_HOSTS", "1")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="https://old-alex.avibe.bot",
+        environ_base={"REMOTE_ADDR": "203.0.113.10"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_docker_configured_local_host_is_local_when_explicitly_trusted(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOCAL_HOSTS", "1")
+    config = _save_config(tmp_path)
+    config.ui.setup_host = "192.168.2.3"
+    config.save()
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://192.168.2.3:15130",
+        environ_base={"REMOTE_ADDR": "172.18.0.1"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_docker_tailscale_local_host_is_local_when_explicitly_trusted(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOCAL_HOSTS", "1")
+    config = _save_config(tmp_path)
+    config.ui.setup_host = "100.97.103.112"
+    config.save()
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://100.97.103.112:15130",
+        environ_base={"REMOTE_ADDR": "100.97.103.112"},
+    )
+
+    assert response.status_code == 200
+
+
 def test_unmatched_non_local_host_fails_closed_when_remote_access_enabled(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
