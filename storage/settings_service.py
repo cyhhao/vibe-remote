@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Connection, Engine, select
+from sqlalchemy import Connection, select
 
 from config.v2_settings import (
     BindCode,
@@ -19,14 +19,10 @@ from config.v2_settings import (
     _split_scoped_key,
 )
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
-from storage.models import (
-    bind_codes,
-    channel_settings,
-    guild_policies,
-    guild_settings,
-    scopes,
-    user_settings,
-)
+from storage.models import auth_codes, scope_settings, scopes
+
+SETTINGS_VERSION = 1
+GUILD_POLICY_KIND = "guild_policy"
 
 
 class SQLiteSettingsService:
@@ -55,29 +51,48 @@ class SQLiteSettingsService:
 
     def save_state(self, state: SettingsState) -> None:
         with self.engine.begin() as conn:
-            self._clear(conn)
+            self._clear_settings(conn)
             now = _utc_now_iso()
+
             for scoped_key, item in state.channels.items():
                 platform, channel_id = _split_scoped_key(scoped_key)
-                scope_id = self._get_or_create_scope(conn, platform or "unknown", "channel", channel_id, now=now)
+                scope_id = upsert_scope(conn, platform or "unknown", "channel", channel_id, now=now)
+                routing = asdict(item.routing)
                 conn.execute(
-                    channel_settings.insert().values(
+                    scope_settings.insert().values(
                         scope_id=scope_id,
                         enabled=_bool_int(item.enabled),
-                        show_message_types_json=_json_dumps(item.show_message_types),
-                        custom_cwd=item.custom_cwd,
-                        routing_json=_json_dumps(asdict(item.routing)),
+                        role=None,
+                        workdir=item.custom_cwd,
                         require_mention=_nullable_bool_int(item.require_mention),
+                        settings_json=_json_dumps(
+                            {
+                                "show_message_types": item.show_message_types,
+                                "routing": routing,
+                            }
+                        ),
                         created_at=now,
                         updated_at=now,
+                        settings_version=SETTINGS_VERSION,
+                        **_routing_columns(item.routing),
                     )
                 )
 
             for platform in sorted(state.guild_scope_platforms):
+                scope_id = upsert_scope(conn, platform, "platform", platform, now=now)
                 conn.execute(
-                    guild_policies.insert().values(
-                        platform=platform,
-                        default_enabled=_bool_int(state.guild_default_enabled.get(platform, False)),
+                    scope_settings.insert().values(
+                        scope_id=scope_id,
+                        enabled=_bool_int(state.guild_default_enabled.get(platform, False)),
+                        role=None,
+                        workdir=None,
+                        agent_backend=None,
+                        agent_variant=None,
+                        model=None,
+                        reasoning_effort=None,
+                        require_mention=None,
+                        settings_version=SETTINGS_VERSION,
+                        settings_json=_json_dumps({"kind": GUILD_POLICY_KIND}),
                         created_at=now,
                         updated_at=now,
                     )
@@ -85,11 +100,20 @@ class SQLiteSettingsService:
 
             for scoped_key, item in state.guilds.items():
                 platform, guild_id = _split_scoped_key(scoped_key)
-                scope_id = self._get_or_create_scope(conn, platform or "discord", "guild", guild_id, now=now)
+                scope_id = upsert_scope(conn, platform or "discord", "guild", guild_id, now=now)
                 conn.execute(
-                    guild_settings.insert().values(
+                    scope_settings.insert().values(
                         scope_id=scope_id,
                         enabled=_bool_int(item.enabled),
+                        role=None,
+                        workdir=None,
+                        agent_backend=None,
+                        agent_variant=None,
+                        model=None,
+                        reasoning_effort=None,
+                        require_mention=None,
+                        settings_version=SETTINGS_VERSION,
+                        settings_json=_json_dumps({}),
                         created_at=now,
                         updated_at=now,
                     )
@@ -97,103 +121,110 @@ class SQLiteSettingsService:
 
             for scoped_key, item in state.users.items():
                 platform, user_id = _split_scoped_key(scoped_key)
-                scope_id = self._get_or_create_scope(
+                scope_id = upsert_scope(
                     conn,
                     platform or "unknown",
                     "user",
                     user_id,
                     display_name=item.display_name,
+                    is_private=True,
                     now=now,
                 )
+                routing = asdict(item.routing)
                 conn.execute(
-                    user_settings.insert().values(
+                    scope_settings.insert().values(
                         scope_id=scope_id,
-                        is_admin=_bool_int(item.is_admin),
-                        bound_at=item.bound_at or None,
                         enabled=_bool_int(item.enabled),
-                        show_message_types_json=_json_dumps(item.show_message_types),
-                        custom_cwd=item.custom_cwd,
-                        routing_json=_json_dumps(asdict(item.routing)),
-                        dm_chat_id=item.dm_chat_id or None,
+                        role="admin" if item.is_admin else "member",
+                        workdir=item.custom_cwd,
+                        require_mention=None,
+                        settings_version=SETTINGS_VERSION,
+                        settings_json=_json_dumps(
+                            {
+                                "bound_at": item.bound_at or "",
+                                "dm_chat_id": item.dm_chat_id or "",
+                                "show_message_types": item.show_message_types,
+                                "routing": routing,
+                            }
+                        ),
                         created_at=now,
                         updated_at=now,
+                        **_routing_columns(item.routing),
                     )
                 )
 
             for item in state.bind_codes:
                 conn.execute(
-                    bind_codes.insert().values(
+                    auth_codes.insert().values(
                         code=item.code,
                         type=item.type,
-                        created_at=item.created_at or now,
-                        expires_at=item.expires_at,
                         is_active=_bool_int(item.is_active),
+                        expires_at=item.expires_at,
                         used_by_json=_json_dumps(item.used_by),
+                        created_at=item.created_at or now,
+                        updated_at=now,
                     )
                 )
 
-    def _clear(self, conn: Connection) -> None:
-        conn.execute(channel_settings.delete())
-        conn.execute(guild_settings.delete())
-        conn.execute(guild_policies.delete())
-        conn.execute(user_settings.delete())
-        conn.execute(bind_codes.delete())
-        conn.execute(scopes.delete())
+    def _clear_settings(self, conn: Connection) -> None:
+        conn.execute(scope_settings.delete())
+        conn.execute(auth_codes.delete())
 
     def _load_channels(self, conn: Connection) -> dict[str, ChannelSettings]:
-        rows = conn.execute(
-            select(scopes, channel_settings).join(channel_settings, channel_settings.c.scope_id == scopes.c.id)
-        ).mappings()
+        rows = _settings_rows(conn, "channel")
         result: dict[str, ChannelSettings] = {}
         for row in rows:
-            key = _make_scoped_key(str(row["platform"]), str(row["scope_id"]))
+            payload = _json_loads(row["settings_json"], {})
+            key = _make_scoped_key(str(row["platform"]), str(row["native_id"]))
             result[key] = ChannelSettings(
                 enabled=bool(row["enabled"]),
-                show_message_types=_json_loads(row["show_message_types_json"], []),
-                custom_cwd=row["custom_cwd"],
-                routing=_routing_from_json(row["routing_json"]),
+                show_message_types=_json_list(payload.get("show_message_types")),
+                custom_cwd=row["workdir"],
+                routing=_routing_from_row(row, payload),
                 require_mention=_nullable_bool(row["require_mention"]),
             )
         return result
 
     def _load_guilds(self, conn: Connection) -> dict[str, GuildSettings]:
-        rows = conn.execute(
-            select(scopes, guild_settings).join(guild_settings, guild_settings.c.scope_id == scopes.c.id)
-        ).mappings()
+        rows = _settings_rows(conn, "guild")
         result: dict[str, GuildSettings] = {}
         for row in rows:
-            key = _make_scoped_key(str(row["platform"]), str(row["scope_id"]))
+            key = _make_scoped_key(str(row["platform"]), str(row["native_id"]))
             result[key] = GuildSettings(enabled=bool(row["enabled"]))
         return result
 
     def _load_guild_scope_platforms(self, conn: Connection) -> set[str]:
-        return {str(row[0]) for row in conn.execute(select(guild_policies.c.platform))}
+        return set(self._load_guild_policies(conn).keys())
 
     def _load_guild_policies(self, conn: Connection) -> dict[str, bool]:
-        rows = conn.execute(select(guild_policies.c.platform, guild_policies.c.default_enabled))
-        return {str(platform): bool(default_enabled) for platform, default_enabled in rows}
+        rows = _settings_rows(conn, "platform")
+        result: dict[str, bool] = {}
+        for row in rows:
+            payload = _json_loads(row["settings_json"], {})
+            if payload.get("kind") == GUILD_POLICY_KIND:
+                result[str(row["platform"])] = bool(row["enabled"])
+        return result
 
     def _load_users(self, conn: Connection) -> dict[str, UserSettings]:
-        rows = conn.execute(
-            select(scopes, user_settings).join(user_settings, user_settings.c.scope_id == scopes.c.id)
-        ).mappings()
+        rows = _settings_rows(conn, "user")
         result: dict[str, UserSettings] = {}
         for row in rows:
-            key = _make_scoped_key(str(row["platform"]), str(row["scope_id"]))
+            payload = _json_loads(row["settings_json"], {})
+            key = _make_scoped_key(str(row["platform"]), str(row["native_id"]))
             result[key] = UserSettings(
                 display_name=row["display_name"] or "",
-                is_admin=bool(row["is_admin"]),
-                bound_at=row["bound_at"] or "",
+                is_admin=str(row["role"] or "").lower() in {"admin", "owner"},
+                bound_at=str(payload.get("bound_at") or ""),
                 enabled=bool(row["enabled"]),
-                show_message_types=_json_loads(row["show_message_types_json"], []),
-                custom_cwd=row["custom_cwd"],
-                routing=_routing_from_json(row["routing_json"]),
-                dm_chat_id=row["dm_chat_id"] or "",
+                show_message_types=_json_list(payload.get("show_message_types")),
+                custom_cwd=row["workdir"],
+                routing=_routing_from_row(row, payload),
+                dm_chat_id=str(payload.get("dm_chat_id") or ""),
             )
         return result
 
     def _load_bind_codes(self, conn: Connection) -> list[BindCode]:
-        rows = conn.execute(select(bind_codes)).mappings()
+        rows = conn.execute(select(auth_codes)).mappings()
         return [
             BindCode(
                 code=row["code"],
@@ -206,52 +237,139 @@ class SQLiteSettingsService:
             for row in rows
         ]
 
-    def _get_or_create_scope(
-        self,
-        conn: Connection,
-        platform: str,
-        scope_type: str,
-        scope_id: str,
-        *,
-        now: str,
-        display_name: str | None = None,
-    ) -> int:
-        existing = conn.execute(
-            select(scopes.c.id).where(
-                scopes.c.platform == platform,
-                scopes.c.scope_type == scope_type,
-                scopes.c.scope_id == scope_id,
-            )
-        ).scalar_one_or_none()
-        if existing is not None:
-            return int(existing)
-        result = conn.execute(
-            scopes.insert().values(
-                platform=platform,
-                scope_type=scope_type,
-                scope_id=scope_id,
-                display_name=display_name,
-                created_at=now,
-                updated_at=now,
-            )
+
+def upsert_scope(
+    conn: Connection,
+    platform: str,
+    scope_type: str,
+    native_id: str,
+    *,
+    now: str,
+    parent_scope_id: str | None = None,
+    display_name: str | None = None,
+    native_type: str | None = None,
+    is_private: bool | None = None,
+    supports_threads: bool | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    scope_id = make_scope_id(platform, scope_type, native_id)
+    existing = conn.execute(select(scopes.c.id).where(scopes.c.id == scope_id)).scalar_one_or_none()
+    values = {
+        "parent_scope_id": parent_scope_id,
+        "display_name": display_name,
+        "native_type": native_type,
+        "last_seen_at": now,
+        "updated_at": now,
+    }
+    if is_private is not None:
+        values["is_private"] = _bool_int(is_private)
+    if supports_threads is not None:
+        values["supports_threads"] = _bool_int(supports_threads)
+    if metadata is not None:
+        values["metadata_json"] = _json_dumps(metadata)
+    if existing is not None:
+        clean_values = {key: value for key, value in values.items() if value not in (None, "", _json_dumps({}))}
+        if clean_values:
+            conn.execute(scopes.update().where(scopes.c.id == scope_id).values(**clean_values))
+        return scope_id
+
+    insert_values = {
+        "id": scope_id,
+        "platform": platform,
+        "scope_type": scope_type,
+        "native_id": native_id,
+        "is_private": _bool_int(is_private),
+        "supports_threads": _bool_int(supports_threads),
+        "metadata_json": _json_dumps(metadata or {}),
+        "first_seen_at": now,
+        **values,
+    }
+    conn.execute(scopes.insert().values(**insert_values))
+    return scope_id
+
+
+def make_scope_id(platform: str, scope_type: str, native_id: str) -> str:
+    return f"{platform}::{scope_type}::{native_id}"
+
+
+def _settings_rows(conn: Connection, scope_type: str):
+    return conn.execute(
+        select(
+            scopes.c.id.label("scope_id"),
+            scopes.c.platform,
+            scopes.c.scope_type,
+            scopes.c.native_id,
+            scopes.c.display_name,
+            scope_settings,
         )
-        return int(result.inserted_primary_key[0])
+        .join(scope_settings, scope_settings.c.scope_id == scopes.c.id)
+        .where(scopes.c.scope_type == scope_type)
+    ).mappings()
 
 
-def _routing_from_json(value: str) -> RoutingSettings:
-    payload = _json_loads(value, {})
-    return RoutingSettings(
-        agent_backend=payload.get("agent_backend"),
-        opencode_agent=payload.get("opencode_agent"),
-        opencode_model=payload.get("opencode_model"),
-        opencode_reasoning_effort=payload.get("opencode_reasoning_effort"),
-        claude_agent=payload.get("claude_agent"),
-        claude_model=payload.get("claude_model"),
-        claude_reasoning_effort=payload.get("claude_reasoning_effort"),
-        codex_agent=payload.get("codex_agent"),
-        codex_model=payload.get("codex_model"),
-        codex_reasoning_effort=payload.get("codex_reasoning_effort"),
+def _routing_columns(routing: RoutingSettings) -> dict[str, str | None]:
+    backend = routing.agent_backend
+    if backend == "codex":
+        variant = routing.codex_agent
+        model = routing.codex_model
+        effort = routing.codex_reasoning_effort
+    elif backend == "claude":
+        variant = routing.claude_agent
+        model = routing.claude_model
+        effort = routing.claude_reasoning_effort
+    elif backend == "opencode":
+        variant = routing.opencode_agent
+        model = routing.opencode_model
+        effort = routing.opencode_reasoning_effort
+    else:
+        variant = routing.codex_agent or routing.claude_agent or routing.opencode_agent
+        model = routing.codex_model or routing.claude_model or routing.opencode_model
+        effort = (
+            routing.codex_reasoning_effort
+            or routing.claude_reasoning_effort
+            or routing.opencode_reasoning_effort
+        )
+    return {
+        "agent_backend": backend,
+        "agent_variant": variant,
+        "model": model,
+        "reasoning_effort": effort,
+    }
+
+
+def _routing_from_row(row: dict[str, Any], payload: dict[str, Any]) -> RoutingSettings:
+    routing_payload = payload.get("routing") or {}
+    routing = RoutingSettings(
+        agent_backend=routing_payload.get("agent_backend"),
+        opencode_agent=routing_payload.get("opencode_agent"),
+        opencode_model=routing_payload.get("opencode_model"),
+        opencode_reasoning_effort=routing_payload.get("opencode_reasoning_effort"),
+        claude_agent=routing_payload.get("claude_agent"),
+        claude_model=routing_payload.get("claude_model"),
+        claude_reasoning_effort=routing_payload.get("claude_reasoning_effort"),
+        codex_agent=routing_payload.get("codex_agent"),
+        codex_model=routing_payload.get("codex_model"),
+        codex_reasoning_effort=routing_payload.get("codex_reasoning_effort"),
     )
+    backend = row.get("agent_backend")
+    if backend:
+        routing.agent_backend = str(backend)
+    variant = row.get("agent_variant")
+    model = row.get("model")
+    effort = row.get("reasoning_effort")
+    if routing.agent_backend == "codex":
+        routing.codex_agent = routing.codex_agent or variant
+        routing.codex_model = routing.codex_model or model
+        routing.codex_reasoning_effort = routing.codex_reasoning_effort or effort
+    elif routing.agent_backend == "claude":
+        routing.claude_agent = routing.claude_agent or variant
+        routing.claude_model = routing.claude_model or model
+        routing.claude_reasoning_effort = routing.claude_reasoning_effort or effort
+    elif routing.agent_backend == "opencode":
+        routing.opencode_agent = routing.opencode_agent or variant
+        routing.opencode_model = routing.opencode_model or model
+        routing.opencode_reasoning_effort = routing.opencode_reasoning_effort or effort
+    return routing
 
 
 def _json_dumps(value: Any) -> str:
@@ -265,6 +383,10 @@ def _json_loads(value: str | None, default: Any) -> Any:
         return json.loads(value)
     except (TypeError, ValueError):
         return default
+
+
+def _json_list(value: Any) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []
 
 
 def _bool_int(value: Any) -> int:

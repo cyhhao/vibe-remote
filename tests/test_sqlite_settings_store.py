@@ -5,8 +5,11 @@ from pathlib import Path
 
 from config import paths
 from config.v2_settings import ChannelSettings, SettingsState, SettingsStore, UserSettings
+from storage.db import create_sqlite_engine
+from storage.migrations import run_migrations
+from storage.models import scopes
 from storage.sessions_service import SQLiteSessionsService
-from storage.settings_service import SQLiteSettingsService
+from storage.settings_service import SQLiteSettingsService, upsert_scope
 
 
 def test_settings_store_uses_sqlite_without_rewriting_legacy_json(tmp_path: Path) -> None:
@@ -61,6 +64,54 @@ def test_settings_store_reloads_external_sqlite_writes(tmp_path: Path) -> None:
     finally:
         external.close()
         store.close()
+
+
+def test_settings_save_preserves_observed_scope_metadata(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    engine = create_sqlite_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            upsert_scope(
+                conn,
+                "telegram",
+                "channel",
+                "123",
+                display_name="General",
+                native_type="supergroup",
+                is_private=True,
+                supports_threads=True,
+                metadata={"username": "general"},
+                now="2026-05-01T00:00:00+00:00",
+            )
+    finally:
+        engine.dispose()
+
+    service = SQLiteSettingsService(db_path)
+    try:
+        service.save_state(
+            SettingsState(
+                channels={
+                    "telegram::123": ChannelSettings(enabled=True),
+                }
+            )
+        )
+    finally:
+        service.close()
+
+    engine = create_sqlite_engine(db_path)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                scopes.select().where(scopes.c.id == "telegram::channel::123"),
+            ).mappings().one()
+    finally:
+        engine.dispose()
+
+    assert row["native_type"] == "supergroup"
+    assert row["is_private"] == 1
+    assert row["supports_threads"] == 1
+    assert json.loads(row["metadata_json"]) == {"username": "general"}
 
 
 def test_settings_store_bootstrap_uses_config_primary_platform(tmp_path: Path, monkeypatch) -> None:

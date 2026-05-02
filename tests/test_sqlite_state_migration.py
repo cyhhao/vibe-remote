@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -27,9 +28,9 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
             )
         }
         assert "alembic_version" in tables
-        assert "channel_settings" in tables
-        assert "agent_session_bindings" in tables
-        assert "session_messages" in tables
+        assert "scope_settings" in tables
+        assert "agent_sessions" in tables
+        assert "runtime_records" in tables
         version = conn.execute("select version_num from alembic_version").fetchone()
         assert version == ("20260501_0001",)
 
@@ -106,24 +107,68 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
     assert first.imported is True
     assert first.backup_path is not None
     assert (first.backup_path / "settings.json").exists()
-    assert first.counts["channel_settings"] == 1
-    assert first.counts["user_settings"] == 1
-    assert first.counts["guild_settings"] == 1
-    assert first.counts["bind_codes"] == 1
-    assert first.counts["agent_session_bindings"] == 1
-    assert first.counts["active_threads"] == 1
-    assert first.counts["active_polls"] == 1
-    assert first.counts["processed_messages"] == 2
-    assert first.counts["discovered_chats"] == 1
+    assert first.counts["scopes"] == 5
+    assert first.counts["scope_settings"] == 4
+    assert first.counts["auth_codes"] == 1
+    assert first.counts["agent_sessions"] == 1
+    assert first.counts["runtime_records"] == 4
+    assert first.counts["discovered_scopes"] == 1
     with sqlite3.connect(db_path) as conn:
         last_activity = conn.execute(
-            "select value from schema_meta where key = 'sessions_last_activity'",
+            "select value_json from state_meta where key = 'sessions_last_activity'",
         ).fetchone()
-    assert last_activity == ("2026-05-01T00:00:00+00:00",)
+        channel_settings = conn.execute(
+            """
+            select s.native_id, ss.workdir, ss.agent_backend, ss.model, ss.reasoning_effort
+            from scopes s
+            join scope_settings ss on ss.scope_id = s.id
+            where s.platform = 'slack' and s.scope_type = 'channel' and s.native_id = 'C123'
+            """,
+        ).fetchone()
+        user_settings = conn.execute(
+            """
+            select ss.role, ss.agent_backend
+            from scopes s
+            join scope_settings ss on ss.scope_id = s.id
+            where s.platform = 'slack' and s.scope_type = 'user' and s.native_id = 'U123'
+            """,
+        ).fetchone()
+        agent_session = conn.execute(
+            """
+            select id, scope_id, session_anchor, workdir, native_session_id
+            from agent_sessions
+            """,
+        ).fetchone()
+        duplicate_insert_ok = True
+        try:
+            conn.execute(
+                """
+                insert into agent_sessions (
+                    id, scope_id, agent_backend, agent_variant, model, reasoning_effort,
+                    session_anchor, workdir, native_session_id, title, status,
+                    metadata_json, created_at, updated_at, last_active_at
+                ) values (
+                    'sesabc234def', ?, 'codex', 'codex', 'gpt-5.4', 'high',
+                    ?, ?, 'native-2', null, 'active', '{}', 'now', 'now', 'now'
+                )
+                """,
+                (agent_session[1], agent_session[2], agent_session[3]),
+            )
+        except sqlite3.IntegrityError:
+            duplicate_insert_ok = False
+    assert last_activity == ('"2026-05-01T00:00:00+00:00"',)
+    assert channel_settings == ("C123", "/repo", "codex", "gpt-5.4", None)
+    assert user_settings == ("admin", "opencode")
+    assert re.fullmatch(r"ses[23456789abcdefghjkmnpqrstuvwxyz]{10}", agent_session[0])
+    assert agent_session[1] == "slack::channel::C123"
+    assert agent_session[2] == "slack_1774074591.762089:/repo"
+    assert agent_session[3] == "/repo"
+    assert agent_session[4] == "codex-session-1"
+    assert duplicate_insert_ok is True
 
     assert second.imported is False
     assert second.backup_path is None
-    assert second.counts == first.counts
+    assert second.counts == {key: value for key, value in first.counts.items() if key != "discovered_scopes"}
 
 
 def test_custom_state_paths_do_not_bootstrap_default_home(tmp_path: Path, monkeypatch) -> None:
@@ -174,7 +219,7 @@ def test_legacy_sessions_import_requires_platform_when_not_inferable(tmp_path: P
 
     with sqlite3.connect(db_path) as conn:
         marker = conn.execute(
-            "select value from schema_meta where key = 'json_import_completed_at'",
+            "select value_json from state_meta where key = 'json_import_completed_at'",
         ).fetchone()
     assert marker is None
 
@@ -200,7 +245,7 @@ def test_legacy_settings_import_does_not_rewrite_source_json(tmp_path: Path) -> 
     report = ensure_sqlite_state(db_path=state_dir / "vibe.sqlite", state_dir=state_dir, primary_platform="slack")
 
     assert report.imported is True
-    assert report.counts["channel_settings"] == 1
+    assert report.counts["scope_settings"] == 1
     assert settings_path.read_text(encoding="utf-8") == original
 
 
@@ -215,7 +260,7 @@ def test_failed_json_import_does_not_mark_complete_and_can_retry(tmp_path: Path)
 
     with sqlite3.connect(db_path) as conn:
         marker = conn.execute(
-            "select value from schema_meta where key = 'json_import_completed_at'",
+            "select value_json from state_meta where key = 'json_import_completed_at'",
         ).fetchone()
     assert marker is None
 
@@ -223,7 +268,7 @@ def test_failed_json_import_does_not_mark_complete_and_can_retry(tmp_path: Path)
     report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
 
     assert report.imported is True
-    assert report.counts["channel_settings"] == 1
+    assert report.counts["scope_settings"] == 4
 
 
 def test_invalid_discovered_chats_import_does_not_mark_complete_and_can_retry(tmp_path: Path) -> None:
@@ -239,7 +284,7 @@ def test_invalid_discovered_chats_import_does_not_mark_complete_and_can_retry(tm
 
     with sqlite3.connect(db_path) as conn:
         marker = conn.execute(
-            "select value from schema_meta where key = 'json_import_completed_at'",
+            "select value_json from state_meta where key = 'json_import_completed_at'",
         ).fetchone()
     assert marker is None
 
@@ -247,7 +292,7 @@ def test_invalid_discovered_chats_import_does_not_mark_complete_and_can_retry(tm
     report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
 
     assert report.imported is True
-    assert report.counts["discovered_chats"] == 1
+    assert report.counts["discovered_scopes"] == 1
 
 
 def test_malformed_discovered_chats_structure_does_not_mark_complete(tmp_path: Path) -> None:
@@ -266,7 +311,7 @@ def test_malformed_discovered_chats_structure_does_not_mark_complete(tmp_path: P
 
     with sqlite3.connect(db_path) as conn:
         marker = conn.execute(
-            "select value from schema_meta where key = 'json_import_completed_at'",
+            "select value_json from state_meta where key = 'json_import_completed_at'",
         ).fetchone()
     assert marker is None
 
@@ -274,7 +319,7 @@ def test_malformed_discovered_chats_structure_does_not_mark_complete(tmp_path: P
     report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
 
     assert report.imported is True
-    assert report.counts["discovered_chats"] == 1
+    assert report.counts["discovered_scopes"] == 1
 
 
 def test_data_version_probe_detects_external_write(tmp_path: Path) -> None:
@@ -286,7 +331,7 @@ def test_data_version_probe_detects_external_write(tmp_path: Path) -> None:
             assert probe.has_external_write() is False
             with engine.begin() as conn:
                 conn.exec_driver_sql(
-                    "insert into schema_meta (key, value, updated_at) values ('probe', '1', 'now')"
+                    "insert into state_meta (key, value_json, updated_at) values ('probe', '1', 'now')"
                 )
             assert probe.has_external_write() is True
             assert probe.has_external_write() is False
