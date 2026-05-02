@@ -501,6 +501,7 @@ bind vr-a3x9k2
 | `vibe restart` | 停止后重新启动 |
 | `vibe status` | 输出运行状态 JSON |
 | `vibe doctor` | 运行诊断 |
+| `vibe remote` | 引导式配置 Vibe Cloud 远程 Web UI |
 | `vibe screenshot` | 截取本机桌面截图 |
 | `vibe version` | 查看当前版本 |
 | `vibe check-update` | 检查是否有新版本 |
@@ -572,6 +573,31 @@ vibe doctor
 - 检查平台凭据
 - 检查 backend CLI 是否可用
 - 检查运行环境
+
+### `vibe remote`
+
+```bash
+vibe remote
+```
+
+- 启动 Vibe Cloud 远程访问的引导式配置
+- 先解释远程访问的作用，再请求 pairing key
+- 引导用户打开 `https://avibe.bot`，创建 remote-access bot，领取个人域名，并复制一次性 pairing key
+- 配对后保存远程访问凭证，并启动安全 tunnel
+
+常用后续命令：
+
+```bash
+vibe remote status
+vibe remote start
+vibe remote stop
+```
+
+如果你已经拿到 pairing key：
+
+```bash
+vibe remote pair vrp_abc123
+```
 
 ### `vibe screenshot`
 

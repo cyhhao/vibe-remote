@@ -14,7 +14,7 @@ def _config_with_setup_state(*, ready: bool) -> SimpleNamespace:
     )
 
 
-def test_cmd_vibe_marks_setup_when_no_enabled_platform_has_credentials() -> None:
+def test_cmd_vibe_marks_setup_when_no_enabled_platform_has_credentials(capsys) -> None:
     config = _config_with_setup_state(ready=False)
 
     with (
@@ -30,6 +30,9 @@ def test_cmd_vibe_marks_setup_when_no_enabled_platform_has_credentials() -> None
         cli.cmd_vibe()
 
     write_status.assert_called_once_with("setup", "missing platform credentials")
+    output = capsys.readouterr().out
+    assert "Run: vibe remote" in output
+    assert "SSH port forwarding" not in output
 
 
 def test_cmd_vibe_marks_starting_when_non_slack_platform_is_configured() -> None:

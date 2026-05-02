@@ -58,6 +58,12 @@ curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.s
 
 完事。浏览器打开 -> 跟着向导走 -> 搞定。
 
+如果你希望从另一台设备或远端服务器打开 Web UI，运行：
+
+```bash
+vibe remote
+```
+
 <details>
 <summary><b>Windows？</b></summary>
 
@@ -332,15 +338,17 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 - **微信配置指南** — 运行 `vibe` 后在向导中选择微信即可
 - **飞书配置指南** — 运行 `vibe` 后在向导中选择飞书即可
 
-## 远端服务器提示（SSH）
+## 远程访问 Web UI
 
-如果你把 Vibe Remote 部署在远端服务器上，请保持 Web UI 只监听在 `127.0.0.1:5123`，并通过 SSH 端口转发在本机访问：
+如果你希望从另一台设备打开本机 Web UI，或者把 Vibe Remote 部署在远端服务器上，请使用引导式远程访问配置：
 
 ```bash
-ssh -NL 5123:localhost:5123 user@server-ip
+vibe remote
 ```
 
-详见：**[CLI 参考手册](docs/CLI_ZH.md)**（搜索"远端服务器访问 Web UI"）
+它会引导你登录 avibe.bot、领取个人域名、完成配对，并启动安全 tunnel。
+
+详见：**[CLI 参考手册](docs/CLI_ZH.md)**。
 
 ---
 

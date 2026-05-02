@@ -154,6 +154,17 @@ export const RemoteAccess: React.FC = () => {
             </a>
           </div>
 
+          {showPairingForm && (
+            <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-950">
+              <div className="font-semibold">{t('remoteAccess.flowTitle')}</div>
+              <ol className="mt-2 list-decimal space-y-1 pl-5">
+                <li>{t('remoteAccess.flowStep1')}</li>
+                <li>{t('remoteAccess.flowStep2')}</li>
+                <li>{t('remoteAccess.flowStep3')}</li>
+              </ol>
+            </div>
+          )}
+
           {showPairingForm ? (
             <>
               <label className="block space-y-2">
@@ -210,15 +221,6 @@ export const RemoteAccess: React.FC = () => {
               </button>
             </div>
           )}
-
-          <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm text-cyan-950">
-            <div className="font-semibold">{t('remoteAccess.flowTitle')}</div>
-            <ol className="mt-2 list-decimal space-y-1 pl-5">
-              <li>{t('remoteAccess.flowStep1')}</li>
-              <li>{t('remoteAccess.flowStep2')}</li>
-              <li>{t('remoteAccess.flowStep3')}</li>
-            </ol>
-          </div>
 
           {legacyNestedHostname && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
