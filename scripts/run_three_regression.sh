@@ -132,7 +132,7 @@ fi
 print_summary() {
     local port="${THREE_REGRESSION_PORT:-15130}"
     local bind_host="${THREE_REGRESSION_PORT_BIND_HOST:-127.0.0.1}"
-    local ui_host="${THREE_REGRESSION_ACCESS_HOST:-$bind_host}"
+    local ui_host="${THREE_REGRESSION_ACCESS_HOST:-${THREE_REGRESSION_UI_HOST:-$bind_host}}"
     local default_backend="${THREE_REGRESSION_DEFAULT_BACKEND:-opencode}"
     local config_path="$OUTPUT_ROOT/vibe/config/config.json"
 
