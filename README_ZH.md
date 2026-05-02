@@ -4,9 +4,9 @@
 
 # Vibe Remote
 
-### 在 Slack、Discord、Telegram、微信、飞书里运行 Claude Code、OpenCode 和 Codex。
+### 你的 AI agent 军团，用 Slack、Discord、Telegram、微信或飞书指挥。
 
-**本地优先。Web 设置向导。真实 agent 会话，随时从聊天 App 接管。**
+**不用笔记本电脑。不用 IDE。只需 vibe。**
 
 [![GitHub Stars](https://img.shields.io/github/stars/cyhhao/vibe-remote?color=ffcb47&labelColor=black&style=flat-square)](https://github.com/cyhhao/vibe-remote/stargazers)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?labelColor=black&style=flat-square)](https://www.python.org/)
@@ -35,21 +35,6 @@
 ![Banner](assets/banner.jpg)
 
 </div>
-
-## 功能速览
-
-| 能力 | 状态 |
-| --- | --- |
-| 聊天平台 | Slack、Discord、Telegram、微信、飞书 / Lark |
-| Agent 后端 | Claude Code、OpenCode、Codex |
-| 设置方式 | 一行安装命令 + 浏览器向导 |
-| 会话模型 | 每个 thread 或聊天范围都是独立 agent 会话 |
-| 会话恢复 | 从当前项目恢复真实 Claude Code、OpenCode、Codex 历史会话 |
-| 远程访问 | `vibe remote` 通过 avibe.bot 安全 tunnel 打开本地 Web UI |
-| 自动化 | `vibe task` 定时任务，`vibe hook` 一次性异步回调 |
-| 安全模型 | 本地优先运行，代码留在自己的机器上 |
-
-Vibe Remote 不是另一个 agent 框架，而是你已经信任的编码 agent 的远程控制层。
 
 ## 为什么
 
@@ -92,24 +77,6 @@ Windows 下默认推荐使用 WSL 方案，因为它的兼容性最好。
 - 在哪里执行 Vibe Remote 的安装命令
 - 如何启动 Ubuntu 并打开 Web UI
 </details>
-
----
-
-## 让 AI Agent 帮你安装配置
-
-最省事的方式，是把这段话交给你的编码 agent：
-
-```text
-Follow https://raw.githubusercontent.com/cyhhao/vibe-remote/master/docs/INSTALL_FOR_AI.md to install and configure Vibe Remote for me.
-```
-
-如果希望中文说明，可以使用：
-
-```text
-按照 https://raw.githubusercontent.com/cyhhao/vibe-remote/master/docs/INSTALL_FOR_AI_ZH.md 帮我安装并配置 Vibe Remote。
-```
-
-这份指南会引导 agent 检查系统、安装 `vibe`、选择 Claude Code / OpenCode / Codex、启动 Web UI，并通过向导完成聊天平台配置。
 
 ---
 
