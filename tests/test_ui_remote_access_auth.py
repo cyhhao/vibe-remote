@@ -103,6 +103,7 @@ def test_docker_loopback_host_requires_explicit_trust(monkeypatch, tmp_path):
 def test_docker_loopback_host_is_local_when_explicitly_trusted(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
     _save_config(tmp_path)
 
     response = app.test_client().get(
@@ -114,9 +115,26 @@ def test_docker_loopback_host_is_local_when_explicitly_trusted(monkeypatch, tmp_
     assert response.status_code == 200
 
 
+def test_docker_loopback_trust_requires_loopback_port_binding(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "0.0.0.0")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "172.17.0.1"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
 def test_docker_loopback_trust_still_rejects_non_local_host(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
     _save_config(tmp_path)
 
     response = app.test_client().get(
@@ -132,6 +150,7 @@ def test_docker_loopback_trust_still_rejects_non_local_host(monkeypatch, tmp_pat
 def test_docker_loopback_trust_rejects_untrusted_peer(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
     _save_config(tmp_path)
 
     response = app.test_client().get(
@@ -147,6 +166,7 @@ def test_docker_loopback_trust_rejects_untrusted_peer(monkeypatch, tmp_path):
 def test_docker_loopback_trust_supports_configured_peer_cidrs(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
     monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_PEER_CIDRS", "100.64.0.0/10")
     _save_config(tmp_path)
 

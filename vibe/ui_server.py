@@ -228,8 +228,21 @@ def _is_loopback_host(value: str | None) -> bool:
         return False
 
 
+def _env_flag_enabled(name: str) -> bool:
+    return os.environ.get(name, "").lower() in {"1", "true", "yes", "on"}
+
+
+def _has_loopback_only_docker_port_binding() -> bool:
+    bind_host = os.environ.get("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST")
+    if not bind_host:
+        return False
+    return _is_loopback_host(bind_host)
+
+
 def _is_trusted_docker_peer() -> bool:
-    if os.environ.get("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "").lower() not in {"1", "true", "yes", "on"}:
+    if not _env_flag_enabled("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS"):
+        return False
+    if not _has_loopback_only_docker_port_binding():
         return False
 
     remote_addr = (request.remote_addr or "").strip()
