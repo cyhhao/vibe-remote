@@ -7,6 +7,7 @@ import asyncio
 from config.paths import ensure_data_dirs, get_logs_dir
 from config.v2_config import V2Config
 from core.controller import Controller
+from storage.importer import ensure_sqlite_state
 from vibe.sentry_integration import init_sentry
 
 
@@ -61,6 +62,11 @@ def apply_claude_sdk_patches():
         )
 
 
+def prepare_sqlite_state(config: V2Config):
+    """Run safe SQLite state migrations before the service starts."""
+    return ensure_sqlite_state(primary_platform=config.platform)
+
+
 def main():
     """Main entry point"""
     try:
@@ -76,6 +82,13 @@ def main():
         
         logger.info("Starting vibe-remote service...")
         logger.info(f"Working directory: {config.runtime.default_cwd}")
+        report = prepare_sqlite_state(config)
+        logger.info(
+            "SQLite state ready: imported=%s db_path=%s backup_path=%s",
+            report.imported,
+            report.db_path,
+            report.backup_path,
+        )
         
         # Create and run controller
         from config.v2_compat import to_app_config
