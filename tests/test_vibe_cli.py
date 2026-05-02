@@ -5,11 +5,13 @@ import signal
 import shlex
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from config import paths
 from vibe import runtime
 from vibe import cli
+from vibe import remote_access
 
 
 def test_default_config_written(tmp_path, monkeypatch):
@@ -180,6 +182,179 @@ def test_restart_parser_accepts_delay_seconds():
 
     assert args.command == "restart"
     assert args.delay_seconds == 60
+
+
+def test_remote_parser_accepts_pairing_command():
+    parser = cli.build_parser()
+    args = parser.parse_args(["remote", "pair", "vrp_test", "--device-name", "Mac Studio"])
+
+    assert args.command == "remote"
+    assert args.remote_command == "pair"
+    assert args.pairing_key == "vrp_test"
+    assert args.device_name == "Mac Studio"
+
+
+def test_remote_parser_allows_guided_setup_without_subcommand():
+    parser = cli.build_parser()
+    args = parser.parse_args(["remote"])
+
+    assert args.command == "remote"
+    assert args.remote_command is None
+
+
+def test_remote_parser_accepts_status_json():
+    parser = cli.build_parser()
+    args = parser.parse_args(["remote", "status", "--json"])
+
+    assert args.command == "remote"
+    assert args.remote_command == "status"
+    assert args.json is True
+
+
+def test_cmd_remote_pair_prompts_and_reports_success(monkeypatch, capsys):
+    captured = {}
+
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "vrp_prompt")
+
+    def fake_pair(pairing_key: str, backend_url: str, device_name: str):
+        captured.update(
+            {
+                "pairing_key": pairing_key,
+                "backend_url": backend_url,
+                "device_name": device_name,
+            }
+        )
+        return {
+            "ok": True,
+            "public_url": "https://alex.avibe.bot",
+            "running": True,
+            "start": {"ok": True},
+        }
+
+    monkeypatch.setattr(remote_access, "pair", fake_pair)
+
+    result = cli.cmd_remote_pair(
+        SimpleNamespace(
+            pairing_key=None,
+            backend_url="https://backend.test",
+            device_name="Mac Studio",
+            json=False,
+        )
+    )
+
+    assert result == 0
+    assert captured == {
+        "pairing_key": "vrp_prompt",
+        "backend_url": "https://backend.test",
+        "device_name": "Mac Studio",
+    }
+    output = capsys.readouterr().out
+    assert "Remote access is ready" in output
+    assert "https://alex.avibe.bot" in output
+    assert "vibe remote status" in output
+
+
+def test_cmd_remote_setup_explains_before_prompting_for_key(monkeypatch, capsys):
+    events = []
+
+    monkeypatch.setattr(remote_access, "status", lambda: {"ok": True, "paired": False})
+    monkeypatch.setattr("builtins.input", lambda prompt: events.append(("ready", prompt)) or "")
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: events.append(("key", prompt)) or "vrp_prompt")
+
+    def fake_pair(pairing_key: str, backend_url: str, device_name: str):
+        events.append(("pair", pairing_key, backend_url, device_name))
+        return {
+            "ok": True,
+            "public_url": "https://alex.avibe.bot",
+            "running": True,
+            "start": {"ok": True},
+        }
+
+    monkeypatch.setattr(remote_access, "pair", fake_pair)
+
+    result = cli.cmd_remote_setup(SimpleNamespace(remote_command=None))
+
+    assert result == 0
+    assert events == [
+        ("ready", "Press Enter when you have copied the pairing key, or Ctrl+C to cancel."),
+        ("key", "Paste pairing key (input hidden): "),
+        ("pair", "vrp_prompt", "https://avibe.bot", "Vibe Remote"),
+    ]
+    output = capsys.readouterr().out
+    assert "Open https://avibe.bot" in output
+    assert "Create a new remote-access bot" in output
+    assert "Copy the one-time pairing key" in output
+    assert output.index("Open https://avibe.bot") < output.index("Pairing this device")
+
+
+def test_cmd_remote_setup_shows_existing_pairing_without_prompt(monkeypatch, capsys):
+    events = []
+
+    monkeypatch.setattr(
+        remote_access,
+        "status",
+        lambda: {
+            "ok": True,
+            "paired": True,
+            "running": True,
+            "public_url": "https://alex.avibe.bot",
+        },
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: events.append(("ready", prompt)) or "")
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: events.append(("key", prompt)) or "vrp_prompt")
+    monkeypatch.setattr(remote_access, "pair", lambda *args, **kwargs: events.append(("pair", args, kwargs)))
+
+    result = cli.cmd_remote_setup(SimpleNamespace(remote_command=None))
+
+    assert result == 0
+    assert events == []
+    output = capsys.readouterr().out
+    assert "Remote access is already configured." in output
+    assert "https://alex.avibe.bot" in output
+    assert "vibe remote pair" in output
+
+
+def test_cmd_remote_pair_maps_invalid_key_to_user_action(monkeypatch, capsys):
+    monkeypatch.setattr(
+        remote_access,
+        "pair",
+        lambda *args, **kwargs: {"ok": False, "error": "invalid_pairing_key", "status": 400},
+    )
+
+    result = cli.cmd_remote_pair(
+        SimpleNamespace(
+            pairing_key="vrp_bad",
+            backend_url="https://backend.test",
+            device_name="Mac Studio",
+            json=False,
+        )
+    )
+
+    assert result == 1
+    error_output = capsys.readouterr().err
+    assert "Pairing key is invalid or expired." in error_output
+    assert "https://avibe.bot" in error_output
+    assert "vibe remote" in error_output
+
+
+def test_cmd_remote_pair_missing_key_fails_without_request(monkeypatch, capsys):
+    pair_calls = []
+
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "")
+    monkeypatch.setattr(remote_access, "pair", lambda *args, **kwargs: pair_calls.append(args))
+
+    result = cli.cmd_remote_pair(
+        SimpleNamespace(
+            pairing_key=None,
+            backend_url="https://backend.test",
+            device_name="Mac Studio",
+            json=False,
+        )
+    )
+
+    assert result == 1
+    assert pair_calls == []
+    assert "missing pairing key" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("raw_value", ["nan", "inf", "-inf"])

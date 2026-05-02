@@ -5,60 +5,24 @@
 ```bash
 vibe              # Start Vibe Remote (opens web UI)
 vibe status       # Check service status
+vibe remote       # Guided Vibe Cloud remote-access setup
 vibe screenshot   # Capture a local desktop screenshot
 vibe stop         # Stop all services
 ```
 
 ## Commands
 
-## Remote Web UI Access (SSH Port Forwarding)
+## Remote Web UI Access
 
 By default, the Web UI binds to `127.0.0.1:5123` on the machine where Vibe Remote is running.
 
-If you deploy Vibe Remote on a remote server, **do not expose the UI port to the public internet**.
-Instead, use SSH local port forwarding so the UI is only reachable from your own computer.
-
-### 1) Start Vibe Remote on the server
-
-SSH into your server and start Vibe Remote:
+If you want to open the Web UI from another device, or you installed Vibe Remote on a remote server, use the guided remote-access setup:
 
 ```bash
-vibe
+vibe remote
 ```
 
-The server-side UI is still only reachable on the server itself:
-
-- `http://127.0.0.1:5123`
-
-### 2) Forward the UI port to your local machine
-
-On your **local machine** (your laptop/desktop), run:
-
-```bash
-ssh -NL 5123:localhost:5123 user@server-ip
-```
-
-Then open:
-
-- `http://127.0.0.1:5123`
-
-### Tips
-
-- If `5123` is already in use on your local machine, pick another local port:
-
-```bash
-ssh -NL 15123:localhost:5123 user@server-ip
-```
-
-and open `http://127.0.0.1:15123`.
-
-- If your SSH server runs on a non-standard port:
-
-```bash
-ssh -p 2222 -NL 5123:localhost:5123 user@server-ip
-```
-
-- `-N` means "do not run a remote command"; the SSH session is used only for tunneling.
+The command walks you through signing in at `https://avibe.bot`, creating a remote-access bot, claiming your personal domain, pasting the one-time pairing key, and starting the secure tunnel.
 
 
 ### `vibe`
@@ -117,6 +81,36 @@ vibe doctor
 - Slack token configuration
 - Agent CLI availability (Claude Code, OpenCode, Codex)
 - Runtime environment
+
+### `vibe remote`
+
+Start the guided Vibe Cloud remote-access setup.
+
+```bash
+vibe remote
+```
+
+**Flow:**
+- The CLI explains what remote access does before asking for anything.
+- Open `https://avibe.bot`, sign up or log in, create a new remote-access bot, claim your personal domain, and copy the one-time pairing key.
+- Press Enter in the CLI, paste the pairing key, and Vibe Remote saves the config and starts the managed tunnel automatically.
+- On success, the CLI prints your remote URL and the next commands for checking or stopping the tunnel. When you open the URL, sign in with the same avibe.bot account.
+
+If you already have a pairing key and want to skip the guided copy, use:
+
+```bash
+vibe remote pair vrp_abc123
+```
+
+Useful follow-up commands:
+
+```bash
+vibe remote status
+vibe remote start
+vibe remote stop
+```
+
+Use `--json` on these subcommands for machine-readable output.
 
 ### `vibe screenshot`
 
