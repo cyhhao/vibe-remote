@@ -58,6 +58,12 @@ curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.s
 
 That's it. Browser opens -> Follow the wizard -> Done.
 
+Need to open the Web UI from another device or a remote server? Run:
+
+```bash
+vibe remote
+```
+
 <details>
 <summary><b>Windows?</b></summary>
 
@@ -332,15 +338,17 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 - **WeChat Setup Guide** — Follow the in-app wizard (`vibe` → choose WeChat)
 - **Lark Setup Guide** — Follow the in-app wizard (`vibe` → choose Lark)
 
-## Remote Server Tip (SSH)
+## Remote Web UI Access
 
-If you run Vibe Remote on a remote server, keep the Web UI bound to `127.0.0.1:5123` and access it via SSH port forwarding:
+If you want to open the local Web UI from another device, or you run Vibe Remote on a remote server, use the guided remote-access setup:
 
 ```bash
-ssh -NL 5123:localhost:5123 user@server-ip
+vibe remote
 ```
 
-See: **[CLI Reference](docs/CLI.md)** (search for "Remote Web UI Access")
+It guides you through avibe.bot sign-in, personal domain setup, pairing, and starting the secure tunnel.
+
+See: **[CLI Reference](docs/CLI.md)**.
 
 ---
 
