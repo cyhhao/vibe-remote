@@ -522,6 +522,7 @@ The `vibe` executable controls the local service and async automation features.
 | `vibe restart` | Stop then start again |
 | `vibe status` | Print runtime status JSON |
 | `vibe doctor` | Run diagnostics |
+| `vibe remote` | Guided Vibe Cloud remote Web UI setup |
 | `vibe screenshot` | Capture a local desktop screenshot |
 | `vibe version` | Show installed version |
 | `vibe check-update` | Check for new version |
@@ -593,6 +594,31 @@ vibe doctor
 - checks platform credentials
 - checks backend CLI availability
 - checks runtime environment
+
+### `vibe remote`
+
+```bash
+vibe remote
+```
+
+- starts the guided Vibe Cloud remote-access setup
+- explains what remote access does before asking for a pairing key
+- guides the user to open `https://avibe.bot`, create a remote-access bot, claim a personal domain, and copy the one-time pairing key
+- saves remote-access credentials and starts the secure tunnel after pairing
+
+Useful follow-up commands:
+
+```bash
+vibe remote status
+vibe remote start
+vibe remote stop
+```
+
+If you already have a pairing key:
+
+```bash
+vibe remote pair vrp_abc123
+```
 
 ### `vibe screenshot`
 
