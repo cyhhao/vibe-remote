@@ -4,9 +4,9 @@
 
 # Vibe Remote
 
-### Your AI agent army, commanded from Slack, Discord, Telegram, WeChat & Lark.
+### Run Claude Code, OpenCode, and Codex from Slack, Discord, Telegram, WeChat, and Lark.
 
-**No laptop. No IDE. Just vibes.**
+**Local-first. Web setup wizard. Real agent sessions from any chat app.**
 
 [![GitHub Stars](https://img.shields.io/github/stars/cyhhao/vibe-remote?color=ffcb47&labelColor=black&style=flat-square)](https://github.com/cyhhao/vibe-remote/stargazers)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?labelColor=black&style=flat-square)](https://www.python.org/)
@@ -35,6 +35,21 @@
 ![Banner](assets/banner.jpg)
 
 </div>
+
+## Feature Snapshot
+
+| Capability | Status |
+| --- | --- |
+| Chat platforms | Slack, Discord, Telegram, WeChat, Lark / Feishu |
+| Agent backends | Claude Code, OpenCode, Codex |
+| Setup | One-command installer plus browser wizard |
+| Session model | Each thread or chat scope maps to an isolated agent session |
+| Resume | Reopen real Claude Code, OpenCode, and Codex sessions from the current project |
+| Remote access | `vibe remote` pairs the local Web UI with a secure avibe.bot tunnel |
+| Automation | Scheduled tasks with `vibe task`, one-shot async callbacks with `vibe hook` |
+| Security model | Local-first runtime; your code stays on your machine |
+
+Vibe Remote is not another agent framework. It is the remote control layer for the coding agents you already trust.
 
 ## The Pitch
 
@@ -77,6 +92,18 @@ If you are new to WSL, this guide explains:
 - where to run the Vibe Remote install command
 - how to launch Ubuntu and open the Web UI
 </details>
+
+---
+
+## Install & Configure via AI Agent
+
+The easiest path is to hand the setup to your coding agent:
+
+```text
+Follow https://raw.githubusercontent.com/cyhhao/vibe-remote/master/docs/INSTALL_FOR_AI.md to install and configure Vibe Remote for me.
+```
+
+The agent guide covers OS checks, installing `vibe`, choosing Claude Code / OpenCode / Codex, starting the Web UI, and walking through the chat-platform wizard.
 
 ---
 
@@ -332,6 +359,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 ## Docs
 
 - **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
+- **[Install via AI Agent](docs/INSTALL_FOR_AI.md)** — Give this to Claude Code, Codex, or OpenCode for guided setup
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
 - **[Discord Setup Guide](docs/DISCORD_SETUP.md)** — Detailed setup with screenshots
 - **[Telegram Setup Guide](docs/TELEGRAM_SETUP.md)** — BotFather setup, token validation, and chat discovery

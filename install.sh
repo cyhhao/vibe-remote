@@ -30,7 +30,7 @@ print_banner() {
     \_/   |_||_.__/  \___| |_| \_\\___||_| |_| |_|\___/ \__|\___|
 EOF
     echo -e "${NC}"
-    echo -e "${GREEN}Local-first agent runtime for Slack${NC}"
+    echo -e "${GREEN}Local-first AI coding agents in your chat apps${NC}"
     echo ""
 }
 
