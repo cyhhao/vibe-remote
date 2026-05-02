@@ -100,7 +100,7 @@ def test_docker_loopback_host_requires_explicit_trust(monkeypatch, tmp_path):
     assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
-def test_docker_loopback_host_is_local_when_explicitly_trusted(monkeypatch, tmp_path):
+def test_docker_loopback_health_probe_is_allowed_when_explicitly_trusted(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
     monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
@@ -113,6 +113,37 @@ def test_docker_loopback_host_is_local_when_explicitly_trusted(monkeypatch, tmp_
     )
 
     assert response.status_code == 200
+
+
+def test_docker_loopback_status_probe_is_allowed_when_explicitly_trusted(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/status",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "172.17.0.1"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_docker_loopback_trust_does_not_bypass_ui_auth(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "172.17.0.1"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
 def test_docker_loopback_trust_requires_loopback_port_binding(monkeypatch, tmp_path):

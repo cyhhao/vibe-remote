@@ -265,14 +265,24 @@ def _is_trusted_docker_peer() -> bool:
     return False
 
 
+def _is_trusted_docker_loopback_probe() -> bool:
+    if request.method not in {"GET", "HEAD"}:
+        return False
+    if request.path not in {"/health", "/status"}:
+        return False
+    if _has_cloudflare_forwarded_metadata():
+        return False
+    if not _is_loopback_host(request.host):
+        return False
+    return _is_trusted_docker_peer()
+
+
 def _is_local_request() -> bool:
     if _has_cloudflare_forwarded_metadata():
         return False
     if not _is_loopback_host(request.host):
         return False
-    if _is_loopback_peer():
-        return True
-    return _is_trusted_docker_peer()
+    return _is_loopback_peer()
 
 
 def _normalized_host(value: str | None) -> str:
@@ -414,15 +424,16 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
     local_request = _is_local_request()
+    docker_probe_request = _is_trusted_docker_loopback_probe()
     if config is None:
-        if local_request:
+        if local_request or docker_probe_request:
             return None
         return jsonify({"ok": False, "error": "remote_access_config_unavailable"}), 503
-    if _remote_access_public_url_invalid(config) and not local_request:
+    if _remote_access_public_url_invalid(config) and not (local_request or docker_probe_request):
         return jsonify({"ok": False, "error": "remote_access_public_url_invalid"}), 503
     remote_request = _is_remote_access_request(config)
     if not remote_request:
-        if not local_request:
+        if not local_request and not docker_probe_request:
             return jsonify({"ok": False, "error": "remote_access_host_mismatch"}), 503
         return None
     if _remote_auth_exempt_path():
