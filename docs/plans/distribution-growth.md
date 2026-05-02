@@ -11,6 +11,7 @@ Make Vibe Remote easier to understand, easier to install, and easier for AI codi
 ## Completed in This Pass
 
 - Kept the README / README_ZH first-screen brand story intact instead of replacing it with a checklist-style positioning block.
+- Added a concise "What Ships Today" checklist after installation, where it supports scanning without weakening the hero narrative.
 - Added AI-agent installation guides in English and Chinese:
   - `docs/INSTALL_FOR_AI.md`
   - `docs/INSTALL_FOR_AI_ZH.md`

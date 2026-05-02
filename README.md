@@ -80,6 +80,19 @@ If you are new to WSL, this guide explains:
 
 ---
 
+## What Ships Today
+
+Not an agent framework. Not a hosted coding VM. Vibe Remote is the remote-control layer for the coding agents already running on your machine.
+
+- **Chat apps become terminals:** Slack, Discord, Telegram, WeChat, and Lark / Feishu.
+- **Real coding agents, no middleman:** Claude Code, OpenCode, and Codex run as themselves.
+- **Thread = session:** Start five threads, run five isolated jobs, resume later.
+- **Web setup, not token archaeology:** Local wizard, dashboard, routing, and health checks.
+- **Remote UI when you need it:** `vibe remote` opens your local Web UI through a secure avibe.bot tunnel.
+- **Walk away without losing the loop:** Completion notifications, scheduled tasks, and async hooks keep work moving.
+
+---
+
 ## Why This Exists
 
 | Problem | Solution |

@@ -80,6 +80,19 @@ Windows 下默认推荐使用 WSL 方案，因为它的兼容性最好。
 
 ---
 
+## 现在就能做什么
+
+Vibe Remote 不是 agent 框架，也不是云端 coding VM。它是你本地编码 agent 的远程控制层。
+
+- **聊天 App 变终端：** Slack、Discord、Telegram、微信、飞书 / Lark。
+- **真实编码 Agent，不加中间层：** Claude Code、OpenCode、Codex 以原本的方式运行。
+- **Thread = 会话：** 开 5 个 thread，跑 5 个隔离任务，之后还能接着做。
+- **Web 向导，不是手搓 token：** 本地设置向导、仪表盘、路由、健康检查。
+- **需要远程 UI 时再打开：** `vibe remote` 通过 avibe.bot 安全 tunnel 访问本地 Web UI。
+- **人走开，循环不断：** 完成通知、定时任务、异步 hook 让任务继续推进。
+
+---
+
 ## 为什么要用
 
 | 问题 | 解决 |
