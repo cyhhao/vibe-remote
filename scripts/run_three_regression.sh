@@ -217,18 +217,25 @@ snapshot_agent_runtime_state() {
 }
 
 wait_for_service() {
-    local port="$1"
-    local url="http://127.0.0.1:${port}"
-
     for _ in $(seq 1 60); do
-        if curl -sf "$url/health" >/dev/null 2>&1 && \
-            curl -sf "$url/status" | "$PYTHON_BIN" -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("running") else 1)' >/dev/null 2>&1; then
+        if "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" exec -T vibe python - <<'PY' >/dev/null 2>&1; then
+import json
+import sys
+import urllib.request
+
+try:
+    urllib.request.urlopen("http://127.0.0.1:5123/health", timeout=3).read()
+    status = json.loads(urllib.request.urlopen("http://127.0.0.1:5123/status", timeout=3).read())
+except Exception:
+    sys.exit(1)
+sys.exit(0 if status.get("running") else 1)
+PY
             return 0
         fi
         sleep 2
     done
 
-    echo "Service did not become ready on port $port" >&2
+    echo "Service did not become ready inside the regression container" >&2
     "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs vibe || true
     return 1
 }

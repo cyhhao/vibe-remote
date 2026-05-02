@@ -250,6 +250,7 @@ def _is_trusted_docker_peer() -> bool:
         address = ipaddress.ip_address(remote_addr)
     except ValueError:
         return False
+    address = getattr(address, "ipv4_mapped", None) or address
 
     cidrs = os.environ.get("VIBE_REMOTE_DOCKER_LOOPBACK_PEER_CIDRS", "172.16.0.0/12,192.168.65.0/24")
     for raw_network in cidrs.split(","):
