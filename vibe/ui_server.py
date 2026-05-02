@@ -228,27 +228,38 @@ def _is_loopback_host(value: str | None) -> bool:
         return False
 
 
-def _are_docker_local_hosts_allowed() -> bool:
-    return os.environ.get("VIBE_REMOTE_ALLOW_DOCKER_LOCAL_HOSTS", "").lower() in {"1", "true", "yes", "on"}
-
-
-def _is_configured_local_host(config: V2Config | None) -> bool:
-    if config is None:
+def _is_trusted_docker_peer() -> bool:
+    if os.environ.get("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "").lower() not in {"1", "true", "yes", "on"}:
         return False
-    setup_host = _normalized_host(config.ui.setup_host)
-    if not setup_host or setup_host in {"0.0.0.0", "::"}:
+
+    remote_addr = (request.remote_addr or "").strip()
+    try:
+        address = ipaddress.ip_address(remote_addr)
+    except ValueError:
         return False
-    return _normalized_host(request.host) == setup_host
+
+    cidrs = os.environ.get("VIBE_REMOTE_DOCKER_LOOPBACK_PEER_CIDRS", "172.16.0.0/12,192.168.65.0/24")
+    for raw_network in cidrs.split(","):
+        raw_network = raw_network.strip()
+        if not raw_network:
+            continue
+        try:
+            network = ipaddress.ip_network(raw_network, strict=False)
+        except ValueError:
+            continue
+        if address in network:
+            return True
+    return False
 
 
-def _is_local_request(config: V2Config | None = None) -> bool:
+def _is_local_request() -> bool:
     if _has_cloudflare_forwarded_metadata():
         return False
-    if not (_is_loopback_host(request.host) or _is_configured_local_host(config)):
+    if not _is_loopback_host(request.host):
         return False
     if _is_loopback_peer():
         return True
-    return _are_docker_local_hosts_allowed()
+    return _is_trusted_docker_peer()
 
 
 def _normalized_host(value: str | None) -> str:
@@ -389,7 +400,7 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
 @app.before_request
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
-    local_request = _is_local_request(config)
+    local_request = _is_local_request()
     if config is None:
         if local_request:
             return None

@@ -131,24 +131,12 @@ fi
 
 print_summary() {
     local port="${THREE_REGRESSION_PORT:-15130}"
-    local ui_host="${THREE_REGRESSION_UI_HOST:-127.0.0.1}"
+    local bind_host="${THREE_REGRESSION_PORT_BIND_HOST:-127.0.0.1}"
+    local ui_host="${THREE_REGRESSION_ACCESS_HOST:-$bind_host}"
     local default_backend="${THREE_REGRESSION_DEFAULT_BACKEND:-opencode}"
     local config_path="$OUTPUT_ROOT/vibe/config/config.json"
 
     if [ -f "$config_path" ]; then
-        ui_host="$("$PYTHON_BIN" - "$config_path" "$ui_host" <<'PY'
-import json
-import sys
-
-path, fallback = sys.argv[1], sys.argv[2]
-try:
-    with open(path, encoding="utf-8") as fh:
-        payload = json.load(fh)
-    print((payload.get("ui") or {}).get("setup_host") or fallback)
-except Exception:
-    print(fallback)
-PY
-)"
         default_backend="$("$PYTHON_BIN" - "$config_path" "$default_backend" <<'PY'
 import json
 import sys
