@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 
-from flask import Flask, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, redirect, send_file, Response
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
@@ -204,6 +204,30 @@ def _has_cloudflare_forwarded_metadata() -> bool:
     )
 
 
+def _has_forwarded_metadata() -> bool:
+    """Detect any sign that the request traversed a reverse proxy.
+
+    When any forwarded header is set, request.remote_addr no longer reliably
+    identifies the actual client (a same-host proxy makes external attackers
+    look like loopback / private peers), so authorization paths that lean on a
+    private/loopback peer must refuse the request unless we have an explicit
+    trusted-proxy chain.
+    """
+    forwarded_headers = (
+        "Forwarded",
+        "X-Forwarded-For",
+        "X-Forwarded-Host",
+        "X-Forwarded-Proto",
+        "X-Forwarded-Port",
+        "X-Real-IP",
+        "X-Original-Forwarded-For",
+        "True-Client-IP",
+    )
+    if any(request.headers.get(header) for header in forwarded_headers):
+        return True
+    return _has_cloudflare_forwarded_metadata()
+
+
 def _is_loopback_peer() -> bool:
     remote_addr = (request.remote_addr or "").strip()
     if remote_addr == "localhost":
@@ -226,6 +250,35 @@ def _is_loopback_host(value: str | None) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+# RFC 6598 shared address space (CGNAT). Python's ipaddress module classifies
+# this range as neither private nor global, but in practice overlay networks
+# such as Tailscale assign 100.x.y.z addresses that should be trusted as local
+# setup-host peers when the request's Host header otherwise matches.
+_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _is_private_address(address: ipaddress._BaseAddress) -> bool:
+    if address.is_loopback or address.is_private or address.is_link_local:
+        return True
+    return isinstance(address, ipaddress.IPv4Address) and address in _SHARED_ADDRESS_SPACE
+
+
+def _is_private_peer() -> bool:
+    remote_addr = (request.remote_addr or "").strip()
+    if not remote_addr or remote_addr == "localhost":
+        return False
+    try:
+        address = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return False
+    if _is_private_address(address):
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        return _is_private_address(mapped)
+    return False
 
 
 def _env_flag_enabled(name: str) -> bool:
@@ -271,19 +324,48 @@ def _is_trusted_docker_loopback_probe() -> bool:
         return False
     if request.path not in {"/health", "/status"}:
         return False
-    if _has_cloudflare_forwarded_metadata():
+    if _has_forwarded_metadata():
         return False
     if not _is_loopback_host(request.host):
         return False
     return _is_trusted_docker_peer()
 
 
-def _is_local_request() -> bool:
-    if _has_cloudflare_forwarded_metadata():
+def _is_setup_host_request(config: V2Config | None) -> bool:
+    if config is None:
         return False
-    if not _is_loopback_host(request.host):
+    setup_host = _normalized_host(getattr(config.ui, "setup_host", ""))
+    if not setup_host or setup_host in {"0.0.0.0", "::", "*"}:
         return False
-    return _is_loopback_peer()
+    if _is_loopback_host(setup_host):
+        return False
+    # Only trust setup-host requests when setup_host parses to a private/CGNAT
+    # IP. Public hostnames or public IPs cannot be assumed safe: a reverse proxy
+    # on the same machine would make request.remote_addr look like a private
+    # peer even for external attackers, so the host-match + private-peer pair
+    # is not sufficient on its own.
+    try:
+        setup_address = ipaddress.ip_address(setup_host)
+    except ValueError:
+        return False
+    if not _is_private_address(setup_address):
+        return False
+    if _normalized_host(request.host) != setup_host:
+        return False
+    # Any forwarded header (including non-Cloudflare proxies like nginx /
+    # Caddy / Traefik) means we cannot trust request.remote_addr to identify
+    # the actual client, so refuse the setup-host trust path entirely.
+    if _has_forwarded_metadata():
+        return False
+    return _is_private_peer()
+
+
+def _is_local_request(config: V2Config | None = None) -> bool:
+    if _has_forwarded_metadata():
+        return False
+    if _is_loopback_peer() and _is_loopback_host(request.host):
+        return True
+    return _is_setup_host_request(config)
 
 
 def _normalized_host(value: str | None) -> str:
@@ -428,7 +510,7 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
 @app.before_request
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
-    local_request = _is_local_request()
+    local_request = _is_local_request(config)
     docker_probe_request = _is_trusted_docker_loopback_probe()
     if config is None:
         if local_request or docker_probe_request:
@@ -628,6 +710,14 @@ def platforms_get():
 
 @app.route("/settings", methods=["GET"])
 def settings_get():
+    # /settings doubles as a backend JSON API and a user-facing URL the SPA
+    # owns (it lives under /settings/<page>). Browser navigations send
+    # Accept: text/html..., while fetch() callers from the SPA send Accept:
+    # */* (no explicit text/html), so we can distinguish the two and redirect
+    # bookmarked / hard-refreshed browser hits to the canonical settings page
+    # instead of serving raw JSON.
+    if "text/html" in request.headers.get("Accept", ""):
+        return redirect("/settings/service")
     from vibe import api
 
     return jsonify(api.get_settings(request.args.get("platform") or None))
@@ -1487,6 +1577,19 @@ def serve_static(path):
 # =============================================================================
 
 
+def _reconcile_remote_access_for_ui_start(config: V2Config | None) -> None:
+    if config is None:
+        return
+    try:
+        from vibe import remote_access
+
+        result = remote_access.reconcile(config)
+        if isinstance(result, dict) and result.get("ok") is False:
+            logger.warning("Remote access reconcile after UI start failed: %s", result.get("error"))
+    except Exception:
+        logger.warning("Failed to reconcile remote access after UI start", exc_info=True)
+
+
 def run_ui_server(host: str, port: int) -> None:
     """Start the Flask UI server."""
     global _server
@@ -1517,6 +1620,15 @@ def run_ui_server(host: str, port: int) -> None:
     for attempt in range(10):
         try:
             _server = make_server(host, port, app, threaded=True)
+            # Reconcile remote_access in the background so cloudflared download/
+            # connector start does not block /health and the rest of the UI
+            # from coming up after restart/reload.
+            threading.Thread(
+                target=_reconcile_remote_access_for_ui_start,
+                args=(config,),
+                daemon=True,
+                name="remote-access-reconcile-on-start",
+            ).start()
             _server.serve_forever()
             break
         except OSError as e:

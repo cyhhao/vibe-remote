@@ -4,7 +4,7 @@ import { useApi, type VersionInfo, type UpgradeResult } from '../context/ApiCont
 import { Download, X, RefreshCw, Check, AlertCircle } from 'lucide-react';
 import clsx from 'clsx';
 
-export const VersionBadge: React.FC = () => {
+export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = false }) => {
   const { t } = useTranslation();
   const api = useApi();
   const [versionInfo, setVersionInfo] = React.useState<VersionInfo | null>(null);
@@ -17,13 +17,11 @@ export const VersionBadge: React.FC = () => {
   const [savingAutoUpdate, setSavingAutoUpdate] = React.useState(false);
   const popupRef = React.useRef<HTMLDivElement>(null);
 
-  // Check version and load config on mount
   React.useEffect(() => {
     checkVersion();
     loadAutoUpdateSetting();
   }, []);
 
-  // Close popup when clicking outside
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (popupRef.current && !popupRef.current.contains(event.target as Node)) {
@@ -77,13 +75,11 @@ export const VersionBadge: React.FC = () => {
       setUpgradeResult(result);
       if (result.ok) {
         if (result.restarting) {
-          // Show restarting state and reload page after delay
           setRestarting(true);
           setTimeout(() => {
             window.location.reload();
           }, 4000);
         } else {
-          // Refresh version info after upgrade
           setTimeout(() => checkVersion(), 1000);
         }
       }
@@ -99,34 +95,44 @@ export const VersionBadge: React.FC = () => {
 
   return (
     <div className="relative" ref={popupRef}>
-      {/* Version Badge */}
+      {/* Version Badge trigger */}
       <button
         onClick={() => setIsPopupOpen(!isPopupOpen)}
         className={clsx(
-          'relative px-2 py-0.5 text-xs font-medium rounded-md transition-colors cursor-pointer',
+          'relative cursor-pointer rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
           hasUpdate
-            ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-            : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+            ? 'border-gold/30 bg-gold/15 text-gold hover:bg-gold/20'
+            : 'border-border bg-surface-2/60 text-muted hover:bg-surface-2'
         )}
       >
         v{currentVersion}
-        {/* Update indicator dot */}
         {hasUpdate && (
-          <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-500 rounded-full border-2 border-white animate-pulse" />
+          <span className="absolute -top-1 -right-1 size-2.5 rounded-full border-2 border-background bg-gold animate-pulse" />
         )}
       </button>
 
       {/* Popup */}
       {isPopupOpen && (
-        <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-lg shadow-lg border border-border z-50">
+        <div
+          className={clsx(
+            'z-50 rounded-lg border border-border bg-popover text-popover-foreground shadow-xl',
+            // Mobile: full-width fixed below sticky header, with scroll
+            'fixed inset-x-3 top-[4.5rem] max-h-[calc(100dvh-5.5rem)] overflow-auto',
+            // Desktop: anchor to trigger, fixed width
+            'md:absolute md:inset-x-auto md:max-h-none md:w-72 md:overflow-visible',
+            openUpward
+              ? 'md:bottom-full md:left-0 md:top-auto md:mb-2'
+              : 'md:left-0 md:top-full md:mt-2'
+          )}
+        >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-            <span className="font-medium text-sm">{t('dashboard.versionAndUpdate')}</span>
-            <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <span className="text-sm font-medium text-foreground">{t('dashboard.versionAndUpdate')}</span>
+            <div className="flex items-center gap-1">
               <button
                 onClick={checkVersion}
                 disabled={checking || restarting}
-                className="text-muted hover:text-text p-1 rounded disabled:opacity-50"
+                className="rounded p-1.5 text-muted hover:bg-surface-2 hover:text-foreground disabled:opacity-50"
                 aria-label={checking ? t('dashboard.checking') : t('dashboard.checkUpdate')}
                 title={checking ? t('dashboard.checking') : t('dashboard.checkUpdate')}
               >
@@ -134,7 +140,7 @@ export const VersionBadge: React.FC = () => {
               </button>
               <button
                 onClick={() => setIsPopupOpen(false)}
-                className="text-muted hover:text-text p-1 rounded"
+                className="rounded p-1.5 text-muted hover:bg-surface-2 hover:text-foreground"
               >
                 <X size={14} />
               </button>
@@ -142,40 +148,40 @@ export const VersionBadge: React.FC = () => {
           </div>
 
           {/* Content */}
-          <div className="p-4 space-y-3">
+          <div className="space-y-3 p-4">
             {/* Current Version */}
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted">{t('dashboard.currentVersion')}</span>
-              <span className="font-mono font-medium">{currentVersion}</span>
+              <span className="font-mono font-medium text-foreground">{currentVersion}</span>
             </div>
 
             {/* Latest Version */}
             {versionInfo?.latest && (
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted">{t('dashboard.latestVersion')}</span>
-                <span className="font-mono font-medium">{versionInfo.latest}</span>
+                <span className="font-mono font-medium text-foreground">{versionInfo.latest}</span>
               </div>
             )}
 
             {/* Update Status */}
             {hasUpdate ? (
-              <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 text-amber-800 rounded-md text-sm">
-                <AlertCircle size={16} />
+              <div className="flex items-center gap-2 rounded-md border border-gold/30 bg-gold/10 px-3 py-2 text-sm text-gold">
+                <AlertCircle size={16} className="shrink-0" />
                 <span>
                   {t('dashboard.updateHint', {
                     from: currentVersion,
-                    to: versionInfo?.latest
+                    to: versionInfo?.latest,
                   })}
                 </span>
               </div>
             ) : versionInfo && !versionInfo.error ? (
-              <div className="flex items-center gap-2 px-3 py-2 bg-green-50 text-green-700 rounded-md text-sm">
-                <Check size={16} />
+              <div className="flex items-center gap-2 rounded-md border border-mint/25 bg-mint/10 px-3 py-2 text-sm text-mint">
+                <Check size={16} className="shrink-0" />
                 <span>{t('dashboard.upToDate')}</span>
               </div>
             ) : versionInfo?.error ? (
-              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 text-red-700 rounded-md text-sm">
-                <AlertCircle size={16} />
+              <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <AlertCircle size={16} className="shrink-0" />
                 <span>{t('dashboard.checkFailed')}</span>
               </div>
             ) : null}
@@ -184,63 +190,61 @@ export const VersionBadge: React.FC = () => {
             {upgradeResult && (
               <div
                 className={clsx(
-                  'flex items-center gap-2 px-3 py-2 rounded-md text-sm',
+                  'flex items-center gap-2 rounded-md border px-3 py-2 text-sm',
                   upgradeResult.ok
-                    ? 'bg-green-50 text-green-700'
-                    : 'bg-red-50 text-red-700'
+                    ? 'border-mint/25 bg-mint/10 text-mint'
+                    : 'border-destructive/30 bg-destructive/10 text-destructive'
                 )}
               >
-                {upgradeResult.ok ? <Check size={16} /> : <AlertCircle size={16} />}
+                {upgradeResult.ok ? <Check size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
                 <span>
-                  {upgradeResult.ok
-                    ? t('dashboard.upgradeSuccess')
-                    : t('dashboard.upgradeFailed')}
+                  {upgradeResult.ok ? t('dashboard.upgradeSuccess') : t('dashboard.upgradeFailed')}
                 </span>
               </div>
             )}
 
             {/* Restarting Status */}
             {restarting && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 rounded-md text-sm">
-                <RefreshCw size={16} className="animate-spin" />
+              <div className="flex items-center gap-2 rounded-md border border-cyan/30 bg-cyan/10 px-3 py-2 text-sm text-cyan">
+                <RefreshCw size={16} className="shrink-0 animate-spin" />
                 <span>{t('dashboard.restarting')}</span>
               </div>
             )}
 
             {/* Auto Update Toggle */}
             {autoUpdate !== null && (
-              <div className="flex items-center justify-between pt-2 border-t border-border">
-                <div>
-                  <span className="text-sm text-text">{t('dashboard.autoUpdate')}</span>
-                  <p className="text-xs text-muted">{t('dashboard.autoUpdateHint')}</p>
+              <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-foreground">{t('dashboard.autoUpdate')}</div>
+                  <div className="text-xs text-muted">{t('dashboard.autoUpdateHint')}</div>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
+                <label className="relative inline-flex cursor-pointer items-center">
                   <input
                     type="checkbox"
                     checked={autoUpdate}
                     onChange={(e) => handleAutoUpdateToggle(e.target.checked)}
                     disabled={savingAutoUpdate}
-                    className="sr-only peer"
+                    className="peer sr-only"
                   />
-                  <div className="w-9 h-5 bg-neutral-200 rounded-full peer peer-checked:bg-green-500 peer-focus:ring-2 peer-focus:ring-green-200 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4"></div>
+                  <div className="peer h-5 w-9 rounded-full bg-surface-3 transition-colors after:absolute after:left-[2px] after:top-0.5 after:size-4 after:rounded-full after:bg-foreground after:transition-all after:content-[''] peer-checked:bg-mint peer-checked:after:translate-x-4 peer-checked:after:bg-primary-foreground peer-focus:ring-2 peer-focus:ring-ring" />
                 </label>
               </div>
             )}
           </div>
 
           {/* Actions */}
-          <div className="px-4 py-3 border-t border-border flex justify-end">
-            {hasUpdate && !restarting && (
+          {hasUpdate && !restarting && (
+            <div className="flex justify-end border-t border-border px-4 py-3">
               <button
                 onClick={handleUpgrade}
                 disabled={upgrading}
-                className="flex items-center justify-center gap-1.5 px-3 py-2 text-sm bg-accent text-white hover:bg-accent/90 rounded-md transition-colors disabled:opacity-50 whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 rounded-md bg-mint px-3 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-mint/90 disabled:opacity-50"
               >
                 <Download size={14} className={upgrading ? 'animate-bounce' : ''} />
                 {upgrading ? t('dashboard.upgrading') : t('dashboard.upgradeNow')}
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
     </div>

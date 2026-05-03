@@ -37,8 +37,8 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      {/* Toast container - fixed at bottom right */}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+      {/* Toast container - fixed at bottom right; lifted above mobile bottom nav */}
+      <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] right-4 z-50 flex flex-col gap-2 md:bottom-4">
         {toasts.map((toast) => (
           <div
             key={toast.id}

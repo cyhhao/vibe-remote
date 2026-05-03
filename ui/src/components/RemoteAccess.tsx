@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink, KeyRound, Link2, Power, RefreshCcw, ShieldCheck } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { useApi } from '../context/ApiContext';
 import { useToast } from '../context/ToastContext';
 
 const VIBE_CLOUD_URL = 'https://avibe.bot';
 
-export const RemoteAccess: React.FC = () => {
+export const RemoteAccess: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
@@ -120,19 +120,161 @@ export const RemoteAccess: React.FC = () => {
       ? t('common.running')
       : t('common.stopped');
 
-  return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950 text-white p-8 shadow-xl overflow-hidden relative">
-        <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-cyan-400/20 blur-3xl" />
-        <div className="relative space-y-3">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-sm text-cyan-100">
-            <ShieldCheck className="w-4 h-4" />
-            {t('remoteAccess.badge')}
+  if (embedded) {
+    return (
+      <section className="overflow-hidden rounded-md border border-border bg-surface-2/45">
+        <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
+          <div className="min-w-0 space-y-2">
+            <h2 className="text-[13px] font-semibold text-foreground">{t('remoteAccess.title')}</h2>
+            <p className="max-w-2xl text-[11px] leading-relaxed text-muted">
+              <Trans
+                i18nKey="remoteAccess.subtitleWithLink"
+                components={{
+                  cloud: (
+                    <a
+                      href={VIBE_CLOUD_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-0.5 font-medium text-cyan hover:underline"
+                    />
+                  ),
+                }}
+              />
+            </p>
+            <ol className="ml-4 list-decimal space-y-1 text-[11px] leading-relaxed text-muted">
+              <li>{t('remoteAccess.flowStep1')}</li>
+              <li>{t('remoteAccess.flowStep2')}</li>
+              <li>{t('remoteAccess.flowStep3')}</li>
+            </ol>
           </div>
-          <h1 className="text-3xl md:text-4xl font-display font-bold tracking-tight">{t('remoteAccess.title')}</h1>
-          <p className="text-cyan-50/80 max-w-2xl">{t('remoteAccess.subtitle')}</p>
+          <button
+            className="inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-border bg-surface-3 px-3 text-[12px] text-foreground transition hover:border-border-strong"
+            onClick={refresh}
+            type="button"
+          >
+            <RefreshCcw className="size-3.5" />
+            {t('common.refresh')}
+          </button>
         </div>
-      </div>
+
+        <div className="grid border-b border-border md:grid-cols-3">
+          <div className="border-b border-border px-4 py-3 md:border-b-0 md:border-r">
+            <div className="text-[11px] text-muted">{t('remoteAccess.paired')}</div>
+            <div className="mt-1 text-[13px] font-medium text-foreground">{paired ? t('common.enabled') : t('common.disabled')}</div>
+          </div>
+          <div className="border-b border-border px-4 py-3 md:border-b-0 md:border-r">
+            <div className="text-[11px] text-muted">{t('remoteAccess.connector')}</div>
+            <div className="mt-1 text-[13px] font-medium text-foreground">{loading ? t('common.loading') : connectorState}</div>
+          </div>
+          <div className="px-4 py-3">
+            <div className="text-[11px] text-muted">{t('remoteAccess.vibeCloudService')}</div>
+            <a className="mt-1 inline-flex text-[13px] font-medium text-cyan" href={VIBE_CLOUD_URL} target="_blank" rel="noreferrer">
+              avibe.bot
+              <ExternalLink className="ml-1 size-3.5" />
+            </a>
+          </div>
+        </div>
+
+        {showPairingForm ? (
+          <div className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto] md:items-end">
+            <label className="space-y-1.5">
+              <span className="text-[12px] font-medium text-foreground">{t('remoteAccess.pairingKey')}</span>
+              <input
+                className="h-8 w-full rounded-md border border-input bg-surface-3 px-3 font-mono text-[12px] text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                value={pairingKey}
+                onChange={(event) => setPairingKey(event.target.value)}
+                placeholder="vrp_xxxxxxxxxxxxxxxxx"
+              />
+              <span className="block text-[10px] text-muted">{t('remoteAccess.pairingKeyHelp')}</span>
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="inline-flex h-8 items-center gap-2 rounded-md bg-primary px-3 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
+                disabled={pairing || !pairingKey.trim()}
+                onClick={pair}
+              >
+                <Link2 className="size-3.5" />
+                {pairing ? t('remoteAccess.pairing') : t('remoteAccess.pair')}
+              </button>
+              {paired && (
+                <button
+                  type="button"
+                  className="h-8 rounded-md border border-border px-3 text-[12px] text-foreground"
+                  onClick={() => {
+                    setReconfiguring(false);
+                    setPairingKey('');
+                  }}
+                >
+                  {t('common.cancel')}
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[13px] font-medium text-mint">
+                <CheckCircle2 className="size-3.5" />
+                {t('remoteAccess.configuredBadge')}
+              </div>
+              {publicUrl && (
+                <a
+                  href={publicUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex max-w-full items-center gap-1 truncate font-mono text-[11px] text-cyan hover:underline"
+                  title={publicUrl}
+                >
+                  <span className="truncate">{publicUrl}</span>
+                  <ExternalLink className="size-3 shrink-0" />
+                </a>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="h-8 rounded-md border border-border px-3 text-[12px] text-foreground"
+                onClick={() => setReconfiguring(true)}
+              >
+                {t('remoteAccess.repair')}
+              </button>
+              <button className="h-8 rounded-md border border-border px-3 text-[12px] text-foreground disabled:opacity-50" disabled={!paired || running} onClick={start} type="button">
+                {t('common.start')}
+              </button>
+              <button className="h-8 rounded-md border border-border px-3 text-[12px] text-foreground disabled:opacity-50" disabled={!paired || !running} onClick={stop} type="button">
+                {t('common.stop')}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {actionMessage && (
+          <div className={`border-t border-border px-4 py-3 text-[12px] ${
+            actionMessage.type === 'error' ? 'text-gold' : 'text-mint'
+          }`}>
+            {actionMessage.text}
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <div className={embedded ? 'space-y-6' : 'max-w-5xl mx-auto space-y-6'}>
+      {!embedded && (
+        <div className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950 p-8 text-white shadow-xl">
+          <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-cyan-400/20 blur-3xl" />
+          <div className="relative space-y-3">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-sm text-cyan-100">
+              <ShieldCheck className="h-4 w-4" />
+              {t('remoteAccess.badge')}
+            </div>
+            <h1 className="font-display text-3xl font-bold tracking-tight md:text-4xl">{t('remoteAccess.title')}</h1>
+            <p className="max-w-2xl text-cyan-50/80">{t('remoteAccess.subtitle')}</p>
+          </div>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-[1.1fr_0.9fr] gap-6">
         <section className="rounded-2xl border border-border bg-panel p-6 space-y-5">

@@ -120,7 +120,12 @@ def write_json(path, payload):
 def read_json(path):
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        # Status files are best-effort: a partially written or corrupted
+        # payload should not break write_status() or read_status().
+        return None
 
 
 def _pid_alive_windows(pid: int) -> bool:
@@ -326,13 +331,31 @@ def stop_process(pid_path, timeout=5):
 
 
 def write_status(state, detail=None, service_pid=None, ui_pid=None):
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    # Preserve started_at across consecutive "running" writes so the UI can
+    # show a stable service start time. Reset it on transitions in/out of
+    # running state, AND when the service PID has changed (e.g. a forced
+    # restart that goes running -> running but with a new process).
+    started_at = None
+    if state == "running":
+        previous = read_json(paths.get_runtime_status_path()) or {}
+        if (
+            previous.get("state") == "running"
+            and previous.get("started_at")
+            and previous.get("service_pid") == service_pid
+        ):
+            started_at = previous["started_at"]
+        else:
+            started_at = now_iso
     payload = {
         "state": state,
         "detail": detail,
         "service_pid": service_pid,
         "ui_pid": ui_pid,
-        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "updated_at": now_iso,
     }
+    if started_at:
+        payload["started_at"] = started_at
     write_json(paths.get_runtime_status_path(), payload)
 
 
@@ -377,19 +400,12 @@ def start_service():
 
 def start_ui(host, port):
     command = "from vibe.ui_server import run_ui_server; run_ui_server('{}', {})".format(host, port)
-    pid = spawn_background(
+    return spawn_background(
         [sys.executable, "-c", command],
         paths.get_runtime_ui_pid_path(),
         "ui_stdout.log",
         "ui_stderr.log",
     )
-    try:
-        from vibe import remote_access
-
-        remote_access.reconcile()
-    except Exception:
-        logger.warning("Failed to reconcile remote access after UI start", exc_info=True)
-    return pid
 
 
 def stop_service():

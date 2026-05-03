@@ -1,58 +1,289 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
-@theme {
-  --font-sans: "IBM Plex Sans", sans-serif;
-  --font-mono: "IBM Plex Mono", monospace;
-  --font-display: "Space Grotesk", sans-serif;
-
-  --color-bg: var(--bg);
-  --color-panel: var(--panel);
-  --color-text: var(--text);
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
-  --color-border: var(--border);
+  --color-muted-soft: var(--muted-soft);
   --color-accent: var(--accent);
-  --color-accent-2: var(--accent-2);
-  --color-success: var(--success);
-  --color-warning: var(--warning);
-  --color-danger: var(--danger);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-mint: var(--mint);
+  --color-mint-soft: var(--mint-soft);
+  --color-cyan: var(--cyan);
+  --color-cyan-soft: var(--cyan-soft);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --color-gold: var(--gold);
+
+  /* Compatibility aliases for current UI during migration. */
+  --color-bg: var(--background);
+  --color-panel: var(--surface);
+  --color-text: var(--foreground);
+  --color-success: var(--mint);
+  --color-warning: var(--gold);
+  --color-danger: var(--destructive);
+
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+    Consolas, monospace;
+  --font-display: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-3xl: 24px;
+
+  /* Card glow shadows (matches design.pen). */
+  --shadow-mint-card: 0 24px 48px -12px rgba(91, 255, 160, 0.078);
+  --shadow-mint-card-lg: 0 32px 64px -12px rgba(91, 255, 160, 0.078);
 }
 
-:root {
-  --bg: #F6F2EA;
-  --panel: #FFFFFF;
-  --text: #1F2430;
-  --muted: #5B6475;
-  --border: #E6DFD3;
+:root,
+[data-theme="dark"] {
+  --background: #080812;
+  --foreground: #f5f1e8;
+  --surface: #0e0e18;
+  --surface-2: #11111c;
+  --surface-3: #06060e;
+  --card: #11111c;
+  --card-foreground: #f5f1e8;
+  --popover: #11111c;
+  --popover-foreground: #f5f1e8;
 
-  --accent: #0B7285;
-  --accent-2: #E29578;
+  --primary: #5bffa0;
+  --primary-foreground: #080812;
+  --secondary: #11111c;
+  --secondary-foreground: #f5f1e8;
+  --muted: #9ba3b8;
+  --muted-soft: #0e0e18;
+  --accent: #3fe0e5;
+  --accent-foreground: #080812;
+  --destructive: #ff6b6b;
+  --destructive-foreground: #080812;
 
-  --success: #2F9E44;
-  --warning: #F08C00;
-  --danger: #D9480F;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --input: rgba(255, 255, 255, 0.10);
+  --ring: rgba(91, 255, 160, 0.6);
+
+  --mint: #5bffa0;
+  --mint-soft: rgba(91, 255, 160, 0.16);
+  --cyan: #3fe0e5;
+  --cyan-soft: rgba(63, 224, 229, 0.16);
+  --violet: #7c5bff;
+  --violet-soft: rgba(124, 91, 255, 0.16);
+  --gold: #ffc857;
+
+  /* Page-family gradients (mirror design.pen 1:1). Layers ordered top-most first. */
+  --gradient-console:
+    radial-gradient(50% 40% at 5% 5%, rgba(91, 255, 160, 0.20), rgba(91, 255, 160, 0) 100%),
+    radial-gradient(40% 50% at 95% 40%, rgba(63, 224, 229, 0.122), rgba(63, 224, 229, 0) 100%),
+    radial-gradient(60% 50% at 50% 100%, rgba(124, 91, 255, 0.078), rgba(124, 91, 255, 0) 100%),
+    #080812;
+  --gradient-settings:
+    radial-gradient(50% 40% at 5% 5%, rgba(91, 255, 160, 0.20), rgba(91, 255, 160, 0) 100%),
+    radial-gradient(50% 50% at 95% 50%, rgba(124, 91, 255, 0.10), rgba(124, 91, 255, 0) 100%),
+    #080812;
+  --gradient-wizard-welcome:
+    radial-gradient(70% 60% at 50% 30%, rgba(91, 255, 160, 0.20), rgba(91, 255, 160, 0) 100%),
+    radial-gradient(50% 50% at 85% 70%, rgba(63, 224, 229, 0.122), rgba(63, 224, 229, 0) 100%),
+    #080812;
+  --gradient-wizard-backends:
+    radial-gradient(60% 50% at 50% 20%, rgba(124, 91, 255, 0.122), rgba(124, 91, 255, 0) 100%),
+    #080812;
+  --gradient-wizard-platforms:
+    radial-gradient(60% 50% at 50% 20%, rgba(91, 255, 160, 0.20), rgba(91, 255, 160, 0) 100%),
+    radial-gradient(40% 40% at 85% 70%, rgba(63, 224, 229, 0.122), rgba(63, 224, 229, 0) 100%),
+    radial-gradient(40% 40% at 15% 70%, rgba(124, 91, 255, 0.122), rgba(124, 91, 255, 0) 100%),
+    #080812;
+  --gradient-wizard-slack:
+    radial-gradient(50% 50% at 30% 20%, rgba(224, 30, 90, 0.122), rgba(224, 30, 90, 0) 100%),
+    #080812;
+  --gradient-wizard-summary:
+    radial-gradient(60% 50% at 50% 30%, rgba(91, 255, 160, 0.20), rgba(91, 255, 160, 0) 100%),
+    #080812;
+
+  /* Legacy alias for any page still using --bg-page directly. */
+  --bg-page: var(--gradient-console);
 }
 
+[data-theme="light"] {
+  --background: #f4f6fb;
+  --foreground: #0a0a14;
+  --surface: #ffffff;
+  --surface-2: #ffffff;
+  --surface-3: #eef1f7;
+  --card: #ffffff;
+  --card-foreground: #0a0a14;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a14;
+
+  --primary: #10b981;
+  --primary-foreground: #ffffff;
+  --secondary: #eef1f7;
+  --secondary-foreground: #0a0a14;
+  --muted: #5c6079;
+  --muted-soft: #eef1f7;
+  --accent: #0891b2;
+  --accent-foreground: #ffffff;
+  --destructive: #e11d48;
+  --destructive-foreground: #ffffff;
+
+  --border: rgba(8, 8, 18, 0.08);
+  --border-strong: rgba(8, 8, 18, 0.14);
+  --input: rgba(8, 8, 18, 0.12);
+  --ring: rgba(16, 185, 129, 0.5);
+
+  --mint: #10b981;
+  --mint-soft: rgba(16, 185, 129, 0.14);
+  --cyan: #0891b2;
+  --cyan-soft: rgba(8, 145, 178, 0.14);
+  --violet: #7c3aed;
+  --violet-soft: rgba(124, 58, 237, 0.14);
+  --gold: #d97706;
+
+  /* Light-theme page gradients (softer alphas over light base). */
+  --gradient-console:
+    radial-gradient(50% 40% at 5% 5%, rgba(16, 185, 129, 0.10), rgba(16, 185, 129, 0) 100%),
+    radial-gradient(40% 50% at 95% 40%, rgba(8, 145, 178, 0.08), rgba(8, 145, 178, 0) 100%),
+    radial-gradient(60% 50% at 50% 100%, rgba(124, 58, 237, 0.06), rgba(124, 58, 237, 0) 100%),
+    #f4f6fb;
+  --gradient-settings:
+    radial-gradient(50% 40% at 5% 5%, rgba(16, 185, 129, 0.10), rgba(16, 185, 129, 0) 100%),
+    radial-gradient(50% 50% at 95% 50%, rgba(124, 58, 237, 0.08), rgba(124, 58, 237, 0) 100%),
+    #f4f6fb;
+  --gradient-wizard-welcome:
+    radial-gradient(70% 60% at 50% 30%, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0) 100%),
+    radial-gradient(50% 50% at 85% 70%, rgba(8, 145, 178, 0.08), rgba(8, 145, 178, 0) 100%),
+    #f4f6fb;
+  --gradient-wizard-backends:
+    radial-gradient(60% 50% at 50% 20%, rgba(124, 58, 237, 0.10), rgba(124, 58, 237, 0) 100%),
+    #f4f6fb;
+  --gradient-wizard-platforms:
+    radial-gradient(60% 50% at 50% 20%, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0) 100%),
+    radial-gradient(40% 40% at 85% 70%, rgba(8, 145, 178, 0.08), rgba(8, 145, 178, 0) 100%),
+    radial-gradient(40% 40% at 15% 70%, rgba(124, 58, 237, 0.08), rgba(124, 58, 237, 0) 100%),
+    #f4f6fb;
+  --gradient-wizard-slack:
+    radial-gradient(50% 50% at 30% 20%, rgba(224, 30, 90, 0.08), rgba(224, 30, 90, 0) 100%),
+    #f4f6fb;
+  --gradient-wizard-summary:
+    radial-gradient(60% 50% at 30% 30%, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0) 100%),
+    #f4f6fb;
+
+  --bg-page: var(--gradient-console);
+
+  /* Light card glow — much softer than dark. */
+  --shadow-mint-card: 0 12px 24px -16px rgba(16, 185, 129, 0.20);
+  --shadow-mint-card-lg: 0 16px 32px -16px rgba(16, 185, 129, 0.22);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html,
 body {
+  background: var(--color-background);
+  color: var(--color-foreground);
   font-family: var(--font-sans);
-  color: var(--text);
-  background: linear-gradient(to top, var(--bg), #FFFFFF);
-  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: 0;
   margin: 0;
 }
 
-h1, h2, h3, h4, h5, h6 {
+/* Page-family glow utilities. Apply on the scrolling main container. */
+.page-glow-console {
+  background: var(--gradient-console);
+  background-attachment: fixed;
+}
+.page-glow-settings {
+  background: var(--gradient-settings);
+  background-attachment: fixed;
+}
+.page-glow-wizard-welcome {
+  background: var(--gradient-wizard-welcome);
+  background-attachment: fixed;
+}
+.page-glow-wizard-backends {
+  background: var(--gradient-wizard-backends);
+  background-attachment: fixed;
+}
+.page-glow-wizard-platforms {
+  background: var(--gradient-wizard-platforms);
+  background-attachment: fixed;
+}
+.page-glow-wizard-slack {
+  background: var(--gradient-wizard-slack);
+  background-attachment: fixed;
+}
+.page-glow-wizard-summary {
+  background: var(--gradient-wizard-summary);
+  background-attachment: fixed;
+}
+
+body {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
   font-family: var(--font-display);
 }
 
-button, [role="button"] {
-  cursor: pointer;
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
 }
 
-button:disabled {
-  cursor: not-allowed;
+code,
+pre,
+.font-mono {
+  font-family: var(--font-mono);
 }
 
-/* Toast animation */
 @keyframes slide-in {
   from {
     transform: translateX(100%);

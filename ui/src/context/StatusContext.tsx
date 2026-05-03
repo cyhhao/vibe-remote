@@ -50,10 +50,13 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, ...payload }),
       });
-      if (res.ok) {
-        await refreshStatus();
-        return await res.json();
+      if (!res.ok) {
+        // Surface non-2xx responses as rejections so callers do not mistake a
+        // failed restart/start for success and emit positive UI feedback.
+        throw new Error(`Control action ${action} failed with status ${res.status}`);
       }
+      await refreshStatus();
+      return await res.json();
     } catch (e) {
       console.error('Control action failed', e);
       throw e;

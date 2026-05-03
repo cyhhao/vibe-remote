@@ -1,18 +1,19 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Languages } from 'lucide-react';
+import { Check } from 'lucide-react';
+import clsx from 'clsx';
 import { useApi } from '../context/ApiContext';
 
-export const LanguageSwitcher: React.FC = () => {
+export const LanguageSwitcher: React.FC<{ openUpward?: boolean }> = ({ openUpward = false }) => {
   const { i18n, t } = useTranslation();
   const { getConfig, saveConfig } = useApi();
+  const [isOpen, setIsOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
 
-  // Load config and sync language on mount
   useEffect(() => {
     const loadConfig = async () => {
       try {
         const cfg = await getConfig();
-        // Sync i18n with config language
         if (cfg.language && cfg.language !== i18n.language) {
           i18n.changeLanguage(cfg.language);
         }
@@ -23,6 +24,18 @@ export const LanguageSwitcher: React.FC = () => {
     loadConfig();
   }, []);
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
   const languageCodes = Object.keys(i18n.options.resources ?? {});
   const availableLanguages = languageCodes.length ? languageCodes : ['en'];
   const languages = availableLanguages.map((code) => ({
@@ -31,32 +44,67 @@ export const LanguageSwitcher: React.FC = () => {
   }));
   const currentLang = languages.find((l) => l.code === i18n.language) || languages[0];
 
-  const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newLang = e.target.value;
-    i18n.changeLanguage(newLang);
+  const shortLabel = (code: string) => {
+    if (code === 'zh') return '中';
+    return code.slice(0, 2).toUpperCase();
+  };
 
-    // Save to config
+  const handleSelect = async (code: string) => {
+    setIsOpen(false);
+    if (code === i18n.language) return;
+    i18n.changeLanguage(code);
     try {
-      await saveConfig({ language: newLang });
+      await saveConfig({ language: code });
     } catch {
       // Ignore save errors - language change already applied locally
     }
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <Languages size={16} className="text-muted" />
-      <select
-        value={currentLang.code}
-        onChange={handleChange}
-        className="bg-transparent border border-border rounded px-2 py-1 text-sm text-text cursor-pointer hover:bg-neutral-50 focus:outline-none focus:ring-1 focus:ring-accent"
+    <div className="relative" ref={wrapRef}>
+      <button
+        type="button"
+        onClick={() => setIsOpen((v) => !v)}
+        aria-label={currentLang.label}
+        title={currentLang.label}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border-strong bg-surface-2/40 text-[11px] font-semibold text-muted transition hover:bg-surface-2 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
       >
-        {languages.map((lang) => (
-          <option key={lang.code} value={lang.code}>
-            {lang.label}
-          </option>
-        ))}
-      </select>
+        {shortLabel(currentLang.code)}
+      </button>
+
+      {isOpen && (
+        <div
+          role="listbox"
+          className={clsx(
+            'absolute right-0 z-50 min-w-[10rem] rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-xl',
+            openUpward ? 'bottom-full mb-2' : 'top-full mt-2'
+          )}
+        >
+          {languages.map((lang) => {
+            const active = lang.code === currentLang.code;
+            return (
+              <button
+                key={lang.code}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => handleSelect(lang.code)}
+                className={clsx(
+                  'flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors',
+                  active
+                    ? 'text-foreground'
+                    : 'text-muted hover:bg-surface-2 hover:text-foreground'
+                )}
+              >
+                <span>{lang.label}</span>
+                {active && <Check size={14} className="text-mint" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
