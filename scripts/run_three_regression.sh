@@ -131,8 +131,26 @@ fi
 
 print_summary() {
     local port="${THREE_REGRESSION_PORT:-15130}"
-    local ui_host="${THREE_REGRESSION_UI_HOST:-127.0.0.1}"
+    local bind_host="${THREE_REGRESSION_PORT_BIND_HOST:-127.0.0.1}"
+    local ui_host="${THREE_REGRESSION_ACCESS_HOST:-${THREE_REGRESSION_UI_HOST:-$bind_host}}"
     local default_backend="${THREE_REGRESSION_DEFAULT_BACKEND:-opencode}"
+    local config_path="$OUTPUT_ROOT/vibe/config/config.json"
+
+    if [ -f "$config_path" ]; then
+        default_backend="$("$PYTHON_BIN" - "$config_path" "$default_backend" <<'PY'
+import json
+import sys
+
+path, fallback = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as fh:
+        payload = json.load(fh)
+    print((payload.get("agents") or {}).get("default_backend") or fallback)
+except Exception:
+    print(fallback)
+PY
+)"
+    fi
 
     local slack_channel="${THREE_REGRESSION_SLACK_CHANNEL:-}"
     local discord_channel="${THREE_REGRESSION_DISCORD_CHANNEL:-}"
@@ -199,18 +217,25 @@ snapshot_agent_runtime_state() {
 }
 
 wait_for_service() {
-    local port="$1"
-    local url="http://127.0.0.1:${port}"
-
     for _ in $(seq 1 60); do
-        if curl -sf "$url/health" >/dev/null 2>&1 && \
-            curl -sf "$url/status" | "$PYTHON_BIN" -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("running") else 1)' >/dev/null 2>&1; then
+        if "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" exec -T vibe python - <<'PY' >/dev/null 2>&1; then
+import json
+import sys
+import urllib.request
+
+try:
+    urllib.request.urlopen("http://127.0.0.1:5123/health", timeout=3).read()
+    status = json.loads(urllib.request.urlopen("http://127.0.0.1:5123/status", timeout=3).read())
+except Exception:
+    sys.exit(1)
+sys.exit(0 if status.get("running") else 1)
+PY
             return 0
         fi
         sleep 2
     done
 
-    echo "Service did not become ready on port $port" >&2
+    echo "Service did not become ready inside the regression container" >&2
     "$DOCKER_BIN" compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs vibe || true
     return 1
 }
