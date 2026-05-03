@@ -73,7 +73,12 @@ export const SettingsServicePage: React.FC = () => {
         normalizedSetupHost === '::' ||
         normalizedSetupHost === '';
       const targetHostname = isBindAll ? currentHostname : normalizedSetupHost;
-      const newOrigin = `${window.location.protocol}//${formatAuthorityHost(targetHostname)}:${targetPort}`;
+      // The UI server (vibe/ui_server.run_ui_server) binds plain HTTP — any
+      // HTTPS access the user has goes through an external TLS proxy whose
+      // upstream is this HTTP bind. Always target http:// so the redirect or
+      // surfaced URL points at something the rebound server can actually
+      // serve, instead of inheriting the current page protocol.
+      const newOrigin = `http://${formatAuthorityHost(targetHostname)}:${targetPort}`;
       const originChanged = targetHostname !== currentHostname || targetPort !== currentPort;
       if (originChanged) {
         // Only auto-redirect when the new hostname is something the current
