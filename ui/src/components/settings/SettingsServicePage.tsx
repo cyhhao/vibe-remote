@@ -55,16 +55,23 @@ export const SettingsServicePage: React.FC = () => {
       // If the UI server's bind host or port changed, the current page is on
       // the old origin and may become unreachable. Redirect (or surface the
       // new origin) so the user is not stranded.
-      const currentHostname = window.location.hostname;
+      // Normalize hosts for comparison (strip brackets), but keep an
+      // URL-authority form (bracketed for IPv6) for building newOrigin.
+      const stripBrackets = (host: string) =>
+        host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+      const formatAuthorityHost = (host: string) =>
+        host.includes(':') ? `[${host}]` : host;
+      const currentHostname = stripBrackets(window.location.hostname);
       const currentPort =
         window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
       const targetPort = String(uiPayload.setup_port);
+      const normalizedSetupHost = stripBrackets(uiPayload.setup_host);
       const isBindAll =
-        uiPayload.setup_host === '0.0.0.0' ||
-        uiPayload.setup_host === '::' ||
-        uiPayload.setup_host === '';
-      const targetHostname = isBindAll ? currentHostname : uiPayload.setup_host;
-      const newOrigin = `${window.location.protocol}//${targetHostname}:${targetPort}`;
+        normalizedSetupHost === '0.0.0.0' ||
+        normalizedSetupHost === '::' ||
+        normalizedSetupHost === '';
+      const targetHostname = isBindAll ? currentHostname : normalizedSetupHost;
+      const newOrigin = `${window.location.protocol}//${formatAuthorityHost(targetHostname)}:${targetPort}`;
       const originChanged = targetHostname !== currentHostname || targetPort !== currentPort;
       if (originChanged) {
         // Only auto-redirect when the new hostname is something the current
