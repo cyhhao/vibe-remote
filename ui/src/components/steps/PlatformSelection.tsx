@@ -483,7 +483,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
     <div className="flex w-full justify-center">
       <WizardCard className="gap-8">
         <div className="flex flex-col gap-3">
-          <EyebrowBadge tone="mint">03 — Platforms</EyebrowBadge>
+          <EyebrowBadge tone="mint">{t('platform.eyebrow')}</EyebrowBadge>
           <h2 className="text-[34px] font-bold leading-[1.1] tracking-[-0.6px] text-foreground">
             {t('platform.title')}
           </h2>

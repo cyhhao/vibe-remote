@@ -185,6 +185,7 @@
     "selfHostDescription": "使用您自己的聊天应用 + Socket Mode 令牌"
   },
   "platform": {
+    "eyebrow": "03 — 平台",
     "title": "选择平台",
     "subtitle": "选择一个或多个要连接的聊天平台。",
     "primary": "主平台",

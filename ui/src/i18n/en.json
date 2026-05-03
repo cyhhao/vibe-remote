@@ -185,6 +185,7 @@
     "selfHostDescription": "Use your own platform credentials and keep execution local."
   },
   "platform": {
+    "eyebrow": "03 — Platforms",
     "title": "Choose a Platform",
     "subtitle": "Select one or more chat platforms to connect.",
     "primary": "Primary",

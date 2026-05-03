@@ -228,6 +228,19 @@ def _is_loopback_host(value: str | None) -> bool:
         return False
 
 
+# RFC 6598 shared address space (CGNAT). Python's ipaddress module classifies
+# this range as neither private nor global, but in practice overlay networks
+# such as Tailscale assign 100.x.y.z addresses that should be trusted as local
+# setup-host peers when the request's Host header otherwise matches.
+_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _is_private_address(address: ipaddress._BaseAddress) -> bool:
+    if address.is_loopback or address.is_private or address.is_link_local:
+        return True
+    return isinstance(address, ipaddress.IPv4Address) and address in _SHARED_ADDRESS_SPACE
+
+
 def _is_private_peer() -> bool:
     remote_addr = (request.remote_addr or "").strip()
     if not remote_addr or remote_addr == "localhost":
@@ -236,11 +249,11 @@ def _is_private_peer() -> bool:
         address = ipaddress.ip_address(remote_addr)
     except ValueError:
         return False
-    if address.is_loopback or address.is_private or address.is_link_local:
+    if _is_private_address(address):
         return True
     mapped = getattr(address, "ipv4_mapped", None)
     if mapped is not None:
-        return mapped.is_loopback or mapped.is_private or mapped.is_link_local
+        return _is_private_address(mapped)
     return False
 
 
