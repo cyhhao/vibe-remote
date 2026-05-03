@@ -110,6 +110,22 @@ Vibe Remote 不是 agent 框架，也不是云端 coding VM。它是你本地编
 
 ---
 
+## 认识一下云团子（Vibey）
+
+**Vibe Remote** 是产品本身，**云团子** 是住在里面的那个小家伙——英文我们叫它 **Vibey**。
+
+<div align="center">
+<img src="assets/mascot/cloud-tuanzi.png" alt="云团子 / Vibey — Vibe Remote 里的那团气体意识" width="220"/>
+</div>
+
+一团纯粹的氛围气体。住在你的 Slack、Discord、Telegram、飞书或微信里。读得懂气氛，会跟你对话，你不在的时候它把活儿干了。
+
+> Vibe Remote 是那根线，云团子是线那头的同事。
+
+产品本身一点没变：依然是本地优先、零公开端口的"远程遥控器"，指挥跑在你电脑上的编码 Agent。云团子只是给它配了一张脸——以及当你跟队友说"让云团子去发版吧"时，会自然冒出来的那个表情。
+
+---
+
 ## 为什么选 Vibe Remote 而不是 OpenClaw？
 
 | | Vibe Remote | OpenClaw |
