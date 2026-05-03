@@ -14,7 +14,7 @@
 
 <a href="https://www.producthunt.com/products/vibe-remote?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-vibe-remote" target="_blank" rel="noopener noreferrer"><img alt="Vibe Remote - Code from your phone — AI agents in your chat app | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1104967&theme=light&t=1774450119248"></a>
 
-[English](README.md) | [中文](README_ZH.md)
+[官方文档](https://docs.avibe.bot) | [English](README.md) | [中文](README_ZH.md)
 
 **支持的平台**
 
@@ -58,6 +58,12 @@ curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.s
 
 完事。浏览器打开 -> 跟着向导走 -> 搞定。
 
+如果你希望从另一台设备或远端服务器打开 Web UI，运行：
+
+```bash
+vibe remote
+```
+
 <details>
 <summary><b>Windows？</b></summary>
 
@@ -71,6 +77,19 @@ Windows 下默认推荐使用 WSL 方案，因为它的兼容性最好。
 - 在哪里执行 Vibe Remote 的安装命令
 - 如何启动 Ubuntu 并打开 Web UI
 </details>
+
+---
+
+## 现在就能做什么
+
+Vibe Remote 不是 agent 框架，也不是云端 coding VM。它是你本地编码 agent 的远程控制层。
+
+- **聊天 App 变终端：** Slack、Discord、Telegram、微信、飞书 / Lark。
+- **真实编码 Agent，不加中间层：** Claude Code、OpenCode、Codex 以原本的方式运行。
+- **Thread = 会话：** 开 5 个 thread，跑 5 个隔离任务，之后还能接着做。
+- **Web 向导，不是手搓 token：** 本地设置向导、仪表盘、路由、健康检查。
+- **需要远程 UI 时再打开：** `vibe remote` 通过 avibe.bot 安全 tunnel 访问本地 Web UI。
+- **人走开，循环不断：** 完成通知、定时任务、异步 hook 让任务继续推进。
 
 ---
 
@@ -325,22 +344,26 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## 文档
 
+- **[官方文档](https://docs.avibe.bot)** — Quickstart、平台配置、Agent 设置、排错和 AI 可读安装说明
 - **[CLI 参考手册](docs/CLI_ZH.md)** — 命令行使用和服务生命周期
+- **[让 AI Agent 帮你安装](docs/INSTALL_FOR_AI_ZH.md)** — 交给 Claude Code、Codex 或 OpenCode 的引导式安装说明
 - **[Slack 配置指南](docs/SLACK_SETUP_ZH.md)** — 详细配置和截图
 - **[Discord 配置指南](docs/DISCORD_SETUP_ZH.md)** — 详细配置和截图
 - **[Telegram 配置指南](docs/TELEGRAM_SETUP_ZH.md)** — BotFather 初始化、令牌验证与会话发现
 - **微信配置指南** — 运行 `vibe` 后在向导中选择微信即可
 - **飞书配置指南** — 运行 `vibe` 后在向导中选择飞书即可
 
-## 远端服务器提示（SSH）
+## 远程访问 Web UI
 
-如果你把 Vibe Remote 部署在远端服务器上，请保持 Web UI 只监听在 `127.0.0.1:5123`，并通过 SSH 端口转发在本机访问：
+如果你希望从另一台设备打开本机 Web UI，或者把 Vibe Remote 部署在远端服务器上，请使用引导式远程访问配置：
 
 ```bash
-ssh -NL 5123:localhost:5123 user@server-ip
+vibe remote
 ```
 
-详见：**[CLI 参考手册](docs/CLI_ZH.md)**（搜索"远端服务器访问 Web UI"）
+它会引导你登录 avibe.bot、领取个人域名、完成配对，并启动安全 tunnel。
+
+详见：**[CLI 参考手册](docs/CLI_ZH.md)**。
 
 ---
 

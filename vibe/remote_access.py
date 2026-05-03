@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import hmac
+import ipaddress
 import json
 import ntpath
 import os
 import platform
+import re
 import shlex
 import secrets
 import shutil
@@ -33,6 +36,14 @@ CLOUDFLARED_BASE_URL = "https://github.com/cloudflare/cloudflared/releases/lates
 SESSION_COOKIE_NAME = "__Host-vibe_remote_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
 _CONNECTOR_LOCK = threading.RLock()
+_STATUS_HEARTBEAT_LOCK = threading.Lock()
+_STATUS_HEARTBEAT_STARTED = False
+_STATUS_REPORT_LOCK = threading.Lock()
+_STATUS_REPORT_THREADS: set[threading.Thread] = set()
+_STATUS_REPORT_ATEXIT_REGISTERED = False
+STATUS_HEARTBEAT_SECONDS = 5 * 60
+STATUS_LOG_TAIL_BYTES = 64 * 1024
+STATUS_REPORT_DRAIN_SECONDS = 1.0
 
 
 class BackendRequestError(Exception):
@@ -57,6 +68,22 @@ def _pid_path() -> Path:
 
 def _state_path() -> Path:
     return paths.get_runtime_dir() / "remote-access-cloudflared.json"
+
+
+def _cloudflared_stderr_path() -> Path:
+    return paths.get_runtime_dir() / "remote_access_cloudflared_stderr.log"
+
+
+def _cloudflared_stdout_path() -> Path:
+    return paths.get_runtime_dir() / "remote_access_cloudflared_stdout.log"
+
+
+def _clear_cloudflared_logs() -> None:
+    for path in (_cloudflared_stdout_path(), _cloudflared_stderr_path()):
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _asset_name() -> str:
@@ -230,6 +257,32 @@ def _read_state() -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _read_text_tail(path: Path, byte_limit: int) -> str | None:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - byte_limit))
+            return handle.read(byte_limit).decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def _observed_cloudflared_origin_service() -> str | None:
+    content = _read_text_tail(_cloudflared_stderr_path(), STATUS_LOG_TAIL_BYTES)
+    if content is None:
+        return None
+    pattern = re.compile(
+        r'originService=([^\s"]+)'
+        r'|\\"service\\":\\"(http://[^"\\]+)\\"'
+        r'|(?<!\\)"service":"(http://[^"]+)"'
+    )
+    last_origin = None
+    for match in pattern.finditer(content):
+        last_origin = next((group for group in match.groups() if group), None)
+    return str(last_origin) if last_origin else None
+
+
 def _running_signature(pid: int | None) -> dict[str, str] | None:
     if not _is_cloudflared_pid(pid):
         return None
@@ -272,6 +325,121 @@ def status(config: V2Config | None = None) -> dict[str, Any]:
     }
 
 
+def _local_ui_healthy(config: V2Config) -> bool:
+    try:
+        response = requests.get(f"{origin_service_for_pairing(config)}/health", timeout=1.0)
+        return response.ok
+    except Exception:
+        return False
+
+
+def runtime_status_payload(config: V2Config | None = None, event: str = "heartbeat", last_error: str | None = None) -> dict[str, Any]:
+    config = config or V2Config.load()
+    current = status(config)
+    payload = {
+        "event": event,
+        "local_version": "dev",
+        "ui_healthy": _local_ui_healthy(config),
+        "tunnel_running": bool(current.get("running")),
+        "cloudflared_found": bool(current.get("binary_found")),
+        "expected_origin_service": origin_service_for_pairing(config),
+        "observed_origin_service": _observed_cloudflared_origin_service(),
+    }
+    error = last_error or current.get("error")
+    if error:
+        payload["last_error"] = str(error)
+    return payload
+
+
+def report_runtime_status(config: V2Config | None = None, event: str = "heartbeat", last_error: str | None = None) -> dict[str, Any]:
+    try:
+        config = config or V2Config.load()
+        cloud = config.remote_access.vibe_cloud
+        if not (cloud.instance_id and cloud.instance_secret and cloud.backend_url):
+            return {"ok": False, "error": "remote_status_not_configured"}
+        payload = {
+            "instance_secret": cloud.instance_secret,
+            **runtime_status_payload(config, event=event, last_error=last_error),
+        }
+        result = _json_request(
+            f"{cloud.backend_url.rstrip('/')}/api/v1/instances/{cloud.instance_id}/runtime-status",
+            payload,
+            timeout=5.0,
+        )
+        return {"ok": True, **result}
+    except Exception as exc:
+        return {"ok": False, "error": "remote_status_report_failed", "detail": str(exc)}
+
+
+def drain_runtime_status_reports(timeout_seconds: float = STATUS_REPORT_DRAIN_SECONDS) -> None:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        with _STATUS_REPORT_LOCK:
+            threads = [thread for thread in _STATUS_REPORT_THREADS if thread.is_alive()]
+        if not threads:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        for thread in threads:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            thread.join(remaining)
+
+
+def _register_status_report_thread(thread: threading.Thread) -> None:
+    global _STATUS_REPORT_ATEXIT_REGISTERED
+    with _STATUS_REPORT_LOCK:
+        _STATUS_REPORT_THREADS.add(thread)
+        if not _STATUS_REPORT_ATEXIT_REGISTERED:
+            atexit.register(drain_runtime_status_reports)
+            _STATUS_REPORT_ATEXIT_REGISTERED = True
+
+
+def _report_runtime_status_async(config: V2Config | None = None, event: str = "heartbeat", last_error: str | None = None) -> None:
+    holder: dict[str, threading.Thread] = {}
+
+    def worker() -> None:
+        try:
+            report_runtime_status(config, event=event, last_error=last_error)
+        finally:
+            thread = holder.get("thread")
+            if thread is not None:
+                with _STATUS_REPORT_LOCK:
+                    _STATUS_REPORT_THREADS.discard(thread)
+
+    try:
+        thread = threading.Thread(target=worker, name="vibe-remote-status-report", daemon=True)
+    except Exception:
+        return
+    holder["thread"] = thread
+    try:
+        _register_status_report_thread(thread)
+        thread.start()
+    except Exception:
+        with _STATUS_REPORT_LOCK:
+            _STATUS_REPORT_THREADS.discard(thread)
+
+
+def start_status_heartbeat(config: V2Config | None = None, interval_seconds: int = STATUS_HEARTBEAT_SECONDS) -> None:
+    global _STATUS_HEARTBEAT_STARTED
+    def loop() -> None:
+        while True:
+            report_runtime_status(None, event="heartbeat")
+            time.sleep(interval_seconds)
+
+    with _STATUS_HEARTBEAT_LOCK:
+        if _STATUS_HEARTBEAT_STARTED:
+            return
+        try:
+            thread = threading.Thread(target=loop, name="vibe-remote-status-heartbeat", daemon=True)
+            thread.start()
+        except Exception:
+            return
+        _STATUS_HEARTBEAT_STARTED = True
+
+
 def stop(config: V2Config | None = None) -> dict[str, Any]:
     try:
         config = config or V2Config.load()
@@ -281,7 +449,9 @@ def stop(config: V2Config | None = None) -> dict[str, Any]:
         pid = _read_pid()
         pid_state = _cloudflared_pid_state(pid)
         if pid is not None and pid_state == "unknown":
-            return {**status(config), "ok": False, "error": "cloudflared_process_unknown", "stopped": False}
+            result = {**status(config), "ok": False, "error": "cloudflared_process_unknown", "stopped": False}
+            _report_runtime_status_async(config, event="stop_failed", last_error="cloudflared_process_unknown")
+            return result
         if pid is not None and pid_state in {"dead", "other"}:
             _pid_path().unlink(missing_ok=True)
             _state_path().unlink(missing_ok=True)
@@ -290,12 +460,18 @@ def stop(config: V2Config | None = None) -> dict[str, Any]:
         if stopped:
             post_stop_state = _cloudflared_pid_state(pid)
             if post_stop_state in {"cloudflared", "unknown"}:
-                return {**status(config), "ok": False, "error": "cloudflared_stop_failed", "stopped": False}
+                result = {**status(config), "ok": False, "error": "cloudflared_stop_failed", "stopped": False}
+                _report_runtime_status_async(config, event="stop_failed", last_error="cloudflared_stop_failed")
+                return result
             _pid_path().unlink(missing_ok=True)
             _state_path().unlink(missing_ok=True)
         if pid is not None and not stopped and _is_cloudflared_pid(pid):
-            return {**status(config), "ok": False, "error": "cloudflared_stop_failed", "stopped": False}
-        return {**status(config), "ok": True, "stopped": stopped}
+            result = {**status(config), "ok": False, "error": "cloudflared_stop_failed", "stopped": False}
+            _report_runtime_status_async(config, event="stop_failed", last_error="cloudflared_stop_failed")
+            return result
+        result = {**status(config), "ok": True, "stopped": stopped}
+        _report_runtime_status_async(config, event="stop")
+        return result
 
 
 def rotate_session_secret(config: V2Config) -> None:
@@ -327,15 +503,18 @@ def start(config: V2Config | None = None) -> dict[str, Any]:
         if not binary:
             install_result = install_cloudflared()
             if install_result.get("ok") is False:
+                _report_runtime_status_async(config, event="start_failed", last_error=str(install_result.get("error") or "cloudflared_install_failed"))
                 return {**status(config), **install_result}
             binary = str(install_result["path"])
         current = status(config)
         if current.get("pid_state") == "unknown":
+            _report_runtime_status_async(config, event="start_failed", last_error="cloudflared_process_unknown")
             return {**current, "ok": False, "error": "cloudflared_process_unknown", "started": False}
         if current.get("running"):
             running_sig = _running_signature(current.get("pid"))
             desired_sig = _runtime_signature(config, binary)
             if running_sig == desired_sig:
+                _report_runtime_status_async(config, event="start")
                 return {**current, "ok": True, "started": False}
             stop_result = stop(config)
             if stop_result.get("ok") is False or stop_result.get("running"):
@@ -347,6 +526,7 @@ def start(config: V2Config | None = None) -> dict[str, Any]:
                 }
         env = {**os.environ, "TUNNEL_TOKEN": cloud.tunnel_token}
         try:
+            _clear_cloudflared_logs()
             pid = runtime.spawn_background(
                 [binary, "tunnel", "--no-autoupdate", "run"],
                 _pid_path(),
@@ -356,12 +536,16 @@ def start(config: V2Config | None = None) -> dict[str, Any]:
             )
             _write_state(pid, config, binary)
         except Exception as exc:
+            _report_runtime_status_async(config, event="start_failed", last_error="cloudflared_spawn_failed")
             return {**status(config), "ok": False, "error": "cloudflared_spawn_failed", "detail": str(exc)}
         time.sleep(0.2)
         current = status(config)
         if not current.get("running"):
+            _report_runtime_status_async(config, event="start_failed", last_error="cloudflared_exited")
             return {**current, "ok": False, "error": "cloudflared_exited"}
-        return {**current, "ok": True, "started": True, "pid": pid}
+        result = {**current, "ok": True, "started": True, "pid": pid}
+        _report_runtime_status_async(config, event="start")
+        return result
 
 
 def reconcile(config: V2Config | None = None) -> dict[str, Any]:
@@ -412,18 +596,28 @@ def _effective_ui_port(config: V2Config) -> int:
     return port
 
 
-def _origin_host_for_ui(config: V2Config) -> str:
-    host = (config.ui.setup_host or "127.0.0.1").strip()
-    if not host or host in {"0.0.0.0", "::", "[::]"}:
+def _origin_host_for_pairing(config: V2Config) -> str:
+    host = (config.ui.setup_host or "").strip()
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1].strip()
+    if host.lower() == "localhost":
+        return "localhost"
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
         return "127.0.0.1"
-    if ":" in host and not host.startswith("["):
-        return f"[{host}]"
-    return host
+
+    if address.is_loopback:
+        return f"[{address.compressed}]" if address.version == 6 else address.compressed
+    if address.is_unspecified and address.version == 6:
+        return "[::1]"
+    return "127.0.0.1"
 
 
 def origin_service_for_pairing(config: V2Config | None = None) -> str:
     config = config or V2Config.load()
-    return f"http://{_origin_host_for_ui(config)}:{_effective_ui_port(config)}"
+    return f"http://{_origin_host_for_pairing(config)}:{_effective_ui_port(config)}"
 
 
 def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -> dict[str, Any]:
@@ -453,6 +647,13 @@ def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -
     missing = [field for field in required if not result.get(field)]
     if missing:
         return {"ok": False, "error": "invalid_pairing_response", "missing": missing}
+    origin_update = result.get("tunnel_origin_update")
+    if isinstance(origin_update, dict) and origin_update.get("ok") is False:
+        return {
+            "ok": False,
+            "error": str(origin_update.get("error") or "tunnel_origin_update_failed"),
+            "pairing": {"ok": False, "origin_service": origin_service},
+        }
     config = api.save_config(
         {
             "remote_access": {
@@ -476,6 +677,7 @@ def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -
         }
     )
     start_result = start(config)
+    _report_runtime_status_async(config, event="pair", last_error=start_result.get("error"))
     return {**status(config), "ok": True, "pairing": {"ok": True}, "start": start_result}
 
 

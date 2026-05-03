@@ -103,26 +103,150 @@ class SessionState:
     last_activity: Optional[str] = None
 
 
+def parse_session_payload(payload: dict[str, Any]) -> SessionState:
+    """Parse current or legacy sessions JSON into SessionState."""
+    if not isinstance(payload, dict):
+        raise ValueError("sessions payload must be an object")
+    return SessionState(
+        session_mappings=payload.get("session_mappings", {}),
+        active_slack_threads=payload.get("active_slack_threads", {}),
+        active_polls=payload.get("active_polls", {}),
+        processed_message_ts=payload.get("processed_message_ts", {}),
+        last_activity=payload.get("last_activity"),
+    )
+
+
+def load_session_state_from_json(sessions_path: Path) -> SessionState:
+    if not sessions_path.exists():
+        return SessionState()
+    payload = json.loads(sessions_path.read_text(encoding="utf-8"))
+    return parse_session_payload(payload)
+
+
+def infer_platform_from_thread_ids(agent_maps: Dict[str, Dict[str, str]]) -> Optional[str]:
+    """Infer platform from thread ID prefixes within a legacy mapping."""
+    platforms: set[str] = set()
+    for thread_map in agent_maps.values():
+        for thread_id in thread_map:
+            if "_" in thread_id:
+                prefix = thread_id.split("_", 1)[0]
+                if prefix.isalpha():
+                    platforms.add(prefix)
+    if len(platforms) == 1:
+        return platforms.pop()
+    return None
+
+
+def migrate_session_state_active_polls(state: SessionState, default_platform: str) -> bool:
+    migrated = False
+    for _sid, data in state.active_polls.items():
+        if not isinstance(data, dict):
+            continue
+        sk = data.get("settings_key", "")
+        if sk and "::" in sk:
+            prefix, raw = sk.split("::", 1)
+            if not data.get("platform") and prefix:
+                data["platform"] = prefix
+            data["settings_key"] = raw
+            migrated = True
+        if not data.get("platform"):
+            data["platform"] = default_platform
+            migrated = True
+    return migrated
+
+
+def migrate_session_state_mappings(state: SessionState, default_platform: str) -> tuple[int, int, int]:
+    """Migrate legacy raw session keys to platform-prefixed keys.
+
+    Returns ``(migrated_entries, legacy_keys, empty_keys_removed)``.
+    """
+    mappings = state.session_mappings
+    old_keys = [
+        k
+        for k in list(mappings.keys())
+        if "::" not in k and mappings[k]
+    ]
+    if not old_keys:
+        empty_keys = [k for k in list(mappings.keys()) if not mappings[k]]
+        for key in empty_keys:
+            del mappings[key]
+        return 0, 0, len(empty_keys)
+
+    migrated_count = 0
+    for old_key in old_keys:
+        old_agents = mappings[old_key]
+        inferred = infer_platform_from_thread_ids(old_agents)
+        platform = inferred or default_platform
+        if not inferred:
+            logger.warning(
+                "Could not infer platform for legacy key %s, falling back to default_platform=%s",
+                old_key,
+                default_platform,
+            )
+        new_key = f"{platform}::{old_key}"
+
+        if new_key not in mappings:
+            mappings[new_key] = {}
+        for agent_name, thread_map in old_agents.items():
+            if agent_name not in mappings[new_key]:
+                mappings[new_key][agent_name] = {}
+            for thread_id, session_id in thread_map.items():
+                if thread_id not in mappings[new_key][agent_name]:
+                    mappings[new_key][agent_name][thread_id] = session_id
+                    migrated_count += 1
+
+        del mappings[old_key]
+
+    empty_keys = [k for k in list(mappings.keys()) if not mappings[k]]
+    for key in empty_keys:
+        del mappings[key]
+
+    return migrated_count, len(old_keys), len(empty_keys)
+
+
 @dataclass
 class SessionsStore:
     sessions_path: Path = field(default_factory=paths.get_sessions_path)
     state: SessionState = field(default_factory=SessionState)
 
-    def load(self) -> None:
-        if not self.sessions_path.exists():
+    def __post_init__(self) -> None:
+        self.sessions_path = Path(self.sessions_path)
+        self.db_path: Path | None = None
+        self._service = None
+        self._ensure_service()
+        self.load()
+        self._service.has_external_write()
+
+    def _ensure_service(self) -> None:
+        target_db = Path(self.sessions_path).with_name("vibe.sqlite")
+        if self._service is not None and self.db_path == target_db:
             return
-        try:
-            payload = json.loads(self.sessions_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.error("Failed to load sessions: %s", exc)
-            return
-        self.state = SessionState(
-            session_mappings=payload.get("session_mappings", {}),
-            active_slack_threads=payload.get("active_slack_threads", {}),
-            active_polls=payload.get("active_polls", {}),
-            processed_message_ts=payload.get("processed_message_ts", {}),
-            last_activity=payload.get("last_activity"),
+        if self._service is not None:
+            self._service.close()
+        from storage.importer import ensure_sqlite_state, resolve_primary_platform_from_config
+        from storage.sessions_service import SQLiteSessionsService
+
+        ensure_sqlite_state(
+            db_path=target_db,
+            state_dir=Path(self.sessions_path).parent,
+            primary_platform=resolve_primary_platform_from_config(Path(self.sessions_path).parent),
         )
+        self.db_path = target_db
+        self._service = SQLiteSessionsService(target_db)
+
+    def close(self) -> None:
+        service = getattr(self, "_service", None)
+        if service is not None:
+            service.close()
+
+    def load(self) -> None:
+        self._ensure_service()
+        self.state = self._service.load_state()
+
+    def maybe_reload(self) -> None:
+        self._ensure_service()
+        if self._service.has_external_write():
+            self.load()
 
     def migrate_active_polls(self, default_platform: str) -> None:
         """Migrate legacy active_polls that lack ``platform`` or use scoped settings_key.
@@ -132,23 +256,7 @@ class SessionsStore:
         created under a single platform, so ``default_platform`` is safe to
         use as the backfill value.
         """
-        migrated = False
-        for _sid, data in self.state.active_polls.items():
-            if not isinstance(data, dict):
-                continue
-            # Strip any scoped settings_key back to raw ID, and extract
-            # the platform from the prefix when the platform field is missing.
-            sk = data.get("settings_key", "")
-            if sk and "::" in sk:
-                prefix, raw = sk.split("::", 1)
-                if not data.get("platform") and prefix:
-                    data["platform"] = prefix
-                data["settings_key"] = raw
-                migrated = True
-            # Backfill missing platform (when key was never scoped)
-            if not data.get("platform"):
-                data["platform"] = default_platform
-                migrated = True
+        migrated = migrate_session_state_active_polls(self.state, default_platform)
         if migrated:
             self.save()
             logger.info("Migrated legacy active_polls (default_platform=%s)", default_platform)
@@ -162,16 +270,7 @@ class SessionsStore:
         or ``discord_1485641561998889093:/work``.  Returns the platform if
         all thread IDs agree, otherwise ``None``.
         """
-        platforms: set[str] = set()
-        for thread_map in agent_maps.values():
-            for thread_id in thread_map:
-                if "_" in thread_id:
-                    prefix = thread_id.split("_", 1)[0]
-                    if prefix.isalpha():
-                        platforms.add(prefix)
-        if len(platforms) == 1:
-            return platforms.pop()
-        return None
+        return infer_platform_from_thread_ids(agent_maps)
 
     def migrate_session_mappings(self, default_platform: str) -> None:
         """Migrate legacy session_mappings stored under raw keys to prefixed keys.
@@ -188,67 +287,18 @@ class SessionsStore:
 
         Also removes empty orphan keys left behind by the migration.
         """
-        mappings = self.state.session_mappings
-        old_keys = [
-            k
-            for k in list(mappings.keys())
-            if "::" not in k and mappings[k]  # non-prefixed AND non-empty
-        ]
-        if not old_keys:
-            # Still clean up any empty orphan keys (e.g. "U0E0FM3QT": {})
-            empty_keys = [k for k in list(mappings.keys()) if not mappings[k]]
-            if empty_keys:
-                for k in empty_keys:
-                    del mappings[k]
+        migrated_count, old_key_count, empty_key_count = migrate_session_state_mappings(self.state, default_platform)
+        if migrated_count == 0 and old_key_count == 0:
+            if empty_key_count:
                 self.save()
-                logger.info(
-                    "Cleaned up %d empty session_mapping keys: %s",
-                    len(empty_keys),
-                    empty_keys,
-                )
+                logger.info("Cleaned up %d empty session_mapping keys", empty_key_count)
             return
-
-        migrated_count = 0
-        for old_key in old_keys:
-            old_agents = mappings[old_key]
-
-            # Infer platform from thread IDs; fall back to default_platform
-            inferred = self._infer_platform_from_thread_ids(old_agents)
-            platform = inferred or default_platform
-            if not inferred:
-                logger.warning(
-                    "Could not infer platform for legacy key %s, falling back to default_platform=%s",
-                    old_key,
-                    default_platform,
-                )
-            new_key = f"{platform}::{old_key}"
-
-            # Merge into prefixed key, preserving any entries already there
-            if new_key not in mappings:
-                mappings[new_key] = {}
-            for agent_name, thread_map in old_agents.items():
-                if agent_name not in mappings[new_key]:
-                    mappings[new_key][agent_name] = {}
-                for thread_id, session_id in thread_map.items():
-                    # Only carry over if the new key doesn't already have this thread
-                    if thread_id not in mappings[new_key][agent_name]:
-                        mappings[new_key][agent_name][thread_id] = session_id
-                        migrated_count += 1
-
-            # Remove the old key
-            del mappings[old_key]
-
-        # Also clean up any remaining empty orphan keys
-        empty_keys = [k for k in list(mappings.keys()) if not mappings[k]]
-        for k in empty_keys:
-            del mappings[k]
-
         self.save()
         logger.info(
             "Migrated %d session entries from %d legacy keys; removed %d empty keys",
             migrated_count,
-            len(old_keys),
-            len(empty_keys),
+            old_key_count,
+            empty_key_count,
         )
 
     def _ensure_user_namespace(self, user_id: str) -> None:
@@ -350,12 +400,6 @@ class SessionsStore:
             self.save()
 
     def save(self) -> None:
-        paths.ensure_data_dirs()
-        payload = {
-            "session_mappings": self.state.session_mappings,
-            "active_slack_threads": self.state.active_slack_threads,
-            "active_polls": self.state.active_polls,
-            "processed_message_ts": self.state.processed_message_ts,
-            "last_activity": self.state.last_activity,
-        }
-        self.sessions_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._ensure_service()
+        self._service.save_state(self.state)
+        self._service.has_external_write()

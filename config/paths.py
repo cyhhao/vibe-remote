@@ -73,6 +73,18 @@ def get_discovered_chats_path() -> Path:
     return get_state_dir() / "discovered_chats.json"
 
 
+def get_sqlite_state_path() -> Path:
+    return get_state_dir() / "vibe.sqlite"
+
+
+def get_sqlite_migration_lock_path() -> Path:
+    return get_state_dir() / "migration.lock"
+
+
+def get_state_backups_dir() -> Path:
+    return get_state_dir() / "backups"
+
+
 def get_user_preferences_path() -> Path:
     return get_state_dir() / "user_preferences.md"
 
@@ -98,6 +110,7 @@ def ensure_data_dirs() -> None:
     get_logs_dir().mkdir(parents=True, exist_ok=True)
     get_runtime_dir().mkdir(parents=True, exist_ok=True)
     get_attachments_dir().mkdir(parents=True, exist_ok=True)
+    get_state_backups_dir().mkdir(parents=True, exist_ok=True)
     preferences_path = get_user_preferences_path()
     if not preferences_path.exists():
         preferences_path.write_text(_USER_PREFERENCES_TEMPLATE, encoding="utf-8")

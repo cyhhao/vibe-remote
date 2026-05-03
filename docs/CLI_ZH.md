@@ -5,60 +5,24 @@
 ```bash
 vibe              # 启动 Vibe Remote（打开 Web UI）
 vibe status       # 查看服务状态
+vibe remote       # 引导式配置 Vibe Cloud 远程访问
 vibe screenshot   # 截取本机桌面截图
 vibe stop         # 停止所有服务
 ```
 
 ## 命令详解
 
-## 远端服务器访问 Web UI（SSH 端口转发）
+## 远程访问 Web UI
 
 默认情况下，Web UI 只监听在运行 Vibe Remote 的那台机器的 `127.0.0.1:5123`。
 
-如果你把 Vibe Remote 部署在远端服务器上，**不建议把 UI 端口直接暴露到公网**。
-推荐使用 SSH 本地端口转发，把远端的 UI 端口安全地映射到你自己的电脑上访问。
-
-### 1）在服务器上启动 Vibe Remote
-
-先 SSH 登录到服务器并启动：
+如果你希望从另一台设备打开 Web UI，或者把 Vibe Remote 安装在远端服务器上，请使用引导式远程访问配置：
 
 ```bash
-vibe
+vibe remote
 ```
 
-此时 UI 仍然只能在服务器本机访问：
-
-- `http://127.0.0.1:5123`
-
-### 2）把 UI 端口转发到本机
-
-在你自己的电脑（本地）执行：
-
-```bash
-ssh -NL 5123:localhost:5123 user@server-ip
-```
-
-然后在本机浏览器打开：
-
-- `http://127.0.0.1:5123`
-
-### 小贴士
-
-- 如果你本机的 `5123` 端口已被占用，可以换一个本地端口：
-
-```bash
-ssh -NL 15123:localhost:5123 user@server-ip
-```
-
-然后打开 `http://127.0.0.1:15123`。
-
-- 如果服务器 SSH 端口不是 22：
-
-```bash
-ssh -p 2222 -NL 5123:localhost:5123 user@server-ip
-```
-
-- `-N` 表示不在远端执行命令，这条 SSH 连接只用于建立隧道。
+这个命令会引导你登录 `https://avibe.bot`、创建 remote-access bot、领取个人专属域名、粘贴一次性 pairing key，并自动启动安全 tunnel。
 
 
 ### `vibe`
@@ -117,6 +81,36 @@ vibe doctor
 - Slack token 配置
 - Agent CLI 可用性（Claude Code、OpenCode、Codex）
 - 运行时环境
+
+### `vibe remote`
+
+启动 Vibe Cloud 远程访问的引导式配置流程。
+
+```bash
+vibe remote
+```
+
+**流程：**
+- CLI 会先解释远程访问的作用，不会一上来就要求输入配对码。
+- 打开 `https://avibe.bot`，注册或登录，创建新的 remote-access bot，领取自己的个人域名，然后复制一次性 pairing key。
+- 回到 CLI 按 Enter，粘贴 pairing key，Vibe Remote 会自动保存配置并启动托管 tunnel。
+- 启动成功后，CLI 会展示远程访问链接，并给出查看状态、重新启动、停止远程访问的后续命令。打开链接时，请使用同一个 avibe.bot 账号登录。
+
+如果你已经拿到 pairing key，也可以用直接配对命令：
+
+```bash
+vibe remote pair vrp_abc123
+```
+
+常用后续命令：
+
+```bash
+vibe remote status
+vibe remote start
+vibe remote stop
+```
+
+这些子命令都支持 `--json` 输出，便于脚本调用。
 
 ### `vibe screenshot`
 

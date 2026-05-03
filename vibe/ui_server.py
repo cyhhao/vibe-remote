@@ -244,6 +244,56 @@ def _is_private_peer() -> bool:
     return False
 
 
+def _env_flag_enabled(name: str) -> bool:
+    return os.environ.get(name, "").lower() in {"1", "true", "yes", "on"}
+
+
+def _has_loopback_only_docker_port_binding() -> bool:
+    bind_host = os.environ.get("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST")
+    if not bind_host:
+        return False
+    return _is_loopback_host(bind_host)
+
+
+def _is_trusted_docker_peer() -> bool:
+    if not _env_flag_enabled("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS"):
+        return False
+    if not _has_loopback_only_docker_port_binding():
+        return False
+
+    remote_addr = (request.remote_addr or "").strip()
+    try:
+        address = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return False
+    address = getattr(address, "ipv4_mapped", None) or address
+
+    cidrs = os.environ.get("VIBE_REMOTE_DOCKER_LOOPBACK_PEER_CIDRS", "172.16.0.0/12,192.168.65.0/24")
+    for raw_network in cidrs.split(","):
+        raw_network = raw_network.strip()
+        if not raw_network:
+            continue
+        try:
+            network = ipaddress.ip_network(raw_network, strict=False)
+        except ValueError:
+            continue
+        if address in network:
+            return True
+    return False
+
+
+def _is_trusted_docker_loopback_probe() -> bool:
+    if request.method not in {"GET", "HEAD"}:
+        return False
+    if request.path not in {"/health", "/status"}:
+        return False
+    if _has_cloudflare_forwarded_metadata():
+        return False
+    if not _is_loopback_host(request.host):
+        return False
+    return _is_trusted_docker_peer()
+
+
 def _is_setup_host_request(config: V2Config | None) -> bool:
     if config is None:
         return False
@@ -370,6 +420,10 @@ def _safe_remote_redirect_target(value: Any) -> str:
     return urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
 
 
+def _oauth_callback_arg(name: str) -> str | None:
+    return request.args.get(name) or request.args.get(f"amp;{name}")
+
+
 def _redirect_to_vibe_cloud_login(config: V2Config):
     from vibe import remote_access
 
@@ -406,15 +460,16 @@ def _redirect_to_vibe_cloud_login(config: V2Config):
 def enforce_remote_access_cookie():
     config = _load_remote_access_config()
     local_request = _is_local_request(config)
+    docker_probe_request = _is_trusted_docker_loopback_probe()
     if config is None:
-        if local_request:
+        if local_request or docker_probe_request:
             return None
         return jsonify({"ok": False, "error": "remote_access_config_unavailable"}), 503
-    if _remote_access_public_url_invalid(config) and not local_request:
+    if _remote_access_public_url_invalid(config) and not (local_request or docker_probe_request):
         return jsonify({"ok": False, "error": "remote_access_public_url_invalid"}), 503
     remote_request = _is_remote_access_request(config)
     if not remote_request:
-        if not local_request:
+        if not local_request and not docker_probe_request:
             return jsonify({"ok": False, "error": "remote_access_host_mismatch"}), 503
         return None
     if _remote_auth_exempt_path():
@@ -753,10 +808,10 @@ def remote_access_auth_callback():
     if not cloud.enabled:
         return jsonify({"error": "remote_access_disabled"}), 400
     oauth_state = _read_oauth_cookie(cloud.session_secret, request.cookies.get(REMOTE_OAUTH_COOKIE_NAME))
-    if not oauth_state or oauth_state.get("state") != request.args.get("state"):
+    if not oauth_state or oauth_state.get("state") != _oauth_callback_arg("state"):
         return jsonify({"error": "invalid_oauth_state"}), 400
     try:
-        result = remote_access.exchange_oauth_code(config, request.args.get("code", ""), oauth_state["code_verifier"])
+        result = remote_access.exchange_oauth_code(config, _oauth_callback_arg("code") or "", oauth_state["code_verifier"])
         claims = result["claims"]
     except Exception as exc:
         return jsonify({"error": "oauth_exchange_failed", "detail": str(exc)}), 400
@@ -1492,6 +1547,12 @@ def run_ui_server(host: str, port: int) -> None:
         config = None
     if config is not None:
         init_sentry(config, component="ui", enable_flask=True)
+        try:
+            from vibe import remote_access
+
+            remote_access.start_status_heartbeat(config)
+        except Exception:
+            logger.warning("Failed to start remote access status heartbeat", exc_info=True)
     print(f"UI Server running at http://{host}:{port}")
 
     # Use make_server directly for better compatibility with subprocess/multiprocessing

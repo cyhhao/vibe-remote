@@ -1,0 +1,41 @@
+name: Publish npm package
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to publish from"
+        required: true
+        default: "master"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22.14.0"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install npm with trusted publishing support
+        run: npm install -g npm@latest
+
+      - name: Test npm entrypoint
+        working-directory: npm/avibe
+        run: npm test
+
+      - name: Publish @avibe/cli
+        working-directory: npm/avibe
+        run: npm publish --access public

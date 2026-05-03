@@ -85,6 +85,146 @@ def test_localhost_does_not_require_remote_access_cookie(monkeypatch, tmp_path):
     assert response.status_code == 200
 
 
+def test_docker_loopback_host_requires_explicit_trust(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.delenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", raising=False)
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "172.17.0.1"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_docker_loopback_health_probe_is_allowed_when_explicitly_trusted(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "172.17.0.1"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_docker_loopback_status_probe_is_allowed_when_explicitly_trusted(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/status",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "172.17.0.1"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_docker_loopback_probe_accepts_ipv4_mapped_peer(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "::ffff:172.17.0.1"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_docker_loopback_trust_does_not_bypass_ui_auth(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "172.17.0.1"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_docker_loopback_trust_requires_loopback_port_binding(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "0.0.0.0")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "172.17.0.1"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_docker_loopback_trust_still_rejects_non_local_host(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="https://old-alex.avibe.bot",
+        environ_base={"REMOTE_ADDR": "172.17.0.1"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_docker_loopback_trust_rejects_untrusted_peer(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "8.8.8.8"},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_docker_loopback_trust_supports_configured_peer_cidrs(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIBE_REMOTE_ALLOW_DOCKER_LOOPBACK_PEERS", "1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_BIND_HOST", "127.0.0.1")
+    monkeypatch.setenv("VIBE_REMOTE_DOCKER_LOOPBACK_PEER_CIDRS", "100.64.0.0/10")
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://127.0.0.1:15130",
+        environ_base={"REMOTE_ADDR": "100.97.103.112"},
+    )
+
+    assert response.status_code == 200
+
+
 def test_unmatched_non_local_host_fails_closed_when_remote_access_enabled(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config(tmp_path)
@@ -475,6 +615,42 @@ def test_remote_callback_rejects_when_remote_access_is_disabled(monkeypatch, tmp
     assert response.status_code == 400
     assert response.get_json()["error"] == "remote_access_disabled"
     assert exchange_calls == []
+
+
+def test_remote_callback_accepts_html_escaped_state_separator(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    client = app.test_client()
+    oauth_cookie = ui_server._make_oauth_cookie(
+        config.remote_access.vibe_cloud.session_secret,
+        {
+            "state": "state-1",
+            "nonce": "nonce-1",
+            "code_verifier": "verifier-1",
+            "next": "/dashboard",
+            "exp": int(ui_server.datetime.now().timestamp()) + 300,
+        },
+    )
+    exchange_calls = []
+    client.set_cookie(ui_server.REMOTE_OAUTH_COOKIE_NAME, oauth_cookie, domain="alex.avibe.bot")
+
+    def exchange(cfg, code, verifier):
+        exchange_calls.append((code, verifier))
+        return {
+            "claims": {
+                "email": "alex@example.com",
+                "sub": "user-1",
+                "nonce": "nonce-1",
+            }
+        }
+
+    monkeypatch.setattr(remote_access, "exchange_oauth_code", exchange)
+
+    response = client.get("/auth/callback?code=test-code&amp;state=state-1", base_url="https://alex.avibe.bot")
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/dashboard"
+    assert exchange_calls == [("test-code", "verifier-1")]
 
 
 def test_remote_callback_sanitizes_protocol_relative_next(monkeypatch, tmp_path):

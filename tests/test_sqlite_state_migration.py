@@ -1,0 +1,462 @@
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from config import paths
+from storage.db import SqliteInvalidationProbe, create_sqlite_engine
+from storage.importer import ensure_sqlite_state
+from storage.migrations import run_migrations
+from storage.models import metadata
+
+
+def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "select name from sqlite_master where type = 'table'",
+            )
+        }
+        assert "alembic_version" in tables
+        assert "scope_settings" in tables
+        assert "agent_sessions" in tables
+        assert "runtime_records" in tables
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        assert version == ("20260501_0001",)
+
+
+def test_initial_migration_is_schema_snapshot() -> None:
+    migration_path = Path("storage/alembic/versions/20260501_0001_initial_sqlite_state.py")
+
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert "from storage.models" not in source
+    assert "metadata.create_all" not in source
+
+
+def test_alembic_env_sets_wal_before_transaction() -> None:
+    env_path = Path("storage/alembic/env.py")
+
+    source = env_path.read_text(encoding="utf-8")
+
+    assert "with connectable.begin()" not in source
+    assert "with connectable.connect()" in source
+    assert "PRAGMA journal_mode = WAL" in source
+
+
+def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("select name from sqlite_master where name = 'alembic_version'").fetchone() is None
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+    assert version == ("20260501_0001",)
+
+
+def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("create table alembic_version (version_num varchar(32) not null)")
+        conn.commit()
+
+    run_migrations(db_path)
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+    assert version == ("20260501_0001",)
+
+
+def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    _write_current_settings(state_dir / "settings.json")
+    _write_current_sessions(state_dir / "sessions.json")
+    _write_discovered_chats(state_dir / "discovered_chats.json")
+
+    first = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+    second = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    assert first.imported is True
+    assert first.backup_path is not None
+    assert (first.backup_path / "settings.json").exists()
+    assert first.counts["scopes"] == 5
+    assert first.counts["scope_settings"] == 4
+    assert first.counts["auth_codes"] == 1
+    assert first.counts["agent_sessions"] == 1
+    assert first.counts["runtime_records"] == 4
+    assert first.counts["discovered_scopes"] == 1
+    with sqlite3.connect(db_path) as conn:
+        last_activity = conn.execute(
+            "select value_json from state_meta where key = 'sessions_last_activity'",
+        ).fetchone()
+        channel_settings = conn.execute(
+            """
+            select s.native_id, ss.workdir, ss.agent_backend, ss.model, ss.reasoning_effort
+            from scopes s
+            join scope_settings ss on ss.scope_id = s.id
+            where s.platform = 'slack' and s.scope_type = 'channel' and s.native_id = 'C123'
+            """,
+        ).fetchone()
+        user_settings = conn.execute(
+            """
+            select ss.role, ss.agent_backend
+            from scopes s
+            join scope_settings ss on ss.scope_id = s.id
+            where s.platform = 'slack' and s.scope_type = 'user' and s.native_id = 'U123'
+            """,
+        ).fetchone()
+        agent_session = conn.execute(
+            """
+            select id, scope_id, session_anchor, workdir, native_session_id
+            from agent_sessions
+            """,
+        ).fetchone()
+        duplicate_insert_ok = True
+        try:
+            conn.execute(
+                """
+                insert into agent_sessions (
+                    id, scope_id, agent_backend, agent_variant, model, reasoning_effort,
+                    session_anchor, workdir, native_session_id, title, status,
+                    metadata_json, created_at, updated_at, last_active_at
+                ) values (
+                    'sesabc234def', ?, 'codex', 'codex', 'gpt-5.4', 'high',
+                    ?, ?, 'native-2', null, 'active', '{}', 'now', 'now', 'now'
+                )
+                """,
+                (agent_session[1], agent_session[2], agent_session[3]),
+            )
+        except sqlite3.IntegrityError:
+            duplicate_insert_ok = False
+    assert last_activity == ('"2026-05-01T00:00:00+00:00"',)
+    assert channel_settings == ("C123", "/repo", "codex", "gpt-5.4", None)
+    assert user_settings == ("admin", "opencode")
+    assert re.fullmatch(r"ses[23456789abcdefghjkmnpqrstuvwxyz]{10}", agent_session[0])
+    assert agent_session[1] == "slack::channel::C123"
+    assert agent_session[2] == "slack_1774074591.762089:/repo"
+    assert agent_session[3] == "/repo"
+    assert agent_session[4] == "codex-session-1"
+    assert duplicate_insert_ok is True
+
+    assert second.imported is False
+    assert second.backup_path is None
+    assert second.counts == {key: value for key, value in first.counts.items() if key != "discovered_scopes"}
+
+
+def test_custom_state_paths_do_not_bootstrap_default_home(tmp_path: Path, monkeypatch) -> None:
+    state_dir = tmp_path / "isolated-state"
+
+    def fail_default_bootstrap() -> None:
+        raise AssertionError("default Vibe home should not be bootstrapped for custom state paths")
+
+    monkeypatch.setattr(paths, "ensure_data_dirs", fail_default_bootstrap)
+
+    report = ensure_sqlite_state(db_path=state_dir / "vibe.sqlite", state_dir=state_dir)
+
+    assert report.imported is True
+    assert (state_dir / "vibe.sqlite").exists()
+
+
+def test_legacy_sessions_import_requires_platform_when_not_inferable(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    (state_dir / "sessions.json").write_text(
+        json.dumps(
+            {
+                "session_mappings": {
+                    "C123": {
+                        "codex": {
+                            "1774074591.762089:/repo": "codex-session-1",
+                        }
+                    }
+                },
+                "active_polls": {
+                    "opencode-session-1": {
+                        "opencode_session_id": "opencode-session-1",
+                        "base_session_id": "base-1",
+                        "channel_id": "C123",
+                        "thread_id": "1774074591.762089",
+                        "settings_key": "C123",
+                        "working_path": "/repo",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="primary_platform is required"):
+        ensure_sqlite_state(db_path=db_path, state_dir=state_dir)
+
+    with sqlite3.connect(db_path) as conn:
+        marker = conn.execute(
+            "select value_json from state_meta where key = 'json_import_completed_at'",
+        ).fetchone()
+    assert marker is None
+
+
+def test_legacy_settings_import_does_not_rewrite_source_json(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    settings_path = state_dir / "settings.json"
+    original = json.dumps(
+        {
+            "channels": {
+                "C123": {
+                    "enabled": True,
+                    "show_message_types": ["assistant"],
+                    "custom_cwd": "/repo",
+                }
+            }
+        },
+        indent=2,
+    )
+    settings_path.write_text(original, encoding="utf-8")
+
+    report = ensure_sqlite_state(db_path=state_dir / "vibe.sqlite", state_dir=state_dir, primary_platform="slack")
+
+    assert report.imported is True
+    assert report.counts["scope_settings"] == 1
+    assert settings_path.read_text(encoding="utf-8") == original
+
+
+def test_failed_json_import_does_not_mark_complete_and_can_retry(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    (state_dir / "settings.json").write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        marker = conn.execute(
+            "select value_json from state_meta where key = 'json_import_completed_at'",
+        ).fetchone()
+    assert marker is None
+
+    _write_current_settings(state_dir / "settings.json")
+    report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    assert report.imported is True
+    assert report.counts["scope_settings"] == 4
+
+
+def test_invalid_discovered_chats_import_does_not_mark_complete_and_can_retry(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    _write_current_settings(state_dir / "settings.json")
+    _write_current_sessions(state_dir / "sessions.json")
+    (state_dir / "discovered_chats.json").write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        marker = conn.execute(
+            "select value_json from state_meta where key = 'json_import_completed_at'",
+        ).fetchone()
+    assert marker is None
+
+    _write_discovered_chats(state_dir / "discovered_chats.json")
+    report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    assert report.imported is True
+    assert report.counts["discovered_scopes"] == 1
+
+
+def test_malformed_discovered_chats_structure_does_not_mark_complete(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    _write_current_settings(state_dir / "settings.json")
+    _write_current_sessions(state_dir / "sessions.json")
+    (state_dir / "discovered_chats.json").write_text(
+        json.dumps({"schema_version": 1, "platforms": {"telegram": ["not", "a", "map"]}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="platform 'telegram'"):
+        ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    with sqlite3.connect(db_path) as conn:
+        marker = conn.execute(
+            "select value_json from state_meta where key = 'json_import_completed_at'",
+        ).fetchone()
+    assert marker is None
+
+    _write_discovered_chats(state_dir / "discovered_chats.json")
+    report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    assert report.imported is True
+    assert report.counts["discovered_scopes"] == 1
+
+
+def test_data_version_probe_detects_external_write(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    engine = create_sqlite_engine(db_path)
+    try:
+        with SqliteInvalidationProbe(engine) as probe:
+            assert probe.has_external_write() is False
+            with engine.begin() as conn:
+                conn.exec_driver_sql(
+                    "insert into state_meta (key, value_json, updated_at) values ('probe', '1', 'now')"
+                )
+            assert probe.has_external_write() is True
+            assert probe.has_external_write() is False
+    finally:
+        engine.dispose()
+
+
+def _write_current_settings(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 5,
+                "scopes": {
+                    "channel": {
+                        "slack": {
+                            "C123": {
+                                "enabled": True,
+                                "show_message_types": ["assistant", "toolcall"],
+                                "custom_cwd": "/repo",
+                                "routing": {"agent_backend": "codex", "codex_model": "gpt-5.4"},
+                                "require_mention": False,
+                            }
+                        }
+                    },
+                    "guild": {"discord": {"G123": {"enabled": True}}},
+                    "guild_policy": {"discord": {"default_enabled": False}},
+                    "user": {
+                        "slack": {
+                            "U123": {
+                                "display_name": "Alex",
+                                "is_admin": True,
+                                "bound_at": "2026-05-01T00:00:00+00:00",
+                                "enabled": True,
+                                "show_message_types": ["assistant"],
+                                "custom_cwd": "/repo",
+                                "routing": {"agent_backend": "opencode"},
+                                "dm_chat_id": "D123",
+                            }
+                        }
+                    },
+                },
+                "bind_codes": [
+                    {
+                        "code": "vr-abc123",
+                        "type": "one_time",
+                        "created_at": "2026-05-01T00:00:00+00:00",
+                        "expires_at": None,
+                        "is_active": True,
+                        "used_by": ["U123"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_current_sessions(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "session_mappings": {
+                    "slack::C123": {
+                        "codex": {
+                            "slack_1774074591.762089:/repo": "codex-session-1",
+                        }
+                    }
+                },
+                "active_slack_threads": {
+                    "slack::C123": {
+                        "C123": {
+                            "1774074591.762089": 1774074591.762089,
+                        }
+                    }
+                },
+                "active_polls": {
+                    "opencode-session-1": {
+                        "opencode_session_id": "opencode-session-1",
+                        "base_session_id": "base-1",
+                        "channel_id": "C123",
+                        "thread_id": "1774074591.762089",
+                        "settings_key": "C123",
+                        "working_path": "/repo",
+                        "baseline_message_ids": ["m0"],
+                        "seen_tool_calls": ["tool-1"],
+                        "emitted_assistant_messages": ["m1"],
+                        "started_at": 1774074591.0,
+                        "typing_indicator_active": True,
+                        "context_token": "ctx",
+                        "processing_indicator": {"platform": "slack"},
+                        "user_id": "U123",
+                        "platform": "slack",
+                    }
+                },
+                "processed_message_ts": {
+                    "C123": {
+                        "1774074591.762089": ["m1", "m2"],
+                    }
+                },
+                "last_activity": "2026-05-01T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_discovered_chats(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "platforms": {
+                    "telegram": {
+                        "123": {
+                            "name": "General",
+                            "username": "general",
+                            "chat_type": "supergroup",
+                            "is_private": False,
+                            "is_forum": True,
+                            "supports_topics": True,
+                            "last_seen_at": "2026-05-01T00:00:00+00:00",
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )

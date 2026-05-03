@@ -14,7 +14,7 @@
 
 <a href="https://www.producthunt.com/products/vibe-remote?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-vibe-remote" target="_blank" rel="noopener noreferrer"><img alt="Vibe Remote - Code from your phone — AI agents in your chat app | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1104967&theme=light&t=1774450119248"></a>
 
-[English](README.md) | [中文](README_ZH.md)
+[Docs](https://docs.avibe.bot) | [English](README.md) | [中文](README_ZH.md)
 
 **Supported Platforms**
 
@@ -58,6 +58,12 @@ curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.s
 
 That's it. Browser opens -> Follow the wizard -> Done.
 
+Need to open the Web UI from another device or a remote server? Run:
+
+```bash
+vibe remote
+```
+
 <details>
 <summary><b>Windows?</b></summary>
 
@@ -71,6 +77,19 @@ If you are new to WSL, this guide explains:
 - where to run the Vibe Remote install command
 - how to launch Ubuntu and open the Web UI
 </details>
+
+---
+
+## What Ships Today
+
+Not an agent framework. Not a hosted coding VM. Vibe Remote is the remote-control layer for the coding agents already running on your machine.
+
+- **Chat apps become terminals:** Slack, Discord, Telegram, WeChat, and Lark / Feishu.
+- **Real coding agents, no middleman:** Claude Code, OpenCode, and Codex run as themselves.
+- **Thread = session:** Start five threads, run five isolated jobs, resume later.
+- **Web setup, not token archaeology:** Local wizard, dashboard, routing, and health checks.
+- **Remote UI when you need it:** `vibe remote` opens your local Web UI through a secure avibe.bot tunnel.
+- **Walk away without losing the loop:** Completion notifications, scheduled tasks, and async hooks keep work moving.
 
 ---
 
@@ -325,22 +344,26 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## Docs
 
+- **[Official Docs](https://docs.avibe.bot)** — Quickstart, platform guides, agent setup, troubleshooting, and AI-readable install instructions
 - **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
+- **[Install via AI Agent](docs/INSTALL_FOR_AI.md)** — Give this to Claude Code, Codex, or OpenCode for guided setup
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
 - **[Discord Setup Guide](docs/DISCORD_SETUP.md)** — Detailed setup with screenshots
 - **[Telegram Setup Guide](docs/TELEGRAM_SETUP.md)** — BotFather setup, token validation, and chat discovery
 - **WeChat Setup Guide** — Follow the in-app wizard (`vibe` → choose WeChat)
 - **Lark Setup Guide** — Follow the in-app wizard (`vibe` → choose Lark)
 
-## Remote Server Tip (SSH)
+## Remote Web UI Access
 
-If you run Vibe Remote on a remote server, keep the Web UI bound to `127.0.0.1:5123` and access it via SSH port forwarding:
+If you want to open the local Web UI from another device, or you run Vibe Remote on a remote server, use the guided remote-access setup:
 
 ```bash
-ssh -NL 5123:localhost:5123 user@server-ip
+vibe remote
 ```
 
-See: **[CLI Reference](docs/CLI.md)** (search for "Remote Web UI Access")
+It guides you through avibe.bot sign-in, personal domain setup, pairing, and starting the secure tunnel.
+
+See: **[CLI Reference](docs/CLI.md)**.
 
 ---
 

@@ -5,14 +5,29 @@ build-backend = "hatchling.build"
 [project]
 name = "vibe-remote"
 dynamic = ["version"]
-description = "Local-first agent runtime for Slack - run AI coding agents from your chat"
+description = "Local-first agent runtime for Slack, Discord, Telegram, WeChat, and Lark"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "cyhhao", email = "cyhhao@users.noreply.github.com" }
 ]
-keywords = ["slack", "ai", "agent", "claude", "opencode", "codex", "automation"]
+keywords = [
+    "slack",
+    "discord",
+    "telegram",
+    "wechat",
+    "lark",
+    "feishu",
+    "ai",
+    "agent",
+    "claude-code",
+    "opencode",
+    "codex",
+    "automation",
+    "chatops",
+    "vibe-coding",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -45,6 +60,8 @@ dependencies = [
     "aiohttp-socks>=0.8.0",
     "httpx[socks]>=0.27",
     "PyJWT[crypto]>=2.9.0",
+    "SQLAlchemy>=2.0.0",
+    "alembic>=1.13.0",
 ]
 
 [project.urls]
@@ -67,7 +84,7 @@ version-file = "vibe/_version.py"
 artifacts = ["ui/dist/**"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["vibe", "config", "core", "modules"]
+packages = ["vibe", "config", "core", "modules", "storage"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "main.py" = "vibe/service_main.py"
@@ -80,6 +97,7 @@ include = [
     "config/**",
     "core/**",
     "modules/**",
+    "storage/**",
     "main.py",
     "ui/dist/**",
     "README.md",

@@ -83,7 +83,8 @@ def test_install_script_keeps_vibe_available_on_current_path(tmp_path):
     version_result = _vibe_version(env)
 
     assert install_result.returncode == 0, install_result.stdout + install_result.stderr
-    assert "Run 'vibe' to start the setup wizard" in install_result.stdout
+    assert "Run 'vibe' to open the setup wizard" in install_result.stdout
+    assert "vibe remote   - Set up remote Web UI access" in install_result.stdout
     assert "export PATH=" not in install_result.stdout
     assert version_result.returncode == 0, version_result.stdout + version_result.stderr
     assert "vibe-remote 9.9.9" in version_result.stdout

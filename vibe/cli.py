@@ -1,4 +1,5 @@
 import argparse
+import getpass
 import json
 import logging
 import math
@@ -238,6 +239,42 @@ def _watch_examples_text() -> str:
           vibe watch pause 12ab34cd56ef
         """
     )
+
+
+def _remote_examples_text() -> str:
+    return dedent(
+        """\
+        Examples:
+          vibe remote
+          vibe remote status
+          vibe remote start
+          vibe remote stop
+          vibe remote pair vrp_abc123
+        """
+    )
+
+
+def _remote_pair_examples_text() -> str:
+    return dedent(
+        """\
+        Guidance:
+          This is the direct pairing command for users who already have a pairing key.
+          For the guided setup flow, run `vibe remote`.
+          If you omit the pairing key, the CLI prompts for it without echoing it to the terminal.
+          Pairing saves the remote-access config and then starts the managed tunnel automatically.
+          The pairing key is one-time use; create a fresh key from the Vibe Cloud console if it fails.
+
+        Examples:
+          vibe remote
+          vibe remote pair vrp_abc123
+          vibe remote pair --device-name "Mac Studio"
+          vibe remote pair --backend-url https://avibe.bot
+        """
+    )
+
+
+def _print_json(payload: dict) -> None:
+    print(json.dumps(payload, indent=2))
 
 
 def _watch_add_examples_text() -> str:
@@ -1801,12 +1838,9 @@ def cmd_vibe():
     print("Web UI:")
     print(f"  {ui_url}")
     print("")
-    port = int(config.ui.setup_port)
-    print("If you are running Vibe Remote on a remote server, use SSH port forwarding on your local machine:")
-    print(f"  ssh -NL {port}:localhost:{port} user@server-ip")
-    print("")
-    print("Then open in your local browser:")
-    print(f"  http://127.0.0.1:{port}")
+    print("Want to open this Web UI from another device or a remote server?")
+    print("  Run: vibe remote")
+    print("  Vibe Remote will guide you through creating a private avibe.bot URL.")
     print("")
 
     # If running over SSH, avoid trying to open a browser on the server.
@@ -1866,6 +1900,266 @@ def cmd_stop():
 def cmd_status():
     print(_render_status())
     return 0
+
+
+def _remote_access_result_status(result: dict) -> str:
+    if not result.get("ok"):
+        return "error"
+    if result.get("running"):
+        return "running"
+    if result.get("paired"):
+        return "paired"
+    if result.get("enabled"):
+        return "enabled"
+    return "not paired"
+
+
+def _print_remote_status(result: dict) -> None:
+    print("Remote access:")
+    print(f"  Status: {_remote_access_result_status(result)}")
+    public_url = result.get("public_url")
+    if public_url:
+        print(f"  URL: {public_url}")
+    if result.get("paired") is not None:
+        print(f"  Paired: {'yes' if result.get('paired') else 'no'}")
+    if result.get("enabled") is not None:
+        print(f"  Enabled: {'yes' if result.get('enabled') else 'no'}")
+    if result.get("running") is not None:
+        print(f"  Tunnel: {'running' if result.get('running') else 'stopped'}")
+    if result.get("binary_found") is not None:
+        print(f"  cloudflared: {'found' if result.get('binary_found') else 'not found'}")
+    if result.get("error"):
+        print(f"  Error: {result.get('error')}")
+    if result.get("detail"):
+        print(f"  Detail: {result.get('detail')}")
+
+
+def _read_pairing_key_from_args(args) -> str:
+    pairing_key = (getattr(args, "pairing_key", None) or "").strip()
+    if pairing_key:
+        return pairing_key
+    try:
+        return getpass.getpass("Paste pairing key (input hidden): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
+
+def _print_remote_setup_intro() -> None:
+    print("Vibe Cloud remote access")
+    print("")
+    print("This connects your local Vibe Remote Web UI to a private avibe.bot URL.")
+    print("Your agent and code still run on this machine; the remote URL only opens the local Web UI through a managed secure tunnel.")
+    print("")
+    print("Step 1: Get your pairing key")
+    print("  1. Open https://avibe.bot")
+    print("  2. Sign up or log in")
+    print("  3. Create a new remote-access bot")
+    print("  4. Claim your personal domain")
+    print("  5. Copy the one-time pairing key")
+    print("")
+
+
+def _wait_for_pairing_key_ready() -> bool:
+    try:
+        input("Press Enter when you have copied the pairing key, or Ctrl+C to cancel.")
+        return True
+    except (EOFError, KeyboardInterrupt):
+        print("")
+        return False
+
+
+def _print_remote_pair_start() -> None:
+    print("")
+    print("Step 2: Pair this device")
+
+
+def _print_remote_pair_failure(result: dict) -> None:
+    error_code = str(result.get("error") or "unknown_error")
+    if error_code in {"invalid_pairing_key", "pairing_key_expired", "pairing_key_used"}:
+        print("Pairing key is invalid or expired.", file=sys.stderr)
+        print("Create a new pairing key at https://avibe.bot, then run:", file=sys.stderr)
+        print("  vibe remote", file=sys.stderr)
+        return
+    if error_code in {"pairing_request_failed", "backend_http_error"}:
+        print("Could not reach Vibe Cloud.", file=sys.stderr)
+        print("Check your network connection, then run:", file=sys.stderr)
+        print("  vibe remote", file=sys.stderr)
+        if result.get("detail"):
+            print(f"Detail: {result['detail']}", file=sys.stderr)
+        return
+    if error_code == "invalid_pairing_response":
+        print("Vibe Cloud returned incomplete pairing data.", file=sys.stderr)
+        print("Create a fresh pairing key and run:", file=sys.stderr)
+        print("  vibe remote", file=sys.stderr)
+        return
+    print(f"Remote access setup failed: {error_code}", file=sys.stderr)
+    if result.get("detail"):
+        print(f"Detail: {result['detail']}", file=sys.stderr)
+    print("Run 'vibe remote' to try again.", file=sys.stderr)
+
+
+def _print_remote_start_failure(start_result: dict) -> None:
+    error_code = str(start_result.get("error") or "unknown_error")
+    print("Remote access is paired, but the tunnel did not start.", file=sys.stderr)
+    if error_code == "cloudflared_install_failed":
+        print("Vibe Remote could not install cloudflared automatically.", file=sys.stderr)
+    elif error_code == "cloudflared_spawn_failed":
+        print("Vibe Remote could not launch cloudflared.", file=sys.stderr)
+    elif error_code == "cloudflared_exited":
+        print("cloudflared exited immediately after launch.", file=sys.stderr)
+    elif error_code == "remote_access_disabled":
+        print("Remote access is disabled in the saved config.", file=sys.stderr)
+    else:
+        print(f"Reason: {error_code}", file=sys.stderr)
+    if start_result.get("detail"):
+        print(f"Detail: {start_result['detail']}", file=sys.stderr)
+    print("After fixing the issue, run:", file=sys.stderr)
+    print("  vibe remote start", file=sys.stderr)
+
+
+def _print_remote_pair_success(result: dict, start_result: dict) -> None:
+    print("")
+    if not start_result.get("ok"):
+        print("Step 3: Pairing saved")
+        _print_remote_start_failure(start_result)
+        return
+    print("Step 3: Remote access is ready")
+    public_url = result.get("public_url")
+    if public_url:
+        print("Open:")
+        print(f"  {public_url}")
+        print("")
+        print("This URL opens the Web UI for this local Vibe Remote instance.")
+        print("When you open it, sign in with the same avibe.bot account to continue.")
+    print("Tunnel: running" if result.get("running") else "Tunnel: ready")
+    print("")
+    print("Useful commands:")
+    print("  vibe remote status   Check the remote URL and tunnel status")
+    print("  vibe remote start    Start the tunnel again after a reboot or stop")
+    print("  vibe remote stop     Stop remote access without deleting the pairing")
+
+
+def _print_remote_already_configured(result: dict) -> None:
+    print("Remote access is already configured.")
+    public_url = result.get("public_url")
+    if public_url:
+        print("")
+        print("Open:")
+        print(f"  {public_url}")
+        print("")
+        print("When you open this URL, sign in with the same avibe.bot account to access this local Web UI.")
+    print("")
+    print(f"Tunnel: {'running' if result.get('running') else 'stopped'}")
+    print("")
+    print("Useful commands:")
+    print("  vibe remote status   Show the remote URL and tunnel status")
+    print("  vibe remote start    Start the tunnel again after a reboot or stop")
+    print("  vibe remote stop     Temporarily disable remote access")
+    print("")
+    print("Need to switch account or domain?")
+    print("  Run: vibe remote pair")
+
+
+def _run_remote_pair(args, *, guided: bool) -> int:
+    from vibe import remote_access
+
+    if guided:
+        current = remote_access.status()
+        if current.get("paired"):
+            _print_remote_already_configured(current)
+            return 0
+        _print_remote_setup_intro()
+        if not _wait_for_pairing_key_ready():
+            print("Remote access setup cancelled.")
+            return 1
+        _print_remote_pair_start()
+
+    pairing_key = _read_pairing_key_from_args(args)
+    if not pairing_key:
+        payload = {"ok": False, "error": "missing_pairing_key", "hint": "Run 'vibe remote' to restart setup."}
+        if getattr(args, "json", False):
+            _print_json(payload)
+        else:
+            print("Pairing failed: missing pairing key.", file=sys.stderr)
+            print("Run 'vibe remote' to restart setup.", file=sys.stderr)
+        return 1
+
+    if not getattr(args, "json", False):
+        print("Pairing this device with Vibe Cloud remote access...", flush=True)
+    result = remote_access.pair(
+        pairing_key,
+        getattr(args, "backend_url", "https://avibe.bot"),
+        getattr(args, "device_name", "Vibe Remote"),
+    )
+    if getattr(args, "json", False):
+        _print_json(result)
+        return 0 if result.get("ok") else 1
+
+    if not result.get("ok"):
+        _print_remote_pair_failure(result)
+        return 1
+
+    start_result = result.get("start") if isinstance(result.get("start"), dict) else {}
+    _print_remote_pair_success(result, start_result)
+    return 0
+
+
+def cmd_remote_pair(args):
+    return _run_remote_pair(args, guided=False)
+
+
+def cmd_remote_setup(args):
+    return _run_remote_pair(args, guided=True)
+
+
+def cmd_remote_status(args):
+    from vibe import remote_access
+
+    result = remote_access.status()
+    if getattr(args, "json", False):
+        _print_json(result)
+    else:
+        _print_remote_status(result)
+    return 0 if result.get("ok") else 1
+
+
+def cmd_remote_start(args):
+    from vibe import remote_access
+
+    result = remote_access.start()
+    if getattr(args, "json", False):
+        _print_json(result)
+    else:
+        if result.get("ok"):
+            if result.get("started"):
+                print("Remote access tunnel started.")
+            elif result.get("running"):
+                print("Remote access tunnel is already running.")
+            else:
+                print("Remote access tunnel is ready.")
+            if result.get("public_url"):
+                print(f"Remote URL: {result['public_url']}")
+        else:
+            print(f"Remote access failed to start: {result.get('error') or 'unknown_error'}", file=sys.stderr)
+            if result.get("detail"):
+                print(str(result["detail"]), file=sys.stderr)
+    return 0 if result.get("ok") else 1
+
+
+def cmd_remote_stop(args):
+    from vibe import remote_access
+
+    result = remote_access.stop()
+    if getattr(args, "json", False):
+        _print_json(result)
+    else:
+        if result.get("ok"):
+            print("Remote access tunnel stopped." if result.get("stopped") else "Remote access tunnel is already stopped.")
+        else:
+            print(f"Remote access failed to stop: {result.get('error') or 'unknown_error'}", file=sys.stderr)
+            if result.get("detail"):
+                print(str(result["detail"]), file=sys.stderr)
+    return 0 if result.get("ok") else 1
 
 
 def cmd_doctor():
@@ -2071,6 +2365,77 @@ def build_parser():
     subparsers.add_parser("version", help="Show version")
     subparsers.add_parser("check-update", help="Check for updates")
     subparsers.add_parser("upgrade", help="Upgrade to latest version")
+    remote_parser = subparsers.add_parser(
+        "remote",
+        help="Manage Vibe Cloud remote access",
+        description="Start a guided Vibe Cloud remote-access setup, or manage the remote-access tunnel.",
+        epilog=_remote_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe remote --help",
+        error_hint="Run 'vibe remote' for guided setup, or use one of the remote subcommands below.",
+    )
+    remote_subparsers = remote_parser.add_subparsers(
+        dest="remote_command",
+        metavar="[command]",
+    )
+
+    remote_pair_parser = remote_subparsers.add_parser(
+        "pair",
+        help="Pair directly when you already have a pairing key",
+        description="Redeem a Vibe Cloud pairing key, save remote-access config, and start the managed tunnel.",
+        epilog=_remote_pair_examples_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe remote pair --help",
+        error_hint="Pass a pairing key or omit it to be prompted securely.",
+    )
+    remote_pair_parser.add_argument(
+        "pairing_key",
+        nargs="?",
+        help="One-time pairing key from the Vibe Cloud console. Omit to enter it securely.",
+    )
+    remote_pair_parser.add_argument(
+        "--backend-url",
+        default="https://avibe.bot",
+        help="Vibe Cloud backend URL. Default: https://avibe.bot",
+    )
+    remote_pair_parser.add_argument(
+        "--device-name",
+        default="Vibe Remote",
+        help="Human-friendly name for this local device. Default: Vibe Remote",
+    )
+    remote_pair_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the raw machine-readable pairing result.",
+    )
+
+    remote_status_parser = remote_subparsers.add_parser(
+        "status",
+        help="Show remote-access status",
+        description="Show pairing, tunnel, and cloudflared status for Vibe Cloud remote access.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe remote status --help",
+    )
+    remote_status_parser.add_argument("--json", action="store_true", help="Print the raw machine-readable status.")
+
+    remote_start_parser = remote_subparsers.add_parser(
+        "start",
+        help="Start the remote-access tunnel",
+        description="Start the managed cloudflared tunnel for the saved Vibe Cloud pairing.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe remote start --help",
+    )
+    remote_start_parser.add_argument("--json", action="store_true", help="Print the raw machine-readable result.")
+
+    remote_stop_parser = remote_subparsers.add_parser(
+        "stop",
+        help="Stop the remote-access tunnel",
+        description="Stop the managed cloudflared tunnel without deleting the saved pairing.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe remote stop --help",
+    )
+    remote_stop_parser.add_argument("--json", action="store_true", help="Print the raw machine-readable result.")
+
     screenshot_parser = subparsers.add_parser(
         "screenshot",
         help="Capture a local desktop screenshot",
@@ -2454,6 +2819,18 @@ def main():
         sys.exit(cmd_check_update())
     if args.command == "upgrade":
         sys.exit(cmd_upgrade())
+    if args.command == "remote":
+        if args.remote_command is None:
+            sys.exit(cmd_remote_setup(args))
+        if args.remote_command == "pair":
+            sys.exit(cmd_remote_pair(args))
+        if args.remote_command == "status":
+            sys.exit(cmd_remote_status(args))
+        if args.remote_command == "start":
+            sys.exit(cmd_remote_start(args))
+        if args.remote_command == "stop":
+            sys.exit(cmd_remote_stop(args))
+        parser.error("remote command is invalid")
     if args.command == "task":
         if args.task_command == "add":
             sys.exit(cmd_task_add(args))
