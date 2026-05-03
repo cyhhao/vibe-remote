@@ -8,6 +8,8 @@ Vibe Remote already has a stronger product experience than a simple bridge: setu
 
 Make Vibe Remote easier to understand, easier to install, and easier for AI coding agents to configure on behalf of users without overstating channels that are not shipped yet.
 
+The canonical install path should remain the current one-line curl / PowerShell installer because it is explicit, cross-runtime, and does not require users to already think in the Node ecosystem. npm should be an additional familiar entrypoint for Node-heavy developers, not the primary public installation story.
+
 ## Completed in This Pass
 
 - Kept the README / README_ZH first-screen brand story intact instead of replacing it with a checklist-style positioning block.
@@ -27,10 +29,10 @@ Make Vibe Remote easier to understand, easier to install, and easier for AI codi
 
 ## Next High-Leverage Work
 
-1. Publish the `avibe` npm package, then switch public install copy to npm-first.
-   - Preferred public command after publish: `npx avibe`.
-   - Global install path: `npm install -g avibe && avibe`.
-   - Keep the curl / PowerShell installers documented as fallback paths.
+1. Publish the `avibe` npm package as a supplemental install entrypoint.
+   - Keep the main README / docs install path as the existing one-line curl / PowerShell installer.
+   - Document `npx avibe` and `npm install -g avibe && avibe` as optional Node-friendly alternatives after publish.
+   - Do not make npm the default public install copy unless the product distribution strategy changes explicitly.
 
 2. Add Homebrew distribution.
    - Short path: maintain a tap first.
