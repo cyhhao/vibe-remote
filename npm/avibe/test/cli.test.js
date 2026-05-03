@@ -3,9 +3,11 @@
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
+const Module = require("node:module");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 const cliPath = path.join(__dirname, "..", "bin", "avibe.js");
 
@@ -40,6 +42,30 @@ function runCli(args, envOverrides = {}) {
     encoding: "utf8",
     env,
   });
+}
+
+function loadCliForUnitTest(overrides = {}) {
+  const source = fs.readFileSync(cliPath, "utf8").replace(/\nmain\(\);\s*$/, "\n");
+  const sandbox = {
+    console,
+    process: {
+      ...process,
+      argv: [process.execPath, cliPath],
+      env: { ...process.env, ...overrides.env },
+      exit(code) {
+        throw new Error(`process.exit(${code})`);
+      },
+    },
+    require: Module.createRequire(cliPath),
+    __dirname: path.dirname(cliPath),
+    __filename: cliPath,
+    module: { exports: {} },
+    exports: {},
+  };
+  vm.runInNewContext(`${source}\nmodule.exports = { shouldRunThroughShell };`, sandbox, {
+    filename: cliPath,
+  });
+  return sandbox.module.exports;
 }
 
 test("prints wrapper help without installing", () => {
@@ -111,4 +137,12 @@ test("maps init and start to the default vibe command", () => {
   assert.equal(start.status, 0);
   assert.match(init.stdout, /default-vibe\s*$/m);
   assert.match(start.stdout, /default-vibe\s*$/m);
+});
+
+test("runs Windows batch wrappers through a shell", { skip: process.platform !== "win32" }, () => {
+  const { shouldRunThroughShell } = loadCliForUnitTest();
+
+  assert.equal(shouldRunThroughShell("C:\\Users\\alex\\.local\\bin\\vibe.cmd"), true);
+  assert.equal(shouldRunThroughShell("C:\\Users\\alex\\.local\\bin\\vibe.bat"), true);
+  assert.equal(shouldRunThroughShell("C:\\Users\\alex\\.local\\bin\\vibe.exe"), false);
 });

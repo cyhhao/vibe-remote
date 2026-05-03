@@ -129,9 +129,10 @@ function findVibeBinary() {
 }
 
 function runCommand(command, args, options = {}) {
+  const useShell = options.shell || shouldRunThroughShell(command);
   const result = childProcess.spawnSync(command, args, {
     stdio: "inherit",
-    shell: options.shell || false,
+    shell: useShell,
     env: options.env || prependPathEntries(process.env, candidateBinDirs()),
   });
 
@@ -144,6 +145,15 @@ function runCommand(command, args, options = {}) {
   }
 
   return result.signal ? 1 : 0;
+}
+
+function shouldRunThroughShell(command) {
+  if (process.platform !== "win32") {
+    return false;
+  }
+
+  const extension = path.extname(command).toLowerCase();
+  return extension === ".cmd" || extension === ".bat";
 }
 
 function hasCommand(command) {
