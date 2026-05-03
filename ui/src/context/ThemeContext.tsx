@@ -77,11 +77,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setModeState(nextMode);
 
     try {
-      if (nextMode === 'system') {
-        window.localStorage.removeItem(STORAGE_KEY);
-      } else {
-        window.localStorage.setItem(STORAGE_KEY, nextMode);
-      }
+      // Persist all modes including "system" so the choice survives reloads;
+      // removing the key would let readStoredTheme() fall back to the dark
+      // default and silently drop system-follow behavior.
+      window.localStorage.setItem(STORAGE_KEY, nextMode);
     } catch {
       // Ignore storage issues.
     }
