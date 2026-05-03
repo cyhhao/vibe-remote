@@ -9,13 +9,13 @@ points.
 ## Quick Start
 
 ```bash
-npx avibe
+npx @avibe/cli
 ```
 
 Or install the npm entrypoint globally:
 
 ```bash
-npm install -g avibe
+npm install -g @avibe/cli
 vibe
 ```
 

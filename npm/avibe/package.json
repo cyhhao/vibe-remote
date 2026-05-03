@@ -1,6 +1,6 @@
 {
-  "name": "avibe",
-  "version": "0.1.0",
+  "name": "@avibe/cli",
+  "version": "2.2.14",
   "description": "NPM entrypoint for installing and running Vibe Remote",
   "license": "MIT",
   "author": "cyhhao",
@@ -14,8 +14,8 @@
     "url": "https://github.com/cyhhao/vibe-remote/issues"
   },
   "bin": {
-    "avibe": "./bin/avibe.js",
-    "vibe": "./bin/avibe.js"
+    "avibe": "bin/avibe.js",
+    "vibe": "bin/avibe.js"
   },
   "files": [
     "bin/",
