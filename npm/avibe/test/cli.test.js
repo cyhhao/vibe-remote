@@ -62,7 +62,7 @@ function loadCliForUnitTest(overrides = {}) {
     module: { exports: {} },
     exports: {},
   };
-  vm.runInNewContext(`${source}\nmodule.exports = { shouldRunThroughShell };`, sandbox, {
+  vm.runInNewContext(`${source}\nmodule.exports = { quoteWindowsCmdArgument, shouldRunThroughShell };`, sandbox, {
     filename: cliPath,
   });
   return sandbox.module.exports;
@@ -164,4 +164,30 @@ test("runs Windows batch wrappers through a shell", { skip: process.platform !==
   assert.equal(shouldRunThroughShell("C:\\Users\\alex\\.local\\bin\\vibe.cmd"), true);
   assert.equal(shouldRunThroughShell("C:\\Users\\alex\\.local\\bin\\vibe.bat"), true);
   assert.equal(shouldRunThroughShell("C:\\Users\\alex\\.local\\bin\\vibe.exe"), false);
+});
+
+test("quotes Windows batch wrapper paths with spaces", { skip: process.platform !== "win32" }, () => {
+  const { quoteWindowsCmdArgument } = loadCliForUnitTest();
+
+  assert.equal(
+    quoteWindowsCmdArgument("C:\\Users\\Jane Doe\\.local\\bin\\vibe.cmd"),
+    '"C:\\Users\\Jane Doe\\.local\\bin\\vibe.cmd"'
+  );
+  assert.equal(quoteWindowsCmdArgument('C:\\bin\\vibe "dev".cmd'), '"C:\\bin\\vibe \\"dev\\".cmd"');
+});
+
+test("delegates to Windows batch wrappers in paths with spaces", { skip: process.platform !== "win32" }, () => {
+  const temp = makeTempEnv();
+  const spacedBin = path.join(temp.root, "space dir");
+  fs.mkdirSync(spacedBin, { recursive: true });
+  writeFakeVibe(spacedBin, "spaced-vibe");
+
+  const result = runCli(["status", "--json"], {
+    HOME: temp.home,
+    USERPROFILE: temp.home,
+    PATH: spacedBin,
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /spaced-vibe status --json/);
 });

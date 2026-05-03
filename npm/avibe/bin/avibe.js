@@ -136,13 +136,20 @@ function findVibeBinary() {
 }
 
 function runCommand(command, args, options = {}) {
-  const useShell = options.shell || shouldRunThroughShell(command);
+  if (!options.shell && shouldRunThroughShell(command)) {
+    return runWindowsBatchCommand(command, args, options);
+  }
+
   const result = childProcess.spawnSync(command, args, {
     stdio: "inherit",
-    shell: useShell,
+    shell: options.shell || false,
     env: options.env || prependPathEntries(process.env, candidateBinDirs()),
   });
 
+  return normalizeSpawnResult(result);
+}
+
+function normalizeSpawnResult(result) {
   if (result.error) {
     throw result.error;
   }
@@ -152,6 +159,22 @@ function runCommand(command, args, options = {}) {
   }
 
   return result.signal ? 1 : 0;
+}
+
+function runWindowsBatchCommand(command, args, options = {}) {
+  const shellCommand = [quoteWindowsCmdArgument(command), ...args.map(quoteWindowsCmdArgument)].join(" ");
+  const result = childProcess.spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", shellCommand], {
+    stdio: "inherit",
+    env: options.env || prependPathEntries(process.env, candidateBinDirs()),
+  });
+
+  return normalizeSpawnResult(result);
+}
+
+function quoteWindowsCmdArgument(value) {
+  const rawValue = String(value);
+  const escapedValue = rawValue.replace(/"/g, '\\"');
+  return `"${escapedValue}"`;
 }
 
 function shouldRunThroughShell(command) {
