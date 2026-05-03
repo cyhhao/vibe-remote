@@ -74,6 +74,18 @@ def _cloudflared_stderr_path() -> Path:
     return paths.get_runtime_dir() / "remote_access_cloudflared_stderr.log"
 
 
+def _cloudflared_stdout_path() -> Path:
+    return paths.get_runtime_dir() / "remote_access_cloudflared_stdout.log"
+
+
+def _clear_cloudflared_logs() -> None:
+    for path in (_cloudflared_stdout_path(), _cloudflared_stderr_path()):
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def _asset_name() -> str:
     system = platform.system().lower()
     machine = platform.machine().lower()
@@ -260,16 +272,15 @@ def _observed_cloudflared_origin_service() -> str | None:
     content = _read_text_tail(_cloudflared_stderr_path(), STATUS_LOG_TAIL_BYTES)
     if content is None:
         return None
-    patterns = (
-        r'originService=([^\s"]+)',
-        r'\\"service\\":\\"(http://[^"\\]+)\\"',
-        r'"service":"(http://[^"]+)"',
+    pattern = re.compile(
+        r'originService=([^\s"]+)'
+        r'|\\"service\\":\\"(http://[^"\\]+)\\"'
+        r'|(?<!\\)"service":"(http://[^"]+)"'
     )
-    for pattern in patterns:
-        matches = re.findall(pattern, content)
-        if matches:
-            return str(matches[-1])
-    return None
+    last_origin = None
+    for match in pattern.finditer(content):
+        last_origin = next((group for group in match.groups() if group), None)
+    return str(last_origin) if last_origin else None
 
 
 def _running_signature(pid: int | None) -> dict[str, str] | None:
@@ -515,6 +526,7 @@ def start(config: V2Config | None = None) -> dict[str, Any]:
                 }
         env = {**os.environ, "TUNNEL_TOKEN": cloud.tunnel_token}
         try:
+            _clear_cloudflared_logs()
             pid = runtime.spawn_background(
                 [binary, "tunnel", "--no-autoupdate", "run"],
                 _pid_path(),
@@ -635,6 +647,13 @@ def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -
     missing = [field for field in required if not result.get(field)]
     if missing:
         return {"ok": False, "error": "invalid_pairing_response", "missing": missing}
+    origin_update = result.get("tunnel_origin_update")
+    if isinstance(origin_update, dict) and origin_update.get("ok") is False:
+        return {
+            "ok": False,
+            "error": str(origin_update.get("error") or "tunnel_origin_update_failed"),
+            "pairing": {"ok": False, "origin_service": origin_service},
+        }
     config = api.save_config(
         {
             "remote_access": {

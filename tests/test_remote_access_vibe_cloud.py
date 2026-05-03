@@ -198,6 +198,18 @@ def test_observed_cloudflared_origin_service_reads_only_log_tail(monkeypatch, tm
     assert remote_access._observed_cloudflared_origin_service() == "http://new.local:5123"
 
 
+def test_observed_cloudflared_origin_service_uses_latest_mixed_log_format(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._cloudflared_stderr_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._cloudflared_stderr_path().write_text(
+        'ERR originService=http://100.97.103.112:5123\n'
+        'INF Updated to new configuration config="{\\"ingress\\":[{\\"service\\":\\"http://127.0.0.1:5123\\"}]}"\n',
+        encoding="utf-8",
+    )
+
+    assert remote_access._observed_cloudflared_origin_service() == "http://127.0.0.1:5123"
+
+
 def test_report_runtime_status_posts_to_backend(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()
@@ -334,6 +346,48 @@ def test_pair_reports_success_when_connector_start_fails(monkeypatch, tmp_path) 
     assert result["start"]["ok"] is False
     assert result["start"]["error"] == "cloudflared_spawn_failed"
     assert saved_payload["remote_access"]["vibe_cloud"]["tunnel_token"] == "tunnel-token"
+
+
+def test_pair_rejects_origin_update_failure_before_saving_config(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.remote_access.vibe_cloud.enabled = False
+    config.save()
+
+    monkeypatch.setattr(
+        remote_access,
+        "_json_request",
+        lambda *args, **kwargs: {
+            "instance_id": "inst_123",
+            "client_id": "vr_client_123",
+            "issuer": "https://backend.test",
+            "authorization_endpoint": "https://backend.test/oauth/authorize",
+            "token_endpoint": "https://backend.test/oauth/token",
+            "jwks_uri": "https://backend.test/oauth/jwks.json",
+            "public_url": "https://alex.avibe.bot",
+            "redirect_uri": "https://alex.avibe.bot/auth/callback",
+            "tunnel_token": "tunnel-token",
+            "instance_secret": "instance-secret",
+            "tunnel_origin_update": {"ok": False, "error": "tunnel_origin_update_failed"},
+        },
+    )
+    monkeypatch.setattr(
+        remote_access.api,
+        "save_config",
+        lambda payload: (_ for _ in ()).throw(AssertionError("failed origin update must not persist pairing")),
+    )
+    monkeypatch.setattr(
+        remote_access,
+        "start",
+        lambda next_config: (_ for _ in ()).throw(AssertionError("failed origin update must not start tunnel")),
+    )
+
+    result = remote_access.pair("vrp_test", "https://backend.test")
+    saved_payload = json.loads((tmp_path / "config" / "config.json").read_text(encoding="utf-8"))
+
+    assert result["ok"] is False
+    assert result["error"] == "tunnel_origin_update_failed"
+    assert saved_payload["remote_access"]["vibe_cloud"]["enabled"] is False
 
 
 def test_pair_returns_structured_error_when_backend_request_fails(monkeypatch) -> None:
@@ -774,3 +828,33 @@ def test_start_restarts_when_runtime_signature_changes(monkeypatch, tmp_path) ->
     assert result["pid"] == new_pid
     assert old_pid not in alive
     assert state["tunnel_token_sha256"] == "348e9df2a42bd6e3c6356ca9c95c5f1fe9a6b3e5cd25f4ae58df0f09049c3209"
+
+
+def test_start_clears_previous_cloudflared_logs_before_spawn(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.remote_access.vibe_cloud.tunnel_token = "tunnel-token"
+    config.save()
+    binary = "/usr/local/bin/cloudflared"
+    new_pid = 222
+    remote_access._cloudflared_stdout_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._cloudflared_stdout_path().write_text("old stdout", encoding="utf-8")
+    remote_access._cloudflared_stderr_path().write_text("originService=http://old.local:5123\n", encoding="utf-8")
+
+    monkeypatch.setattr(remote_access, "_resolve_binary", lambda cfg: binary)
+    monkeypatch.setattr(remote_access, "_version", lambda path: "cloudflared test")
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == new_pid)
+    monkeypatch.setattr(runtime, "get_process_command", lambda pid: f"{binary} tunnel run")
+
+    def spawn_background(args, pid_path, stdout_name, stderr_name, env=None):
+        assert not remote_access._cloudflared_stdout_path().exists()
+        assert not remote_access._cloudflared_stderr_path().exists()
+        pid_path.write_text(str(new_pid), encoding="utf-8")
+        return new_pid
+
+    monkeypatch.setattr(runtime, "spawn_background", spawn_background)
+
+    result = remote_access.start(config)
+
+    assert result["ok"] is True
+    assert result["started"] is True
