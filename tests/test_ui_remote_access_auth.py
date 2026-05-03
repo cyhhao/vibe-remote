@@ -779,3 +779,25 @@ def test_setup_host_with_cloudflare_metadata_is_not_local(monkeypatch, tmp_path)
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_with_reverse_proxy_header_is_not_local(monkeypatch, tmp_path):
+    """A non-Cloudflare reverse proxy on the same host (nginx, Caddy, ...)
+    fronts vibe and an attacker spoofs Host=setup_host. Flask sees a private
+    peer (the proxy) and the Host matches setup_host, so the host+peer pair
+    looks "local" — but X-Forwarded-For (or any other forwarded header) tells
+    us the actual client is unknown, so the request must not be trusted.
+    """
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.2.3")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://192.168.2.3:5123",
+        environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        headers={"X-Forwarded-For": "203.0.113.10"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"

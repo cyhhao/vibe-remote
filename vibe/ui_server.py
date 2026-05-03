@@ -204,6 +204,30 @@ def _has_cloudflare_forwarded_metadata() -> bool:
     )
 
 
+def _has_forwarded_metadata() -> bool:
+    """Detect any sign that the request traversed a reverse proxy.
+
+    When any forwarded header is set, request.remote_addr no longer reliably
+    identifies the actual client (a same-host proxy makes external attackers
+    look like loopback / private peers), so authorization paths that lean on a
+    private/loopback peer must refuse the request unless we have an explicit
+    trusted-proxy chain.
+    """
+    forwarded_headers = (
+        "Forwarded",
+        "X-Forwarded-For",
+        "X-Forwarded-Host",
+        "X-Forwarded-Proto",
+        "X-Forwarded-Port",
+        "X-Real-IP",
+        "X-Original-Forwarded-For",
+        "True-Client-IP",
+    )
+    if any(request.headers.get(header) for header in forwarded_headers):
+        return True
+    return _has_cloudflare_forwarded_metadata()
+
+
 def _is_loopback_peer() -> bool:
     remote_addr = (request.remote_addr or "").strip()
     if remote_addr == "localhost":
@@ -300,7 +324,7 @@ def _is_trusted_docker_loopback_probe() -> bool:
         return False
     if request.path not in {"/health", "/status"}:
         return False
-    if _has_cloudflare_forwarded_metadata():
+    if _has_forwarded_metadata():
         return False
     if not _is_loopback_host(request.host):
         return False
@@ -328,13 +352,16 @@ def _is_setup_host_request(config: V2Config | None) -> bool:
         return False
     if _normalized_host(request.host) != setup_host:
         return False
-    if _has_cloudflare_forwarded_metadata():
+    # Any forwarded header (including non-Cloudflare proxies like nginx /
+    # Caddy / Traefik) means we cannot trust request.remote_addr to identify
+    # the actual client, so refuse the setup-host trust path entirely.
+    if _has_forwarded_metadata():
         return False
     return _is_private_peer()
 
 
 def _is_local_request(config: V2Config | None = None) -> bool:
-    if _has_cloudflare_forwarded_metadata():
+    if _has_forwarded_metadata():
         return False
     if _is_loopback_peer() and _is_loopback_host(request.host):
         return True
