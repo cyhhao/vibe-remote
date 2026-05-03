@@ -40,6 +40,11 @@ function printVersion() {
   console.log(`avibe ${packageJson.version}`);
 }
 
+function invokedAsVibe() {
+  const invokedName = path.basename(process.argv[1] || "").toLowerCase();
+  return invokedName === "vibe" || invokedName === "vibe.cmd" || invokedName === "vibe.bat" || invokedName === "vibe.exe";
+}
+
 function prependPathEntries(env, entries) {
   const delimiter = path.delimiter;
   const currentPath = env.PATH || env.Path || "";
@@ -319,13 +324,14 @@ function normalizeArgs(args) {
 function main() {
   const args = process.argv.slice(2);
   const command = args[0];
+  const shouldDelegateHelpAndVersion = invokedAsVibe();
 
-  if (command === "--help" || command === "-h" || command === "help") {
+  if (!shouldDelegateHelpAndVersion && (command === "--help" || command === "-h" || command === "help")) {
     printHelp();
     return;
   }
 
-  if (command === "--version" || command === "-v") {
+  if (!shouldDelegateHelpAndVersion && (command === "--version" || command === "-v")) {
     printVersion();
     return;
   }

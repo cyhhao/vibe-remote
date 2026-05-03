@@ -42,13 +42,13 @@ function writeSelfNpmVibeShim(bin) {
   return shimPath;
 }
 
-function runCli(args, envOverrides = {}) {
+function runCli(args, envOverrides = {}, binPath = cliPath) {
   const env = {
     ...process.env,
     ...envOverrides,
   };
 
-  return childProcess.spawnSync(process.execPath, [cliPath, ...args], {
+  return childProcess.spawnSync(process.execPath, [binPath, ...args], {
     encoding: "utf8",
     env,
   });
@@ -90,6 +90,39 @@ test("prints wrapper help without installing", () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /npx avibe/);
   assert.match(result.stdout, /npm install -g avibe/);
+});
+
+test("delegates help and version when invoked through vibe", () => {
+  const temp = makeTempEnv();
+  const runtimeBin = path.join(temp.root, "runtime-bin");
+  const npmBin = path.join(temp.root, "npm-bin");
+  fs.mkdirSync(runtimeBin, { recursive: true });
+  fs.mkdirSync(npmBin, { recursive: true });
+  writeFakeVibe(runtimeBin, "runtime-vibe");
+  const npmVibeShim = writeSelfNpmVibeShim(npmBin);
+
+  const help = runCli(["--help"], {
+    HOME: temp.home,
+    USERPROFILE: temp.home,
+    PATH: `${npmBin}${path.delimiter}${runtimeBin}`,
+  }, npmVibeShim);
+  const version = runCli(["--version"], {
+    HOME: temp.home,
+    USERPROFILE: temp.home,
+    PATH: `${npmBin}${path.delimiter}${runtimeBin}`,
+  }, npmVibeShim);
+  const commandHelp = runCli(["help", "remote"], {
+    HOME: temp.home,
+    USERPROFILE: temp.home,
+    PATH: `${npmBin}${path.delimiter}${runtimeBin}`,
+  }, npmVibeShim);
+
+  assert.equal(help.status, 0);
+  assert.equal(version.status, 0);
+  assert.equal(commandHelp.status, 0);
+  assert.match(help.stdout, /runtime-vibe --help/);
+  assert.match(version.stdout, /runtime-vibe --version/);
+  assert.match(commandHelp.stdout, /runtime-vibe help remote/);
 });
 
 test("delegates commands to an existing vibe binary", () => {
