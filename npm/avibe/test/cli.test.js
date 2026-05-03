@@ -51,6 +51,7 @@ function runCli(args, envOverrides = {}, binPath = cliPath) {
   return childProcess.spawnSync(process.execPath, [binPath, ...args], {
     encoding: "utf8",
     env,
+    timeout: 5000,
   });
 }
 
@@ -175,6 +176,33 @@ test("skips its own npm vibe shim before delegating", () => {
 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /runtime-vibe status/);
+});
+
+test("skips its own npm vibe shim in fallback bin dirs before installing", () => {
+  const temp = makeTempEnv();
+  const fallbackBin = path.join(temp.home, ".local", "bin");
+  fs.mkdirSync(fallbackBin, { recursive: true });
+  writeSelfNpmVibeShim(fallbackBin);
+
+  const installCommand =
+    process.platform === "win32"
+      ? `echo @echo off> "${path.join(temp.bin, "vibe.cmd")}" && echo echo installed-vibe %*>> "${path.join(temp.bin, "vibe.cmd")}"`
+      : `/bin/mkdir -p "${temp.bin}" && /usr/bin/printf '#!/bin/sh\\necho installed-vibe "$@"\\n' > "${path.join(
+          temp.bin,
+          "vibe"
+        )}" && /bin/chmod +x "${path.join(temp.bin, "vibe")}"`;
+
+  const result = runCli(["doctor"], {
+    HOME: temp.home,
+    USERPROFILE: temp.home,
+    PATH: temp.bin,
+    AVIBE_INSTALL_COMMAND: installCommand,
+  });
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Installing Vibe Remote/);
+  assert.match(result.stdout, /installed-vibe doctor/);
 });
 
 test("installs vibe when missing, then delegates", () => {

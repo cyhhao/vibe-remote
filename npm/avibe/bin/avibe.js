@@ -168,7 +168,7 @@ function findVibeBinary() {
   for (const dir of candidateBinDirs()) {
     for (const executableName of executableNames("vibe")) {
       const candidate = path.join(dir, executableName);
-      if (isExecutable(candidate)) {
+      if (isExecutable(candidate) && !isSelfWrapperCandidate(candidate)) {
         return candidate;
       }
     }
