@@ -18,7 +18,7 @@ function Write-Banner {
    \ V /  | || |_) ||  __/ |  _ <|  __/| | | | | | (_) | |_|  __/
     \_/   |_||_.__/  \___| |_| \_\\___||_| |_| |_|\___/ \__|\___|
 "@ -ForegroundColor Blue
-    Write-Host "Local-first agent runtime for Slack" -ForegroundColor Green
+    Write-Host "Local-first AI coding agents in your chat apps" -ForegroundColor Green
     Write-Host ""
 }
 

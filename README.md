@@ -80,6 +80,19 @@ If you are new to WSL, this guide explains:
 
 ---
 
+## What Ships Today
+
+Not an agent framework. Not a hosted coding VM. Vibe Remote is the remote-control layer for the coding agents already running on your machine.
+
+- **Chat apps become terminals:** Slack, Discord, Telegram, WeChat, and Lark / Feishu.
+- **Real coding agents, no middleman:** Claude Code, OpenCode, and Codex run as themselves.
+- **Thread = session:** Start five threads, run five isolated jobs, resume later.
+- **Web setup, not token archaeology:** Local wizard, dashboard, routing, and health checks.
+- **Remote UI when you need it:** `vibe remote` opens your local Web UI through a secure avibe.bot tunnel.
+- **Walk away without losing the loop:** Completion notifications, scheduled tasks, and async hooks keep work moving.
+
+---
+
 ## Why This Exists
 
 | Problem | Solution |
@@ -332,6 +345,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 ## Docs
 
 - **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
+- **[Install via AI Agent](docs/INSTALL_FOR_AI.md)** — Give this to Claude Code, Codex, or OpenCode for guided setup
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
 - **[Discord Setup Guide](docs/DISCORD_SETUP.md)** — Detailed setup with screenshots
 - **[Telegram Setup Guide](docs/TELEGRAM_SETUP.md)** — BotFather setup, token validation, and chat discovery
