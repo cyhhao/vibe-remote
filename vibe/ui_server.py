@@ -1499,6 +1499,12 @@ def run_ui_server(host: str, port: int) -> None:
         config = None
     if config is not None:
         init_sentry(config, component="ui", enable_flask=True)
+        try:
+            from vibe import remote_access
+
+            remote_access.start_status_heartbeat(config)
+        except Exception:
+            logger.warning("Failed to start remote access status heartbeat", exc_info=True)
     print(f"UI Server running at http://{host}:{port}")
 
     # Use make_server directly for better compatibility with subprocess/multiprocessing

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 
-from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
 from config import paths
+from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
 from vibe import remote_access
 from vibe import runtime
 
@@ -82,6 +84,7 @@ def test_pair_redeems_key_and_starts_connector(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(remote_access, "_json_request", fake_request)
     monkeypatch.setattr(remote_access, "start", lambda next_config: {"ok": True, "running": True})
     monkeypatch.setattr(remote_access, "status", lambda next_config=None: {"ok": True, "running": True, "paired": True})
+    monkeypatch.setattr(remote_access, "report_runtime_status", lambda *args, **kwargs: {"ok": True})
 
     result = remote_access.pair("vrp_test", "https://backend.test")
     saved_payload = json.loads((tmp_path / "config" / "config.json").read_text(encoding="utf-8"))
@@ -155,6 +158,112 @@ def test_pair_origin_service_uses_ipv6_loopback_for_ipv6_wildcard(monkeypatch, t
     assert remote_access.origin_service_for_pairing() == "http://[::1]:15130"
 
 
+def test_runtime_status_payload_reports_local_origin_and_tunnel_state(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.ui.setup_host = "100.97.103.112"
+    config.save()
+    monkeypatch.setattr(remote_access, "_local_ui_healthy", lambda cfg: True)
+    monkeypatch.setattr(remote_access, "_observed_cloudflared_origin_service", lambda: "http://100.97.103.112:5123")
+    monkeypatch.setattr(
+        remote_access,
+        "status",
+        lambda cfg=None: {
+            "ok": True,
+            "running": True,
+            "binary_found": True,
+        },
+    )
+
+    payload = remote_access.runtime_status_payload(config, event="heartbeat")
+
+    assert payload["event"] == "heartbeat"
+    assert payload["ui_healthy"] is True
+    assert payload["tunnel_running"] is True
+    assert payload["cloudflared_found"] is True
+    assert payload["expected_origin_service"] == "http://127.0.0.1:5123"
+    assert payload["observed_origin_service"] == "http://100.97.103.112:5123"
+
+
+def test_observed_cloudflared_origin_service_reads_only_log_tail(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._cloudflared_stderr_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._cloudflared_stderr_path().write_bytes(
+        b'originService=http://old.local:5123\n'
+        + (b"x" * (remote_access.STATUS_LOG_TAIL_BYTES + 1024))
+        + b'originService=http://new.local:5123\n'
+    )
+    monkeypatch.setattr(remote_access.Path, "read_text", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("full read")))
+
+    assert remote_access._observed_cloudflared_origin_service() == "http://new.local:5123"
+
+
+def test_report_runtime_status_posts_to_backend(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    cloud = config.remote_access.vibe_cloud
+    cloud.backend_url = "https://backend.test"
+    cloud.instance_secret = "instance-secret"
+    config.save()
+    monkeypatch.setattr(remote_access, "_local_ui_healthy", lambda cfg: True)
+    monkeypatch.setattr(remote_access, "_observed_cloudflared_origin_service", lambda: "http://127.0.0.1:5123")
+    monkeypatch.setattr(remote_access, "status", lambda cfg=None: {"ok": True, "running": False, "binary_found": True})
+    calls = []
+
+    def fake_request(url: str, payload: dict, timeout: float = 20.0):
+        calls.append((url, payload, timeout))
+        return {"ok": True}
+
+    monkeypatch.setattr(remote_access, "_json_request", fake_request)
+
+    result = remote_access.report_runtime_status(config, event="stop")
+
+    assert result["ok"] is True
+    assert calls == [
+        (
+            "https://backend.test/api/v1/instances/inst_123/runtime-status",
+            {
+                "instance_secret": "instance-secret",
+                "event": "stop",
+                "local_version": "dev",
+                "ui_healthy": True,
+                "tunnel_running": False,
+                "cloudflared_found": True,
+                "expected_origin_service": "http://127.0.0.1:5123",
+                "observed_origin_service": "http://127.0.0.1:5123",
+            },
+            5.0,
+        )
+    ]
+
+
+def test_report_runtime_status_posts_when_remote_access_is_disabled(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    cloud = config.remote_access.vibe_cloud
+    cloud.enabled = False
+    cloud.backend_url = "https://backend.test"
+    cloud.instance_secret = "instance-secret"
+    config.save()
+    monkeypatch.setattr(remote_access, "_local_ui_healthy", lambda cfg: True)
+    monkeypatch.setattr(remote_access, "_observed_cloudflared_origin_service", lambda: None)
+    monkeypatch.setattr(remote_access, "status", lambda cfg=None: {"ok": True, "running": False, "binary_found": True})
+    calls = []
+
+    def fake_request(url: str, payload: dict, timeout: float = 20.0):
+        calls.append((url, payload, timeout))
+        return {"ok": True}
+
+    monkeypatch.setattr(remote_access, "_json_request", fake_request)
+
+    result = remote_access.report_runtime_status(config, event="stop")
+
+    assert result["ok"] is True
+    assert calls[0][0] == "https://backend.test/api/v1/instances/inst_123/runtime-status"
+    assert calls[0][1]["event"] == "stop"
+    assert calls[0][1]["tunnel_running"] is False
+
+
 def test_pair_persists_with_locked_incremental_config_save(monkeypatch) -> None:
     config = _config()
     save_payloads = []
@@ -178,6 +287,7 @@ def test_pair_persists_with_locked_incremental_config_save(monkeypatch) -> None:
     monkeypatch.setattr(remote_access.api, "save_config", lambda payload: save_payloads.append(payload) or config)
     monkeypatch.setattr(remote_access, "start", lambda next_config: {"ok": True, "running": True})
     monkeypatch.setattr(remote_access, "status", lambda next_config=None: {"ok": True, "running": True, "paired": True})
+    monkeypatch.setattr(remote_access, "report_runtime_status", lambda *args, **kwargs: {"ok": True})
 
     result = remote_access.pair("vrp_test", "https://backend.test")
 
@@ -214,6 +324,7 @@ def test_pair_reports_success_when_connector_start_fails(monkeypatch, tmp_path) 
     )
     monkeypatch.setattr(remote_access, "start", lambda next_config: {"ok": False, "error": "cloudflared_spawn_failed"})
     monkeypatch.setattr(remote_access, "status", lambda next_config=None: {"ok": True, "running": False, "paired": True})
+    monkeypatch.setattr(remote_access, "report_runtime_status", lambda *args, **kwargs: {"ok": True})
 
     result = remote_access.pair("vrp_test", "https://backend.test")
     saved_payload = json.loads((tmp_path / "config" / "config.json").read_text(encoding="utf-8"))
@@ -244,6 +355,128 @@ def test_pair_preserves_backend_error_response(monkeypatch) -> None:
     result = remote_access.pair("vrp_test", "https://backend.test")
 
     assert result == {"ok": False, "error": "invalid_pairing_key", "status": 400}
+
+
+def test_pair_queues_lifecycle_status_for_drain(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    reports = []
+
+    monkeypatch.setattr(
+        remote_access,
+        "_json_request",
+        lambda *args, **kwargs: {
+            "instance_id": "inst_123",
+            "client_id": "vr_client_123",
+            "issuer": "https://backend.test",
+            "authorization_endpoint": "https://backend.test/oauth/authorize",
+            "token_endpoint": "https://backend.test/oauth/token",
+            "jwks_uri": "https://backend.test/oauth/jwks.json",
+            "public_url": "https://alex.avibe.bot",
+            "redirect_uri": "https://alex.avibe.bot/auth/callback",
+            "tunnel_token": "tunnel-token",
+            "instance_secret": "instance-secret",
+        },
+    )
+    monkeypatch.setattr(remote_access.api, "save_config", lambda payload: config)
+    monkeypatch.setattr(remote_access, "start", lambda next_config: {"ok": False, "error": "cloudflared_spawn_failed"})
+    monkeypatch.setattr(remote_access, "status", lambda next_config=None: {"ok": True, "running": False, "paired": True})
+    monkeypatch.setattr(
+        remote_access,
+        "report_runtime_status",
+        lambda cfg, event="heartbeat", last_error=None: reports.append((event, last_error)) or {"ok": True},
+    )
+
+    result = remote_access.pair("vrp_test", "https://backend.test")
+    remote_access.drain_runtime_status_reports(timeout_seconds=1.0)
+
+    assert result["ok"] is True
+    assert reports == [("pair", "cloudflared_spawn_failed")]
+
+
+def test_lifecycle_status_report_does_not_block_stop(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_report(*args, **kwargs):
+        started.set()
+        release.wait(timeout=5)
+        return {"ok": True}
+
+    monkeypatch.setattr(remote_access, "report_runtime_status", blocking_report)
+
+    before = time.monotonic()
+    result = remote_access.stop(_config())
+    elapsed = time.monotonic() - before
+
+    assert result["ok"] is True
+    assert elapsed < 0.5
+    assert started.wait(timeout=1)
+    assert remote_access._CONNECTOR_LOCK.acquire(blocking=False)
+    remote_access._CONNECTOR_LOCK.release()
+    release.set()
+    remote_access.drain_runtime_status_reports(timeout_seconds=1.0)
+
+
+def test_lifecycle_status_thread_start_failure_is_best_effort(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    with remote_access._STATUS_REPORT_LOCK:
+        remote_access._STATUS_REPORT_THREADS.clear()
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread limit reached")
+
+        def is_alive(self):
+            return False
+
+        def join(self, timeout=None):
+            return None
+
+    monkeypatch.setattr(remote_access.threading, "Thread", FailingThread)
+
+    result = remote_access.stop(_config())
+
+    assert result["ok"] is True
+    with remote_access._STATUS_REPORT_LOCK:
+        assert remote_access._STATUS_REPORT_THREADS == set()
+
+
+def test_status_heartbeat_can_retry_after_thread_start_failure(monkeypatch) -> None:
+    remote_access._STATUS_HEARTBEAT_STARTED = False
+    starts = []
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread limit reached")
+
+    class SuccessfulThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            starts.append(True)
+
+    monkeypatch.setattr(remote_access.threading, "Thread", FailingThread)
+
+    try:
+        remote_access.start_status_heartbeat(interval_seconds=1)
+        assert remote_access._STATUS_HEARTBEAT_STARTED is False
+
+        monkeypatch.setattr(remote_access.threading, "Thread", SuccessfulThread)
+        remote_access.start_status_heartbeat(interval_seconds=1)
+        assert remote_access._STATUS_HEARTBEAT_STARTED is True
+        assert starts == [True]
+    finally:
+        remote_access._STATUS_HEARTBEAT_STARTED = False
 
 
 def test_stop_ui_continues_when_remote_access_stop_fails(monkeypatch, tmp_path) -> None:
@@ -313,6 +546,7 @@ def test_stop_preserves_pid_file_when_process_stop_fails(monkeypatch, tmp_path) 
     monkeypatch.setattr(runtime, "stop_pid", lambda candidate, timeout=8: False)
 
     result = remote_access.stop()
+    remote_access.drain_runtime_status_reports(timeout_seconds=1.0)
 
     assert result["ok"] is False
     assert result["error"] == "cloudflared_stop_failed"
@@ -330,11 +564,18 @@ def test_stop_preserves_pid_file_when_stop_reports_success_but_process_survives(
     monkeypatch.setattr(runtime, "pid_alive", lambda candidate: candidate == pid)
     monkeypatch.setattr(runtime, "get_process_command", lambda candidate: "cloudflared tunnel run")
     monkeypatch.setattr(runtime, "stop_pid", lambda candidate, timeout=8: True)
+    reports = []
+    monkeypatch.setattr(
+        remote_access,
+        "report_runtime_status",
+        lambda config=None, event="heartbeat", last_error=None: reports.append((event, last_error)),
+    )
 
     result = remote_access.stop()
 
     assert result["ok"] is False
     assert result["error"] == "cloudflared_stop_failed"
+    assert reports == [("stop_failed", "cloudflared_stop_failed")]
     assert remote_access._pid_path().read_text(encoding="utf-8") == str(pid)
     assert remote_access._state_path().exists()
 
