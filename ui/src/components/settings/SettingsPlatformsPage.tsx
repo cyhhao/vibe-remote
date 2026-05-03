@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-import { Check, ChevronUp, Pencil, RefreshCw } from 'lucide-react';
+import { Check, ChevronUp, Loader2, Pencil, RefreshCw, RotateCw } from 'lucide-react';
 
 import { useApi } from '@/context/ApiContext';
+import { useStatus } from '@/context/StatusContext';
 import { useToast } from '@/context/ToastContext';
 import { getEnabledPlatforms, getPlatformCatalog, getPrimaryPlatform, platformHasCredentials } from '@/lib/platforms';
 import { PlatformIcon } from '@/components/visual';
@@ -28,12 +29,14 @@ type ExpandedKey = string | null; // 'enabled' | platform id | null
 export const SettingsPlatformsPage: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
+  const { control } = useStatus();
   const { showToast } = useToast();
   const [config, setConfig] = useState<any>(null);
   const [expanded, setExpanded] = useState<ExpandedKey>(null);
   const [draftEnabled, setDraftEnabled] = useState<string[]>([]);
   const [draftPrimary, setDraftPrimary] = useState<string>('');
   const [savingEnabled, setSavingEnabled] = useState(false);
+  const [restartPhase, setRestartPhase] = useState<'idle' | 'saving' | 'restarting'>('idle');
 
   useEffect(() => {
     api.getConfig().then(setConfig).catch(() => {});
@@ -53,11 +56,26 @@ export const SettingsPlatformsPage: React.FC = () => {
 
   const closeAll = () => setExpanded(null);
 
+  const saveAndRestart = async (nextData: any) => {
+    setRestartPhase('saving');
+    try {
+      await api.saveConfig(nextData);
+      setConfig((prev: any) => ({ ...(prev || {}), ...nextData }));
+      closeAll();
+      setRestartPhase('restarting');
+      try {
+        await control('restart');
+        showToast(t('platform.restartedSuccess'), 'success');
+      } catch {
+        showToast(t('platform.restartFailed'), 'error');
+      }
+    } finally {
+      setRestartPhase('idle');
+    }
+  };
+
   const handleApplyPlatform = async (nextData: any) => {
-    await api.saveConfig(nextData);
-    setConfig((prev: any) => ({ ...(prev || {}), ...nextData }));
-    showToast(t('common.saved'), 'success');
-    closeAll();
+    await saveAndRestart(nextData);
   };
 
   const toggleDraftPlatform = (id: string) => {
@@ -83,10 +101,7 @@ export const SettingsPlatformsPage: React.FC = () => {
     };
     setSavingEnabled(true);
     try {
-      await api.saveConfig(nextData);
-      setConfig((prev: any) => ({ ...(prev || {}), ...nextData }));
-      showToast(t('common.saved'), 'success');
-      closeAll();
+      await saveAndRestart(nextData);
     } finally {
       setSavingEnabled(false);
     }
@@ -111,6 +126,27 @@ export const SettingsPlatformsPage: React.FC = () => {
       subtitle={t('settings.platformsSubtitle')}
     >
       <div className="mx-auto flex w-full max-w-[920px] flex-col gap-3">
+        {restartPhase !== 'idle' && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="sticky top-2 z-10 flex items-center gap-3 rounded-xl border border-cyan/35 bg-cyan/[0.08] px-4 py-3 shadow-[0_8px_24px_-8px_rgba(0,212,255,0.35)]"
+          >
+            {restartPhase === 'saving' ? (
+              <Loader2 size={16} className="shrink-0 animate-spin text-cyan" />
+            ) : (
+              <RotateCw size={16} className="shrink-0 animate-spin text-cyan" strokeWidth={2.25} />
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold text-foreground">
+                {restartPhase === 'saving' ? t('platform.applyingConfig') : t('platform.restartingService')}
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted">
+                {restartPhase === 'saving' ? t('common.saving') : t('dashboard.restarting')}
+              </div>
+            </div>
+          </div>
+        )}
         {/* Enabled platforms card */}
         <CollapseCard
           expanded={expanded === 'enabled'}
