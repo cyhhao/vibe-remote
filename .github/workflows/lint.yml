@@ -19,6 +19,23 @@ jobs:
           pip install pre-commit
           pre-commit run --all-files
 
+  npm-wrapper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Test npm entrypoint
+        working-directory: npm/avibe
+        run: npm test
+
+      - name: Validate npm package contents
+        working-directory: npm/avibe
+        run: npm pack --dry-run
+
   install-upgrade-regression:
     runs-on: ubuntu-latest
     steps:

@@ -17,12 +17,20 @@ Make Vibe Remote easier to understand, easier to install, and easier for AI codi
   - `docs/INSTALL_FOR_AI_ZH.md`
 - Linked the AI-agent installation guides from the docs section without interrupting the landing-page narrative.
 - Updated package metadata and installer banner copy so the project no longer presents as Slack-only.
+- Added an npm entrypoint package under `npm/avibe`:
+  - `npx avibe` and globally installed `avibe` bootstrap the existing Python `vibe-remote` package.
+  - The npm package does not ship a second runtime; it installs or locates the real `vibe` command and delegates to it.
+  - `avibe init` and `avibe start` map to the default `vibe` startup flow.
+  - `avibe status`, `doctor`, `remote`, `upgrade`, `task`, `hook`, and other commands pass through to `vibe`.
+  - CI now tests the wrapper and validates the packed npm contents.
+  - A manual GitHub Actions workflow can publish `avibe` to npm with provenance after npm trusted publishing is configured.
 
 ## Next High-Leverage Work
 
-1. Add a tiny npm wrapper package named `vibe-remote` or `vibe-remote-cli` that delegates to the existing installer.
-   - Purpose: capture `npm install -g ...` muscle memory in the AI coding community.
-   - Constraint: do not ship a second runtime; keep Python / uv as the source of truth until a binary packaging decision is made.
+1. Publish the `avibe` npm package, then switch public install copy to npm-first.
+   - Preferred public command after publish: `npx avibe`.
+   - Global install path: `npm install -g avibe && avibe`.
+   - Keep the curl / PowerShell installers documented as fallback paths.
 
 2. Add Homebrew distribution.
    - Short path: maintain a tap first.
