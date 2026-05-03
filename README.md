@@ -14,7 +14,7 @@
 
 <a href="https://www.producthunt.com/products/vibe-remote?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-vibe-remote" target="_blank" rel="noopener noreferrer"><img alt="Vibe Remote - Code from your phone — AI agents in your chat app | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1104967&theme=light&t=1774450119248"></a>
 
-[English](README.md) | [中文](README_ZH.md)
+[Docs](https://docs.avibe.bot) | [English](README.md) | [中文](README_ZH.md)
 
 **Supported Platforms**
 
@@ -344,6 +344,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## Docs
 
+- **[Official Docs](https://docs.avibe.bot)** — Quickstart, platform guides, agent setup, troubleshooting, and AI-readable install instructions
 - **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
 - **[Install via AI Agent](docs/INSTALL_FOR_AI.md)** — Give this to Claude Code, Codex, or OpenCode for guided setup
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots

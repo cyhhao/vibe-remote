@@ -14,7 +14,7 @@
 
 <a href="https://www.producthunt.com/products/vibe-remote?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-vibe-remote" target="_blank" rel="noopener noreferrer"><img alt="Vibe Remote - Code from your phone — AI agents in your chat app | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1104967&theme=light&t=1774450119248"></a>
 
-[English](README.md) | [中文](README_ZH.md)
+[官方文档](https://docs.avibe.bot) | [English](README.md) | [中文](README_ZH.md)
 
 **支持的平台**
 
@@ -344,6 +344,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 
 ## 文档
 
+- **[官方文档](https://docs.avibe.bot)** — Quickstart、平台配置、Agent 设置、排错和 AI 可读安装说明
 - **[CLI 参考手册](docs/CLI_ZH.md)** — 命令行使用和服务生命周期
 - **[让 AI Agent 帮你安装](docs/INSTALL_FOR_AI_ZH.md)** — 交给 Claude Code、Codex 或 OpenCode 的引导式安装说明
 - **[Slack 配置指南](docs/SLACK_SETUP_ZH.md)** — 详细配置和截图
