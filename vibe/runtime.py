@@ -120,7 +120,12 @@ def write_json(path, payload):
 def read_json(path):
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        # Status files are best-effort: a partially written or corrupted
+        # payload should not break write_status() or read_status().
+        return None
 
 
 def _pid_alive_windows(pid: int) -> bool:

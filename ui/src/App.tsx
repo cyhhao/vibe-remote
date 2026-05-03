@@ -24,7 +24,7 @@ const AuthGuard = ({ children }: { children: any }) => {
     const location = useLocation();
     const [loading, setLoading] = useState(true);
     const [needsSetup, setNeedsSetup] = useState(false);
-    const bypassSetupGuard = location.pathname === '/doctor/logs';
+    const bypassSetupGuard = location.pathname === '/doctor/logs' || location.pathname === '/logs';
 
     useEffect(() => {
         if (bypassSetupGuard) {
