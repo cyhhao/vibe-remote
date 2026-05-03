@@ -112,17 +112,15 @@ Not an agent framework. Not a hosted coding VM. Vibe Remote is the remote-contro
 
 ## Meet Vibey
 
-**Vibe Remote** is the platform. **Vibey** is who lives inside it.
-
 <div align="center">
 <img src="assets/mascot/cloud-tuanzi.png" alt="Vibey — the gaseous consciousness inside Vibe Remote" width="220"/>
 </div>
 
-A wisp of pure vibe. Takes up residence in your Slack, Discord, Telegram, Lark, or WeChat. Reads the room. Talks back. Ships work while you're away.
+Lives in your Slack, Discord, Telegram, Lark, or WeChat. Reads the room. Picks up where you left off. Asks the right question when it's not sure. Goes quiet when you're heads-down. Ships at 2am because that's when the vibe hits — then leaves a note about what it touched.
 
 > Vibe Remote is the wire. Vibey is the colleague on the other end.
 
-Nothing about the product changes: still a local-first, zero-public-port remote for the coding agents already running on your machine. Vibey is just the face on top — and the emoji your team will end up using when they say *"ask Vibey to ship it."*
+Forgets nothing. Holds opinions. Says thanks when you fix its bugs.
 
 ---
 
