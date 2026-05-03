@@ -315,6 +315,17 @@ def _is_setup_host_request(config: V2Config | None) -> bool:
         return False
     if _is_loopback_host(setup_host):
         return False
+    # Only trust setup-host requests when setup_host parses to a private/CGNAT
+    # IP. Public hostnames or public IPs cannot be assumed safe: a reverse proxy
+    # on the same machine would make request.remote_addr look like a private
+    # peer even for external attackers, so the host-match + private-peer pair
+    # is not sufficient on its own.
+    try:
+        setup_address = ipaddress.ip_address(setup_host)
+    except ValueError:
+        return False
+    if not _is_private_address(setup_address):
+        return False
     if _normalized_host(request.host) != setup_host:
         return False
     if _has_cloudflare_forwarded_metadata():
