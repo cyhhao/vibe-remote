@@ -21,9 +21,9 @@ function printHelp() {
 NPM entrypoint for Vibe Remote.
 
 Usage:
-  npx avibe              Install Vibe Remote if needed, then start the setup wizard
-  avibe                 Same as above after npm install -g avibe
-  vibe                  Same as above after npm install -g avibe
+  npx @avibe/cli        Install Vibe Remote if needed, then start the setup wizard
+  avibe                 Same as above after npm install -g @avibe/cli
+  vibe                  Same as above after npm install -g @avibe/cli
   avibe install         Install or refresh the underlying vibe-remote Python CLI
   avibe init            Start the setup wizard
   avibe start           Start Vibe Remote

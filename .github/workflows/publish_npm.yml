@@ -36,6 +36,6 @@ jobs:
         working-directory: npm/avibe
         run: npm test
 
-      - name: Publish avibe
+      - name: Publish @avibe/cli
         working-directory: npm/avibe
         run: npm publish --access public

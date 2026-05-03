@@ -89,8 +89,8 @@ test("prints wrapper help without installing", () => {
   });
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /npx avibe/);
-  assert.match(result.stdout, /npm install -g avibe/);
+  assert.match(result.stdout, /npx @avibe\/cli/);
+  assert.match(result.stdout, /npm install -g @avibe\/cli/);
 });
 
 test("delegates help and version when invoked through vibe", () => {
