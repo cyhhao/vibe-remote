@@ -52,6 +52,44 @@ export const SettingsServicePage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ host: uiPayload.setup_host, port: uiPayload.setup_port }),
       });
+      // If the UI server's bind host or port changed, the current page is on
+      // the old origin and may become unreachable. Redirect (or surface the
+      // new origin) so the user is not stranded.
+      const currentHostname = window.location.hostname;
+      const currentPort =
+        window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+      const targetPort = String(uiPayload.setup_port);
+      const isBindAll =
+        uiPayload.setup_host === '0.0.0.0' ||
+        uiPayload.setup_host === '::' ||
+        uiPayload.setup_host === '';
+      const targetHostname = isBindAll ? currentHostname : uiPayload.setup_host;
+      const newOrigin = `${window.location.protocol}//${targetHostname}:${targetPort}`;
+      const originChanged = targetHostname !== currentHostname || targetPort !== currentPort;
+      if (originChanged) {
+        // Only auto-redirect when the new hostname is something the current
+        // browser can reasonably reach. If the user changed the bind to a
+        // loopback-only host while accessing remotely, surface the new URL
+        // instead of bouncing them somewhere they cannot reach.
+        const targetIsLoopback =
+          targetHostname === '127.0.0.1' ||
+          targetHostname === '::1' ||
+          targetHostname === 'localhost';
+        const browserOnLoopback =
+          currentHostname === '127.0.0.1' ||
+          currentHostname === '::1' ||
+          currentHostname === 'localhost';
+        if (!targetIsLoopback || browserOnLoopback) {
+          setUiMessage(t('settings.consoleServerRedirecting', { origin: newOrigin }));
+          // Give the UI server a moment to actually rebind before we navigate.
+          window.setTimeout(() => {
+            window.location.replace(newOrigin);
+          }, 1500);
+          return;
+        }
+        setUiMessage(t('settings.consoleServerRelocated', { origin: newOrigin }));
+        return;
+      }
       setUiMessage(t('dashboard.uiRestartMessage'));
     } catch {
       setUiMessage(t('common.saveFailed'));

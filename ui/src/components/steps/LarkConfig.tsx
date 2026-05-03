@@ -537,7 +537,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
       <WizardCard className="gap-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-2">
-            <EyebrowBadge tone="mint">Lark / Feishu</EyebrowBadge>
+            <EyebrowBadge tone="mint">{t('larkConfig.eyebrow')}</EyebrowBadge>
             <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
               {t('larkConfig.title')}
             </h2>

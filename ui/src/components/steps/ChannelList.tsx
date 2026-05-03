@@ -769,7 +769,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         <div className="flex w-full justify-center">
           <WizardCard className="gap-6">
             <div className="space-y-2">
-              <EyebrowBadge tone="mint">Groups</EyebrowBadge>
+              <EyebrowBadge tone="mint">{t('channelList.eyebrow')}</EyebrowBadge>
               <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
                 {t('channelList.title')}
               </h2>
@@ -1305,7 +1305,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     <Wrapper>
       <div className={clsx('space-y-4', !isPage && 'space-y-2')}>
         <div>
-          {!isPage && <EyebrowBadge tone="mint">Groups</EyebrowBadge>}
+          {!isPage && <EyebrowBadge tone="mint">{t('channelList.eyebrow')}</EyebrowBadge>}
           <h2
             className={clsx(
               'font-bold tracking-[-0.4px] text-foreground',

@@ -401,7 +401,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
       <WizardCard className="gap-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-2">
-            <EyebrowBadge tone="mint">WeChat</EyebrowBadge>
+            <EyebrowBadge tone="mint">{t('wechatConfig.eyebrow')}</EyebrowBadge>
             <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
               {t('wechatConfig.title')}
             </h2>

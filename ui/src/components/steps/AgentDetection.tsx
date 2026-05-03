@@ -373,7 +373,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
       <WizardCard className="gap-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-2">
-            <EyebrowBadge tone="mint">Backends</EyebrowBadge>
+            <EyebrowBadge tone="mint">{t('agentDetection.eyebrow')}</EyebrowBadge>
             <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
               {t('agentDetection.title')}
             </h2>

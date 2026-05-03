@@ -73,6 +73,8 @@
     "statusNow": "Current state",
     "consoleServerTitle": "Console server",
     "consoleServerHint": "Saving these values restarts only the Web UI server.",
+    "consoleServerRedirecting": "UI server moved. Redirecting to {{origin}}...",
+    "consoleServerRelocated": "UI server now listens on {{origin}}. Open this URL to continue.",
     "serviceNotesTitle": "Operational notes",
     "serviceNotesSubtitle": "Keep the local service healthy before moving on to platform and routing work.",
     "serviceNote1": "Remote access is now part of Service because it changes how this machine exposes the local admin UI.",
@@ -238,6 +240,7 @@
     }
   },
   "discordConfig": {
+    "eyebrow": "Discord",
     "title": "Discord Configuration",
     "subtitle": "Create a Discord app, invite the bot, then add your token.",
     "botToken": "Bot Token",
@@ -289,6 +292,7 @@
     "dmTroubleshoot3": "Ensure you didn't block the bot account."
   },
   "telegramConfig": {
+    "eyebrow": "Telegram",
     "title": "Telegram Configuration",
     "subtitle": "Create a Telegram bot, validate the token, then finish the group setup in a few guided steps.",
     "step1Title": "Create Bot with BotFather",
@@ -342,6 +346,7 @@
     "forumAutoTopicHint": "For forum-enabled supergroups, new top-level messages can automatically create a new topic that becomes the session container. This requires the bot to have admin or topic-management rights in that chat."
   },
   "larkConfig": {
+    "eyebrow": "Lark / Feishu",
     "title": "Configure Lark",
     "subtitle": "Set up your Lark/Feishu bot in a few steps",
     "domainLabel": "Platform Region",
@@ -414,6 +419,7 @@
     "step5OpenLink": "Open Version Management"
   },
   "wechatConfig": {
+    "eyebrow": "WeChat",
     "title": "WeChat Setup",
     "subtitle": "Scan the QR code with your WeChat to connect.",
     "stepStart": "Start",
@@ -441,6 +447,7 @@
     "rebind": "Rebind Account"
   },
   "slackConfig": {
+    "eyebrow": "04 — Slack",
     "title": "Slack Configuration",
     "saasDescription": "Authorize the official Slack app and wait for workspace binding.",
     "selfHostDescription": "Create a Slack app and configure tokens for Socket Mode.",
@@ -488,6 +495,7 @@
     "step4Tip": "You can also right-click a channel and select 'Add apps'."
   },
   "agentDetection": {
+    "eyebrow": "Backends",
     "title": "Agent Configuration",
     "subtitle": "Detect local CLI paths and choose enabled backends.",
     "defaultBackend": "Default Backend",
@@ -503,6 +511,7 @@
     "showOutput": "Show details"
   },
   "channelList": {
+    "eyebrow": "Groups",
     "title": "Group Settings",
     "subtitle": "Enable groups and configure routing for each group.",
     "refreshList": "Refresh List",
@@ -576,6 +585,7 @@
     "platformDisabled": "Platform disabled — enable it in Settings to see groups."
   },
   "summary": {
+    "eyebrow": "Summary",
     "title": "Review & Finish",
     "subtitle": "Confirm settings and start Vibe Remote.",
     "mode": "Mode",

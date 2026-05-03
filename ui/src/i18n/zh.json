@@ -73,6 +73,8 @@
     "statusNow": "当前状态",
     "consoleServerTitle": "控制台服务",
     "consoleServerHint": "保存这些值只会重启 Web UI 服务，不会重启主服务。",
+    "consoleServerRedirecting": "UI 服务地址已变更，正在跳转到 {{origin}}...",
+    "consoleServerRelocated": "UI 服务现在监听 {{origin}}，请打开该地址继续。",
     "serviceNotesTitle": "运维说明",
     "serviceNotesSubtitle": "先把本地服务运行状态稳定下来，再继续配置平台和路由。",
     "serviceNote1": "远程访问已经并入 Service，因为它本质上决定的是这台机器如何暴露本地管理 UI。",
@@ -238,6 +240,7 @@
     }
   },
   "discordConfig": {
+    "eyebrow": "Discord",
     "title": "Discord 配置",
     "subtitle": "创建 Discord 应用、邀请机器人加入服务器，然后填写令牌。",
     "botToken": "机器人令牌",
@@ -289,6 +292,7 @@
     "dmTroubleshoot3": "确认你没有屏蔽该机器人账号。"
   },
   "telegramConfig": {
+    "eyebrow": "Telegram",
     "title": "Telegram 配置",
     "subtitle": "按步骤创建 Telegram 机器人、验证令牌，并完成群组侧配置。",
     "step1Title": "用 BotFather 创建机器人",
@@ -342,6 +346,7 @@
     "forumAutoTopicHint": "对启用了 forum 的 supergroup，新顶层消息可以自动创建新的 topic，并把它作为 session 容器。这个功能要求 bot 在该群里有管理员或管理 topic 的权限。"
   },
   "larkConfig": {
+    "eyebrow": "Lark / 飞书",
     "title": "配置飞书",
     "subtitle": "几步完成飞书/Lark 机器人的配置",
     "domainLabel": "平台区域",
@@ -414,6 +419,7 @@
     "step5OpenLink": "打开版本管理"
   },
   "wechatConfig": {
+    "eyebrow": "微信",
     "title": "微信设置",
     "subtitle": "使用微信扫描二维码以连接。",
     "stepStart": "开始",
@@ -441,6 +447,7 @@
     "rebind": "重新绑定"
   },
   "slackConfig": {
+    "eyebrow": "04 — Slack",
     "title": "Slack 配置",
     "saasDescription": "授权官方 Slack 应用并等待工作区绑定",
     "selfHostDescription": "创建 Slack 应用并配置 Socket Mode 所需的令牌",
@@ -488,6 +495,7 @@
     "step4Tip": "也可以右键点击频道，选择「添加应用」。"
   },
   "agentDetection": {
+    "eyebrow": "后端",
     "title": "Agent 配置",
     "subtitle": "检测本地 CLI 路径并选择启用的后端",
     "defaultBackend": "默认后端",
@@ -503,6 +511,7 @@
     "showOutput": "显示详情"
   },
   "channelList": {
+    "eyebrow": "群组",
     "title": "群组设置",
     "subtitle": "启用群组并配置每个群组的路由",
     "refreshList": "刷新列表",
@@ -576,6 +585,7 @@
     "platformDisabled": "平台未启用 — 请在设置中启用后再查看群组。"
   },
   "summary": {
+    "eyebrow": "概览",
     "title": "检查并完成",
     "subtitle": "确认设置并启动 Vibe Remote",
     "mode": "模式",

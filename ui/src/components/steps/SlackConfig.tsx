@@ -376,7 +376,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
       <WizardCard className="gap-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-2">
-            <EyebrowBadge tone="mint">04 — Slack</EyebrowBadge>
+            <EyebrowBadge tone="mint">{t('slackConfig.eyebrow')}</EyebrowBadge>
             <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
               {t('slackConfig.title')}
             </h2>

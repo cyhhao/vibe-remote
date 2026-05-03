@@ -244,7 +244,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             <Check size={36} strokeWidth={2.4} />
           </div>
           <div className="space-y-2">
-            <EyebrowBadge tone="mint">Summary</EyebrowBadge>
+            <EyebrowBadge tone="mint">{t('summary.eyebrow')}</EyebrowBadge>
             <h2 className="text-[38px] font-bold leading-tight tracking-[-0.7px] text-foreground">
               {t('summary.title')}
             </h2>
