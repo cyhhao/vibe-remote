@@ -35,7 +35,7 @@ function writeFakeVibe(bin, label) {
 function writeSelfNpmVibeShim(bin) {
   const shimPath = path.join(bin, process.platform === "win32" ? "vibe.cmd" : "vibe");
   if (process.platform === "win32") {
-    fs.writeFileSync(shimPath, '@echo off\r\nnode "%~dp0\\node_modules\\avibe\\bin\\avibe.js" %*\r\n');
+    fs.writeFileSync(shimPath, `@echo off\r\nset AVIBE_ENTRYPOINT=vibe\r\nnode "${cliPath}" %*\r\n`);
   } else {
     fs.symlinkSync(cliPath, shimPath);
   }

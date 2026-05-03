@@ -41,8 +41,11 @@ function printVersion() {
 }
 
 function invokedAsVibe() {
-  const invokedName = path.basename(process.argv[1] || "").toLowerCase();
-  return invokedName === "vibe" || invokedName === "vibe.cmd" || invokedName === "vibe.bat" || invokedName === "vibe.exe";
+  const candidates = [process.env.AVIBE_ENTRYPOINT, process.argv0, process.argv[1]];
+  return candidates.some((candidate) => {
+    const invokedName = path.basename(candidate || "").toLowerCase();
+    return invokedName === "vibe" || invokedName === "vibe.cmd" || invokedName === "vibe.bat" || invokedName === "vibe.exe";
+  });
 }
 
 function prependPathEntries(env, entries) {
