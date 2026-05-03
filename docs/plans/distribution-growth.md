@@ -8,6 +8,8 @@ Vibe Remote already has a stronger product experience than a simple bridge: setu
 
 Make Vibe Remote easier to understand, easier to install, and easier for AI coding agents to configure on behalf of users without overstating channels that are not shipped yet.
 
+The canonical install path should remain the current one-line curl / PowerShell installer because it is explicit, cross-runtime, and does not require users to already think in the Node ecosystem. npm should be an additional familiar entrypoint for Node-heavy developers, not the primary public installation story.
+
 ## Completed in This Pass
 
 - Kept the README / README_ZH first-screen brand story intact instead of replacing it with a checklist-style positioning block.
@@ -17,12 +19,21 @@ Make Vibe Remote easier to understand, easier to install, and easier for AI codi
   - `docs/INSTALL_FOR_AI_ZH.md`
 - Linked the AI-agent installation guides from the docs section without interrupting the landing-page narrative.
 - Updated package metadata and installer banner copy so the project no longer presents as Slack-only.
+- Added an npm entrypoint package under `npm/avibe`:
+  - `npx avibe` and globally installed `avibe` / `vibe` bootstrap the existing Python `vibe-remote` package.
+  - The npm package does not ship a second runtime; it installs or locates the real `vibe` command and delegates to it.
+  - The npm package skips its own `vibe` shim when resolving the real Python runtime to avoid recursion.
+  - `avibe init` and `avibe start` map to the default `vibe` startup flow.
+  - `avibe status`, `doctor`, `remote`, `upgrade`, `task`, `hook`, and other commands pass through to `vibe`.
+  - CI now tests the wrapper and validates the packed npm contents.
+  - A manual GitHub Actions workflow can publish `avibe` to npm with provenance after npm trusted publishing is configured.
 
 ## Next High-Leverage Work
 
-1. Add a tiny npm wrapper package named `vibe-remote` or `vibe-remote-cli` that delegates to the existing installer.
-   - Purpose: capture `npm install -g ...` muscle memory in the AI coding community.
-   - Constraint: do not ship a second runtime; keep Python / uv as the source of truth until a binary packaging decision is made.
+1. Publish the `avibe` npm package as a supplemental install entrypoint.
+   - Keep the main README / docs install path as the existing one-line curl / PowerShell installer.
+   - Document `npx avibe` and `npm install -g avibe && vibe` as optional Node-friendly alternatives after publish.
+   - Do not make npm the default public install copy unless the product distribution strategy changes explicitly.
 
 2. Add Homebrew distribution.
    - Short path: maintain a tap first.
