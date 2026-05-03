@@ -424,36 +424,14 @@ class CodexAgent(BaseAgent):
         request: AgentRequest,
     ) -> str:
         """Create a new Codex thread and return its threadId."""
-        _, _, _, agent_instructions = self._resolve_codex_agent_settings(request)
-
         params: Dict[str, Any] = {
             "cwd": request.working_path,
             "approvalPolicy": "never",
             "sandbox": "danger-full-access",
         }
-        platform = (
-            request.context.platform
-            or (request.context.platform_specific or {}).get("platform")
-            or self.controller.config.platform
-        )
-
-        instruction_parts: list[str] = []
-        if agent_instructions:
-            instruction_parts.append(agent_instructions)
-
-        if getattr(self.controller.config, "reply_enhancements", True):
-            from core.reply_enhancer import build_reply_enhancements_prompt
-
-            instruction_parts.append(
-                build_reply_enhancements_prompt(
-                    include_quick_replies=platform != "wechat",
-                    context=request.context,
-                    fallback_platform=platform,
-                )
-            )
-
-        if instruction_parts:
-            params["developerInstructions"] = "\n\n".join(part for part in instruction_parts if part)
+        developer_instructions = self._build_thread_developer_instructions(request)
+        if developer_instructions:
+            params["developerInstructions"] = developer_instructions
 
         resp = await transport.send_request("thread/start", params)
         # thread/start returns Thread directly OR may nest under "thread"
@@ -541,9 +519,13 @@ class CodexAgent(BaseAgent):
         )
         if persisted:
             try:
+                resume_params: Dict[str, Any] = {"threadId": persisted}
+                developer_instructions = self._build_thread_developer_instructions(request)
+                if developer_instructions:
+                    resume_params["developerInstructions"] = developer_instructions
                 resp = await transport.send_request(
                     "thread/resume",
-                    {"threadId": persisted},
+                    resume_params,
                 )
                 # thread/resume returns Thread directly OR may nest under "thread"
                 thread_id = resp.get("id", "")
@@ -559,6 +541,37 @@ class CodexAgent(BaseAgent):
                 logger.warning("Failed to resume Codex thread %s: %s, starting new", persisted, e)
 
         return await self._start_thread(transport, request)
+
+    def _build_thread_developer_instructions(self, request: AgentRequest) -> Optional[str]:
+        """Build Codex thread-level developer instructions for start/resume.
+
+        Codex treats these as session configuration, not appended chat history.
+        Passing the current value on resume refreshes stale Vibe Remote targeting
+        instructions without growing the thread transcript.
+        """
+        _, _, _, agent_instructions = self._resolve_codex_agent_settings(request)
+        platform = (
+            request.context.platform
+            or (request.context.platform_specific or {}).get("platform")
+            or self.controller.config.platform
+        )
+
+        instruction_parts: list[str] = []
+        if agent_instructions:
+            instruction_parts.append(agent_instructions)
+
+        if getattr(self.controller.config, "reply_enhancements", True):
+            from core.reply_enhancer import build_reply_enhancements_prompt
+
+            instruction_parts.append(
+                build_reply_enhancements_prompt(
+                    include_quick_replies=platform != "wechat",
+                    context=request.context,
+                    fallback_platform=platform,
+                )
+            )
+
+        return "\n\n".join(part for part in instruction_parts if part) or None
 
     async def _start_turn(
         self,

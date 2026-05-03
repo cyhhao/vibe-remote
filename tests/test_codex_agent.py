@@ -705,6 +705,57 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         params = transport.send_request.await_args.args[1]
         self.assertNotIn("If you generate an image with Codex", params["developerInstructions"])
 
+    async def test_resume_thread_refreshes_developer_instructions_without_appending(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
+        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent.sessions = SimpleNamespace(
+            get_agent_session_id=Mock(return_value="thread-existing"),
+        )
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={"is_dm": False},
+                user_id="U1",
+                channel_id="C1",
+                thread_id="171717.123",
+            ),
+            base_session_id="session-1",
+            session_key="slack::channel::C1::thread::171717.123",
+            subagent_name="reviewer",
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-existing"}}))
+
+        with patch.object(
+            _MODULE,
+            "load_codex_subagent",
+            return_value=SimpleNamespace(
+                developer_instructions="Focus on regressions.",
+                model=None,
+                reasoning_effort=None,
+            ),
+        ):
+            thread_id = await agent._start_or_resume_thread(transport, request)
+
+        self.assertEqual(thread_id, "thread-existing")
+        transport.send_request.assert_awaited_once()
+        method, params = transport.send_request.await_args.args
+        self.assertEqual(method, "thread/resume")
+        self.assertEqual(params["threadId"], "thread-existing")
+        developer_instructions = params["developerInstructions"]
+        self.assertEqual(developer_instructions.count("Focus on regressions."), 1)
+        self.assertEqual(developer_instructions.count("Default session key:"), 1)
+        self.assertIn(
+            "Default session key: `slack::channel::C1::thread::171717.123`",
+            developer_instructions,
+        )
+        self.assertIn("Channel-level session key: `slack::channel::C1`", developer_instructions)
+
     def test_build_input_adds_codex_generated_image_prompt_to_each_turn(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(reply_enhancements=True))
