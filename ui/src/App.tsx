@@ -71,7 +71,9 @@ function AppRoutes() {
         <Route path="/channels" element={<Navigate to="/groups" replace />} />
         <Route path="/users" element={<UserList />} />
         <Route path="/logs" element={<SettingsLogsPage standalone />} />
-        <Route path="/settings" element={<Navigate to="/settings/service" replace />} />
+        {/* No client-side route at /settings: Flask owns GET /settings as a
+            JSON API, so a hard refresh would hit the API instead of the SPA.
+            The Flask handler redirects browser-Accept hits to /settings/service. */}
         <Route path="/settings/service" element={<SettingsServicePage />} />
         <Route path="/settings/platforms" element={<SettingsPlatformsPage />} />
         <Route path="/settings/backends" element={<SettingsBackendsPage />} />

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 
-from flask import Flask, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, redirect, send_file, Response
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
@@ -710,6 +710,14 @@ def platforms_get():
 
 @app.route("/settings", methods=["GET"])
 def settings_get():
+    # /settings doubles as a backend JSON API and a user-facing URL the SPA
+    # owns (it lives under /settings/<page>). Browser navigations send
+    # Accept: text/html..., while fetch() callers from the SPA send Accept:
+    # */* (no explicit text/html), so we can distinguish the two and redirect
+    # bookmarked / hard-refreshed browser hits to the canonical settings page
+    # instead of serving raw JSON.
+    if "text/html" in request.headers.get("Accept", ""):
+        return redirect("/settings/service")
     from vibe import api
 
     return jsonify(api.get_settings(request.args.get("platform") or None))

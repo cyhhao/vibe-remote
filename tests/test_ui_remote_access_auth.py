@@ -801,3 +801,39 @@ def test_setup_host_with_reverse_proxy_header_is_not_local(monkeypatch, tmp_path
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_settings_get_redirects_browser_navigation_to_spa(monkeypatch, tmp_path):
+    """A browser bookmark / hard refresh of /settings sends Accept: text/html
+    and must be redirected to the SPA settings page rather than receiving the
+    JSON API payload, so the user lands in the UI as expected.
+    """
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/settings",
+        base_url="http://127.0.0.1:5123",
+        headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (301, 302, 303, 307, 308)
+    assert response.headers["Location"].endswith("/settings/service")
+
+
+def test_settings_get_returns_json_for_fetch_callers(monkeypatch, tmp_path):
+    """fetch() from the SPA hits /settings without an explicit text/html in
+    Accept; the handler must keep returning JSON so getSettings() works.
+    """
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config(tmp_path)
+
+    response = app.test_client().get(
+        "/settings",
+        base_url="http://127.0.0.1:5123",
+        headers={"Accept": "*/*"},
+    )
+
+    assert response.status_code == 200
+    assert response.is_json
