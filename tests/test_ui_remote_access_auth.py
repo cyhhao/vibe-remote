@@ -617,6 +617,42 @@ def test_remote_callback_rejects_when_remote_access_is_disabled(monkeypatch, tmp
     assert exchange_calls == []
 
 
+def test_remote_callback_accepts_html_escaped_state_separator(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    client = app.test_client()
+    oauth_cookie = ui_server._make_oauth_cookie(
+        config.remote_access.vibe_cloud.session_secret,
+        {
+            "state": "state-1",
+            "nonce": "nonce-1",
+            "code_verifier": "verifier-1",
+            "next": "/dashboard",
+            "exp": int(ui_server.datetime.now().timestamp()) + 300,
+        },
+    )
+    exchange_calls = []
+    client.set_cookie(ui_server.REMOTE_OAUTH_COOKIE_NAME, oauth_cookie, domain="alex.avibe.bot")
+
+    def exchange(cfg, code, verifier):
+        exchange_calls.append((code, verifier))
+        return {
+            "claims": {
+                "email": "alex@example.com",
+                "sub": "user-1",
+                "nonce": "nonce-1",
+            }
+        }
+
+    monkeypatch.setattr(remote_access, "exchange_oauth_code", exchange)
+
+    response = client.get("/auth/callback?code=test-code&amp;state=state-1", base_url="https://alex.avibe.bot")
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/dashboard"
+    assert exchange_calls == [("test-code", "verifier-1")]
+
+
 def test_remote_callback_sanitizes_protocol_relative_next(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _save_config(tmp_path)

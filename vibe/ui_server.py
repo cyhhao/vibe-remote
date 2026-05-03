@@ -389,6 +389,10 @@ def _safe_remote_redirect_target(value: Any) -> str:
     return urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
 
 
+def _oauth_callback_arg(name: str) -> str | None:
+    return request.args.get(name) or request.args.get(f"amp;{name}")
+
+
 def _redirect_to_vibe_cloud_login(config: V2Config):
     from vibe import remote_access
 
@@ -773,10 +777,10 @@ def remote_access_auth_callback():
     if not cloud.enabled:
         return jsonify({"error": "remote_access_disabled"}), 400
     oauth_state = _read_oauth_cookie(cloud.session_secret, request.cookies.get(REMOTE_OAUTH_COOKIE_NAME))
-    if not oauth_state or oauth_state.get("state") != request.args.get("state"):
+    if not oauth_state or oauth_state.get("state") != _oauth_callback_arg("state"):
         return jsonify({"error": "invalid_oauth_state"}), 400
     try:
-        result = remote_access.exchange_oauth_code(config, request.args.get("code", ""), oauth_state["code_verifier"])
+        result = remote_access.exchange_oauth_code(config, _oauth_callback_arg("code") or "", oauth_state["code_verifier"])
         claims = result["claims"]
     except Exception as exc:
         return jsonify({"error": "oauth_exchange_failed", "detail": str(exc)}), 400
