@@ -23,6 +23,7 @@ NPM entrypoint for Vibe Remote.
 Usage:
   npx avibe              Install Vibe Remote if needed, then start the setup wizard
   avibe                 Same as above after npm install -g avibe
+  vibe                  Same as above after npm install -g avibe
   avibe install         Install or refresh the underlying vibe-remote Python CLI
   avibe init            Start the setup wizard
   avibe start           Start Vibe Remote
@@ -96,6 +97,39 @@ function isExecutable(filePath) {
   }
 }
 
+function realpathOrNull(filePath) {
+  try {
+    return fs.realpathSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function isSelfWrapperCandidate(filePath) {
+  const currentScriptPath = realpathOrNull(__filename);
+  const candidatePath = realpathOrNull(filePath);
+
+  if (currentScriptPath && candidatePath && currentScriptPath === candidatePath) {
+    return true;
+  }
+
+  if (process.platform !== "win32") {
+    return false;
+  }
+
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension !== ".cmd" && extension !== ".bat") {
+    return false;
+  }
+
+  try {
+    const content = fs.readFileSync(filePath, "utf8").toLowerCase();
+    return content.includes("\\node_modules\\avibe\\bin\\avibe.js") || content.includes("/node_modules/avibe/bin/avibe.js");
+  } catch {
+    return false;
+  }
+}
+
 function resolveFromPath(command, env = process.env) {
   const pathValue = env.PATH || env.Path || "";
   for (const dir of pathValue.split(path.delimiter)) {
@@ -104,7 +138,7 @@ function resolveFromPath(command, env = process.env) {
     }
     for (const executableName of executableNames(command)) {
       const candidate = path.join(dir, executableName);
-      if (isExecutable(candidate)) {
+      if (isExecutable(candidate) && !isSelfWrapperCandidate(candidate)) {
         return candidate;
       }
     }

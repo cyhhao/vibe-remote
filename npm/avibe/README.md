@@ -16,15 +16,18 @@ Or install the npm entrypoint globally:
 
 ```bash
 npm install -g avibe
-avibe
+vibe
 ```
 
 The first run installs the underlying `vibe` command if needed, then starts the
-local Vibe Remote setup wizard.
+local Vibe Remote setup wizard. The global npm package exposes both `vibe` and
+`avibe`; `vibe` matches the rest of the Vibe Remote docs, while `avibe` remains
+available when you want to call the npm bootstrapper explicitly.
 
 ## Commands
 
 ```bash
+vibe            # start Vibe Remote after global npm install
 avibe install   # install or refresh the underlying vibe-remote Python CLI
 avibe init      # start the setup wizard
 avibe start     # start Vibe Remote
@@ -34,7 +37,7 @@ avibe remote    # configure remote Web UI access
 avibe upgrade   # upgrade the underlying vibe-remote Python package
 ```
 
-After bootstrap, `avibe` delegates to the real `vibe` command.
+After bootstrap, the npm entrypoint delegates to the real `vibe` command.
 
 ## Requirements
 

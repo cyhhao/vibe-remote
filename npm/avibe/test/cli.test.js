@@ -32,6 +32,16 @@ function writeFakeVibe(bin, label) {
   return vibePath;
 }
 
+function writeSelfNpmVibeShim(bin) {
+  const shimPath = path.join(bin, process.platform === "win32" ? "vibe.cmd" : "vibe");
+  if (process.platform === "win32") {
+    fs.writeFileSync(shimPath, '@echo off\r\nnode "%~dp0\\node_modules\\avibe\\bin\\avibe.js" %*\r\n');
+  } else {
+    fs.symlinkSync(cliPath, shimPath);
+  }
+  return shimPath;
+}
+
 function runCli(args, envOverrides = {}) {
   const env = {
     ...process.env,
@@ -113,6 +123,25 @@ test("ignores non-executable vibe files on PATH", { skip: process.platform === "
 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /working-vibe status/);
+});
+
+test("skips its own npm vibe shim before delegating", () => {
+  const temp = makeTempEnv();
+  const npmBin = path.join(temp.root, "npm-bin");
+  const runtimeBin = path.join(temp.root, "runtime-bin");
+  fs.mkdirSync(npmBin, { recursive: true });
+  fs.mkdirSync(runtimeBin, { recursive: true });
+  writeSelfNpmVibeShim(npmBin);
+  writeFakeVibe(runtimeBin, "runtime-vibe");
+
+  const result = runCli(["status"], {
+    HOME: temp.home,
+    USERPROFILE: temp.home,
+    PATH: `${npmBin}${path.delimiter}${runtimeBin}`,
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /runtime-vibe status/);
 });
 
 test("installs vibe when missing, then delegates", () => {

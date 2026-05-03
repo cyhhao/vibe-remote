@@ -14,7 +14,8 @@
     "url": "https://github.com/cyhhao/vibe-remote/issues"
   },
   "bin": {
-    "avibe": "./bin/avibe.js"
+    "avibe": "./bin/avibe.js",
+    "vibe": "./bin/avibe.js"
   },
   "files": [
     "bin/",

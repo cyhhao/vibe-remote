@@ -20,8 +20,9 @@ The canonical install path should remain the current one-line curl / PowerShell 
 - Linked the AI-agent installation guides from the docs section without interrupting the landing-page narrative.
 - Updated package metadata and installer banner copy so the project no longer presents as Slack-only.
 - Added an npm entrypoint package under `npm/avibe`:
-  - `npx avibe` and globally installed `avibe` bootstrap the existing Python `vibe-remote` package.
+  - `npx avibe` and globally installed `avibe` / `vibe` bootstrap the existing Python `vibe-remote` package.
   - The npm package does not ship a second runtime; it installs or locates the real `vibe` command and delegates to it.
+  - The npm package skips its own `vibe` shim when resolving the real Python runtime to avoid recursion.
   - `avibe init` and `avibe start` map to the default `vibe` startup flow.
   - `avibe status`, `doctor`, `remote`, `upgrade`, `task`, `hook`, and other commands pass through to `vibe`.
   - CI now tests the wrapper and validates the packed npm contents.
@@ -31,7 +32,7 @@ The canonical install path should remain the current one-line curl / PowerShell 
 
 1. Publish the `avibe` npm package as a supplemental install entrypoint.
    - Keep the main README / docs install path as the existing one-line curl / PowerShell installer.
-   - Document `npx avibe` and `npm install -g avibe && avibe` as optional Node-friendly alternatives after publish.
+   - Document `npx avibe` and `npm install -g avibe && vibe` as optional Node-friendly alternatives after publish.
    - Do not make npm the default public install copy unless the product distribution strategy changes explicitly.
 
 2. Add Homebrew distribution.
