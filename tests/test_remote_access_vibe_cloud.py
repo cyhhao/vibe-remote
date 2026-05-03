@@ -105,14 +105,54 @@ def test_pair_origin_service_follows_effective_ui_port(monkeypatch, tmp_path) ->
     assert remote_access.origin_service_for_pairing() == "http://127.0.0.1:15130"
 
 
-def test_pair_origin_service_uses_configured_ui_host(monkeypatch, tmp_path) -> None:
+def test_pair_origin_service_ignores_configured_ui_host(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()
     config.ui.setup_host = "192.168.2.3"
     config.ui.setup_port = 15130
     config.save()
 
-    assert remote_access.origin_service_for_pairing() == "http://192.168.2.3:15130"
+    assert remote_access.origin_service_for_pairing() == "http://127.0.0.1:15130"
+
+
+def test_pair_origin_service_preserves_localhost(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.ui.setup_host = "localhost"
+    config.ui.setup_port = 15130
+    config.save()
+
+    assert remote_access.origin_service_for_pairing() == "http://localhost:15130"
+
+
+def test_pair_origin_service_preserves_ipv6_loopback(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.ui.setup_host = "::1"
+    config.ui.setup_port = 15130
+    config.save()
+
+    assert remote_access.origin_service_for_pairing() == "http://[::1]:15130"
+
+
+def test_pair_origin_service_preserves_bracketed_ipv6_loopback(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.ui.setup_host = "[::1]"
+    config.ui.setup_port = 15130
+    config.save()
+
+    assert remote_access.origin_service_for_pairing() == "http://[::1]:15130"
+
+
+def test_pair_origin_service_uses_ipv6_loopback_for_ipv6_wildcard(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _config()
+    config.ui.setup_host = "::"
+    config.ui.setup_port = 15130
+    config.save()
+
+    assert remote_access.origin_service_for_pairing() == "http://[::1]:15130"
 
 
 def test_pair_persists_with_locked_incremental_config_save(monkeypatch) -> None:

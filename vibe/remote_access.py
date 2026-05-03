@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import ntpath
 import os
@@ -412,18 +413,28 @@ def _effective_ui_port(config: V2Config) -> int:
     return port
 
 
-def _origin_host_for_ui(config: V2Config) -> str:
-    host = (config.ui.setup_host or "127.0.0.1").strip()
-    if not host or host in {"0.0.0.0", "::", "[::]"}:
+def _origin_host_for_pairing(config: V2Config) -> str:
+    host = (config.ui.setup_host or "").strip()
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1].strip()
+    if host.lower() == "localhost":
+        return "localhost"
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
         return "127.0.0.1"
-    if ":" in host and not host.startswith("["):
-        return f"[{host}]"
-    return host
+
+    if address.is_loopback:
+        return f"[{address.compressed}]" if address.version == 6 else address.compressed
+    if address.is_unspecified and address.version == 6:
+        return "[::1]"
+    return "127.0.0.1"
 
 
 def origin_service_for_pairing(config: V2Config | None = None) -> str:
     config = config or V2Config.load()
-    return f"http://{_origin_host_for_ui(config)}:{_effective_ui_port(config)}"
+    return f"http://{_origin_host_for_pairing(config)}:{_effective_ui_port(config)}"
 
 
 def pair(pairing_key: str, backend_url: str, device_name: str = "Vibe Remote") -> dict[str, Any]:
