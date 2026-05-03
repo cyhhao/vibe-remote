@@ -1574,7 +1574,15 @@ def run_ui_server(host: str, port: int) -> None:
     for attempt in range(10):
         try:
             _server = make_server(host, port, app, threaded=True)
-            _reconcile_remote_access_for_ui_start(config)
+            # Reconcile remote_access in the background so cloudflared download/
+            # connector start does not block /health and the rest of the UI
+            # from coming up after restart/reload.
+            threading.Thread(
+                target=_reconcile_remote_access_for_ui_start,
+                args=(config,),
+                daemon=True,
+                name="remote-access-reconcile-on-start",
+            ).start()
             _server.serve_forever()
             break
         except OSError as e:
