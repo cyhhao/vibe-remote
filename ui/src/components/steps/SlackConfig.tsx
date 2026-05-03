@@ -5,24 +5,28 @@ import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
-import { EyebrowBadge, WizardCard } from '../visual';
+import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 
 interface SlackConfigProps {
   data: any;
   onNext: (data: any) => void;
-  onBack: () => void;
+  onBack?: () => void;
+  embedded?: boolean;
+  onApply?: (data: any) => Promise<void> | void;
+  onCancel?: () => void;
 }
 
 // Mirrors design.pen XCWAT (Slack creds wizard step): WizardCard 920 wide,
 // sStep accordion rows with mint-bordered active row + faint border collapsed
 // rows, navigation row with chevron-left back and mint pill next.
-export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }) => {
+export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, embedded = false, onApply, onCancel }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
   const [botToken, setBotToken] = useState(data.slack?.bot_token || data.slackBotToken || '');
   const [appToken, setAppToken] = useState(data.slack?.app_token || data.slackAppToken || '');
   const [checking, setChecking] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
   const [manifest, setManifest] = useState<string>('');
   const [manifestCompact, setManifestCompact] = useState<string>('');
@@ -153,38 +157,24 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
     Boolean(authResult?.ok),
   ].filter(Boolean).length;
 
-  return (
-    <div className="flex w-full justify-center">
-      <WizardCard className="gap-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-2">
-            <EyebrowBadge tone="mint">04 — Slack</EyebrowBadge>
-            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
-              {t('slackConfig.title')}
-            </h2>
-            <p className="max-w-[560px] text-[14px] leading-[1.55] text-muted">
-              {t('slackConfig.selfHostDescription')}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
-            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
-              {completedCount} / 4
-            </span>
-            <div className="flex gap-1">
-              {[0, 1, 2, 3].map((i) => (
-                <span
-                  key={i}
-                  className={clsx(
-                    'h-1 w-5 rounded-full',
-                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
-                  )}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+  const buildSubmitData = () => ({
+    slack: { ...data.slack, bot_token: botToken, app_token: appToken },
+    mode: 'self_host',
+  });
 
-        <div className="flex flex-col gap-3">
+  const handleApply = async () => {
+    if (!onApply) return;
+    setApplying(true);
+    try {
+      await onApply(buildSubmitData());
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const stepShells = (
+    <>
+          {/* steps content */}
           {/* Step 1 */}
           <StepShell active={expandedSteps[1]}>
             <StepHeader step={1} title={t('slackConfig.step1Title')} icon={<Plus size={16} className="text-cyan" />} />
@@ -363,7 +353,56 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack }
               </div>
             )}
           </StepShell>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <EmbeddedConfigShell
+        total={4}
+        completed={completedCount}
+        canApply={isValid}
+        applying={applying}
+        onApply={() => void handleApply()}
+        onCancel={() => onCancel?.()}
+      >
+        {stepShells}
+      </EmbeddedConfigShell>
+    );
+  }
+
+  return (
+    <div className="flex w-full justify-center">
+      <WizardCard className="gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-2">
+            <EyebrowBadge tone="mint">04 — Slack</EyebrowBadge>
+            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
+              {t('slackConfig.title')}
+            </h2>
+            <p className="max-w-[560px] text-[14px] leading-[1.55] text-muted">
+              {t('slackConfig.selfHostDescription')}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
+            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
+              {completedCount} / 4
+            </span>
+            <div className="flex gap-1">
+              {[0, 1, 2, 3].map((i) => (
+                <span
+                  key={i}
+                  className={clsx(
+                    'h-1 w-5 rounded-full',
+                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
+                  )}
+                />
+              ))}
+            </div>
+          </div>
         </div>
+
+        <div className="flex flex-col gap-3">{stepShells}</div>
 
         <div className="flex items-center justify-between border-t border-border pt-4">
           <button

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink, KeyRound, Link2, Power, RefreshCcw, ShieldCheck } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { useApi } from '../context/ApiContext';
 import { useToast } from '../context/ToastContext';
 
@@ -124,9 +124,28 @@ export const RemoteAccess: React.FC<{ embedded?: boolean }> = ({ embedded = fals
     return (
       <section className="overflow-hidden rounded-md border border-border bg-surface-2/45">
         <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
-          <div className="min-w-0 space-y-1">
+          <div className="min-w-0 space-y-2">
             <h2 className="text-[13px] font-semibold text-foreground">{t('remoteAccess.title')}</h2>
-            <p className="max-w-2xl text-[11px] leading-relaxed text-muted">{t('remoteAccess.subtitle')}</p>
+            <p className="max-w-2xl text-[11px] leading-relaxed text-muted">
+              <Trans
+                i18nKey="remoteAccess.subtitleWithLink"
+                components={{
+                  cloud: (
+                    <a
+                      href={VIBE_CLOUD_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-0.5 font-medium text-cyan hover:underline"
+                    />
+                  ),
+                }}
+              />
+            </p>
+            <ol className="ml-4 list-decimal space-y-1 text-[11px] leading-relaxed text-muted">
+              <li>{t('remoteAccess.flowStep1')}</li>
+              <li>{t('remoteAccess.flowStep2')}</li>
+              <li>{t('remoteAccess.flowStep3')}</li>
+            </ol>
           </div>
           <button
             className="inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-border bg-surface-3 px-3 text-[12px] text-foreground transition hover:border-border-strong"
@@ -199,7 +218,18 @@ export const RemoteAccess: React.FC<{ embedded?: boolean }> = ({ embedded = fals
                 <CheckCircle2 className="size-3.5" />
                 {t('remoteAccess.configuredBadge')}
               </div>
-              {publicUrl && <div className="mt-1 truncate font-mono text-[11px] text-muted">{publicUrl}</div>}
+              {publicUrl && (
+                <a
+                  href={publicUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex max-w-full items-center gap-1 truncate font-mono text-[11px] text-cyan hover:underline"
+                  title={publicUrl}
+                >
+                  <span className="truncate">{publicUrl}</span>
+                  <ExternalLink className="size-3 shrink-0" />
+                </a>
+              )}
             </div>
             <div className="flex gap-2">
               <button

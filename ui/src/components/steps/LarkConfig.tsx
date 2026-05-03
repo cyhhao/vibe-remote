@@ -23,7 +23,7 @@ import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
-import { EyebrowBadge, WizardCard } from '../visual';
+import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 
 const LARK_PERMISSIONS_JSON = `{
   "scopes": {
@@ -51,12 +51,15 @@ const LARK_PERMISSIONS_JSON = `{
 interface LarkConfigProps {
   data: any;
   onNext: (data: any) => void;
-  onBack: () => void;
+  onBack?: () => void;
+  embedded?: boolean;
+  onApply?: (data: any) => Promise<void> | void;
+  onCancel?: () => void;
 }
 
 // Mirrors design.pen XCWAT (Slack creds wizard step) adapted for Lark/Feishu.
 // Adds a domain selector ahead of the 5-step accordion. WizardCard 920, mint eyebrow.
-export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) => {
+export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, embedded = false, onApply, onCancel }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
@@ -64,6 +67,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
   const [appId, setAppId] = useState(data.lark?.app_id || '');
   const [appSecret, setAppSecret] = useState(data.lark?.app_secret || '');
   const [checking, setChecking] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
   const [wsStatus, setWsStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [chats, setChats] = useState<any[]>([]);
@@ -229,37 +233,29 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
     expandedSteps[5],
   ].filter(Boolean).length;
 
-  return (
-    <div className="flex w-full justify-center">
-      <WizardCard className="gap-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-2">
-            <EyebrowBadge tone="mint">Lark / Feishu</EyebrowBadge>
-            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
-              {t('larkConfig.title')}
-            </h2>
-            <p className="max-w-[560px] text-[14px] leading-[1.55] text-muted">
-              {t('larkConfig.subtitle')}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
-            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
-              {completedCount} / 5
-            </span>
-            <div className="flex gap-1">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <span
-                  key={i}
-                  className={clsx(
-                    'h-1 w-4 rounded-full',
-                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
-                  )}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+  const buildSubmitData = () => ({
+    platform: 'lark',
+    lark: {
+      ...(data.lark || {}),
+      app_id: appId,
+      app_secret: appSecret,
+      domain,
+    },
+  });
 
+  const handleApply = async () => {
+    if (!onApply) return;
+    setApplying(true);
+    try {
+      api.larkTempWsStop().catch(() => {});
+      await onApply(buildSubmitData());
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const bodyContent = (
+    <>
         {/* Domain selector */}
         <div className="space-y-2 rounded-xl border border-border bg-background px-5 py-4">
           <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
@@ -518,6 +514,56 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
             )}
           </StepShell>
         </div>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <EmbeddedConfigShell
+        total={5}
+        completed={completedCount}
+        canApply={isValid}
+        applying={applying}
+        onApply={() => void handleApply()}
+        onCancel={() => onCancel?.()}
+      >
+        {bodyContent}
+      </EmbeddedConfigShell>
+    );
+  }
+
+  return (
+    <div className="flex w-full justify-center">
+      <WizardCard className="gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-2">
+            <EyebrowBadge tone="mint">Lark / Feishu</EyebrowBadge>
+            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
+              {t('larkConfig.title')}
+            </h2>
+            <p className="max-w-[560px] text-[14px] leading-[1.55] text-muted">
+              {t('larkConfig.subtitle')}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
+            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
+              {completedCount} / 5
+            </span>
+            <div className="flex gap-1">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <span
+                  key={i}
+                  className={clsx(
+                    'h-1 w-4 rounded-full',
+                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
+                  )}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {bodyContent}
 
         <div className="flex items-center justify-between border-t border-border pt-4">
           <button
@@ -532,15 +578,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack }) 
             type="button"
             onClick={() => {
               api.larkTempWsStop().catch(() => {});
-              onNext({
-                platform: 'lark',
-                lark: {
-                  ...(data.lark || {}),
-                  app_id: appId,
-                  app_secret: appSecret,
-                  domain,
-                },
-              });
+              onNext(buildSubmitData());
             }}
             disabled={!isValid}
             className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"

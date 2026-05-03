@@ -10,3 +10,4 @@ export { WizardCard } from './WizardCard';
 export { WizardChrome } from './WizardChrome';
 export { StatCard } from './StatCard';
 export { StepCard } from './StepCard';
+export { EmbeddedConfigShell } from './EmbeddedConfigShell';

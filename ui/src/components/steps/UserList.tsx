@@ -177,7 +177,7 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
   };
 
   const handleCopy = async (code: string) => {
-    const copied = await copyTextToClipboard(code);
+    const copied = await copyTextToClipboard(`bind ${code}`);
     if (!copied) {
       showToast(t('common.copyFailed'), 'error');
       return;
@@ -314,7 +314,7 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
                   return (
                     <div key={bc.code} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
                       <div className="flex flex-wrap items-center gap-2">
-                        <code className="rounded border border-border bg-surface px-2 py-0.5 font-mono text-[12px] text-foreground">{bc.code}</code>
+                        <code className="rounded border border-border bg-surface px-2 py-0.5 font-mono text-[12px] text-foreground">bind {bc.code}</code>
                         <span
                           className={clsx(
                             'rounded-full border px-2 py-0.5 text-[10px] font-mono font-bold tracking-[0.12em]',
@@ -392,7 +392,7 @@ const ActiveCodeBox: React.FC<{
         style={{ borderColor: 'rgba(255,200,87,0.33)' }}
         title={t('bindCode.copy')}
       >
-        <span className="font-mono text-[18px] font-bold tracking-[0.12em] text-gold">{code.code}</span>
+        <span className="font-mono text-[18px] font-bold tracking-[0.12em] text-gold">bind {code.code}</span>
         {copied ? (
           <Check size={14} className="shrink-0 text-mint" />
         ) : (

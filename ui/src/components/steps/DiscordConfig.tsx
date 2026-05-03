@@ -20,12 +20,15 @@ import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
-import { EyebrowBadge, WizardCard } from '../visual';
+import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 
 interface DiscordConfigProps {
   data: any;
   onNext: (data: any) => void;
-  onBack: () => void;
+  onBack?: () => void;
+  embedded?: boolean;
+  onApply?: (data: any) => Promise<void> | void;
+  onCancel?: () => void;
 }
 
 const getDiscordGuildAllowlist = (source: any): string[] => {
@@ -35,12 +38,13 @@ const getDiscordGuildAllowlist = (source: any): string[] => {
 
 // Mirrors design.pen XCWAT (Slack creds wizard step) adapted for Discord.
 // 920-wide WizardCard, mint eyebrow, accordion rows with mint-bordered active row.
-export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBack }) => {
+export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBack, embedded = false, onApply, onCancel }) => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
   const [botToken, setBotToken] = useState(data.discord?.bot_token || '');
   const [checking, setChecking] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
   const [guilds, setGuilds] = useState<any[]>([]);
   const [selectedGuilds, setSelectedGuilds] = useState<string[]>(getDiscordGuildAllowlist(data));
@@ -183,38 +187,28 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
     isValid,
   ].filter(Boolean).length;
 
-  return (
-    <div className="flex w-full justify-center">
-      <WizardCard className="gap-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-2">
-            <EyebrowBadge tone="mint">Discord</EyebrowBadge>
-            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
-              {t('discordConfig.title')}
-            </h2>
-            <p className="max-w-[560px] text-[14px] leading-[1.55] text-muted">
-              {t('discordConfig.subtitle')}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
-            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
-              {completedCount} / 4
-            </span>
-            <div className="flex gap-1">
-              {[0, 1, 2, 3].map((i) => (
-                <span
-                  key={i}
-                  className={clsx(
-                    'h-1 w-5 rounded-full',
-                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
-                  )}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+  const buildSubmitData = () => ({
+    platform: 'discord',
+    discord: {
+      ...(data.discord || {}),
+      bot_token: botToken,
+    },
+    discordGuildAllowlist: selectedGuilds,
+    discordGuildAllowlistTouched: guildSelectionTouched,
+  });
 
-        <div className="flex flex-col gap-3">
+  const handleApply = async () => {
+    if (!onApply) return;
+    setApplying(true);
+    try {
+      await onApply(buildSubmitData());
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const stepShells = (
+    <>
           {/* Step 1: Create application */}
           <StepShell active={expandedSteps[1]}>
             <StepHeader step={1} title={t('discordConfig.step1Title')} icon={<Plus size={16} className="text-cyan" />} />
@@ -439,7 +433,56 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
               </div>
             )}
           </StepShell>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <EmbeddedConfigShell
+        total={4}
+        completed={completedCount}
+        canApply={isValid}
+        applying={applying}
+        onApply={() => void handleApply()}
+        onCancel={() => onCancel?.()}
+      >
+        {stepShells}
+      </EmbeddedConfigShell>
+    );
+  }
+
+  return (
+    <div className="flex w-full justify-center">
+      <WizardCard className="gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-2">
+            <EyebrowBadge tone="mint">Discord</EyebrowBadge>
+            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
+              {t('discordConfig.title')}
+            </h2>
+            <p className="max-w-[560px] text-[14px] leading-[1.55] text-muted">
+              {t('discordConfig.subtitle')}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
+            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
+              {completedCount} / 4
+            </span>
+            <div className="flex gap-1">
+              {[0, 1, 2, 3].map((i) => (
+                <span
+                  key={i}
+                  className={clsx(
+                    'h-1 w-5 rounded-full',
+                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
+                  )}
+                />
+              ))}
+            </div>
+          </div>
         </div>
+
+        <div className="flex flex-col gap-3">{stepShells}</div>
 
         <div className="flex items-center justify-between border-t border-border pt-4">
           <button
@@ -452,17 +495,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
           </button>
           <button
             type="button"
-            onClick={() =>
-              onNext({
-                platform: 'discord',
-                discord: {
-                  ...(data.discord || {}),
-                  bot_token: botToken,
-                },
-                discordGuildAllowlist: selectedGuilds,
-                discordGuildAllowlistTouched: guildSelectionTouched,
-              })
-            }
+            onClick={() => onNext(buildSubmitData())}
             disabled={!isValid}
             className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >

@@ -14,21 +14,25 @@ import {
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
-import { EyebrowBadge, WizardCard } from '../visual';
+import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 
 interface WeChatConfigProps {
   data: Record<string, any>;
   onNext: (data: Record<string, any>) => void;
-  onBack: () => void;
+  onBack?: () => void;
+  embedded?: boolean;
+  onApply?: (data: Record<string, any>) => Promise<void> | void;
+  onCancel?: () => void;
 }
 
 const QR_POLL_INTERVAL_MS = 5000;
 
 // Mirrors design.pen XCWAT visual treatment for the QR-driven WeChat onboarding.
 // Three-stop horizontal stepper, mint-bordered QR card, mint primary actions.
-export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack }) => {
+export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack, embedded = false, onApply, onCancel }) => {
   const { t } = useTranslation();
   const api = useApi();
+  const [applying, setApplying] = useState(false);
 
   const [loginState, setLoginState] = useState<
     'idle' | 'qr_ready' | 'scanning' | 'confirming' | 'connected' | 'error'
@@ -188,37 +192,27 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
 
   const stepLabels = [t('wechatConfig.stepStart'), t('wechatConfig.stepScan'), t('wechatConfig.stepDone')];
 
-  return (
-    <div className="flex w-full justify-center">
-      <WizardCard className="gap-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-2">
-            <EyebrowBadge tone="mint">WeChat</EyebrowBadge>
-            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
-              {t('wechatConfig.title')}
-            </h2>
-            <p className="max-w-[560px] text-[14px] leading-[1.55] text-muted">
-              {t('wechatConfig.subtitle')}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
-            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
-              {completedDots} / 3
-            </span>
-            <div className="flex gap-1">
-              {[0, 1, 2].map((i) => (
-                <span
-                  key={i}
-                  className={clsx(
-                    'h-1 w-6 rounded-full',
-                    i < completedDots ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
-                  )}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+  const buildSubmitData = () => ({
+    platform: 'wechat',
+    wechat: {
+      ...(data.wechat || {}),
+      bot_token: botToken,
+      base_url: baseUrl,
+    },
+  });
 
+  const handleApply = async () => {
+    if (!onApply) return;
+    setApplying(true);
+    try {
+      await onApply(buildSubmitData());
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const bodyContent = (
+    <>
         {/* Horizontal stepper */}
         <div className="rounded-xl border border-border bg-background px-5 py-4">
           <div className="flex items-center justify-between gap-3">
@@ -384,6 +378,56 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
             </div>
           )}
         </div>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <EmbeddedConfigShell
+        total={3}
+        completed={completedDots}
+        canApply={canProceed}
+        applying={applying}
+        onApply={() => void handleApply()}
+        onCancel={() => onCancel?.()}
+      >
+        {bodyContent}
+      </EmbeddedConfigShell>
+    );
+  }
+
+  return (
+    <div className="flex w-full justify-center">
+      <WizardCard className="gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-2">
+            <EyebrowBadge tone="mint">WeChat</EyebrowBadge>
+            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">
+              {t('wechatConfig.title')}
+            </h2>
+            <p className="max-w-[560px] text-[14px] leading-[1.55] text-muted">
+              {t('wechatConfig.subtitle')}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
+            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
+              {completedDots} / 3
+            </span>
+            <div className="flex gap-1">
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  className={clsx(
+                    'h-1 w-6 rounded-full',
+                    i < completedDots ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
+                  )}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {bodyContent}
 
         <div className="flex items-center justify-between border-t border-border pt-4">
           <button
@@ -396,16 +440,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
           </button>
           <button
             type="button"
-            onClick={() =>
-              onNext({
-                platform: 'wechat',
-                wechat: {
-                  ...(data.wechat || {}),
-                  bot_token: botToken,
-                  base_url: baseUrl,
-                },
-              })
-            }
+            onClick={() => onNext(buildSubmitData())}
             disabled={!canProceed}
             className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
