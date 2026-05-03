@@ -118,6 +118,8 @@ export const Dashboard: React.FC = () => {
     setLoading(true);
     try {
       await control(action);
+    } catch (e) {
+      console.error('Service control action failed', e);
     } finally {
       setLoading(false);
     }

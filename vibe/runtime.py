@@ -334,11 +334,16 @@ def write_status(state, detail=None, service_pid=None, ui_pid=None):
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     # Preserve started_at across consecutive "running" writes so the UI can
     # show a stable service start time. Reset it on transitions in/out of
-    # running state.
+    # running state, AND when the service PID has changed (e.g. a forced
+    # restart that goes running -> running but with a new process).
     started_at = None
     if state == "running":
         previous = read_json(paths.get_runtime_status_path()) or {}
-        if previous.get("state") == "running" and previous.get("started_at"):
+        if (
+            previous.get("state") == "running"
+            and previous.get("started_at")
+            and previous.get("service_pid") == service_pid
+        ):
             started_at = previous["started_at"]
         else:
             started_at = now_iso
