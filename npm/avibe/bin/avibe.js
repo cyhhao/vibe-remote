@@ -83,7 +83,14 @@ function executableNames(name) {
 function isExecutable(filePath) {
   try {
     const stat = fs.statSync(filePath);
-    return stat.isFile();
+    if (!stat.isFile()) {
+      return false;
+    }
+    if (process.platform === "win32") {
+      return true;
+    }
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return true;
   } catch {
     return false;
   }

@@ -96,6 +96,25 @@ test("delegates commands to an existing vibe binary", () => {
   assert.match(result.stdout, /existing-vibe status --json/);
 });
 
+test("ignores non-executable vibe files on PATH", { skip: process.platform === "win32" }, () => {
+  const temp = makeTempEnv();
+  const staleBin = path.join(temp.root, "stale-bin");
+  const workingBin = path.join(temp.root, "working-bin");
+  fs.mkdirSync(staleBin, { recursive: true });
+  fs.mkdirSync(workingBin, { recursive: true });
+  fs.writeFileSync(path.join(staleBin, "vibe"), "not executable\n", { mode: 0o644 });
+  writeFakeVibe(workingBin, "working-vibe");
+
+  const result = runCli(["status"], {
+    HOME: temp.home,
+    USERPROFILE: temp.home,
+    PATH: `${staleBin}${path.delimiter}${workingBin}`,
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /working-vibe status/);
+});
+
 test("installs vibe when missing, then delegates", () => {
   const temp = makeTempEnv();
   const installCommand =
