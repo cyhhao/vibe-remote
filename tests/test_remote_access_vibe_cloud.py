@@ -198,6 +198,18 @@ def test_observed_cloudflared_origin_service_reads_only_log_tail(monkeypatch, tm
     assert remote_access._observed_cloudflared_origin_service() == "http://new.local:5123"
 
 
+def test_observed_cloudflared_origin_service_uses_latest_mixed_log_format(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    remote_access._cloudflared_stderr_path().parent.mkdir(parents=True, exist_ok=True)
+    remote_access._cloudflared_stderr_path().write_text(
+        'ERR originService=http://100.97.103.112:5123\n'
+        'INF Updated to new configuration config="{\\"ingress\\":[{\\"service\\":\\"http://127.0.0.1:5123\\"}]}"\n',
+        encoding="utf-8",
+    )
+
+    assert remote_access._observed_cloudflared_origin_service() == "http://127.0.0.1:5123"
+
+
 def test_report_runtime_status_posts_to_backend(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()

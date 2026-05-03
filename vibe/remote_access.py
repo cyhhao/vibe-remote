@@ -260,16 +260,15 @@ def _observed_cloudflared_origin_service() -> str | None:
     content = _read_text_tail(_cloudflared_stderr_path(), STATUS_LOG_TAIL_BYTES)
     if content is None:
         return None
-    patterns = (
-        r'originService=([^\s"]+)',
-        r'\\"service\\":\\"(http://[^"\\]+)\\"',
-        r'"service":"(http://[^"]+)"',
+    pattern = re.compile(
+        r'originService=([^\s"]+)'
+        r'|\\"service\\":\\"(http://[^"\\]+)\\"'
+        r'|(?<!\\)"service":"(http://[^"]+)"'
     )
-    for pattern in patterns:
-        matches = re.findall(pattern, content)
-        if matches:
-            return str(matches[-1])
-    return None
+    last_origin = None
+    for match in pattern.finditer(content):
+        last_origin = next((group for group in match.groups() if group), None)
+    return str(last_origin) if last_origin else None
 
 
 def _running_signature(pid: int | None) -> dict[str, str] | None:
