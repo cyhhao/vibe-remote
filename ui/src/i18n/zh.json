@@ -337,6 +337,8 @@
     "botToken": "机器人令牌",
     "botTokenPlaceholder": "粘贴 Telegram 机器人令牌",
     "botTokenHint": "先通过 @BotFather 创建机器人，再把令牌粘贴到这里。",
+    "proxyUrl": "代理地址（可选）",
+    "proxyUrlHint": "SOCKS5、SOCKS4、HTTP 或 HTTPS 代理。如 Telegram 可直接访问，请留空。",
     "validateToken": "验证令牌",
     "tokenValidated": "令牌验证成功",
     "authFailed": "验证失败",

@@ -337,6 +337,8 @@
     "botToken": "Bot Token",
     "botTokenPlaceholder": "Paste your Telegram bot token",
     "botTokenHint": "Create a bot with @BotFather, then paste the token here.",
+    "proxyUrl": "Proxy URL (optional)",
+    "proxyUrlHint": "SOCKS5, SOCKS4, HTTP or HTTPS proxy. Leave empty if Telegram is accessible directly.",
     "validateToken": "Validate Token",
     "tokenValidated": "Token validated",
     "authFailed": "Validation failed",

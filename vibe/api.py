@@ -661,9 +661,9 @@ def discord_auth_test(bot_token: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def telegram_auth_test(bot_token: str) -> dict:
+def telegram_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
     try:
-        return {"ok": True, "response": asyncio.run(_telegram_get_me(bot_token))}
+        return {"ok": True, "response": asyncio.run(_telegram_get_me(bot_token, proxy_url))}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

@@ -1007,7 +1007,10 @@ def telegram_auth_test():
     from vibe import api
 
     payload = request.json or {}
-    result = api.telegram_auth_test(payload.get("bot_token", ""))
+    result = api.telegram_auth_test(
+        payload.get("bot_token", ""),
+        proxy_url=payload.get("proxy_url")
+    )
     return jsonify(result)
 
 
