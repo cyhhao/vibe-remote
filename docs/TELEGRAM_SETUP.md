@@ -121,3 +121,47 @@ The wizard exposes two important Telegram defaults:
 **Logs:** `~/.vibe_remote/logs/vibe_remote.log`
 
 **Diagnostics:** `vibe doctor`
+
+## Using a Proxy
+
+If Telegram API is blocked in your region, you can configure a proxy server.
+
+### Configuration
+
+Add `proxy_url` to your config in `~/.vibe_remote/config/config.json`:
+
+```json
+{
+  "mode": "self_host",
+  "platforms": {
+    "telegram": {
+      "bot_token": "YOUR_BOT_TOKEN",
+      "proxy_url": "socks5://user:password@proxy.example.com:1080"
+    }
+  }
+}
+```
+
+### Supported Proxy Types
+
+| Scheme | Type |
+|--------|------|
+| `socks5://` | SOCKS5 proxy |
+| `socks4://` | SOCKS4 proxy |
+| `http://` | HTTP proxy |
+| `https://` | HTTPS proxy |
+
+### Fallback Behavior
+
+If the proxy is unavailable:
+1. Vibe Remote logs a warning
+2. After 3 failed attempts, switches to direct connection
+3. When proxy becomes available again, automatically reconnects via proxy
+
+### Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| Bot can't connect | Check proxy URL format and credentials |
+| Works then stops | Proxy may be down, direct fallback is automatic |
+| Token validation fails | Verify proxy allows connections to api.telegram.org |
