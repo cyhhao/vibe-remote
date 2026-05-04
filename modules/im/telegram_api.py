@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import aiohttp
+from aiohttp_socks import ProxyConnector
 
 
 def _api_url(bot_token: str, method: str) -> str:
@@ -29,13 +30,13 @@ async def call_api(
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     connector = None
     if proxy_url:
-        connector = aiohttp.TCPConnector()
+        connector = ProxyConnector.from_url(proxy_url)
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         if form is not None:
-            async with session.post(_api_url(bot_token, method), data=form, proxy=proxy_url) as resp:
+            async with session.post(_api_url(bot_token, method), data=form) as resp:
                 data = await resp.json()
         else:
-            async with session.post(_api_url(bot_token, method), json=payload or {}, proxy=proxy_url) as resp:
+            async with session.post(_api_url(bot_token, method), json=payload or {}) as resp:
                 data = await resp.json()
     if not data.get("ok"):
         raise RuntimeError(data.get("description") or f"Telegram API call failed: {method}")
@@ -64,9 +65,9 @@ async def download_file(bot_token: str, file_path: str, *, timeout_seconds: int 
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     connector = None
     if proxy_url:
-        connector = aiohttp.TCPConnector()
+        connector = ProxyConnector.from_url(proxy_url)
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-        async with session.get(_file_url(bot_token, file_path), proxy=proxy_url) as resp:
+        async with session.get(_file_url(bot_token, file_path)) as resp:
             resp.raise_for_status()
             return await resp.read()
 

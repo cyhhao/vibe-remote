@@ -124,11 +124,15 @@ The wizard exposes two important Telegram defaults:
 
 ## Using a Proxy
 
-If Telegram API is blocked in your region, you can configure a proxy server.
+If Telegram API is blocked in your region, you can configure a proxy server. The easiest way is to set it up in the setup wizard: enter the proxy URL in the "Proxy URL" field before validating your bot token.
 
-### Configuration
+### Configuration via Setup Wizard
 
-Add `proxy_url` to your config in `~/.vibe_remote/config/config.json`:
+In the Telegram setup wizard (Step 2: Paste the Token), you'll see a "Proxy URL" field below the bot token input. Enter your proxy URL there and click "Validate Token" — the validation will use the proxy automatically.
+
+### Configuration via Config File
+
+Alternatively, add `proxy_url` to your config in `~/.vibe_remote/config/config.json`:
 
 ```json
 {

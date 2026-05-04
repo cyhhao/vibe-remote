@@ -744,10 +744,10 @@ def _discord_api_get(bot_token: str, path: str) -> dict:
         return json.loads(payload)
 
 
-async def _telegram_get_me(bot_token: str) -> dict:
+async def _telegram_get_me(bot_token: str, proxy_url: str | None = None) -> dict:
     from modules.im import telegram_api
 
-    result = await telegram_api.get_me(bot_token)
+    result = await telegram_api.get_me(bot_token, proxy_url=proxy_url)
     return result.get("result") or {}
 
 
