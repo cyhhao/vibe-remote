@@ -110,6 +110,20 @@ Not an agent framework. Not a hosted coding VM. Vibe Remote is the remote-contro
 
 ---
 
+## Meet Vibey
+
+<div align="center">
+<img src="assets/mascot/cloud-tuanzi.png" alt="Vibey — the gaseous consciousness inside Vibe Remote" width="220"/>
+</div>
+
+Lives in your Slack, Discord, Telegram, Lark, or WeChat. Reads the room. Picks up where you left off. Asks the right question when it's not sure. Goes quiet when you're heads-down. Ships at 2am because that's when the vibe hits — then leaves a note about what it touched.
+
+> Vibe Remote is the wire. Vibey is the colleague on the other end.
+
+Forgets nothing. Holds opinions. Says thanks when you fix its bugs.
+
+---
+
 ## Why Vibe Remote over OpenClaw?
 
 | | Vibe Remote | OpenClaw |
