@@ -167,14 +167,18 @@ class TelegramBot(BaseIMClient):
     async def _run(self) -> None:
         self._loop = asyncio.get_running_loop()
         try:
-            self._bot_user = (await telegram_api.get_me(self.config.bot_token)).get("result")
+            self._bot_user = (await telegram_api.get_me(self.config.bot_token, proxy_url=self.config.proxy_url)).get("result")
             logger.info("Telegram bot connected as @%s", self._bot_user.get("username") if self._bot_user else "unknown")
             if self._on_ready:
                 await self._on_ready()
 
             while not self._stop_event.is_set():
                 try:
-                    updates = await telegram_api.get_updates(self.config.bot_token, self._offset)
+                    updates = await telegram_api.get_updates(
+                        self.config.bot_token,
+                        self._offset,
+                        proxy_url=self.config.proxy_url,
+                    )
                     for update in updates.get("result", []):
                         await self._wait_for_update_capacity()
                         self._offset = int(update["update_id"]) + 1
