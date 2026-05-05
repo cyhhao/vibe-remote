@@ -1,0 +1,44 @@
+# P2 — retry with built-in image_gen tool, no CLI fallback
+# Codex session: 13:43:54 (rollout-2026-05-03T13-43-54-019dec5d-5bc9-7991-b26a-cb71d6f8a8d3.jsonl)
+
+请用你的内置 image_gen 工具(built-in tool,不需要 OPENAI_API_KEY)生成三张吉祥物候选形象图。**不要使用 CLI fallback 或 scripts/image_gen.py**,就用默认的内置 image_gen 工具,一次一张,共三张。
+
+## 背景
+Vibe Remote 是把 AI agent 接入 Slack/Discord/Telegram/飞书/微信的中间件。我们想给它一个可爱的拟人吉祥物,中文叫'团子',英文叫 Vibey。形象灵感来自一团有意识的气体云,但要做成完全原创设计。
+
+## 通用设计要求(三张共通)
+- 一团有意识的气态生物,圆滚滚一团,半透明 + 微微发光
+- 一对可爱的圆眼睛(像宫崎骏煤炭精灵那种简单的圆点眼),温和友好
+- 内部隐约有 3-5 个柔和的发光点(代表它接入的多个 IM 平台,但不要明显的彩色球分布,做成模糊的内部光晕)
+- 卡通治愈系扁平风格,边缘柔和
+- 干净的白色或非常浅的渐变背景
+- 1024x1024 方形构图,主体居中
+- **绝对不要用浅霓虹蓝色 + 5 个明显彩色球的组合**(这是 Rick and Morty 角色 Fart 的版权识别点)
+
+## 三张图各自的特点
+
+### 第 1 张: 云团子
+- 白色蓬松、像棉花糖云一样饱满圆润
+- 边缘干净规整,但保留云朵的卷曲感
+- 整体颜色: 纯白带一点点淡蓝或淡粉的高光
+- 形状最圆、最饱满,最像圆滚滚的小球
+
+### 第 2 张: 雾团子
+- 灰白色或淡青色雾气感
+- 边缘更朦胧、不规则、有飘散感
+- 整体偏冷色调,带一丝神秘
+- 形状不那么规整,有一点拉长或不对称
+
+### 第 3 张: 烟团子
+- 浅米白色或浅米色,轻烟感
+- 有向上飘起的尾迹或丝状结构
+- 灵动、轻盈,比云团子更纤细
+- 整体暖色调,但很淡
+
+## 输出
+为每张图都用一次内置 image_gen 工具调用。生成完成后,把三张图分别复制/移动到这三个路径(因为这是项目相关资产):
+- /Users/cyh/vibe-remote-project/mascot/cloud-tuanzi.png
+- /Users/cyh/vibe-remote-project/mascot/mist-tuanzi.png
+- /Users/cyh/vibe-remote-project/mascot/smoke-tuanzi.png
+
+最后告诉我三张图的最终路径。
