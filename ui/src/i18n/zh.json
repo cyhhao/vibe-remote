@@ -48,7 +48,8 @@
     "themeToggleHint": "点击切换主题",
     "step": "步骤",
     "proxyUrl": "代理地址（可选）",
-    "proxyUrlHint": "SOCKS5、SOCKS4、HTTP 或 HTTPS 代理。留空则回退到系统 SOCKS 代理探测，未配置时直连。"
+    "proxyUrlHint": "SOCKS5、SOCKS4、HTTP 或 HTTPS 代理。留空则回退到系统 SOCKS 代理探测，未配置时直连。",
+    "proxyUrlCollapsedHint": "（留空则尝试系统代理，否则直连）"
   },
   "nav": {
     "dashboard": "仪表盘",
