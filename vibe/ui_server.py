@@ -495,11 +495,24 @@ def _is_setup_host_request(config: V2Config | None) -> bool:
         return False
     if not _is_private_peer():
         return False
-    # See _peer_shares_setup_host_network: the tunnel-on path widens the
-    # UI bind, so we have to enforce setup_host's network scoping at the
-    # application layer instead of relying on the kernel to drop traffic
-    # from peers on other interfaces.
-    return _peer_shares_setup_host_network(setup_address)
+    # When the Vibe Cloud tunnel is on, the UI binds to a wildcard so the
+    # local cloudflared origin can reach setup_host regardless of which
+    # interface it lives on. Wildcard means the kernel no longer drops
+    # cross-interface traffic, so we have to re-enforce "peer shares the
+    # setup_host interface subnet" at the application layer to prevent a
+    # peer on a different interface from spoofing Host=<setup_host>. When
+    # the tunnel is off, the kernel binds to setup_host directly and that
+    # interface filtering is already in force; adding the subnet gate
+    # here would just block legitimate routed peers (e.g. a 10.50/16
+    # client reaching setup_host=10.1.2.3 across a routed corporate net).
+    if _is_tunnel_wildcard_bind(config):
+        return _peer_shares_setup_host_network(setup_address)
+    return True
+
+
+def _is_tunnel_wildcard_bind(config: V2Config) -> bool:
+    cloud = getattr(getattr(config, "remote_access", None), "vibe_cloud", None)
+    return bool(cloud is not None and cloud.enabled)
 
 
 def _is_local_request(config: V2Config | None = None) -> bool:

@@ -972,6 +972,70 @@ def test_setup_host_ipv6_with_64_prefix_excludes_peer_outside_64(monkeypatch, tm
     assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
+def _save_config_tunnel_off_with_setup_host(tmp_path, host: str) -> V2Config:
+    config = _save_config(tmp_path)
+    config.remote_access.vibe_cloud.enabled = False
+    config.ui.setup_host = host
+    config.save()
+    return config
+
+
+def test_setup_host_tunnel_off_allows_routed_peer_outside_interface_subnet(monkeypatch, tmp_path):
+    """When the tunnel is off, the UI binds directly to setup_host and the
+    kernel already enforces interface filtering — a routed peer reaching
+    setup_host across a /16 corporate or campus net must have been routed
+    legitimately, so the application layer should not add a second-pass
+    subnet gate (regression noted in Codex review of #252)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_tunnel_off_with_setup_host(tmp_path, "10.1.2.3")
+    _mock_interface(monkeypatch, "10.1.2.3", 24)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "10.50.0.5"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_tunnel_off_still_rejects_public_peer(monkeypatch, tmp_path):
+    """Tunnel-off relaxation of the subnet gate must not relax the
+    private-peer requirement: a public peer is still untrusted."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_tunnel_off_with_setup_host(tmp_path, "10.1.2.3")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "8.8.8.8"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_tunnel_on_still_enforces_subnet_gate(monkeypatch, tmp_path):
+    """Mirror of the tunnel-off test above: with the tunnel on, the
+    wildcard bind requires the application-layer subnet gate, so the same
+    cross-subnet peer that is allowed when the tunnel is off must be
+    rejected when the tunnel is on."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "10.1.2.3")
+    _mock_interface(monkeypatch, "10.1.2.3", 24)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "10.50.0.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
 def test_setup_host_mismatched_host_header_is_not_local(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "192.168.2.3")
