@@ -900,6 +900,8 @@ def ui_reload():
     port = payload.get("port")
     if not host or not port:
         return jsonify({"error": "host_and_port_required"}), 400
+    if not isinstance(host, str):
+        return jsonify({"error": "invalid_host"}), 400
     try:
         port = int(port)
     except (TypeError, ValueError):

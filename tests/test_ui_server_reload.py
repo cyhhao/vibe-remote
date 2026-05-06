@@ -78,6 +78,22 @@ def test_ui_reload_overrides_bind_host_when_tunnel_enabled(monkeypatch):
     assert call["config"].remote_access.vibe_cloud.enabled is True
 
 
+def test_ui_reload_rejects_non_string_host(monkeypatch):
+    monkeypatch.setattr(V2Config, "load", classmethod(lambda cls: _config_with_tunnel(enabled=True)))
+    monkeypatch.setattr(threading, "Thread", _NoopThread)
+
+    client = app.test_client()
+    response = client.post(
+        "/ui/reload",
+        json={"host": 123, "port": 5123},
+        headers=csrf_headers(client, "http://127.0.0.1:5123"),
+        base_url="http://127.0.0.1:5123",
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "invalid_host"}
+
+
 def test_ui_reload_uses_requested_host_when_tunnel_disabled(monkeypatch):
     captured: dict = {}
 
