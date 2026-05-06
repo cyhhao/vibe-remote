@@ -3,8 +3,6 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
-  ChevronDown,
-  ChevronUp,
   Copy,
   ExternalLink,
   KeyRound,
@@ -21,6 +19,7 @@ import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
+import { StepHeader, StepShell } from '../shared/WizardStep';
 
 interface TelegramConfigProps {
   data: any;
@@ -101,47 +100,6 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
     setExpandedSteps((prev) => ({ ...prev, [step]: !prev[step] }));
   };
 
-  const StepHeader: React.FC<{ step: number; title: string; icon: React.ReactNode; completed?: boolean }> = ({
-    step,
-    title,
-    icon,
-    completed,
-  }) => (
-    <button
-      onClick={() => toggleStep(step)}
-      className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-white/[0.02]"
-    >
-      <div className="flex items-center gap-3">
-        <span
-          className={clsx(
-            'flex size-7 items-center justify-center rounded-full text-[12px] font-bold transition-colors',
-            completed ? 'bg-mint text-[#080812]' : 'bg-cyan/15 text-cyan'
-          )}
-        >
-          {completed ? <Check size={14} /> : step}
-        </span>
-        <span className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
-          {icon}
-          {title}
-        </span>
-      </div>
-      {expandedSteps[step] ? <ChevronUp size={18} className="text-muted" /> : <ChevronDown size={18} className="text-muted" />}
-    </button>
-  );
-
-  const StepShell: React.FC<{ active: boolean; children: React.ReactNode }> = ({ active, children }) => (
-    <div
-      className={clsx(
-        'overflow-hidden rounded-xl border transition-colors',
-        active
-          ? 'border-mint/35 bg-surface-2 shadow-[0_8px_32px_-8px_rgba(91,255,160,0.078)]'
-          : 'border-border bg-background'
-      )}
-    >
-      {children}
-    </div>
-  );
-
   const completedCount = [
     Boolean(botToken),
     isValid,
@@ -197,6 +155,8 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
               step={1}
               title={t('telegramConfig.step1Title')}
               icon={<MessageSquare size={16} className="text-cyan" />}
+              expanded={expandedSteps[1]}
+              onToggle={() => toggleStep(1)}
             />
             {expandedSteps[1] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
@@ -237,6 +197,8 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
               title={t('telegramConfig.step2Title')}
               icon={<KeyRound size={16} className="text-cyan" />}
               completed={isValid}
+              expanded={expandedSteps[2]}
+              onToggle={() => toggleStep(2)}
             />
             {expandedSteps[2] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
@@ -304,6 +266,8 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
               step={3}
               title={t('telegramConfig.step3Title')}
               icon={<Shield size={16} className="text-cyan" />}
+              expanded={expandedSteps[3]}
+              onToggle={() => toggleStep(3)}
             />
             {expandedSteps[3] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
@@ -354,6 +318,8 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
               step={4}
               title={t('telegramConfig.step4Title')}
               icon={<ExternalLink size={16} className="text-cyan" />}
+              expanded={expandedSteps[4]}
+              onToggle={() => toggleStep(4)}
             />
             {expandedSteps[4] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
@@ -377,6 +343,8 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
               step={5}
               title={t('telegramConfig.step5Title')}
               icon={<Settings2 size={16} className="text-cyan" />}
+              expanded={expandedSteps[5]}
+              onToggle={() => toggleStep(5)}
             />
             {expandedSteps[5] && (
               <div className="space-y-3 border-t border-border px-5 py-4">

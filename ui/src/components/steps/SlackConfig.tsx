@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Lock, Shield, RefreshCw, Copy, ExternalLink, Check, ChevronDown, ChevronUp, Key, Hash, Plus, ArrowLeft, ArrowRight } from 'lucide-react';
+import { Lock, Shield, RefreshCw, Copy, ExternalLink, Check, ChevronDown, Key, Hash, Plus, ArrowLeft, ArrowRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
@@ -7,6 +7,7 @@ import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
+import { StepHeader, StepShell } from '../shared/WizardStep';
 
 interface SlackConfigProps {
   data: any;
@@ -111,47 +112,6 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
     setExpandedSteps((prev) => ({ ...prev, [step]: !prev[step] }));
   };
 
-  const StepHeader: React.FC<{ step: number; title: string; icon: React.ReactNode; completed?: boolean }> = ({
-    step,
-    title,
-    icon,
-    completed,
-  }) => (
-    <button
-      onClick={() => toggleStep(step)}
-      className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-white/[0.02]"
-    >
-      <div className="flex items-center gap-3">
-        <span
-          className={clsx(
-            'flex size-7 items-center justify-center rounded-full text-[12px] font-bold transition-colors',
-            completed ? 'bg-mint text-[#080812]' : 'bg-cyan/15 text-cyan'
-          )}
-        >
-          {completed ? <Check size={14} /> : step}
-        </span>
-        <span className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
-          {icon}
-          {title}
-        </span>
-      </div>
-      {expandedSteps[step] ? <ChevronUp size={18} className="text-muted" /> : <ChevronDown size={18} className="text-muted" />}
-    </button>
-  );
-
-  const StepShell: React.FC<{ active: boolean; children: React.ReactNode }> = ({ active, children }) => (
-    <div
-      className={clsx(
-        'overflow-hidden rounded-xl border transition-colors',
-        active
-          ? 'border-mint/35 bg-surface-2 shadow-[0_8px_32px_-8px_rgba(91,255,160,0.078)]'
-          : 'border-border bg-background'
-      )}
-    >
-      {children}
-    </div>
-  );
-
   const completedCount = [
     !!manifest, // step 1 done as soon as manifest is available (best heuristic without backend signal)
     botToken.startsWith('xoxb-'),
@@ -179,7 +139,13 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
           {/* steps content */}
           {/* Step 1 */}
           <StepShell active={expandedSteps[1]}>
-            <StepHeader step={1} title={t('slackConfig.step1Title')} icon={<Plus size={16} className="text-cyan" />} />
+            <StepHeader
+              step={1}
+              title={t('slackConfig.step1Title')}
+              icon={<Plus size={16} className="text-cyan" />}
+              expanded={expandedSteps[1]}
+              onToggle={() => toggleStep(1)}
+            />
             {expandedSteps[1] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
                 <p className="text-[13px] leading-[1.55] text-muted">{t('slackConfig.step1Description')}</p>
@@ -234,6 +200,8 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
               title={t('slackConfig.step2Title')}
               icon={<Shield size={16} className="text-cyan" />}
               completed={botToken.startsWith('xoxb-')}
+              expanded={expandedSteps[2]}
+              onToggle={() => toggleStep(2)}
             />
             {expandedSteps[2] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
@@ -271,6 +239,8 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
               title={t('slackConfig.step3Title')}
               icon={<Lock size={16} className="text-cyan" />}
               completed={appToken.startsWith('xapp-')}
+              expanded={expandedSteps[3]}
+              onToggle={() => toggleStep(3)}
             />
             {expandedSteps[3] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
@@ -312,6 +282,8 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
               title={t('slackConfig.step4Title')}
               icon={<Hash size={16} className="text-cyan" />}
               completed={!!authResult?.ok}
+              expanded={expandedSteps[4]}
+              onToggle={() => toggleStep(4)}
             />
             {expandedSteps[4] && (
               <div className="space-y-4 border-t border-border px-5 py-4">

@@ -8,8 +8,6 @@ import {
   Plus,
   ExternalLink,
   Settings,
-  ChevronDown,
-  ChevronUp,
   Copy,
   AlertTriangle,
   ArrowLeft,
@@ -22,6 +20,7 @@ import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
+import { StepHeader, StepShell } from '../shared/WizardStep';
 
 interface DiscordConfigProps {
   data: any;
@@ -141,47 +140,6 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
     showToast(t('common.copyFailed'), 'error');
   };
 
-  const StepHeader: React.FC<{ step: number; title: string; icon: React.ReactNode; completed?: boolean }> = ({
-    step,
-    title,
-    icon,
-    completed,
-  }) => (
-    <button
-      onClick={() => toggleStep(step)}
-      className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-white/[0.02]"
-    >
-      <div className="flex items-center gap-3">
-        <span
-          className={clsx(
-            'flex size-7 items-center justify-center rounded-full text-[12px] font-bold transition-colors',
-            completed ? 'bg-mint text-[#080812]' : 'bg-cyan/15 text-cyan'
-          )}
-        >
-          {completed ? <Check size={14} /> : step}
-        </span>
-        <span className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
-          {icon}
-          {title}
-        </span>
-      </div>
-      {expandedSteps[step] ? <ChevronUp size={18} className="text-muted" /> : <ChevronDown size={18} className="text-muted" />}
-    </button>
-  );
-
-  const StepShell: React.FC<{ active: boolean; children: React.ReactNode }> = ({ active, children }) => (
-    <div
-      className={clsx(
-        'overflow-hidden rounded-xl border transition-colors',
-        active
-          ? 'border-mint/35 bg-surface-2 shadow-[0_8px_32px_-8px_rgba(91,255,160,0.078)]'
-          : 'border-border bg-background'
-      )}
-    >
-      {children}
-    </div>
-  );
-
   const completedCount = [
     !!clientId,
     Boolean(authResult?.ok || (data.discord?.bot_token && botToken === data.discord?.bot_token)),
@@ -214,7 +172,13 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
     <>
           {/* Step 1: Create application */}
           <StepShell active={expandedSteps[1]}>
-            <StepHeader step={1} title={t('discordConfig.step1Title')} icon={<Plus size={16} className="text-cyan" />} />
+            <StepHeader
+              step={1}
+              title={t('discordConfig.step1Title')}
+              icon={<Plus size={16} className="text-cyan" />}
+              expanded={expandedSteps[1]}
+              onToggle={() => toggleStep(1)}
+            />
             {expandedSteps[1] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
                 <p className="text-[13px] leading-[1.55] text-muted">{t('discordConfig.step1Description')}</p>
@@ -236,7 +200,13 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
 
           {/* Step 2: Configure bot */}
           <StepShell active={expandedSteps[2]}>
-            <StepHeader step={2} title={t('discordConfig.step2Title')} icon={<Settings size={16} className="text-cyan" />} />
+            <StepHeader
+              step={2}
+              title={t('discordConfig.step2Title')}
+              icon={<Settings size={16} className="text-cyan" />}
+              expanded={expandedSteps[2]}
+              onToggle={() => toggleStep(2)}
+            />
             {expandedSteps[2] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
                 <p className="text-[13px] leading-[1.55] text-muted">{t('discordConfig.step2Description')}</p>
@@ -253,7 +223,13 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
 
           {/* Step 3: Invite bot */}
           <StepShell active={expandedSteps[3]}>
-            <StepHeader step={3} title={t('discordConfig.step3Title')} icon={<ExternalLink size={16} className="text-cyan" />} />
+            <StepHeader
+              step={3}
+              title={t('discordConfig.step3Title')}
+              icon={<ExternalLink size={16} className="text-cyan" />}
+              expanded={expandedSteps[3]}
+              onToggle={() => toggleStep(3)}
+            />
             {expandedSteps[3] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
                 <p className="text-[13px] leading-[1.55] text-muted">{t('discordConfig.step3Description')}</p>
@@ -329,6 +305,8 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
               title={t('discordConfig.step4Title')}
               icon={<KeyRound size={16} className="text-cyan" />}
               completed={isValid}
+              expanded={expandedSteps[4]}
+              onToggle={() => toggleStep(4)}
             />
             {expandedSteps[4] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
