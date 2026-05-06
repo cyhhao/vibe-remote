@@ -907,6 +907,15 @@ def ui_reload():
 
     status = runtime.read_status()
 
+    try:
+        current_config = V2Config.load()
+    except Exception:
+        current_config = None
+    if current_config is not None:
+        bind_host = runtime.effective_ui_bind_host(current_config, requested_host=host)
+    else:
+        bind_host = host
+
     def _restart():
         global _server
         import subprocess
@@ -915,7 +924,7 @@ def ui_reload():
         from config import paths as config_paths
 
         working_dir = get_working_dir()
-        command = f"from vibe.ui_server import run_ui_server; run_ui_server('{host}', {port})"
+        command = f"from vibe.ui_server import run_ui_server; run_ui_server('{bind_host}', {port})"
         stdout_path = config_paths.get_runtime_dir() / "ui_stdout.log"
         stderr_path = config_paths.get_runtime_dir() / "ui_stderr.log"
         stdout = stdout_path.open("ab")

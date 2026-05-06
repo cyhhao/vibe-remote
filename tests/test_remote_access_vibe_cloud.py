@@ -858,3 +858,67 @@ def test_start_clears_previous_cloudflared_logs_before_spawn(monkeypatch, tmp_pa
 
     assert result["ok"] is True
     assert result["started"] is True
+
+
+def test_effective_ui_bind_host_uses_setup_host_when_tunnel_disabled() -> None:
+    config = _config()
+    config.remote_access.vibe_cloud.enabled = False
+    config.ui.setup_host = "100.97.103.112"
+
+    assert runtime.effective_ui_bind_host(config) == "100.97.103.112"
+
+
+def test_effective_ui_bind_host_overrides_to_wildcard_when_tunnel_enabled() -> None:
+    config = _config()
+    assert config.remote_access.vibe_cloud.enabled is True
+    config.ui.setup_host = "100.97.103.112"
+
+    assert runtime.effective_ui_bind_host(config) == "0.0.0.0"
+
+
+def test_effective_ui_bind_host_preserves_loopback_when_tunnel_disabled() -> None:
+    config = _config()
+    config.remote_access.vibe_cloud.enabled = False
+    config.ui.setup_host = "127.0.0.1"
+
+    assert runtime.effective_ui_bind_host(config) == "127.0.0.1"
+
+
+def test_effective_ui_bind_host_falls_back_to_loopback_when_setup_host_blank() -> None:
+    config = _config()
+    config.remote_access.vibe_cloud.enabled = False
+    config.ui.setup_host = ""
+
+    assert runtime.effective_ui_bind_host(config) == "127.0.0.1"
+
+
+def test_effective_ui_bind_host_uses_v6_wildcard_for_ipv6_setup_host() -> None:
+    config = _config()
+    assert config.remote_access.vibe_cloud.enabled is True
+    config.ui.setup_host = "::"
+
+    assert runtime.effective_ui_bind_host(config) == "::"
+
+
+def test_effective_ui_bind_host_uses_v6_wildcard_for_bracketed_ipv6_loopback() -> None:
+    config = _config()
+    assert config.remote_access.vibe_cloud.enabled is True
+    config.ui.setup_host = "[::1]"
+
+    assert runtime.effective_ui_bind_host(config) == "::"
+
+
+def test_effective_ui_bind_host_prefers_requested_host_over_persisted_setup_host() -> None:
+    config = _config()
+    config.remote_access.vibe_cloud.enabled = False
+    config.ui.setup_host = "127.0.0.1"
+
+    assert runtime.effective_ui_bind_host(config, requested_host="192.168.1.10") == "192.168.1.10"
+
+
+def test_effective_ui_bind_host_requested_host_yields_to_tunnel_override() -> None:
+    config = _config()
+    assert config.remote_access.vibe_cloud.enabled is True
+    config.ui.setup_host = "127.0.0.1"
+
+    assert runtime.effective_ui_bind_host(config, requested_host="100.97.103.112") == "0.0.0.0"

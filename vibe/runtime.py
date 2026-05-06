@@ -398,6 +398,38 @@ def start_service():
         )
 
 
+def effective_ui_bind_host(config: V2Config, requested_host: str | None = None) -> str:
+    """Resolve the host the UI server should bind to.
+
+    When the Vibe Cloud tunnel is enabled, bind to a wildcard so the local
+    ``cloudflared`` origin (which dials ``127.0.0.1``/``[::1]``) can reach the
+    UI no matter which interface IP the user typed into ``ui.setup_host``
+    (loopback, Tailscale CGNAT, LAN). The host-trust middleware in
+    ``ui_server`` still rejects untrusted peers, so widening the bind does
+    not widen exposure.
+
+    Why: If the user binds to a Tailscale or LAN IP and then enables the
+    tunnel, ``cloudflared`` cannot reach the UI on its loopback origin and
+    every public request returns 502.
+
+    ``requested_host`` lets callers (e.g. the ``/ui/reload`` endpoint)
+    propagate the host from the inbound request without persisting it first;
+    when omitted we fall back to ``config.ui.setup_host``.
+    """
+    setup_host = (requested_host if requested_host is not None else config.ui.setup_host) or "127.0.0.1"
+    cloud = getattr(getattr(config, "remote_access", None), "vibe_cloud", None)
+    if cloud is not None and cloud.enabled:
+        # Pick the wildcard family that matches the user's intent so an
+        # IPv6-only setup_host stays reachable on v6.
+        normalized = setup_host.strip()
+        if normalized.startswith("[") and normalized.endswith("]"):
+            normalized = normalized[1:-1]
+        if normalized in {"::", "::0"} or ":" in normalized:
+            return "::"
+        return "0.0.0.0"
+    return setup_host
+
+
 def start_ui(host, port):
     command = "from vibe.ui_server import run_ui_server; run_ui_server('{}', {})".format(host, port)
     return spawn_background(
