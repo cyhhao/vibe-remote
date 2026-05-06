@@ -118,14 +118,17 @@ def test_pair_origin_service_ignores_configured_ui_host(monkeypatch, tmp_path) -
     assert remote_access.origin_service_for_pairing() == "http://127.0.0.1:15130"
 
 
-def test_pair_origin_service_preserves_localhost(monkeypatch, tmp_path) -> None:
+def test_pair_origin_service_normalizes_localhost_to_loopback_ipv4(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     config = _config()
     config.ui.setup_host = "localhost"
     config.ui.setup_port = 15130
     config.save()
 
-    assert remote_access.origin_service_for_pairing() == "http://localhost:15130"
+    # cloudflared and werkzeug each resolve "localhost" independently, so we
+    # hand cloudflared a literal IPv4 loopback to match the bind family and
+    # avoid the ::1 vs 127.0.0.1 race that surfaces as a 502.
+    assert remote_access.origin_service_for_pairing() == "http://127.0.0.1:15130"
 
 
 def test_pair_origin_service_preserves_ipv6_loopback(monkeypatch, tmp_path) -> None:
@@ -922,3 +925,13 @@ def test_effective_ui_bind_host_requested_host_yields_to_tunnel_override() -> No
     config.ui.setup_host = "127.0.0.1"
 
     assert runtime.effective_ui_bind_host(config, requested_host="100.97.103.112") == "0.0.0.0"
+
+
+def test_effective_ui_bind_host_overrides_to_ipv4_wildcard_when_setup_host_is_localhost() -> None:
+    # Pairs with _origin_host_for_pairing returning 127.0.0.1 for "localhost":
+    # the bind family must be IPv4 so cloudflared can reach the UI.
+    config = _config()
+    assert config.remote_access.vibe_cloud.enabled is True
+    config.ui.setup_host = "localhost"
+
+    assert runtime.effective_ui_bind_host(config) == "0.0.0.0"

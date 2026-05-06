@@ -600,8 +600,12 @@ def _origin_host_for_pairing(config: V2Config) -> str:
     host = (config.ui.setup_host or "").strip()
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1].strip()
+    # cloudflared and werkzeug each resolve "localhost" independently; on a
+    # dual-stack host they can land on different families (e.g. ::1 vs
+    # 127.0.0.1) and surface as a 502. Hand cloudflared a literal IPv4
+    # loopback so the origin family always matches the bind family.
     if host.lower() == "localhost":
-        return "localhost"
+        return "127.0.0.1"
 
     try:
         address = ipaddress.ip_address(host)
