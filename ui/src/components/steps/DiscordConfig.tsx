@@ -14,7 +14,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  SplitSquareVertical,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -22,6 +21,7 @@ import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
+import { ProxyUrlField } from '../shared/ProxyUrlField';
 
 interface DiscordConfigProps {
   data: any;
@@ -353,20 +353,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                   <p className="text-[11px] text-muted">{t('discordConfig.botTokenHint')}</p>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
-                    <SplitSquareVertical size={14} className="text-cyan" />
-                    {t('common.proxyUrl')}
-                  </label>
-                  <input
-                    type="text"
-                    value={proxyUrl}
-                    onChange={(e) => setProxyUrl(e.target.value)}
-                    placeholder="socks5://user:pass@host:port (optional)"
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
-                  />
-                  <p className="text-[11px] text-muted">{t('common.proxyUrlHint')}</p>
-                </div>
+                <ProxyUrlField value={proxyUrl} onChange={setProxyUrl} />
 
                 <div className="flex flex-wrap items-center gap-3">
                   <button

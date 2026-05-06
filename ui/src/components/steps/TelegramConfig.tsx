@@ -20,6 +20,7 @@ import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
+import { ProxyUrlField } from '../shared/ProxyUrlField';
 
 interface TelegramConfigProps {
   data: any;
@@ -261,20 +262,12 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
                   <p className="text-[11px] text-muted">{t('telegramConfig.botTokenHint')}</p>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
-                    <SplitSquareVertical size={14} className="text-cyan" />
-                    {t('telegramConfig.proxyUrl')}
-                  </label>
-                  <input
-                    type="text"
-                    value={proxyUrl}
-                    onChange={(e) => setProxyUrl(e.target.value)}
-                    placeholder="socks5://user:pass@host:port (optional)"
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
-                  />
-                  <p className="text-[11px] text-muted">{t('telegramConfig.proxyUrlHint')}</p>
-                </div>
+                <ProxyUrlField
+                  value={proxyUrl}
+                  onChange={setProxyUrl}
+                  labelKey="telegramConfig.proxyUrl"
+                  hintKey="telegramConfig.proxyUrlHint"
+                />
 
                 <div className="flex flex-wrap items-center gap-3">
                   <button
