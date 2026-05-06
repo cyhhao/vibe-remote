@@ -600,8 +600,14 @@ def _origin_host_for_pairing(config: V2Config) -> str:
     host = (config.ui.setup_host or "").strip()
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1].strip()
+    # "localhost" is ambiguous: cloudflared and werkzeug resolve it
+    # independently, so on a dual-stack host they can land on different
+    # families (::1 vs 127.0.0.1) and surface as a 502. Hand cloudflared
+    # a literal loopback IP whose family matches the wildcard
+    # ``effective_ui_bind_host`` chooses, so the two sides never disagree
+    # and IPv6-only hosts still work.
     if host.lower() == "localhost":
-        return "localhost"
+        return "[::1]" if runtime.resolve_localhost_family() == "inet6" else "127.0.0.1"
 
     try:
         address = ipaddress.ip_address(host)

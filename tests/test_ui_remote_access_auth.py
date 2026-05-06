@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import ipaddress
+import socket
+from collections import namedtuple
+
 from config.v2_config import AgentsConfig, PlatformsConfig, RemoteAccessConfig, RuntimeConfig, SlackConfig, UiConfig, V2Config
 from config.v2_config import CONFIG_LOCK
 from tests.ui_server_test_helpers import csrf_headers
@@ -7,6 +11,30 @@ from vibe import api
 from vibe import remote_access
 from vibe import ui_server
 from vibe.ui_server import app
+
+
+_FakeSnicaddr = namedtuple("snicaddr", ["family", "address", "netmask", "broadcast", "ptp"])
+
+
+def _mock_interface(monkeypatch, ip: str, prefix: int) -> None:
+    """Make ``psutil.net_if_addrs()`` report ``ip`` with the given prefix
+    length so ``_local_interface_network`` returns the expected subnet.
+    Tests that exercise the RFC1918/ULA trust path need this because the
+    real test runner does not have the synthetic addresses (192.168.2.3
+    etc.) configured on any interface."""
+    address = ipaddress.ip_address(ip)
+    if address.version == 4:
+        family = socket.AF_INET
+        netmask = str(ipaddress.IPv4Network(f"0.0.0.0/{prefix}").netmask)
+    else:
+        family = socket.AF_INET6
+        netmask = str(ipaddress.IPv6Network(f"::/{prefix}").netmask)
+    snic = _FakeSnicaddr(family=family, address=ip, netmask=netmask, broadcast=None, ptp=None)
+    monkeypatch.setattr("vibe.ui_server.psutil.net_if_addrs", lambda: {"en0": [snic]})
+
+
+def _mock_no_interfaces(monkeypatch) -> None:
+    monkeypatch.setattr("vibe.ui_server.psutil.net_if_addrs", lambda: {})
 
 
 def _save_config(tmp_path) -> V2Config:
@@ -697,6 +725,7 @@ def _save_config_with_setup_host(tmp_path, host: str) -> V2Config:
 def test_setup_host_lan_request_is_treated_as_local(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "192.168.2.3")
+    _mock_interface(monkeypatch, "192.168.2.3", 24)
 
     response = app.test_client().get(
         "/health",
@@ -710,6 +739,7 @@ def test_setup_host_lan_request_is_treated_as_local(monkeypatch, tmp_path):
 def test_setup_host_request_from_self_is_treated_as_local(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "192.168.2.3")
+    _mock_interface(monkeypatch, "192.168.2.3", 24)
 
     response = app.test_client().get(
         "/health",
@@ -728,6 +758,277 @@ def test_setup_host_with_public_peer_is_not_local(monkeypatch, tmp_path):
         "/dashboard",
         base_url="http://192.168.2.3:5123",
         environ_base={"REMOTE_ADDR": "8.8.8.8"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_lan_peer_with_tailscale_setup_is_not_local(monkeypatch, tmp_path):
+    """Wildcard-bind regression guard: a LAN peer cannot inherit setup-host
+    trust by spoofing the Host header to a Tailscale setup_host that lives
+    in a different private block."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "100.97.103.112")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://100.97.103.112:5123",
+        environ_base={"REMOTE_ADDR": "192.168.1.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_tailscale_peer_with_lan_setup_is_not_local(monkeypatch, tmp_path):
+    """Inverse of the LAN-vs-Tailscale check: a Tailscale peer cannot inherit
+    setup-host trust by spoofing the Host header to a LAN setup_host."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.2.3")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://192.168.2.3:5123",
+        environ_base={"REMOTE_ADDR": "100.97.103.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_tailscale_peer_with_tailscale_setup_is_local(monkeypatch, tmp_path):
+    """Same-block trust still works: a Tailscale peer can inherit setup-host
+    trust when setup_host is also in 100.64/10."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "100.97.103.112")
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://100.97.103.112:5123",
+        environ_base={"REMOTE_ADDR": "100.97.103.5"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_rfc1918_peer_outside_interface_subnet_is_not_local(monkeypatch, tmp_path):
+    """RFC1918 trust must not span the entire /8: a 10.50/16 peer cannot
+    inherit setup-host trust from a 10.1.2.3 setup_host configured with a
+    /24 mask. Pre-wildcard, the kernel only let in peers on the same
+    interface subnet — _local_interface_network restores that scoping
+    using the actual netmask."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "10.1.2.3")
+    _mock_interface(monkeypatch, "10.1.2.3", 24)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "10.50.0.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_rfc1918_peer_in_same_interface_subnet_is_local(monkeypatch, tmp_path):
+    """Same-subnet RFC1918 peer still inherits trust (typical home/office LAN)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "10.1.2.3")
+    _mock_interface(monkeypatch, "10.1.2.3", 24)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "10.1.2.50"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_192168_peer_outside_interface_subnet_is_not_local(monkeypatch, tmp_path):
+    """A peer on 192.168.2/24 cannot spoof Host=192.168.1.5 when the
+    interface mask is /24."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.1.5")
+    _mock_interface(monkeypatch, "192.168.1.5", 24)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://192.168.1.5:5123",
+        environ_base={"REMOTE_ADDR": "192.168.2.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_with_16_prefix_includes_peer_in_same_16(monkeypatch, tmp_path):
+    """When the interface mask is /16, a peer on a different /24 within
+    the same /16 still inherits trust — fixed-/24 estimates were too
+    narrow for /16 LANs."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.1.5")
+    _mock_interface(monkeypatch, "192.168.1.5", 16)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://192.168.1.5:5123",
+        environ_base={"REMOTE_ADDR": "192.168.7.20"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_with_20_prefix_includes_peer_in_same_20(monkeypatch, tmp_path):
+    """/20 corporate networks (4096 addresses) are honored without
+    artificially narrowing to /24."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "10.1.16.5")
+    _mock_interface(monkeypatch, "10.1.16.5", 20)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://10.1.16.5:5123",
+        environ_base={"REMOTE_ADDR": "10.1.31.250"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_with_20_prefix_excludes_peer_outside_20(monkeypatch, tmp_path):
+    """/20 still excludes peers outside the /20 (peer in next /20 is not
+    on the same routed subnet)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "10.1.16.5")
+    _mock_interface(monkeypatch, "10.1.16.5", 20)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://10.1.16.5:5123",
+        environ_base={"REMOTE_ADDR": "10.1.32.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_unknown_to_local_interfaces_is_not_local(monkeypatch, tmp_path):
+    """If setup_host is not configured on any local interface, deny trust
+    rather than guess a subnet — this preserves the kernel's pre-wildcard
+    "no matching interface, no traffic" semantics."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.99.99")
+    _mock_no_interfaces(monkeypatch)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://192.168.99.99:5123",
+        environ_base={"REMOTE_ADDR": "192.168.99.50"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_ipv6_with_56_prefix_includes_peer_in_same_56(monkeypatch, tmp_path):
+    """A non-/64 IPv6 LAN (e.g. /56 prefix delegated to the home network)
+    is honored without artificially narrowing to /64."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "fd00:0:0:1::5")
+    _mock_interface(monkeypatch, "fd00:0:0:1::5", 56)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://[fd00:0:0:1::5]:5123",
+        environ_base={"REMOTE_ADDR": "fd00:0:0:7::20"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_ipv6_with_64_prefix_excludes_peer_outside_64(monkeypatch, tmp_path):
+    """Default IPv6 LAN /64 still scopes peers correctly."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "fd00::5")
+    _mock_interface(monkeypatch, "fd00::5", 64)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://[fd00::5]:5123",
+        environ_base={"REMOTE_ADDR": "fd00:0:0:1::20"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def _save_config_tunnel_off_with_setup_host(tmp_path, host: str) -> V2Config:
+    config = _save_config(tmp_path)
+    config.remote_access.vibe_cloud.enabled = False
+    config.ui.setup_host = host
+    config.save()
+    return config
+
+
+def test_setup_host_tunnel_off_allows_routed_peer_outside_interface_subnet(monkeypatch, tmp_path):
+    """When the tunnel is off, the UI binds directly to setup_host and the
+    kernel already enforces interface filtering — a routed peer reaching
+    setup_host across a /16 corporate or campus net must have been routed
+    legitimately, so the application layer should not add a second-pass
+    subnet gate (regression noted in Codex review of #252)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_tunnel_off_with_setup_host(tmp_path, "10.1.2.3")
+    _mock_interface(monkeypatch, "10.1.2.3", 24)
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "10.50.0.5"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_tunnel_off_still_rejects_public_peer(monkeypatch, tmp_path):
+    """Tunnel-off relaxation of the subnet gate must not relax the
+    private-peer requirement: a public peer is still untrusted."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_tunnel_off_with_setup_host(tmp_path, "10.1.2.3")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "8.8.8.8"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_tunnel_on_still_enforces_subnet_gate(monkeypatch, tmp_path):
+    """Mirror of the tunnel-off test above: with the tunnel on, the
+    wildcard bind requires the application-layer subnet gate, so the same
+    cross-subnet peer that is allowed when the tunnel is off must be
+    rejected when the tunnel is on."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "10.1.2.3")
+    _mock_interface(monkeypatch, "10.1.2.3", 24)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "10.50.0.5"},
         follow_redirects=False,
     )
 

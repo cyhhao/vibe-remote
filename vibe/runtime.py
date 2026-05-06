@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 import shlex
+import socket
 import subprocess
 import sys
 import threading
@@ -396,6 +397,67 @@ def start_service():
                 "VIBE_DISABLE_STDOUT_LOGGING": "1",
             },
         )
+
+
+def resolve_localhost_family() -> str:
+    """Return the loopback family ``localhost`` actually maps to on this host.
+
+    ``"inet"`` when IPv4 loopback resolves (the common dual-stack case),
+    ``"inet6"`` only when ``localhost`` is exclusively IPv6. Used by
+    ``effective_ui_bind_host`` and ``_origin_host_for_pairing`` so the
+    bind family and the cloudflared origin family stay aligned: forcing
+    IPv4 unconditionally would regress IPv6-only hosts, while leaving
+    resolution to werkzeug + cloudflared independently re-creates the
+    ::1 vs 127.0.0.1 race that surfaces as 502.
+    """
+    try:
+        infos = socket.getaddrinfo("localhost", None, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return "inet"
+    families = {info[0] for info in infos}
+    if socket.AF_INET in families:
+        return "inet"
+    if socket.AF_INET6 in families:
+        return "inet6"
+    return "inet"
+
+
+def effective_ui_bind_host(config: V2Config, requested_host: str | None = None) -> str:
+    """Resolve the host the UI server should bind to.
+
+    When the Vibe Cloud tunnel is enabled, bind to a wildcard so the local
+    ``cloudflared`` origin (which dials ``127.0.0.1``/``[::1]``) can reach the
+    UI no matter which interface IP the user typed into ``ui.setup_host``
+    (loopback, Tailscale CGNAT, LAN). The host-trust middleware in
+    ``ui_server`` still rejects untrusted peers, so widening the bind does
+    not widen exposure.
+
+    Why: If the user binds to a Tailscale or LAN IP and then enables the
+    tunnel, ``cloudflared`` cannot reach the UI on its loopback origin and
+    every public request returns 502.
+
+    ``requested_host`` lets callers (e.g. the ``/ui/reload`` endpoint)
+    propagate the host from the inbound request without persisting it first;
+    when omitted we fall back to ``config.ui.setup_host``.
+    """
+    setup_host = (requested_host if requested_host is not None else config.ui.setup_host) or "127.0.0.1"
+    cloud = getattr(getattr(config, "remote_access", None), "vibe_cloud", None)
+    if cloud is not None and cloud.enabled:
+        # Pick the wildcard family that matches the user's intent so an
+        # IPv6-only setup_host stays reachable on v6.
+        normalized = setup_host.strip()
+        if normalized.startswith("[") and normalized.endswith("]"):
+            normalized = normalized[1:-1]
+        # "localhost" is ambiguous on dual-stack hosts and may even be
+        # exclusively IPv6. Resolve once and pick the wildcard that
+        # matches the family _origin_host_for_pairing will hand
+        # cloudflared, so the two sides cannot disagree.
+        if normalized.lower() == "localhost":
+            return "::" if resolve_localhost_family() == "inet6" else "0.0.0.0"
+        if normalized in {"::", "::0"} or ":" in normalized:
+            return "::"
+        return "0.0.0.0"
+    return setup_host
 
 
 def start_ui(host, port):

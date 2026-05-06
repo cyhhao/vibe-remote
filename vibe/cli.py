@@ -1829,7 +1829,8 @@ def cmd_vibe():
         _write_status("starting")
 
     service_pid = runtime.start_service()
-    ui_pid = runtime.start_ui(config.ui.setup_host, config.ui.setup_port)
+    bind_host = runtime.effective_ui_bind_host(config)
+    ui_pid = runtime.start_ui(bind_host, config.ui.setup_port)
     runtime.write_status("running", "pid={}".format(service_pid), service_pid, ui_pid)
 
     ui_url = "http://{}:{}".format(config.ui.setup_host, config.ui.setup_port)

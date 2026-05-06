@@ -9,12 +9,14 @@ import mimetypes
 import os
 import re
 import secrets
+import socket
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 
+import psutil
 from flask import Flask, request, jsonify, redirect, send_file, Response
 
 from config import paths
@@ -258,6 +260,20 @@ def _is_loopback_host(value: str | None) -> bool:
 # setup-host peers when the request's Host header otherwise matches.
 _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
+# Networks that are scoped by the overlay/link itself rather than by the
+# kernel's interface routing, so peers anywhere in the block are trusted
+# in lieu of a tighter same-subnet check:
+#   * 100.64.0.0/10 — Tailscale CGNAT. Tailscale assigns each peer a /32 in
+#     this range and routes peers via its overlay; legitimate peers can be
+#     anywhere in the /10 even though they share the same logical network.
+#   * 169.254.0.0/16 / fe80::/10 — link-local. Confined to the same L2
+#     segment by the kernel.
+_OVERLAY_TRUST_NETWORKS_V4 = (
+    ipaddress.IPv4Network("100.64.0.0/10"),
+    ipaddress.IPv4Network("169.254.0.0/16"),
+)
+_OVERLAY_TRUST_NETWORKS_V6 = (ipaddress.IPv6Network("fe80::/10"),)
+
 
 def _is_private_address(address: ipaddress._BaseAddress) -> bool:
     if address.is_loopback or address.is_private or address.is_link_local:
@@ -279,6 +295,126 @@ def _is_private_peer() -> bool:
     if mapped is not None:
         return _is_private_address(mapped)
     return False
+
+
+def _local_interface_network(setup_address: ipaddress._BaseAddress) -> ipaddress._BaseNetwork | None:
+    """Return the network ``setup_host`` is configured on locally.
+
+    Reads the interface's actual netmask via ``psutil.net_if_addrs`` so
+    the trust scope mirrors the kernel's pre-wildcard interface filtering
+    exactly — a /16 LAN, a /20 corporate network, and a non-/64 IPv6
+    network all get their real prefix instead of a fixed estimate.
+
+    Returns None when ``setup_host`` is not configured on any local
+    interface or psutil cannot enumerate them; the caller denies trust
+    in that case so we never widen the application-layer scope beyond
+    what the kernel would have permitted.
+    """
+    try:
+        interfaces = psutil.net_if_addrs()
+    except Exception:
+        return None
+    target_family = socket.AF_INET if setup_address.version == 4 else socket.AF_INET6
+    for addrs in interfaces.values():
+        for snic in addrs:
+            if snic.family != target_family:
+                continue
+            address_str = (snic.address or "").split("%", 1)[0]
+            try:
+                addr = ipaddress.ip_address(address_str)
+            except ValueError:
+                continue
+            if addr != setup_address:
+                continue
+            netmask = snic.netmask
+            if not netmask:
+                continue
+            prefix = _netmask_to_prefix(netmask, addr.version)
+            if prefix is None:
+                continue
+            try:
+                return ipaddress.ip_network(f"{addr}/{prefix}", strict=False)
+            except ValueError:
+                continue
+    return None
+
+
+def _netmask_to_prefix(netmask: str, version: int) -> int | None:
+    """Convert ``psutil``'s netmask string to a prefix length.
+
+    psutil returns IPv4 netmasks as dotted strings (``255.255.255.0``)
+    and IPv6 netmasks as hex strings (``ffff:ffff:ffff:ff00::``).
+    ``ipaddress.ip_network`` only accepts the dotted form for IPv4 and
+    requires an integer prefix for IPv6, so we normalize to a prefix
+    length here. Returns None for malformed or non-contiguous masks.
+    """
+    try:
+        if version == 4:
+            mask_int = int(ipaddress.IPv4Address(netmask))
+            width = 32
+        else:
+            mask_int = int(ipaddress.IPv6Address(netmask))
+            width = 128
+    except (ipaddress.AddressValueError, ValueError):
+        return None
+    if mask_int == 0:
+        return 0
+    inverted = (~mask_int) & ((1 << width) - 1)
+    if inverted & (inverted + 1):
+        # Non-contiguous mask — refuse rather than guess.
+        return None
+    prefix = width - inverted.bit_length()
+    return prefix
+
+
+def _setup_host_trust_network(setup_address: ipaddress._BaseAddress) -> ipaddress._BaseNetwork | None:
+    """Return the network setup-host trust should extend to, or None to deny.
+
+    Overlay networks (Tailscale CGNAT, link-local) trust the entire block
+    because the overlay routing or kernel link-local scoping handles peer
+    isolation; legitimate peers can be anywhere in the block. RFC1918 and
+    ULA setup hosts derive the network from the actual interface netmask
+    via :func:`_local_interface_network` so the application-layer scope
+    matches the kernel's pre-wildcard interface filtering. Returning None
+    means the scope cannot be determined and the caller must deny trust.
+    """
+    if setup_address.version == 4:
+        for overlay in _OVERLAY_TRUST_NETWORKS_V4:
+            if setup_address in overlay:
+                return overlay
+    elif setup_address.version == 6:
+        for overlay in _OVERLAY_TRUST_NETWORKS_V6:
+            if setup_address in overlay:
+                return overlay
+    return _local_interface_network(setup_address)
+
+
+def _peer_shares_setup_host_network(setup_address: ipaddress._BaseAddress) -> bool:
+    """Require the peer to share setup_host's interface-level subnet.
+
+    Compensates for the wildcard bind in the tunnel-on path. Without this,
+    a 192.168/16 LAN peer could spoof ``Host=<tailscale_setup_host>`` on
+    a different interface and inherit setup-host trust. Subnet size comes
+    from :func:`_setup_host_trust_network`, which keeps overlay networks
+    (Tailscale, link-local) broad and otherwise mirrors the actual
+    interface netmask via :func:`_local_interface_network`.
+    """
+    remote_addr = (request.remote_addr or "").strip()
+    if not remote_addr or remote_addr == "localhost":
+        return False
+    try:
+        peer = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return False
+    if peer.version != setup_address.version:
+        mapped = getattr(peer, "ipv4_mapped", None)
+        if mapped is None or mapped.version != setup_address.version:
+            return False
+        peer = mapped
+    network = _setup_host_trust_network(setup_address)
+    if network is None:
+        return False
+    return peer in network
 
 
 def _env_flag_enabled(name: str) -> bool:
@@ -357,7 +493,26 @@ def _is_setup_host_request(config: V2Config | None) -> bool:
     # the actual client, so refuse the setup-host trust path entirely.
     if _has_forwarded_metadata():
         return False
-    return _is_private_peer()
+    if not _is_private_peer():
+        return False
+    # When the Vibe Cloud tunnel is on, the UI binds to a wildcard so the
+    # local cloudflared origin can reach setup_host regardless of which
+    # interface it lives on. Wildcard means the kernel no longer drops
+    # cross-interface traffic, so we have to re-enforce "peer shares the
+    # setup_host interface subnet" at the application layer to prevent a
+    # peer on a different interface from spoofing Host=<setup_host>. When
+    # the tunnel is off, the kernel binds to setup_host directly and that
+    # interface filtering is already in force; adding the subnet gate
+    # here would just block legitimate routed peers (e.g. a 10.50/16
+    # client reaching setup_host=10.1.2.3 across a routed corporate net).
+    if _is_tunnel_wildcard_bind(config):
+        return _peer_shares_setup_host_network(setup_address)
+    return True
+
+
+def _is_tunnel_wildcard_bind(config: V2Config) -> bool:
+    cloud = getattr(getattr(config, "remote_access", None), "vibe_cloud", None)
+    return bool(cloud is not None and cloud.enabled)
 
 
 def _is_local_request(config: V2Config | None = None) -> bool:
@@ -900,12 +1055,23 @@ def ui_reload():
     port = payload.get("port")
     if not host or not port:
         return jsonify({"error": "host_and_port_required"}), 400
+    if not isinstance(host, str):
+        return jsonify({"error": "invalid_host"}), 400
     try:
         port = int(port)
     except (TypeError, ValueError):
         return jsonify({"error": "invalid_port"}), 400
 
     status = runtime.read_status()
+
+    try:
+        current_config = V2Config.load()
+    except Exception:
+        current_config = None
+    if current_config is not None:
+        bind_host = runtime.effective_ui_bind_host(current_config, requested_host=host)
+    else:
+        bind_host = host
 
     def _restart():
         global _server
@@ -915,7 +1081,7 @@ def ui_reload():
         from config import paths as config_paths
 
         working_dir = get_working_dir()
-        command = f"from vibe.ui_server import run_ui_server; run_ui_server('{host}', {port})"
+        command = f"from vibe.ui_server import run_ui_server; run_ui_server('{bind_host}', {port})"
         stdout_path = config_paths.get_runtime_dir() / "ui_stdout.log"
         stderr_path = config_paths.get_runtime_dir() / "ui_stderr.log"
         stdout = stdout_path.open("ab")
