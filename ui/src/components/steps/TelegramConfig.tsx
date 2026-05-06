@@ -37,6 +37,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
   const api = useApi();
   const { showToast } = useToast();
   const [botToken, setBotToken] = useState(data.telegram?.bot_token || '');
+  const [proxyUrl, setProxyUrl] = useState(data.telegram?.proxy_url || '');
   const [requireMention, setRequireMention] = useState(data.telegram?.require_mention ?? true);
   const [forumAutoTopic, setForumAutoTopic] = useState(data.telegram?.forum_auto_topic ?? true);
   const [checking, setChecking] = useState(false);
@@ -72,7 +73,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
   const runAuthTest = async () => {
     setChecking(true);
     try {
-      const result = await api.telegramAuthTest(botToken);
+      const result = await api.telegramAuthTest(botToken, proxyUrl);
       setAuthResult(result);
     } catch (err: any) {
       setAuthResult({ ok: false, error: err?.message || 'Request failed' });
@@ -171,6 +172,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
     telegram: {
       ...(data.telegram || {}),
       bot_token: botToken,
+      proxy_url: proxyUrl || undefined,
       require_mention: requireMention,
       forum_auto_topic: forumAutoTopic,
     },
@@ -257,6 +259,21 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
                     className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
                   />
                   <p className="text-[11px] text-muted">{t('telegramConfig.botTokenHint')}</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+                    <SplitSquareVertical size={14} className="text-cyan" />
+                    {t('telegramConfig.proxyUrl')}
+                  </label>
+                  <input
+                    type="text"
+                    value={proxyUrl}
+                    onChange={(e) => setProxyUrl(e.target.value)}
+                    placeholder="socks5://user:pass@host:port (optional)"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                  />
+                  <p className="text-[11px] text-muted">{t('telegramConfig.proxyUrlHint')}</p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">

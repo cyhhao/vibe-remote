@@ -46,7 +46,9 @@
     "themeLight": "Light theme",
     "themeDark": "Dark theme",
     "themeToggleHint": "Click to change theme",
-    "step": "Step"
+    "step": "Step",
+    "proxyUrl": "Proxy URL (optional)",
+    "proxyUrlHint": "SOCKS5, SOCKS4, HTTP or HTTPS proxy. Leave empty to fall back to system SOCKS proxy detection or direct connection."
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -337,6 +339,8 @@
     "botToken": "Bot Token",
     "botTokenPlaceholder": "Paste your Telegram bot token",
     "botTokenHint": "Create a bot with @BotFather, then paste the token here.",
+    "proxyUrl": "Proxy URL (optional)",
+    "proxyUrlHint": "SOCKS5, SOCKS4, HTTP or HTTPS proxy. Leave empty if Telegram is accessible directly.",
     "validateToken": "Validate Token",
     "tokenValidated": "Token validated",
     "authFailed": "Validation failed",
@@ -369,6 +373,7 @@
     "appSecret": "App Secret",
     "appSecretPlaceholder": "Enter your App Secret",
     "appSecretHint": "Click to reveal and copy from the Open Platform",
+    "proxyUrlLarkLimitation": "Heads-up: lark-oapi has no proxy hook today, so the SDK message path bypasses this proxy. Auth and direct REST calls honor it.",
     "validateCredentials": "Validate Credentials",
     "credentialsValidated": "Credentials validated",
     "authFailed": "Validation failed",

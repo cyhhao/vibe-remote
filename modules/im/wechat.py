@@ -29,6 +29,7 @@ from .base import (
 )
 from config.paths import get_state_dir
 from vibe.i18n import t as i18n_t
+from vibe.proxy import resolve_proxy
 from modules.im import wechat_api as _wechat_api_mod
 from modules.im import wechat_cdn as _wechat_cdn_mod
 from modules.im.formatters.wechat_formatter import WeChatFormatter
@@ -449,6 +450,10 @@ class WeChatBot(BaseIMClient):
     # Platform metadata
     # ------------------------------------------------------------------
 
+    @property
+    def _proxy_url(self) -> Optional[str]:
+        return resolve_proxy(self.config.proxy_url)
+
     def get_default_parse_mode(self) -> str:
         """WeChat only supports plain text."""
         return "plain"
@@ -538,7 +543,7 @@ class WeChatBot(BaseIMClient):
                 user_id,
                 context_token,
                 item_list,
-                proxy=self.config.proxy_url,
+                proxy=self._proxy_url,
             )
             if _is_session_expired_code(_get_wechat_error_code(resp)):
                 self._mark_session_expired(_get_wechat_error_code(resp))
@@ -634,7 +639,7 @@ class WeChatBot(BaseIMClient):
             self.config.bot_token,
             user_id,
             context_token=context_token or None,
-            proxy=self.config.proxy_url,
+            proxy=self._proxy_url,
         )
         _raise_if_wechat_api_error(resp, "get_config")
 
@@ -667,7 +672,7 @@ class WeChatBot(BaseIMClient):
             user_id,
             typing_ticket,
             status=_wechat_api_mod.TYPING_START,
-            proxy=self.config.proxy_url,
+            proxy=self._proxy_url,
         )
         if not ok:
             self._typing_tickets.pop((user_id, context_token), None)
@@ -694,7 +699,7 @@ class WeChatBot(BaseIMClient):
             user_id,
             typing_ticket,
             status=_wechat_api_mod.TYPING_CANCEL,
-            proxy=self.config.proxy_url,
+            proxy=self._proxy_url,
         )
         if not ok:
             self._typing_tickets.pop((user_id, context_token), None)
@@ -726,7 +731,7 @@ class WeChatBot(BaseIMClient):
             getattr(self.config, "cdn_base_url", self.config.base_url),
             context.user_id,
             file_path,
-            proxy=self.config.proxy_url,
+            proxy=self._proxy_url,
         )
         if cdn_meta is None:
             logger.error("Failed to upload file to CDN: %s", file_path)
@@ -758,7 +763,7 @@ class WeChatBot(BaseIMClient):
                 user_id,
                 context_token,
                 item_list,
-                proxy=self.config.proxy_url,
+                proxy=self._proxy_url,
             )
             if _is_session_expired_code(_get_wechat_error_code(resp)):
                 self._mark_session_expired(_get_wechat_error_code(resp))
@@ -785,7 +790,7 @@ class WeChatBot(BaseIMClient):
             getattr(self.config, "cdn_base_url", self.config.base_url),
             context.user_id,
             file_path,
-            proxy=self.config.proxy_url,
+            proxy=self._proxy_url,
         )
         if cdn_meta is None:
             logger.error("Failed to upload image to CDN: %s", file_path)
@@ -815,7 +820,7 @@ class WeChatBot(BaseIMClient):
                 user_id,
                 context_token,
                 item_list,
-                proxy=self.config.proxy_url,
+                proxy=self._proxy_url,
             )
             if _is_session_expired_code(_get_wechat_error_code(resp)):
                 self._mark_session_expired(_get_wechat_error_code(resp))
@@ -872,7 +877,7 @@ class WeChatBot(BaseIMClient):
                 user_id,
                 context_token,
                 item_list,
-                proxy=self.config.proxy_url,
+                proxy=self._proxy_url,
             )
             if _is_session_expired_code(_get_wechat_error_code(resp)):
                 self._mark_session_expired(_get_wechat_error_code(resp))
@@ -897,7 +902,7 @@ class WeChatBot(BaseIMClient):
             getattr(self.config, "cdn_base_url", self.config.base_url),
             file_info,
             target_path,
-            proxy=self.config.proxy_url,
+            proxy=self._proxy_url,
         )
         if not success:
             return FileDownloadResult(False, "CDN download/decrypt failed")
@@ -1100,7 +1105,7 @@ class WeChatBot(BaseIMClient):
                     self.config.bot_token,
                     self._sync_buf,
                     timeout_ms=self._poll_timeout_ms,
-                    proxy=self.config.proxy_url,
+                    proxy=self._proxy_url,
                 )
 
                 errcode = _get_updates_error_code(resp)

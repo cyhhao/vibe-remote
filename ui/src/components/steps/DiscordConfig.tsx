@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  SplitSquareVertical,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -43,6 +44,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   const api = useApi();
   const { showToast } = useToast();
   const [botToken, setBotToken] = useState(data.discord?.bot_token || '');
+  const [proxyUrl, setProxyUrl] = useState(data.discord?.proxy_url || '');
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
@@ -79,7 +81,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
   const runAuthTest = async () => {
     setChecking(true);
     try {
-      const result = await api.discordAuthTest(botToken);
+      const result = await api.discordAuthTest(botToken, proxyUrl);
       setAuthResult(result);
     } catch (err: any) {
       setAuthResult({ ok: false, error: err?.message || 'Request failed' });
@@ -192,6 +194,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
     discord: {
       ...(data.discord || {}),
       bot_token: botToken,
+      proxy_url: proxyUrl || undefined,
     },
     discordGuildAllowlist: selectedGuilds,
     discordGuildAllowlistTouched: guildSelectionTouched,
@@ -348,6 +351,21 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                     className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
                   />
                   <p className="text-[11px] text-muted">{t('discordConfig.botTokenHint')}</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+                    <SplitSquareVertical size={14} className="text-cyan" />
+                    {t('common.proxyUrl')}
+                  </label>
+                  <input
+                    type="text"
+                    value={proxyUrl}
+                    onChange={(e) => setProxyUrl(e.target.value)}
+                    placeholder="socks5://user:pass@host:port (optional)"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                  />
+                  <p className="text-[11px] text-muted">{t('common.proxyUrlHint')}</p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">

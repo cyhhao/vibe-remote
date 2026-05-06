@@ -26,6 +26,7 @@ from core.auth import AuthResult
 from .formatters import SlackFormatter
 from .slack_modal import parse_routing_modal_selection
 from vibe.i18n import get_supported_languages, t as i18n_t
+from vibe.proxy import resolve_proxy
 from modules.agents.opencode.utils import (
     build_claude_reasoning_options,
     build_opencode_model_option_items,
@@ -260,11 +261,16 @@ class SlackBot(BaseIMClient):
 
     def _ensure_clients(self):
         """Ensure web and socket clients are initialized"""
+        proxy = resolve_proxy(self.config.proxy_url)
         if self.web_client is None:
-            self.web_client = AsyncWebClient(token=self.config.bot_token)
+            self.web_client = AsyncWebClient(token=self.config.bot_token, proxy=proxy)
 
         if self.socket_client is None and self.config.app_token:
-            self.socket_client = SocketModeClient(app_token=self.config.app_token, web_client=self.web_client)
+            self.socket_client = SocketModeClient(
+                app_token=self.config.app_token,
+                web_client=self.web_client,
+                proxy=proxy,
+            )
 
     def _extract_bot_user_id_from_payload(self, payload: Dict[str, Any]) -> Optional[str]:
         authorizations = payload.get("authorizations") or []

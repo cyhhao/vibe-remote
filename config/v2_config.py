@@ -121,7 +121,6 @@ class WeChatConfig(BaseIMConfig):
     bot_token: str = ""
     base_url: str = "https://ilinkai.weixin.qq.com"
     cdn_base_url: str = "https://novac2c.cdn.weixin.qq.com/c2c"
-    proxy_url: Optional[str] = None
     require_mention: bool = False  # unused for WeChat DM-only, kept for interface compat
 
     def validate(self) -> None:

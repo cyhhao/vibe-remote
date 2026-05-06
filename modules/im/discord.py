@@ -5,7 +5,6 @@ import logging
 import os
 import time
 from typing import Dict, Any, Optional, Callable, List
-from urllib.parse import urlsplit
 
 import aiohttp
 import discord
@@ -313,19 +312,19 @@ class DiscordBot(BaseIMClient):
 
         async def _run():
             self._loop = asyncio.get_running_loop()
-            # Inject SOCKS proxy connector inside the event loop (required
-            # by aiohttp).  Must happen before login() creates the session.
-            from vibe.proxy import get_system_socks_proxy
+            # Inject proxy connector inside the event loop (required by
+            # aiohttp). Must happen before login() creates the session.
+            from vibe.proxy import redact_proxy_url, resolve_proxy
 
-            socks_url = get_system_socks_proxy()
-            if socks_url:
+            proxy_url = resolve_proxy(self.config.proxy_url)
+            if proxy_url:
                 try:
                     from aiohttp_socks import ProxyConnector
 
-                    self.client.http.connector = ProxyConnector.from_url(socks_url, rdns=True)
-                    logger.info("Discord using SOCKS proxy: %s", self._redact_proxy_url(socks_url))
+                    self.client.http.connector = ProxyConnector.from_url(proxy_url, rdns=True)
+                    logger.info("Discord using proxy: %s", redact_proxy_url(proxy_url))
                 except ImportError:
-                    logger.warning("SOCKS proxy detected but aiohttp_socks not installed")
+                    logger.warning("Proxy configured but aiohttp_socks not installed")
 
             async with self.client:
                 await self.client.start(self.config.bot_token)
@@ -343,22 +342,6 @@ class DiscordBot(BaseIMClient):
             loop.call_soon_threadsafe(lambda: loop.create_task(self.client.close()))
         except Exception:
             logger.exception("Failed to stop Discord client")
-
-    @staticmethod
-    def _redact_proxy_url(proxy_url: str) -> str:
-        """Return a proxy URL safe for logs (credentials stripped)."""
-        try:
-            parts = urlsplit(proxy_url)
-            if parts.scheme and parts.hostname:
-                host = parts.hostname
-                if ":" in host and not host.startswith("["):
-                    host = f"[{host}]"
-                if parts.port:
-                    return f"{parts.scheme}://{host}:{parts.port}"
-                return f"{parts.scheme}://{host}"
-        except Exception:
-            pass
-        return "<configured>"
 
     async def shutdown(self) -> None:
         loop = getattr(self, "_loop", None)
