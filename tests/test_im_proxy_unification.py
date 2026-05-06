@@ -281,3 +281,115 @@ def test_telegram_auth_test_prefers_explicit_over_system() -> None:
         vibe_api.telegram_auth_test("123456:abc", proxy_url="socks5://explicit:1080")
 
     assert captured["proxy_url"] == "socks5://explicit:1080"
+
+
+# ---------------------------------------------------------------------------
+# lark_auth_test must route through the configured proxy (round-3 P1 review)
+# ---------------------------------------------------------------------------
+
+
+def test_lark_auth_test_threads_proxy_into_token_helper() -> None:
+    """lark_auth_test must resolve proxy and forward it to _lark_tenant_token.
+
+    Before the fix, lark_auth_test called the internal helper with no proxy
+    info, so users behind a corporate/SOCKS proxy got a false auth failure
+    even after providing proxy_url in the wizard.
+    """
+    from vibe import api as vibe_api
+
+    captured: dict = {}
+
+    def fake_token(app_id, app_secret, domain="feishu", proxy_url=None):
+        captured["app_id"] = app_id
+        captured["proxy_url"] = proxy_url
+        return "tok-123"
+
+    with patch.object(vibe_api, "_lark_tenant_token", new=fake_token), patch.object(
+        proxy_module, "get_system_socks_proxy", return_value=None
+    ):
+        result = vibe_api.lark_auth_test("cli_x", "secret", proxy_url="socks5://explicit:1080")
+
+    assert result == {"ok": True}
+    assert captured["proxy_url"] == "socks5://explicit:1080"
+
+
+def test_lark_auth_test_falls_back_to_system_proxy() -> None:
+    """Empty proxy_url should pick up the system SOCKS proxy."""
+    from vibe import api as vibe_api
+
+    captured: dict = {}
+
+    def fake_token(app_id, app_secret, domain="feishu", proxy_url=None):
+        captured["proxy_url"] = proxy_url
+        return "tok-123"
+
+    with patch.object(vibe_api, "_lark_tenant_token", new=fake_token), patch.object(
+        proxy_module, "get_system_socks_proxy", return_value="socks5://system:1080"
+    ):
+        vibe_api.lark_auth_test("cli_x", "secret")
+
+    assert captured["proxy_url"] == "socks5://system:1080"
+
+
+def test_lark_tenant_token_uses_aiohttp_for_socks() -> None:
+    """SOCKS proxy_url branches into the aiohttp helper, not urllib."""
+    import asyncio
+
+    from unittest.mock import AsyncMock
+
+    from vibe import api as vibe_api
+
+    aiohttp_called = {"hit": False}
+
+    async def fake_aiohttp(url, body, headers, proxy):
+        aiohttp_called["hit"] = True
+        aiohttp_called["proxy"] = proxy
+        return {"code": 0, "tenant_access_token": "tok-from-socks"}
+
+    def fail_urlopen(*args, **kwargs):
+        raise AssertionError("urllib should not be used for SOCKS proxies")
+
+    with patch.object(vibe_api, "_lark_tenant_token_via_aiohttp", new=fake_aiohttp), patch(
+        "urllib.request.build_opener", side_effect=fail_urlopen
+    ):
+        token = vibe_api._lark_tenant_token(
+            "cli_x", "secret", proxy_url="socks5://127.0.0.1:1080"
+        )
+
+    assert token == "tok-from-socks"
+    assert aiohttp_called["hit"] is True
+    assert aiohttp_called["proxy"] == "socks5://127.0.0.1:1080"
+    # touch asyncio so import is used in case lints flag it
+    assert asyncio.iscoroutinefunction(fake_aiohttp)
+    AsyncMock  # unused-import guard
+
+
+def test_lark_tenant_token_uses_urllib_proxy_for_http() -> None:
+    """HTTP proxy_url uses urllib.ProxyHandler with the proxy applied."""
+    from unittest.mock import MagicMock
+
+    from vibe import api as vibe_api
+
+    fake_resp_cm = MagicMock()
+    fake_resp_cm.__enter__ = MagicMock(
+        return_value=MagicMock(read=MagicMock(return_value=b'{"code":0,"tenant_access_token":"tok-http"}'))
+    )
+    fake_resp_cm.__exit__ = MagicMock(return_value=None)
+
+    fake_opener = MagicMock()
+    fake_opener.open = MagicMock(return_value=fake_resp_cm)
+
+    captured: dict = {}
+
+    def capture_build_opener(*handlers):
+        captured["handlers"] = handlers
+        return fake_opener
+
+    with patch("urllib.request.build_opener", side_effect=capture_build_opener):
+        token = vibe_api._lark_tenant_token(
+            "cli_x", "secret", proxy_url="http://proxy.local:8080"
+        )
+
+    assert token == "tok-http"
+    # ProxyHandler should be in the chain when proxy_url is set
+    assert any("ProxyHandler" in type(h).__name__ for h in captured["handlers"])

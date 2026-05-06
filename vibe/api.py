@@ -1573,18 +1573,53 @@ def _lark_api_base(domain: str = "feishu") -> str:
     return "https://open.feishu.cn"
 
 
-def _lark_tenant_token(app_id: str, app_secret: str, domain: str = "feishu") -> Optional[str]:
-    """Get Lark tenant access token (internal helper, not exposed to frontend)."""
+def _lark_tenant_token(
+    app_id: str,
+    app_secret: str,
+    domain: str = "feishu",
+    proxy_url: str | None = None,
+) -> Optional[str]:
+    """Get Lark tenant access token (internal helper, not exposed to frontend).
+
+    ``proxy_url`` is honored when set: SOCKS schemes route through
+    ``aiohttp_socks``, HTTP schemes use ``urllib.ProxyHandler``. The runtime
+    Feishu/Lark adapter still bypasses this because ``lark-oapi`` has no
+    proxy hook — that gap is surfaced by the adapter, not here.
+    """
     import urllib.request
 
     url = f"{_lark_api_base(domain)}/open-apis/auth/v3/tenant_access_token/internal"
-    data = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        result = json.loads(resp.read().decode())
-        if result.get("code") == 0:
-            return result.get("tenant_access_token")
+    body = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
+    headers = {"Content-Type": "application/json"}
+
+    if proxy_url and "socks" in proxy_url.lower():
+        result = asyncio.run(_lark_tenant_token_via_aiohttp(url, body, headers, proxy_url))
+    else:
+        if proxy_url:
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+            )
+        else:
+            opener = urllib.request.build_opener()
+        req = urllib.request.Request(url, data=body, headers=headers)
+        with opener.open(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+
+    if result.get("code") == 0:
+        return result.get("tenant_access_token")
     return None
+
+
+async def _lark_tenant_token_via_aiohttp(url: str, body: bytes, headers: dict, proxy: str) -> dict:
+    import aiohttp
+    from aiohttp_socks import ProxyConnector
+
+    connector = ProxyConnector.from_url(proxy, rdns=True)
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        async with session.post(url, data=body, headers=headers) as resp:
+            resp.raise_for_status()
+            return await resp.json()
 
 
 def lark_auth_test(
@@ -1595,20 +1630,15 @@ def lark_auth_test(
 ) -> dict:
     """Test Lark/Feishu app credentials. Only returns ok/error, never exposes token.
 
-    ``proxy_url`` is accepted for API parity, but ``lark-oapi`` provides no
-    proxy hook today, so the auth test (and the runtime SDK) bypass it. We
-    log once when a value is provided so users understand the gap.
+    ``proxy_url`` is honored for the auth call itself; the runtime SDK
+    (``lark-oapi``) has no proxy hook and bypasses it — that limitation is
+    surfaced by ``modules/im/feishu.py`` once at adapter init.
     """
-    if proxy_url and proxy_url.strip():
-        from vibe.proxy import redact_proxy_url
+    from vibe.proxy import resolve_proxy
 
-        logger.warning(
-            "Feishu/Lark auth_test received proxy_url=%s but lark-oapi has no "
-            "proxy hook; the request will bypass the configured proxy.",
-            redact_proxy_url(proxy_url),
-        )
+    proxy = resolve_proxy(proxy_url)
     try:
-        token = _lark_tenant_token(app_id, app_secret, domain)
+        token = _lark_tenant_token(app_id, app_secret, domain, proxy_url=proxy)
         if not token:
             return {"ok": False, "error": "Invalid credentials"}
         return {"ok": True}
