@@ -155,17 +155,17 @@ Alternatively, add `proxy_url` to your config in `~/.vibe_remote/config/config.j
 | `http://` | HTTP proxy |
 | `https://` | HTTPS proxy |
 
-### Fallback Behavior
+### If the Proxy Fails
 
-If the proxy is unavailable:
-1. Vibe Remote logs a warning
-2. After 3 failed attempts, switches to direct connection
-3. When proxy becomes available again, automatically reconnects via proxy
+Vibe Remote does **not** automatically fall back to a direct connection when
+the proxy is unreachable. Telegram requests will fail and the error will be
+logged. To recover, fix the proxy, switch `proxy_url` to a working endpoint,
+or remove the `proxy_url` field if Telegram is reachable directly.
 
 ### Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
 | Bot can't connect | Check proxy URL format and credentials |
-| Works then stops | Proxy may be down, direct fallback is automatic |
+| Works then stops | Proxy is down — restart it or remove `proxy_url` to use a direct connection |
 | Token validation fails | Verify proxy allows connections to api.telegram.org |
