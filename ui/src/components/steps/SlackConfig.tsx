@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Lock, Shield, RefreshCw, Copy, ExternalLink, Check, ChevronDown, ChevronUp, Key, Hash, Plus, ArrowLeft, ArrowRight } from 'lucide-react';
+import { Lock, Shield, RefreshCw, Copy, ExternalLink, Check, ChevronDown, ChevronUp, Key, Hash, Plus, ArrowLeft, ArrowRight, SplitSquareVertical } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
@@ -25,6 +25,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
   const { showToast } = useToast();
   const [botToken, setBotToken] = useState(data.slack?.bot_token || data.slackBotToken || '');
   const [appToken, setAppToken] = useState(data.slack?.app_token || data.slackAppToken || '');
+  const [proxyUrl, setProxyUrl] = useState(data.slack?.proxy_url || '');
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
@@ -96,7 +97,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
   const runAuthTest = async () => {
     setChecking(true);
     try {
-      const result = await api.slackAuthTest(botToken);
+      const result = await api.slackAuthTest(botToken, proxyUrl);
       setAuthResult(result);
     } catch (err: any) {
       setAuthResult({ ok: false, error: err?.message || 'Request failed' });
@@ -158,7 +159,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
   ].filter(Boolean).length;
 
   const buildSubmitData = () => ({
-    slack: { ...data.slack, bot_token: botToken, app_token: appToken },
+    slack: { ...data.slack, bot_token: botToken, app_token: appToken, proxy_url: proxyUrl || undefined },
     mode: 'self_host',
   });
 
@@ -314,6 +315,20 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
             {expandedSteps[4] && (
               <div className="space-y-4 border-t border-border px-5 py-4">
                 <p className="text-[13px] leading-[1.55] text-muted">{t('slackConfig.step4Description')}</p>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+                    <SplitSquareVertical size={14} className="text-cyan" />
+                    {t('common.proxyUrl')}
+                  </label>
+                  <input
+                    type="text"
+                    value={proxyUrl}
+                    onChange={(e) => setProxyUrl(e.target.value)}
+                    placeholder="socks5://user:pass@host:port (optional)"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                  />
+                  <p className="text-[11px] text-muted">{t('common.proxyUrlHint')}</p>
+                </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <button
                     onClick={runAuthTest}
@@ -416,7 +431,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
           <button
             type="button"
             onClick={() =>
-              onNext({ slack: { ...data.slack, bot_token: botToken, app_token: appToken }, mode: 'self_host' })
+              onNext({ slack: { ...data.slack, bot_token: botToken, app_token: appToken, proxy_url: proxyUrl || undefined }, mode: 'self_host' })
             }
             disabled={!isValid}
             className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"

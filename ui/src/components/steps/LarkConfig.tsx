@@ -16,6 +16,7 @@ import {
   Radio,
   RefreshCw,
   Shield,
+  SplitSquareVertical,
   Wifi,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -66,6 +67,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
   const [domain, setDomain] = useState<'feishu' | 'lark'>(data.lark?.domain || 'feishu');
   const [appId, setAppId] = useState(data.lark?.app_id || '');
   const [appSecret, setAppSecret] = useState(data.lark?.app_secret || '');
+  const [proxyUrl, setProxyUrl] = useState(data.lark?.proxy_url || '');
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [authResult, setAuthResult] = useState<any>(null);
@@ -120,7 +122,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
     setChecking(true);
     setWsStatus('idle');
     try {
-      const result = await api.larkAuthTest(appId, appSecret, domain);
+      const result = await api.larkAuthTest(appId, appSecret, domain, proxyUrl);
       setAuthResult(result);
 
       if (result.ok) {
@@ -240,6 +242,7 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
       app_id: appId,
       app_secret: appSecret,
       domain,
+      proxy_url: proxyUrl || undefined,
     },
   });
 
@@ -339,6 +342,21 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
                     className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
                   />
                   <p className="text-[11px] text-muted">{t('larkConfig.appSecretHint')}</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+                    <SplitSquareVertical size={14} className="text-cyan" />
+                    {t('common.proxyUrl')}
+                  </label>
+                  <input
+                    type="text"
+                    value={proxyUrl}
+                    onChange={(e) => setProxyUrl(e.target.value)}
+                    placeholder="socks5://user:pass@host:port (optional)"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                  />
+                  <p className="text-[11px] text-muted">{t('larkConfig.proxyUrlLarkLimitation')}</p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">

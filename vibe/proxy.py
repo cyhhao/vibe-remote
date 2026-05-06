@@ -12,6 +12,21 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def resolve_proxy(config_proxy: Optional[str]) -> Optional[str]:
+    """Resolve the effective proxy URL for an IM adapter.
+
+    Returns the explicit ``config_proxy`` when set, otherwise falls back to
+    the system SOCKS proxy via :func:`get_system_socks_proxy`. Returns
+    ``None`` when neither is configured.
+
+    This is the single decision point for "what proxy should this platform
+    use?" so adapters do not need to re-implement the precedence rule.
+    """
+    if config_proxy and config_proxy.strip():
+        return config_proxy.strip()
+    return get_system_socks_proxy()
+
+
 def get_system_socks_proxy() -> Optional[str]:
     """Return the system SOCKS proxy URL, or ``None`` if not configured.
 

@@ -202,6 +202,16 @@ class FeishuBot(BaseIMClient):
             return
         import lark_oapi as lark
 
+        if getattr(self.config, "proxy_url", None):
+            # lark-oapi (as of 1.x) does not expose a proxy hook on its
+            # builder; the SDK ignores HTTP(S)_PROXY env vars too. Surface
+            # this once at init so users in restricted regions don't
+            # silently think the field works.
+            logger.warning(
+                "Feishu/Lark adapter: proxy_url is set but lark-oapi has no "
+                "proxy hook; outbound traffic will bypass the configured proxy."
+            )
+
         self._lark_client = (
             lark.Client.builder()
             .app_id(self.config.app_id)

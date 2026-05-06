@@ -313,19 +313,19 @@ class DiscordBot(BaseIMClient):
 
         async def _run():
             self._loop = asyncio.get_running_loop()
-            # Inject SOCKS proxy connector inside the event loop (required
-            # by aiohttp).  Must happen before login() creates the session.
-            from vibe.proxy import get_system_socks_proxy
+            # Inject proxy connector inside the event loop (required by
+            # aiohttp). Must happen before login() creates the session.
+            from vibe.proxy import resolve_proxy
 
-            socks_url = get_system_socks_proxy()
-            if socks_url:
+            proxy_url = resolve_proxy(self.config.proxy_url)
+            if proxy_url:
                 try:
                     from aiohttp_socks import ProxyConnector
 
-                    self.client.http.connector = ProxyConnector.from_url(socks_url, rdns=True)
-                    logger.info("Discord using SOCKS proxy: %s", self._redact_proxy_url(socks_url))
+                    self.client.http.connector = ProxyConnector.from_url(proxy_url, rdns=True)
+                    logger.info("Discord using proxy: %s", self._redact_proxy_url(proxy_url))
                 except ImportError:
-                    logger.warning("SOCKS proxy detected but aiohttp_socks not installed")
+                    logger.warning("Proxy configured but aiohttp_socks not installed")
 
             async with self.client:
                 await self.client.start(self.config.bot_token)

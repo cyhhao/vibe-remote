@@ -63,6 +63,13 @@ class InlineKeyboard:
 class BaseIMConfig(ABC):
     """Abstract base class for IM platform configurations"""
 
+    # Optional outbound proxy used by the platform's HTTP transport.
+    # Schemes: socks5://, socks4://, http://, https://. When unset, the
+    # adapter may fall back to a system SOCKS proxy via vibe.proxy.
+    # Lark/Feishu currently has no proxy hook in lark-oapi and ignores
+    # this field with a logged warning.
+    proxy_url: Optional[str] = None
+
     @abstractmethod
     def validate(self) -> None:
         """Validate the configuration

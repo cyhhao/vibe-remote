@@ -960,7 +960,10 @@ def slack_auth_test():
     from vibe import api
 
     payload = request.json or {}
-    result = api.slack_auth_test(payload.get("bot_token", ""))
+    result = api.slack_auth_test(
+        payload.get("bot_token", ""),
+        proxy_url=payload.get("proxy_url"),
+    )
     return jsonify(result)
 
 
@@ -982,7 +985,10 @@ def discord_auth_test():
     from vibe import api
 
     payload = request.json or {}
-    result = api.discord_auth_test(payload.get("bot_token", ""))
+    result = api.discord_auth_test(
+        payload.get("bot_token", ""),
+        proxy_url=payload.get("proxy_url"),
+    )
     return jsonify(result)
 
 
@@ -1028,7 +1034,10 @@ def lark_auth_test():
 
     payload = request.json or {}
     result = api.lark_auth_test(
-        payload.get("app_id", ""), payload.get("app_secret", ""), payload.get("domain", "feishu")
+        payload.get("app_id", ""),
+        payload.get("app_secret", ""),
+        payload.get("domain", "feishu"),
+        proxy_url=payload.get("proxy_url"),
     )
     return jsonify(result)
 

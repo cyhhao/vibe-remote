@@ -90,7 +90,6 @@ class TelegramConfig(BaseIMConfig):
     webhook_secret_token: Optional[str] = None
     allowed_chat_ids: Optional[List[str]] = None
     allowed_user_ids: Optional[List[str]] = None
-    proxy_url: Optional[str] = None
 
     def validate(self) -> None:
         # Allow empty token for initial setup
@@ -122,7 +121,6 @@ class WeChatConfig(BaseIMConfig):
     bot_token: str = ""
     base_url: str = "https://ilinkai.weixin.qq.com"
     cdn_base_url: str = "https://novac2c.cdn.weixin.qq.com/c2c"
-    proxy_url: Optional[str] = None
     require_mention: bool = False  # unused for WeChat DM-only, kept for interface compat
 
     def validate(self) -> None:

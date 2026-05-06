@@ -46,7 +46,9 @@
     "themeLight": "浅色主题",
     "themeDark": "深色主题",
     "themeToggleHint": "点击切换主题",
-    "step": "步骤"
+    "step": "步骤",
+    "proxyUrl": "代理地址（可选）",
+    "proxyUrlHint": "SOCKS5、SOCKS4、HTTP 或 HTTPS 代理。留空则回退到系统 SOCKS 代理探测，未配置时直连。"
   },
   "nav": {
     "dashboard": "仪表盘",
@@ -371,6 +373,7 @@
     "appSecret": "App Secret",
     "appSecretPlaceholder": "输入 App Secret",
     "appSecretHint": "在开放平台点击显示并复制",
+    "proxyUrlLarkLimitation": "提示：当前 lark-oapi 没有代理钩子，SDK 消息通道不会走此代理；身份验证及直连 REST 调用会遵循该代理。",
     "validateCredentials": "验证凭证",
     "credentialsValidated": "凭证验证通过",
     "authFailed": "验证失败",

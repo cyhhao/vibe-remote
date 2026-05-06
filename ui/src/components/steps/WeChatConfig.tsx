@@ -9,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
   Smartphone,
+  SplitSquareVertical,
   Wifi,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -41,6 +42,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
   const [message, setMessage] = useState<string>('');
   const [botToken, setBotToken] = useState<string>(data.wechat?.bot_token || '');
   const [baseUrl, setBaseUrl] = useState<string>(data.wechat?.base_url || '');
+  const [proxyUrl, setProxyUrl] = useState<string>(data.wechat?.proxy_url || '');
   const [starting, setStarting] = useState(false);
 
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -198,6 +200,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
       ...(data.wechat || {}),
       bot_token: botToken,
       base_url: baseUrl,
+      proxy_url: proxyUrl || undefined,
     },
   });
 
@@ -377,6 +380,22 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
               </div>
             </div>
           )}
+
+          {/* Proxy (optional) — applies to outbound iLink/CDN traffic */}
+          <div className="rounded-xl border border-border bg-background px-5 py-4 space-y-2">
+            <label className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+              <SplitSquareVertical size={14} className="text-cyan" />
+              {t('common.proxyUrl')}
+            </label>
+            <input
+              type="text"
+              value={proxyUrl}
+              onChange={(e) => setProxyUrl(e.target.value)}
+              placeholder="socks5://user:pass@host:port (optional)"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+            />
+            <p className="text-[11px] text-muted">{t('common.proxyUrlHint')}</p>
+          </div>
         </div>
     </>
   );

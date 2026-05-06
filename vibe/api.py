@@ -567,11 +567,13 @@ def check_cli_exec(path: str) -> dict:
     return {"ok": True}
 
 
-def slack_auth_test(bot_token: str) -> dict:
+def slack_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
     try:
         from slack_sdk.web import WebClient
+        from vibe.proxy import resolve_proxy
 
-        client = WebClient(token=bot_token)
+        proxy = resolve_proxy(proxy_url)
+        client = WebClient(token=bot_token, proxy=proxy)
         response = client.auth_test()
         return {"ok": True, "response": response.data}
     except Exception as exc:
@@ -653,9 +655,9 @@ def list_channels(bot_token: str, browse_all: bool = False) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def discord_auth_test(bot_token: str) -> dict:
+def discord_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
     try:
-        data = _discord_api_get(bot_token, "users/@me")
+        data = _discord_api_get(bot_token, "users/@me", proxy_url=proxy_url)
         return {"ok": True, "response": data}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -729,19 +731,42 @@ def opencode_options(cwd: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def _discord_api_get(bot_token: str, path: str) -> dict:
+def _discord_api_get(bot_token: str, path: str, proxy_url: str | None = None) -> dict:
     import urllib.request
+
+    from vibe.proxy import resolve_proxy
 
     if not bot_token:
         raise ValueError("bot_token is required")
     url = f"https://discord.com/api/v10/{path.lstrip('/')}"
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bot {bot_token}", "User-Agent": "vibe-remote"},
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    headers = {"Authorization": f"Bot {bot_token}", "User-Agent": "vibe-remote"}
+
+    proxy = resolve_proxy(proxy_url)
+    if proxy and "socks" in proxy.lower():
+        # urllib has no native SOCKS support; route via aiohttp + aiohttp_socks.
+        return asyncio.run(_discord_api_get_via_aiohttp(url, headers, proxy))
+
+    if proxy:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        )
+    else:
+        opener = urllib.request.build_opener()
+    req = urllib.request.Request(url, headers=headers)
+    with opener.open(req, timeout=10) as resp:
         payload = resp.read().decode("utf-8")
         return json.loads(payload)
+
+
+async def _discord_api_get_via_aiohttp(url: str, headers: dict, proxy: str) -> dict:
+    import aiohttp
+    from aiohttp_socks import ProxyConnector
+
+    connector = ProxyConnector.from_url(proxy, rdns=True)
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        async with session.get(url, headers=headers) as resp:
+            return await resp.json()
 
 
 async def _telegram_get_me(bot_token: str, proxy_url: str | None = None) -> dict:
@@ -1555,8 +1580,24 @@ def _lark_tenant_token(app_id: str, app_secret: str, domain: str = "feishu") -> 
     return None
 
 
-def lark_auth_test(app_id: str, app_secret: str, domain: str = "feishu") -> dict:
-    """Test Lark/Feishu app credentials. Only returns ok/error, never exposes token."""
+def lark_auth_test(
+    app_id: str,
+    app_secret: str,
+    domain: str = "feishu",
+    proxy_url: str | None = None,
+) -> dict:
+    """Test Lark/Feishu app credentials. Only returns ok/error, never exposes token.
+
+    ``proxy_url`` is accepted for API parity, but ``lark-oapi`` provides no
+    proxy hook today, so the auth test (and the runtime SDK) bypass it. We
+    log once when a value is provided so users understand the gap.
+    """
+    if proxy_url and proxy_url.strip():
+        logger.warning(
+            "Feishu/Lark auth_test received proxy_url=%s but lark-oapi has no "
+            "proxy hook; the request will bypass the configured proxy.",
+            proxy_url,
+        )
     try:
         token = _lark_tenant_token(app_id, app_secret, domain)
         if not token:
