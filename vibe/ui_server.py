@@ -9,12 +9,14 @@ import mimetypes
 import os
 import re
 import secrets
+import socket
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 
+import psutil
 from flask import Flask, request, jsonify, redirect, send_file, Response
 
 from config import paths
@@ -271,15 +273,6 @@ _OVERLAY_TRUST_NETWORKS_V4 = (
     ipaddress.IPv4Network("169.254.0.0/16"),
 )
 _OVERLAY_TRUST_NETWORKS_V6 = (ipaddress.IPv6Network("fe80::/10"),)
-# Subnet sizes used to approximate the kernel's pre-wildcard interface
-# filtering for RFC1918 / ULA setup hosts. The wildcard bind in the
-# tunnel-on path means we no longer get free interface scoping from the
-# kernel; we have to enforce "peer is on the same subnet as setup_host"
-# at the application layer. /24 and /64 cover typical home/office LANs
-# without granting trust across the whole /8 (10.0.0.0/8) or /7 (fc00::/7)
-# block, which would let a 10.50/16 peer spoof ``Host=10.20.x.y``.
-_DEFAULT_TRUST_PREFIX_V4 = 24
-_DEFAULT_TRUST_PREFIX_V6 = 64
 
 
 def _is_private_address(address: ipaddress._BaseAddress) -> bool:
@@ -304,27 +297,96 @@ def _is_private_peer() -> bool:
     return False
 
 
-def _setup_host_trust_network(setup_address: ipaddress._BaseAddress) -> ipaddress._BaseNetwork | None:
-    """Return the network setup-host trust should extend to.
+def _local_interface_network(setup_address: ipaddress._BaseAddress) -> ipaddress._BaseNetwork | None:
+    """Return the network ``setup_host`` is configured on locally.
 
-    Tailscale CGNAT and link-local ranges keep their natural block size
-    because the overlay or kernel link-local routing scopes them. RFC1918
-    and ULA setup hosts get a typical same-subnet prefix (/24 v4, /64 v6)
-    around setup_host so we don't extend trust across an entire 10.0.0.0/8
-    or fc00::/7 block — a 10.50/16 peer should not inherit trust from a
-    10.20/16 setup host.
+    Reads the interface's actual netmask via ``psutil.net_if_addrs`` so
+    the trust scope mirrors the kernel's pre-wildcard interface filtering
+    exactly — a /16 LAN, a /20 corporate network, and a non-/64 IPv6
+    network all get their real prefix instead of a fixed estimate.
+
+    Returns None when ``setup_host`` is not configured on any local
+    interface or psutil cannot enumerate them; the caller denies trust
+    in that case so we never widen the application-layer scope beyond
+    what the kernel would have permitted.
+    """
+    try:
+        interfaces = psutil.net_if_addrs()
+    except Exception:
+        return None
+    target_family = socket.AF_INET if setup_address.version == 4 else socket.AF_INET6
+    for addrs in interfaces.values():
+        for snic in addrs:
+            if snic.family != target_family:
+                continue
+            address_str = (snic.address or "").split("%", 1)[0]
+            try:
+                addr = ipaddress.ip_address(address_str)
+            except ValueError:
+                continue
+            if addr != setup_address:
+                continue
+            netmask = snic.netmask
+            if not netmask:
+                continue
+            prefix = _netmask_to_prefix(netmask, addr.version)
+            if prefix is None:
+                continue
+            try:
+                return ipaddress.ip_network(f"{addr}/{prefix}", strict=False)
+            except ValueError:
+                continue
+    return None
+
+
+def _netmask_to_prefix(netmask: str, version: int) -> int | None:
+    """Convert ``psutil``'s netmask string to a prefix length.
+
+    psutil returns IPv4 netmasks as dotted strings (``255.255.255.0``)
+    and IPv6 netmasks as hex strings (``ffff:ffff:ffff:ff00::``).
+    ``ipaddress.ip_network`` only accepts the dotted form for IPv4 and
+    requires an integer prefix for IPv6, so we normalize to a prefix
+    length here. Returns None for malformed or non-contiguous masks.
+    """
+    try:
+        if version == 4:
+            mask_int = int(ipaddress.IPv4Address(netmask))
+            width = 32
+        else:
+            mask_int = int(ipaddress.IPv6Address(netmask))
+            width = 128
+    except (ipaddress.AddressValueError, ValueError):
+        return None
+    if mask_int == 0:
+        return 0
+    inverted = (~mask_int) & ((1 << width) - 1)
+    if inverted & (inverted + 1):
+        # Non-contiguous mask — refuse rather than guess.
+        return None
+    prefix = width - inverted.bit_length()
+    return prefix
+
+
+def _setup_host_trust_network(setup_address: ipaddress._BaseAddress) -> ipaddress._BaseNetwork | None:
+    """Return the network setup-host trust should extend to, or None to deny.
+
+    Overlay networks (Tailscale CGNAT, link-local) trust the entire block
+    because the overlay routing or kernel link-local scoping handles peer
+    isolation; legitimate peers can be anywhere in the block. RFC1918 and
+    ULA setup hosts derive the network from the actual interface netmask
+    via :func:`_local_interface_network` so the application-layer scope
+    matches the kernel's pre-wildcard interface filtering. Returning None
+    means the scope cannot be determined and the caller must deny trust.
     """
     if setup_address.version == 4:
         for overlay in _OVERLAY_TRUST_NETWORKS_V4:
             if setup_address in overlay:
                 return overlay
-        return ipaddress.ip_network(f"{setup_address}/{_DEFAULT_TRUST_PREFIX_V4}", strict=False)
-    if setup_address.version == 6:
+    elif setup_address.version == 6:
         for overlay in _OVERLAY_TRUST_NETWORKS_V6:
             if setup_address in overlay:
                 return overlay
-        return ipaddress.ip_network(f"{setup_address}/{_DEFAULT_TRUST_PREFIX_V6}", strict=False)
-    return None
+    return _local_interface_network(setup_address)
 
 
 def _peer_shares_setup_host_network(setup_address: ipaddress._BaseAddress) -> bool:
@@ -334,8 +396,8 @@ def _peer_shares_setup_host_network(setup_address: ipaddress._BaseAddress) -> bo
     a 192.168/16 LAN peer could spoof ``Host=<tailscale_setup_host>`` on
     a different interface and inherit setup-host trust. Subnet size comes
     from :func:`_setup_host_trust_network`, which keeps overlay networks
-    (Tailscale, link-local) broad and tightens RFC1918/ULA to /24 or /64
-    around setup_host.
+    (Tailscale, link-local) broad and otherwise mirrors the actual
+    interface netmask via :func:`_local_interface_network`.
     """
     remote_addr = (request.remote_addr or "").strip()
     if not remote_addr or remote_addr == "localhost":
