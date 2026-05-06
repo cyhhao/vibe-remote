@@ -737,7 +737,7 @@ def opencode_options(cwd: str) -> dict:
 def _discord_api_get(bot_token: str, path: str, proxy_url: str | None = None) -> dict:
     import urllib.request
 
-    from vibe.proxy import resolve_proxy
+    from vibe.proxy import is_socks_proxy, resolve_proxy
 
     if not bot_token:
         raise ValueError("bot_token is required")
@@ -745,7 +745,7 @@ def _discord_api_get(bot_token: str, path: str, proxy_url: str | None = None) ->
     headers = {"Authorization": f"Bot {bot_token}", "User-Agent": "vibe-remote"}
 
     proxy = resolve_proxy(proxy_url)
-    if proxy and "socks" in proxy.lower():
+    if proxy and is_socks_proxy(proxy):
         # urllib has no native SOCKS support; route via aiohttp + aiohttp_socks.
         return asyncio.run(_discord_api_get_via_aiohttp(url, headers, proxy))
 
@@ -1588,11 +1588,13 @@ def _lark_tenant_token(
     """
     import urllib.request
 
+    from vibe.proxy import is_socks_proxy
+
     url = f"{_lark_api_base(domain)}/open-apis/auth/v3/tenant_access_token/internal"
     body = json.dumps({"app_id": app_id, "app_secret": app_secret}).encode()
     headers = {"Content-Type": "application/json"}
 
-    if proxy_url and "socks" in proxy_url.lower():
+    if proxy_url and is_socks_proxy(proxy_url):
         result = asyncio.run(_lark_tenant_token_via_aiohttp(url, body, headers, proxy_url))
     else:
         if proxy_url:

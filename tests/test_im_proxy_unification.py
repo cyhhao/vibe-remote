@@ -28,7 +28,7 @@ from config.v2_config import (
     WeChatConfig,
 )
 from vibe import proxy as proxy_module
-from vibe.proxy import redact_proxy_url, resolve_proxy
+from vibe.proxy import is_socks_proxy, redact_proxy_url, resolve_proxy
 
 
 CONFIG_FACTORIES = [
@@ -155,6 +155,45 @@ def test_redact_proxy_url_handles_empty(value) -> None:
 def test_redact_proxy_url_handles_garbage() -> None:
     """Unparseable input returns a generic placeholder, never the raw value."""
     assert redact_proxy_url("not a url") == "<configured>"
+
+
+# ---------------------------------------------------------------------------
+# is_socks_proxy() detects by scheme, not substring (regression for round-4 P2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "socks5://127.0.0.1:1080",
+        "socks5h://127.0.0.1:1080",
+        "socks4://127.0.0.1:1080",
+        "socks4a://127.0.0.1:1080",
+        "SOCKS5://127.0.0.1:1080",  # case-insensitive
+        "  socks5://127.0.0.1:1080  ",  # leading/trailing whitespace tolerated
+        "socks5://user:pass@host:1080",
+    ],
+)
+def test_is_socks_proxy_true_for_socks_schemes(url) -> None:
+    assert is_socks_proxy(url) is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # Regression: hostname containing "socks" must not be classified as SOCKS.
+        "http://socks-gateway.corp:8080",
+        "https://socks-gateway.corp:8080",
+        "http://user:socks@proxy.local:8080",  # credentials containing "socks"
+        "http://127.0.0.1:8080",
+        "https://proxy.local:443",
+        "",
+        None,
+        "not a url",
+    ],
+)
+def test_is_socks_proxy_false_for_non_socks(url) -> None:
+    assert is_socks_proxy(url) is False
 
 
 # ---------------------------------------------------------------------------
@@ -393,3 +432,37 @@ def test_lark_tenant_token_uses_urllib_proxy_for_http() -> None:
     assert token == "tok-http"
     # ProxyHandler should be in the chain when proxy_url is set
     assert any("ProxyHandler" in type(h).__name__ for h in captured["handlers"])
+
+
+def test_lark_tenant_token_does_not_misroute_http_with_socks_hostname() -> None:
+    """Regression for round-4 P2: an HTTP proxy whose hostname contains
+    'socks' (e.g. http://socks-gateway.corp:8080) must take the urllib path,
+    not the aiohttp_socks path. The previous substring-based check would
+    misclassify this as a SOCKS proxy.
+    """
+    from unittest.mock import MagicMock
+
+    from vibe import api as vibe_api
+
+    fake_resp_cm = MagicMock()
+    fake_resp_cm.__enter__ = MagicMock(
+        return_value=MagicMock(
+            read=MagicMock(return_value=b'{"code":0,"tenant_access_token":"tok-via-http"}')
+        )
+    )
+    fake_resp_cm.__exit__ = MagicMock(return_value=None)
+
+    fake_opener = MagicMock()
+    fake_opener.open = MagicMock(return_value=fake_resp_cm)
+
+    def fail_aiohttp(*args, **kwargs):
+        raise AssertionError("aiohttp must not be used for HTTP proxies, even when hostname contains 'socks'")
+
+    with patch("urllib.request.build_opener", return_value=fake_opener), patch.object(
+        vibe_api, "_lark_tenant_token_via_aiohttp", side_effect=fail_aiohttp
+    ):
+        token = vibe_api._lark_tenant_token(
+            "cli_x", "secret", proxy_url="http://socks-gateway.corp:8080"
+        )
+
+    assert token == "tok-via-http"
