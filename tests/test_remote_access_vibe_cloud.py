@@ -118,8 +118,11 @@ def test_pair_origin_service_ignores_configured_ui_host(monkeypatch, tmp_path) -
     assert remote_access.origin_service_for_pairing() == "http://127.0.0.1:15130"
 
 
-def test_pair_origin_service_normalizes_localhost_to_loopback_ipv4(monkeypatch, tmp_path) -> None:
+def test_pair_origin_service_uses_ipv4_loopback_when_localhost_resolves_dual_stack(
+    monkeypatch, tmp_path
+) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setattr(runtime, "resolve_localhost_family", lambda: "inet")
     config = _config()
     config.ui.setup_host = "localhost"
     config.ui.setup_port = 15130
@@ -129,6 +132,22 @@ def test_pair_origin_service_normalizes_localhost_to_loopback_ipv4(monkeypatch, 
     # hand cloudflared a literal IPv4 loopback to match the bind family and
     # avoid the ::1 vs 127.0.0.1 race that surfaces as a 502.
     assert remote_access.origin_service_for_pairing() == "http://127.0.0.1:15130"
+
+
+def test_pair_origin_service_uses_ipv6_loopback_when_localhost_resolves_v6_only(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setattr(runtime, "resolve_localhost_family", lambda: "inet6")
+    config = _config()
+    config.ui.setup_host = "localhost"
+    config.ui.setup_port = 15130
+    config.save()
+
+    # On IPv6-only hosts where ``localhost`` only resolves to ::1, the
+    # cloudflared origin must follow into v6 so it can reach the v6
+    # wildcard bind. Otherwise the tunnel dials an unreachable v4 socket.
+    assert remote_access.origin_service_for_pairing() == "http://[::1]:15130"
 
 
 def test_pair_origin_service_preserves_ipv6_loopback(monkeypatch, tmp_path) -> None:
@@ -927,11 +946,61 @@ def test_effective_ui_bind_host_requested_host_yields_to_tunnel_override() -> No
     assert runtime.effective_ui_bind_host(config, requested_host="100.97.103.112") == "0.0.0.0"
 
 
-def test_effective_ui_bind_host_overrides_to_ipv4_wildcard_when_setup_host_is_localhost() -> None:
+def test_effective_ui_bind_host_overrides_to_ipv4_wildcard_when_localhost_resolves_dual_stack(
+    monkeypatch,
+) -> None:
     # Pairs with _origin_host_for_pairing returning 127.0.0.1 for "localhost":
     # the bind family must be IPv4 so cloudflared can reach the UI.
+    monkeypatch.setattr(runtime, "resolve_localhost_family", lambda: "inet")
     config = _config()
     assert config.remote_access.vibe_cloud.enabled is True
     config.ui.setup_host = "localhost"
 
     assert runtime.effective_ui_bind_host(config) == "0.0.0.0"
+
+
+def test_effective_ui_bind_host_overrides_to_ipv6_wildcard_when_localhost_resolves_v6_only(
+    monkeypatch,
+) -> None:
+    # On IPv6-only hosts where "localhost" only resolves to ::1, forcing
+    # IPv4 would unbind the UI from the only loopback the OS exposes;
+    # follow the same family the cloudflared origin will use.
+    monkeypatch.setattr(runtime, "resolve_localhost_family", lambda: "inet6")
+    config = _config()
+    assert config.remote_access.vibe_cloud.enabled is True
+    config.ui.setup_host = "localhost"
+
+    assert runtime.effective_ui_bind_host(config) == "::"
+
+
+def test_resolve_localhost_family_prefers_ipv4_when_both_resolve(monkeypatch) -> None:
+    import socket as _socket
+
+    def fake_getaddrinfo(host, port, *, type=None):  # noqa: A002 - shadowing matches stdlib
+        return [
+            (_socket.AF_INET6, _socket.SOCK_STREAM, 0, "", ("::1", 0, 0, 0)),
+            (_socket.AF_INET, _socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0)),
+        ]
+
+    monkeypatch.setattr("vibe.runtime.socket.getaddrinfo", fake_getaddrinfo)
+    assert runtime.resolve_localhost_family() == "inet"
+
+
+def test_resolve_localhost_family_returns_inet6_when_only_v6_resolves(monkeypatch) -> None:
+    import socket as _socket
+
+    def fake_getaddrinfo(host, port, *, type=None):  # noqa: A002
+        return [(_socket.AF_INET6, _socket.SOCK_STREAM, 0, "", ("::1", 0, 0, 0))]
+
+    monkeypatch.setattr("vibe.runtime.socket.getaddrinfo", fake_getaddrinfo)
+    assert runtime.resolve_localhost_family() == "inet6"
+
+
+def test_resolve_localhost_family_falls_back_to_inet_on_resolution_failure(monkeypatch) -> None:
+    import socket as _socket
+
+    def fake_getaddrinfo(host, port, *, type=None):  # noqa: A002
+        raise _socket.gaierror("simulated")
+
+    monkeypatch.setattr("vibe.runtime.socket.getaddrinfo", fake_getaddrinfo)
+    assert runtime.resolve_localhost_family() == "inet"

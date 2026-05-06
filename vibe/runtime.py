@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 import shlex
+import socket
 import subprocess
 import sys
 import threading
@@ -398,6 +399,29 @@ def start_service():
         )
 
 
+def resolve_localhost_family() -> str:
+    """Return the loopback family ``localhost`` actually maps to on this host.
+
+    ``"inet"`` when IPv4 loopback resolves (the common dual-stack case),
+    ``"inet6"`` only when ``localhost`` is exclusively IPv6. Used by
+    ``effective_ui_bind_host`` and ``_origin_host_for_pairing`` so the
+    bind family and the cloudflared origin family stay aligned: forcing
+    IPv4 unconditionally would regress IPv6-only hosts, while leaving
+    resolution to werkzeug + cloudflared independently re-creates the
+    ::1 vs 127.0.0.1 race that surfaces as 502.
+    """
+    try:
+        infos = socket.getaddrinfo("localhost", None, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return "inet"
+    families = {info[0] for info in infos}
+    if socket.AF_INET in families:
+        return "inet"
+    if socket.AF_INET6 in families:
+        return "inet6"
+    return "inet"
+
+
 def effective_ui_bind_host(config: V2Config, requested_host: str | None = None) -> str:
     """Resolve the host the UI server should bind to.
 
@@ -424,6 +448,12 @@ def effective_ui_bind_host(config: V2Config, requested_host: str | None = None) 
         normalized = setup_host.strip()
         if normalized.startswith("[") and normalized.endswith("]"):
             normalized = normalized[1:-1]
+        # "localhost" is ambiguous on dual-stack hosts and may even be
+        # exclusively IPv6. Resolve once and pick the wildcard that
+        # matches the family _origin_host_for_pairing will hand
+        # cloudflared, so the two sides cannot disagree.
+        if normalized.lower() == "localhost":
+            return "::" if resolve_localhost_family() == "inet6" else "0.0.0.0"
         if normalized in {"::", "::0"} or ":" in normalized:
             return "::"
         return "0.0.0.0"
