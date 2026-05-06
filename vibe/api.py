@@ -766,6 +766,10 @@ async def _discord_api_get_via_aiohttp(url: str, headers: dict, proxy: str) -> d
     timeout = aiohttp.ClientTimeout(total=10)
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         async with session.get(url, headers=headers) as resp:
+            # urllib.urlopen raises HTTPError on non-2xx; mirror that here so
+            # callers like discord_auth_test correctly treat 401 as a failure
+            # instead of returning Discord's error JSON as a successful payload.
+            resp.raise_for_status()
             return await resp.json()
 
 
@@ -1593,10 +1597,12 @@ def lark_auth_test(
     log once when a value is provided so users understand the gap.
     """
     if proxy_url and proxy_url.strip():
+        from vibe.proxy import redact_proxy_url
+
         logger.warning(
             "Feishu/Lark auth_test received proxy_url=%s but lark-oapi has no "
             "proxy hook; the request will bypass the configured proxy.",
-            proxy_url,
+            redact_proxy_url(proxy_url),
         )
     try:
         token = _lark_tenant_token(app_id, app_secret, domain)

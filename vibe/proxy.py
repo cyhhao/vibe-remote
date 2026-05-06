@@ -8,8 +8,33 @@ import logging
 import os
 import subprocess
 from typing import Optional
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
+
+
+def redact_proxy_url(proxy_url: Optional[str]) -> str:
+    """Return a proxy URL safe for logs (userinfo stripped).
+
+    Proxy URLs commonly include ``user:password@`` credentials. Logging them
+    verbatim leaks secrets into ``~/.vibe_remote/logs/``. This helper keeps
+    scheme, host, and port so operators can still identify the target, but
+    drops anything that could contain a credential.
+    """
+    if not proxy_url:
+        return "<unset>"
+    try:
+        parts = urlsplit(proxy_url)
+        if parts.scheme and parts.hostname:
+            host = parts.hostname
+            if ":" in host and not host.startswith("["):
+                host = f"[{host}]"
+            if parts.port:
+                return f"{parts.scheme}://{host}:{parts.port}"
+            return f"{parts.scheme}://{host}"
+    except Exception:
+        pass
+    return "<configured>"
 
 
 def resolve_proxy(config_proxy: Optional[str]) -> Optional[str]:
