@@ -90,6 +90,7 @@ class TelegramConfig(BaseIMConfig):
     webhook_secret_token: Optional[str] = None
     allowed_chat_ids: Optional[List[str]] = None
     allowed_user_ids: Optional[List[str]] = None
+    proxy_url: Optional[str] = None
 
     def validate(self) -> None:
         # Allow empty token for initial setup

@@ -167,14 +167,18 @@ class TelegramBot(BaseIMClient):
     async def _run(self) -> None:
         self._loop = asyncio.get_running_loop()
         try:
-            self._bot_user = (await telegram_api.get_me(self.config.bot_token)).get("result")
+            self._bot_user = (await telegram_api.get_me(self.config.bot_token, proxy_url=self.config.proxy_url)).get("result")
             logger.info("Telegram bot connected as @%s", self._bot_user.get("username") if self._bot_user else "unknown")
             if self._on_ready:
                 await self._on_ready()
 
             while not self._stop_event.is_set():
                 try:
-                    updates = await telegram_api.get_updates(self.config.bot_token, self._offset)
+                    updates = await telegram_api.get_updates(
+                        self.config.bot_token,
+                        self._offset,
+                        proxy_url=self.config.proxy_url,
+                    )
                     for update in updates.get("result", []):
                         await self._wait_for_update_capacity()
                         self._offset = int(update["update_id"]) + 1
@@ -427,7 +431,7 @@ class TelegramBot(BaseIMClient):
             return None
 
         topic_name = self._derive_topic_title(seed_text, message or {})
-        created = await telegram_api.create_forum_topic(self.config.bot_token, context.channel_id, topic_name)
+        created = await telegram_api.create_forum_topic(self.config.bot_token, context.channel_id, topic_name, proxy_url=self.config.proxy_url)
         topic = created.get("result") or {}
         topic_id = topic.get("message_thread_id")
         if topic_id is None:
@@ -790,7 +794,7 @@ class TelegramBot(BaseIMClient):
             reply_to=reply_to,
             parse_mode=parse_mode,
         )
-        result = await telegram_api.call_api(self.config.bot_token, "sendMessage", payload)
+        result = await telegram_api.call_api(self.config.bot_token, "sendMessage", payload, proxy_url=self.config.proxy_url)
         return str(result["result"]["message_id"])
 
     async def send_message_with_buttons(
@@ -802,7 +806,7 @@ class TelegramBot(BaseIMClient):
             keyboard=keyboard,
             parse_mode=parse_mode,
         )
-        result = await telegram_api.call_api(self.config.bot_token, "sendMessage", payload)
+        result = await telegram_api.call_api(self.config.bot_token, "sendMessage", payload, proxy_url=self.config.proxy_url)
         return str(result["result"]["message_id"])
 
     async def upload_markdown(
@@ -852,9 +856,9 @@ class TelegramBot(BaseIMClient):
                 payload["parse_mode"] = resolved_parse_mode
             if keyboard is None:
                 payload["reply_markup"] = {"inline_keyboard": []}
-            await telegram_api.call_api(self.config.bot_token, "editMessageText", payload)
+            await telegram_api.call_api(self.config.bot_token, "editMessageText", payload, proxy_url=self.config.proxy_url)
             return True
-        await telegram_api.call_api(self.config.bot_token, "editMessageReplyMarkup", payload)
+        await telegram_api.call_api(self.config.bot_token, "editMessageReplyMarkup", payload, proxy_url=self.config.proxy_url)
         return True
 
     def _resolve_parse_mode(self, parse_mode: Optional[str]) -> Optional[str]:
@@ -868,17 +872,17 @@ class TelegramBot(BaseIMClient):
         payload = {"callback_query_id": callback_id, "show_alert": show_alert}
         if text:
             payload["text"] = text
-        await telegram_api.call_api(self.config.bot_token, "answerCallbackQuery", payload)
+        await telegram_api.call_api(self.config.bot_token, "answerCallbackQuery", payload, proxy_url=self.config.proxy_url)
         return True
 
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
-        result = await telegram_api.call_api(self.config.bot_token, "getChat", {"chat_id": user_id})
+        result = await telegram_api.call_api(self.config.bot_token, "getChat", {"chat_id": user_id}, proxy_url=self.config.proxy_url)
         chat = result["result"]
         display_name = chat.get("first_name") or chat.get("username") or "Telegram User"
         return {"id": user_id, "name": display_name, "display_name": display_name, "real_name": display_name}
 
     async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
-        result = await telegram_api.call_api(self.config.bot_token, "getChat", {"chat_id": channel_id})
+        result = await telegram_api.call_api(self.config.bot_token, "getChat", {"chat_id": channel_id}, proxy_url=self.config.proxy_url)
         chat = result["result"]
         name = chat.get("title") or chat.get("username") or channel_id
         return {"id": channel_id, "name": name, "type": chat.get("type")}
@@ -917,7 +921,7 @@ class TelegramBot(BaseIMClient):
         if not normalized or not message_id:
             return False
         try:
-            await telegram_api.set_message_reaction(self.config.bot_token, context.channel_id, message_id, normalized)
+            await telegram_api.set_message_reaction(self.config.bot_token, context.channel_id, message_id, normalized, proxy_url=self.config.proxy_url)
             return True
         except Exception as err:
             logger.debug("Failed to add Telegram reaction: %s", err)
@@ -927,7 +931,7 @@ class TelegramBot(BaseIMClient):
         if not message_id or not self._normalize_reaction_emoji(emoji):
             return False
         try:
-            await telegram_api.clear_message_reaction(self.config.bot_token, context.channel_id, message_id)
+            await telegram_api.clear_message_reaction(self.config.bot_token, context.channel_id, message_id, proxy_url=self.config.proxy_url)
             return True
         except Exception as err:
             logger.debug("Failed to remove Telegram reaction: %s", err)
@@ -937,7 +941,7 @@ class TelegramBot(BaseIMClient):
         payload = {"chat_id": context.channel_id, "action": "typing"}
         if context.thread_id:
             payload["message_thread_id"] = int(context.thread_id)
-        await telegram_api.call_api(self.config.bot_token, "sendChatAction", payload)
+        await telegram_api.call_api(self.config.bot_token, "sendChatAction", payload, proxy_url=self.config.proxy_url)
         return True
 
     async def clear_typing_indicator(self, context: MessageContext) -> bool:
@@ -946,7 +950,7 @@ class TelegramBot(BaseIMClient):
     async def delete_message(self, context: MessageContext, message_id: str) -> bool:
         if not message_id:
             return False
-        await telegram_api.delete_message(self.config.bot_token, context.channel_id, message_id)
+        await telegram_api.delete_message(self.config.bot_token, context.channel_id, message_id, proxy_url=self.config.proxy_url)
         return True
 
     async def _delete_interaction_message(self, context: MessageContext, message_id: str) -> None:
@@ -972,6 +976,7 @@ class TelegramBot(BaseIMClient):
             payload,
             file_path,
             "document",
+            proxy_url=self.config.proxy_url,
         )
         return str(result["result"]["message_id"])
 
@@ -990,6 +995,7 @@ class TelegramBot(BaseIMClient):
             payload,
             file_path,
             "photo",
+            proxy_url=self.config.proxy_url,
         )
         return str(result["result"]["message_id"])
 
@@ -1006,9 +1012,9 @@ class TelegramBot(BaseIMClient):
         )
         if not file_id:
             raise ValueError("Telegram file_id is required")
-        file_result = await telegram_api.get_file(self.config.bot_token, str(file_id))
+        file_result = await telegram_api.get_file(self.config.bot_token, str(file_id), proxy_url=self.config.proxy_url)
         file_path = file_result["result"]["file_path"]
-        content = await telegram_api.download_file(self.config.bot_token, file_path, timeout_seconds=timeout_seconds)
+        content = await telegram_api.download_file(self.config.bot_token, file_path, timeout_seconds=timeout_seconds, proxy_url=self.config.proxy_url)
         if max_bytes is not None and len(content) > max_bytes:
             raise ValueError("Downloaded file exceeds max_bytes")
         return content

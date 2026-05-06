@@ -661,9 +661,9 @@ def discord_auth_test(bot_token: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def telegram_auth_test(bot_token: str) -> dict:
+def telegram_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
     try:
-        return {"ok": True, "response": asyncio.run(_telegram_get_me(bot_token))}
+        return {"ok": True, "response": asyncio.run(_telegram_get_me(bot_token, proxy_url))}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -744,10 +744,10 @@ def _discord_api_get(bot_token: str, path: str) -> dict:
         return json.loads(payload)
 
 
-async def _telegram_get_me(bot_token: str) -> dict:
+async def _telegram_get_me(bot_token: str, proxy_url: str | None = None) -> dict:
     from modules.im import telegram_api
 
-    result = await telegram_api.get_me(bot_token)
+    result = await telegram_api.get_me(bot_token, proxy_url=proxy_url)
     return result.get("result") or {}
 
 
