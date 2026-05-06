@@ -258,6 +258,27 @@ def _is_loopback_host(value: str | None) -> bool:
 # setup-host peers when the request's Host header otherwise matches.
 _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
+# Private/CGNAT/link-local blocks used to gate setup-host trust. Pre-tunnel
+# the UI bound only to ``ui.setup_host`` so the kernel filtered out peers
+# from other interfaces; the ``Host`` match + private-peer pair was scoped
+# by the network layer. The tunnel-on path widens the bind to a wildcard,
+# so an attacker on a different private subnet could otherwise reach the
+# socket and spoof ``Host: <setup_host>`` to inherit local trust. We
+# restore the network scoping at the application layer by requiring the
+# peer's IP to share setup_host's block. Order is most-specific first so
+# the tightest block that still contains setup_host wins.
+_PRIVATE_NETWORKS_V4 = (
+    ipaddress.IPv4Network("100.64.0.0/10"),
+    ipaddress.IPv4Network("169.254.0.0/16"),
+    ipaddress.IPv4Network("192.168.0.0/16"),
+    ipaddress.IPv4Network("172.16.0.0/12"),
+    ipaddress.IPv4Network("10.0.0.0/8"),
+)
+_PRIVATE_NETWORKS_V6 = (
+    ipaddress.IPv6Network("fc00::/7"),
+    ipaddress.IPv6Network("fe80::/10"),
+)
+
 
 def _is_private_address(address: ipaddress._BaseAddress) -> bool:
     if address.is_loopback or address.is_private or address.is_link_local:
@@ -278,6 +299,32 @@ def _is_private_peer() -> bool:
     mapped = getattr(address, "ipv4_mapped", None)
     if mapped is not None:
         return _is_private_address(mapped)
+    return False
+
+
+def _peer_shares_setup_host_network(setup_address: ipaddress._BaseAddress) -> bool:
+    """Require the peer to be in the same private/CGNAT block as setup_host.
+
+    Compensates for the wildcard bind in the tunnel-on path. Without this,
+    a 192.168/16 LAN peer could spoof ``Host=<tailscale_setup_host>`` on
+    a different interface and inherit setup-host trust.
+    """
+    remote_addr = (request.remote_addr or "").strip()
+    if not remote_addr or remote_addr == "localhost":
+        return False
+    try:
+        peer = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return False
+    if peer.version != setup_address.version:
+        mapped = getattr(peer, "ipv4_mapped", None)
+        if mapped is None or mapped.version != setup_address.version:
+            return False
+        peer = mapped
+    candidates = _PRIVATE_NETWORKS_V4 if setup_address.version == 4 else _PRIVATE_NETWORKS_V6
+    for net in candidates:
+        if setup_address in net:
+            return peer in net
     return False
 
 
@@ -357,7 +404,13 @@ def _is_setup_host_request(config: V2Config | None) -> bool:
     # the actual client, so refuse the setup-host trust path entirely.
     if _has_forwarded_metadata():
         return False
-    return _is_private_peer()
+    if not _is_private_peer():
+        return False
+    # See _peer_shares_setup_host_network: the tunnel-on path widens the
+    # UI bind, so we have to enforce setup_host's network scoping at the
+    # application layer instead of relying on the kernel to drop traffic
+    # from peers on other interfaces.
+    return _peer_shares_setup_host_network(setup_address)
 
 
 def _is_local_request(config: V2Config | None = None) -> bool:

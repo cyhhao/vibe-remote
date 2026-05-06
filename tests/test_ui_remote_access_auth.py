@@ -735,6 +735,56 @@ def test_setup_host_with_public_peer_is_not_local(monkeypatch, tmp_path):
     assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
+def test_setup_host_lan_peer_with_tailscale_setup_is_not_local(monkeypatch, tmp_path):
+    """Wildcard-bind regression guard: a LAN peer cannot inherit setup-host
+    trust by spoofing the Host header to a Tailscale setup_host that lives
+    in a different private block."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "100.97.103.112")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://100.97.103.112:5123",
+        environ_base={"REMOTE_ADDR": "192.168.1.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_tailscale_peer_with_lan_setup_is_not_local(monkeypatch, tmp_path):
+    """Inverse of the LAN-vs-Tailscale check: a Tailscale peer cannot inherit
+    setup-host trust by spoofing the Host header to a LAN setup_host."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.2.3")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://192.168.2.3:5123",
+        environ_base={"REMOTE_ADDR": "100.97.103.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_tailscale_peer_with_tailscale_setup_is_local(monkeypatch, tmp_path):
+    """Same-block trust still works: a Tailscale peer can inherit setup-host
+    trust when setup_host is also in 100.64/10."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "100.97.103.112")
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://100.97.103.112:5123",
+        environ_base={"REMOTE_ADDR": "100.97.103.5"},
+    )
+
+    assert response.status_code == 200
+
+
 def test_setup_host_mismatched_host_header_is_not_local(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "192.168.2.3")
