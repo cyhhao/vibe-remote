@@ -258,26 +258,28 @@ def _is_loopback_host(value: str | None) -> bool:
 # setup-host peers when the request's Host header otherwise matches.
 _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
-# Private/CGNAT/link-local blocks used to gate setup-host trust. Pre-tunnel
-# the UI bound only to ``ui.setup_host`` so the kernel filtered out peers
-# from other interfaces; the ``Host`` match + private-peer pair was scoped
-# by the network layer. The tunnel-on path widens the bind to a wildcard,
-# so an attacker on a different private subnet could otherwise reach the
-# socket and spoof ``Host: <setup_host>`` to inherit local trust. We
-# restore the network scoping at the application layer by requiring the
-# peer's IP to share setup_host's block. Order is most-specific first so
-# the tightest block that still contains setup_host wins.
-_PRIVATE_NETWORKS_V4 = (
+# Networks that are scoped by the overlay/link itself rather than by the
+# kernel's interface routing, so peers anywhere in the block are trusted
+# in lieu of a tighter same-subnet check:
+#   * 100.64.0.0/10 — Tailscale CGNAT. Tailscale assigns each peer a /32 in
+#     this range and routes peers via its overlay; legitimate peers can be
+#     anywhere in the /10 even though they share the same logical network.
+#   * 169.254.0.0/16 / fe80::/10 — link-local. Confined to the same L2
+#     segment by the kernel.
+_OVERLAY_TRUST_NETWORKS_V4 = (
     ipaddress.IPv4Network("100.64.0.0/10"),
     ipaddress.IPv4Network("169.254.0.0/16"),
-    ipaddress.IPv4Network("192.168.0.0/16"),
-    ipaddress.IPv4Network("172.16.0.0/12"),
-    ipaddress.IPv4Network("10.0.0.0/8"),
 )
-_PRIVATE_NETWORKS_V6 = (
-    ipaddress.IPv6Network("fc00::/7"),
-    ipaddress.IPv6Network("fe80::/10"),
-)
+_OVERLAY_TRUST_NETWORKS_V6 = (ipaddress.IPv6Network("fe80::/10"),)
+# Subnet sizes used to approximate the kernel's pre-wildcard interface
+# filtering for RFC1918 / ULA setup hosts. The wildcard bind in the
+# tunnel-on path means we no longer get free interface scoping from the
+# kernel; we have to enforce "peer is on the same subnet as setup_host"
+# at the application layer. /24 and /64 cover typical home/office LANs
+# without granting trust across the whole /8 (10.0.0.0/8) or /7 (fc00::/7)
+# block, which would let a 10.50/16 peer spoof ``Host=10.20.x.y``.
+_DEFAULT_TRUST_PREFIX_V4 = 24
+_DEFAULT_TRUST_PREFIX_V6 = 64
 
 
 def _is_private_address(address: ipaddress._BaseAddress) -> bool:
@@ -302,12 +304,38 @@ def _is_private_peer() -> bool:
     return False
 
 
+def _setup_host_trust_network(setup_address: ipaddress._BaseAddress) -> ipaddress._BaseNetwork | None:
+    """Return the network setup-host trust should extend to.
+
+    Tailscale CGNAT and link-local ranges keep their natural block size
+    because the overlay or kernel link-local routing scopes them. RFC1918
+    and ULA setup hosts get a typical same-subnet prefix (/24 v4, /64 v6)
+    around setup_host so we don't extend trust across an entire 10.0.0.0/8
+    or fc00::/7 block — a 10.50/16 peer should not inherit trust from a
+    10.20/16 setup host.
+    """
+    if setup_address.version == 4:
+        for overlay in _OVERLAY_TRUST_NETWORKS_V4:
+            if setup_address in overlay:
+                return overlay
+        return ipaddress.ip_network(f"{setup_address}/{_DEFAULT_TRUST_PREFIX_V4}", strict=False)
+    if setup_address.version == 6:
+        for overlay in _OVERLAY_TRUST_NETWORKS_V6:
+            if setup_address in overlay:
+                return overlay
+        return ipaddress.ip_network(f"{setup_address}/{_DEFAULT_TRUST_PREFIX_V6}", strict=False)
+    return None
+
+
 def _peer_shares_setup_host_network(setup_address: ipaddress._BaseAddress) -> bool:
-    """Require the peer to be in the same private/CGNAT block as setup_host.
+    """Require the peer to share setup_host's interface-level subnet.
 
     Compensates for the wildcard bind in the tunnel-on path. Without this,
     a 192.168/16 LAN peer could spoof ``Host=<tailscale_setup_host>`` on
-    a different interface and inherit setup-host trust.
+    a different interface and inherit setup-host trust. Subnet size comes
+    from :func:`_setup_host_trust_network`, which keeps overlay networks
+    (Tailscale, link-local) broad and tightens RFC1918/ULA to /24 or /64
+    around setup_host.
     """
     remote_addr = (request.remote_addr or "").strip()
     if not remote_addr or remote_addr == "localhost":
@@ -321,11 +349,10 @@ def _peer_shares_setup_host_network(setup_address: ipaddress._BaseAddress) -> bo
         if mapped is None or mapped.version != setup_address.version:
             return False
         peer = mapped
-    candidates = _PRIVATE_NETWORKS_V4 if setup_address.version == 4 else _PRIVATE_NETWORKS_V6
-    for net in candidates:
-        if setup_address in net:
-            return peer in net
-    return False
+    network = _setup_host_trust_network(setup_address)
+    if network is None:
+        return False
+    return peer in network
 
 
 def _env_flag_enabled(name: str) -> bool:

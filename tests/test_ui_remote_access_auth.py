@@ -785,6 +785,57 @@ def test_setup_host_tailscale_peer_with_tailscale_setup_is_local(monkeypatch, tm
     assert response.status_code == 200
 
 
+def test_setup_host_rfc1918_peer_in_different_24_is_not_local(monkeypatch, tmp_path):
+    """RFC1918 trust must not span the entire /8: a 10.50/16 peer cannot
+    inherit setup-host trust from a 10.1.2/24 setup_host even though both
+    are in 10.0.0.0/8. Pre-wildcard, the kernel only let in peers on the
+    same interface subnet — restoring that scoping at the application
+    layer means /24 around setup_host, not the whole /8."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "10.1.2.3")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "10.50.0.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_rfc1918_peer_in_same_24_is_local(monkeypatch, tmp_path):
+    """Same-/24 RFC1918 peer still inherits trust (typical home/office LAN)."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "10.1.2.3")
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://10.1.2.3:5123",
+        environ_base={"REMOTE_ADDR": "10.1.2.50"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_192168_peer_in_different_24_is_not_local(monkeypatch, tmp_path):
+    """A peer on 192.168.2/24 cannot spoof Host=192.168.1.5 even though both
+    are in 192.168/16."""
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "192.168.1.5")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://192.168.1.5:5123",
+        environ_base={"REMOTE_ADDR": "192.168.2.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
 def test_setup_host_mismatched_host_header_is_not_local(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "192.168.2.3")
