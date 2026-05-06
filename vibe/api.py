@@ -665,7 +665,10 @@ def discord_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
 
 def telegram_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
     try:
-        return {"ok": True, "response": asyncio.run(_telegram_get_me(bot_token, proxy_url))}
+        from vibe.proxy import resolve_proxy
+
+        proxy = resolve_proxy(proxy_url)
+        return {"ok": True, "response": asyncio.run(_telegram_get_me(bot_token, proxy))}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

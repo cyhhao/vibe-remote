@@ -230,3 +230,54 @@ def test_discord_api_get_via_aiohttp_raises_for_status() -> None:
             )
 
     raise_for_status.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# telegram_auth_test must call resolve_proxy() (regression for round-2 review)
+# ---------------------------------------------------------------------------
+
+
+def test_telegram_auth_test_uses_resolve_proxy_for_system_fallback() -> None:
+    """When proxy_url is empty, telegram_auth_test must still pick up the
+    system SOCKS proxy via resolve_proxy() — same contract as Slack/Discord
+    auth_test and the runtime TelegramBot adapter.
+
+    Before the fix, an empty proxy_url skipped the system fallback, causing
+    the wizard to report ok=False even though the runtime would have
+    succeeded through the detected system proxy.
+    """
+    from vibe import api as vibe_api
+
+    captured: dict = {}
+
+    async def fake_get_me(bot_token, proxy_url=None):
+        captured["bot_token"] = bot_token
+        captured["proxy_url"] = proxy_url
+        return {"id": 1, "username": "bot"}
+
+    with patch.object(vibe_api, "_telegram_get_me", new=fake_get_me), patch.object(
+        proxy_module, "get_system_socks_proxy", return_value="socks5://system:1080"
+    ):
+        result = vibe_api.telegram_auth_test("123456:abc", proxy_url=None)
+
+    assert result["ok"] is True
+    # Must be the resolved system proxy, not the raw None we passed in.
+    assert captured["proxy_url"] == "socks5://system:1080"
+
+
+def test_telegram_auth_test_prefers_explicit_over_system() -> None:
+    """Explicit proxy_url still wins over the detected system proxy."""
+    from vibe import api as vibe_api
+
+    captured: dict = {}
+
+    async def fake_get_me(bot_token, proxy_url=None):
+        captured["proxy_url"] = proxy_url
+        return {"id": 1}
+
+    with patch.object(vibe_api, "_telegram_get_me", new=fake_get_me), patch.object(
+        proxy_module, "get_system_socks_proxy", return_value="socks5://system:1080"
+    ):
+        vibe_api.telegram_auth_test("123456:abc", proxy_url="socks5://explicit:1080")
+
+    assert captured["proxy_url"] == "socks5://explicit:1080"
