@@ -580,5 +580,97 @@ def test_start_keeps_watcher_alive_after_initial_reconcile_failure(tmp_path: Pat
             await service._reconcile_task
         except asyncio.CancelledError:
             pass
+        await service.stop()
+
+    asyncio.run(_exercise())
+
+
+def test_watch_store_respawns_after_unexpected_cancellation(tmp_path: Path) -> None:
+    """A spurious CancelledError must not silently kill the drain loop."""
+    store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+    controller = SimpleNamespace(platform_settings_managers={})
+    service = ScheduledTaskService(controller=controller, store=store)
+    service.scheduler = _StubScheduler()
+
+    started = asyncio.Event()
+
+    async def _watch_store():
+        started.set()
+        await asyncio.Event().wait()
+
+    service._watch_store = _watch_store  # type: ignore[method-assign]
+
+    async def _exercise():
+        service.start()
+        first_task = service._reconcile_task
+        assert first_task is not None
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        started.clear()
+        first_task.cancel()
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if service._reconcile_task is not None and service._reconcile_task is not first_task:
+                break
+        assert service._reconcile_task is not None
+        assert service._reconcile_task is not first_task
+        assert service._watch_store_restart_count == 1
+
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await service.stop()
+
+    asyncio.run(_exercise())
+
+
+def test_watch_store_respawns_after_unexpected_exception(tmp_path: Path) -> None:
+    """If the watch coroutine crashes with a non-Cancelled exception it must respawn."""
+    store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+    controller = SimpleNamespace(platform_settings_managers={})
+    service = ScheduledTaskService(controller=controller, store=store)
+    service.scheduler = _StubScheduler()
+
+    invocations: list[int] = []
+
+    async def _watch_store():
+        invocations.append(1)
+        if len(invocations) == 1:
+            raise RuntimeError("boom")
+        await asyncio.Event().wait()
+
+    service._watch_store = _watch_store  # type: ignore[method-assign]
+
+    async def _exercise():
+        service.start()
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if len(invocations) >= 2:
+                break
+        assert len(invocations) >= 2
+        assert service._watch_store_restart_count == 1
+        await service.stop()
+
+    asyncio.run(_exercise())
+
+
+def test_watch_store_does_not_respawn_after_stop(tmp_path: Path) -> None:
+    """stop() cancels the task and must not trigger a respawn."""
+    store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+    controller = SimpleNamespace(platform_settings_managers={})
+    service = ScheduledTaskService(controller=controller, store=store)
+    service.scheduler = _StubScheduler()
+
+    async def _watch_store():
+        await asyncio.Event().wait()
+
+    service._watch_store = _watch_store  # type: ignore[method-assign]
+
+    async def _exercise():
+        service.start()
+        first_task = service._reconcile_task
+        assert first_task is not None
+        await service.stop()
+        assert service._reconcile_task is None
+        assert service._watch_store_restart_count == 0
+        assert first_task.cancelled() or first_task.done()
 
     asyncio.run(_exercise())
