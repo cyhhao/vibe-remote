@@ -473,6 +473,7 @@ class ScheduledTaskService:
         self._reconcile_task: Optional[asyncio.Task] = None
         self._job_signatures: Dict[str, tuple[Any, ...]] = {}
         self._running = False
+        self._watch_store_restart_count = 0
         self.request_store.recover_processing()
 
     def validate_platform(self, platform: str) -> None:
@@ -484,11 +485,33 @@ class ScheduledTaskService:
             return
         self.scheduler.start()
         self._running = True
-        self._reconcile_task = asyncio.create_task(self._watch_store())
+        self._spawn_watch_store()
         try:
             self.reconcile_jobs()
         except Exception as exc:
             logger.error("Initial scheduled task reconcile failed: %s", exc, exc_info=True)
+
+    def _spawn_watch_store(self) -> None:
+        self._reconcile_task = asyncio.create_task(self._watch_store())
+        self._reconcile_task.add_done_callback(self._on_watch_store_done)
+
+    def _on_watch_store_done(self, task: "asyncio.Task[Any]") -> None:
+        # Only respawn if the service is still meant to be running. During
+        # stop() we deliberately cancel the task and clear _running first.
+        if not self._running:
+            return
+        if task.cancelled():
+            cause: Any = "CancelledError"
+        else:
+            cause = task.exception()
+        self._watch_store_restart_count += 1
+        logger.error(
+            "Scheduled task watch store exited unexpectedly "
+            "(restart_count=%d, cause=%r); respawning",
+            self._watch_store_restart_count,
+            cause,
+        )
+        self._spawn_watch_store()
 
     async def stop(self) -> None:
         self._running = False
@@ -507,11 +530,15 @@ class ScheduledTaskService:
                 if self.store.maybe_reload():
                     self.reconcile_jobs()
                 await self._drain_requests()
+                await asyncio.sleep(2)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.error("Scheduled task store watch failed: %s", exc, exc_info=True)
-            await asyncio.sleep(2)
+                try:
+                    await asyncio.sleep(2)
+                except asyncio.CancelledError:
+                    raise
 
     def reconcile_jobs(self) -> None:
         desired_ids = set()
