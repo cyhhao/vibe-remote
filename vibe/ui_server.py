@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 
 import psutil
-from flask import Flask, request, jsonify, redirect, send_file, Response
+from flask import Flask, g, request, jsonify, redirect, send_file, Response
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
@@ -686,7 +686,10 @@ def enforce_remote_access_cookie():
         return jsonify({"ok": False, "error": "remote_access_disabled"}), 503
     if not config.remote_access.vibe_cloud.session_secret:
         return jsonify({"ok": False, "error": "remote_access_session_secret_missing"}), 503
-    if remote_access.validate_session_cookie(config, request.cookies.get(remote_access.SESSION_COOKIE_NAME)):
+    payload = remote_access.parse_session_cookie(config, request.cookies.get(remote_access.SESSION_COOKIE_NAME))
+    if payload is not None:
+        if remote_access.session_needs_renewal(payload):
+            g.remote_session_renew = (str(payload.get("email", "")), str(payload.get("sub", "")))
         return None
     if request.method == "GET":
         return _redirect_to_vibe_cloud_login(config)
@@ -718,6 +721,29 @@ def protect_mutating_ui_requests():
 @app.after_request
 def add_csrf_cookie(response: Response) -> Response:
     return _ensure_csrf_cookie(response)
+
+
+@app.after_request
+def renew_remote_access_cookie(response: Response) -> Response:
+    renew = getattr(g, "remote_session_renew", None)
+    if not renew:
+        return response
+    config = _load_remote_access_config()
+    if config is None or not config.remote_access.vibe_cloud.session_secret:
+        return response
+    from vibe import remote_access
+
+    email, subject = renew
+    response.set_cookie(
+        remote_access.SESSION_COOKIE_NAME,
+        remote_access.make_session_cookie(config, email, subject),
+        httponly=True,
+        secure=True,
+        samesite="Lax",
+        path="/",
+        max_age=remote_access.SESSION_TTL_SECONDS,
+    )
+    return response
 
 
 def _read_log_entries(log_path: Path, source_key: str, lines: int) -> tuple[list[dict[str, Any]], int]:
