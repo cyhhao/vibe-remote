@@ -34,7 +34,7 @@ from vibe import api, runtime
 
 CLOUDFLARED_BASE_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download"
 SESSION_COOKIE_NAME = "__Host-vibe_remote_session"
-SESSION_TTL_SECONDS = 12 * 60 * 60
+SESSION_TTL_SECONDS = 24 * 60 * 60
 _CONNECTOR_LOCK = threading.RLock()
 _STATUS_HEARTBEAT_LOCK = threading.Lock()
 _STATUS_HEARTBEAT_STARTED = False
