@@ -354,6 +354,36 @@ def test_remote_host_renews_cookie_past_half_ttl(monkeypatch, tmp_path):
     assert payload["exp"] > near_exp
 
 
+def test_remote_host_does_not_renew_cookie_on_rejected_post(monkeypatch, tmp_path):
+    """A near-expiry cookie must NOT be slid by a request that later fails
+    a guard like CSRF/origin. Otherwise repeated rejected mutations could
+    keep a stolen session alive indefinitely."""
+    import time as _time
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    near_exp = int(_time.time()) + (remote_access.SESSION_TTL_SECONDS // 2) - 60
+    cookie = _forged_session_cookie(config, near_exp)
+    client = app.test_client()
+    client.set_cookie(remote_access.SESSION_COOKIE_NAME, cookie, domain="alex.avibe.bot")
+
+    # POST /config without CSRF/origin headers — protect_mutating_ui_requests
+    # will reject this with 403 inside the same request lifecycle that already
+    # set g.remote_session_renew in enforce_remote_access_cookie.
+    response = client.post(
+        "/config",
+        json={"remote_access": {"vibe_cloud": {"enabled": False}}},
+        base_url="https://alex.avibe.bot",
+    )
+
+    assert response.status_code == 403
+    refreshed = next(
+        (h for h in response.headers.getlist("Set-Cookie") if h.startswith(f"{remote_access.SESSION_COOKIE_NAME}=")),
+        None,
+    )
+    assert refreshed is None
+
+
 def test_remote_host_fails_closed_when_config_load_fails(monkeypatch):
     def fail_load():
         raise ValueError("corrupt config")
