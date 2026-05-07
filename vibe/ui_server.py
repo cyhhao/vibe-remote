@@ -728,6 +728,15 @@ def renew_remote_access_cookie(response: Response) -> Response:
     renew = getattr(g, "remote_session_renew", None)
     if not renew:
         return response
+    # Only slide the session cookie when the request was actually accepted.
+    # The renew flag is set in the early `enforce_remote_access_cookie`
+    # before-request hook, but later guards (e.g. CSRF/origin checks in
+    # `protect_mutating_ui_requests`) may still reject the request. Refreshing
+    # the cookie on a rejected response would let repeated failed mutations
+    # keep a stolen session alive indefinitely without any successful
+    # authenticated action.
+    if response.status_code >= 400:
+        return response
     config = _load_remote_access_config()
     if config is None or not config.remote_access.vibe_cloud.session_secret:
         return response
