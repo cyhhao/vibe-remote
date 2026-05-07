@@ -78,8 +78,8 @@ export const LanguageSwitcher: React.FC<{ openUpward?: boolean }> = ({ openUpwar
         <div
           role="listbox"
           className={clsx(
-            'absolute right-0 z-50 min-w-[10rem] rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-xl',
-            openUpward ? 'bottom-full mb-2' : 'top-full mt-2'
+            'absolute z-50 min-w-[10rem] rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-xl',
+            openUpward ? 'bottom-full left-0 mb-2' : 'top-full right-0 mt-2'
           )}
         >
           {languages.map((lang) => {
