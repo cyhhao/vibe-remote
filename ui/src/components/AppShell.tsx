@@ -101,7 +101,7 @@ export const AppShell: React.FC = () => {
 
   return (
     <div className="min-h-screen min-h-[100dvh] bg-background text-foreground">
-      <aside className="fixed inset-y-0 left-0 hidden w-[240px] flex-col border-r border-border bg-surface md:flex">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[240px] flex-col border-r border-border bg-surface md:flex">
         <div className="flex h-full flex-col justify-between gap-6 px-4 py-5">
           {/* Top: Brand + Workspace label + Nav list */}
           <div className="flex flex-col gap-6">
