@@ -47,6 +47,34 @@ def test_session_cookie_rejects_empty_session_secret() -> None:
     assert remote_access.validate_session_cookie(config, "payload.signature") is False
 
 
+def test_parse_session_cookie_returns_payload_for_fresh_token() -> None:
+    config = _config()
+    cookie = remote_access.make_session_cookie(config, "alex@example.com", "user-1")
+
+    payload = remote_access.parse_session_cookie(config, cookie)
+
+    assert payload is not None
+    assert payload["email"] == "alex@example.com"
+    assert payload["sub"] == "user-1"
+    assert payload["instance_id"] == "inst_123"
+
+
+def test_parse_session_cookie_rejects_tampered_signature() -> None:
+    config = _config()
+    cookie = remote_access.make_session_cookie(config, "alex@example.com", "user-1")
+
+    assert remote_access.parse_session_cookie(config, cookie + "x") is None
+
+
+def test_session_needs_renewal_only_after_half_ttl() -> None:
+    now = 1_700_000_000
+    fresh = {"exp": now + remote_access.SESSION_TTL_SECONDS}
+    half_minus_one = {"exp": now + remote_access.SESSION_TTL_SECONDS // 2 - 1}
+
+    assert remote_access.session_needs_renewal(fresh, now=now) is False
+    assert remote_access.session_needs_renewal(half_minus_one, now=now) is True
+
+
 def test_make_session_cookie_requires_session_secret() -> None:
     config = _config()
     config.remote_access.vibe_cloud.session_secret = ""

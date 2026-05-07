@@ -708,21 +708,40 @@ def make_session_cookie(config: V2Config, email: str, subject: str) -> str:
     return f"{payload_text}.{signature}"
 
 
-def validate_session_cookie(config: V2Config, cookie_value: str | None) -> bool:
+def parse_session_cookie(config: V2Config, cookie_value: str | None) -> dict[str, Any] | None:
     if not cookie_value or "." not in cookie_value:
-        return False
+        return None
     cloud = config.remote_access.vibe_cloud
     if not cloud.session_secret:
-        return False
+        return None
     payload_text, signature = cookie_value.rsplit(".", 1)
     expected = _session_signature(cloud.session_secret, payload_text)
     if not hmac.compare_digest(signature, expected):
-        return False
+        return None
     try:
         payload = json.loads(urllib.parse.unquote(payload_text))
     except Exception:
-        return False
-    return payload.get("instance_id") == cloud.instance_id and int(payload.get("exp", 0)) > int(time.time())
+        return None
+    if payload.get("instance_id") != cloud.instance_id:
+        return None
+    if int(payload.get("exp", 0)) <= int(time.time()):
+        return None
+    return payload
+
+
+def validate_session_cookie(config: V2Config, cookie_value: str | None) -> bool:
+    return parse_session_cookie(config, cookie_value) is not None
+
+
+def session_needs_renewal(payload: dict[str, Any], now: int | None = None) -> bool:
+    """Return True when the session has spent more than half of SESSION_TTL_SECONDS.
+
+    Mirrors the avibe-bot-backend control-plane sliding-session policy
+    (middleware.ts): re-sign the cookie once the remaining lifetime drops
+    below half so users don't get bounced through OAuth on every visit.
+    """
+    current = now if now is not None else int(time.time())
+    return int(payload.get("exp", 0)) - current < SESSION_TTL_SECONDS // 2
 
 
 def authorization_url(config: V2Config, state: str, nonce: str, code_challenge: str) -> str:

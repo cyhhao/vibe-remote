@@ -293,6 +293,67 @@ def test_remote_host_allows_valid_remote_session(monkeypatch, tmp_path):
     assert response.status_code != 302
 
 
+def _forged_session_cookie(config: V2Config, exp: int, *, email: str = "alex@example.com", subject: str = "user-1") -> str:
+    import json
+    import urllib.parse
+
+    cloud = config.remote_access.vibe_cloud
+    payload = {
+        "email": email,
+        "sub": subject,
+        "instance_id": cloud.instance_id,
+        "iat": exp - remote_access.SESSION_TTL_SECONDS,
+        "exp": exp,
+    }
+    payload_text = urllib.parse.quote(json.dumps(payload, separators=(",", ":")), safe="")
+    signature = remote_access._session_signature(cloud.session_secret, payload_text)
+    return f"{payload_text}.{signature}"
+
+
+def test_remote_host_does_not_renew_fresh_cookie(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    client = app.test_client()
+    client.set_cookie(
+        remote_access.SESSION_COOKIE_NAME,
+        remote_access.make_session_cookie(config, "alex@example.com", "user-1"),
+        domain="alex.avibe.bot",
+    )
+
+    response = client.get("/dashboard", base_url="https://alex.avibe.bot", follow_redirects=False)
+
+    set_cookie_headers = response.headers.getlist("Set-Cookie")
+    assert not any(h.startswith(f"{remote_access.SESSION_COOKIE_NAME}=") for h in set_cookie_headers)
+
+
+def test_remote_host_renews_cookie_past_half_ttl(monkeypatch, tmp_path):
+    import time as _time
+
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    config = _save_config(tmp_path)
+    near_exp = int(_time.time()) + (remote_access.SESSION_TTL_SECONDS // 2) - 60
+    cookie = _forged_session_cookie(config, near_exp)
+    client = app.test_client()
+    client.set_cookie(remote_access.SESSION_COOKIE_NAME, cookie, domain="alex.avibe.bot")
+
+    response = client.get("/dashboard", base_url="https://alex.avibe.bot", follow_redirects=False)
+
+    refreshed = next(
+        (h for h in response.headers.getlist("Set-Cookie") if h.startswith(f"{remote_access.SESSION_COOKIE_NAME}=")),
+        None,
+    )
+    assert refreshed is not None
+    assert "HttpOnly" in refreshed
+    assert "Secure" in refreshed
+    new_value = refreshed.split(";", 1)[0].split("=", 1)[1]
+    assert new_value != cookie
+    payload = remote_access.parse_session_cookie(config, new_value)
+    assert payload is not None
+    assert payload["email"] == "alex@example.com"
+    assert payload["sub"] == "user-1"
+    assert payload["exp"] > near_exp
+
+
 def test_remote_host_fails_closed_when_config_load_fails(monkeypatch):
     def fail_load():
         raise ValueError("corrupt config")
