@@ -187,7 +187,7 @@ cd ~/work
 就在 `Ubuntu 终端` 里执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
+curl -fsSL https://avibe.bot/install.sh | bash
 ```
 
 安装完成后，继续在同一个 Ubuntu 终端里执行：

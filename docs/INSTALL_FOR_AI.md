@@ -34,7 +34,7 @@ On Windows, prefer the WSL guide unless the user explicitly wants native PowerSh
 macOS / Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
+curl -fsSL https://avibe.bot/install.sh | bash
 ```
 
 Windows PowerShell:

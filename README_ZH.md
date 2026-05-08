@@ -53,7 +53,7 @@
 ## 10 秒安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash && vibe
+curl -fsSL https://avibe.bot/install.sh | bash && vibe
 ```
 
 完事。浏览器打开 -> 跟着向导走 -> 搞定。
