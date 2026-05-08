@@ -44,7 +44,6 @@ _UNSET = object()
 _SLACK_SECTION_TEXT_LIMIT = 3000
 _BARE_HTTP_URL_RE = re.compile(r"https?://[^\s<>\|]+")
 _TRAILING_URL_PUNCTUATION = ".,!?;:"
-_SLACK_TOKEN_PREFIXES = ("http://", "https://", "@", "#", "!", "!date^")
 
 
 class SlackBot(BaseIMClient):
@@ -549,13 +548,16 @@ class SlackBot(BaseIMClient):
             return text
 
         def _linkify_segment(segment: str) -> str:
+            token_ranges = [
+                (match.start(), match.end())
+                for match in re.finditer(r"<[^<>\s][^<>]*>", segment)
+            ]
+
             def _replace(match: re.Match) -> str:
                 url = match.group(0)
                 start = match.start()
                 end = match.end()
-                last_lt = segment.rfind("<", 0, start)
-                last_gt = segment.rfind(">", 0, start)
-                if last_lt > last_gt and segment[last_lt + 1 :].startswith(_SLACK_TOKEN_PREFIXES):
+                if any(token_start < start < token_end for token_start, token_end in token_ranges):
                     return url
 
                 trailing = ""

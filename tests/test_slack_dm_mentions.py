@@ -242,6 +242,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         text = (
             "Open https://example.com/path?a=1&b=2.\n"
             "Existing <https://example.org|Example>.\n"
+            "Mail <mailto:help@example.com|Visit https://status.example.com now>.\n"
             "Date <!date^1392734382^{date_short}^https://date.example/|Feb 18>.\n"
             "Comparison 1 < 2 https://compare.example.\n"
             "Inline `https://code.example`.\n"
@@ -253,6 +254,7 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         block_text = sent_payloads[0]["blocks"][0]["text"]["text"]
         self.assertIn("<https://example.com/path?a=1&b=2>.", block_text)
         self.assertIn("<https://example.org|Example>", block_text)
+        self.assertIn("<mailto:help@example.com|Visit https://status.example.com now>", block_text)
         self.assertIn("<!date^1392734382^{date_short}^https://date.example/|Feb 18>", block_text)
         self.assertIn("Comparison 1 < 2 <https://compare.example>.", block_text)
         self.assertIn("`https://code.example`", block_text)
