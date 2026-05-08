@@ -570,7 +570,9 @@ class SlackBot(BaseIMClient):
                     return url + trailing
                 if not url:
                     return match.group(0)
-                return f"<{url}|{url}>{trailing}"
+                if len(url) + 2 > _SLACK_SECTION_TEXT_LIMIT:
+                    return url + trailing
+                return f"<{url}>{trailing}"
 
             return _BARE_HTTP_URL_RE.sub(_replace, segment)
 
