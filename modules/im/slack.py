@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 _UNSET = object()
 _SLACK_SECTION_TEXT_LIMIT = 3000
+_BARE_HTTP_URL_RE = re.compile(r"https?://[^\s<>\|]+")
+_TRAILING_URL_PUNCTUATION = ".,!?;:"
 
 
 class SlackBot(BaseIMClient):
@@ -538,6 +540,83 @@ class SlackBot(BaseIMClient):
             )
 
         return blocks
+
+    @staticmethod
+    def _linkify_bare_urls_for_verbatim_mrkdwn(text: str) -> str:
+        """Convert bare URLs to explicit Slack links when automatic parsing is off."""
+        if not text or "http" not in text:
+            return text
+
+        def _linkify_segment(segment: str) -> str:
+            token_ranges = [
+                (match.start(), match.end())
+                for match in re.finditer(r"<[^<>\s][^<>]*>", segment)
+            ]
+
+            def _replace(match: re.Match) -> str:
+                url = match.group(0)
+                start = match.start()
+                end = match.end()
+                if any(token_start < start < token_end for token_start, token_end in token_ranges):
+                    return url
+
+                trailing = ""
+                while url and url[-1] in _TRAILING_URL_PUNCTUATION:
+                    trailing = url[-1] + trailing
+                    url = url[:-1]
+
+                while url.endswith(")") and url.count("(") < url.count(")"):
+                    trailing = ")" + trailing
+                    url = url[:-1]
+
+                if end < len(segment) and segment[end : end + 1] == ">":
+                    return url + trailing
+                if not url:
+                    return match.group(0)
+                if len(url) + 2 > _SLACK_SECTION_TEXT_LIMIT:
+                    return url + trailing
+                return f"<{url}>{trailing}"
+
+            return _BARE_HTTP_URL_RE.sub(_replace, segment)
+
+        result: List[str] = []
+        in_fenced_code = False
+        for line in text.splitlines(keepends=True):
+            cursor = 0
+            processed_parts: List[str] = []
+            for part in re.split(r"(```|`)", line):
+                if part == "```":
+                    in_fenced_code = not in_fenced_code
+                    processed_parts.append(part)
+                elif part == "`":
+                    if in_fenced_code:
+                        processed_parts.append(part)
+                    else:
+                        cursor ^= 1
+                        processed_parts.append(part)
+                elif in_fenced_code or cursor:
+                    processed_parts.append(part)
+                else:
+                    processed_parts.append(_linkify_segment(part))
+            result.append("".join(processed_parts))
+        return "".join(result)
+
+    @classmethod
+    def _split_text_for_verbatim_mrkdwn(cls, text: str, max_chars: int) -> List[str]:
+        if len(cls._linkify_bare_urls_for_verbatim_mrkdwn(text)) <= max_chars:
+            return [text]
+
+        chunks: List[str] = []
+        remaining = text
+        while remaining and len(cls._linkify_bare_urls_for_verbatim_mrkdwn(remaining)) > max_chars:
+            split_at = cls._find_text_split_index(remaining, min(len(remaining) - 1, max_chars // 2))
+            if split_at <= 0:
+                split_at = max(1, min(len(remaining) - 1, max_chars // 2))
+            chunks.append(remaining[:split_at])
+            remaining = remaining[split_at:]
+        if remaining:
+            chunks.append(remaining)
+        return chunks
 
     async def _send_prepared_text_message(
         self,
@@ -1222,12 +1301,18 @@ class SlackBot(BaseIMClient):
             if parse_mode == "markdown":
                 text = self._convert_markdown_to_slack_mrkdwn(text)
 
-            chunks = self._split_text(text, _SLACK_SECTION_TEXT_LIMIT)
+            linkify_verbatim_urls = parse_mode == "markdown" and getattr(self.config, "disable_link_unfurl", False)
+            chunks = (
+                self._split_text_for_verbatim_mrkdwn(text, _SLACK_SECTION_TEXT_LIMIT)
+                if linkify_verbatim_urls
+                else self._split_text(text, _SLACK_SECTION_TEXT_LIMIT)
+            )
             for chunk in chunks[:-1]:
                 await self._send_prepared_text_message(context, chunk, parse_mode=parse_mode)
             text = chunks[-1]
+            visible_text = self._linkify_bare_urls_for_verbatim_mrkdwn(text) if linkify_verbatim_urls else text
 
-            blocks = self._build_button_blocks(text, keyboard, parse_mode=parse_mode)
+            blocks = self._build_button_blocks(visible_text, keyboard, parse_mode=parse_mode)
             if blocks and blocks[0].get("type") == "section":
                 blocks[0]["text"]["verbatim"] = True
 
@@ -1235,7 +1320,7 @@ class SlackBot(BaseIMClient):
             kwargs = {
                 "channel": context.channel_id,
                 "blocks": blocks,
-                "text": text,  # Fallback text
+                "text": visible_text,  # Fallback text
             }
 
             # Handle thread replies
