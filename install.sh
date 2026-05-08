@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Vibe Remote Installation Script
-# Usage: curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
+# Usage: curl -fsSL https://avibe.bot/install.sh | bash
 #
 # Prerequisites: None! uv will be installed automatically and manages Python for you.
 

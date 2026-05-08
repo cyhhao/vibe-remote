@@ -53,7 +53,7 @@ AI works. You live.
 ## Install in 10 Seconds
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash && vibe
+curl -fsSL https://avibe.bot/install.sh | bash && vibe
 ```
 
 That's it. Browser opens -> Follow the wizard -> Done.

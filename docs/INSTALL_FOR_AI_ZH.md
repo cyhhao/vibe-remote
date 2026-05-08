@@ -34,7 +34,7 @@ Windows 用户默认推荐 WSL：
 macOS / Linux：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
+curl -fsSL https://avibe.bot/install.sh | bash
 ```
 
 Windows PowerShell：

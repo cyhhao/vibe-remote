@@ -185,7 +185,7 @@ Now you are in the right place.
 In the `Ubuntu terminal`, run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cyhhao/vibe-remote/master/install.sh | bash
+curl -fsSL https://avibe.bot/install.sh | bash
 ```
 
 After installation finishes, still in the same Ubuntu terminal, run:
