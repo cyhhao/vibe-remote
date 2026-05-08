@@ -221,6 +221,86 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message_ts, "1710000000.000013")
         self.assertIs(sent_payloads[0]["unfurl_links"], False)
         self.assertIs(sent_payloads[0]["unfurl_media"], False)
+        self.assertEqual(
+            sent_payloads[0]["blocks"][0]["text"]["text"],
+            "<https://example.com|https://example.com>",
+        )
+        self.assertIs(sent_payloads[0]["blocks"][0]["text"]["verbatim"], True)
+
+    async def test_send_message_with_buttons_linkifies_only_bare_urls_for_verbatim_blocks(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", disable_link_unfurl=True))
+        sent_payloads = []
+
+        class _WebClient:
+            async def chat_postMessage(self, **kwargs):
+                sent_payloads.append(kwargs)
+                return {"ts": "1710000000.000014"}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+        keyboard = InlineKeyboard(buttons=[[InlineButton(text="Open", callback_data="open")]])
+        text = (
+            "Open https://example.com/path?a=1&b=2.\n"
+            "Existing <https://example.org|Example>.\n"
+            "Date <!date^1392734382^{date_short}^https://date.example/|Feb 18>.\n"
+            "Inline `https://code.example`.\n"
+            "```\nhttps://block.example\n```"
+        )
+
+        await slack.send_message_with_buttons(context, text, keyboard, parse_mode="markdown")
+
+        block_text = sent_payloads[0]["blocks"][0]["text"]["text"]
+        self.assertIn("<https://example.com/path?a=1&b=2|https://example.com/path?a=1&b=2>.", block_text)
+        self.assertIn("<https://example.org|Example>", block_text)
+        self.assertIn("<!date^1392734382^{date_short}^https://date.example/|Feb 18>", block_text)
+        self.assertIn("`https://code.example`", block_text)
+        self.assertIn("```\nhttps://block.example\n```", block_text)
+        self.assertNotIn("<<https://example.org", block_text)
+
+    async def test_send_message_with_buttons_keeps_default_preview_behavior(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        sent_payloads = []
+
+        class _WebClient:
+            async def chat_postMessage(self, **kwargs):
+                sent_payloads.append(kwargs)
+                return {"ts": "1710000000.000015"}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+        keyboard = InlineKeyboard(buttons=[[InlineButton(text="Open", callback_data="open")]])
+
+        await slack.send_message_with_buttons(
+            context,
+            "https://example.com",
+            keyboard,
+            parse_mode="markdown",
+        )
+
+        self.assertEqual(sent_payloads[0]["blocks"][0]["text"]["text"], "https://example.com")
+        self.assertNotIn("unfurl_links", sent_payloads[0])
+        self.assertNotIn("unfurl_media", sent_payloads[0])
+
+    async def test_send_message_with_buttons_splits_when_linkified_text_exceeds_section_limit(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test", disable_link_unfurl=True))
+        sent_payloads = []
+
+        class _WebClient:
+            async def chat_postMessage(self, **kwargs):
+                sent_payloads.append(kwargs)
+                return {"ts": f"1710000000.00001{len(sent_payloads)}"}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+        keyboard = InlineKeyboard(buttons=[[InlineButton(text="Open", callback_data="open")]])
+        text = " ".join(["https://example.com/" + ("x" * 60) for _ in range(30)])
+
+        await slack.send_message_with_buttons(context, text, keyboard, parse_mode="markdown")
+
+        self.assertGreater(len(sent_payloads), 1)
+        final_payload = sent_payloads[-1]
+        self.assertLessEqual(len(final_payload["blocks"][0]["text"]["text"]), 3000)
+        self.assertEqual(final_payload["blocks"][1]["type"], "actions")
 
     async def test_send_message_recovers_dm_channel_after_channel_not_found(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
