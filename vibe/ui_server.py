@@ -584,6 +584,8 @@ def _remote_auth_exempt_path() -> bool:
     return (
         path == "/health"
         or path == "/auth/callback"
+        or path == "/auth/logout"
+        or path == "/api/session"
         or path.startswith("/assets/")
         or path == "/favicon.ico"
     )
@@ -725,6 +727,9 @@ def add_csrf_cookie(response: Response) -> Response:
 
 @app.after_request
 def renew_remote_access_cookie(response: Response) -> Response:
+    # Logout handler explicitly clears the session cookie; never re-issue it.
+    if getattr(g, "remote_session_logout", False):
+        return response
     renew = getattr(g, "remote_session_renew", None)
     if not renew:
         return response
@@ -1078,6 +1083,53 @@ def remote_access_auth_callback():
         max_age=remote_access.SESSION_TTL_SECONDS,
     )
     response.delete_cookie(REMOTE_OAUTH_COOKIE_NAME, path="/", secure=True, samesite="Lax")
+    return response
+
+
+@app.route("/api/session", methods=["GET"])
+def api_session():
+    from vibe import remote_access
+
+    config = _load_remote_access_config()
+    if config is None or not _is_remote_access_request(config):
+        response = jsonify({"remote": False})
+    else:
+        payload = remote_access.parse_session_cookie(
+            config, request.cookies.get(remote_access.SESSION_COOKIE_NAME)
+        )
+        if payload is None:
+            response = jsonify({"remote": True, "authenticated": False})
+        else:
+            response = jsonify(
+                {
+                    "remote": True,
+                    "authenticated": True,
+                    "email": str(payload.get("email", "")),
+                }
+            )
+    # Identity payload must never be cached by intermediaries (Cloudflare etc.).
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Vary"] = "Cookie"
+    return response
+
+
+@app.route("/auth/logout", methods=["POST"])
+def remote_access_logout():
+    from vibe import remote_access
+
+    # Suppress the after-request renewal so we don't re-issue the cookie we're
+    # about to clear; flagged so future hook reorderings stay safe.
+    g.remote_session_renew = None
+    g.remote_session_logout = True
+    response = jsonify({"ok": True})
+    response.delete_cookie(
+        remote_access.SESSION_COOKIE_NAME,
+        path="/",
+        secure=True,
+        httponly=True,
+        samesite="Lax",
+    )
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 

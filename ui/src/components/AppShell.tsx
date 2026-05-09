@@ -6,6 +6,7 @@ import clsx from 'clsx';
 
 import { useApi } from '../context/ApiContext';
 import { useStatus } from '../context/StatusContext';
+import { AccountMenu } from './AccountMenu';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ThemeToggle } from './ThemeToggle';
 import { VersionBadge } from './VersionBadge';
@@ -155,6 +156,7 @@ export const AppShell: React.FC = () => {
             <div className="flex items-center gap-2">
               <LanguageSwitcher openUpward />
               <ThemeToggle />
+              <AccountMenu openUpward />
             </div>
 
             {config?.runtime?.hostname && (
@@ -179,6 +181,7 @@ export const AppShell: React.FC = () => {
           <VersionBadge />
           <LanguageSwitcher />
           <ThemeToggle />
+          <AccountMenu />
         </div>
       </header>
 

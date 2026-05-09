@@ -166,7 +166,11 @@
     "workspaceLabel": "工作区",
     "navigationLabel": "控制台",
     "statusLabel": "服务状态",
-    "versionLabel": "版本"
+    "versionLabel": "版本",
+    "accountMenuLabel": "账户（{{email}}）",
+    "signedInAs": "当前登录账户",
+    "signOut": "退出登录",
+    "signingOut": "正在退出…"
   },
   "wizard": {
     "title": "Vibe Remote 设置向导"
