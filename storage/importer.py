@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from storage.sessions_service import SESSIONS_LAST_ACTIVITY_KEY, SQLiteSessionsS
 from storage.settings_service import SQLiteSettingsService, upsert_scope
 
 JSON_IMPORT_MARKER = "json_import_completed_at"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -77,13 +79,17 @@ def ensure_sqlite_state(
                 discovered_count = _import_discovered_chats(conn, parsed.discovered)
                 counts = _current_counts(conn)
                 counts["discovered_scopes"] = discovered_count
+                if parsed.discovered_skipped:
+                    counts["discovered_chats_skipped"] = 1
                 _validate_import(conn, counts)
                 _set_import_marker(conn)
                 return MigrationImportReport(
                     db_path=target_db,
                     imported=True,
                     backup_path=backup_path,
-                    counts=_current_counts(conn) | {"discovered_scopes": discovered_count},
+                    counts=_current_counts(conn)
+                    | {"discovered_scopes": discovered_count}
+                    | ({"discovered_chats_skipped": 1} if parsed.discovered_skipped else {}),
                 )
         finally:
             engine.dispose()
@@ -195,13 +201,19 @@ class _ParsedState:
     settings: SettingsState
     sessions: SessionState
     discovered: DiscoveredChatsStore
+    discovered_skipped: bool = False
 
 
 def _parse_json_state(state_dir: Path, *, primary_platform: str | None) -> _ParsedState:
     settings = _load_settings_from_copy(state_dir / "settings.json")
     sessions = _load_sessions_from_copy(state_dir / "sessions.json", primary_platform=primary_platform)
-    discovered = _load_discovered_chats_strict(state_dir / "discovered_chats.json")
-    return _ParsedState(settings=settings, sessions=sessions, discovered=discovered)
+    discovered, discovered_skipped = _load_discovered_chats_for_import(state_dir / "discovered_chats.json")
+    return _ParsedState(
+        settings=settings,
+        sessions=sessions,
+        discovered=discovered,
+        discovered_skipped=discovered_skipped,
+    )
 
 
 def _load_settings_from_copy(source: Path) -> SettingsState:
@@ -223,11 +235,19 @@ def _load_sessions_from_copy(source: Path, *, primary_platform: str | None) -> S
         return state
 
 
-def _load_discovered_chats_strict(source: Path) -> DiscoveredChatsStore:
-    if source.exists():
+def _load_discovered_chats_for_import(source: Path) -> tuple[DiscoveredChatsStore, bool]:
+    if not source.exists():
+        return DiscoveredChatsStore(source), False
+    try:
         payload = json.loads(source.read_text(encoding="utf-8"))
         _validate_discovered_chats_payload(payload)
-    return DiscoveredChatsStore(source)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "Skipping discovered_chats.json during SQLite import; settings and sessions will still be migrated: %s",
+            exc,
+        )
+        return DiscoveredChatsStore(source.with_name(f".{source.name}.skipped-for-sqlite-import")), True
+    return DiscoveredChatsStore(source), False
 
 
 def _validate_discovered_chats_payload(payload: Any) -> None:
