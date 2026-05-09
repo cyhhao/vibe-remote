@@ -48,7 +48,14 @@ export type ApiContextType = {
   pairVibeCloudRemoteAccess: (payload: { backend_url: string; pairing_key: string; device_name?: string }) => Promise<any>;
   startRemoteAccess: () => Promise<any>;
   stopRemoteAccess: () => Promise<any>;
+  getSession: () => Promise<SessionInfo>;
+  signOut: () => Promise<{ ok: boolean }>;
 };
+
+export type SessionInfo =
+  | { remote: false }
+  | { remote: true; authenticated: false }
+  | { remote: true; authenticated: true; email: string };
 
 export type LogEntry = {
   timestamp: string;
@@ -193,6 +200,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     pairVibeCloudRemoteAccess: (payload) => postJson('/remote-access/vibe-cloud/pair', payload),
     startRemoteAccess: () => postJson('/remote-access/start', {}),
     stopRemoteAccess: () => postJson('/remote-access/stop', {}),
+    getSession: () => getJson('/api/session'),
+    signOut: () => postJson('/auth/logout', {}),
   };
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;

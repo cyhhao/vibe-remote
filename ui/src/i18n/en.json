@@ -166,7 +166,11 @@
     "workspaceLabel": "Workspace",
     "navigationLabel": "Console",
     "statusLabel": "Service status",
-    "versionLabel": "Version"
+    "versionLabel": "Version",
+    "accountMenuLabel": "Account ({{email}})",
+    "signedInAs": "Signed in as",
+    "signOut": "Sign out",
+    "signingOut": "Signing out…"
   },
   "wizard": {
     "title": "Vibe Remote Setup"
