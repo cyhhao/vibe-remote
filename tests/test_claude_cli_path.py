@@ -188,6 +188,44 @@ def test_session_handler_disallows_remote_unsafe_claude_tools(monkeypatch, tmp_p
     assert captured["options"].disallowed_tools == ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"]
 
 
+def test_session_handler_forces_bypass_mode_and_auto_approves_claude_tool_permissions(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    controller.config.claude.permission_mode = "default"
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    _run_session(handler, context)
+    result = asyncio.run(captured["options"].can_use_tool("Bash", {"command": "git status"}, object()))
+
+    assert captured["connected"] is True
+    assert captured["options"].permission_mode == "bypassPermissions"
+    assert result.behavior == "allow"
+
+
+def test_session_handler_auto_approves_all_claude_tool_permission_requests(
+    monkeypatch, tmp_path: Path
+) -> None:
+    handler = SessionHandler(_Controller(tmp_path))
+
+    result = asyncio.run(handler._allow_claude_bypass_tool("Bash", {"command": "git status"}, object()))
+
+    assert result.behavior == "allow"
+
+
 def test_session_handler_does_not_repeat_claude_model_control_request(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, Any] = {"clients": []}
 
