@@ -56,6 +56,8 @@ AI works. You live.
 curl -fsSL https://avibe.bot/install.sh | bash && vibe
 ```
 
+Open source — view the [script on GitHub](https://github.com/cyhhao/vibe-remote/blob/master/install.sh). The short URL is a 307 redirect to that file.
+
 That's it. Browser opens -> Follow the wizard -> Done.
 
 Need to open the Web UI from another device or a remote server? Run:

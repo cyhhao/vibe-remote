@@ -190,6 +190,8 @@ cd ~/work
 curl -fsSL https://avibe.bot/install.sh | bash
 ```
 
+开源脚本，源码在 [GitHub](https://github.com/cyhhao/vibe-remote/blob/master/install.sh) 上；该短链只是到这个文件的 307 重定向。
+
 安装完成后，继续在同一个 Ubuntu 终端里执行：
 
 ```bash
