@@ -20,6 +20,7 @@ try:
         AssistantMessage,
         ClaudeAgentOptions,
         ClaudeSDKClient as _ClaudeSDKClient,
+        PermissionResultAllow,
         ResultMessage,
         SystemMessage,
         TextBlock,
@@ -72,6 +73,12 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only in minimal test
 
     class ClaudeSDKClient(_MissingClaudeSDK):
         pass
+
+    class PermissionResultAllow:
+        def __init__(self, behavior="allow", updated_input=None, updated_permissions=None):
+            self.behavior = behavior
+            self.updated_input = updated_input
+            self.updated_permissions = updated_permissions
 
     class SystemMessage:  # minimal placeholders for isinstance checks
         pass

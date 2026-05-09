@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 from uuid import uuid4
 from modules.im import MessageContext
@@ -12,6 +13,7 @@ from modules.claude_sdk_compat import (
     CLAUDE_SDK_MAX_BUFFER_SIZE,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    PermissionResultAllow,
 )
 from modules.agents.native_sessions.base import build_resume_preview
 
@@ -21,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 CLAUDE_NO_CONVERSATION_RE = re.compile(r"No conversation found with session ID:\s*(\S+)")
 CLAUDE_REMOTE_DISALLOWED_TOOLS = ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"]
+CLAUDE_REMOTE_PERMISSION_MODE = "bypassPermissions"
 
 
 class ClaudeSessionNotFoundError(RuntimeError):
@@ -244,8 +247,11 @@ class SessionHandler(BaseHandler):
     def _should_force_claude_sandbox(self) -> bool:
         if os.environ.get("IS_SANDBOX"):
             return False
-        permission_mode = getattr(getattr(self.config, "claude", None), "permission_mode", None)
-        return permission_mode == "bypassPermissions" and self._running_as_root()
+        return self._running_as_root()
+
+    async def _allow_claude_bypass_tool(self, tool_name: str, tool_input: Dict[str, Any], context: Any):
+        logger.info("Auto-approving Claude tool permission request in Vibe Remote bypass mode: %s", tool_name)
+        return PermissionResultAllow()
 
     def _get_claude_cli_path_override(self) -> Optional[str]:
         cli_path = getattr(getattr(self.config, "claude", None), "cli_path", None)
@@ -563,7 +569,7 @@ class SessionHandler(BaseHandler):
             logger.info("Detected Claude bypassPermissions running as root; forcing IS_SANDBOX=1 for Claude subprocess")
 
         option_kwargs: Dict[str, Any] = {
-            "permission_mode": self.config.claude.permission_mode,
+            "permission_mode": CLAUDE_REMOTE_PERMISSION_MODE,
             "cwd": working_path,
             "system_prompt": final_system_prompt,
             "resume": stored_claude_session_id if stored_claude_session_id else None,
@@ -575,6 +581,7 @@ class SessionHandler(BaseHandler):
             "env": claude_env,  # Pass Anthropic/Claude env vars
             "stderr": _capture_claude_stderr,
             "max_buffer_size": CLAUDE_SDK_MAX_BUFFER_SIZE,
+            "can_use_tool": self._allow_claude_bypass_tool,
         }
         cli_path_override = self._get_claude_cli_path_override()
         if cli_path_override:
