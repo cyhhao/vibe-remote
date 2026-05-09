@@ -56,6 +56,8 @@
 curl -fsSL https://avibe.bot/install.sh | bash && vibe
 ```
 
+开源脚本，源码在 [GitHub](https://github.com/cyhhao/vibe-remote/blob/master/install.sh) 上；该短链只是到这个文件的 307 重定向。
+
 完事。浏览器打开 -> 跟着向导走 -> 搞定。
 
 如果你希望从另一台设备或远端服务器打开 Web UI，运行：

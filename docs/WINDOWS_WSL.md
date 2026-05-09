@@ -188,6 +188,8 @@ In the `Ubuntu terminal`, run:
 curl -fsSL https://avibe.bot/install.sh | bash
 ```
 
+Open source — view the [script on GitHub](https://github.com/cyhhao/vibe-remote/blob/master/install.sh). The short URL is a 307 redirect to that file.
+
 After installation finishes, still in the same Ubuntu terminal, run:
 
 ```bash
