@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-STREAM_BUFFER_LIMIT = 8 * 1024 * 1024  # 8 MB
+STREAM_BUFFER_LIMIT = 128 * 1024 * 1024  # 128 MB
 
 
 class CodexTransport:
@@ -150,7 +150,13 @@ class CodexTransport:
 
     @property
     def is_alive(self) -> bool:
-        return self._process is not None and self._process.returncode is None
+        if self._process is None or self._process.returncode is not None:
+            return False
+        # If the stdout reader has exited, the subprocess can still accept
+        # writes but no responses will ever be dispatched to pending callers.
+        if self._reader_task is not None and self._reader_task.done():
+            return False
+        return True
 
     @property
     def is_initialized(self) -> bool:
@@ -178,6 +184,9 @@ class CodexTransport:
 
     async def send_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Send a JSON-RPC request and return the result (blocking)."""
+        if not self.is_alive:
+            raise ConnectionError("Codex app-server transport is not available")
+
         self._request_id += 1
         req_id = self._request_id
         msg = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
@@ -198,10 +207,14 @@ class CodexTransport:
             return await asyncio.wait_for(fut, timeout=120.0)
         except asyncio.TimeoutError:
             self._pending.pop(req_id, None)
+            self._initialized = False
             raise TimeoutError(f"Codex RPC {method} (id={req_id}) timed out after 120s")
 
     async def send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
         """Send a JSON-RPC notification (fire-and-forget)."""
+        if not self.is_alive:
+            raise ConnectionError("Codex app-server transport is not available")
+
         msg: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             msg["params"] = params
@@ -246,6 +259,7 @@ class CodexTransport:
         except Exception:
             logger.exception("Codex reader loop crashed")
         finally:
+            self._initialized = False
             # Process ended — fail pending futures
             for fut in self._pending.values():
                 if not fut.done():

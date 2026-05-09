@@ -528,6 +528,7 @@ class _HandleMessageTurnRegistry:
     def __init__(self, active_turn: str | None):
         self.active_turn = active_turn
         self.remembered_requests = []
+        self.cleared_sessions = []
 
     def remember_request(self, request):
         self.remembered_requests.append(request)
@@ -537,6 +538,9 @@ class _HandleMessageTurnRegistry:
 
     def has_pending_turn_start(self, base_session_id: str):
         return False
+
+    def clear_session(self, base_session_id: str):
+        self.cleared_sessions.append(base_session_id)
 
 
 class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
@@ -574,6 +578,160 @@ class CodexAgentHandleMessageTests(unittest.IsolatedAsyncioTestCase):
             "notify",
             "❌ Failed to interrupt previous Codex turn: interrupt failed",
         )
+
+    async def test_handle_message_recovers_from_broken_transport_once(self):
+        agent = object.__new__(CodexAgent)
+        request = SimpleNamespace(
+            base_session_id="session-1",
+            working_path="/tmp/work",
+            context=object(),
+            session_key="settings-1",
+            ack_message_id=None,
+        )
+
+        bad_transport = SimpleNamespace(stop=AsyncMock())
+        fresh_transport = SimpleNamespace()
+        invalidated = []
+        session_mgr = SimpleNamespace(
+            set_session_key=Mock(),
+            set_cwd=Mock(),
+            get_thread_id=Mock(return_value=None),
+            sessions_for_cwd=Mock(return_value=["session-1"]),
+            invalidate_thread=Mock(side_effect=lambda base_session_id: invalidated.append(base_session_id)),
+        )
+        sessions = SimpleNamespace(clear_agent_session_mapping=Mock())
+
+        agent._session_locks = {}
+        agent._turn_registry = _HandleMessageTurnRegistry(active_turn=None)
+        agent._event_handler = SimpleNamespace(clear_pending=Mock())
+        agent._remove_ack_reaction = AsyncMock()
+        agent._delete_ack = AsyncMock()
+        agent.controller = SimpleNamespace(
+            emit_agent_message=AsyncMock(),
+            agent_auth_service=SimpleNamespace(maybe_emit_auth_recovery_message=AsyncMock(return_value=False)),
+        )
+        agent._transports = {"/tmp/work": bad_transport}
+        agent._transport_locks = {"/tmp/work": asyncio.Lock()}
+        agent._transport_last_activity = {"/tmp/work": 1.0}
+        agent._session_mgr = session_mgr
+        agent.sessions = sessions
+        agent._get_or_create_transport = AsyncMock(side_effect=[bad_transport, fresh_transport])
+        agent._touch_transport_activity = Mock()
+        agent._start_or_resume_thread = AsyncMock(
+            side_effect=[
+                ConnectionError("Codex app-server stdout closed"),
+                "thread-new",
+            ]
+        )
+        agent._start_thread = AsyncMock(return_value="thread-new")
+        agent._start_turn = AsyncMock(return_value="thread-new")
+
+        await agent.handle_message(request)
+
+        bad_transport.stop.assert_awaited_once()
+        self.assertEqual(agent._transports, {})
+        self.assertEqual(agent._transport_last_activity, {})
+        self.assertEqual(invalidated, ["session-1"])
+        self.assertEqual(agent._turn_registry.cleared_sessions, ["session-1"])
+        sessions.clear_agent_session_mapping.assert_not_called()
+        agent._get_or_create_transport.assert_any_await("/tmp/work")
+        self.assertEqual(agent._start_or_resume_thread.await_args_list[-1].args, (fresh_transport, request))
+        agent._start_thread.assert_not_awaited()
+        agent._start_turn.assert_awaited_once_with(fresh_transport, request, "thread-new")
+        agent.controller.emit_agent_message.assert_not_awaited()
+        agent._remove_ack_reaction.assert_not_awaited()
+
+    async def test_handle_message_reraises_recoverable_interrupt_error_for_retry(self):
+        agent = object.__new__(CodexAgent)
+        request = SimpleNamespace(
+            base_session_id="session-1",
+            working_path="/tmp/work",
+            context=object(),
+            session_key="settings-1",
+            ack_message_id=None,
+        )
+
+        bad_transport = SimpleNamespace(
+            send_request=AsyncMock(side_effect=ConnectionError("Codex app-server transport is not available")),
+            stop=AsyncMock(),
+        )
+        fresh_transport = SimpleNamespace()
+        agent._session_locks = {}
+        agent._turn_registry = _HandleMessageTurnRegistry(active_turn="turn-1")
+        agent._event_handler = SimpleNamespace(clear_pending=Mock())
+        agent._remove_ack_reaction = AsyncMock()
+        agent._delete_ack = AsyncMock()
+        agent.controller = SimpleNamespace(
+            emit_agent_message=AsyncMock(),
+            agent_auth_service=SimpleNamespace(maybe_emit_auth_recovery_message=AsyncMock(return_value=False)),
+        )
+        agent._transports = {"/tmp/work": bad_transport}
+        agent._transport_locks = {"/tmp/work": asyncio.Lock()}
+        agent._transport_last_activity = {"/tmp/work": 1.0}
+        agent._session_mgr = SimpleNamespace(
+            set_session_key=Mock(),
+            set_cwd=Mock(),
+            get_thread_id=Mock(return_value="thread-old"),
+            sessions_for_cwd=Mock(return_value=["session-1"]),
+            invalidate_thread=Mock(),
+        )
+        agent.sessions = SimpleNamespace(clear_agent_session_mapping=Mock())
+        agent._get_or_create_transport = AsyncMock(side_effect=[bad_transport, fresh_transport])
+        agent._touch_transport_activity = Mock()
+        agent._start_or_resume_thread = AsyncMock(return_value="thread-new")
+        agent._start_thread = AsyncMock(return_value="thread-new")
+        agent._start_turn = AsyncMock(return_value="thread-new")
+
+        await agent.handle_message(request)
+
+        bad_transport.send_request.assert_awaited_once_with(
+            "turn/interrupt",
+            {"threadId": "thread-old", "turnId": "turn-1"},
+        )
+        agent._event_handler.clear_pending.assert_not_called()
+        agent._start_or_resume_thread.assert_awaited_once_with(fresh_transport, request)
+        agent._start_thread.assert_not_awaited()
+        agent.controller.emit_agent_message.assert_not_awaited()
+
+    async def test_drop_transport_after_failure_keeps_other_sessions_when_transport_was_replaced(self):
+        agent = object.__new__(CodexAgent)
+        request = SimpleNamespace(base_session_id="session-1")
+        old_transport = SimpleNamespace(stop=AsyncMock())
+        fresh_transport = SimpleNamespace()
+        invalidated = []
+        cleared = []
+        agent._transports = {"/tmp/work": fresh_transport}
+        agent._transport_locks = {"/tmp/work": asyncio.Lock()}
+        agent._transport_last_activity = {"/tmp/work": 1.0}
+        agent._session_mgr = SimpleNamespace(
+            sessions_for_cwd=Mock(return_value=["session-1", "session-2"]),
+            invalidate_thread=Mock(side_effect=lambda base_session_id: invalidated.append(base_session_id)),
+        )
+        agent._turn_registry = SimpleNamespace(
+            clear_session=Mock(side_effect=lambda base_session_id: cleared.append(base_session_id))
+        )
+
+        await agent._drop_transport_after_failure("/tmp/work", old_transport, request)
+
+        old_transport.stop.assert_awaited_once()
+        self.assertIs(agent._transports["/tmp/work"], fresh_transport)
+        self.assertEqual(agent._transport_last_activity, {"/tmp/work": 1.0})
+        self.assertEqual(invalidated, ["session-1"])
+        self.assertEqual(cleared, ["session-1"])
+
+    async def test_start_or_resume_thread_reraises_recoverable_transport_error(self):
+        agent = object.__new__(CodexAgent)
+        agent.sessions = SimpleNamespace(get_agent_session_id=Mock(return_value="thread-old"))
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent._build_thread_developer_instructions = Mock(return_value=None)
+        agent._start_thread = AsyncMock()
+        request = SimpleNamespace(session_key="settings-1", base_session_id="session-1")
+        transport = SimpleNamespace(send_request=AsyncMock(side_effect=ConnectionError("Codex app-server stdout closed")))
+
+        with self.assertRaises(ConnectionError):
+            await agent._start_or_resume_thread(transport, request)
+
+        agent._start_thread.assert_not_awaited()
 
     def test_find_request_does_not_bootstrap_turn_completed_for_pending_turn(self):
         agent = object.__new__(CodexAgent)
@@ -1017,10 +1175,13 @@ class CodexTransportCommandTests(unittest.IsolatedAsyncioTestCase):
 
         class _FakeStdout:
             def __init__(self):
-                self._lines = [b'{"jsonrpc":"2.0","id":1,"result":{}}\n', b""]
+                self._lines = [b'{"jsonrpc":"2.0","id":1,"result":{}}\n']
 
             async def readline(self):
-                return self._lines.pop(0)
+                if self._lines:
+                    return self._lines.pop(0)
+                await asyncio.Event().wait()
+                return b""
 
         class _FakeStderr:
             async def readline(self):

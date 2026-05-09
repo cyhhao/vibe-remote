@@ -119,6 +119,8 @@ class CodexAgent(BaseAgent):
                             {"threadId": thread_id, "turnId": active_turn},
                         )
                     except Exception as e:
+                        if self._is_recoverable_transport_error(e):
+                            raise
                         logger.warning("Failed to interrupt turn %s: %s", active_turn, e)
                         await self.controller.emit_agent_message(
                             request.context,
@@ -137,6 +139,22 @@ class CodexAgent(BaseAgent):
                 # Safety net: if the thread is stale (e.g. Codex server-side
                 # expiry, or the proactive invalidation in _get_or_create_transport
                 # was bypassed by a race), invalidate and retry once.
+                if self._is_recoverable_transport_error(e):
+                    logger.warning(
+                        "Recoverable Codex transport failure for session %s, restarting transport and retrying: %s",
+                        request.base_session_id,
+                        e,
+                    )
+                    await self._drop_transport_after_failure(request.working_path, transport, request)
+                    try:
+                        transport = await self._get_or_create_transport(request.working_path)
+                        self._touch_transport_activity(request.working_path)
+                        thread_id = await self._start_or_resume_thread(transport, request)
+                        await self._start_turn(transport, request, thread_id)
+                        return  # retry succeeded
+                    except Exception as retry_err:
+                        e = retry_err  # fall through to normal error handling
+
                 if "thread not found" in str(e).lower():
                     logger.warning(
                         "Stale Codex thread for session %s, clearing and retrying: %s",
@@ -369,6 +387,49 @@ class CodexAgent(BaseAgent):
     # Transport management
     # ------------------------------------------------------------------
 
+    def _is_recoverable_transport_error(self, error: Exception) -> bool:
+        if isinstance(error, (ConnectionError, TimeoutError)):
+            return True
+
+        text = str(error).lower()
+        return any(
+            marker in text
+            for marker in (
+                "transport is not available",
+                "stdout closed",
+                "timed out after 120s",
+            )
+        )
+
+    async def _drop_transport_after_failure(
+        self,
+        cwd: str,
+        transport: CodexTransport,
+        request: AgentRequest,
+    ) -> None:
+        """Remove a broken app-server and clear stale in-memory request state."""
+        lock = self._transport_locks.setdefault(cwd, asyncio.Lock())
+        async with lock:
+            current = self._transports.get(cwd)
+            should_invalidate_cwd_sessions = current is None or current is transport
+            if current is transport:
+                self._transports.pop(cwd, None)
+                self._transport_last_activity.pop(cwd, None)
+            try:
+                await transport.stop()
+            except Exception as exc:
+                logger.warning("Failed to stop broken Codex transport for cwd=%s: %s", cwd, exc)
+
+            if should_invalidate_cwd_sessions:
+                for base_session_id in list(self._session_mgr.sessions_for_cwd(cwd)):
+                    if base_session_id == request.base_session_id:
+                        continue
+                    self._session_mgr.invalidate_thread(base_session_id)
+                    self._turn_registry.clear_session(base_session_id)
+
+        self._session_mgr.invalidate_thread(request.base_session_id)
+        self._turn_registry.clear_session(request.base_session_id)
+
     async def _get_or_create_transport(self, cwd: str) -> CodexTransport:
         """Return an initialized transport for the given working directory."""
         # Serialize creation per cwd
@@ -538,6 +599,9 @@ class CodexAgent(BaseAgent):
                     logger.info("Resumed Codex thread %s for session %s", thread_id, request.base_session_id)
                     return thread_id
             except Exception as e:
+                if self._is_recoverable_transport_error(e):
+                    logger.warning("Failed to resume Codex thread %s due to transport failure: %s", persisted, e)
+                    raise
                 logger.warning("Failed to resume Codex thread %s: %s, starting new", persisted, e)
 
         return await self._start_thread(transport, request)
