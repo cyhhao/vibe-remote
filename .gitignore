@@ -147,6 +147,8 @@ cython_debug/
 # Project specific
 *.log
 claude_proxy.log
+.claude
+.agents
 demolog.log
 _tmp/
 .DS_Store

@@ -2,7 +2,7 @@
 
 This file is designed to be handed directly to Claude Code, Codex, OpenCode, or another local coding agent. Use it to install and configure Vibe Remote with the user.
 
-Vibe Remote connects local AI coding agents to chat platforms such as Slack, Discord, Telegram, WeChat, and Lark / Feishu. The code and agent processes stay on the user's machine.
+Vibe Remote connects local AI coding agents to chat platforms such as Slack, Discord, Telegram, WeChat, and Lark / Feishu. The user's data and agent processes stay on the user's machine.
 
 ## Rules for the Assisting Agent
 

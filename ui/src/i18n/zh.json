@@ -113,8 +113,8 @@
   "remoteAccess": {
     "badge": "Vibe Cloud Provider",
     "title": "远程访问",
-    "subtitle": "通过私有 avibe.bot 地址，从另一台设备打开这个本机 Web UI。你的代码和 Agent 仍然运行在这台机器上。",
-    "subtitleWithLink": "通过私有 <cloud>avibe.bot</cloud> 地址，从另一台设备打开这个本机 Web UI。你的代码和 Agent 仍然运行在这台机器上。",
+    "subtitle": "通过私有 avibe.bot 地址，从另一台设备打开这个本机 Web UI。你的数据和 Agent 仍然运行在这台机器上。",
+    "subtitleWithLink": "通过私有 <cloud>avibe.bot</cloud> 地址，从另一台设备打开这个本机 Web UI。你的数据和 Agent 仍然运行在这台机器上。",
     "connectTitle": "连接 Vibe Cloud",
     "connectDesc": "先在 avibe.bot 创建 remote-access bot，并复制一次性 pairing key；然后粘贴到这里完成本机配对。",
     "configuredTitle": "Vibe Cloud 已配置",
@@ -182,7 +182,7 @@
     "card1Title": "本地优先",
     "card2Title": "多平台",
     "card3Title": "多 Agent",
-    "feature1": "代码与 Agent 都留在你自己的机器上。",
+    "feature1": "数据与 Agent 都留在你自己的机器上。",
     "feature2": "Slack、Discord、Telegram、飞书、微信，一个 bot 全搞定。",
     "feature3": "Claude、OpenCode、Codex —— 按群/频道路由。"
   },
