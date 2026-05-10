@@ -137,7 +137,7 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
               <button
                 onClick={() => browse(crumb.path)}
                 className={clsx(
-                  'shrink-0 px-1 py-0.5 rounded hover:bg-neutral-100 transition-colors font-mono',
+                  'shrink-0 px-1 py-0.5 rounded hover:bg-foreground/5 transition-colors font-mono',
                   i === breadcrumbs.length - 1 ? 'text-accent font-medium' : 'text-muted',
                 )}
               >
@@ -158,7 +158,7 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
           {parent && (
             <button
               onClick={() => browse(parent)}
-              className="flex items-center gap-2 w-full px-3 py-1.5 rounded-lg hover:bg-neutral-100 transition-colors text-sm text-muted"
+              className="flex items-center gap-2 w-full px-3 py-1.5 rounded-lg hover:bg-foreground/5 transition-colors text-sm text-muted"
             >
               <ArrowUp size={14} />
               <span>..</span>
@@ -170,10 +170,10 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
             <button
               key={dir.path}
               onClick={() => browse(dir.path)}
-              className="flex items-center gap-2 w-full px-3 py-1.5 rounded-lg hover:bg-neutral-100 transition-colors text-sm text-text group"
+              className="flex items-center gap-2 w-full px-3 py-1.5 rounded-lg hover:bg-foreground/5 transition-colors text-sm text-text group"
             >
-              <Folder size={14} className="text-amber-500 group-hover:hidden shrink-0" />
-              <FolderOpen size={14} className="text-amber-500 hidden group-hover:block shrink-0" />
+              <Folder size={14} className="text-gold group-hover:hidden shrink-0" />
+              <FolderOpen size={14} className="text-gold hidden group-hover:block shrink-0" />
               <span className="truncate text-left">{dir.name}</span>
             </button>
           ))}
@@ -196,8 +196,8 @@ export const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({
             className={clsx(
               'flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors shrink-0',
               canConfirm
-                ? 'bg-accent hover:bg-accent/90 text-white'
-                : 'bg-neutral-200 text-muted cursor-not-allowed',
+                ? 'bg-accent hover:bg-accent/90 text-accent-foreground'
+                : 'bg-muted-soft text-muted cursor-not-allowed',
             )}
           >
             <Check size={14} />
