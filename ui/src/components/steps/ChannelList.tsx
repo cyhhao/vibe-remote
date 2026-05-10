@@ -1084,13 +1084,13 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     discovered: summary.total,
                   })}
             </div>
-            <div className="inline-flex items-center gap-2">
+            <label className="inline-flex cursor-pointer items-center gap-2">
               <span className="text-[12px] text-muted">{t('channelList.showInactive')}</span>
               <ToggleSwitch
                 enabled={showInactive}
                 onClick={() => setShowInactive(!showInactive)}
               />
-            </div>
+            </label>
           </div>
 
           {/* Channel rows — design.pen JrNBe / M8FRiG / KywfU */}

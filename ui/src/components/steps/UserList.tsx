@@ -689,13 +689,13 @@ export const UserList: React.FC = () => {
               {totalCount}
             </span>
           </div>
-          <div className="flex items-center gap-1.5 text-[12px] text-muted">
+          <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-muted">
             <span>{t('userList.showDisabled')}</span>
             <ToggleSwitch
               enabled={showDisabled}
               onClick={() => setShowDisabled(!showDisabled)}
             />
-          </div>
+          </label>
         </div>
 
         {/* User cards — design.pen asPXu (VR/RoutingConfig) shared with /groups */}
