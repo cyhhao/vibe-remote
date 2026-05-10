@@ -201,7 +201,7 @@ export const Dashboard: React.FC = () => {
               'flex size-[52px] shrink-0 items-center justify-center rounded-full border',
               isRunning
                 ? 'border-mint/35 bg-mint/[0.08] shadow-[0_0_24px_-6px_rgba(91,255,160,0.44)]'
-                : 'border-border bg-white/[0.04]'
+                : 'border-border bg-foreground/[0.04]'
             )}
           >
             <Zap
@@ -216,7 +216,7 @@ export const Dashboard: React.FC = () => {
                   'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em]',
                   isRunning
                     ? 'border-mint/30 bg-mint/[0.08] text-mint'
-                    : 'border-border bg-white/[0.04] text-muted'
+                    : 'border-border bg-foreground/[0.04] text-muted'
                 )}
               >
                 <span
@@ -283,7 +283,7 @@ export const Dashboard: React.FC = () => {
               type="button"
               onClick={() => void handleAction('stop')}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2.5 text-[13px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2.5 text-[13px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Square className="size-3.5" strokeWidth={2.5} />
               {t('common.stop')}
@@ -297,7 +297,7 @@ export const Dashboard: React.FC = () => {
               'inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-[13px] font-bold transition disabled:cursor-not-allowed disabled:opacity-50',
               isRunning
                 ? 'bg-mint text-[#080812] shadow-[0_0_24px_-6px_rgba(91,255,160,0.44)] hover:brightness-105'
-                : 'border border-border bg-white/[0.04] text-foreground hover:border-border-strong'
+                : 'border border-border bg-foreground/[0.04] text-foreground hover:border-border-strong'
             )}
           >
             <RotateCw className="size-3.5" strokeWidth={2.5} />
@@ -348,7 +348,7 @@ export const Dashboard: React.FC = () => {
             </div>
             <Link
               to="/settings/platforms"
-              className="inline-flex items-center gap-1 rounded-lg border border-border bg-white/[0.04] px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-border-strong"
+              className="inline-flex items-center gap-1 rounded-lg border border-border bg-foreground/[0.04] px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-border-strong"
             >
               {t('dashboard.manageAll')}
               <ArrowRight className="size-3.5" strokeWidth={2.25} />
@@ -378,7 +378,7 @@ export const Dashboard: React.FC = () => {
                       'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium',
                       platform.enabled
                         ? 'border-mint/30 bg-mint/[0.08] text-mint'
-                        : 'border-border bg-white/[0.04] text-muted'
+                        : 'border-border bg-foreground/[0.04] text-muted'
                     )}
                   >
                     {platform.enabled ? t('dashboard.connected') : t('dashboard.notConfigured')}

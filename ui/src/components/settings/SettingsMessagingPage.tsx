@@ -248,7 +248,7 @@ export const SettingsMessagingPage: React.FC = () => {
           control={
             <Link
               to="/groups"
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong"
             >
               {t('common.manageChannels')}
               <ArrowRight className="size-3.5" strokeWidth={2.25} />

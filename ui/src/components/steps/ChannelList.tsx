@@ -785,7 +785,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               <button
                 type="button"
                 onClick={onBack}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
               >
                 <ArrowLeft size={14} strokeWidth={2.25} />
                 {t('common.back')}
@@ -912,7 +912,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 type="button"
                 onClick={handleRescan}
                 disabled={isRescanLoading}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong disabled:opacity-50"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong disabled:opacity-50"
               >
                 <RefreshCw size={14} className={isRescanLoading ? 'animate-spin' : ''} />
                 {t('channelList.rescan')}
@@ -937,7 +937,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               <span
                 className={clsx(
                   'rounded-full px-1.5 py-0.5 font-mono text-[10px]',
-                  pageTab === 'all' ? 'bg-mint-soft text-mint' : 'bg-white/[0.06] text-muted'
+                  pageTab === 'all' ? 'bg-mint-soft text-mint' : 'bg-foreground/[0.06] text-muted'
                 )}
               >
                 {allTabCounts.active}
@@ -963,7 +963,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   <span
                     className={clsx(
                       'rounded-full px-1.5 py-0.5 font-mono text-[10px]',
-                      active ? 'bg-mint-soft text-mint' : 'bg-white/[0.06] text-muted'
+                      active ? 'bg-mint-soft text-mint' : 'bg-foreground/[0.06] text-muted'
                     )}
                   >
                     {counts.active}
@@ -1048,7 +1048,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   type="button"
                   onClick={() => loadChannels(true)}
                   disabled={loadingAll}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:border-cyan/40 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:border-cyan/40 disabled:opacity-50"
                 >
                   <Globe size={13} className={loadingAll ? 'animate-spin' : ''} />
                   {loadingAll ? t('common.loading') : t('channelList.browseAll')}
@@ -1226,7 +1226,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                         'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium',
                         channelEnabled
                           ? 'border-mint/40 bg-mint-soft text-mint'
-                          : 'border-border bg-white/[0.04] text-muted'
+                          : 'border-border bg-foreground/[0.04] text-muted'
                       )}
                     >
                       <span
@@ -1342,7 +1342,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 'rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors',
                 platform === candidate
                   ? 'border-mint/50 bg-mint/[0.16] text-mint shadow-[0_0_20px_-4px_rgba(91,255,160,0.4)]'
-                  : 'border-border bg-white/[0.04] text-foreground hover:border-border-strong'
+                  : 'border-border bg-foreground/[0.04] text-foreground hover:border-border-strong'
               )}
             >
               {t(`platform.${candidate}.title`)}
@@ -1635,7 +1635,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
           >
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}

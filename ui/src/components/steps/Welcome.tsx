@@ -64,7 +64,7 @@ export const Welcome: React.FC<WelcomeProps> = ({ onNext }) => {
           {features.map(({ Icon, iconClass, title, body }) => (
             <div
               key={title}
-              className="flex flex-col gap-2 rounded-xl border border-white/[0.08] bg-background px-4 py-[18px]"
+              className="flex flex-col gap-2 rounded-xl border border-foreground/[0.08] bg-background px-4 py-[18px]"
             >
               <Icon className={`size-5 ${iconClass}`} strokeWidth={1.75} />
               <div className="text-[14px] font-semibold leading-tight text-foreground">{title}</div>

@@ -34,7 +34,7 @@ const ShellNavLink: React.FC<{ item: ShellNavItem }> = ({ item }) => {
         'group flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-colors',
         active
           ? 'border border-mint/30 bg-mint/[0.08] text-foreground shadow-[0_0_16px_-4px_rgba(91,255,160,0.5)]'
-          : 'border border-transparent text-muted hover:bg-white/[0.04] hover:text-foreground'
+          : 'border border-transparent text-muted hover:bg-foreground/[0.04] hover:text-foreground'
       )}
     >
       <Icon className={clsx('size-4', active ? 'text-mint' : 'text-muted group-hover:text-foreground')} />
@@ -135,7 +135,7 @@ export const AppShell: React.FC = () => {
                 'flex items-center gap-2.5 rounded-lg border px-3 py-2.5',
                 isRunning
                   ? 'border-mint/30 bg-mint/[0.08]'
-                  : 'border-border bg-white/[0.02]'
+                  : 'border-border bg-foreground/[0.02]'
               )}
             >
               <span

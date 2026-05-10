@@ -495,8 +495,8 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
             const option = platform.id;
             const active = selected.includes(option);
             const tileTint = PLATFORM_TILE_STYLES[option] || {
-              bg: 'bg-white/[0.04]',
-              border: 'border-white/[0.10]',
+              bg: 'bg-foreground/[0.04]',
+              border: 'border-foreground/[0.10]',
             };
             return (
               <button
@@ -507,7 +507,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
                   'flex flex-col items-center gap-2.5 rounded-xl px-4 py-5 transition-colors',
                   active
                     ? 'border-2 border-mint bg-mint/[0.16]'
-                    : 'border border-white/[0.08] bg-background hover:border-white/[0.16] hover:bg-white/[0.02]'
+                    : 'border border-foreground/[0.08] bg-background hover:border-foreground/[0.16] hover:bg-foreground/[0.02]'
                 )}
               >
                 <span
@@ -532,7 +532,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
           })}
         </div>
 
-        <div className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.04] px-4 py-2.5">
+        <div className="flex items-center gap-2 rounded-lg border border-foreground/[0.08] bg-foreground/[0.04] px-4 py-2.5">
           <Info className="size-3.5 shrink-0 text-cyan" />
           <span className="text-[12px] leading-[1.45] text-muted">
             {t('platform.selectedSummary', { count: selected.length })}
@@ -543,7 +543,7 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
           >
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}

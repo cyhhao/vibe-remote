@@ -212,7 +212,7 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
               <button
                 type="button"
                 onClick={() => setShowAllModal(true)}
-                className="rounded-md border border-border bg-white/[0.04] px-3.5 py-2 text-[12px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+                className="rounded-md border border-border bg-foreground/[0.04] px-3.5 py-2 text-[12px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
               >
                 {moreCount > 0
                   ? t('bindCode.viewMore', { count: moreCount })
@@ -223,7 +223,7 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
               <button
                 type="button"
                 onClick={() => handleDelete(primary.code)}
-                className="rounded-md border border-border bg-white/[0.04] px-3.5 py-2 text-[12px] font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger"
+                className="rounded-md border border-border bg-foreground/[0.04] px-3.5 py-2 text-[12px] font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger"
               >
                 {t('bindCode.revoke')}
               </button>
@@ -319,9 +319,9 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
                           className={clsx(
                             'rounded-full border px-2 py-0.5 text-[10px] font-mono font-bold tracking-[0.12em]',
                             status === 'active' && 'border-mint/40 bg-mint-soft text-mint',
-                            status === 'used' && 'border-border bg-white/[0.04] text-muted',
+                            status === 'used' && 'border-border bg-foreground/[0.04] text-muted',
                             status === 'expired' && 'border-gold/40 bg-gold/10 text-gold',
-                            status === 'inactive' && 'border-border bg-white/[0.04] text-muted',
+                            status === 'inactive' && 'border-border bg-foreground/[0.04] text-muted',
                           )}
                         >
                           {t(`bindCode.${status}`)}
@@ -673,7 +673,7 @@ export const UserList: React.FC = () => {
             <button
               type="button"
               onClick={() => setRefreshTrigger((v) => v + 1)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong"
               title={t('common.refresh', { defaultValue: 'Refresh' })}
             >
               <RefreshCw size={14} />
@@ -691,7 +691,7 @@ export const UserList: React.FC = () => {
         <div className="flex items-center justify-between px-1 py-2">
           <div className="flex items-center gap-2">
             <span className="text-[15px] font-semibold text-foreground">{t('userList.allUsers')}</span>
-            <span className="rounded-full bg-white/[0.08] px-1.5 py-0.5 font-mono text-[11px] font-bold text-muted">
+            <span className="rounded-full bg-foreground/[0.08] px-1.5 py-0.5 font-mono text-[11px] font-bold text-muted">
               {totalCount}
             </span>
           </div>
@@ -826,7 +826,7 @@ export const UserList: React.FC = () => {
 
                     {/* Admin badge — clickable; bot renders as static label */}
                     {isBot ? (
-                      <span className="inline-flex shrink-0 items-center rounded-full border border-border bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-muted">
+                      <span className="inline-flex shrink-0 items-center rounded-full border border-border bg-foreground/[0.04] px-2 py-0.5 text-[11px] font-semibold text-muted">
                         {t('userList.bot')}
                       </span>
                     ) : (
@@ -849,7 +849,7 @@ export const UserList: React.FC = () => {
                           'inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
                           userConfig.is_admin
                             ? 'border-gold/40 bg-gold/10 font-bold text-gold hover:bg-gold/15'
-                            : 'border-border bg-white/[0.04] text-muted hover:border-border-strong hover:text-foreground'
+                            : 'border-border bg-foreground/[0.04] text-muted hover:border-border-strong hover:text-foreground'
                         )}
                       >
                         <Shield size={11} strokeWidth={2.4} />
@@ -884,7 +884,7 @@ export const UserList: React.FC = () => {
                           type="button"
                           onClick={() => handleRemoveUser(u.platform, u.userId)}
                           title={t('userList.removeUser')}
-                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-white/[0.04] px-3 py-1.5 text-[12px] font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-foreground/[0.04] px-3 py-1.5 text-[12px] font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger"
                         >
                           <Trash2 size={12} />
                           {t('userList.removeUser')}
