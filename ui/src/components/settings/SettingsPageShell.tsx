@@ -3,10 +3,10 @@ import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import {
-  AlertCircle,
-  Bot,
   MessageSquare,
-  Settings as SettingsIcon,
+  PlugZap,
+  Server,
+  Sparkles,
   Stethoscope,
 } from 'lucide-react';
 
@@ -18,9 +18,9 @@ const TABS: Array<{
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { key: 'service', href: '/settings/service', label: 'settings.tabs.service', icon: SettingsIcon },
-  { key: 'platforms', href: '/settings/platforms', label: 'settings.tabs.platforms', icon: AlertCircle },
-  { key: 'backends', href: '/settings/backends', label: 'settings.tabs.backends', icon: Bot },
+  { key: 'service', href: '/settings/service', label: 'settings.tabs.service', icon: Server },
+  { key: 'platforms', href: '/settings/platforms', label: 'settings.tabs.platforms', icon: PlugZap },
+  { key: 'backends', href: '/settings/backends', label: 'settings.tabs.backends', icon: Sparkles },
   { key: 'messaging', href: '/settings/messaging', label: 'settings.tabs.messaging', icon: MessageSquare },
   { key: 'diagnostics', href: '/settings/diagnostics', label: 'settings.tabs.diagnostics', icon: Stethoscope },
 ];
@@ -34,9 +34,10 @@ export type SettingsPageShellProps = {
   children: React.ReactNode;
 };
 
-// Mirrors design.pen niFAd (platSubTabs) but applied at the settings root:
-// rounded-full pills, mint-soft active state with #5BFFA055 stroke,
-// 13px lucide icon + 12px label, padding [8, 14].
+// Mirrors design.pen l6PdZd → wH3uC (sTabs):
+// underline tabs over a 1px --border baseline. Each tab is padding [10, 16],
+// 13px Inter, gap 8 between icon + label. Inactive: muted text/icon, font 500.
+// Active: mint 2px bottom border, foreground text, mint icon, font 600.
 export const SettingsPageShell: React.FC<SettingsPageShellProps> = ({
   title,
   subtitle,
@@ -59,27 +60,29 @@ export const SettingsPageShell: React.FC<SettingsPageShellProps> = ({
         {actions && <div className="shrink-0">{actions}</div>}
       </div>
 
-      <nav className="flex flex-wrap gap-1.5" aria-label="Settings sections">
-        {TABS.map((tab) => {
-          const Icon = tab.icon;
-          const active = tab.key === activeTab;
-          return (
-            <Link
-              key={tab.key}
-              to={tab.href}
-              className={clsx(
-                'inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[12px] font-semibold transition-colors',
-                active
-                  ? 'border-mint/35 bg-mint/[0.08] text-foreground shadow-[0_0_18px_-6px_rgba(91,255,160,0.5)]'
-                  : 'border-border bg-white/[0.04] text-muted hover:border-border-strong hover:text-foreground'
-              )}
-            >
-              <Icon className={clsx('size-3.5', active ? 'text-mint' : 'text-muted')} />
-              {t(tab.label)}
-            </Link>
-          );
-        })}
-      </nav>
+      <div className="border-b border-border">
+        <nav className="-mb-px flex flex-wrap gap-1" aria-label="Settings sections">
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            const active = tab.key === activeTab;
+            return (
+              <Link
+                key={tab.key}
+                to={tab.href}
+                className={clsx(
+                  'inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-[13px] transition-colors',
+                  active
+                    ? 'border-mint font-semibold text-foreground'
+                    : 'border-transparent font-medium text-muted hover:border-border-strong hover:text-foreground'
+                )}
+              >
+                <Icon className={clsx('size-3.5', active ? 'text-mint' : 'text-muted')} />
+                {t(tab.label)}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
 
       <div className="flex flex-col gap-4">{children}</div>
     </div>
