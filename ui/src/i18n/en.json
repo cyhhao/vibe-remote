@@ -113,8 +113,8 @@
   "remoteAccess": {
     "badge": "Vibe Cloud provider",
     "title": "Remote Access",
-    "subtitle": "Open this local Web UI from another device through a private avibe.bot URL. Your code and agents still run on this machine.",
-    "subtitleWithLink": "Open this local Web UI from another device through a private <cloud>avibe.bot</cloud> URL. Your code and agents still run on this machine.",
+    "subtitle": "Open this local Web UI from another device through a private avibe.bot URL. Your data and agents still run on this machine.",
+    "subtitleWithLink": "Open this local Web UI from another device through a private <cloud>avibe.bot</cloud> URL. Your data and agents still run on this machine.",
     "connectTitle": "Connect to Vibe Cloud",
     "connectDesc": "First create a remote-access bot at avibe.bot and copy its one-time pairing key. Then paste it here to pair this device.",
     "configuredTitle": "Vibe Cloud is configured",
@@ -182,7 +182,7 @@
     "card1Title": "Local-first",
     "card2Title": "Multi-platform",
     "card3Title": "Multi-agent",
-    "feature1": "Your code + agents stay on your machine.",
+    "feature1": "Your data + agents stay on your machine.",
     "feature2": "Slack, Discord, Telegram, Lark, WeChat — one bot.",
     "feature3": "Claude, OpenCode, Codex — route per channel."
   },

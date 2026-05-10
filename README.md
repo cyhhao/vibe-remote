@@ -219,7 +219,7 @@ Ask your agent to schedule work for later, repeat a prompt on a cron, or queue a
 3. **Agent** reads your codebase, writes code, streams back
 4. **You review** in your chat app, iterate in thread
 
-**Your code never leaves your machine.** Vibe Remote runs locally and connects via Slack Socket Mode, Discord Gateway, Telegram Bot API long polling, WeChat polling, or Lark WebSocket.
+**Your data never leaves your machine.** Vibe Remote runs locally and connects via Slack Socket Mode, Discord Gateway, Telegram Bot API long polling, WeChat polling, or Lark WebSocket.
 
 ---
 
@@ -328,7 +328,7 @@ npm install -g @openai/codex
 - **Local-first** — Vibe Remote runs on your machine
 - **Socket Mode / WebSocket** — No public URLs, no webhooks
 - **Your tokens** — Stored in `~/.vibe_remote/`, never uploaded
-- **Your code** — Stays on your disk, sent only to your chosen AI provider
+- **Your data** — Stays on your disk, sent only to your chosen AI provider
 
 ---
 

@@ -2,7 +2,7 @@
 
 这份文档可以直接丢给 Claude Code、Codex、OpenCode 或其他本地编码 agent，让它帮用户安装和配置 Vibe Remote。
 
-Vibe Remote 会把本地 AI 编码 agent 接到 Slack、Discord、Telegram、微信、飞书 / Lark 等聊天平台。代码和 agent 进程都留在用户自己的机器上。
+Vibe Remote 会把本地 AI 编码 agent 接到 Slack、Discord、Telegram、微信、飞书 / Lark 等聊天平台。数据和 agent 进程都留在用户自己的机器上。
 
 ## 协助安装时的规则
 
