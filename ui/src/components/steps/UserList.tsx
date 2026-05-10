@@ -752,6 +752,7 @@ export const UserList: React.FC = () => {
                     tabIndex={0}
                     onClick={() => setExpandedKey(expanded ? null : u.key)}
                     onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
                       if (e.key === ' ' || e.key === 'Enter') {
                         e.preventDefault();
                         setExpandedKey(expanded ? null : u.key);

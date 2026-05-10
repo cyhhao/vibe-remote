@@ -1157,6 +1157,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     tabIndex={0}
                     onClick={() => setExpandedChannelId(expanded ? null : rowKey)}
                     onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
                       if (e.key === ' ' || e.key === 'Enter') {
                         e.preventDefault();
                         setExpandedChannelId(expanded ? null : rowKey);
