@@ -102,6 +102,8 @@ export const CompactSelect: React.FC<React.SelectHTMLAttributes<HTMLSelectElemen
 
 // Mirrors design.pen FALFE / ylboi (mint switch on): cornerRadius 9999,
 // fill --mint, blur 8 #5BFFA055 glow, 38×22 with knob inset 3.
+// Off state mirrors fcMl6 (Switch/Unchecked): fill + stroke = --border-strong
+// (14% white dark / 14% black light) for sufficient contrast against bg-background.
 export const ToggleSwitch: React.FC<{ enabled: boolean; onClick: () => void; disabled?: boolean }> = ({
   enabled,
   onClick,
@@ -117,7 +119,7 @@ export const ToggleSwitch: React.FC<{ enabled: boolean; onClick: () => void; dis
       'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-mint/40 disabled:opacity-50',
       enabled
         ? 'border-mint/50 bg-mint shadow-[0_0_12px_-2px_rgba(91,255,160,0.6)]'
-        : 'border-border bg-surface-2'
+        : 'border-border-strong bg-border-strong'
     )}
   >
     <span

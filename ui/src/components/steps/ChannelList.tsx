@@ -1097,12 +1097,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               <span
                 className={clsx(
                   'relative inline-flex h-[18px] w-[30px] items-center rounded-full transition-colors',
-                  showInactive ? 'bg-mint' : 'bg-neutral-300'
+                  showInactive ? 'bg-mint' : 'bg-border-strong'
                 )}
               >
                 <span
                   className={clsx(
-                    'inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform',
+                    'inline-block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform',
                     showInactive ? 'translate-x-[14px]' : 'translate-x-0.5'
                   )}
                 />
@@ -1189,12 +1189,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                       }}
                       className={clsx(
                         'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors',
-                        channelEnabled ? 'bg-mint' : 'bg-neutral-300'
+                        channelEnabled ? 'bg-mint' : 'bg-border-strong'
                       )}
                     >
                       <span
                         className={clsx(
-                          'inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform',
+                          'inline-block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform',
                           channelEnabled ? 'translate-x-[14px]' : 'translate-x-0.5'
                         )}
                       />
@@ -1381,12 +1381,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             }}
             className={clsx(
               'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-              (config as any)[platform]?.require_mention ? 'bg-accent' : 'bg-neutral-300'
+              (config as any)[platform]?.require_mention ? 'bg-accent' : 'bg-border-strong'
             )}
           >
             <span
               className={clsx(
-                'inline-block h-4 w-4 rounded-full bg-white transition-transform shadow-sm',
+                'inline-block h-4 w-4 rounded-full bg-background transition-transform shadow-sm',
                 (config as any)[platform]?.require_mention ? 'translate-x-6' : 'translate-x-1'
               )}
             />
