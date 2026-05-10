@@ -11,7 +11,6 @@ import {
   HelpCircle,
   MessageSquare,
   RefreshCw,
-  Search,
   Square,
   Users,
 } from 'lucide-react';
@@ -24,7 +23,7 @@ import clsx from 'clsx';
 import { getEnabledPlatforms, platformSupportsChannels } from '../../lib/platforms';
 import { EyebrowBadge, PlatformIcon, WizardCard } from '../visual';
 import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
-import { CompactSelect, ToggleSwitch } from '../settings/SettingsPrimitives';
+import { CompactSelect, SearchField, ToggleSwitch } from '../settings/SettingsPrimitives';
 
 const PLATFORM_BRAND_COLORS: Record<string, string> = {
   slack: '#4A154B',
@@ -899,16 +898,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               <p className="text-[14px] leading-[1.55] text-muted">{t('channelList.subtitle')}</p>
             </div>
             <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-                <input
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={t('channelList.filterPlaceholder')}
-                  className="h-9 w-[240px] rounded-lg border border-border bg-surface pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted focus:border-mint/50 focus:outline-none"
-                />
-              </div>
+              <SearchField
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={t('channelList.filterPlaceholder')}
+                className="w-[240px]"
+              />
               <button
                 type="button"
                 onClick={handleRescan}

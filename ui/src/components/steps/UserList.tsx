@@ -8,7 +8,6 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
-  Search,
   Shield,
   Trash2,
   X,
@@ -22,7 +21,7 @@ import { DirectoryBrowser } from '../ui/directory-browser';
 import { copyTextToClipboard } from '../../lib/utils';
 import { PlatformIcon } from '../visual';
 import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
-import { ToggleSwitch } from '../settings/SettingsPrimitives';
+import { SearchField, ToggleSwitch } from '../settings/SettingsPrimitives';
 
 interface UserConfig {
   display_name: string;
@@ -661,16 +660,12 @@ export const UserList: React.FC = () => {
             <p className="text-[14px] leading-[1.55] text-muted">{t('userList.subtitle')}</p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t('userList.filterPlaceholder')}
-                className="h-9 w-[280px] rounded-lg border border-border bg-surface pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted focus:border-mint/50 focus:outline-none"
-              />
-            </div>
+            <SearchField
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('userList.filterPlaceholder')}
+              className="w-[280px]"
+            />
             <button
               type="button"
               onClick={() => setRefreshTrigger((v) => v + 1)}
