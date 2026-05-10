@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useApi, type VersionInfo, type UpgradeResult } from '../context/ApiContext';
 import { Download, X, RefreshCw, Check, AlertCircle } from 'lucide-react';
 import clsx from 'clsx';
+import { ToggleSwitch } from './settings/SettingsPrimitives';
 
 export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = false }) => {
   const { t } = useTranslation();
@@ -218,16 +219,12 @@ export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = 
                   <div className="text-sm text-foreground">{t('dashboard.autoUpdate')}</div>
                   <div className="text-xs text-muted">{t('dashboard.autoUpdateHint')}</div>
                 </div>
-                <label className="relative inline-flex cursor-pointer items-center">
-                  <input
-                    type="checkbox"
-                    checked={autoUpdate}
-                    onChange={(e) => handleAutoUpdateToggle(e.target.checked)}
-                    disabled={savingAutoUpdate}
-                    className="peer sr-only"
-                  />
-                  <div className="peer h-5 w-9 rounded-full bg-surface-3 transition-colors after:absolute after:left-[2px] after:top-0.5 after:size-4 after:rounded-full after:bg-foreground after:transition-all after:content-[''] peer-checked:bg-mint peer-checked:after:translate-x-4 peer-checked:after:bg-primary-foreground peer-focus:ring-2 peer-focus:ring-ring" />
-                </label>
+                <ToggleSwitch
+                  enabled={autoUpdate}
+                  onClick={() => handleAutoUpdateToggle(!autoUpdate)}
+                  disabled={savingAutoUpdate}
+                />
+
               </div>
             )}
           </div>
