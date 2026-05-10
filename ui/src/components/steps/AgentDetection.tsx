@@ -16,6 +16,7 @@ import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { BackendIcon, EyebrowBadge, WizardCard } from '../visual';
 import type { BackendId } from '../visual';
+import { CompactField, CompactSelect, ToggleSwitch } from '../settings/SettingsPrimitives';
 
 interface AgentDetectionProps {
   data: any;
@@ -192,15 +193,15 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
             {t('agentDetection.defaultBackend')}
           </span>
-          <select
+          <CompactSelect
             value={defaultBackend}
             onChange={(e) => setDefaultBackend(e.target.value)}
-            className="mt-1 h-9 w-full rounded-lg border border-border bg-surface-2 px-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40 md:max-w-[260px]"
+            className="mt-1 w-full md:max-w-[260px]"
           >
             <option value="opencode">OpenCode {t('agentDetection.recommended')}</option>
             <option value="claude">Claude Code</option>
             <option value="codex">Codex</option>
-          </select>
+          </CompactSelect>
         </label>
         <button
           onClick={detectAll}
@@ -228,30 +229,16 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
               </div>
               <div className="flex items-center gap-3">
                 <StatusBadge status={agent.status || 'unknown'} loading={checking} />
-                <button
-                  role="switch"
-                  aria-checked={agent.enabled}
+                <ToggleSwitch
+                  enabled={agent.enabled}
                   onClick={() => toggle(name, !agent.enabled)}
-                  className={clsx(
-                    'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-mint/40',
-                    agent.enabled
-                      ? 'border-mint/50 bg-mint shadow-[0_0_12px_-2px_rgba(91,255,160,0.6)]'
-                      : 'border-border-strong bg-border-strong'
-                  )}
-                >
-                  <span
-                    className={clsx(
-                      'inline-block size-3.5 rounded-full bg-background shadow transition-transform',
-                      agent.enabled ? 'translate-x-[18px]' : 'translate-x-1'
-                    )}
-                  />
-                </button>
+                />
               </div>
             </div>
 
             <div className="space-y-3 px-5 py-3.5">
               <div className="flex gap-2">
-                <input
+                <CompactField
                   type="text"
                   value={agent.cli_path}
                   onChange={(e) =>
@@ -261,7 +248,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                     }))
                   }
                   placeholder={t('agentDetection.cliPathPlaceholder', { name })}
-                  className="h-9 flex-1 rounded-lg border border-border bg-surface-2 px-3 font-mono text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                  className="flex-1 font-mono"
                 />
                 <button
                   onClick={() => detect(name, agent.cli_path)}

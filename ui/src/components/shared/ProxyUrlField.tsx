@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, SplitSquareVertical } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
+import { CompactField } from '../settings/SettingsPrimitives';
 
 interface ProxyUrlFieldProps {
   value: string;
@@ -51,12 +52,12 @@ export function ProxyUrlField({
       </button>
       {expanded && (
         <div className="space-y-2">
-          <input
+          <CompactField
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder="socks5://user:pass@host:port (optional)"
-            className="w-full rounded-lg border border-border bg-background px-3 py-2.5 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/55 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+            className="w-full font-mono placeholder:text-muted/55"
           />
           <p className="text-[11px] text-muted">{t(hintKey)}</p>
         </div>

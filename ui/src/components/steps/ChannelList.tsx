@@ -24,6 +24,7 @@ import clsx from 'clsx';
 import { getEnabledPlatforms, platformSupportsChannels } from '../../lib/platforms';
 import { EyebrowBadge, PlatformIcon, WizardCard } from '../visual';
 import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
+import { CompactSelect, ToggleSwitch } from '../settings/SettingsPrimitives';
 
 const PLATFORM_BRAND_COLORS: Record<string, string> = {
   slack: '#4A154B',
@@ -979,16 +980,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               <div className="grid gap-3 md:grid-cols-[minmax(220px,280px)_1fr]">
                 <div className="space-y-1">
                   <label className="font-medium text-foreground">{t('channelList.guildBrowse')}</label>
-                  <select
+                  <CompactSelect
                     value={selectedGuild}
                     onChange={(e) => updateSelectedGuild(e.target.value)}
-                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-cyan focus:outline-none"
+                    className="w-full"
                   >
                     <option value="">{t('channelList.guildPlaceholder')}</option>
                     {knownDiscordGuilds.map((g) => (
                       <option key={g.id} value={g.id}>{g.name}</option>
                     ))}
-                  </select>
+                  </CompactSelect>
                 </div>
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1086,28 +1087,13 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     discovered: summary.total,
                   })}
             </div>
-            <label className="inline-flex cursor-pointer items-center gap-2">
+            <div className="inline-flex items-center gap-2">
               <span className="text-[12px] text-muted">{t('channelList.showInactive')}</span>
-              <input
-                type="checkbox"
-                checked={showInactive}
-                onChange={(e) => setShowInactive(e.target.checked)}
-                className="sr-only"
+              <ToggleSwitch
+                enabled={showInactive}
+                onClick={() => setShowInactive(!showInactive)}
               />
-              <span
-                className={clsx(
-                  'relative inline-flex h-[18px] w-[30px] items-center rounded-full transition-colors',
-                  showInactive ? 'bg-mint' : 'bg-border-strong'
-                )}
-              >
-                <span
-                  className={clsx(
-                    'inline-block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform',
-                    showInactive ? 'translate-x-[14px]' : 'translate-x-0.5'
-                  )}
-                />
-              </span>
-            </label>
+            </div>
           </div>
 
           {/* Channel rows — design.pen JrNBe / M8FRiG / KywfU */}
@@ -1166,37 +1152,23 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   )}
                 >
                   {/* Top row */}
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setExpandedChannelId(expanded ? null : rowKey)}
-                    className="flex w-full items-center gap-3.5 px-5 py-3.5 text-left"
+                    onKeyDown={(e) => {
+                      if (e.key === ' ' || e.key === 'Enter') {
+                        e.preventDefault();
+                        setExpandedChannelId(expanded ? null : rowKey);
+                      }
+                    }}
+                    className="flex w-full cursor-pointer items-center gap-3.5 px-5 py-3.5 text-left"
                   >
                     {/* Toggle */}
-                    <span
-                      role="switch"
-                      aria-checked={channelEnabled}
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        updateRow({ enabled: !channelEnabled });
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === ' ' || e.key === 'Enter') {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          updateRow({ enabled: !channelEnabled });
-                        }
-                      }}
-                      className={clsx(
-                        'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors',
-                        channelEnabled ? 'bg-mint' : 'bg-border-strong'
-                      )}
-                    >
-                      <span
-                        className={clsx(
-                          'inline-block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform',
-                          channelEnabled ? 'translate-x-[14px]' : 'translate-x-0.5'
-                        )}
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <ToggleSwitch
+                        enabled={channelEnabled}
+                        onClick={() => updateRow({ enabled: !channelEnabled })}
                       />
                     </span>
 
@@ -1244,7 +1216,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                     ) : (
                       <ChevronDown size={18} className="shrink-0 text-muted" />
                     )}
-                  </button>
+                  </div>
 
                   {/* Expanded body — design.pen asPXu (VR/RoutingConfig) — shared with /users */}
                   {expanded && (
@@ -1442,16 +1414,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             <div className="grid gap-3 md:grid-cols-[minmax(220px,280px)_1fr]">
               <div className="space-y-1">
                 <label className="font-medium text-foreground">{t('channelList.guildBrowse')}</label>
-                <select
+                <CompactSelect
                   value={selectedGuild}
                   onChange={(e) => updateSelectedGuild(e.target.value)}
-                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan"
+                  className="w-full"
                 >
                   <option value="">{t('channelList.guildPlaceholder')}</option>
                   {knownDiscordGuilds.map((g) => (
                     <option key={g.id} value={g.id}>{g.name}</option>
                   ))}
-                </select>
+                </CompactSelect>
               </div>
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">

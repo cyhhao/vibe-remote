@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { Combobox } from '../ui/combobox';
 import { BackendIcon } from '../visual';
+import { CompactSelect } from '../settings/SettingsPrimitives';
 
 // Mirrors design.pen `asPXu` (VR/RoutingConfig). Shared between groups (channels)
 // and users — same form, same fields, same styles. The only difference is whether
@@ -140,7 +141,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
               placeholder={globalConfig?.runtime?.default_cwd || t('channelList.useGlobalDefault')}
               value={value.custom_cwd}
               onCommit={(v) => onChange({ custom_cwd: v })}
-              className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted/50 focus:border-cyan focus:outline-none"
+              className="h-9 flex-1 rounded-lg border border-border bg-foreground/[0.04] px-3 font-mono text-[12px] text-foreground outline-none transition placeholder:text-muted/50 focus:border-cyan focus:ring-1 focus:ring-cyan/40"
             />
             <button
               type="button"
@@ -160,15 +161,15 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
               <BackendIcon backend={effectiveBackend} variant="glyph" size={14} />
             </span>
-            <select
+            <CompactSelect
               value={effectiveBackend}
               onChange={(e) => onChange({ routing: { ...value.routing, agent_backend: e.target.value } })}
-              className="w-full rounded-lg border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground focus:border-cyan focus:outline-none"
+              className="w-full pl-9 pr-3"
             >
               <option value="opencode">OpenCode</option>
               <option value="claude">ClaudeCode</option>
               <option value="codex">Codex</option>
-            </select>
+            </CompactSelect>
           </div>
         </div>
 
@@ -281,20 +282,20 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
           <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">
             <div className="space-y-1">
               <label className="text-xs text-muted">{t('channelList.agent')}</label>
-              <select
+              <CompactSelect
                 value={value.routing.opencode_agent || ''}
                 onChange={(e) => onChange({ routing: { ...value.routing, opencode_agent: e.target.value || null } })}
-                className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground"
+                className="w-full"
               >
                 <option value="">{t('common.default')}</option>
                 {(opencodeOptions?.agents || []).map((a: any) => (
                   <option key={a.name} value={a.name}>{a.name}</option>
                 ))}
-              </select>
+              </CompactSelect>
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted">{t('channelList.model')}</label>
-              <select
+              <CompactSelect
                 value={value.routing.opencode_model || ''}
                 onChange={(e) => onChange({
                   routing: {
@@ -303,7 +304,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
                     opencode_reasoning_effort: null,
                   },
                 })}
-                className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground"
+                className="w-full"
               >
                 <option value="">{t('common.default')}</option>
                 {(opencodeOptions?.models?.providers || []).flatMap((provider: any) => {
@@ -320,23 +321,23 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
                     <option key={`${pid}:${mid}`} value={`${pid}/${mid}`}>{pLabel}/{mid}</option>
                   ));
                 })}
-              </select>
+              </CompactSelect>
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-              <select
+              <CompactSelect
                 value={value.routing.opencode_reasoning_effort || ''}
                 onChange={(e) => onChange({
                   routing: { ...value.routing, opencode_reasoning_effort: e.target.value || null },
                 })}
                 disabled={!getOpenCodeReasoningOptions(value.routing.opencode_model || '').length}
-                className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground disabled:opacity-50"
+                className="w-full disabled:opacity-50"
               >
                 <option value="">{t('common.default')}</option>
                 {getOpenCodeReasoningOptions(value.routing.opencode_model || '').map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
-              </select>
+              </CompactSelect>
             </div>
           </div>
         </div>
@@ -348,14 +349,14 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
           <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">
             <div className="space-y-1">
               <label className="text-xs text-muted">{t('channelList.agent')}</label>
-              <select
+              <CompactSelect
                 value={value.routing.claude_agent || ''}
                 onChange={(e) => onChange({ routing: { ...value.routing, claude_agent: e.target.value || null } })}
-                className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground"
+                className="w-full"
               >
                 <option value="">{t('common.default')}</option>
                 {claudeAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
+              </CompactSelect>
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted">{t('channelList.model')}</label>
@@ -376,12 +377,12 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-              <select
+              <CompactSelect
                 value={value.routing.claude_reasoning_effort || ''}
                 onChange={(e) => onChange({
                   routing: { ...value.routing, claude_reasoning_effort: e.target.value || null },
                 })}
-                className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground"
+                className="w-full"
               >
                 <option value="">{t('common.default')}</option>
                 {getClaudeReasoning(value.routing.claude_model || '')
@@ -391,7 +392,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
                       {getReasoningLabel(option.value, option.label)}
                     </option>
                   ))}
-              </select>
+              </CompactSelect>
             </div>
           </div>
         </div>
@@ -403,14 +404,14 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
           <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface/80 p-3 md:grid-cols-3">
             <div className="space-y-1">
               <label className="text-xs text-muted">{t('channelList.agent')}</label>
-              <select
+              <CompactSelect
                 value={value.routing.codex_agent || ''}
                 onChange={(e) => onChange({ routing: { ...value.routing, codex_agent: e.target.value || null } })}
-                className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground"
+                className="w-full"
               >
                 <option value="">{t('common.default')}</option>
                 {codexAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
+              </CompactSelect>
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted">{t('channelList.model')}</label>
@@ -427,19 +428,19 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted">{t('channelList.reasoningEffort')}</label>
-              <select
+              <CompactSelect
                 value={value.routing.codex_reasoning_effort || ''}
                 onChange={(e) => onChange({
                   routing: { ...value.routing, codex_reasoning_effort: e.target.value || null },
                 })}
-                className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground"
+                className="w-full"
               >
                 <option value="">{t('common.default')}</option>
                 <option value="low">{t('channelList.reasoningLow')}</option>
                 <option value="medium">{t('channelList.reasoningMedium')}</option>
                 <option value="high">{t('channelList.reasoningHigh')}</option>
                 <option value="xhigh">{t('channelList.reasoningXHigh')}</option>
-              </select>
+              </CompactSelect>
             </div>
           </div>
         </div>

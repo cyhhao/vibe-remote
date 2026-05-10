@@ -3,6 +3,7 @@ import { CheckCircle2, ExternalLink, Link2, RefreshCcw } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useApi } from '../context/ApiContext';
 import { useToast } from '../context/ToastContext';
+import { CompactField } from './settings/SettingsPrimitives';
 
 const VIBE_CLOUD_URL = 'https://avibe.bot';
 
@@ -177,8 +178,8 @@ export const RemoteAccess: React.FC = () => {
         <div className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto] md:items-end">
           <label className="space-y-1.5">
             <span className="text-[12px] font-medium text-foreground">{t('remoteAccess.pairingKey')}</span>
-            <input
-              className="h-8 w-full rounded-md border border-input bg-surface-3 px-3 font-mono text-[12px] text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+            <CompactField
+              className="w-full font-mono"
               value={pairingKey}
               onChange={(event) => setPairingKey(event.target.value)}
               placeholder="vrp_xxxxxxxxxxxxxxxxx"

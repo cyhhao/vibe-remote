@@ -22,6 +22,7 @@ import { DirectoryBrowser } from '../ui/directory-browser';
 import { copyTextToClipboard } from '../../lib/utils';
 import { PlatformIcon } from '../visual';
 import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
+import { ToggleSwitch } from '../settings/SettingsPrimitives';
 
 interface UserConfig {
   display_name: string;
@@ -695,28 +696,13 @@ export const UserList: React.FC = () => {
               {totalCount}
             </span>
           </div>
-          <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-muted">
+          <div className="flex items-center gap-1.5 text-[12px] text-muted">
             <span>{t('userList.showDisabled')}</span>
-            <input
-              type="checkbox"
-              checked={showDisabled}
-              onChange={(e) => setShowDisabled(e.target.checked)}
-              className="sr-only"
+            <ToggleSwitch
+              enabled={showDisabled}
+              onClick={() => setShowDisabled(!showDisabled)}
             />
-            <span
-              className={clsx(
-                'relative inline-flex h-[18px] w-[30px] items-center rounded-full transition-colors',
-                showDisabled ? 'bg-mint' : 'bg-border-strong'
-              )}
-            >
-              <span
-                className={clsx(
-                  'inline-block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform',
-                  showDisabled ? 'translate-x-[14px]' : 'translate-x-0.5'
-                )}
-              />
-            </span>
-          </label>
+          </div>
         </div>
 
         {/* User cards — design.pen asPXu (VR/RoutingConfig) shared with /groups */}
@@ -761,34 +747,23 @@ export const UserList: React.FC = () => {
                   )}
                 >
                   {/* Master row — matches /groups layout */}
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setExpandedKey(expanded ? null : u.key)}
-                    className="flex w-full items-center gap-3.5 px-5 py-3.5 text-left"
+                    onKeyDown={(e) => {
+                      if (e.key === ' ' || e.key === 'Enter') {
+                        e.preventDefault();
+                        setExpandedKey(expanded ? null : u.key);
+                      }
+                    }}
+                    className="flex w-full cursor-pointer items-center gap-3.5 px-5 py-3.5 text-left"
                   >
                     {/* Enabled toggle */}
-                    <span
-                      role="switch"
-                      aria-checked={userConfig.enabled}
-                      tabIndex={0}
-                      onClick={(e) => { e.stopPropagation(); toggleEnabled(); }}
-                      onKeyDown={(e) => {
-                        if (e.key === ' ' || e.key === 'Enter') {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          toggleEnabled();
-                        }
-                      }}
-                      className={clsx(
-                        'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors',
-                        userConfig.enabled ? 'bg-mint' : 'bg-border-strong'
-                      )}
-                    >
-                      <span
-                        className={clsx(
-                          'inline-block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform',
-                          userConfig.enabled ? 'translate-x-[14px]' : 'translate-x-0.5'
-                        )}
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <ToggleSwitch
+                        enabled={userConfig.enabled}
+                        onClick={toggleEnabled}
                       />
                     </span>
 
@@ -863,7 +838,7 @@ export const UserList: React.FC = () => {
                     ) : (
                       <ChevronDown size={18} className="shrink-0 text-muted" />
                     )}
-                  </button>
+                  </div>
 
                   {/* Expanded body — design.pen asPXu (VR/RoutingConfig) shared with /groups, no @mention toggle */}
                   {expanded && (

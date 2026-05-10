@@ -20,6 +20,7 @@ import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
 import { StepHeader, StepShell } from '../shared/WizardStep';
+import { ToggleSwitch } from '../settings/SettingsPrimitives';
 
 interface TelegramConfigProps {
   data: any;
@@ -350,22 +351,20 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
               <div className="space-y-3 border-t border-border px-5 py-4">
                 <p className="text-[13px] leading-[1.55] text-muted">{t('telegramConfig.step5Description')}</p>
 
-                <label className="flex items-start justify-between gap-4 rounded-lg border border-border bg-background px-3 py-2.5">
+                <div className="flex items-start justify-between gap-4 rounded-lg border border-border bg-background px-3 py-2.5">
                   <div>
                     <div className="text-[12px] font-semibold text-foreground">
                       {t('telegramConfig.requireMention')}
                     </div>
                     <p className="mt-0.5 text-[11px] text-muted">{t('telegramConfig.requireMentionHint')}</p>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={requireMention}
-                    onChange={(e) => setRequireMention(e.target.checked)}
-                    className="mt-1 size-4 accent-mint"
+                  <ToggleSwitch
+                    enabled={requireMention}
+                    onClick={() => setRequireMention(!requireMention)}
                   />
-                </label>
+                </div>
 
-                <label className="flex items-start justify-between gap-4 rounded-lg border border-border bg-background px-3 py-2.5">
+                <div className="flex items-start justify-between gap-4 rounded-lg border border-border bg-background px-3 py-2.5">
                   <div className="pr-4">
                     <div className="flex items-center gap-2 text-[12px] font-semibold text-foreground">
                       <SplitSquareVertical size={14} className="text-cyan" />
@@ -373,13 +372,11 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
                     </div>
                     <p className="mt-0.5 text-[11px] text-muted">{t('telegramConfig.forumAutoTopicHint')}</p>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={forumAutoTopic}
-                    onChange={(e) => setForumAutoTopic(e.target.checked)}
-                    className="mt-1 size-4 accent-mint"
+                  <ToggleSwitch
+                    enabled={forumAutoTopic}
+                    onClick={() => setForumAutoTopic(!forumAutoTopic)}
                   />
-                </label>
+                </div>
               </div>
             )}
           </StepShell>

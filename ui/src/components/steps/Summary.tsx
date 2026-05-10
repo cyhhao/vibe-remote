@@ -19,6 +19,7 @@ import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
 import { getEnabledPlatforms, getPrimaryPlatform } from '../../lib/platforms';
 import { EyebrowBadge, WizardCard } from '../visual';
+import { ToggleSwitch } from '../settings/SettingsPrimitives';
 
 interface SummaryProps {
   data: any;
@@ -286,10 +287,13 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
                   className="flex items-center justify-between rounded-lg border border-border bg-surface-2 px-3 py-2"
                 >
                   <span className="text-[12px] font-medium text-foreground">{titleCase(platform)}</span>
-                  <Switch
-                    checked={!!requireMentionByPlatform[platform]}
-                    onChange={(value) =>
-                      setRequireMentionByPlatform((current) => ({ ...current, [platform]: value }))
+                  <ToggleSwitch
+                    enabled={!!requireMentionByPlatform[platform]}
+                    onClick={() =>
+                      setRequireMentionByPlatform((current) => ({
+                        ...current,
+                        [platform]: !current[platform],
+                      }))
                     }
                   />
                 </div>
@@ -304,7 +308,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             <h3 className="text-[13px] font-semibold text-foreground">{t('summary.autoUpdate')}</h3>
             <p className="mt-0.5 text-[11px] text-muted">{t('summary.autoUpdateHint')}</p>
           </div>
-          <Switch checked={autoUpdate} onChange={setAutoUpdate} />
+          <ToggleSwitch enabled={autoUpdate} onClick={() => setAutoUpdate((v: boolean) => !v)} />
         </div>
 
         {/* Quick start tips */}
@@ -365,28 +369,6 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
     </div>
   );
 };
-
-const Switch: React.FC<{ checked: boolean; onChange: (next: boolean) => void }> = ({ checked, onChange }) => (
-  <button
-    type="button"
-    role="switch"
-    aria-checked={checked}
-    onClick={() => onChange(!checked)}
-    className={clsx(
-      'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-mint/40',
-      checked
-        ? 'border-mint/50 bg-mint shadow-[0_0_12px_-2px_rgba(91,255,160,0.6)]'
-        : 'border-border-strong bg-border-strong'
-    )}
-  >
-    <span
-      className={clsx(
-        'inline-block size-3.5 rounded-full bg-background shadow transition-transform',
-        checked ? 'translate-x-[18px]' : 'translate-x-1'
-      )}
-    />
-  </button>
-);
 
 const Tip: React.FC<{
   icon: React.ReactNode;
