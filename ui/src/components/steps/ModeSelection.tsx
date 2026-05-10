@@ -55,7 +55,7 @@ export const ModeSelection: React.FC<ModeSelectionProps> = ({ data, onNext, onBa
                 isDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-accent/50'
               )}
             >
-              <div className={clsx("p-3 rounded-lg", isSelected ? "bg-accent/10 text-accent" : "bg-neutral-100 text-muted")}>
+              <div className={clsx("p-3 rounded-lg", isSelected ? "bg-accent/10 text-accent" : "bg-muted-soft text-muted")}>
                   <Icon size={24} />
               </div>
               <div>

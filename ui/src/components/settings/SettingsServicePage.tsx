@@ -246,7 +246,7 @@ export const SettingsServicePage: React.FC = () => {
         </div>
       </SettingsPanel>
 
-      <RemoteAccess embedded />
+      <RemoteAccess />
     </SettingsPageShell>
   );
 };
