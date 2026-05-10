@@ -468,14 +468,16 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
         <div className="flex flex-col gap-3">{stepShells}</div>
 
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="default"
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+            className="font-semibold"
           >
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
-          </button>
+          </Button>
           <Button
             type="button"
             variant="brand"

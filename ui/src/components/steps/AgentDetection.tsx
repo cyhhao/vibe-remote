@@ -204,12 +204,14 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
             <option value="codex">Codex</option>
           </CompactSelect>
         </label>
-        <button
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
           onClick={detectAll}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong"
         >
           <Search className="size-3.5" /> {t('common.detectAll')}
-        </button>
+        </Button>
       </div>
 
       <div className="flex flex-col gap-3">
@@ -251,14 +253,16 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                   placeholder={t('agentDetection.cliPathPlaceholder', { name })}
                   className="flex-1 font-mono"
                 />
-                <button
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
                   onClick={() => detect(name, agent.cli_path)}
                   disabled={checking}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {checking ? <RefreshCw className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
                   {t('common.detect')}
-                </button>
+                </Button>
               </div>
 
               {isMissing(agent) && (
@@ -378,14 +382,16 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
 
         <div className="flex items-center justify-between border-t border-border pt-4">
           {onBack ? (
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="default"
               onClick={onBack}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+              className="font-semibold"
             >
               <ArrowLeft size={14} strokeWidth={2.25} />
               {t('common.back')}
-            </button>
+            </Button>
           ) : (
             <span />
           )}

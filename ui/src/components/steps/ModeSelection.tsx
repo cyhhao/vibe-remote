@@ -2,6 +2,7 @@ import React from 'react';
 import clsx from 'clsx';
 import { Cloud, Server } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Button } from '../ui/button';
 
 interface ModeSelectionProps {
   data: any;
@@ -68,15 +69,17 @@ export const ModeSelection: React.FC<ModeSelectionProps> = ({ data, onNext, onBa
       </div>
 
       <div className="mt-auto flex justify-between">
-         <button onClick={onBack} className="px-6 py-2 text-muted hover:text-text font-medium">
-            {t('common.back')}
-         </button>
-        <button
+        <Button type="button" variant="ghost" size="default" onClick={onBack} className="font-medium">
+          {t('common.back')}
+        </Button>
+        <Button
+          type="button"
+          variant="brand-cyan"
+          size="lg"
           onClick={() => onNext({ mode: selected })}
-          className="px-8 py-3 bg-accent hover:bg-accent/90 text-white rounded-lg font-medium transition-colors shadow-sm"
         >
           {t('common.continue')}
-        </button>
+        </Button>
       </div>
     </div>
   );

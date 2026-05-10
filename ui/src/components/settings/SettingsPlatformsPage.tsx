@@ -234,14 +234,15 @@ export const SettingsPlatformsPage: React.FC = () => {
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="xs"
                 onClick={closeAll}
                 disabled={savingEnabled}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:opacity-50"
               >
                 {t('common.cancel')}
-              </button>
+              </Button>
               <Button
                 type="button"
                 variant="brand"

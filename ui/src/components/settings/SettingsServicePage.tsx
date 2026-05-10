@@ -164,25 +164,27 @@ export const SettingsServicePage: React.FC = () => {
                 </Button>
               )}
               {isRunning && (
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
+                  size="xs"
                   onClick={() => void handleAction('stop')}
                   disabled={loading}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Square className="size-3.5" strokeWidth={2.5} />
                   {t('common.stop')}
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="xs"
                 onClick={() => void handleAction('restart')}
                 disabled={loading}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RotateCw className="size-3.5" strokeWidth={2.5} />
                 {t('common.restart')}
-              </button>
+              </Button>
             </div>
           }
         />
@@ -223,15 +225,17 @@ export const SettingsServicePage: React.FC = () => {
                   }));
                 }}
               />
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="sm"
                 onClick={() => void handleUiSaveRestart()}
                 disabled={uiSaving}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+                className="text-[12px]"
               >
                 <RotateCw className={clsx('size-3.5', uiSaving && 'animate-spin')} strokeWidth={2.5} />
                 {uiSaving ? t('common.saving') : t('common.saveAndRestart')}
-              </button>
+              </Button>
             </div>
           }
         />

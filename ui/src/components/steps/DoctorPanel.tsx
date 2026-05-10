@@ -120,14 +120,15 @@ export const DoctorPanel: React.FC<DoctorPanelProps> = ({
             {t('common.viewLogs')}
           </Link>
           {results && (
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="xs"
               onClick={() => void copyReport()}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong"
             >
               <Copy className="size-3.5" />
               {t('doctor.copyReport')}
-            </button>
+            </Button>
           )}
           <Button type="button" variant="brand" size="xs" onClick={runDoctor} disabled={loading}>
             <RefreshCw className={clsx('size-3.5', loading && 'animate-spin')} strokeWidth={2.5} />
