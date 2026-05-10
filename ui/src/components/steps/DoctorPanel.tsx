@@ -113,7 +113,7 @@ export const DoctorPanel: React.FC<DoctorPanelProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           <Link
             to={logsPath}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong"
           >
             <FileText className="size-3.5" />
             {t('common.viewLogs')}
@@ -122,7 +122,7 @@ export const DoctorPanel: React.FC<DoctorPanelProps> = ({
             <button
               type="button"
               onClick={() => void copyReport()}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong"
             >
               <Copy className="size-3.5" />
               {t('doctor.copyReport')}

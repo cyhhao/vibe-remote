@@ -204,7 +204,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
         </label>
         <button
           onClick={detectAll}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong"
         >
           <Search className="size-3.5" /> {t('common.detectAll')}
         </button>
@@ -266,7 +266,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                 <button
                   onClick={() => detect(name, agent.cli_path)}
                   disabled={checking}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {checking ? <RefreshCw className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
                   {t('common.detect')}
@@ -381,7 +381,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
               {t('agentDetection.subtitle')}
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
+          <div className="flex items-center gap-2 rounded-full border border-border bg-foreground/[0.04] px-3 py-1.5">
             <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
               {enabledCount} active
             </span>
@@ -395,7 +395,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
             <button
               type="button"
               onClick={onBack}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
             >
               <ArrowLeft size={14} strokeWidth={2.25} />
               {t('common.back')}

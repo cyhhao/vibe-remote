@@ -132,7 +132,7 @@ export const SettingsServicePage: React.FC = () => {
               'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em]',
               isRunning
                 ? 'border-mint/30 bg-mint/[0.08] text-mint'
-                : 'border-border bg-white/[0.04] text-muted'
+                : 'border-border bg-foreground/[0.04] text-muted'
             )}
           >
             <span
@@ -166,7 +166,7 @@ export const SettingsServicePage: React.FC = () => {
                   type="button"
                   onClick={() => void handleAction('stop')}
                   disabled={loading}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Square className="size-3.5" strokeWidth={2.5} />
                   {t('common.stop')}
@@ -176,7 +176,7 @@ export const SettingsServicePage: React.FC = () => {
                 type="button"
                 onClick={() => void handleAction('restart')}
                 disabled={loading}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RotateCw className="size-3.5" strokeWidth={2.5} />
                 {t('common.restart')}
@@ -225,7 +225,7 @@ export const SettingsServicePage: React.FC = () => {
                 type="button"
                 onClick={() => void handleUiSaveRestart()}
                 disabled={uiSaving}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RotateCw className={clsx('size-3.5', uiSaving && 'animate-spin')} strokeWidth={2.5} />
                 {uiSaving ? t('common.saving') : t('common.saveAndRestart')}
@@ -239,7 +239,7 @@ export const SettingsServicePage: React.FC = () => {
       <SettingsPanel>
         <div className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between">
           <div className="text-[13px] font-medium text-foreground">{t('settings.logFileLabel')}</div>
-          <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-white/[0.04] px-3 py-2">
+          <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-foreground/[0.04] px-3 py-2">
             <FileText className="size-3.5 text-muted" />
             <span className="font-mono text-[11px] text-foreground">~/.vibe_remote/logs/vibe_remote.log</span>
           </div>

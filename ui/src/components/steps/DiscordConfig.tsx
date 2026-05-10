@@ -447,7 +447,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
               {t('discordConfig.subtitle')}
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
+          <div className="flex items-center gap-2 rounded-full border border-border bg-foreground/[0.04] px-3 py-1.5">
             <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
               {completedCount} / 4
             </span>
@@ -457,7 +457,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                   key={i}
                   className={clsx(
                     'h-1 w-5 rounded-full',
-                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
+                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-foreground/[0.08]'
                   )}
                 />
               ))}
@@ -471,7 +471,7 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
           >
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}

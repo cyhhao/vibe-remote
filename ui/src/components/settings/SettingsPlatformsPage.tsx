@@ -165,7 +165,7 @@ export const SettingsPlatformsPage: React.FC = () => {
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
                   {enabledPlatforms.map((id) => {
                     const descriptor = platformCatalog.find((p) => p.id === id);
-                    const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-white/[0.04]', border: 'border-white/[0.10]' };
+                    const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-foreground/[0.04]', border: 'border-foreground/[0.10]' };
                     return (
                       <span
                         key={id}
@@ -197,7 +197,7 @@ export const SettingsPlatformsPage: React.FC = () => {
               {platformCatalog.map((platform) => {
                 const id = platform.id;
                 const active = draftEnabled.includes(id);
-                const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-white/[0.04]', border: 'border-white/[0.10]' };
+                const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-foreground/[0.04]', border: 'border-foreground/[0.10]' };
                 return (
                   <button
                     key={id}
@@ -207,7 +207,7 @@ export const SettingsPlatformsPage: React.FC = () => {
                       'flex flex-col items-center gap-2 rounded-xl px-3 py-3.5 transition-colors',
                       active
                         ? 'border-2 border-mint bg-mint/[0.16]'
-                        : 'border border-white/[0.08] bg-background hover:border-white/[0.16] hover:bg-white/[0.02]'
+                        : 'border border-foreground/[0.08] bg-background hover:border-foreground/[0.16] hover:bg-foreground/[0.02]'
                     )}
                   >
                     <span
@@ -237,7 +237,7 @@ export const SettingsPlatformsPage: React.FC = () => {
                 type="button"
                 onClick={closeAll}
                 disabled={savingEnabled}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:opacity-50"
               >
                 {t('common.cancel')}
               </button>
@@ -259,7 +259,7 @@ export const SettingsPlatformsPage: React.FC = () => {
           const descriptor = platformCatalog.find((p) => p.id === id);
           const label = t(descriptor?.title_key || `platform.${id}.title`);
           const description = t(descriptor?.description_key || `platform.${id}.desc`);
-          const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-white/[0.04]', border: 'border-white/[0.10]' };
+          const tile = PLATFORM_TILE_STYLES[id] || { bg: 'bg-foreground/[0.04]', border: 'border-foreground/[0.10]' };
           const configured = platformHasCredentials(config, id);
           return (
             <CollapseCard
@@ -335,7 +335,7 @@ const CollapseCard: React.FC<{
             'inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-medium transition',
             expanded
               ? 'border-mint/35 bg-mint/[0.08] text-mint'
-              : 'border-border bg-white/[0.04] text-foreground hover:border-border-strong'
+              : 'border-border bg-foreground/[0.04] text-foreground hover:border-border-strong'
           )}
         >
           {expanded ? (

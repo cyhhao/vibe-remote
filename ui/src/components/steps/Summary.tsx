@@ -213,7 +213,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
               <code className="flex-1 select-all font-mono text-[13px] text-foreground">bind {bindCode}</code>
               <button
                 onClick={copyBindCode}
-                className="rounded-md p-1.5 text-muted transition hover:bg-white/[0.04] hover:text-foreground"
+                className="rounded-md p-1.5 text-muted transition hover:bg-foreground/[0.04] hover:text-foreground"
                 title="Copy"
                 aria-label={t('common.copy') as string}
               >
@@ -346,7 +346,7 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             type="button"
             onClick={onBack}
             disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong disabled:opacity-50"
           >
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}

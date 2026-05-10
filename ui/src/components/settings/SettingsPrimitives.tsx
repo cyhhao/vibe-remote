@@ -80,7 +80,7 @@ export const CompactField: React.FC<React.InputHTMLAttributes<HTMLInputElement>>
 }) => (
   <input
     className={clsx(
-      'h-9 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40',
+      'h-9 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40',
       className
     )}
     {...props}
@@ -93,7 +93,7 @@ export const CompactSelect: React.FC<React.SelectHTMLAttributes<HTMLSelectElemen
 }) => (
   <select
     className={clsx(
-      'h-9 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40',
+      'h-9 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40',
       className
     )}
     {...props}

@@ -162,7 +162,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
                     <button
                       onClick={copyManifest}
                       disabled={manifestLoading}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-3 py-2 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 py-2 text-[12px] font-medium text-foreground transition hover:border-border-strong disabled:opacity-50"
                     >
                       {copied ? <Check size={14} /> : <Copy size={14} />}
                       {copied ? t('slackConfig.copied') : t('slackConfig.copyManifest')}
@@ -225,7 +225,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
                   />
                   <p className="text-[11px] text-muted">
                     {t('slackConfig.botTokenHint')}{' '}
-                    <code className="rounded bg-white/[0.06] px-1.5 py-0.5 text-foreground">xoxb-</code>
+                    <code className="rounded bg-foreground/[0.06] px-1.5 py-0.5 text-foreground">xoxb-</code>
                   </p>
                 </div>
               </div>
@@ -265,7 +265,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
                   />
                   <p className="text-[11px] text-muted">
                     {t('slackConfig.appTokenHint')}{' '}
-                    <code className="rounded bg-white/[0.06] px-1.5 py-0.5 text-foreground">xapp-</code>
+                    <code className="rounded bg-foreground/[0.06] px-1.5 py-0.5 text-foreground">xapp-</code>
                   </p>
                 </div>
                 <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-2 text-[12px] leading-[1.55] text-gold">
@@ -359,7 +359,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
               {t('slackConfig.selfHostDescription')}
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-border bg-white/[0.04] px-3 py-1.5">
+          <div className="flex items-center gap-2 rounded-full border border-border bg-foreground/[0.04] px-3 py-1.5">
             <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-mint">
               {completedCount} / 4
             </span>
@@ -369,7 +369,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
                   key={i}
                   className={clsx(
                     'h-1 w-5 rounded-full',
-                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-white/[0.08]'
+                    i < completedCount ? 'bg-mint shadow-[0_0_8px_rgba(91,255,160,0.6)]' : 'bg-foreground/[0.08]'
                   )}
                 />
               ))}
@@ -383,7 +383,7 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
           >
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}

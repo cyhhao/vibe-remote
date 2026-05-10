@@ -16,7 +16,7 @@ import { useApi, type LogEntry, type LogSource } from '../../context/ApiContext'
 type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'ALL';
 
 const LEVEL_PILL: Record<string, string> = {
-  DEBUG: 'border-border bg-white/[0.04] text-muted',
+  DEBUG: 'border-border bg-foreground/[0.04] text-muted',
   INFO: 'border-cyan/30 bg-cyan/[0.08] text-cyan',
   WARNING: 'border-gold/30 bg-gold/[0.08] text-gold',
   ERROR: 'border-danger/30 bg-danger/[0.08] text-danger',
@@ -158,7 +158,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
               'inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-medium transition',
               autoRefresh
                 ? 'border-cyan/40 bg-cyan/[0.08] text-cyan'
-                : 'border-border bg-white/[0.04] text-foreground hover:border-border-strong'
+                : 'border-border bg-foreground/[0.04] text-foreground hover:border-border-strong'
             )}
           >
             {autoRefresh ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
@@ -184,7 +184,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
             placeholder={t('logs.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 w-full rounded-lg border border-border bg-white/[0.04] pl-9 pr-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+            className="h-9 w-full rounded-lg border border-border bg-foreground/[0.04] pl-9 pr-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40"
           />
         </div>
         <div className="flex items-center gap-2">
@@ -192,7 +192,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
           <select
             value={levelFilter}
             onChange={(e) => setLevelFilter(e.target.value as LogLevel)}
-            className="h-9 rounded-lg border border-border bg-white/[0.04] px-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+            className="h-9 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40"
           >
             <option value="ALL">{t('logs.allLevels')}</option>
             <option value="ERROR">{t('logs.error')} ({levelCounts.ERROR})</option>
@@ -214,7 +214,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
                 'inline-flex h-7 items-center gap-1 rounded-full border px-3 text-[11px] font-medium transition-colors',
                 selectedSource === source.key
                   ? 'border-mint/35 bg-mint/[0.08] text-mint shadow-[0_0_12px_-4px_rgba(91,255,160,0.5)]'
-                  : 'border-border bg-white/[0.04] text-muted hover:border-border-strong hover:text-foreground'
+                  : 'border-border bg-foreground/[0.04] text-muted hover:border-border-strong hover:text-foreground'
               )}
             >
               {getSourceLabel(source.key)}
@@ -236,7 +236,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
               'inline-flex h-7 items-center gap-1 rounded-full border px-3 text-[11px] font-medium transition-colors',
               levelFilter === level
                 ? 'border-cyan/40 bg-cyan/[0.08] text-cyan'
-                : 'border-border bg-white/[0.04] text-muted hover:border-border-strong hover:text-foreground'
+                : 'border-border bg-foreground/[0.04] text-muted hover:border-border-strong hover:text-foreground'
             )}
           >
             {level === 'ALL' ? t('logs.all') : level}
@@ -248,7 +248,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background">
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-white/[0.02] px-4 py-2.5">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-foreground/[0.02] px-4 py-2.5">
           <span className="font-mono text-[11px] font-medium text-muted">
             {t('logs.entriesCount', { filtered: filteredLogs.length, total: logs.length })}
             {logsTotal > logs.length && ` · ${t('logs.totalInFile', { total: logsTotal })}`}
@@ -293,7 +293,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
                   <div
                     key={i}
                     className={clsx(
-                      'px-4 py-2.5 transition-colors hover:bg-white/[0.02]',
+                      'px-4 py-2.5 transition-colors hover:bg-foreground/[0.02]',
                       log.level === 'ERROR' && 'bg-danger/[0.04]',
                       log.level === 'WARNING' && 'bg-gold/[0.04]'
                     )}

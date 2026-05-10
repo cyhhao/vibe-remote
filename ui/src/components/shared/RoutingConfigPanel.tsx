@@ -200,7 +200,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
               <div
                 role="radiogroup"
                 aria-label={t('channelList.requireMention') as string}
-                className="flex h-9 items-stretch gap-0.5 rounded-md border border-border bg-white/[0.03] p-0.5"
+                className="flex h-9 items-stretch gap-0.5 rounded-md border border-border bg-foreground/[0.03] p-0.5"
               >
                 {segs.map((seg) => {
                   const active = current === seg.id;
@@ -258,7 +258,7 @@ export const RoutingConfigPanel: React.FC<RoutingConfigPanelProps> = ({
                   'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium transition-colors',
                   checked
                     ? 'border-mint/40 bg-mint/15 text-mint'
-                    : 'border-border bg-white/[0.02] text-muted hover:border-border-strong hover:text-foreground'
+                    : 'border-border bg-foreground/[0.02] text-muted hover:border-border-strong hover:text-foreground'
                 )}
               >
                 <span
