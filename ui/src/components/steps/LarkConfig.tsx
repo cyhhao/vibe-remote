@@ -24,16 +24,13 @@ import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
 import { StepHeader, StepShell } from '../shared/WizardStep';
+import { Button } from '../ui/button';
 
 const LinkButton: React.FC<{ url: string; label: string }> = ({ url, label }) => (
-  <button
-    onClick={() => window.open(url, '_blank')}
-    disabled={!url}
-    className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
-  >
+  <Button variant="brand" size="sm" onClick={() => window.open(url, '_blank')} disabled={!url}>
     <ExternalLink size={14} strokeWidth={2.25} />
     {label}
-  </button>
+  </Button>
 );
 
 const LARK_PERMISSIONS_JSON = `{
@@ -317,14 +314,15 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
                 />
 
                 <div className="flex flex-wrap items-center gap-3">
-                  <button
+                  <Button
+                    variant="brand"
+                    size="sm"
                     onClick={runAuthTest}
                     disabled={!appId || !appSecret || checking}
-                    className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {checking ? <RefreshCw size={14} className="animate-spin" /> : <Shield size={14} strokeWidth={2.25} />}
                     {t('larkConfig.validateCredentials')}
-                  </button>
+                  </Button>
                   {authResult && (
                     <span
                       className={clsx(
@@ -567,18 +565,19 @@ export const LarkConfig: React.FC<LarkConfigProps> = ({ data, onNext, onBack, em
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
           </button>
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={() => {
               api.larkTempWsStop().catch(() => {});
               onNext(buildSubmitData());
             }}
             disabled={!isValid}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />
-          </button>
+          </Button>
         </div>
       </WizardCard>
     </div>

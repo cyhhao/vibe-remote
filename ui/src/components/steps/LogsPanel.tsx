@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 
 import { useApi, type LogEntry, type LogSource } from '../../context/ApiContext';
+import { Button } from '../ui/button';
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'ALL';
 
@@ -164,15 +165,17 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({
             {autoRefresh ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
             {autoRefresh ? t('logs.autoRefreshOn') : t('logs.autoRefresh')}
           </button>
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="xs"
+            className="h-9"
             onClick={() => void loadLogs(selectedSource)}
             disabled={loading}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-mint px-3 text-[12px] font-bold text-[#080812] shadow-[0_0_18px_-4px_rgba(91,255,160,0.55)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw className={clsx('size-3.5', loading && 'animate-spin')} strokeWidth={2.5} />
             {t('common.refresh')}
-          </button>
+          </Button>
         </div>
       </div>
 

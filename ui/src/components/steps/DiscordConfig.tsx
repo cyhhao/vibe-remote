@@ -21,6 +21,7 @@ import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
 import { StepHeader, StepShell } from '../shared/WizardStep';
+import { Button } from '../ui/button';
 
 interface DiscordConfigProps {
   data: any;
@@ -187,13 +188,10 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                   <li>{t('discordConfig.step1Item2')}</li>
                   <li>{t('discordConfig.step1Item3')}</li>
                 </ol>
-                <button
-                  onClick={openDiscordDeveloperPortal}
-                  className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105"
-                >
+                <Button variant="brand" size="sm" onClick={openDiscordDeveloperPortal}>
                   <ExternalLink size={14} strokeWidth={2.25} />
                   {t('discordConfig.openDeveloperPortal')}
-                </button>
+                </Button>
               </div>
             )}
           </StepShell>
@@ -274,14 +272,15 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                     className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-[11px] text-foreground"
                   />
                 </div>
-                <button
+                <Button
+                  variant="brand"
+                  size="sm"
                   onClick={() => inviteUrl && window.open(inviteUrl, '_blank')}
                   disabled={!inviteUrl}
-                  className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <ExternalLink size={14} strokeWidth={2.25} />
                   {t('discordConfig.openInviteUrl')}
-                </button>
+                </Button>
 
                 <div className="space-y-2 rounded-lg border border-gold/30 bg-gold/10 px-3 py-2.5">
                   <div className="flex items-center gap-2 text-[12px] font-semibold text-gold">
@@ -334,14 +333,15 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
                 <ProxyUrlField value={proxyUrl} onChange={setProxyUrl} />
 
                 <div className="flex flex-wrap items-center gap-3">
-                  <button
+                  <Button
+                    variant="brand"
+                    size="sm"
                     onClick={runAuthTest}
                     disabled={!botToken || checking}
-                    className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {checking ? <RefreshCw size={14} className="animate-spin" /> : <Shield size={14} strokeWidth={2.25} />}
                     {t('discordConfig.validateToken')}
-                  </button>
+                  </Button>
                   {authResult && (
                     <span
                       className={clsx(
@@ -476,15 +476,16 @@ export const DiscordConfig: React.FC<DiscordConfigProps> = ({ data, onNext, onBa
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
           </button>
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={() => onNext(buildSubmitData())}
             disabled={!isValid}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />
-          </button>
+          </Button>
         </div>
       </WizardCard>
     </div>

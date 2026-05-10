@@ -22,6 +22,7 @@ import { copyTextToClipboard } from '../../lib/utils';
 import { PlatformIcon } from '../visual';
 import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
 import { SearchField, ToggleSwitch } from '../settings/SettingsPrimitives';
+import { Button } from '../ui/button';
 
 interface UserConfig {
   display_name: string;
@@ -228,14 +229,10 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
                 {t('bindCode.revoke')}
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => setShowFormModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-md bg-mint px-3.5 py-2 text-[12px] font-bold text-background shadow-[0_0_16px_rgba(91,255,160,0.35)] transition hover:brightness-110"
-            >
+            <Button type="button" variant="brand" size="xs" onClick={() => setShowFormModal(true)}>
               <Plus size={14} strokeWidth={2.4} />
               {primary ? t('bindCode.newCode') : t('bindCode.createCode')}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -290,14 +287,15 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
                 />
               </div>
             )}
-            <button
+            <Button
               type="button"
+              variant="brand"
+              size="xs"
               onClick={handleCreate}
               disabled={loading || (newType === 'expiring' && !newExpiry)}
-              className="rounded-md bg-mint px-4 py-1.5 text-[12px] font-bold text-background shadow-[0_0_16px_rgba(91,255,160,0.35)] transition hover:brightness-110 disabled:opacity-50"
             >
               {t('bindCode.generate')}
-            </button>
+            </Button>
           </div>
         </Modal>
       )}

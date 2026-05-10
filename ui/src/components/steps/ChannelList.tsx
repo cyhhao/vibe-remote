@@ -24,6 +24,7 @@ import { getEnabledPlatforms, platformSupportsChannels } from '../../lib/platfor
 import { EyebrowBadge, PlatformIcon, WizardCard } from '../visual';
 import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
 import { CompactSelect, SearchField, ToggleSwitch } from '../settings/SettingsPrimitives';
+import { Button } from '../ui/button';
 
 const PLATFORM_BRAND_COLORS: Record<string, string> = {
   slack: '#4A154B',
@@ -790,14 +791,15 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 <ArrowLeft size={14} strokeWidth={2.25} />
                 {t('common.back')}
               </button>
-              <button
+              <Button
                 type="button"
+                variant="brand"
+                size="default"
                 onClick={() => onNext && onNext({})}
-                className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105"
               >
                 {t('common.continue')}
                 <ArrowRight size={14} strokeWidth={2.25} />
-              </button>
+              </Button>
             </div>
           </WizardCard>
         </div>
@@ -1608,8 +1610,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
           </button>
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={() => {
               const discordGuildAllowlist = selectedGuildIds;
               if (isWizardMultiPlatform) {
@@ -1633,11 +1637,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 });
               }
             }}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />
-          </button>
+          </Button>
         </div>
       )}
     </Wrapper>

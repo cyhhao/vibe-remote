@@ -17,6 +17,7 @@ import { useApi } from '../../context/ApiContext';
 import { BackendIcon, EyebrowBadge, WizardCard } from '../visual';
 import type { BackendId } from '../visual';
 import { CompactField, CompactSelect, ToggleSwitch } from '../settings/SettingsPrimitives';
+import { Button } from '../ui/button';
 
 interface AgentDetectionProps {
   data: any;
@@ -264,10 +265,11 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                 <div className="space-y-2 rounded-lg border border-cyan/30 bg-cyan/[0.06] px-3 py-2.5">
                   <p className="text-[11px] text-cyan">{t('agentDetection.installHint')}</p>
                   <div className="flex flex-wrap items-center gap-3">
-                    <button
+                    <Button
+                      variant="brand-cyan"
+                      size="xs"
                       onClick={() => installAgent(name)}
                       disabled={isAnyInstalling}
-                      className="inline-flex h-8 items-center gap-2 rounded-lg bg-cyan px-3 text-[12px] font-bold text-[#080812] shadow-[0_0_18px_-4px_rgba(63,224,229,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {installingAgents[name] ? (
                         <RefreshCw className="size-3.5 animate-spin" />
@@ -275,7 +277,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                         <Download className="size-3.5" />
                       )}
                       {installingAgents[name] ? t('agentDetection.installing') : t('agentDetection.installAgent')}
-                    </button>
+                    </Button>
                     {installResults[name]?.message && (
                       <span
                         className={clsx(
@@ -310,10 +312,11 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                 <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-2.5">
                   <p className="mb-2 text-[11px] text-gold">{t('agentDetection.permissionHint')}</p>
                   <div className="flex flex-wrap items-center gap-3">
-                    <button
+                    <Button
+                      variant="brand-gold"
+                      size="xs"
                       onClick={setupPermission}
                       disabled={permissionState === 'loading'}
-                      className="inline-flex h-8 items-center gap-2 rounded-lg bg-gold px-3 text-[12px] font-bold text-[#080812] shadow-[0_0_18px_-4px_rgba(255,200,87,0.55)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {permissionState === 'loading' ? (
                         <RefreshCw className="size-3.5 animate-spin" />
@@ -321,7 +324,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                         <Settings className="size-3.5" />
                       )}
                       {t('agentDetection.setupPermission')}
-                    </button>
+                    </Button>
                     {permissionState === 'success' && (
                       <span className="text-[11px] text-mint">{permissionMessage}</span>
                     )}
@@ -343,13 +346,9 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
       <div className="flex flex-col gap-4">
         {Inner}
         <div className="flex justify-end">
-          <button
-            onClick={() => void handlePrimaryAction()}
-            disabled={!canContinue}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-          >
+          <Button variant="brand" size="default" onClick={() => void handlePrimaryAction()} disabled={!canContinue}>
             {t('common.save')}
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -390,15 +389,16 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           ) : (
             <span />
           )}
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={() => void handlePrimaryAction()}
             disabled={!canContinue}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />
-          </button>
+          </Button>
         </div>
       </WizardCard>
     </div>

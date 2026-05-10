@@ -14,6 +14,7 @@ import { TelegramConfig } from '@/components/steps/TelegramConfig';
 import { LarkConfig } from '@/components/steps/LarkConfig';
 import { WeChatConfig } from '@/components/steps/WeChatConfig';
 import { SettingsPageShell } from './SettingsPageShell';
+import { Button } from '@/components/ui/button';
 
 const PLATFORM_TILE_STYLES: Record<string, { bg: string; border: string }> = {
   slack: { bg: 'bg-[#4A154B26]', border: 'border-[#4A154B66]' },
@@ -241,15 +242,16 @@ export const SettingsPlatformsPage: React.FC = () => {
               >
                 {t('common.cancel')}
               </button>
-              <button
+              <Button
                 type="button"
+                variant="brand"
+                size="xs"
                 onClick={() => void applyEnabled()}
                 disabled={!draftEnabled.length || savingEnabled}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-mint px-3.5 py-1.5 text-[12px] font-bold text-[#080812] shadow-[0_0_24px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
               >
                 {savingEnabled ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
                 {t('platform.apply')}
-              </button>
+              </Button>
             </div>
           </div>
         </CollapseCard>

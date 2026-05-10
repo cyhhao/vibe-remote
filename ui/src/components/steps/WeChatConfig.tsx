@@ -16,6 +16,7 @@ import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
+import { Button } from '../ui/button';
 
 interface WeChatConfigProps {
   data: Record<string, any>;
@@ -230,7 +231,7 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
                       className={clsx(
                         'flex size-7 items-center justify-center rounded-full text-[12px] font-bold transition-colors',
                         isCompleted
-                          ? 'bg-mint text-[#080812]'
+                          ? 'bg-mint text-primary-foreground'
                           : isActive
                             ? 'bg-cyan/15 text-cyan'
                             : 'bg-foreground/[0.06] text-muted'
@@ -369,14 +370,10 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
                   <h3 className="text-[14px] font-semibold text-foreground">{t('wechatConfig.errorTitle')}</h3>
                   <p className="mt-1 text-[12px] text-danger">{message}</p>
                 </div>
-                <button
-                  onClick={startLogin}
-                  disabled={starting}
-                  className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
-                >
+                <Button variant="brand" size="sm" onClick={startLogin} disabled={starting}>
                   <RefreshCw size={14} strokeWidth={2.25} />
                   {t('wechatConfig.retry')}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -446,15 +443,16 @@ export const WeChatConfig: React.FC<WeChatConfigProps> = ({ data, onNext, onBack
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
           </button>
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={() => onNext(buildSubmitData())}
             disabled={!canProceed}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />
-          </button>
+          </Button>
         </div>
       </WizardCard>
     </div>

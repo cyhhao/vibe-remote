@@ -32,6 +32,7 @@
   --color-violet: var(--violet);
   --color-violet-soft: var(--violet-soft);
   --color-gold: var(--gold);
+  --color-gold-foreground: var(--gold-foreground);
 
   /* Compatibility aliases for current UI during migration. */
   --color-bg: var(--background);
@@ -96,6 +97,7 @@
   --violet: #7c5bff;
   --violet-soft: rgba(124, 91, 255, 0.16);
   --gold: #ffc857;
+  --gold-foreground: #080812;
 
   /* Page-family gradients (mirror design.pen 1:1). Layers ordered top-most first. */
   --gradient-console:
@@ -164,6 +166,7 @@
   --violet: #7c3aed;
   --violet-soft: rgba(124, 58, 237, 0.14);
   --gold: #d97706;
+  --gold-foreground: #ffffff;
 
   /* Light-theme page gradients (softer alphas over light base). */
   --gradient-console:

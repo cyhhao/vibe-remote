@@ -20,6 +20,7 @@ import { copyTextToClipboard } from '../../lib/utils';
 import { getEnabledPlatforms, getPrimaryPlatform } from '../../lib/platforms';
 import { EyebrowBadge, WizardCard } from '../visual';
 import { ToggleSwitch } from '../settings/SettingsPrimitives';
+import { Button } from '../ui/button';
 
 interface SummaryProps {
   data: any;
@@ -225,13 +226,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
               <p className="mt-2 text-[11px] text-mint">{t('summary.bindCodeCopied')}</p>
             )}
           </div>
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-7 py-3 text-[14px] font-bold text-[#080812] shadow-[0_0_48px_-8px_rgba(91,255,160,0.7)] transition hover:brightness-105"
-          >
+          <Button variant="brand" size="lg" onClick={() => navigate('/dashboard')}>
             {t('summary.goToDashboard')}
             <ArrowRight size={16} strokeWidth={2.25} />
-          </button>
+          </Button>
         </WizardCard>
       </div>
     );
@@ -355,15 +353,10 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
           </button>
-          <button
-            type="button"
-            onClick={saveAll}
-            disabled={saving}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-7 py-3 text-[14px] font-bold text-[#080812] shadow-[0_0_48px_-8px_rgba(91,255,160,0.7)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
-          >
+          <Button type="button" variant="brand" size="lg" onClick={saveAll} disabled={saving}>
             {saving ? t('common.saving') : t('summary.finishAndStart')}
             {!saving && <ArrowRight size={16} strokeWidth={2.25} />}
-          </button>
+          </Button>
         </div>
       </WizardCard>
     </div>

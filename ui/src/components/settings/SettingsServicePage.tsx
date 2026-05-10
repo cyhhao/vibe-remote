@@ -9,6 +9,7 @@ import { apiFetch } from '@/lib/apiFetch';
 import { RemoteAccess } from '@/components/RemoteAccess';
 import { SettingsPageShell } from './SettingsPageShell';
 import { CompactField, SettingsPanel, SettingsRow } from './SettingsPrimitives';
+import { Button } from '@/components/ui/button';
 
 // Mirrors design.pen mHUcm (VR/CM/Service): two cards.
 // svcSec1: header [16, 20] + value rows [12, 20] with bottom borders.
@@ -151,15 +152,16 @@ export const SettingsServicePage: React.FC = () => {
           control={
             <div className="flex flex-wrap gap-2">
               {!isRunning && (
-                <button
+                <Button
                   type="button"
+                  variant="brand"
+                  size="xs"
                   onClick={() => void handleAction('start')}
                   disabled={loading}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-mint px-3 text-[12px] font-bold text-[#080812] shadow-[0_0_18px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Play className="size-3.5" strokeWidth={2.5} />
                   {t('common.start')}
-                </button>
+                </Button>
               )}
               {isRunning && (
                 <button
