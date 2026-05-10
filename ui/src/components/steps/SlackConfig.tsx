@@ -8,6 +8,7 @@ import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
 import { StepHeader, StepShell } from '../shared/WizardStep';
+import { Button } from '../ui/button';
 
 interface SlackConfigProps {
   data: any;
@@ -150,14 +151,15 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
               <div className="space-y-4 border-t border-border px-5 py-4">
                 <p className="text-[13px] leading-[1.55] text-muted">{t('slackConfig.step1Description')}</p>
                 <div className="flex flex-wrap items-center gap-3">
-                  <button
+                  <Button
+                    variant="brand"
+                    size="sm"
                     onClick={openSlackCreateApp}
                     disabled={!manifestCompact || manifestLoading}
-                    className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <ExternalLink size={14} strokeWidth={2.25} />
                     {t('slackConfig.createSlackApp')}
-                  </button>
+                  </Button>
                   {manifest && (
                     <button
                       onClick={copyManifest}
@@ -290,14 +292,15 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
                 <p className="text-[13px] leading-[1.55] text-muted">{t('slackConfig.step4Description')}</p>
                 <ProxyUrlField value={proxyUrl} onChange={setProxyUrl} />
                 <div className="flex flex-wrap items-center gap-3">
-                  <button
+                  <Button
+                    variant="brand"
+                    size="sm"
                     onClick={runAuthTest}
                     disabled={!botToken || !appToken || checking}
-                    className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {checking ? <RefreshCw size={14} className="animate-spin" /> : <Shield size={14} strokeWidth={2.25} />}
                     {t('slackConfig.validateTokens')}
-                  </button>
+                  </Button>
                   {authResult && (
                     <span
                       className={clsx(
@@ -388,17 +391,18 @@ export const SlackConfig: React.FC<SlackConfigProps> = ({ data, onNext, onBack, 
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
           </button>
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={() =>
               onNext({ slack: { ...data.slack, bot_token: botToken, app_token: appToken, proxy_url: proxyUrl || undefined }, mode: 'self_host' })
             }
             disabled={!isValid}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />
-          </button>
+          </Button>
         </div>
       </WizardCard>
     </div>

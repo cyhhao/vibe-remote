@@ -8,7 +8,6 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
-  Search,
   Shield,
   Trash2,
   X,
@@ -22,6 +21,8 @@ import { DirectoryBrowser } from '../ui/directory-browser';
 import { copyTextToClipboard } from '../../lib/utils';
 import { PlatformIcon } from '../visual';
 import { RoutingConfigPanel } from '../shared/RoutingConfigPanel';
+import { SearchField, ToggleSwitch } from '../settings/SettingsPrimitives';
+import { Button } from '../ui/button';
 
 interface UserConfig {
   display_name: string;
@@ -228,14 +229,10 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
                 {t('bindCode.revoke')}
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => setShowFormModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-md bg-mint px-3.5 py-2 text-[12px] font-bold text-background shadow-[0_0_16px_rgba(91,255,160,0.35)] transition hover:brightness-110"
-            >
+            <Button type="button" variant="brand" size="xs" onClick={() => setShowFormModal(true)}>
               <Plus size={14} strokeWidth={2.4} />
               {primary ? t('bindCode.newCode') : t('bindCode.createCode')}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -290,14 +287,15 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
                 />
               </div>
             )}
-            <button
+            <Button
               type="button"
+              variant="brand"
+              size="xs"
               onClick={handleCreate}
               disabled={loading || (newType === 'expiring' && !newExpiry)}
-              className="rounded-md bg-mint px-4 py-1.5 text-[12px] font-bold text-background shadow-[0_0_16px_rgba(91,255,160,0.35)] transition hover:brightness-110 disabled:opacity-50"
             >
               {t('bindCode.generate')}
-            </button>
+            </Button>
           </div>
         </Modal>
       )}
@@ -660,16 +658,12 @@ export const UserList: React.FC = () => {
             <p className="text-[14px] leading-[1.55] text-muted">{t('userList.subtitle')}</p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t('userList.filterPlaceholder')}
-                className="h-9 w-[280px] rounded-lg border border-border bg-surface pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted focus:border-mint/50 focus:outline-none"
-              />
-            </div>
+            <SearchField
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('userList.filterPlaceholder')}
+              className="w-[280px]"
+            />
             <button
               type="button"
               onClick={() => setRefreshTrigger((v) => v + 1)}
@@ -697,25 +691,10 @@ export const UserList: React.FC = () => {
           </div>
           <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-muted">
             <span>{t('userList.showDisabled')}</span>
-            <input
-              type="checkbox"
-              checked={showDisabled}
-              onChange={(e) => setShowDisabled(e.target.checked)}
-              className="sr-only"
+            <ToggleSwitch
+              enabled={showDisabled}
+              onClick={() => setShowDisabled(!showDisabled)}
             />
-            <span
-              className={clsx(
-                'relative inline-flex h-[18px] w-[30px] items-center rounded-full transition-colors',
-                showDisabled ? 'bg-mint' : 'bg-border-strong'
-              )}
-            >
-              <span
-                className={clsx(
-                  'inline-block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform',
-                  showDisabled ? 'translate-x-[14px]' : 'translate-x-0.5'
-                )}
-              />
-            </span>
           </label>
         </div>
 
@@ -761,34 +740,24 @@ export const UserList: React.FC = () => {
                   )}
                 >
                   {/* Master row — matches /groups layout */}
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setExpandedKey(expanded ? null : u.key)}
-                    className="flex w-full items-center gap-3.5 px-5 py-3.5 text-left"
+                    onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === ' ' || e.key === 'Enter') {
+                        e.preventDefault();
+                        setExpandedKey(expanded ? null : u.key);
+                      }
+                    }}
+                    className="flex w-full cursor-pointer items-center gap-3.5 px-5 py-3.5 text-left"
                   >
                     {/* Enabled toggle */}
-                    <span
-                      role="switch"
-                      aria-checked={userConfig.enabled}
-                      tabIndex={0}
-                      onClick={(e) => { e.stopPropagation(); toggleEnabled(); }}
-                      onKeyDown={(e) => {
-                        if (e.key === ' ' || e.key === 'Enter') {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          toggleEnabled();
-                        }
-                      }}
-                      className={clsx(
-                        'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors',
-                        userConfig.enabled ? 'bg-mint' : 'bg-border-strong'
-                      )}
-                    >
-                      <span
-                        className={clsx(
-                          'inline-block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform',
-                          userConfig.enabled ? 'translate-x-[14px]' : 'translate-x-0.5'
-                        )}
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <ToggleSwitch
+                        enabled={userConfig.enabled}
+                        onClick={toggleEnabled}
                       />
                     </span>
 
@@ -863,7 +832,7 @@ export const UserList: React.FC = () => {
                     ) : (
                       <ChevronDown size={18} className="shrink-0 text-muted" />
                     )}
-                  </button>
+                  </div>
 
                   {/* Expanded body — design.pen asPXu (VR/RoutingConfig) shared with /groups, no @mention toggle */}
                   {expanded && (

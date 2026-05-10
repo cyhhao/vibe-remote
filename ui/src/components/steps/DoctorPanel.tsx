@@ -15,6 +15,7 @@ import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { copyTextToClipboard } from '../../lib/utils';
+import { Button } from '../ui/button';
 
 interface DoctorPanelProps {
   isPage?: boolean;
@@ -128,15 +129,10 @@ export const DoctorPanel: React.FC<DoctorPanelProps> = ({
               {t('doctor.copyReport')}
             </button>
           )}
-          <button
-            type="button"
-            onClick={runDoctor}
-            disabled={loading}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-mint px-3 text-[12px] font-bold text-[#080812] shadow-[0_0_18px_-4px_rgba(91,255,160,0.55)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
-          >
+          <Button type="button" variant="brand" size="xs" onClick={runDoctor} disabled={loading}>
             <RefreshCw className={clsx('size-3.5', loading && 'animate-spin')} strokeWidth={2.5} />
             {t('doctor.runChecks')}
-          </button>
+          </Button>
         </div>
       </div>
 

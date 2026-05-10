@@ -6,6 +6,7 @@ import { useApi } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { getEnabledPlatforms, getPlatformCatalog, getPrimaryPlatform } from '../../lib/platforms';
 import { EyebrowBadge, PlatformIcon, WizardCard } from '../visual';
+import { Button } from '../ui/button';
 
 // Per-platform brand-tinted tile container colors (matches design.pen wT*L
 // frames: Slack purple-soft, Discord indigo-soft, etc.).
@@ -548,15 +549,16 @@ export const PlatformSelection: React.FC<PlatformSelectionProps> = ({ data, onNe
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
           </button>
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={() => void handleContinue()}
             disabled={!selected.length}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />
-          </button>
+          </Button>
         </div>
       </WizardCard>
     </div>

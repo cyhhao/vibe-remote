@@ -16,6 +16,8 @@ import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { BackendIcon, EyebrowBadge, WizardCard } from '../visual';
 import type { BackendId } from '../visual';
+import { CompactField, CompactSelect, ToggleSwitch } from '../settings/SettingsPrimitives';
+import { Button } from '../ui/button';
 
 interface AgentDetectionProps {
   data: any;
@@ -192,15 +194,15 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
             {t('agentDetection.defaultBackend')}
           </span>
-          <select
+          <CompactSelect
             value={defaultBackend}
             onChange={(e) => setDefaultBackend(e.target.value)}
-            className="mt-1 h-9 w-full rounded-lg border border-border bg-surface-2 px-3 text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40 md:max-w-[260px]"
+            className="mt-1 w-full md:max-w-[260px]"
           >
             <option value="opencode">OpenCode {t('agentDetection.recommended')}</option>
             <option value="claude">Claude Code</option>
             <option value="codex">Codex</option>
-          </select>
+          </CompactSelect>
         </label>
         <button
           onClick={detectAll}
@@ -228,30 +230,16 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
               </div>
               <div className="flex items-center gap-3">
                 <StatusBadge status={agent.status || 'unknown'} loading={checking} />
-                <button
-                  role="switch"
-                  aria-checked={agent.enabled}
+                <ToggleSwitch
+                  enabled={agent.enabled}
                   onClick={() => toggle(name, !agent.enabled)}
-                  className={clsx(
-                    'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-mint/40',
-                    agent.enabled
-                      ? 'border-mint/50 bg-mint shadow-[0_0_12px_-2px_rgba(91,255,160,0.6)]'
-                      : 'border-border-strong bg-border-strong'
-                  )}
-                >
-                  <span
-                    className={clsx(
-                      'inline-block size-3.5 rounded-full bg-background shadow transition-transform',
-                      agent.enabled ? 'translate-x-[18px]' : 'translate-x-1'
-                    )}
-                  />
-                </button>
+                />
               </div>
             </div>
 
             <div className="space-y-3 px-5 py-3.5">
               <div className="flex gap-2">
-                <input
+                <CompactField
                   type="text"
                   value={agent.cli_path}
                   onChange={(e) =>
@@ -261,7 +249,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                     }))
                   }
                   placeholder={t('agentDetection.cliPathPlaceholder', { name })}
-                  className="h-9 flex-1 rounded-lg border border-border bg-surface-2 px-3 font-mono text-[12px] text-foreground outline-none transition focus:border-cyan focus:ring-1 focus:ring-cyan/40"
+                  className="flex-1 font-mono"
                 />
                 <button
                   onClick={() => detect(name, agent.cli_path)}
@@ -277,10 +265,11 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                 <div className="space-y-2 rounded-lg border border-cyan/30 bg-cyan/[0.06] px-3 py-2.5">
                   <p className="text-[11px] text-cyan">{t('agentDetection.installHint')}</p>
                   <div className="flex flex-wrap items-center gap-3">
-                    <button
+                    <Button
+                      variant="brand-cyan"
+                      size="xs"
                       onClick={() => installAgent(name)}
                       disabled={isAnyInstalling}
-                      className="inline-flex h-8 items-center gap-2 rounded-lg bg-cyan px-3 text-[12px] font-bold text-[#080812] shadow-[0_0_18px_-4px_rgba(63,224,229,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {installingAgents[name] ? (
                         <RefreshCw className="size-3.5 animate-spin" />
@@ -288,7 +277,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                         <Download className="size-3.5" />
                       )}
                       {installingAgents[name] ? t('agentDetection.installing') : t('agentDetection.installAgent')}
-                    </button>
+                    </Button>
                     {installResults[name]?.message && (
                       <span
                         className={clsx(
@@ -323,10 +312,11 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                 <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-2.5">
                   <p className="mb-2 text-[11px] text-gold">{t('agentDetection.permissionHint')}</p>
                   <div className="flex flex-wrap items-center gap-3">
-                    <button
+                    <Button
+                      variant="brand-gold"
+                      size="xs"
                       onClick={setupPermission}
                       disabled={permissionState === 'loading'}
-                      className="inline-flex h-8 items-center gap-2 rounded-lg bg-gold px-3 text-[12px] font-bold text-[#080812] shadow-[0_0_18px_-4px_rgba(255,200,87,0.55)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {permissionState === 'loading' ? (
                         <RefreshCw className="size-3.5 animate-spin" />
@@ -334,7 +324,7 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                         <Settings className="size-3.5" />
                       )}
                       {t('agentDetection.setupPermission')}
-                    </button>
+                    </Button>
                     {permissionState === 'success' && (
                       <span className="text-[11px] text-mint">{permissionMessage}</span>
                     )}
@@ -356,13 +346,9 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
       <div className="flex flex-col gap-4">
         {Inner}
         <div className="flex justify-end">
-          <button
-            onClick={() => void handlePrimaryAction()}
-            disabled={!canContinue}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-          >
+          <Button variant="brand" size="default" onClick={() => void handlePrimaryAction()} disabled={!canContinue}>
             {t('common.save')}
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -403,15 +389,16 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
           ) : (
             <span />
           )}
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={() => void handlePrimaryAction()}
             disabled={!canContinue}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />
-          </button>
+          </Button>
         </div>
       </WizardCard>
     </div>

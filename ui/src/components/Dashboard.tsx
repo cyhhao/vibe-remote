@@ -20,6 +20,7 @@ import clsx from 'clsx';
 import { useApi, type LogEntry } from '@/context/ApiContext';
 import { useStatus } from '@/context/StatusContext';
 import { PlatformIcon } from '@/components/visual';
+import { Button } from '@/components/ui/button';
 import { getEnabledPlatforms, getPlatformCatalog, platformSupportsChannels } from '@/lib/platforms';
 
 function relativeFromIso(value?: string | null) {
@@ -268,41 +269,39 @@ export const Dashboard: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-2">
           {!isRunning && (
-            <button
+            <Button
               type="button"
+              variant="brand"
+              size="sm"
               onClick={() => void handleAction('start')}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-mint px-4 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-6px_rgba(91,255,160,0.44)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Play className="size-3.5" strokeWidth={2.5} />
               {t('common.start')}
-            </button>
+            </Button>
           )}
           {isRunning && (
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={() => void handleAction('stop')}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2.5 text-[13px] font-medium text-foreground transition hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Square className="size-3.5" strokeWidth={2.5} />
               {t('common.stop')}
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             type="button"
+            variant={isRunning ? 'brand' : 'secondary'}
+            size="sm"
             onClick={() => void handleAction('restart')}
             disabled={loading}
-            className={clsx(
-              'inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-[13px] font-bold transition disabled:cursor-not-allowed disabled:opacity-50',
-              isRunning
-                ? 'bg-mint text-[#080812] shadow-[0_0_24px_-6px_rgba(91,255,160,0.44)] hover:brightness-105'
-                : 'border border-border bg-foreground/[0.04] text-foreground hover:border-border-strong'
-            )}
           >
             <RotateCw className="size-3.5" strokeWidth={2.5} />
             {t('common.restart')}
-          </button>
+          </Button>
         </div>
       </div>
 

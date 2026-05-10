@@ -1,5 +1,7 @@
 import React from 'react';
 import clsx from 'clsx';
+import { Search } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 type SettingsPanelProps = {
   title?: React.ReactNode;
@@ -98,6 +100,36 @@ export const CompactSelect: React.FC<React.SelectHTMLAttributes<HTMLSelectElemen
     )}
     {...props}
   />
+);
+
+type SearchFieldProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> & {
+  icon?: LucideIcon;
+  containerClassName?: string;
+};
+
+// Search input with leading icon. Distinct from CompactField on purpose:
+// list pages use a slightly larger 13px shell on bg-surface with a mint
+// focus border (not the cyan focus ring used in dense settings forms).
+export const SearchField: React.FC<SearchFieldProps> = ({
+  icon: Icon = Search,
+  className,
+  containerClassName,
+  ...props
+}) => (
+  <div className={clsx('relative', containerClassName)}>
+    <Icon
+      size={14}
+      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+    />
+    <input
+      type="search"
+      className={clsx(
+        'h-9 rounded-lg border border-border bg-surface pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted focus:border-mint/50 focus:outline-none',
+        className
+      )}
+      {...props}
+    />
+  </div>
 );
 
 // Mirrors design.pen FALFE / ylboi (mint switch on): cornerRadius 9999,

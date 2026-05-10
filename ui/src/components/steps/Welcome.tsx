@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowRight, HardDrive, PlugZap, Radio, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { WizardCard } from '../visual';
+import { Button } from '../ui/button';
 
 interface WelcomeProps {
   onNext: (data: any) => void;
@@ -74,14 +75,10 @@ export const Welcome: React.FC<WelcomeProps> = ({ onNext }) => {
         </div>
 
         {/* welStart (a95QY) — large mint pill */}
-        <button
-          type="button"
-          onClick={() => onNext({})}
-          className="group inline-flex items-center gap-2 rounded-xl bg-mint px-8 py-[14px] text-[15px] font-bold leading-tight text-[#080812] shadow-[0_0_48px_-8px_rgba(91,255,160,0.44)] transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint/60"
-        >
+        <Button type="button" variant="brand" size="hero" onClick={() => onNext({})} className="group">
           {t('welcome.getStarted')}
           <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" strokeWidth={2.25} />
-        </button>
+        </Button>
       </WizardCard>
     </div>
   );

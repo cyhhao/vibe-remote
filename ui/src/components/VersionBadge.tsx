@@ -4,6 +4,7 @@ import { useApi, type VersionInfo, type UpgradeResult } from '../context/ApiCont
 import { Download, X, RefreshCw, Check, AlertCircle } from 'lucide-react';
 import clsx from 'clsx';
 import { ToggleSwitch } from './settings/SettingsPrimitives';
+import { Button } from './ui/button';
 
 export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = false }) => {
   const { t } = useTranslation();
@@ -232,14 +233,10 @@ export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = 
           {/* Actions */}
           {hasUpdate && !restarting && (
             <div className="flex justify-end border-t border-border px-4 py-3">
-              <button
-                onClick={handleUpgrade}
-                disabled={upgrading}
-                className="inline-flex items-center gap-1.5 rounded-md bg-mint px-3 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-mint/90 disabled:opacity-50"
-              >
+              <Button variant="brand" size="xs" onClick={handleUpgrade} disabled={upgrading}>
                 <Download size={14} className={upgrading ? 'animate-bounce' : ''} />
                 {upgrading ? t('dashboard.upgrading') : t('dashboard.upgradeNow')}
-              </button>
+              </Button>
             </div>
           )}
         </div>

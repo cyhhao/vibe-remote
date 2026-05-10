@@ -20,6 +20,8 @@ import { copyTextToClipboard } from '../../lib/utils';
 import { EmbeddedConfigShell, EyebrowBadge, WizardCard } from '../visual';
 import { ProxyUrlField } from '../shared/ProxyUrlField';
 import { StepHeader, StepShell } from '../shared/WizardStep';
+import { ToggleSwitch } from '../settings/SettingsPrimitives';
+import { Button } from '../ui/button';
 
 interface TelegramConfigProps {
   data: any;
@@ -168,13 +170,10 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
                   <li>{t('telegramConfig.step1Item4')}</li>
                 </ol>
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={openBotFather}
-                    className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105"
-                  >
+                  <Button variant="brand" size="sm" onClick={openBotFather}>
                     <ExternalLink size={14} strokeWidth={2.25} />
                     {t('telegramConfig.openBotFather')}
-                  </button>
+                  </Button>
                   <button
                     onClick={() => copyCommand('/newbot')}
                     className="inline-flex items-center gap-2 rounded-lg border border-border bg-foreground/[0.04] px-3 py-2 text-[12px] font-medium text-foreground transition hover:border-border-strong"
@@ -232,14 +231,15 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
                 />
 
                 <div className="flex flex-wrap items-center gap-3">
-                  <button
+                  <Button
+                    variant="brand"
+                    size="sm"
                     onClick={runAuthTest}
                     disabled={!botToken || checking}
-                    className="inline-flex items-center gap-2 rounded-lg bg-mint px-4 py-2 text-[13px] font-bold text-[#080812] shadow-[0_0_24px_-4px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {checking ? <RefreshCw size={14} className="animate-spin" /> : <Shield size={14} strokeWidth={2.25} />}
                     {t('telegramConfig.validateToken')}
-                  </button>
+                  </Button>
                   {authResult && (
                     <span
                       className={clsx(
@@ -350,22 +350,20 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
               <div className="space-y-3 border-t border-border px-5 py-4">
                 <p className="text-[13px] leading-[1.55] text-muted">{t('telegramConfig.step5Description')}</p>
 
-                <label className="flex items-start justify-between gap-4 rounded-lg border border-border bg-background px-3 py-2.5">
+                <label className="flex cursor-pointer items-start justify-between gap-4 rounded-lg border border-border bg-background px-3 py-2.5">
                   <div>
                     <div className="text-[12px] font-semibold text-foreground">
                       {t('telegramConfig.requireMention')}
                     </div>
                     <p className="mt-0.5 text-[11px] text-muted">{t('telegramConfig.requireMentionHint')}</p>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={requireMention}
-                    onChange={(e) => setRequireMention(e.target.checked)}
-                    className="mt-1 size-4 accent-mint"
+                  <ToggleSwitch
+                    enabled={requireMention}
+                    onClick={() => setRequireMention(!requireMention)}
                   />
                 </label>
 
-                <label className="flex items-start justify-between gap-4 rounded-lg border border-border bg-background px-3 py-2.5">
+                <label className="flex cursor-pointer items-start justify-between gap-4 rounded-lg border border-border bg-background px-3 py-2.5">
                   <div className="pr-4">
                     <div className="flex items-center gap-2 text-[12px] font-semibold text-foreground">
                       <SplitSquareVertical size={14} className="text-cyan" />
@@ -373,11 +371,9 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
                     </div>
                     <p className="mt-0.5 text-[11px] text-muted">{t('telegramConfig.forumAutoTopicHint')}</p>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={forumAutoTopic}
-                    onChange={(e) => setForumAutoTopic(e.target.checked)}
-                    className="mt-1 size-4 accent-mint"
+                  <ToggleSwitch
+                    enabled={forumAutoTopic}
+                    onClick={() => setForumAutoTopic(!forumAutoTopic)}
                   />
                 </label>
               </div>
@@ -443,15 +439,16 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
           </button>
-          <button
+          <Button
             type="button"
+            variant="brand"
+            size="default"
             onClick={() => onNext(buildSubmitData())}
             disabled={!isValid}
-            className="inline-flex items-center gap-2 rounded-lg bg-mint px-5 py-2.5 text-[13px] font-bold text-[#080812] shadow-[0_0_32px_-6px_rgba(91,255,160,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
             {t('common.continue')}
             <ArrowRight size={14} strokeWidth={2.25} />
-          </button>
+          </Button>
         </div>
       </WizardCard>
     </div>
