@@ -376,7 +376,7 @@ const Switch: React.FC<{ checked: boolean; onChange: (next: boolean) => void }> 
       'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-mint/40',
       checked
         ? 'border-mint/50 bg-mint shadow-[0_0_12px_-2px_rgba(91,255,160,0.6)]'
-        : 'border-border bg-surface-2'
+        : 'border-border-strong bg-border-strong'
     )}
   >
     <span

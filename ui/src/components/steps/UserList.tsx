@@ -706,12 +706,12 @@ export const UserList: React.FC = () => {
             <span
               className={clsx(
                 'relative inline-flex h-[18px] w-[30px] items-center rounded-full transition-colors',
-                showDisabled ? 'bg-mint' : 'bg-white/[0.08]'
+                showDisabled ? 'bg-mint' : 'bg-border-strong'
               )}
             >
               <span
                 className={clsx(
-                  'inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform',
+                  'inline-block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform',
                   showDisabled ? 'translate-x-[14px]' : 'translate-x-0.5'
                 )}
               />
@@ -781,12 +781,12 @@ export const UserList: React.FC = () => {
                       }}
                       className={clsx(
                         'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors',
-                        userConfig.enabled ? 'bg-mint' : 'bg-neutral-300'
+                        userConfig.enabled ? 'bg-mint' : 'bg-border-strong'
                       )}
                     >
                       <span
                         className={clsx(
-                          'inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform',
+                          'inline-block h-3.5 w-3.5 rounded-full bg-background shadow-sm transition-transform',
                           userConfig.enabled ? 'translate-x-[14px]' : 'translate-x-0.5'
                         )}
                       />
