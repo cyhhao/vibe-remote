@@ -113,6 +113,15 @@ export const SettingsCodexProviderPage: React.FC = () => {
         base_url: baseUrl.trim() || null,
       };
       const result = await api.saveCodexAuth(payload);
+      if (result.ok === false) {
+        // The server returns ok:false for validation/persist failures
+        // (e.g. missing api_key when auth_mode is "api_key") with HTTP 200,
+        // so we must not advance into the success branch here — applying
+        // ``result`` into state would overwrite the user's in-progress
+        // edits with a malformed response that omits auth_mode / base_url.
+        showToast(result.message || t('settings.backends.codexSaveFailed'), 'error');
+        return;
+      }
       setState(result);
       setAuthMode(result.auth_mode);
       setBaseUrl(result.base_url || '');

@@ -2082,7 +2082,22 @@ def get_codex_auth() -> dict:
         configured_mode = getattr(cfg, "auth_mode", None)
     except Exception:
         configured_mode = None
-    auth_mode = configured_mode if configured_mode in _VALID_AUTH_MODES else disk_state.get("auth_mode")
+
+    # Disk wins when it carries unambiguous evidence of API-key auth: an
+    # ``OPENAI_API_KEY`` in ``~/.codex/auth.json`` is a concrete artefact
+    # the user (or a prior ``codex login`` flow) placed there. ``V2Config``
+    # may still default ``auth_mode`` to ``"oauth"`` on the upgrade path
+    # (older configs lacked the field entirely), so trusting the config
+    # alone would make the UI render OAuth and a subsequent save would
+    # then wipe ``OPENAI_API_KEY``. Configured mode remains the source of
+    # truth only when disk has no key — i.e., the user's stated intent
+    # before they have signed in or pasted credentials.
+    if disk_state.get("has_api_key"):
+        auth_mode: str | None = "api_key"
+    elif configured_mode in _VALID_AUTH_MODES:
+        auth_mode = configured_mode
+    else:
+        auth_mode = disk_state.get("auth_mode")
     return {
         "ok": True,
         "auth_mode": auth_mode or "oauth",
