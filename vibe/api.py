@@ -1672,42 +1672,56 @@ def _process_matches_codex_binary(cmdline: list[str], resolved_binary: str | Non
 
     The original cmdline-substring check matched any ``codex`` mention in any
     argument (e.g. a user invoking ``codex app-server`` themselves from a
-    shell, or another tool whose args happen to contain those tokens). We
-    now require:
+    shell, or another tool whose args happen to contain those tokens), and
+    a follow-up tightening only inspected ``argv[0]`` — which missed the
+    ``npm install -g @openai/codex`` shim, where the live process is
+    ``node /path/.../bin/codex app-server`` (``argv[0] == "node"``).
 
-      1. argv[0] resolves to the same absolute path as the configured
-         codex binary, **or** its basename starts with ``codex``; and
+    We now scan the first few argv tokens (``argv[0]`` and ``argv[1]``)
+    looking for the codex binary itself, since the kernel preserves the
+    script path as ``argv[1]`` whenever a ``#!/usr/bin/env node`` shim is
+    exec'd. The match requires:
+
+      1. one of ``argv[0]``/``argv[1]`` resolves to the same absolute path
+         as the configured codex binary (or, when no resolved binary is
+         known, has basename starting with ``codex``); and
       2. one of the early arguments is exactly ``app-server``.
-
-    When ``resolved_binary`` is None we fall back to a basename match so the
-    chip still works for users whose config points at a CLI that isn't on
-    PATH right now.
     """
     if not cmdline:
         return False
-    head = cmdline[0]
     try:
-        head_resolved = str(Path(head).expanduser().resolve())
+        target = (
+            str(Path(resolved_binary).expanduser().resolve())
+            if resolved_binary
+            else None
+        )
     except Exception:
-        head_resolved = head
-    if resolved_binary:
-        # When we know which binary the user configured, require an exact
-        # match. A second codex install elsewhere on the system is *not* ours
-        # to kill.
+        target = resolved_binary
+
+    def _matches(token: str) -> bool:
         try:
-            target = str(Path(resolved_binary).expanduser().resolve())
+            resolved = str(Path(token).expanduser().resolve())
         except Exception:
-            target = resolved_binary
-        if head_resolved != target:
-            return False
-    else:
+            resolved = token
+        if target is not None:
+            # When we know the configured binary, require an exact match
+            # against either the raw or the resolved token. A second codex
+            # install elsewhere on the system is *not* ours to kill.
+            return resolved == target or token == target
         # No resolved binary: best-effort basename match so the chip still
         # works when the configured CLI isn't on PATH right now.
-        if not os.path.basename(head_resolved).startswith("codex"):
-            return False
+        return os.path.basename(resolved).startswith("codex")
+
+    # Check argv[0] and argv[1] — the latter is where ``node`` shebang shims
+    # land the codex script path. We deliberately stop at argv[1] so an
+    # unrelated tool with ``codex`` mentioned later in its args isn't swept up.
+    if not any(_matches(tok) for tok in cmdline[:2] if tok):
+        return False
     # ``codex app-server`` always passes ``app-server`` as an argv token; we
-    # intentionally do NOT match it inside an arbitrary substring.
-    return "app-server" in cmdline[1:4]
+    # intentionally do NOT match it inside an arbitrary substring. Widen the
+    # window slightly so the node-shim layout (``node script app-server``)
+    # still hits.
+    return "app-server" in cmdline[1:5]
 
 
 def _codex_processes(resolved_binary: str | None) -> list[int]:
