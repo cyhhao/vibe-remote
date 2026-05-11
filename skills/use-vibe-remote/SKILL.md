@@ -36,7 +36,7 @@ Follow this skill as an operations playbook for agents, not as end-user marketin
 5. Use the smallest viable API call and verify by reading back the API response.
 6. For `POST /settings`, preserve every existing channel for that platform; the endpoint replaces the platform's channel map.
 7. For `POST /api/users`, merge each edited user with its current user payload first; missing user fields are not a patch.
-8. Make every persistent-state change through the Web UI API or the `vibe` CLI. Vibe Remote keeps internal state in an opaque SQLite database (`~/.vibe_remote/state/vibe.sqlite`) plus a few JSON files such as `discovered_chats.json`; do not treat the database as an operator surface. JSON files may be hand-edited only as a documented recovery fallback (see "Direct File Recovery Fallback").
+8. Make every persistent-state change through the Web UI API or the `vibe` CLI. Vibe Remote's internal storage is opaque — do not read, query, or hand-edit it.
 9. `POST /config` persists the new payload but does not restart running platform adapters by itself. When the change is platform credentials, `proxy_url`, or other transport-level settings, plan an explicit restart afterwards; prefer the delayed CLI form (`vibe restart --delay-seconds 60`) when triggering it from inside an active conversation. The only credential save that restarts on its own is the WeChat QR-login completion through `POST /wechat/qr_login/poll`.
 10. Do not restart the service by default. Use `POST /doctor`, `GET /status`, and read-back checks first.
 11. Only start, stop, restart, or reload Vibe Remote when the user explicitly asks or when a change cannot take effect otherwise; explain why before doing it.
@@ -150,32 +150,14 @@ python3 "$API_HELPER" GET '/settings?platform=slack'
 
 ## Runtime Layout
 
-Vibe Remote stores runtime data under `~/.vibe_remote/` by default. If `VIBE_REMOTE_HOME` is set, use that directory instead.
+Vibe Remote stores runtime data under `~/.vibe_remote/` by default (or `VIBE_REMOTE_HOME` if set). The only paths an agent normally needs:
 
-Important paths:
+- `~/.vibe_remote/config/config.json` — global config; mutate through `POST /config`, not by editing the file
+- `~/.vibe_remote/logs/vibe_remote.log` — main application log; read via `POST /logs`
+- `~/.vibe_remote/screenshots/` — default output directory for `vibe screenshot`
+- `~/.vibe_remote/state/user_preferences.md` — shared long-term preference file (safe to read and update)
 
-- `~/.vibe_remote/config/config.json`: global config persisted by `POST /config`
-- `~/.vibe_remote/state/vibe.sqlite`: internal database managed by Vibe Remote. Treat as opaque; never read, write, or query it directly — use the Web UI API or `vibe` CLI for any state change.
-- `~/.vibe_remote/state/migration.lock`: internal migration lock for the database above; never delete or modify
-- `~/.vibe_remote/state/backups/`: automatic state backups taken before migrations
-- `~/.vibe_remote/state/settings.json`: legacy JSON snapshot mirror for `/settings`, `/api/users`, and `/api/bind-codes`; read-only during normal operation
-- `~/.vibe_remote/state/scheduled_tasks.json`: persisted scheduled tasks created by `vibe task`
-- `~/.vibe_remote/state/watches.json`: persisted managed watches
-- `~/.vibe_remote/state/task_requests/`: queued task-run and hook-send requests plus completion receipts
-- `~/.vibe_remote/state/user_preferences.md`: shared long-term preference file
-- `~/.vibe_remote/state/discovered_chats.json`: cached chat discovery payloads used by the setup wizard
-- `~/.vibe_remote/state/sessions.json`: legacy JSON session snapshot; do not edit during normal config work
-- `~/.vibe_remote/logs/vibe_remote.log`: main application log
-- `~/.vibe_remote/runtime/status.json`: runtime status file
-- `~/.vibe_remote/runtime/doctor.json`: latest doctor result
-- `~/.vibe_remote/runtime/watch_runtime.json`: live watch runtime state, including active PIDs
-- `~/.vibe_remote/runtime/vibe.pid`: main service PID
-- `~/.vibe_remote/runtime/vibe-ui.pid`: Web UI server PID
-- `~/.vibe_remote/runtime/remote-access-cloudflared.pid`: cloudflared tunnel PID for Vibe Cloud remote access
-- `~/.vibe_remote/attachments/`: attachment staging area
-- `~/.vibe_remote/screenshots/`: default output directory for `vibe screenshot`
-
-Only edit the JSON files in this layout as a recovery fallback when the Web UI API is unavailable or the user explicitly asks for low-level repair. If you must edit one directly, back it up first, validate JSON, and explain why the API path was not usable. Never read or write `vibe.sqlite` — escalate database issues instead of touching the file (see the recovery section below for the supported path).
+Scheduled tasks and watches are managed through `vibe task` / `vibe watch` (or their API endpoints), not by editing their persistence files. Everything else under `state/` and `runtime/` is internal — treat it as opaque.
 
 ## API Endpoint Reference
 
@@ -979,7 +961,7 @@ Common cases:
 - wrong repository/cwd: inspect `custom_cwd` and `runtime.default_cwd`
 - DM access denied: inspect `/api/users?platform=<platform>` and bind-code state
 - platform cannot reach API: inspect `proxy_url` on that platform's config block; check logs for proxy/TLS errors; for SOCKS proxies confirm `aiohttp_socks` is installed
-- remote URL is unreachable: `GET /remote-access/status` should show `tunnel_running: true`; if not, check `remote-access-cloudflared.pid`, `cloudflared_path`, and the latest doctor result
+- remote URL is unreachable: `GET /remote-access/status` should show `tunnel_running: true`; if not, run `POST /doctor` and check the configured `cloudflared_path`
 - remote session expired: instruct the user to re-sign in at the public URL (24h TTL with sliding renewal); use `POST /auth/logout` to clear a stale session on the current device
 - upgrade did not apply: inspect the response from `POST /upgrade` (auto-restart on success) or `vibe upgrade` (does not auto-restart — run `vibe restart` manually), then verify with `vibe status` that the new PID is running
 - startup failure: use `GET /status`, `POST /doctor`, then inspect logs
@@ -988,25 +970,6 @@ Do not use `vibe restart`, `POST /control {"action":"restart"}`, or `POST /ui/re
 
 If a restart is still required and you are replying through an active Vibe Remote conversation, use `vibe restart --delay-seconds 60` so the current reply can be delivered before the restart lands.
 
-## Direct File Recovery Fallback
-
-Use file edits only when:
-
-- the Web UI API is down and cannot be recovered through normal service start
-- the config file is malformed and prevents the API from starting
-- the user explicitly asks for low-level file repair
-
-Recovery rules:
-
-1. Identify `VIBE_REMOTE_HOME` or default to `~/.vibe_remote`.
-2. Back up the target file before writing.
-3. Preserve unrelated keys and secrets.
-4. Validate JSON after editing.
-5. Start or restart only when needed to bring the API back.
-6. After recovery, return to the API workflow for further changes.
-
-`vibe.sqlite` is never a fallback target. Never open it with sqlite3 or any inspection tool, and do not move the file aside in the hope of triggering a rebuild — `~/.vibe_remote/state/backups/` only holds JSON snapshots captured at the original migration, and a fresh startup will re-import from the current live JSON files, which may be stale relative to recent runtime state. If the database itself is the problem, stop Vibe Remote, preserve `vibe.sqlite` and the JSON state files as-is, and escalate to the repo.
-
 ## Safety Boundaries
 
 Always follow these constraints:
@@ -1014,8 +977,7 @@ Always follow these constraints:
 - never delete unrelated platform scopes
 - never blank out tokens or secrets as part of an unrelated config task
 - never claim a backend feature exists if current Vibe Remote behavior does not support it
-- never read, query, or rewrite `vibe.sqlite` — it is an internal store, not an operator surface
-- never manually rewrite `sessions.json` for routine routing changes — use the Web UI API or `vibe` CLI instead
+- never read, query, or hand-edit Vibe Remote's internal state storage — go through the Web UI API or `vibe` CLI
 - never expose bind codes, pairing keys, tunnel tokens, instance secrets, or session secrets unless the user explicitly asks
 - never paste a credentialed `proxy_url` (`user:pass@host`) back into chat — mask the credentials portion when echoing the value
 - always say when a requested change actually belongs in OpenCode, Claude Code, or Codex config instead of Vibe Remote
