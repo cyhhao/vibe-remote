@@ -528,7 +528,7 @@ These endpoints drive the managed `avibe.bot` tunnel that exposes the local Web 
 - `GET /auth/callback`
   - OIDC redirect target used by avibe.bot during sign-in. Browser-driven; do not call directly from automation.
 - `GET /api/session`
-  - returns the active avibe.bot user identity and signed-in state (or 401 when not signed in)
+  - always returns `200` with an auth-state payload, never `401`. Three shapes: `{"remote": false}` when remote access is not configured for this request, `{"remote": true, "authenticated": false}` when remote access is on but the caller has no valid session cookie, and `{"remote": true, "authenticated": true, "email": "..."}` when signed in. Check `authenticated` to gate behavior; do not poll for HTTP status codes.
 - `POST /auth/logout`
   - clears the avibe.bot session cookie on this device. Does not stop the tunnel.
 
@@ -960,7 +960,7 @@ Watches:
 
 - `vibe watch add`, `vibe watch list [--brief]`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, `vibe watch remove <id>`
 
-For any subcommand, prefer `<command> --help` before composing a new invocation. `vibe task`, `vibe hook send`, and `vibe watch add` share the delivery flags documented above (`--session-key`, `--post-to`, `--deliver-key`, `--prompt`, `--prompt-file`, `--name`, `--timezone`).
+For any subcommand, prefer `<command> --help` before composing a new invocation. The delivery flags shared by all three commands are `--session-key`, `--post-to`, `--deliver-key`, and `--name`. The remaining surface differs: `vibe task add` and `vibe hook send` take `--prompt` / `--prompt-file`, only `vibe task add` takes `--cron` / `--at` / `--timezone`, and `vibe watch add` takes its own set (`--prefix`, `--shell` or a positional command after `--`, `--cwd`, `--timeout`, `--forever`, `--lifetime-timeout`, `--retry-exit-code`, `--retry-delay`). Do not copy task or hook flags into a watch invocation.
 
 ## Troubleshooting
 
