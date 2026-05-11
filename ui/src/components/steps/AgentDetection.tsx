@@ -234,7 +234,20 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                   name={name}
                   enabled={agent.enabled}
                   cliStatus={agent.status || 'unknown'}
-                  onChanged={() => detect(name, agent.cli_path)}
+                  onChanged={async (info) => {
+                    // After a successful (re)install the chip hands back the
+                    // path the installer landed at — adopt it before
+                    // detecting, otherwise a stale ``agent.cli_path`` from
+                    // this render keeps the row in a false ``missing`` state.
+                    const installedPath = info?.installedPath || null;
+                    if (installedPath) {
+                      setAgents((prev) => ({
+                        ...prev,
+                        [name]: { ...prev[name], cli_path: installedPath },
+                      }));
+                    }
+                    await detect(name, installedPath || agent.cli_path);
+                  }}
                 />
                 <ToggleSwitch
                   enabled={agent.enabled}

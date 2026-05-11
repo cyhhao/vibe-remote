@@ -13,11 +13,20 @@ type Phase = 'idle' | 'loading' | 'upgrading' | 'restarting';
 type Visual = 'disabled' | 'ready' | 'updating' | 'update' | 'error' | 'loading';
 type BadgeVariant = 'secondary' | 'success' | 'info' | 'warning' | 'destructive';
 
+export type BackendChipChange = {
+  // Path returned by ``install_agent`` when the chip just (re)installed the
+  // backend. Parents should treat this as the new source of truth and update
+  // their saved ``cli_path`` before re-running detection — otherwise a stale
+  // path from the React closure keeps the row in a false ``missing`` state
+  // even though the install succeeded.
+  installedPath?: string | null;
+};
+
 interface BackendLifecycleChipProps {
   name: string;
   enabled: boolean;
   cliStatus: CliStatus;
-  onChanged?: () => void | Promise<void>;
+  onChanged?: (info?: BackendChipChange) => void | Promise<void>;
 }
 
 // Map lifecycle visual states to canonical Badge variants from the design
@@ -140,7 +149,8 @@ export const BackendLifecycleChip: React.FC<BackendLifecycleChipProps> = ({
       if (result.ok) {
         showToast(t('backendLifecycle.upgradeSuccess'), 'success');
         await loadRuntime();
-        await onChanged?.();
+        const installedPath = typeof result.path === 'string' && result.path ? result.path : null;
+        await onChanged?.({ installedPath });
       } else {
         showToast(result.message || t('backendLifecycle.upgradeFailed'), 'error');
       }

@@ -1486,6 +1486,13 @@ def install_agent(name: str) -> dict:
 # In-memory caches keyed by (backend, cli_path) so version answers stay tied
 # to the binary they came from. Trade freshness for fewer probes during rapid
 # popover opens. Tuned for human pacing (seconds), not bots.
+#
+# The UI server handles requests on multiple threads, so reads, writes, and
+# invalidation can race. A single lock serializes mutation — fast in practice
+# (the cache holds at most a handful of entries), and avoids
+# ``RuntimeError: dictionary changed size during iteration`` during the
+# scan in ``_invalidate_version_cache``.
+_BACKEND_CACHE_LOCK = __import__("threading").Lock()
 _BACKEND_VERSION_CACHE: dict[tuple[str, str], tuple[float, str | None]] = {}
 _BACKEND_LATEST_CACHE: dict[str, tuple[float, str | None]] = {}
 _BACKEND_VERSION_TTL_SECONDS = 30.0
@@ -1577,28 +1584,39 @@ def _fetch_latest_version(name: str) -> str | None:
 
 def _cached_version(name: str, cli_path: str | None) -> str | None:
     key = (name, cli_path or "")
-    cached = _BACKEND_VERSION_CACHE.get(key)
+    with _BACKEND_CACHE_LOCK:
+        cached = _BACKEND_VERSION_CACHE.get(key)
     if cached and time.time() - cached[0] < _BACKEND_VERSION_TTL_SECONDS:
         return cached[1]
+    # Probe outside the lock — CLI invocation can block on subprocess for
+    # seconds, and we don't want unrelated lookups stuck behind it.
     version = _probe_cli_version(cli_path)
-    _BACKEND_VERSION_CACHE[key] = (time.time(), version)
+    with _BACKEND_CACHE_LOCK:
+        _BACKEND_VERSION_CACHE[key] = (time.time(), version)
     return version
 
 
 def _invalidate_version_cache(name: str) -> None:
     """Drop all cached version entries for *name* across cli paths."""
-    for key in [k for k in _BACKEND_VERSION_CACHE if k[0] == name]:
-        _BACKEND_VERSION_CACHE.pop(key, None)
+    with _BACKEND_CACHE_LOCK:
+        # Snapshot keys under the lock so the subsequent ``pop`` calls can
+        # never observe a partially mutated dict from a concurrent writer.
+        stale = [k for k in _BACKEND_VERSION_CACHE if k[0] == name]
+        for key in stale:
+            _BACKEND_VERSION_CACHE.pop(key, None)
 
 
 def _cached_latest(name: str) -> str | None:
-    cached = _BACKEND_LATEST_CACHE.get(name)
+    with _BACKEND_CACHE_LOCK:
+        cached = _BACKEND_LATEST_CACHE.get(name)
     if cached:
         ttl = _BACKEND_LATEST_TTL_SECONDS if cached[1] else _BACKEND_LATEST_FAILURE_TTL_SECONDS
         if time.time() - cached[0] < ttl:
             return cached[1]
+    # Network fetch outside the lock — same reasoning as ``_cached_version``.
     latest = _fetch_latest_version(name)
-    _BACKEND_LATEST_CACHE[name] = (time.time(), latest)
+    with _BACKEND_CACHE_LOCK:
+        _BACKEND_LATEST_CACHE[name] = (time.time(), latest)
     return latest
 
 
