@@ -331,7 +331,7 @@ When switching the active platform, update `platforms.primary` and make sure `pl
 
 Per-platform fields worth knowing about:
 
-- every platform inherits `proxy_url` from the shared `BaseIMConfig`. Set it when the host machine cannot reach the upstream API directly. Accepts standard HTTP/HTTPS proxy URLs and `socks5://` / `socks5h://` URLs (SOCKS5 support uses `aiohttp_socks`).
+- every platform inherits `proxy_url` from the shared `BaseIMConfig`. Set it when the host machine cannot reach the upstream API directly. Accepts standard HTTP/HTTPS proxy URLs and any `socks*://` URL (`socks4`, `socks4a`, `socks5`, `socks5h`). SOCKS variants route through `aiohttp_socks`.
 - `slack.disable_link_unfurl` suppresses link previews when posting messages.
 - `discord.thread_auto_archive_minutes` must be one of `60`, `1440`, `4320`, or `10080`.
 - `discord.guild_allowlist` / `guild_denylist` are legacy input lists; current runtime server access lives in `/settings` under `guilds`.
@@ -699,7 +699,7 @@ Use `POST /config` with only the proxy field for the affected platform:
 
 Notes:
 
-- `proxy_url` accepts `http://`, `https://`, `socks5://`, and `socks5h://` schemes; the SOCKS variants require `aiohttp_socks` (bundled).
+- `proxy_url` accepts `http://`, `https://`, and any `socks*://` scheme (`socks4`, `socks4a`, `socks5`, `socks5h`). The SOCKS variants route through `aiohttp_socks` (bundled).
 - Set the field to `null` (or omit it on a fresh save) to disable the proxy.
 - `POST /config` only persists the new value; running platform adapters keep their old transport until the service restarts. After saving, run `vibe restart --delay-seconds 60` (or `POST /control {"action":"restart"}` with the user's confirmation) so the proxy applies to live connections.
 - Do not paste credentialed proxy URLs (`user:pass@host`) into logs or chat replies; mask the credentials portion when reporting back.
