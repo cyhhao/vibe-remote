@@ -52,6 +52,18 @@ class _StubIMClient:
         return self._upload_id
 
 
+class _NativeMarkdownIMClient(_StubIMClient):
+    def __init__(self):
+        super().__init__()
+        self.native_markdown_messages = []
+
+    async def send_markdown_message(self, context, text, keyboard=None, reply_to=None):
+        self.native_markdown_messages.append((context.channel_id, text, keyboard, reply_to))
+        message_id = f"native-{self._next_id}"
+        self._next_id += 1
+        return message_id
+
+
 class _StubController:
     def __init__(
         self,
@@ -60,14 +72,16 @@ class _StubController:
         language: str = "en",
         fail_first_send: bool = False,
         upload_id: str = "file-1",
+        im_client=None,
+        reply_enhancements: bool = False,
     ):
         self.config = type(
             "Config",
             (),
-            {"platform": platform, "language": language, "reply_enhancements": False},
+            {"platform": platform, "language": language, "reply_enhancements": reply_enhancements},
         )()
         self.session_handler = _StubSessionHandler()
-        self.im_client = _StubIMClient(fail_first_send=fail_first_send, upload_id=upload_id)
+        self.im_client = im_client or _StubIMClient(fail_first_send=fail_first_send, upload_id=upload_id)
 
     def _get_settings_key(self, context):
         return context.channel_id
@@ -83,6 +97,39 @@ class _StubController:
 
 
 class MessageDispatcherResultFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_slack_result_uses_native_markdown_sender_when_available(self):
+        im_client = _NativeMarkdownIMClient()
+        controller = _StubController(platform="slack", im_client=im_client)
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack")
+        text = "| A | B |\n| - | - |\n| 1 | 2 |"
+
+        message_id = await dispatcher.emit_agent_message(context, "result", text)
+
+        self.assertEqual(message_id, "native-1")
+        self.assertEqual(im_client.sent_messages, [])
+        self.assertEqual(im_client.native_markdown_messages, [("C1", text, None, None)])
+
+    async def test_slack_result_passes_quick_replies_to_native_markdown_sender(self):
+        im_client = _NativeMarkdownIMClient()
+        controller = _StubController(platform="slack", im_client=im_client, reply_enhancements=True)
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack")
+
+        message_id = await dispatcher.emit_agent_message(
+            context,
+            "result",
+            "Body\n\n---\n[Continue] | [Stop]",
+        )
+
+        self.assertEqual(message_id, "native-1")
+        self.assertEqual(im_client.sent_messages, [])
+        channel_id, text, keyboard, reply_to = im_client.native_markdown_messages[0]
+        self.assertEqual(channel_id, "C1")
+        self.assertEqual(text, "Body")
+        self.assertIsNone(reply_to)
+        self.assertEqual([button.text for button in keyboard.buttons[0]], ["Continue", "Stop"])
+
     async def test_summary_upload_becomes_primary_anchor_without_duplicate_upload(self):
         controller = _StubController(platform="lark", language="en", fail_first_send=True)
         dispatcher = ConsolidatedMessageDispatcher(controller)

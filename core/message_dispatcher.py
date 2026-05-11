@@ -347,17 +347,17 @@ class ConsolidatedMessageDispatcher:
                 display_text = text
 
             if self._result_within_limit(context, display_text):
-                if enhanced and enhanced.buttons and self._supports_quick_replies(context):
-                    try:
-                        primary_message_id = await self._send_with_quick_replies(
-                            im_client,
-                            target_context,
-                            display_text,
-                            enhanced.buttons,
-                            parse_mode,
-                        )
-                        scheduled_anchor_message_id = primary_message_id
-                    except Exception as err:
+                try:
+                    primary_message_id = await self._send_result_inline(
+                        im_client,
+                        target_context,
+                        display_text,
+                        enhanced.buttons if enhanced else [],
+                        parse_mode,
+                    )
+                    scheduled_anchor_message_id = primary_message_id
+                except Exception as err:
+                    if enhanced and enhanced.buttons and self._supports_quick_replies(context):
                         logger.warning("Failed to send result with quick replies, falling back: %s", err)
                         try:
                             primary_message_id = await im_client.send_message(
@@ -366,13 +366,7 @@ class ConsolidatedMessageDispatcher:
                             scheduled_anchor_message_id = primary_message_id
                         except Exception as fallback_err:
                             logger.error("Failed to send fallback result message: %s", fallback_err)
-                else:
-                    try:
-                        primary_message_id = await im_client.send_message(
-                            target_context, display_text, parse_mode=parse_mode
-                        )
-                        scheduled_anchor_message_id = primary_message_id
-                    except Exception as err:
+                    else:
                         logger.error("Failed to send result message: %s", err)
             elif self._should_split_long_result(context):
                 try:
@@ -626,6 +620,15 @@ class ConsolidatedMessageDispatcher:
         parse_mode,
     ) -> str:
         """Send a message with quick-reply buttons appended."""
+        keyboard = self._build_quick_reply_keyboard(context, buttons)
+        return await im_client.send_message_with_buttons(
+            context,
+            text,
+            keyboard,
+            parse_mode=parse_mode,
+        )
+
+    def _build_quick_reply_keyboard(self, context: MessageContext, buttons):
         from modules.im.base import InlineButton, InlineKeyboard
 
         row = []
@@ -634,13 +637,33 @@ class ConsolidatedMessageDispatcher:
             row.append(InlineButton(text=btn.text, callback_data=callback))
 
         rows = [[button] for button in row] if self._capabilities(context).quick_reply_single_column else [row]
-        keyboard = InlineKeyboard(buttons=rows)
-        return await im_client.send_message_with_buttons(
-            context,
-            text,
-            keyboard,
-            parse_mode=parse_mode,
-        )
+        return InlineKeyboard(buttons=rows)
+
+    async def _send_result_inline(
+        self,
+        im_client,
+        context: MessageContext,
+        text: str,
+        buttons,
+        parse_mode,
+    ) -> str:
+        keyboard = None
+        if buttons and self._supports_quick_replies(context):
+            keyboard = self._build_quick_reply_keyboard(context, buttons)
+
+        native_markdown_sender = getattr(im_client, "send_markdown_message", None)
+        if parse_mode == "markdown" and callable(native_markdown_sender):
+            return await native_markdown_sender(context, text, keyboard=keyboard)
+
+        if keyboard is not None:
+            return await im_client.send_message_with_buttons(
+                context,
+                text,
+                keyboard,
+                parse_mode=parse_mode,
+            )
+
+        return await im_client.send_message(context, text, parse_mode=parse_mode)
 
     async def _send_split_result_messages(
         self,
@@ -659,7 +682,7 @@ class ConsolidatedMessageDispatcher:
 
             if is_last_chunk and buttons and self._supports_quick_replies(context):
                 try:
-                    message_id = await self._send_with_quick_replies(
+                    message_id = await self._send_result_inline(
                         im_client,
                         context,
                         chunk,
@@ -670,7 +693,7 @@ class ConsolidatedMessageDispatcher:
                     logger.warning("Failed to send split result chunk with quick replies, falling back: %s", err)
 
             if message_id is None:
-                message_id = await im_client.send_message(context, chunk, parse_mode=parse_mode)
+                message_id = await self._send_result_inline(im_client, context, chunk, [], parse_mode)
 
             if first_message_id is None:
                 first_message_id = message_id
