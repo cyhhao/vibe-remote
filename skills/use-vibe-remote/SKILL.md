@@ -179,7 +179,7 @@ Scheduled tasks and watches are managed through `vibe task` / `vibe watch` (or t
 - `GET /api/csrf-token`
   - issues the `vibe_csrf_token` cookie and returns the matching token value for `X-Vibe-CSRF-Token`
 - `GET /platforms`
-  - returns the catalog of supported IM platforms, current enabled list, and credential state
+  - returns the static catalog of supported IM platforms only (id, config_key, title/description i18n keys, credential field names, capabilities). It does not include enablement or credential-presence state — fetch `/config` to see which platforms are enabled and whether credentials are configured.
 
 ### Global config
 
@@ -497,7 +497,7 @@ WeChat QR login is special: when login is confirmed and a token is returned, the
 These endpoints drive the managed `avibe.bot` tunnel that exposes the local Web UI to other devices. They are paired with the `remote_access.vibe_cloud` block under `/config`.
 
 - `GET /remote-access/status`
-  - returns enabled state, public URL, tunnel status, last error, OIDC issuer, and whether `cloudflared` is running
+  - returns `enabled`, `paired`, `public_url`, `running` (tunnel up), `pid`, `pid_state`, plus `binary_found` / `binary_path` / `binary_version` for the resolved `cloudflared` executable. Use `running: true` to assert the tunnel is up.
 - `POST /remote-access/vibe-cloud/pair`
   - payload: `{"pairing_key": "vrp_..."}`
   - exchanges the one-time key for an OIDC client, tunnel token, and persists the full `remote_access.vibe_cloud` block; on success Vibe Remote launches the cloudflared tunnel
@@ -710,7 +710,7 @@ Goal: connect the local Web UI to `avibe.bot` so it is reachable from another de
 
 1. The user signs in at `https://avibe.bot`, creates a remote-access bot, and copies the one-time pairing key (format `vrp_...`).
 2. Call `POST /remote-access/vibe-cloud/pair` with `{"pairing_key": "vrp_..."}` from the local Web UI origin.
-3. Verify with `GET /remote-access/status` — `enabled: true`, `public_url` populated, `tunnel_running: true`.
+3. Verify with `GET /remote-access/status` — `enabled: true`, `paired: true`, `public_url` populated, `running: true`.
 4. Have the user open `public_url` and sign in with the same avibe.bot account.
 
 Alternatively, drive the same flow from the CLI:
@@ -961,7 +961,7 @@ Common cases:
 - wrong repository/cwd: inspect `custom_cwd` and `runtime.default_cwd`
 - DM access denied: inspect `/api/users?platform=<platform>` and bind-code state
 - platform cannot reach API: inspect `proxy_url` on that platform's config block; check logs for proxy/TLS errors; for SOCKS proxies confirm `aiohttp_socks` is installed
-- remote URL is unreachable: `GET /remote-access/status` should show `tunnel_running: true`; if not, run `POST /doctor` and check the configured `cloudflared_path`
+- remote URL is unreachable: `GET /remote-access/status` should show `running: true` and `binary_found: true`; if not, run `POST /doctor` and check the configured `cloudflared_path`
 - remote session expired: instruct the user to re-sign in at the public URL (24h TTL with sliding renewal); use `POST /auth/logout` to clear a stale session on the current device
 - upgrade did not apply: inspect the response from `POST /upgrade` (auto-restart on success) or `vibe upgrade` (does not auto-restart — run `vibe restart` manually), then verify with `vibe status` that the new PID is running
 - startup failure: use `GET /status`, `POST /doctor`, then inspect logs
