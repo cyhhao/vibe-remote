@@ -61,7 +61,12 @@ const deriveVisual = (
   if (phase === 'upgrading') return 'updating';
   if (!enabled) return 'disabled';
   if (cliStatus === 'missing') return 'error';
-  if (runtime && runtime.installed === false) return 'error';
+  // ``runtime.installed`` is probed against the *persisted* cli_path. When
+  // the user edits the row's path and runs Detect, ``cliStatus`` flips to
+  // ``ok`` but the runtime probe is still inspecting the saved config. In
+  // that window the local detection is the fresher signal — trust it and
+  // do not flip the chip to error just because the saved config is stale.
+  if (cliStatus !== 'ok' && runtime && runtime.installed === false) return 'error';
   // A daemon-backed backend whose process was killed externally must surface
   // as error so the popover offers Restart — a stopped daemon outranks both
   // "update available" and "ready".
