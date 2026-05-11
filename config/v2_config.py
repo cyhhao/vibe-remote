@@ -5,7 +5,7 @@ import tempfile
 import threading
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from config import paths
 from config.platform_registry import (
@@ -151,6 +151,10 @@ class OpenCodeConfig:
     default_model: Optional[str] = None
     default_reasoning_effort: Optional[str] = None
     error_retry_limit: int = DEFAULT_OPENCODE_ERROR_RETRY_LIMIT  # Max retries on LLM stream errors (0 = no retry)
+    # Provider chosen by default when starting a new session. The provider
+    # catalog itself lives in ~/.config/opencode/opencode.json (OpenCode's
+    # own state file); we only persist the user's UI-selected default here.
+    default_provider: str = "anthropic"
 
 
 @dataclass
@@ -159,6 +163,12 @@ class ClaudeConfig:
     cli_path: str = "claude"
     default_model: Optional[str] = None
     idle_timeout_seconds: int = DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
+    # Auth model: "oauth" relies on Claude Code's own credential storage;
+    # "api_key" injects ANTHROPIC_API_KEY (and optionally ANTHROPIC_BASE_URL)
+    # at CLI launch time for API gateway / proxy setups.
+    auth_mode: Literal["oauth", "api_key"] = "oauth"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 @dataclass
@@ -167,6 +177,12 @@ class CodexConfig:
     cli_path: str = "codex"
     default_model: Optional[str] = None
     idle_timeout_seconds: int = DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
+    # Auth model: "oauth" defers to whatever ~/.codex/config.toml already
+    # has (typically `auth.method = "ChatGPT"`); "api_key" writes the
+    # config.toml fields that point Codex at an API key + custom base URL.
+    auth_mode: Literal["oauth", "api_key"] = "oauth"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 @dataclass

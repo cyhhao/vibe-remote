@@ -21,6 +21,8 @@ export type ApiContextType = {
   installAgent: (name: string) => Promise<InstallResult>;
   getBackendRuntime: (name: string) => Promise<BackendRuntimeInfo>;
   restartBackend: (name: string) => Promise<BackendRestartResult>;
+  getCodexAuth: () => Promise<CodexAuthState>;
+  saveCodexAuth: (payload: CodexAuthPayload) => Promise<CodexAuthSaveResult>;
   slackAuthTest: (botToken: string, proxyUrl?: string) => Promise<any>;
   slackChannels: (botToken: string, browseAll?: boolean) => Promise<any>;
   slackManifest: () => Promise<{ ok: boolean; manifest?: string; manifest_compact?: string; error?: string }>;
@@ -117,6 +119,28 @@ export type BackendRestartResult = {
   message: string;
 };
 
+export type CodexAuthMode = 'oauth' | 'api_key';
+
+export type CodexAuthState = {
+  ok: boolean;
+  auth_mode: CodexAuthMode;
+  has_api_key: boolean;
+  api_key_length: number;
+  base_url: string | null;
+  has_chatgpt_tokens: boolean;
+  message?: string;
+};
+
+export type CodexAuthPayload = {
+  auth_mode: CodexAuthMode;
+  api_key?: string | null;
+  base_url?: string | null;
+};
+
+export type CodexAuthSaveResult = CodexAuthState & {
+  restart?: BackendRestartResult;
+};
+
 const ApiContext = createContext<ApiContextType | undefined>(undefined);
 
 export const useApi = () => {
@@ -195,6 +219,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     installAgent: (name) => postJson(`/agent/${encodeURIComponent(name)}/install`, {}),
     getBackendRuntime: (name) => getJson(`/backend/${encodeURIComponent(name)}/runtime`),
     restartBackend: (name) => postJson(`/backend/${encodeURIComponent(name)}/restart`, {}),
+    getCodexAuth: () => getJson('/backend/codex/auth'),
+    saveCodexAuth: (payload) => postJson('/backend/codex/auth', payload),
     slackAuthTest: (botToken, proxyUrl) => postJson('/slack/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
     slackChannels: (botToken, browseAll) => postJson('/slack/channels', { bot_token: botToken, browse_all: browseAll || false }),
     slackManifest: () => getJson('/slack/manifest'),

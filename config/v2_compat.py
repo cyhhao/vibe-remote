@@ -23,6 +23,9 @@ class ClaudeCompatConfig:
     default_model: Optional[str] = None
     cli_path: Optional[str] = None
     idle_timeout_seconds: int = DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
+    auth_mode: str = "oauth"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
     def __post_init__(self) -> None:
         self.permission_mode = str(self.permission_mode)

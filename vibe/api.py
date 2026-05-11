@@ -279,9 +279,39 @@ def _deep_merge_dicts(base: dict, patch: dict) -> dict:
     return merged
 
 
+_AGENT_AUTH_FIELDS = ("auth_mode", "api_key", "base_url")
+
+
+def _strip_agent_auth_fields(payload: dict) -> dict:
+    """Drop auth fields from a generic settings patch.
+
+    The UI's Settings → Backends page round-trips the masked agent config
+    on save (api_key arrives as ``None`` after masking), and naive
+    deep-merge would clobber the real key. Auth state changes must go
+    through ``/backend/<name>/auth`` exclusively; this helper enforces
+    that contract on the generic settings POST.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    agents = payload.get("agents")
+    if not isinstance(agents, dict):
+        return payload
+    cleaned_agents = dict(agents)
+    for backend in ("claude", "codex"):
+        backend_payload = cleaned_agents.get(backend)
+        if isinstance(backend_payload, dict):
+            cleaned_backend = {
+                k: v for k, v in backend_payload.items() if k not in _AGENT_AUTH_FIELDS
+            }
+            cleaned_agents[backend] = cleaned_backend
+    return {**payload, "agents": cleaned_agents}
+
+
 def save_config(payload: dict) -> V2Config:
     if not isinstance(payload, dict):
         raise ValueError("Config payload must be an object")
+
+    payload = _strip_agent_auth_fields(payload)
 
     with CONFIG_LOCK:
         base_payload: dict = {}
@@ -316,6 +346,27 @@ def _vibe_cloud_payload(config: V2Config, include_secrets: bool) -> dict:
     return payload
 
 
+def _agent_payload(raw: dict, *, include_secrets: bool) -> dict:
+    """Project a Claude/Codex config dict for the UI, masking the api_key.
+
+    The UI surfaces *whether* a key is configured (and its length, so the
+    user can see ``****6c1f``-style hints), never the plaintext. Only the
+    secrets-included path (used by the setup wizard's "load existing
+    config" flow) sees the raw value.
+    """
+    payload = dict(raw)
+    api_key = payload.get("api_key")
+    if isinstance(api_key, str):
+        payload["api_key_length"] = len(api_key)
+        payload["has_api_key"] = bool(api_key)
+    else:
+        payload["api_key_length"] = 0
+        payload["has_api_key"] = False
+    if not include_secrets:
+        payload["api_key"] = None
+    return payload
+
+
 def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dict:
     from config.platform_registry import platform_descriptors
 
@@ -344,8 +395,8 @@ def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dic
         "agents": {
             "default_backend": config.agents.default_backend,
             "opencode": config.agents.opencode.__dict__,
-            "claude": config.agents.claude.__dict__,
-            "codex": config.agents.codex.__dict__,
+            "claude": _agent_payload(config.agents.claude.__dict__, include_secrets=include_secrets),
+            "codex": _agent_payload(config.agents.codex.__dict__, include_secrets=include_secrets),
         },
         "gateway": config.gateway.__dict__ if config.gateway else None,
         "ui": config.ui.__dict__,
@@ -2003,6 +2054,117 @@ def restart_backend(name: str) -> dict:
     if failed:
         return {"ok": False, "message": f"Failed to stop Codex process(es): {failed}"}
     return {"ok": True, "message": f"Stopped {len(pids)} Codex process(es); they will respawn on next request."}
+
+
+_VALID_AUTH_MODES = {"oauth", "api_key"}
+
+
+def get_codex_auth() -> dict:
+    """Return the user-facing Codex auth state for the Settings UI.
+
+    Merges two sources of truth:
+    - on-disk ``~/.codex/{config.toml,auth.json}`` (what Codex actually
+      reads at launch) — authoritative for ``has_api_key`` / ``base_url`` /
+      ``has_chatgpt_tokens`` so the UI never lies when the user edited the
+      files by hand.
+    - ``V2Config.agents.codex`` — the mode we *intend* to be in, useful as
+      a tiebreaker (e.g. user clicked OAuth but hasn't run ``codex login``
+      yet, so disk has no tokens but our config says oauth).
+
+    Secrets never leave the server; only length is returned.
+    """
+    from vibe.codex_config import read_codex_auth_state
+
+    disk_state = read_codex_auth_state()
+    try:
+        config = load_config()
+        cfg = getattr(getattr(config, "agents", None), "codex", None)
+        configured_mode = getattr(cfg, "auth_mode", None)
+    except Exception:
+        configured_mode = None
+    auth_mode = configured_mode if configured_mode in _VALID_AUTH_MODES else disk_state.get("auth_mode")
+    return {
+        "ok": True,
+        "auth_mode": auth_mode or "oauth",
+        "has_api_key": bool(disk_state.get("has_api_key")),
+        "api_key_length": int(disk_state.get("api_key_length") or 0),
+        "base_url": disk_state.get("base_url"),
+        "has_chatgpt_tokens": bool(disk_state.get("has_chatgpt_tokens")),
+    }
+
+
+def save_codex_auth(payload: dict) -> dict:
+    """Persist Codex auth: V2Config + ``~/.codex/{config.toml,auth.json}``.
+
+    The on-disk write is what Codex actually reads; the V2Config write
+    records the user's intent so the UI can render a coherent state after
+    restart. We treat the disk write as authoritative — if it fails, we
+    surface the error instead of leaving V2Config out of sync.
+
+    After writing, we trigger ``restart_backend('codex')`` so the persistent
+    app-server reloads with the new credentials. The restart failure is
+    surfaced but does not roll back the config write; the user can retry.
+    """
+    if not isinstance(payload, dict):
+        return {"ok": False, "message": "Payload must be an object"}
+
+    auth_mode = payload.get("auth_mode")
+    if auth_mode not in _VALID_AUTH_MODES:
+        return {"ok": False, "message": f"auth_mode must be one of {sorted(_VALID_AUTH_MODES)}"}
+
+    raw_api_key = payload.get("api_key")
+    if raw_api_key is not None and not isinstance(raw_api_key, str):
+        return {"ok": False, "message": "api_key must be a string"}
+    api_key = raw_api_key.strip() if isinstance(raw_api_key, str) else None
+
+    raw_base_url = payload.get("base_url")
+    if raw_base_url is not None and not isinstance(raw_base_url, str):
+        return {"ok": False, "message": "base_url must be a string"}
+    base_url = raw_base_url.strip() if isinstance(raw_base_url, str) else None
+    if base_url == "":
+        base_url = None
+
+    if auth_mode == "api_key" and not api_key:
+        # Allow callers to PATCH base_url alone by reusing the stored key.
+        with CONFIG_LOCK:
+            try:
+                existing = load_config()
+                stored = getattr(getattr(existing, "agents", None), "codex", None)
+                api_key = getattr(stored, "api_key", None) or None
+            except Exception:
+                api_key = None
+        if not api_key:
+            return {"ok": False, "message": "api_key is required when auth_mode='api_key'"}
+
+    from vibe.codex_config import apply_codex_auth
+
+    try:
+        apply_codex_auth(auth_mode=auth_mode, api_key=api_key, base_url=base_url)
+    except ValueError as exc:
+        return {"ok": False, "message": str(exc)}
+    except OSError as exc:
+        logger.error("Failed to write Codex auth files: %s", exc, exc_info=True)
+        return {"ok": False, "message": f"Failed to write Codex config: {exc}"}
+
+    with CONFIG_LOCK:
+        try:
+            config = load_config()
+        except FileNotFoundError:
+            config = V2Config()
+        config.agents.codex.auth_mode = auth_mode
+        config.agents.codex.api_key = api_key if auth_mode == "api_key" else None
+        config.agents.codex.base_url = base_url
+        config.save()
+
+    restart_result = restart_backend("codex")
+    state = get_codex_auth()
+    state["restart"] = restart_result
+    if not restart_result.get("ok", False):
+        # Config written, restart failed — tell the UI both so the toast
+        # can say "saved, but you may need to restart Codex manually".
+        state["ok"] = True
+        state["message"] = restart_result.get("message")
+    return state
 
 
 def codex_models() -> dict:

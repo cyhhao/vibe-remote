@@ -1573,6 +1573,26 @@ def backend_restart(name):
     return jsonify(api.restart_backend(name))
 
 
+@app.route("/backend/codex/auth", methods=["GET"])
+def backend_codex_auth_get():
+    """Read the user-facing Codex auth state (masked secrets)."""
+    from vibe import api
+
+    return jsonify(api.get_codex_auth())
+
+
+@app.route("/backend/codex/auth", methods=["POST"])
+def backend_codex_auth_post():
+    """Persist Codex auth and reload the app-server.
+
+    Body: ``{auth_mode: 'oauth'|'api_key', api_key?: string, base_url?: string}``.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.save_codex_auth(payload))
+
+
 @app.route("/browse", methods=["POST"])
 def browse_directory():
     """List sub-directories of a given path for the directory picker UI."""

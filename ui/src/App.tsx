@@ -6,6 +6,7 @@ import { ChannelList } from './components/steps/ChannelList';
 import { UserList } from './components/steps/UserList';
 import { SettingsDiagnosticsPage } from './components/settings/SettingsDiagnosticsPage';
 import { SettingsBackendsPage } from './components/settings/SettingsBackendsPage';
+import { SettingsCodexProviderPage } from './components/settings/SettingsCodexProviderPage';
 import { SettingsLogsPage } from './components/settings/SettingsLogsPage';
 import { SettingsMessagingPage } from './components/settings/SettingsMessagingPage';
 import { SettingsPlatformsPage } from './components/settings/SettingsPlatformsPage';
@@ -77,6 +78,7 @@ function AppRoutes() {
         <Route path="/settings/service" element={<SettingsServicePage />} />
         <Route path="/settings/platforms" element={<SettingsPlatformsPage />} />
         <Route path="/settings/backends" element={<SettingsBackendsPage />} />
+        <Route path="/settings/backends/codex" element={<SettingsCodexProviderPage />} />
         <Route path="/settings/messaging" element={<SettingsMessagingPage />} />
         <Route path="/settings/diagnostics" element={<SettingsDiagnosticsPage />} />
         <Route path="/settings/logs" element={<SettingsLogsPage />} />

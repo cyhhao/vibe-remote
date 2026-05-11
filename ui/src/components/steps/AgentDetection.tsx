@@ -5,10 +5,12 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
+  ExternalLink,
   RefreshCw,
   Search,
   Settings,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
@@ -17,6 +19,14 @@ import type { BackendId } from '../visual';
 import { BackendLifecycleChip } from '../settings/BackendLifecycleChip';
 import { CompactField, CompactSelect, ToggleSwitch } from '../settings/SettingsPrimitives';
 import { Button } from '../ui/button';
+
+// Backends that expose a dedicated provider settings page. The link is
+// rendered only when the wizard is hosted inside Settings (``isPage``) —
+// hiding it during initial setup keeps the wizard linear and avoids
+// landing the user on a half-configured Codex with no app-server yet.
+const PROVIDER_PAGE_ROUTES: Record<string, string> = {
+  codex: '/settings/backends/codex',
+};
 
 interface AgentDetectionProps {
   data: any;
@@ -353,6 +363,18 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                       <span className="text-[11px] text-danger">{permissionMessage}</span>
                     )}
                   </div>
+                </div>
+              )}
+
+              {isPage && PROVIDER_PAGE_ROUTES[name] && (
+                <div className="flex justify-end">
+                  <Button asChild variant="ghost" size="sm">
+                    <Link to={PROVIDER_PAGE_ROUTES[name]}>
+                      <Settings className="size-3.5" />
+                      {t('settings.backends.openProviderPage')}
+                      <ExternalLink className="size-3.5" />
+                    </Link>
+                  </Button>
                 </div>
               )}
             </div>
