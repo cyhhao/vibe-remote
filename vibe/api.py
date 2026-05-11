@@ -2141,11 +2141,23 @@ def save_codex_auth(payload: dict) -> dict:
 
     if auth_mode == "api_key" and not api_key:
         # Allow callers to PATCH base_url alone by reusing the stored key.
+        # Try V2Config first (typical case after a save via this endpoint),
+        # then fall back to ``~/.codex/auth.json`` for keys written outside
+        # our flow (e.g. ``codex login --with-api-key`` or pre-Settings
+        # installs); the live Codex process reads from there too, so a
+        # base-URL-only update must succeed if either source has the key.
         with CONFIG_LOCK:
             try:
                 existing = load_config()
                 stored = getattr(getattr(existing, "agents", None), "codex", None)
                 api_key = getattr(stored, "api_key", None) or None
+            except Exception:
+                api_key = None
+        if not api_key:
+            try:
+                from vibe.codex_config import read_codex_api_key
+
+                api_key = read_codex_api_key()
             except Exception:
                 api_key = None
         if not api_key:

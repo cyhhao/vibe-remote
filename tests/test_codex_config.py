@@ -9,6 +9,7 @@ round-trip behavior of the emitter.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import sys
 from pathlib import Path
@@ -94,6 +95,61 @@ def test_apply_api_key_mode_preserves_unrelated_blocks(tmp_path: Path) -> None:
 
     auth = json.loads((codex_home / "auth.json").read_text(encoding="utf-8"))
     assert auth["OPENAI_API_KEY"] == "sk-test-1234567890"
+
+
+def test_round_trip_datetime_scalars() -> None:
+    """``tomllib`` returns datetime/date/time for temporal TOML values; the
+    emitter must round-trip them unquoted instead of crashing on the
+    JSON fallback (datetimes are not JSON-serializable)."""
+    data = {
+        "created_at": _dt.datetime(2024, 1, 15, 9, 30, 0),
+        "expires_on": _dt.date(2025, 12, 31),
+        "daily_window": _dt.time(9, 0, 0),
+    }
+    parsed = _round_trip(data)
+    assert parsed == data
+
+
+def test_get_codex_home_honors_env(monkeypatch, tmp_path: Path) -> None:
+    """``CODEX_HOME`` points directly at the Codex data dir (matches the
+    rest of the integration in modules/agents/codex/agent.py)."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "alt"))
+    assert codex_config.get_codex_home() == tmp_path / "alt"
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    # When ``home`` is injected (test fixture path), CODEX_HOME must not
+    # override it — fixture isolation has to win.
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ignored"))
+    assert codex_config.get_codex_home(tmp_path) == tmp_path / ".codex"
+
+
+def test_apply_codex_auth_respects_codex_home(monkeypatch, tmp_path: Path) -> None:
+    """End-to-end: with CODEX_HOME set, apply_codex_auth writes there and
+    leaves ``~/.codex`` untouched. This is the bug the live Codex process
+    would otherwise hit — saved key in one dir, read from another."""
+    alt_home = tmp_path / "alt-codex"
+    monkeypatch.setenv("CODEX_HOME", str(alt_home))
+    # Sanity: the real $HOME/.codex must not exist or, if it does, we
+    # leave the test environment alone — we only assert against alt_home.
+    codex_config.apply_codex_auth(auth_mode="api_key", api_key="sk-env", base_url=None)
+    assert (alt_home / "auth.json").exists()
+    assert (alt_home / "config.toml").exists()
+    auth = json.loads((alt_home / "auth.json").read_text(encoding="utf-8"))
+    assert auth["OPENAI_API_KEY"] == "sk-env"
+
+
+def test_read_codex_api_key_returns_stored_value(tmp_path: Path) -> None:
+    """The base-URL-only update path in vibe/api.py depends on this."""
+    home = tmp_path
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    (codex_home / "auth.json").write_text(
+        json.dumps({"OPENAI_API_KEY": "sk-from-disk"}), encoding="utf-8"
+    )
+    assert codex_config.read_codex_api_key(home=home) == "sk-from-disk"
+
+
+def test_read_codex_api_key_missing_returns_none(tmp_path: Path) -> None:
+    assert codex_config.read_codex_api_key(home=tmp_path) is None
 
 
 def test_apply_oauth_mode_clears_managed_base_url(tmp_path: Path) -> None:

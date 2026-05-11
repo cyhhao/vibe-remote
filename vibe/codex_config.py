@@ -16,6 +16,7 @@ changes via ``restart_backend('codex')``.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import logging
 import os
@@ -38,7 +39,20 @@ MANAGED_PROVIDER_ID = "openai"
 
 
 def get_codex_home(home: Path | None = None) -> Path:
-    return (home or Path.home()) / ".codex"
+    """Resolve the directory Codex actually reads ``config.toml`` from.
+
+    Codex respects the ``CODEX_HOME`` environment variable (unlike most
+    tools, this points directly at the data directory — *not* HOME).
+    ``modules/agents/codex/agent.py`` already treats it as authoritative,
+    so we mirror that here; otherwise "Save and restart Codex" can report
+    success while the live process keeps reading a different directory.
+    """
+    if home is not None:
+        return home / ".codex"
+    env_home = os.environ.get("CODEX_HOME")
+    if env_home:
+        return Path(env_home).expanduser()
+    return Path.home() / ".codex"
 
 
 def get_codex_config_paths(home: Path | None = None) -> tuple[Path, Path]:
@@ -109,6 +123,17 @@ def _dump_toml_value(value: Any) -> str:
         return repr(value)
     if isinstance(value, str):
         return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    # TOML temporal scalars: ``tomllib`` parses ``2024-01-15T09:30:00`` as a
+    # ``datetime``, dates as ``date``, times as ``time``. Their ``isoformat``
+    # output is exactly the RFC3339-ish form TOML expects, and they are
+    # emitted *unquoted* (a quoted version would round-trip as a string,
+    # silently corrupting the user's config).
+    if isinstance(value, _dt.datetime):
+        return value.isoformat()
+    if isinstance(value, _dt.date):
+        return value.isoformat()
+    if isinstance(value, _dt.time):
+        return value.isoformat()
     if isinstance(value, list):
         return "[" + ", ".join(_dump_toml_value(item) for item in value) + "]"
     # Fallback: serialize as JSON-ish string (best-effort for unexpected types).
@@ -267,6 +292,21 @@ def apply_codex_auth(
 
     _atomic_write(auth_path, json.dumps(auth_data, indent=2) + "\n", mode=0o600)
     _atomic_write(config_path, _dump_toml(toml_data), mode=0o600)
+
+
+def read_codex_api_key(home: Path | None = None) -> Optional[str]:
+    """Return the API key currently stored in ``auth.json``, if any.
+
+    Used as a fallback when the UI sends a base-URL-only update: the
+    V2Config cache may not have the key (e.g. ``codex login --with-api-key``
+    wrote it directly to ``auth.json`` outside our flow), but the live
+    Codex process still reads it from disk, so we must too.
+    """
+    _, auth_path = get_codex_config_paths(home)
+    raw = _load_auth(auth_path).get("OPENAI_API_KEY")
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    return None
 
 
 def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
