@@ -112,16 +112,36 @@ class RuntimeCommandWatcher:
         )
         if handler is None:
             logger.warning("AgentAuthService missing _refresh_backend_runtime; dropping marker")
-            marker.unlink(missing_ok=True)
+            self._fail_marker(marker, "refresh handler unavailable")
             return
         try:
             await handler(backend)
         except Exception as exc:
             logger.error("Backend refresh failed for %s: %s", backend, exc, exc_info=True)
-        finally:
-            # Always delete the marker so the UI server stops waiting; a
-            # failed refresh is still observable via the next runtime probe.
-            try:
-                marker.unlink(missing_ok=True)
-            except OSError as exc:  # pragma: no cover - best-effort cleanup
-                logger.debug("Could not remove marker %s: %s", marker, exc)
+            self._fail_marker(marker, str(exc) or exc.__class__.__name__)
+            return
+        # Success path: silently drop the marker so the UI server reads the
+        # absence-of-``.err`` as a clean ack.
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError as exc:  # pragma: no cover - best-effort cleanup
+            logger.debug("Could not remove marker %s: %s", marker, exc)
+
+    @staticmethod
+    def _fail_marker(marker: Path, error: str) -> None:
+        """Surface a refresh failure to the UI server via a companion ``.err``.
+
+        The caller (``vibe.api._wait_for_controller_ack``) treats marker
+        deletion as the ack and looks for ``marker.name + ".err"`` to decide
+        whether the refresh actually succeeded — otherwise the UI would
+        toast ``ok: true`` while the runtime is still stale.
+        """
+        err_marker = marker.with_name(marker.name + ".err")
+        try:
+            err_marker.write_text(error[:1024], encoding="utf-8")
+        except OSError as exc:  # pragma: no cover - best-effort surface
+            logger.debug("Could not write error marker %s: %s", err_marker, exc)
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError as exc:  # pragma: no cover - best-effort cleanup
+            logger.debug("Could not remove marker %s: %s", marker, exc)

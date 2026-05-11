@@ -1831,17 +1831,42 @@ def _runtime_command_dir() -> Path:
     return base
 
 
-def _wait_for_controller_ack(marker: Path, timeout: float) -> bool:
-    """Poll for ``marker`` removal as a signal that the controller ran it."""
+def _wait_for_controller_ack(marker: Path, timeout: float) -> tuple[bool, str | None]:
+    """Poll for ``marker`` removal as a signal that the controller ran it.
+
+    Returns ``(handled, error)``:
+
+    - ``handled=True, error=None`` — controller picked up the marker and the
+      handler returned cleanly.
+    - ``handled=True, error="..."`` — controller picked up the marker but
+      the handler raised; the controller wrote the message to a companion
+      ``<marker>.err`` file before deleting the request marker.
+    - ``handled=False, error=None`` — timed out; the controller never
+      consumed the marker. Caller should fall back to a direct kill.
+
+    The companion ``.err`` file is consumed (unlinked) before returning so
+    later requests start clean.
+    """
+    err_marker = marker.with_name(marker.name + ".err")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not marker.exists():
-            return True
+            error: str | None = None
+            if err_marker.exists():
+                try:
+                    error = err_marker.read_text(encoding="utf-8").strip() or "unknown error"
+                except OSError:
+                    error = "unknown error"
+                try:
+                    err_marker.unlink(missing_ok=True)
+                except OSError:  # pragma: no cover - best-effort cleanup
+                    pass
+            return True, error
         time.sleep(0.1)
-    return False
+    return False, None
 
 
-def _request_controller_restart(backend: str, timeout: float = 4.0) -> bool:
+def _request_controller_restart(backend: str, timeout: float = 4.0) -> tuple[bool, str | None]:
     """Ask the controller to refresh a backend via the runtime-command marker.
 
     The controller's ``RuntimeCommandWatcher`` (see ``core/runtime_commands.py``)
@@ -1852,6 +1877,11 @@ def _request_controller_restart(backend: str, timeout: float = 4.0) -> bool:
     wait briefly for the controller to delete it; the caller falls back to a
     direct process kill when the controller is unreachable (e.g. running
     detached, not yet started).
+
+    Returns ``(handled, error)`` — see ``_wait_for_controller_ack`` for the
+    contract. ``handled=True`` does *not* imply success; check ``error`` too
+    so the UI toast doesn't claim a restart when the controller's refresh
+    actually raised.
     """
     marker = _runtime_command_dir() / f"restart-{backend}.cmd"
     try:
@@ -1861,16 +1891,17 @@ def _request_controller_restart(backend: str, timeout: float = 4.0) -> bool:
         )
     except OSError as exc:
         logger.debug("Failed to write controller restart marker for %s: %s", backend, exc)
-        return False
-    if _wait_for_controller_ack(marker, timeout):
-        return True
+        return False, None
+    handled, error = _wait_for_controller_ack(marker, timeout)
+    if handled:
+        return True, error
     # Marker still present — controller didn't pick it up. Clean up before
     # falling back so we don't leave a stale request lying around.
     try:
         marker.unlink(missing_ok=True)
     except OSError:
         pass
-    return False
+    return False, None
 
 
 def restart_backend(name: str) -> dict:
@@ -1888,10 +1919,19 @@ def restart_backend(name: str) -> dict:
     if name not in _BACKENDS_WITH_RESTART:
         return {"ok": False, "message": f"Restart is not supported for backend: {name}"}
 
-    controller_handled = _request_controller_restart(name)
+    controller_handled, controller_error = _request_controller_restart(name)
     _invalidate_version_cache(name)
 
     if controller_handled:
+        if controller_error:
+            # Controller saw the request and ran the handler, but the handler
+            # raised. Don't lie to the user — surface the failure so they can
+            # retry or look at logs. (The next runtime probe will also reflect
+            # the stale state, but the toast must already say so.)
+            return {
+                "ok": False,
+                "message": f"Backend refresh failed: {controller_error}",
+            }
         if name == "opencode":
             return {"ok": True, "message": "OpenCode server refreshed; it will respawn on next request."}
         return {"ok": True, "message": "Codex runtime refreshed; transports will respawn on next request."}
