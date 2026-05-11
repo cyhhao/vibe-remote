@@ -5,10 +5,13 @@ import clsx from 'clsx';
 import { useApi, type BackendRuntimeInfo } from '../../context/ApiContext';
 import { useToast } from '../../context/ToastContext';
 import { Button } from '../ui/button';
+import { badgeVariants } from '../ui/badge';
+import { cn } from '@/lib/utils';
 
 type CliStatus = 'unknown' | 'ok' | 'missing';
 type Phase = 'idle' | 'loading' | 'upgrading' | 'restarting';
 type Visual = 'disabled' | 'ready' | 'updating' | 'update' | 'error' | 'loading';
+type BadgeVariant = 'secondary' | 'success' | 'info' | 'warning' | 'destructive';
 
 interface BackendLifecycleChipProps {
   name: string;
@@ -17,13 +20,16 @@ interface BackendLifecycleChipProps {
   onChanged?: () => void | Promise<void>;
 }
 
-const VISUAL_STYLES: Record<Visual, string> = {
-  disabled: 'border-border bg-surface-2/60 text-muted',
-  ready: 'border-mint/30 bg-mint/[0.08] text-mint',
-  updating: 'border-cyan/30 bg-cyan/[0.10] text-cyan',
-  update: 'border-gold/30 bg-gold/15 text-gold',
-  error: 'border-destructive/30 bg-destructive/10 text-destructive',
-  loading: 'border-border bg-surface-2/60 text-muted',
+// Map lifecycle visual states to canonical Badge variants from the design
+// system. The chip is a clickable status pill so it shares Badge's shape;
+// we apply badgeVariants() to a <button> rather than re-roll the styling.
+const BADGE_VARIANT: Record<Visual, BadgeVariant> = {
+  disabled: 'secondary',
+  loading: 'secondary',
+  ready: 'success',
+  updating: 'info',
+  update: 'warning',
+  error: 'destructive',
 };
 
 const DOT_STYLES: Record<Visual, string> = {
@@ -184,9 +190,9 @@ export const BackendLifecycleChip: React.FC<BackendLifecycleChipProps> = ({
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        className={clsx(
-          'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors',
-          VISUAL_STYLES[visual],
+        className={cn(
+          badgeVariants({ variant: BADGE_VARIANT[visual] }),
+          'cursor-pointer font-medium tracking-normal hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         )}
         aria-label={chipLabel}
       >
@@ -205,24 +211,26 @@ export const BackendLifecycleChip: React.FC<BackendLifecycleChipProps> = ({
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <span className="text-sm font-medium text-foreground">{t('backendLifecycle.title')}</span>
             <div className="flex items-center gap-1">
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted hover:text-foreground"
                 onClick={() => void loadRuntime()}
                 disabled={phase !== 'idle'}
-                className="rounded p-1.5 text-muted hover:bg-surface-2 hover:text-foreground disabled:opacity-50"
                 aria-label={t('common.refresh')}
                 title={t('common.refresh')}
               >
                 <RefreshCw size={14} className={phase === 'loading' ? 'animate-spin' : ''} />
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted hover:text-foreground"
                 onClick={() => setIsOpen(false)}
-                className="rounded p-1.5 text-muted hover:bg-surface-2 hover:text-foreground"
                 aria-label={t('common.close')}
               >
                 <X size={14} />
-              </button>
+              </Button>
             </div>
           </div>
 

@@ -188,6 +188,14 @@ Source-of-truth rule:
 - build command: `npm run build` from `ui/`
 - built assets land in `ui/dist/` and are served by `vibe/ui_server.py`
 
+Reuse design-system primitives — do not re-roll:
+
+- buttons must use `Button` from `ui/src/components/ui/button.tsx`; pick a `variant` + `size` rather than hand-rolling `<button>` with custom Tailwind classes. Icon-only triggers use `variant="ghost" size="icon"` (with a `className` size override when the surrounding row is tight).
+- status pills must use `Badge` (or `badgeVariants()` applied to a `<button>` when the pill needs to be clickable) from `ui/src/components/ui/badge.tsx`; pick a semantic variant (`success` / `warning` / `info` / `destructive` / `secondary`) instead of redefining border/bg/text colors.
+- the same rule applies to every other primitive under `ui/src/components/ui/` (`Card`, `Input`, `Label`, `Popover`, `Dialog`, `Combobox`, `Separator`, ...): if a primitive already exists, extend it via `variant`, `size`, or `className` overrides — do not duplicate it inline.
+- if no existing primitive fits, add a new variant (or a new primitive in `ui/src/components/ui/`) so the next caller can reuse it. Prefer adjusting the design-system layer over re-implementing the visual locally in a feature component.
+- the source of truth for visual tokens (colors, radii, spacing, variant names) is `design.pen` — extend primitives to match its variant names so design ↔ code stay aligned.
+
 Important packaging caveat:
 
 - the installed `vibe` command uses packaged UI assets, not raw `ui/dist/` from the repo by default
