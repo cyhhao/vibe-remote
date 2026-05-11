@@ -202,13 +202,38 @@ Ask your agent to schedule work for later, repeat a prompt on a cron, or queue a
 
 ---
 
+## 📡 Your Machine, In Your Pocket — Powered by avibe.bot
+
+Your Vibe Remote runs on your machine. You don't sit in front of it 24/7.
+
+You're on a plane. At a café. Holding someone else's borrowed laptop. The bot just pinged you that a job needs attention — and the control panel is back home.
+
+```bash
+vibe remote
+```
+
+One command. Your local Web UI becomes reachable from any browser on Earth — through a secure avibe.bot tunnel.
+
+- 🌍 **Your own `you-app.avibe.bot`** — 30-second sign-in, your slug for life
+- 🔒 **Fail-closed at every join** — Auth, routing, host checks default to "deny"
+- 📱 **Mobile-aware UI** — Thumb-friendly layout, designed for borrowed screens
+- ⏱ **24-hour sessions** — Cookie auto-renews mid-session, no sudden logouts
+
+No VPN. No port forwarding. No "wait what's my IP again." No public webhooks pointed at your laptop. **Your data plane stays on your machine**; avibe.bot is just the control-plane handshake.
+
+> Your agents work on your machine. You command them from your pocket.
+
+→ [Set it up in 60 seconds](docs/CLI.md)
+
+---
+
 ## How It Works
 
 ```
 ┌──────────────┐             ┌──────────────┐             ┌──────────────┐
 │     You      │   Slack     │              │   stdio     │  Claude Code │
 │  (anywhere)  │   Discord   │ Vibe Remote  │ ──────────▶ │  OpenCode    │
-│              │   Telegram  │  (your Mac)  │ ◀────────── │  Codex       │
+│              │   Telegram  │ (your host)  │ ◀────────── │  Codex       │
 │              │   WeChat    │              │             │              │
 │              │   Lark      │              │             │              │
 └──────────────┘             └──────────────┘             └──────────────┘
@@ -368,18 +393,6 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 - **[Telegram Setup Guide](docs/TELEGRAM_SETUP.md)** — BotFather setup, token validation, and chat discovery
 - **WeChat Setup Guide** — Follow the in-app wizard (`vibe` → choose WeChat)
 - **Lark Setup Guide** — Follow the in-app wizard (`vibe` → choose Lark)
-
-## Remote Web UI Access
-
-If you want to open the local Web UI from another device, or you run Vibe Remote on a remote server, use the guided remote-access setup:
-
-```bash
-vibe remote
-```
-
-It guides you through avibe.bot sign-in, personal domain setup, pairing, and starting the secure tunnel.
-
-See: **[CLI Reference](docs/CLI.md)**.
 
 ---
 
