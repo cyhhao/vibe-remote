@@ -934,7 +934,7 @@ Service lifecycle:
 Updates:
 
 - `vibe check-update` — query the release feed and print whether an upgrade is available
-- `vibe upgrade` — reinstall Vibe Remote to the latest release (followed by a restart)
+- `vibe upgrade` — reinstall Vibe Remote to the latest release. The CLI does not restart the service for you; it prints "Please restart vibe..." and exits. Run `vibe restart` (or `vibe restart --delay-seconds 60` from inside an active conversation) yourself after the upgrade reports success. The Web UI's `POST /upgrade` endpoint is the path that performs an automatic restart.
 
 Remote access:
 
@@ -981,7 +981,7 @@ Common cases:
 - platform cannot reach API: inspect `proxy_url` on that platform's config block; check logs for proxy/TLS errors; for SOCKS proxies confirm `aiohttp_socks` is installed
 - remote URL is unreachable: `GET /remote-access/status` should show `tunnel_running: true`; if not, check `remote-access-cloudflared.pid`, `cloudflared_path`, and the latest doctor result
 - remote session expired: instruct the user to re-sign in at the public URL (24h TTL with sliding renewal); use `POST /auth/logout` to clear a stale session on the current device
-- upgrade did not apply: inspect the response from `POST /upgrade` and follow up with `vibe status`; a restart is part of the upgrade flow
+- upgrade did not apply: inspect the response from `POST /upgrade` (auto-restart on success) or `vibe upgrade` (does not auto-restart — run `vibe restart` manually), then verify with `vibe status` that the new PID is running
 - startup failure: use `GET /status`, `POST /doctor`, then inspect logs
 
 Do not use `vibe restart`, `POST /control {"action":"restart"}`, or `POST /ui/reload` as a first response to config problems.
@@ -1005,7 +1005,7 @@ Recovery rules:
 5. Start or restart only when needed to bring the API back.
 6. After recovery, return to the API workflow for further changes.
 
-`vibe.sqlite` is never a fallback target. Never open it with sqlite3 or any inspection tool. If the database itself is the problem, stop Vibe Remote, move the file aside under `~/.vibe_remote/state/`, and let Vibe Remote rebuild from `backups/` on next start. Escalate to the repo if the rebuild fails.
+`vibe.sqlite` is never a fallback target. Never open it with sqlite3 or any inspection tool, and do not move the file aside in the hope of triggering a rebuild — `~/.vibe_remote/state/backups/` only holds JSON snapshots captured at the original migration, and a fresh startup will re-import from the current live JSON files, which may be stale relative to recent runtime state. If the database itself is the problem, stop Vibe Remote, preserve `vibe.sqlite` and the JSON state files as-is, and escalate to the repo.
 
 ## Safety Boundaries
 
