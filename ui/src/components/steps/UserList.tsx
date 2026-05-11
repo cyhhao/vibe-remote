@@ -210,24 +210,28 @@ const BindCodeCard: React.FC<BindCodeCardProps> = ({ refreshTrigger, onCodesChan
           )}
           <div className="flex flex-wrap items-center gap-2">
             {moreCount > 0 || otherCodes.length > 0 ? (
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="xs"
                 onClick={() => setShowAllModal(true)}
-                className="rounded-md border border-border bg-foreground/[0.04] px-3.5 py-2 text-[12px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+                className="text-muted hover:text-foreground"
               >
                 {moreCount > 0
                   ? t('bindCode.viewMore', { count: moreCount })
                   : t('bindCode.viewUnavailable', { count: otherCodes.length })}
-              </button>
+              </Button>
             ) : null}
             {primary && (
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="xs"
                 onClick={() => handleDelete(primary.code)}
-                className="rounded-md border border-border bg-foreground/[0.04] px-3.5 py-2 text-[12px] font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger"
+                className="text-muted hover:border-danger/40 hover:text-danger"
               >
                 {t('bindCode.revoke')}
-              </button>
+              </Button>
             )}
             <Button type="button" variant="brand" size="xs" onClick={() => setShowFormModal(true)}>
               <Plus size={14} strokeWidth={2.4} />
@@ -664,14 +668,16 @@ export const UserList: React.FC = () => {
               placeholder={t('userList.filterPlaceholder')}
               className="w-[280px]"
             />
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={() => setRefreshTrigger((v) => v + 1)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong"
               title={t('common.refresh', { defaultValue: 'Refresh' })}
+              className="px-3"
             >
               <RefreshCw size={14} />
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -849,15 +855,17 @@ export const UserList: React.FC = () => {
                       codexAgents={codexAgents}
                       codexModels={codexModels}
                       footerActions={
-                        <button
+                        <Button
                           type="button"
+                          variant="secondary"
+                          size="xs"
                           onClick={() => handleRemoveUser(u.platform, u.userId)}
                           title={t('userList.removeUser')}
-                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-foreground/[0.04] px-3 py-1.5 text-[12px] font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger"
+                          className="text-muted hover:border-danger/40 hover:text-danger"
                         >
                           <Trash2 size={12} />
                           {t('userList.removeUser')}
-                        </button>
+                        </Button>
                       }
                     />
                   )}

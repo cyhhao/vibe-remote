@@ -783,14 +783,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               <p className="text-[12px] text-muted">{t('wechat.noChannels')}</p>
             </div>
             <div className="flex items-center justify-between border-t border-border pt-4">
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="default"
                 onClick={onBack}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+                className="font-semibold"
               >
                 <ArrowLeft size={14} strokeWidth={2.25} />
                 {t('common.back')}
-              </button>
+              </Button>
               <Button
                 type="button"
                 variant="brand"
@@ -820,13 +822,15 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             <MessageSquare size={32} />
           </div>
           <p className="text-muted mb-6">{t('wechat.noChannels')}</p>
-          <button
+          <Button
+            type="button"
+            variant="brand"
+            size="default"
             onClick={() => navigate('/users')}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-accent hover:bg-accent/90 text-white rounded-lg font-medium transition-colors shadow-sm"
           >
             <Users size={18} />
             {t('wechat.manageUserSettings')}
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -906,15 +910,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 placeholder={t('channelList.filterPlaceholder')}
                 className="w-[240px]"
               />
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="sm"
                 onClick={handleRescan}
                 disabled={isRescanLoading}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong disabled:opacity-50"
               >
                 <RefreshCw size={14} className={isRescanLoading ? 'animate-spin' : ''} />
                 {t('channelList.rescan')}
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -1042,15 +1047,17 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           {pageTab !== 'all' && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-0.5">
               {!['lark', 'telegram'].includes(pageTab) && (
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
+                  size="xs"
                   onClick={() => loadChannels(true)}
                   disabled={loadingAll}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:border-cyan/40 disabled:opacity-50"
+                  className="hover:border-cyan/40"
                 >
                   <Globe size={13} className={loadingAll ? 'animate-spin' : ''} />
                   {loadingAll ? t('common.loading') : t('channelList.browseAll')}
-                </button>
+                </Button>
               )}
               {browseAll && pageTab === platform && (
                 <span className="text-[11px] text-muted">{t('channelList.showingAll')}</span>
@@ -1367,21 +1374,27 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       <div className="mb-4 space-y-3 rounded-2xl border border-border bg-surface-2/40 p-4 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.8)]">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <button
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
               onClick={() => loadChannels(browseAll)}
-              className="flex items-center gap-2 rounded-lg border border-border bg-surface-3/60 px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:border-cyan/40 hover:bg-surface-2/70"
+              className="hover:border-cyan/40"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('channelList.refreshList')}
-            </button>
+            </Button>
             {!browseAll && !['lark', 'telegram'].includes(platform) && (
-              <button
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
                 onClick={() => loadChannels(true)}
                 disabled={loadingAll}
-                className="flex items-center gap-2 rounded-lg border border-border bg-surface-3/60 px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:border-cyan/40 hover:bg-surface-2/70 disabled:opacity-50"
+                className="hover:border-cyan/40"
               >
                 <Globe size={14} className={loadingAll ? 'animate-spin' : ''} />
                 {loadingAll ? t('common.loading') : t('channelList.browseAll')}
-              </button>
+              </Button>
             )}
             {browseAll && (
               <span className="text-xs text-muted">{t('channelList.showingAll')}</span>
@@ -1602,14 +1615,16 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
       {!isPage && (
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="default"
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+            className="font-semibold"
           >
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
-          </button>
+          </Button>
           <Button
             type="button"
             variant="brand"

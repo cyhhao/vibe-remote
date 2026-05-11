@@ -344,15 +344,17 @@ export const Summary: React.FC<SummaryProps> = ({ data, onBack }) => {
         )}
 
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="default"
             onClick={onBack}
             disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong disabled:opacity-50"
+            className="font-semibold"
           >
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
-          </button>
+          </Button>
           <Button type="button" variant="brand" size="lg" onClick={saveAll} disabled={saving}>
             {saving ? t('common.saving') : t('summary.finishAndStart')}
             {!saving && <ArrowRight size={16} strokeWidth={2.25} />}

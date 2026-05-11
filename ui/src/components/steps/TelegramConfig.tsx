@@ -174,13 +174,15 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
                     <ExternalLink size={14} strokeWidth={2.25} />
                     {t('telegramConfig.openBotFather')}
                   </Button>
-                  <button
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
                     onClick={() => copyCommand('/newbot')}
-                    className="inline-flex items-center gap-2 rounded-lg border border-border bg-foreground/[0.04] px-3 py-2 text-[12px] font-medium text-foreground transition hover:border-border-strong"
                   >
                     {copiedCommand === '/newbot' ? <Check size={14} className="text-mint" /> : <Copy size={14} />}
                     {copiedCommand === '/newbot' ? t('telegramConfig.copiedCommand') : t('telegramConfig.copyNewBotCommand')}
-                  </button>
+                  </Button>
                 </div>
                 <div className="rounded-lg border border-cyan/30 bg-cyan/[0.06] px-3 py-2 text-[12px] leading-[1.55] text-cyan">
                   <strong>{t('slackConfig.tip')}:</strong> {t('telegramConfig.step1Tip')}
@@ -431,14 +433,16 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({ data, onNext, on
         <div className="flex flex-col gap-3">{stepShells}</div>
 
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="default"
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-foreground/[0.04] px-4 py-2 text-[13px] font-semibold text-foreground transition hover:border-border-strong"
+            className="font-semibold"
           >
             <ArrowLeft size={14} strokeWidth={2.25} />
             {t('common.back')}
-          </button>
+          </Button>
           <Button
             type="button"
             variant="brand"

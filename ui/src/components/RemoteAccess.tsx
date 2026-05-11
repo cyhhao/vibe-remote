@@ -4,6 +4,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import { useApi } from '../context/ApiContext';
 import { useToast } from '../context/ToastContext';
 import { CompactField } from './settings/SettingsPrimitives';
+import { Button } from './ui/button';
 
 const VIBE_CLOUD_URL = 'https://avibe.bot';
 
@@ -146,14 +147,16 @@ export const RemoteAccess: React.FC = () => {
             <li>{t('remoteAccess.flowStep3')}</li>
           </ol>
         </div>
-        <button
-          className="inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-border bg-surface-3 px-3 text-[12px] text-foreground transition hover:border-border-strong"
+        <Button
+          variant="secondary"
+          size="xs"
+          className="shrink-0"
           onClick={refresh}
           type="button"
         >
           <RefreshCcw className="size-3.5" />
           {t('common.refresh')}
-        </button>
+        </Button>
       </div>
 
       <div className="grid border-b border-border md:grid-cols-3">
@@ -187,26 +190,29 @@ export const RemoteAccess: React.FC = () => {
             <span className="block text-[10px] text-muted">{t('remoteAccess.pairingKeyHelp')}</span>
           </label>
           <div className="flex gap-2">
-            <button
+            <Button
               type="button"
-              className="inline-flex h-8 items-center gap-2 rounded-md bg-primary px-3 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
+              variant="default"
+              size="xs"
+              className="font-semibold"
               disabled={pairing || !pairingKey.trim()}
               onClick={pair}
             >
               <Link2 className="size-3.5" />
               {pairing ? t('remoteAccess.pairing') : t('remoteAccess.pair')}
-            </button>
+            </Button>
             {paired && (
-              <button
+              <Button
                 type="button"
-                className="h-8 rounded-md border border-border px-3 text-[12px] text-foreground"
+                variant="secondary"
+                size="xs"
                 onClick={() => {
                   setReconfiguring(false);
                   setPairingKey('');
                 }}
               >
                 {t('common.cancel')}
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -231,19 +237,32 @@ export const RemoteAccess: React.FC = () => {
             )}
           </div>
           <div className="flex gap-2">
-            <button
+            <Button
               type="button"
-              className="h-8 rounded-md border border-border px-3 text-[12px] text-foreground"
+              variant="secondary"
+              size="xs"
               onClick={() => setReconfiguring(true)}
             >
               {t('remoteAccess.repair')}
-            </button>
-            <button className="h-8 rounded-md border border-border px-3 text-[12px] text-foreground disabled:opacity-50" disabled={!paired || running} onClick={start} type="button">
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="xs"
+              disabled={!paired || running}
+              onClick={start}
+            >
               {t('common.start')}
-            </button>
-            <button className="h-8 rounded-md border border-border px-3 text-[12px] text-foreground disabled:opacity-50" disabled={!paired || !running} onClick={stop} type="button">
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="xs"
+              disabled={!paired || !running}
+              onClick={stop}
+            >
               {t('common.stop')}
-            </button>
+            </Button>
           </div>
         </div>
       )}
