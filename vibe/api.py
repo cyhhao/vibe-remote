@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -1753,9 +1754,16 @@ def _codex_processes(resolved_binary: str | None) -> list[int]:
     except ImportError:  # pragma: no cover - psutil is a hard dep elsewhere
         return []
 
+    # ``uids`` is a POSIX-only psutil attribute; requesting it on Windows
+    # makes ``process_iter`` raise ``ValueError: invalid attr name 'uids'``
+    # and the entire probe blows up. Gate it on ``getuid`` availability,
+    # which is the same signal we use to decide whether to filter at all.
     current_uid = os.getuid() if hasattr(os, "getuid") else None
+    attrs = ["pid", "name", "cmdline"]
+    if current_uid is not None:
+        attrs.append("uids")
     pids: list[int] = []
-    for proc in psutil.process_iter(attrs=["pid", "name", "cmdline", "uids"]):
+    for proc in psutil.process_iter(attrs=attrs):
         try:
             info = proc.info
             cmdline = info.get("cmdline") or []
@@ -1878,15 +1886,22 @@ def _request_controller_restart(backend: str, timeout: float = 4.0) -> tuple[boo
     direct process kill when the controller is unreachable (e.g. running
     detached, not yet started).
 
+    Each request gets its own marker filename (``restart-<backend>.<reqid>.cmd``)
+    so we can correlate failures back to *this* request. Without the reqid,
+    a stale ``.err`` from a prior request that timed out caller-side — or an
+    overlapping concurrent restart — could be mistaken for *our* failure and
+    surface a phantom error toast.
+
     Returns ``(handled, error)`` — see ``_wait_for_controller_ack`` for the
     contract. ``handled=True`` does *not* imply success; check ``error`` too
     so the UI toast doesn't claim a restart when the controller's refresh
     actually raised.
     """
-    marker = _runtime_command_dir() / f"restart-{backend}.cmd"
+    reqid = uuid.uuid4().hex[:8]
+    marker = _runtime_command_dir() / f"restart-{backend}.{reqid}.cmd"
     try:
         marker.write_text(
-            json.dumps({"backend": backend, "ts": time.time()}),
+            json.dumps({"backend": backend, "ts": time.time(), "reqid": reqid}),
             encoding="utf-8",
         )
     except OSError as exc:
@@ -1895,10 +1910,15 @@ def _request_controller_restart(backend: str, timeout: float = 4.0) -> tuple[boo
     handled, error = _wait_for_controller_ack(marker, timeout)
     if handled:
         return True, error
-    # Marker still present — controller didn't pick it up. Clean up before
-    # falling back so we don't leave a stale request lying around.
+    # Marker still present — controller didn't pick it up. Clean up the
+    # request marker *and* any stray ``.err`` so the next attempt starts
+    # from a clean slate.
     try:
         marker.unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        marker.with_name(marker.name + ".err").unlink(missing_ok=True)
     except OSError:
         pass
     return False, None

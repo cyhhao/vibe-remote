@@ -93,3 +93,53 @@ def test_requires_app_server_token(tmp_path: Path) -> None:
     _, codex_path = _make_paths(tmp_path)
     cmdline = [codex_path, "login", "--browser"]
     assert api._process_matches_codex_binary(cmdline, codex_path) is False
+
+
+def test_codex_processes_skips_uids_attr_on_windows(monkeypatch, tmp_path: Path) -> None:
+    """``psutil.process_iter`` rejects ``uids`` on Windows; gate the request.
+
+    Regression for the Codex review P1: ``_codex_processes`` previously
+    asked for ``['pid', 'name', 'cmdline', 'uids']`` unconditionally, and
+    on Windows ``process_iter`` raises ``ValueError: invalid attr name
+    'uids'`` — making the entire backend runtime probe crash with 500.
+    """
+    import sys
+    import types
+
+    # Pretend we're on a platform without ``os.getuid`` (i.e. Windows).
+    if hasattr(os, "getuid"):
+        monkeypatch.delattr(os, "getuid")
+
+    seen_attrs: list[list[str]] = []
+    fake_psutil = types.SimpleNamespace(
+        NoSuchProcess=Exception,
+        AccessDenied=Exception,
+        process_iter=lambda attrs: seen_attrs.append(list(attrs)) or iter(()),
+    )
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
+
+    api._codex_processes(None)
+    assert seen_attrs, "process_iter should have been called once"
+    assert "uids" not in seen_attrs[0]
+    assert seen_attrs[0] == ["pid", "name", "cmdline"]
+
+
+def test_codex_processes_requests_uids_on_posix(monkeypatch) -> None:
+    """On POSIX, ``uids`` is still requested so we can filter by current user."""
+    import sys
+    import types
+
+    if not hasattr(os, "getuid"):
+        # Test only meaningful on POSIX; skip on Windows hosts.
+        return
+    seen_attrs: list[list[str]] = []
+    fake_psutil = types.SimpleNamespace(
+        NoSuchProcess=Exception,
+        AccessDenied=Exception,
+        process_iter=lambda attrs: seen_attrs.append(list(attrs)) or iter(()),
+    )
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
+
+    api._codex_processes(None)
+    assert seen_attrs
+    assert "uids" in seen_attrs[0]

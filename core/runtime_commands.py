@@ -29,7 +29,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_BACKENDS = {"opencode", "codex"}
-_MARKER_PATTERN = re.compile(r"^restart-(?P<backend>[a-z][a-z0-9_-]*)\.cmd$")
+# The optional ``.<reqid>`` suffix lets each restart get its own marker
+# (and ``.err`` companion). The UI server's ``_request_controller_restart``
+# always sends a reqid; we still accept the bare ``restart-<backend>.cmd``
+# form so any leftover marker from an older client doesn't get ignored.
+_MARKER_PATTERN = re.compile(
+    r"^restart-(?P<backend>[a-z][a-z0-9_-]*)(?:\.(?P<reqid>[A-Za-z0-9_-]+))?\.cmd$"
+)
 _POLL_INTERVAL_SECONDS = 0.5
 
 
