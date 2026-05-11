@@ -467,12 +467,49 @@ def _is_trusted_docker_loopback_probe() -> bool:
     return _is_trusted_docker_peer()
 
 
+def _is_wildcard_setup_host(setup_host: str) -> bool:
+    return setup_host in {"0.0.0.0", "::", "*"}
+
+
+def _is_wildcard_setup_host_request(config: V2Config | None) -> bool:
+    """Treat wildcard binds as local only through an actual private interface.
+
+    ``0.0.0.0``/``::`` is a listen address, not a trusted browser host. For
+    compatibility with LAN direct access, accept requests to a concrete local
+    private interface IP while keeping arbitrary private Host spoofing and
+    public-IP exposure behind the normal remote-access checks.
+    """
+    if config is None:
+        return False
+    setup_host = _normalized_host(getattr(config.ui, "setup_host", ""))
+    if not _is_wildcard_setup_host(setup_host):
+        return False
+
+    try:
+        host_address = ipaddress.ip_address(_normalized_host(request.host))
+    except ValueError:
+        return False
+    if host_address.is_unspecified:
+        return False
+    if not _is_private_address(host_address):
+        return False
+    if _local_interface_network(host_address) is None:
+        return False
+    if _has_forwarded_metadata():
+        return False
+    if not _is_private_peer():
+        return False
+    return _peer_shares_setup_host_network(host_address)
+
+
 def _is_setup_host_request(config: V2Config | None) -> bool:
     if config is None:
         return False
     setup_host = _normalized_host(getattr(config.ui, "setup_host", ""))
-    if not setup_host or setup_host in {"0.0.0.0", "::", "*"}:
+    if not setup_host:
         return False
+    if _is_wildcard_setup_host(setup_host):
+        return _is_wildcard_setup_host_request(config)
     if _is_loopback_host(setup_host):
         return False
     # Only trust setup-host requests when setup_host parses to a private/CGNAT
