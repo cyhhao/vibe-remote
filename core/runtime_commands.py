@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
@@ -36,6 +37,12 @@ _SUPPORTED_BACKENDS = {"opencode", "codex"}
 _MARKER_PATTERN = re.compile(
     r"^restart-(?P<backend>[a-z][a-z0-9_-]*)(?:\.(?P<reqid>[A-Za-z0-9_-]+))?\.cmd$"
 )
+_ERR_SUFFIX = ".cmd.err"
+# .err companions older than this are assumed orphaned (the requester never
+# polled — e.g. the UI server was restarted mid-flight) and may be cleaned
+# up. The window is generous because ``_wait_for_controller_ack`` waits up
+# to ~4s; anything older than five minutes is safely past every caller.
+_ERR_STALE_AGE_SECONDS = 300.0
 _POLL_INTERVAL_SECONDS = 0.5
 
 
@@ -99,6 +106,14 @@ class RuntimeCommandWatcher:
         for marker in entries:
             if not marker.is_file():
                 continue
+            # ``.cmd.err`` companions are status output for the requester;
+            # leaving them in place is required so ``_wait_for_controller_ack``
+            # can read them before the next sweep. Only drop ones that are
+            # demonstrably orphaned so the directory does not grow without
+            # bound when a requester crashes mid-flight.
+            if marker.name.endswith(_ERR_SUFFIX):
+                self._maybe_evict_stale_err(marker)
+                continue
             match = _MARKER_PATTERN.match(marker.name)
             if not match:
                 logger.debug("Ignoring unknown runtime command marker: %s", marker.name)
@@ -110,6 +125,28 @@ class RuntimeCommandWatcher:
                 marker.unlink(missing_ok=True)
                 continue
             await self._handle_restart(backend, marker)
+
+    @staticmethod
+    def _maybe_evict_stale_err(err_marker: Path) -> None:
+        """Delete a ``.err`` companion only if it is clearly orphaned.
+
+        The requester reads ``.err`` files at most a few seconds after the
+        controller writes them; anything older is past every caller's
+        polling window and can be reclaimed. We deliberately do *not*
+        delete fresh ones — that would race against
+        ``_wait_for_controller_ack`` and silently demote a real failure to
+        a "restart succeeded" toast.
+        """
+        try:
+            age = time.time() - err_marker.stat().st_mtime
+        except OSError:
+            return
+        if age < _ERR_STALE_AGE_SECONDS:
+            return
+        try:
+            err_marker.unlink(missing_ok=True)
+        except OSError as exc:  # pragma: no cover - best-effort cleanup
+            logger.debug("Could not evict stale err marker %s: %s", err_marker, exc)
 
     async def _handle_restart(self, backend: str, marker: Path) -> None:
         logger.info("Runtime command: refresh backend=%s", backend)
