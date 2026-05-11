@@ -960,7 +960,7 @@ Watches:
 
 - `vibe watch add`, `vibe watch list [--brief]`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, `vibe watch remove <id>`
 
-For any subcommand, prefer `<command> --help` before composing a new invocation. The delivery flags shared by all three commands are `--session-key`, `--post-to`, `--deliver-key`, and `--name`. The remaining surface differs: `vibe task add` and `vibe hook send` take `--prompt` / `--prompt-file`, only `vibe task add` takes `--cron` / `--at` / `--timezone`, and `vibe watch add` takes its own set (`--prefix`, `--shell` or a positional command after `--`, `--cwd`, `--timeout`, `--forever`, `--lifetime-timeout`, `--retry-exit-code`, `--retry-delay`). Do not copy task or hook flags into a watch invocation.
+For any subcommand, prefer `<command> --help` before composing a new invocation. The delivery flags shared by all three commands are `--session-key`, `--post-to`, and `--deliver-key`. The remaining surface differs: `vibe task add` and `vibe hook send` take `--prompt` / `--prompt-file`; `vibe task add` and `vibe watch add` take `--name`; only `vibe task add` takes `--cron` / `--at` / `--timezone`; and `vibe watch add` takes its own set (`--prefix`, `--shell` or a positional command after `--`, `--cwd`, `--timeout`, `--forever`, `--lifetime-timeout`, `--retry-exit-code`, `--retry-delay`). Do not copy task or hook flags into a watch invocation, and do not pass `--name` to `vibe hook send`.
 
 ## Troubleshooting
 
