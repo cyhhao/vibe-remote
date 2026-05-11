@@ -37,7 +37,7 @@ Follow this skill as an operations playbook for agents, not as end-user marketin
 6. For `POST /settings`, preserve every existing channel for that platform; the endpoint replaces the platform's channel map.
 7. For `POST /api/users`, merge each edited user with its current user payload first; missing user fields are not a patch.
 8. The persistent state store is `~/.vibe_remote/state/vibe.sqlite`. Do not hand-edit it. Use the API for settings, users, sessions, and discovered chats.
-9. `POST /config` for a platform credential block will trigger an automatic service restart inside Vibe Remote so the new credentials can take effect. Tell the user before saving, and prefer the delayed CLI form (`vibe restart --delay-seconds 60`) when an explicit restart is still needed from inside an active conversation.
+9. `POST /config` persists the new payload but does not restart running platform adapters by itself. When the change is platform credentials, `proxy_url`, or other transport-level settings, plan an explicit restart afterwards; prefer the delayed CLI form (`vibe restart --delay-seconds 60`) when triggering it from inside an active conversation. The only credential save that restarts on its own is the WeChat QR-login completion through `POST /wechat/qr_login/poll`.
 10. Do not restart the service by default. Use `POST /doctor`, `GET /status`, and read-back checks first.
 11. Only start, stop, restart, or reload Vibe Remote when the user explicitly asks or when a change cannot take effect otherwise; explain why before doing it.
 12. If an agent must restart Vibe Remote from an active conversation, use `vibe restart --delay-seconds 60` so the current session can receive the reply before the restart lands.
@@ -206,7 +206,7 @@ Only use direct file editing as a recovery fallback when the Web UI API is unava
 - `POST /config`
   - accepts a partial object, deep-merges it with current config, validates it through `V2Config.from_payload`, then persists it
   - use for platform credentials, enabled platforms, primary platform, runtime defaults, agent defaults, UI config, remote-access provider settings, update policy, and global toggles
-  - saving a platform credential block schedules an automatic restart so the new credentials take effect
+  - the handler only persists and (for `remote_access`) reconciles the cloudflared tunnel; running platform adapters keep using their previous credentials and transport until a restart. Plan a `vibe restart --delay-seconds 60` after any credential, `proxy_url`, or transport-level change.
 
 Important config payload shape:
 
@@ -719,7 +719,7 @@ Notes:
 
 - `proxy_url` accepts `http://`, `https://`, `socks5://`, and `socks5h://` schemes; the SOCKS variants require `aiohttp_socks` (bundled).
 - Set the field to `null` (or omit it on a fresh save) to disable the proxy.
-- Saving a platform credential block schedules an automatic restart so the proxy can apply to live connections.
+- `POST /config` only persists the new value; running platform adapters keep their old transport until the service restarts. After saving, run `vibe restart --delay-seconds 60` (or `POST /control {"action":"restart"}` with the user's confirmation) so the proxy applies to live connections.
 - Do not paste credentialed proxy URLs (`user:pass@host`) into logs or chat replies; mask the credentials portion when reporting back.
 
 ### Pair Vibe Cloud remote access
@@ -774,7 +774,7 @@ Preferred CLI shape:
 - one-off task: `vibe task add --session-key '<key>' --at '<ISO-8601>' --prompt '...'`
 - immediate rerun: `vibe task run <id>`
 - one-shot async hook: `vibe hook send --session-key '<key>' --prompt '...'`
-- managed background watch: `vibe watch add --session-key '<key>' --command '<cmd>' --prefix '...'`
+- managed background watch: `vibe watch add --session-key '<key>' --prefix '...' -- <cmd>` (or `--shell '<cmd>'` to pass a single shell string)
 
 Delivery controls (apply to `vibe task add`, `vibe hook send`, and `vibe watch add`):
 
@@ -798,7 +798,7 @@ Session key format:
 Operational guidance:
 
 - use `vibe task list` before editing or deleting an existing task; use `vibe watch list` before touching a managed watch
-- if this is the first time using `vibe task add`, `vibe hook send`, or `vibe watch add`, read the matching `--help` output first — watches accept additional flags like `--command`, `--cwd`, `--timeout-seconds`, and `--max-cycles`
+- if this is the first time using `vibe task add`, `vibe hook send`, or `vibe watch add`, read the matching `--help` output first — watches accept additional flags like `--shell`, `--timeout` (per-cycle), `--lifetime-timeout` (overall), `--forever`, `--retry-exit-code`, and `--retry-delay`
 - use `vibe task update <id>` to keep the same task ID while changing name, schedule, prompt, or target
 - watches do not have an `update` subcommand; remove and re-add when you must change the waiter
 - use `vibe task list --brief` and `vibe watch list --brief` for scheduling-focused summaries

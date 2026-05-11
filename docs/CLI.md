@@ -183,8 +183,14 @@ stdout and delivers it through the chosen session as a follow-up message.
 ```bash
 vibe watch add \
   --session-key 'slack::channel::C123' \
-  --command './scripts/run_tests.sh' \
-  --prefix 'Test run finished. Summarize the failures and propose next steps.'
+  --prefix 'Test run finished. Summarize the failures and propose next steps.' \
+  -- ./scripts/run_tests.sh
+
+# Alternative: pass the command through a shell with --shell
+vibe watch add \
+  --session-key 'slack::channel::C123' \
+  --prefix 'Build done. Summarize.' \
+  --shell 'make build && ./scripts/post_build.sh'
 
 vibe watch list --brief
 vibe watch show <watch-id>
@@ -193,12 +199,14 @@ vibe watch resume <watch-id>
 vibe watch remove <watch-id>
 ```
 
-Use `vibe watch add --help` for the full surface, including `--cwd`,
-`--timeout-seconds`, `--max-cycles`, `--post-to channel`, `--deliver-key`, and
-`--name`. Watches share `--session-key`, `--post-to`, and `--deliver-key`
-semantics with `vibe task` and `vibe hook send`. Prefer `vibe watch` over
-ad-hoc `nohup` jobs when the user wants a managed background task with a
-guaranteed follow-up message.
+The waiter command is passed positionally after `--` (or as a single shell
+string via `--shell`). Use `vibe watch add --help` for the full surface,
+including `--timeout` (per-cycle timeout in seconds), `--lifetime-timeout`
+(total wall-clock limit), `--forever`, `--retry-exit-code`, `--retry-delay`,
+`--post-to channel`, `--deliver-key`, and `--name`. Watches share
+`--session-key`, `--post-to`, and `--deliver-key` semantics with `vibe task`
+and `vibe hook send`. Prefer `vibe watch` over ad-hoc `nohup` jobs when the
+user wants a managed background task with a guaranteed follow-up message.
 
 ### `vibe version`
 
