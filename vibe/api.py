@@ -2105,6 +2105,14 @@ def get_codex_auth() -> dict:
         "api_key_length": int(disk_state.get("api_key_length") or 0),
         "base_url": disk_state.get("base_url"),
         "has_chatgpt_tokens": bool(disk_state.get("has_chatgpt_tokens")),
+        # Forward the live Codex credentials-store status so the UI can
+        # warn when the user is about to switch storage backends
+        # (Codex's documented default is ``auto`` → keyring-preferred).
+        # Dropping these here was the bug: the React page would treat
+        # ``file_store_active`` as undefined and surface a keyring
+        # warning even when the store is already ``file``.
+        "credentials_store": disk_state.get("credentials_store") or "auto",
+        "file_store_active": bool(disk_state.get("file_store_active")),
     }
 
 
@@ -2141,25 +2149,27 @@ def save_codex_auth(payload: dict) -> dict:
 
     if auth_mode == "api_key" and not api_key:
         # Allow callers to PATCH base_url alone by reusing the stored key.
-        # Try V2Config first (typical case after a save via this endpoint),
-        # then fall back to ``~/.codex/auth.json`` for keys written outside
-        # our flow (e.g. ``codex login --with-api-key`` or pre-Settings
-        # installs); the live Codex process reads from there too, so a
-        # base-URL-only update must succeed if either source has the key.
-        with CONFIG_LOCK:
-            try:
-                existing = load_config()
-                stored = getattr(getattr(existing, "agents", None), "codex", None)
-                api_key = getattr(stored, "api_key", None) or None
-            except Exception:
-                api_key = None
-        if not api_key:
-            try:
-                from vibe.codex_config import read_codex_api_key
+        # ``auth.json`` is the live source Codex reads at launch, and it
+        # captures keys rotated outside this flow (e.g. ``codex login
+        # --with-api-key``). The V2Config cache can be stale relative to
+        # disk, so trusting it first would silently revert a freshly
+        # rotated key when we re-write ``auth.json`` below. Prefer disk;
+        # fall back to V2Config only if disk has nothing (legacy installs
+        # that never wrote ``auth.json``).
+        try:
+            from vibe.codex_config import read_codex_api_key
 
-                api_key = read_codex_api_key()
-            except Exception:
-                api_key = None
+            api_key = read_codex_api_key()
+        except Exception:
+            api_key = None
+        if not api_key:
+            with CONFIG_LOCK:
+                try:
+                    existing = load_config()
+                    stored = getattr(getattr(existing, "agents", None), "codex", None)
+                    api_key = getattr(stored, "api_key", None) or None
+                except Exception:
+                    api_key = None
         if not api_key:
             return {"ok": False, "message": "api_key is required when auth_mode='api_key'"}
 
