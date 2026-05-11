@@ -5,6 +5,8 @@ import { Download, X, RefreshCw, Check, AlertCircle } from 'lucide-react';
 import clsx from 'clsx';
 import { ToggleSwitch } from './settings/SettingsPrimitives';
 import { Button } from './ui/button';
+import { badgeVariants } from './ui/badge';
+import { cn } from '@/lib/utils';
 
 export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = false }) => {
   const { t } = useTranslation();
@@ -99,12 +101,11 @@ export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = 
     <div className="relative" ref={popupRef}>
       {/* Version Badge trigger */}
       <button
+        type="button"
         onClick={() => setIsPopupOpen(!isPopupOpen)}
-        className={clsx(
-          'relative cursor-pointer rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
-          hasUpdate
-            ? 'border-gold/30 bg-gold/15 text-gold hover:bg-gold/20'
-            : 'border-border bg-surface-2/60 text-muted hover:bg-surface-2'
+        className={cn(
+          badgeVariants({ variant: hasUpdate ? 'warning' : 'secondary' }),
+          'relative cursor-pointer rounded-md font-medium tracking-normal hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         )}
       >
         v{currentVersion}
@@ -131,21 +132,26 @@ export const VersionBadge: React.FC<{ openUpward?: boolean }> = ({ openUpward = 
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <span className="text-sm font-medium text-foreground">{t('dashboard.versionAndUpdate')}</span>
             <div className="flex items-center gap-1">
-              <button
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted hover:text-foreground"
                 onClick={checkVersion}
                 disabled={checking || restarting}
-                className="rounded p-1.5 text-muted hover:bg-surface-2 hover:text-foreground disabled:opacity-50"
                 aria-label={checking ? t('dashboard.checking') : t('dashboard.checkUpdate')}
                 title={checking ? t('dashboard.checking') : t('dashboard.checkUpdate')}
               >
                 <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted hover:text-foreground"
                 onClick={() => setIsPopupOpen(false)}
-                className="rounded p-1.5 text-muted hover:bg-surface-2 hover:text-foreground"
+                aria-label={t('common.close')}
               >
                 <X size={14} />
-              </button>
+              </Button>
             </div>
           </div>
 
