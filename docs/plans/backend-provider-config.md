@@ -35,10 +35,14 @@ Let the user, from the UI, without dropping to the terminal:
 Out of scope (still terminal-only or punted):
 
 - per-provider model whitelist editing (read-only list in the design)
-- provider catalog management (the 14-provider list is fixed in code for v1)
 - non-default Codex / Claude profiles (single `auth_mode` per backend)
+- connectivity-test buttons (`cdTest` / `cxTest` in the design) — punted
+  to a follow-up; per user direction 2026-05-12
 - replacing the existing setup wizard `AgentDetection.tsx` — that stays
   as first-run; this page is for ongoing reconfiguration
+- modifying `opencodeSetupPermission()` quick-setup flow — per user
+  direction 2026-05-12, the wizard remains untouched; the new page is
+  edit-only
 
 ## Sub-requirements (enumerated up front)
 
@@ -119,7 +123,7 @@ tokens in `v2_config.json`. Note in the doc that file is `chmod 600`.
 | GET    | `/backend/<name>/auth` | — | Read current auth state (claude/codex) |
 | POST   | `/backend/<name>/auth` | `{auth_mode, api_key?, base_url?}` | Save claude/codex auth |
 | POST   | `/backend/<name>/auth/test` | — | Live connectivity probe (optional, behind `cdTest`/`cxTest` button in design) |
-| GET    | `/backend/opencode/providers` | — | Return the 14-provider catalog with each one's `configured` / `oauth_available` / `local` flag |
+| GET    | `/backend/opencode/providers` | — | Return the provider catalog (dynamic — see "Provider catalog source" below) with each one's `configured` / `oauth_available` / `local` flag |
 | POST   | `/backend/opencode/provider/<id>/auth` | `{api_key, base_url?}` | Write provider API key |
 | DELETE | `/backend/opencode/provider/<id>/auth` | — | Remove provider API key |
 | POST   | `/backend/opencode/default-provider` | `{provider_id}` | Set default |
@@ -176,24 +180,41 @@ land.
 - [ ] Reviewer subagent + ruff + npm run build before push
 - [ ] Update PR #282 title/description to reflect expanded scope
 
-## Open questions for the user
+## Provider catalog source (resolved 2026-05-12)
 
-1. **Provider list source of truth.** Hard-code the 14 OpenCode providers
-   in Python (fixed catalog), or call `opencode auth list` / similar CLI
-   command at runtime so the list stays in sync with whatever the
-   installed OpenCode binary supports? Hard-coding is simpler and ships
-   v1 faster; runtime introspection avoids future drift.
-2. **Connectivity test.** Design shows a `cdTest2` / `cxTest` band at
-   the bottom of each page (probably a "Test connection" button). Worth
-   building in v1, or punt to a follow-up?
-3. **OpenCode setup wizard relationship.** Today there's
-   `opencodeSetupPermission()` (a modal/dialog flow) used by the first-run
-   wizard. Keep it as the quick-setup path and have the new page be for
-   ongoing edits? Or fold the wizard into the new page entirely?
-4. **PR size sanity check.** Estimated combined PR ~2,700 lines (lifecycle
-   chip ~500 + Provider config ~2,200). Still want a single PR, or split
-   the OpenCode page (Phase C, ~700 lines) into a follow-up to keep the
-   review tractable?
+OpenCode's running HTTP server exposes the relevant endpoints — confirmed
+against `opencode.ai/docs/server` and our own `modules/agents/opencode/server.py`
+which already calls one of them:
+
+| Method | OpenCode path | Purpose |
+| --- | --- | --- |
+| GET | `/provider` | `{all, default, connected}` — full provider list **plus** which IDs have credentials |
+| GET | `/provider/auth` | `{[providerID]: ProviderAuthMethod[]}` — which providers support OAuth and which auth methods are available |
+| GET | `/config/providers` | `{providers: [...], default: {...}}` — providers with their models (already wired in `OpenCodeServer.get_available_models`) |
+| PUT | `/auth/:id` | Set provider credentials (already wired in `set_api_key_auth`) |
+| POST | `/provider/:id/oauth/authorize` | Kick off OAuth (future-proof for when we wire OAuth flows from the UI) |
+
+The `GET /backend/opencode/providers` endpoint in our HTTP API will fan
+these out: hit `/provider` + `/provider/auth` in parallel, merge into a
+list of `{id, name, configured, oauth_available, models, default_model}`,
+and infer `local: true` from the absence of network auth methods (Ollama
+/ LM Studio surface as providers with empty auth-method lists).
+
+This means the **catalog is fully dynamic** — no Python-side hard-coded
+14-provider list. If OpenCode adds providers, our UI surfaces them on
+the next refresh without a vibe-remote release.
+
+## Open questions resolved 2026-05-12
+
+1. ✅ **Provider list source of truth** — runtime introspection from
+   OpenCode (above); no hard-coded catalog.
+2. ✅ **Connectivity test** — punted to a follow-up PR. Each backend
+   needs a distinct probe strategy; not blocking v1.
+3. ✅ **OpenCode setup wizard** — left untouched. The new page is for
+   ongoing edits only; `opencodeSetupPermission()` remains the first-run
+   path.
+4. ✅ **PR size** — single bundled PR #282 (~2,700 lines). User accepted
+   the review-burden tradeoff.
 
 ## Evidence
 
