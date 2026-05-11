@@ -1547,6 +1547,32 @@ def agent_install(name):
     return jsonify(result)
 
 
+_ALLOWED_BACKENDS = {"opencode", "claude", "codex"}
+_BACKENDS_WITH_RESTART = {"opencode", "codex"}
+
+
+@app.route("/backend/<name>/runtime")
+def backend_runtime(name):
+    """Return lifecycle info (version, update, process status) for a backend."""
+    if name not in _ALLOWED_BACKENDS:
+        return jsonify({"ok": False, "error": f"Unknown backend: {name}"}), 400
+
+    from vibe import api
+
+    return jsonify(api.get_backend_runtime(name))
+
+
+@app.route("/backend/<name>/restart", methods=["POST"])
+def backend_restart(name):
+    """Restart a backend's persistent server process (opencode or codex)."""
+    if name not in _BACKENDS_WITH_RESTART:
+        return jsonify({"ok": False, "message": f"Restart is not supported for backend: {name}"}), 400
+
+    from vibe import api
+
+    return jsonify(api.restart_backend(name))
+
+
 @app.route("/browse", methods=["POST"])
 def browse_directory():
     """List sub-directories of a given path for the directory picker UI."""

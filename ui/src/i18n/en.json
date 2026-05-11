@@ -520,6 +520,28 @@
     "installing": "Installing...",
     "showOutput": "Show details"
   },
+  "backendLifecycle": {
+    "title": "Backend status",
+    "statusReady": "Ready",
+    "statusUpdating": "Updating",
+    "statusDisabled": "Disabled",
+    "statusError": "Not running",
+    "statusUpdateAvailable": "Update available",
+    "currentVersion": "Current version",
+    "latestVersion": "Latest version",
+    "readyHint": "Running the latest release.",
+    "updateHint": "Update available: {{from}} → {{to}}",
+    "errorHint": "{{name}} is not running. Try restarting or reinstalling.",
+    "disabledHint": "Toggle this backend on in the card header to activate.",
+    "upgrading": "Upgrading…",
+    "upgradeNow": "Upgrade",
+    "upgradeSuccess": "Upgrade complete",
+    "upgradeFailed": "Upgrade failed",
+    "reinstall": "Reinstall",
+    "restart": "Restart",
+    "restartSuccess": "Restart requested",
+    "restartFailed": "Restart failed"
+  },
   "channelList": {
     "eyebrow": "Groups",
     "title": "Group Settings",

@@ -25,6 +25,7 @@ from core.handlers import (
 from core.agent_auth_service import AgentAuthService
 from core.message_dispatcher import ConsolidatedMessageDispatcher
 from core.processing_indicator import ProcessingIndicatorService
+from core.runtime_commands import RuntimeCommandWatcher
 from core.scheduled_tasks import ScheduledTaskService
 from core.update_checker import UpdateChecker
 from core.watches import ManagedWatchService
@@ -73,6 +74,7 @@ class Controller:
         self.message_dispatcher = ConsolidatedMessageDispatcher(self)
         self.scheduled_task_service = ScheduledTaskService(self)
         self.watch_service = ManagedWatchService(self)
+        self.runtime_command_watcher = RuntimeCommandWatcher(self)
 
         # Background task for cleanup
         self.cleanup_task: Optional[asyncio.Task] = None
@@ -420,6 +422,10 @@ class Controller:
             self.watch_service.start()
         except Exception as e:
             logger.error("Failed to start watch service: %s", e, exc_info=True)
+        try:
+            await self.runtime_command_watcher.start()
+        except Exception as e:
+            logger.error("Failed to start runtime command watcher: %s", e, exc_info=True)
 
         claude_timeout, codex_timeout = self._get_idle_cleanup_timeouts()
         if (claude_timeout > 0 or codex_timeout > 0) and (
@@ -704,6 +710,7 @@ class Controller:
         _stop_loop_coroutine(_cancel_cleanup_task(), "Idle cleanup task")
         _stop_loop_coroutine(self.scheduled_task_service.stop(), "Scheduled task service")
         _stop_loop_coroutine(self.watch_service.stop(), "Watch service")
+        _stop_loop_coroutine(self.runtime_command_watcher.stop(), "Runtime command watcher")
 
         try:
             codex_agent = self.agent_service.agents.get("codex")

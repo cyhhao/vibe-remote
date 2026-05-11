@@ -2,20 +2,19 @@ import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
-  Check,
   ChevronDown,
   ChevronUp,
   Download,
   RefreshCw,
   Search,
   Settings,
-  X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { BackendIcon, EyebrowBadge, WizardCard } from '../visual';
 import type { BackendId } from '../visual';
+import { BackendLifecycleChip } from '../settings/BackendLifecycleChip';
 import { CompactField, CompactSelect, ToggleSwitch } from '../settings/SettingsPrimitives';
 import { Button } from '../ui/button';
 
@@ -231,7 +230,12 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <StatusBadge status={agent.status || 'unknown'} loading={checking} />
+                <BackendLifecycleChip
+                  name={name}
+                  enabled={agent.enabled}
+                  cliStatus={agent.status || 'unknown'}
+                  onChanged={() => detect(name, agent.cli_path)}
+                />
                 <ToggleSwitch
                   enabled={agent.enabled}
                   onClick={() => toggle(name, !agent.enabled)}
@@ -411,26 +415,3 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   );
 };
 
-const StatusBadge: React.FC<{ status: 'unknown' | 'ok' | 'missing'; loading: boolean }> = ({ status, loading }) => {
-  const { t } = useTranslation();
-
-  if (loading) {
-    return (
-      <div className="text-muted">
-        <RefreshCw className="size-3.5 animate-spin" />
-      </div>
-    );
-  }
-  if (status === 'unknown') {
-    return <span className="text-[11px] text-muted">{t('common.notChecked')}</span>;
-  }
-  return status === 'ok' ? (
-    <div className="inline-flex items-center gap-1.5 rounded-full border border-mint/30 bg-mint/[0.08] px-2 py-0.5 text-[11px] font-medium text-mint">
-      <Check className="size-3" /> {t('common.found')}
-    </div>
-  ) : (
-    <div className="inline-flex items-center gap-1.5 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger">
-      <X className="size-3" /> {t('common.missing')}
-    </div>
-  );
-};

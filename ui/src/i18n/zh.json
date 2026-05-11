@@ -520,6 +520,28 @@
     "installing": "安装中...",
     "showOutput": "显示详情"
   },
+  "backendLifecycle": {
+    "title": "后端状态",
+    "statusReady": "就绪",
+    "statusUpdating": "升级中",
+    "statusDisabled": "已停用",
+    "statusError": "未运行",
+    "statusUpdateAvailable": "可升级",
+    "currentVersion": "当前版本",
+    "latestVersion": "最新版本",
+    "readyHint": "当前已是最新版本。",
+    "updateHint": "可升级：{{from}} → {{to}}",
+    "errorHint": "{{name}} 当前未运行，可尝试重启或重新安装。",
+    "disabledHint": "请在卡片顶部开关中启用该后端。",
+    "upgrading": "正在升级…",
+    "upgradeNow": "立即升级",
+    "upgradeSuccess": "升级完成",
+    "upgradeFailed": "升级失败",
+    "reinstall": "重新安装",
+    "restart": "重启",
+    "restartSuccess": "已请求重启",
+    "restartFailed": "重启失败"
+  },
   "channelList": {
     "eyebrow": "群组",
     "title": "群组设置",

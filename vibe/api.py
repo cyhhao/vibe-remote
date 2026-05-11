@@ -1475,6 +1475,440 @@ def install_agent(name: str) -> dict:
         return {"ok": False, "message": str(e), "output": None}
 
 
+# =============================================================================
+# Backend lifecycle (version probe, latest check, restart)
+# =============================================================================
+
+# In-memory caches keyed by (backend, cli_path) so version answers stay tied
+# to the binary they came from. Trade freshness for fewer probes during rapid
+# popover opens. Tuned for human pacing (seconds), not bots.
+_BACKEND_VERSION_CACHE: dict[tuple[str, str], tuple[float, str | None]] = {}
+_BACKEND_LATEST_CACHE: dict[str, tuple[float, str | None]] = {}
+_BACKEND_VERSION_TTL_SECONDS = 30.0
+_BACKEND_LATEST_TTL_SECONDS = 3600.0
+# Failed lookups (network down, registry hiccup) re-probe sooner so a
+# transient outage doesn't pin "—" for the full hour.
+_BACKEND_LATEST_FAILURE_TTL_SECONDS = 120.0
+_BACKEND_RUNTIME_USER_AGENT = "vibe-remote/backend-runtime"
+
+_BACKENDS_WITH_RESTART = {"opencode", "codex"}
+_BACKEND_LATEST_PROBES = {
+    "opencode": ("github", "sst/opencode"),
+    "codex": ("npm", "@openai/codex"),
+    "claude": ("npm", "@anthropic-ai/claude-code"),
+}
+
+
+def _parse_semver(text: str) -> str | None:
+    """Extract the first dotted-numeric version token from *text*.
+
+    Handles outputs like ``opencode 1.2.3``, ``codex-cli 0.77.1 (build ...)``
+    and ``v1.0.0`` uniformly. Returns ``None`` if no version is found.
+    """
+    if not text:
+        return None
+    match = re.search(r"\d+(?:\.\d+){1,3}(?:[-+][\w.\-]+)?", text)
+    return match.group(0) if match else None
+
+
+def _probe_cli_version(cli_path: str | None) -> str | None:
+    """Run ``<cli> --version`` with a short timeout and return the parsed version."""
+    if not cli_path:
+        return None
+    try:
+        result = subprocess.run(
+            [cli_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=_command_env_for(cli_path if os.path.isabs(cli_path) else None),
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.debug("CLI version probe failed for %s: %s", cli_path, exc)
+        return None
+    output = (result.stdout or "") + " " + (result.stderr or "")
+    return _parse_semver(output.strip())
+
+
+def _fetch_latest_version(name: str) -> str | None:
+    """Best-effort upstream lookup. Returns ``None`` on any failure."""
+    probe = _BACKEND_LATEST_PROBES.get(name)
+    if not probe:
+        return None
+    kind, ident = probe
+    url = (
+        f"https://api.github.com/repos/{ident}/releases/latest"
+        if kind == "github"
+        else f"https://registry.npmjs.org/{ident}/latest"
+    )
+    try:
+        from vibe.proxy import resolve_proxy
+
+        proxy = resolve_proxy(None)
+    except Exception:
+        proxy = None
+
+    req = urllib.request.Request(url, headers={"User-Agent": _BACKEND_RUNTIME_USER_AGENT})
+    if proxy and not proxy.lower().startswith("socks"):
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        )
+    else:
+        # SOCKS proxies need aiohttp_socks; latest-version probe is best-effort
+        # so we silently fall back to direct urlopen rather than complicate the
+        # cache path. Direct-connection failures are cached for a short TTL.
+        opener = urllib.request.build_opener()
+
+    try:
+        with opener.open(req, timeout=5) as resp:  # noqa: S310 - trusted registries
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # pragma: no cover - network failure path
+        logger.debug("Latest version probe failed for %s: %s", name, exc)
+        return None
+    raw = payload.get("tag_name") if kind == "github" else payload.get("version")
+    if not isinstance(raw, str):
+        return None
+    return raw.lstrip("v").strip() or None
+
+
+def _cached_version(name: str, cli_path: str | None) -> str | None:
+    key = (name, cli_path or "")
+    cached = _BACKEND_VERSION_CACHE.get(key)
+    if cached and time.time() - cached[0] < _BACKEND_VERSION_TTL_SECONDS:
+        return cached[1]
+    version = _probe_cli_version(cli_path)
+    _BACKEND_VERSION_CACHE[key] = (time.time(), version)
+    return version
+
+
+def _invalidate_version_cache(name: str) -> None:
+    """Drop all cached version entries for *name* across cli paths."""
+    for key in [k for k in _BACKEND_VERSION_CACHE if k[0] == name]:
+        _BACKEND_VERSION_CACHE.pop(key, None)
+
+
+def _cached_latest(name: str) -> str | None:
+    cached = _BACKEND_LATEST_CACHE.get(name)
+    if cached:
+        ttl = _BACKEND_LATEST_TTL_SECONDS if cached[1] else _BACKEND_LATEST_FAILURE_TTL_SECONDS
+        if time.time() - cached[0] < ttl:
+            return cached[1]
+    latest = _fetch_latest_version(name)
+    _BACKEND_LATEST_CACHE[name] = (time.time(), latest)
+    return latest
+
+
+def _compare_versions(current: str | None, latest: str | None) -> bool:
+    """Return True when *latest* is strictly greater than *current*.
+
+    Honors PEP 440 / semver pre-release ordering when possible (e.g. ``0.77.1``
+    is greater than ``0.77.1-beta.0``). Falls back to a conservative numeric
+    tuple comparison; returns False on any parsing failure so we never nag the
+    user with a phantom update.
+    """
+    if not current or not latest or current == latest:
+        return False
+
+    try:
+        from packaging.version import InvalidVersion, Version
+
+        try:
+            return Version(latest) > Version(current)
+        except InvalidVersion:
+            pass
+    except Exception:  # pragma: no cover - packaging is a transitive dep
+        pass
+
+    def _parts(value: str) -> tuple[tuple[int, ...], bool] | None:
+        # Strip build metadata; keep pre-release tag to compare lexically.
+        core, _, pre = value.split("+", 1)[0].partition("-")
+        try:
+            nums = tuple(int(part) for part in core.split("."))
+        except ValueError:
+            return None
+        # A version with a pre-release suffix is "less than" the bare release.
+        return nums, bool(pre)
+
+    cur_parts = _parts(current)
+    new_parts = _parts(latest)
+    if cur_parts is None or new_parts is None:
+        return False
+    cur_nums, cur_is_pre = cur_parts
+    new_nums, new_is_pre = new_parts
+    if new_nums != cur_nums:
+        return new_nums > cur_nums
+    # Same numeric core: pre-release sorts before release.
+    return cur_is_pre and not new_is_pre
+
+
+def _opencode_server_pid() -> int | None:
+    pid_path = paths.get_logs_dir() / "opencode_server.json"
+    if not pid_path.exists():
+        return None
+    try:
+        info = json.loads(pid_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    pid = info.get("pid") if isinstance(info, dict) else None
+    return pid if isinstance(pid, int) and pid > 0 else None
+
+
+def _opencode_process_status() -> str:
+    from vibe import runtime
+
+    pid = _opencode_server_pid()
+    if not pid or not runtime.pid_alive(pid):
+        return "stopped"
+    cmd = runtime.get_process_command(pid) or ""
+    return "running" if "opencode" in cmd and "serve" in cmd else "unknown"
+
+
+def _process_matches_codex_binary(cmdline: list[str], resolved_binary: str | None) -> bool:
+    """Decide whether ``cmdline`` belongs to *our* codex app-server.
+
+    The original cmdline-substring check matched any ``codex`` mention in any
+    argument (e.g. a user invoking ``codex app-server`` themselves from a
+    shell, or another tool whose args happen to contain those tokens). We
+    now require:
+
+      1. argv[0] resolves to the same absolute path as the configured
+         codex binary, **or** its basename starts with ``codex``; and
+      2. one of the early arguments is exactly ``app-server``.
+
+    When ``resolved_binary`` is None we fall back to a basename match so the
+    chip still works for users whose config points at a CLI that isn't on
+    PATH right now.
+    """
+    if not cmdline:
+        return False
+    head = cmdline[0]
+    try:
+        head_resolved = str(Path(head).expanduser().resolve())
+    except Exception:
+        head_resolved = head
+    if resolved_binary:
+        # When we know which binary the user configured, require an exact
+        # match. A second codex install elsewhere on the system is *not* ours
+        # to kill.
+        try:
+            target = str(Path(resolved_binary).expanduser().resolve())
+        except Exception:
+            target = resolved_binary
+        if head_resolved != target:
+            return False
+    else:
+        # No resolved binary: best-effort basename match so the chip still
+        # works when the configured CLI isn't on PATH right now.
+        if not os.path.basename(head_resolved).startswith("codex"):
+            return False
+    # ``codex app-server`` always passes ``app-server`` as an argv token; we
+    # intentionally do NOT match it inside an arbitrary substring.
+    return "app-server" in cmdline[1:4]
+
+
+def _codex_processes(resolved_binary: str | None) -> list[int]:
+    """Find live ``codex app-server`` subprocesses owned by the current user.
+
+    The match must hit our resolved codex binary so unrelated tools that
+    happen to mention ``codex`` and ``app-server`` aren't swept up.
+    """
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover - psutil is a hard dep elsewhere
+        return []
+
+    current_uid = os.getuid() if hasattr(os, "getuid") else None
+    pids: list[int] = []
+    for proc in psutil.process_iter(attrs=["pid", "name", "cmdline", "uids"]):
+        try:
+            info = proc.info
+            cmdline = info.get("cmdline") or []
+            if not _process_matches_codex_binary(cmdline, resolved_binary):
+                continue
+            if current_uid is not None:
+                uids = info.get("uids")
+                proc_uid = getattr(uids, "real", None) if uids else None
+                if proc_uid is not None and proc_uid != current_uid:
+                    continue
+            pids.append(info["pid"])
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return pids
+
+
+def _codex_process_status(resolved_binary: str | None) -> str:
+    return "running" if _codex_processes(resolved_binary) else "stopped"
+
+
+def get_backend_runtime(name: str) -> dict:
+    """Return live lifecycle info for one backend.
+
+    Versions are cached for short windows so popovers and re-renders do not
+    fan out into many CLI invocations or registry HTTP calls.
+    """
+    if name not in _BACKEND_LATEST_PROBES:
+        return {"ok": False, "error": f"Unknown backend: {name}"}
+
+    try:
+        config = V2Config.load()
+    except Exception as exc:
+        logger.debug("Failed to load config for backend runtime: %s", exc)
+        config = None
+
+    backend_cfg = getattr(getattr(config, "agents", None), name, None) if config else None
+    enabled = bool(getattr(backend_cfg, "enabled", False))
+    configured_path = getattr(backend_cfg, "cli_path", "") or name
+
+    resolved_path = resolve_cli_path(configured_path)
+    installed = resolved_path is not None
+
+    current_version = _cached_version(name, resolved_path) if installed else None
+    latest_version = _cached_latest(name)
+    has_update = _compare_versions(current_version, latest_version)
+
+    if name == "opencode":
+        process_status = _opencode_process_status() if installed else "stopped"
+    elif name == "codex":
+        process_status = _codex_process_status(resolved_path) if installed else "stopped"
+    else:
+        process_status = "unknown"
+
+    return {
+        "ok": True,
+        "name": name,
+        "enabled": enabled,
+        "cli_path": configured_path,
+        "resolved_path": resolved_path,
+        "installed": installed,
+        "current_version": current_version,
+        "latest_version": latest_version,
+        "has_update": has_update,
+        "supports_restart": name in _BACKENDS_WITH_RESTART,
+        "process_status": process_status,
+    }
+
+
+def _runtime_command_dir() -> Path:
+    """Directory the controller watches for cross-process command markers."""
+    base = paths.get_state_dir() / "runtime_commands"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _wait_for_controller_ack(marker: Path, timeout: float) -> bool:
+    """Poll for ``marker`` removal as a signal that the controller ran it."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not marker.exists():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _request_controller_restart(backend: str, timeout: float = 4.0) -> bool:
+    """Ask the controller to refresh a backend via the runtime-command marker.
+
+    The controller's ``RuntimeCommandWatcher`` (see ``core/runtime_commands.py``)
+    is the in-process owner of ``CodexAgent._transports`` / OpenCode server
+    state. Killing those processes from the UI server would leave that cache
+    stale, so the cleanest path is to ask the controller to call its existing
+    ``_refresh_backend_runtime(backend)`` for us. We drop a marker file and
+    wait briefly for the controller to delete it; the caller falls back to a
+    direct process kill when the controller is unreachable (e.g. running
+    detached, not yet started).
+    """
+    marker = _runtime_command_dir() / f"restart-{backend}.cmd"
+    try:
+        marker.write_text(
+            json.dumps({"backend": backend, "ts": time.time()}),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.debug("Failed to write controller restart marker for %s: %s", backend, exc)
+        return False
+    if _wait_for_controller_ack(marker, timeout):
+        return True
+    # Marker still present — controller didn't pick it up. Clean up before
+    # falling back so we don't leave a stale request lying around.
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return False
+
+
+def restart_backend(name: str) -> dict:
+    """Refresh the backend so the next request picks up new config/env.
+
+    Preferred path: drop a runtime-command marker that the controller
+    observes and reacts to via ``_refresh_backend_runtime``. This keeps the
+    controller's in-memory transport/session state consistent. If the
+    controller isn't running (e.g. service not yet started), we fall back to
+    killing the OS process directly — the controller's recovery logic will
+    rebuild state when it next starts.
+
+    Claude has no persistent process and is rejected at the route layer.
+    """
+    if name not in _BACKENDS_WITH_RESTART:
+        return {"ok": False, "message": f"Restart is not supported for backend: {name}"}
+
+    controller_handled = _request_controller_restart(name)
+    _invalidate_version_cache(name)
+
+    if controller_handled:
+        if name == "opencode":
+            return {"ok": True, "message": "OpenCode server refreshed; it will respawn on next request."}
+        return {"ok": True, "message": "Codex runtime refreshed; transports will respawn on next request."}
+
+    if name == "opencode":
+        from vibe import runtime
+        from vibe.cli import _stop_opencode_server
+
+        stopped = _stop_opencode_server()
+        if stopped:
+            return {"ok": True, "message": "OpenCode server stopped; it will respawn on next request."}
+        pid = _opencode_server_pid()
+        if not pid or not runtime.pid_alive(pid):
+            return {"ok": True, "message": "OpenCode server is not running; next request will start a fresh one."}
+        return {"ok": False, "message": "Failed to stop OpenCode server."}
+
+    # codex fallback: kill app-server processes; controller recovery rebuilds.
+    try:
+        import psutil
+    except ImportError:
+        return {"ok": False, "message": "psutil unavailable; cannot manage Codex processes."}
+
+    try:
+        config = V2Config.load()
+        backend_cfg = getattr(getattr(config, "agents", None), "codex", None)
+        configured = getattr(backend_cfg, "cli_path", "") or "codex"
+    except Exception:
+        configured = "codex"
+    resolved = resolve_cli_path(configured)
+
+    pids = _codex_processes(resolved)
+    if not pids:
+        return {"ok": True, "message": "Codex app-server is not running; next request will start a fresh one."}
+
+    failed: list[int] = []
+    for pid in pids:
+        try:
+            proc = psutil.Process(pid)
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except psutil.TimeoutExpired:
+                proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+            logger.debug("Codex restart skip pid=%s: %s", pid, exc)
+        except Exception as exc:
+            logger.warning("Failed to stop codex pid=%s: %s", pid, exc)
+            failed.append(pid)
+    if failed:
+        return {"ok": False, "message": f"Failed to stop Codex process(es): {failed}"}
+    return {"ok": True, "message": f"Stopped {len(pids)} Codex process(es); they will respawn on next request."}
+
+
 def codex_models() -> dict:
     """Best-effort merged list of Codex model options.
 

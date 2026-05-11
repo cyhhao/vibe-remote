@@ -19,6 +19,8 @@ export type ApiContextType = {
   getFirstBindCode: () => Promise<any>;
   detectCli: (binary: string) => Promise<any>;
   installAgent: (name: string) => Promise<InstallResult>;
+  getBackendRuntime: (name: string) => Promise<BackendRuntimeInfo>;
+  restartBackend: (name: string) => Promise<BackendRestartResult>;
   slackAuthTest: (botToken: string, proxyUrl?: string) => Promise<any>;
   slackChannels: (botToken: string, browseAll?: boolean) => Promise<any>;
   slackManifest: () => Promise<{ ok: boolean; manifest?: string; manifest_compact?: string; error?: string }>;
@@ -93,6 +95,26 @@ export type InstallResult = {
   message: string;
   output: string | null;
   path?: string | null;
+};
+
+export type BackendRuntimeInfo = {
+  ok: boolean;
+  name?: string;
+  enabled?: boolean;
+  cli_path?: string;
+  resolved_path?: string | null;
+  installed?: boolean;
+  current_version?: string | null;
+  latest_version?: string | null;
+  has_update?: boolean;
+  supports_restart?: boolean;
+  process_status?: 'running' | 'stopped' | 'unknown';
+  error?: string;
+};
+
+export type BackendRestartResult = {
+  ok: boolean;
+  message: string;
 };
 
 const ApiContext = createContext<ApiContextType | undefined>(undefined);
@@ -171,6 +193,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getFirstBindCode: () => getJson('/api/setup/first-bind-code'),
     detectCli: (binary) => getJson(`/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => postJson(`/agent/${encodeURIComponent(name)}/install`, {}),
+    getBackendRuntime: (name) => getJson(`/backend/${encodeURIComponent(name)}/runtime`),
+    restartBackend: (name) => postJson(`/backend/${encodeURIComponent(name)}/restart`, {}),
     slackAuthTest: (botToken, proxyUrl) => postJson('/slack/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
     slackChannels: (botToken, browseAll) => postJson('/slack/channels', { bot_token: botToken, browse_all: browseAll || false }),
     slackManifest: () => getJson('/slack/manifest'),
