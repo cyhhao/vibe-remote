@@ -332,7 +332,7 @@ The web UI (`http://127.0.0.1:5123`) provides the same controls:
 | Path | Description |
 |------|-------------|
 | `~/.vibe_remote/config/config.json` | Main configuration |
-| `~/.vibe_remote/state/vibe.sqlite` | Primary persistent store (scope settings, agent sessions, auth codes, runtime records) |
+| `~/.vibe_remote/state/vibe.sqlite` | Internal database managed by Vibe Remote — opaque; manage state through the Web UI or `vibe` CLI, never read or write this file directly |
 | `~/.vibe_remote/state/discovered_chats.json` | Discovered IM chats/channels surfaced by platform adapters |
 | `~/.vibe_remote/state/settings.json` | Legacy JSON snapshot of channel routing settings |
 | `~/.vibe_remote/state/scheduled_tasks.json` | Persisted scheduled task definitions |

@@ -36,7 +36,7 @@ Follow this skill as an operations playbook for agents, not as end-user marketin
 5. Use the smallest viable API call and verify by reading back the API response.
 6. For `POST /settings`, preserve every existing channel for that platform; the endpoint replaces the platform's channel map.
 7. For `POST /api/users`, merge each edited user with its current user payload first; missing user fields are not a patch.
-8. The persistent state store is `~/.vibe_remote/state/vibe.sqlite` (scope settings, agent sessions, auth codes, runtime records). Discovered chats live separately in `~/.vibe_remote/state/discovered_chats.json`. Do not hand-edit either; use the API for settings, users, sessions, and chat discovery.
+8. Make every persistent-state change through the Web UI API or the `vibe` CLI. Vibe Remote keeps internal state in an opaque SQLite database (`~/.vibe_remote/state/vibe.sqlite`) plus a few JSON files such as `discovered_chats.json`; do not treat the database as an operator surface. JSON files may be hand-edited only as a documented recovery fallback (see "Direct File Recovery Fallback").
 9. `POST /config` persists the new payload but does not restart running platform adapters by itself. When the change is platform credentials, `proxy_url`, or other transport-level settings, plan an explicit restart afterwards; prefer the delayed CLI form (`vibe restart --delay-seconds 60`) when triggering it from inside an active conversation. The only credential save that restarts on its own is the WeChat QR-login completion through `POST /wechat/qr_login/poll`.
 10. Do not restart the service by default. Use `POST /doctor`, `GET /status`, and read-back checks first.
 11. Only start, stop, restart, or reload Vibe Remote when the user explicitly asks or when a change cannot take effect otherwise; explain why before doing it.
@@ -155,8 +155,8 @@ Vibe Remote stores runtime data under `~/.vibe_remote/` by default. If `VIBE_REM
 Important paths:
 
 - `~/.vibe_remote/config/config.json`: global config persisted by `POST /config`
-- `~/.vibe_remote/state/vibe.sqlite`: primary persistent store (scope settings, agent sessions, auth codes, runtime records). Treat as opaque; do not hand-edit.
-- `~/.vibe_remote/state/migration.lock`: SQLite migration lock; do not delete during normal operation
+- `~/.vibe_remote/state/vibe.sqlite`: internal database managed by Vibe Remote. Treat as opaque; never read, write, or query it directly — use the Web UI API or `vibe` CLI for any state change.
+- `~/.vibe_remote/state/migration.lock`: internal migration lock for the database above; never delete or modify
 - `~/.vibe_remote/state/backups/`: automatic state backups taken before migrations
 - `~/.vibe_remote/state/settings.json`: legacy JSON snapshot mirror for `/settings`, `/api/users`, and `/api/bind-codes`; read-only during normal operation
 - `~/.vibe_remote/state/scheduled_tasks.json`: persisted scheduled tasks created by `vibe task`
@@ -175,7 +175,7 @@ Important paths:
 - `~/.vibe_remote/attachments/`: attachment staging area
 - `~/.vibe_remote/screenshots/`: default output directory for `vibe screenshot`
 
-Only use direct file editing as a recovery fallback when the Web UI API is unavailable or the user explicitly asks for low-level repair. If you must edit files directly, back up the file first, validate JSON, and explain why the API path was not usable. The SQLite store (`vibe.sqlite`) is not safe to hand-edit during recovery — escalate instead.
+Only edit the JSON files in this layout as a recovery fallback when the Web UI API is unavailable or the user explicitly asks for low-level repair. If you must edit one directly, back it up first, validate JSON, and explain why the API path was not usable. Never read or write `vibe.sqlite` — escalate database issues instead of touching the file (see the recovery section below for the supported path).
 
 ## API Endpoint Reference
 
@@ -1005,7 +1005,7 @@ Recovery rules:
 5. Start or restart only when needed to bring the API back.
 6. After recovery, return to the API workflow for further changes.
 
-`vibe.sqlite` is not part of this fallback. If the database is the problem, copy aside the file under `~/.vibe_remote/state/` and let Vibe Remote rebuild from `backups/` rather than editing it directly. Escalate to the repo if the rebuild fails.
+`vibe.sqlite` is never a fallback target. Never open it with sqlite3 or any inspection tool. If the database itself is the problem, stop Vibe Remote, move the file aside under `~/.vibe_remote/state/`, and let Vibe Remote rebuild from `backups/` on next start. Escalate to the repo if the rebuild fails.
 
 ## Safety Boundaries
 
@@ -1014,7 +1014,8 @@ Always follow these constraints:
 - never delete unrelated platform scopes
 - never blank out tokens or secrets as part of an unrelated config task
 - never claim a backend feature exists if current Vibe Remote behavior does not support it
-- never manually rewrite `sessions.json` or `vibe.sqlite` for routine routing changes
+- never read, query, or rewrite `vibe.sqlite` — it is an internal store, not an operator surface
+- never manually rewrite `sessions.json` for routine routing changes — use the Web UI API or `vibe` CLI instead
 - never expose bind codes, pairing keys, tunnel tokens, instance secrets, or session secrets unless the user explicitly asks
 - never paste a credentialed `proxy_url` (`user:pass@host`) back into chat — mask the credentials portion when echoing the value
 - always say when a requested change actually belongs in OpenCode, Claude Code, or Codex config instead of Vibe Remote
