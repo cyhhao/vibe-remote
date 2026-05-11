@@ -47,6 +47,10 @@ const deriveVisual = (
   if (!enabled) return 'disabled';
   if (cliStatus === 'missing') return 'error';
   if (runtime && runtime.installed === false) return 'error';
+  // A daemon-backed backend whose process was killed externally must surface
+  // as error so the popover offers Restart — a stopped daemon outranks both
+  // "update available" and "ready".
+  if (runtime?.supports_restart && runtime.process_status === 'stopped') return 'error';
   if (runtime?.has_update) return 'update';
   if (cliStatus === 'ok') return 'ready';
   return 'loading';

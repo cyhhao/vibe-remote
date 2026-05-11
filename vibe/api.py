@@ -1454,6 +1454,10 @@ def install_agent(name: str) -> dict:
                 logger.info("Agent %s installed successfully at %s", name, installed_path)
             else:
                 logger.warning("Agent %s install command succeeded but CLI path was not detected", name)
+            # The chip refreshes runtime immediately after upgrade; drop the
+            # 30s version cache so it reads the new `--version` instead of the
+            # pre-upgrade value.
+            _invalidate_version_cache(name)
             return {
                 "ok": True,
                 "message": f"{name} installed successfully",
