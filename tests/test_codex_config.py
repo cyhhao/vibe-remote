@@ -152,6 +152,24 @@ def test_read_codex_api_key_missing_returns_none(tmp_path: Path) -> None:
     assert codex_config.read_codex_api_key(home=tmp_path) is None
 
 
+def test_round_trip_mixed_array_with_inline_tables() -> None:
+    """``contributors = ["foo", { name = "bar" }]`` and similar mixed
+    arrays must keep the dict element as a TOML inline table — falling
+    through to ``json.dumps`` previously converted it into a quoted
+    JSON string, silently corrupting valid user-owned config."""
+    data = {
+        "contributors": ["foo", {"name": "bar", "role": "maintainer"}],
+        "plugins": [{"name": "first"}, {"name": "second", "enabled": True}, "raw-string"],
+    }
+    assert _round_trip(data) == data
+
+
+def test_round_trip_nested_inline_table() -> None:
+    """Inline tables can nest other inline tables."""
+    data = {"settings": ["a", {"nested": {"x": 1, "y": "two"}}]}
+    assert _round_trip(data) == data
+
+
 def test_apply_api_key_pins_credentials_store_to_file(tmp_path: Path) -> None:
     """Codex's default ``cli_auth_credentials_store`` is ``auto`` (keyring-
     preferred). When the UI writes an API key, the live process must

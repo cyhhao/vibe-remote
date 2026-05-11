@@ -123,6 +123,22 @@ def _is_table_array(value: Any) -> bool:
     return isinstance(value, list) and bool(value) and all(isinstance(item, dict) for item in value)
 
 
+def _dump_toml_inline_table(data: Dict[str, Any]) -> str:
+    """Emit a dict as a TOML inline table: ``{ key = value, key2 = value2 }``.
+
+    Used for dict elements that appear inside arrays — TOML calls these
+    "inline tables" and they must stay single-line. Without this path,
+    ``_dump_toml_value`` would fall through to ``json.dumps`` and write
+    something like ``"{\\"name\\": \\"bar\\"}"`` — a quoted JSON string,
+    not a table — silently corrupting valid configs such as
+    ``contributors = ["foo", { name = "bar" }]``.
+    """
+    if not data:
+        return "{}"
+    parts = [f"{_format_toml_key(k)} = {_dump_toml_value(v)}" for k, v in data.items()]
+    return "{ " + ", ".join(parts) + " }"
+
+
 def _dump_toml_value(value: Any) -> str:
     """Serialize a single scalar value back to TOML. Tables handled separately."""
     if isinstance(value, bool):
@@ -144,6 +160,12 @@ def _dump_toml_value(value: Any) -> str:
         return value.isoformat()
     if isinstance(value, _dt.time):
         return value.isoformat()
+    if isinstance(value, dict):
+        # Pure dict-only lists are routed through ``[[a.b]]`` array-of-
+        # tables emission in ``_dump_toml_table``, so reaching this branch
+        # means we're inside a mixed array (or an explicit inline-table
+        # value) — both of which TOML requires to stay single-line.
+        return _dump_toml_inline_table(value)
     if isinstance(value, list):
         return "[" + ", ".join(_dump_toml_value(item) for item in value) + "]"
     # Fallback: serialize as JSON-ish string (best-effort for unexpected types).
