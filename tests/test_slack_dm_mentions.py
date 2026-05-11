@@ -203,6 +203,59 @@ class SlackDmMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent_payloads[1]["blocks"][0]["type"], "section")
         self.assertEqual(sent_payloads[1]["blocks"][0]["text"]["type"], "mrkdwn")
 
+    async def test_send_markdown_message_long_button_fallback_preserves_reply_to(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        sent_payloads = []
+
+        class _WebClient:
+            async def chat_postMessage(self, **kwargs):
+                sent_payloads.append(kwargs)
+                return {"ts": "1710000000.000022"}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+        keyboard = InlineKeyboard(buttons=[[InlineButton(text="Continue", callback_data="quick_reply:Continue")]])
+        text = "x" * 12001
+
+        message_ts = await slack.send_markdown_message(
+            context,
+            text,
+            keyboard=keyboard,
+            reply_to="1710000000.000001",
+        )
+
+        self.assertEqual(message_ts, "1710000000.000022")
+        self.assertGreater(len(sent_payloads), 1)
+        self.assertTrue(all(payload["thread_ts"] == "1710000000.000001" for payload in sent_payloads))
+        self.assertEqual(sent_payloads[-1]["blocks"][-1]["type"], "actions")
+
+    async def test_send_markdown_message_button_rejection_fallback_preserves_reply_to(self):
+        slack = SlackBot(SlackConfig(bot_token="xoxb-test"))
+        sent_payloads = []
+
+        class _WebClient:
+            async def chat_postMessage(self, **kwargs):
+                sent_payloads.append(kwargs)
+                if len(sent_payloads) == 1:
+                    raise SlackApiError("invalid blocks", response=_ResponseLike({"error": "invalid_blocks"}))
+                return {"ts": "1710000000.000023"}
+
+        slack.web_client = _WebClient()
+        context = MessageContext(user_id="U123", channel_id="C123")
+        keyboard = InlineKeyboard(buttons=[[InlineButton(text="Continue", callback_data="quick_reply:Continue")]])
+
+        message_ts = await slack.send_markdown_message(
+            context,
+            "markdown table",
+            keyboard=keyboard,
+            reply_to="1710000000.000001",
+        )
+
+        self.assertEqual(message_ts, "1710000000.000023")
+        self.assertEqual(sent_payloads[0]["thread_ts"], "1710000000.000001")
+        self.assertEqual(sent_payloads[1]["thread_ts"], "1710000000.000001")
+        self.assertEqual(sent_payloads[1]["blocks"][-1]["type"], "actions")
+
     async def test_send_message_disables_link_unfurl_when_configured(self):
         slack = SlackBot(SlackConfig(bot_token="xoxb-test", disable_link_unfurl=True))
         sent_payloads = []

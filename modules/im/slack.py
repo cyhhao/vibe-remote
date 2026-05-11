@@ -740,7 +740,13 @@ class SlackBot(BaseIMClient):
 
         if len(text) > _SLACK_MARKDOWN_TEXT_LIMIT:
             if keyboard:
-                return await self.send_message_with_buttons(context, text, keyboard, parse_mode="markdown")
+                return await self.send_message_with_buttons(
+                    context,
+                    text,
+                    keyboard,
+                    parse_mode="markdown",
+                    reply_to=reply_to,
+                )
             return await self.send_message(context, text, parse_mode="markdown", reply_to=reply_to)
 
         blocks = [self._build_markdown_block(text)]
@@ -772,7 +778,13 @@ class SlackBot(BaseIMClient):
                 raise
             logger.warning("Slack rejected native markdown block; falling back to legacy mrkdwn rendering")
             if keyboard:
-                return await self.send_message_with_buttons(context, text, keyboard, parse_mode="markdown")
+                return await self.send_message_with_buttons(
+                    context,
+                    text,
+                    keyboard,
+                    parse_mode="markdown",
+                    reply_to=reply_to,
+                )
             return await self.send_message(context, text, parse_mode="markdown", reply_to=reply_to)
 
         if self.settings_manager and (context.thread_id or reply_to):
@@ -1375,6 +1387,7 @@ class SlackBot(BaseIMClient):
         text: str,
         keyboard: InlineKeyboard,
         parse_mode: Optional[str] = None,
+        reply_to: Optional[str] = None,
     ) -> str:
         """Send a message with interactive buttons"""
         self._ensure_clients()
@@ -1394,7 +1407,7 @@ class SlackBot(BaseIMClient):
                 else self._split_text(text, _SLACK_SECTION_TEXT_LIMIT)
             )
             for chunk in chunks[:-1]:
-                await self._send_prepared_text_message(context, chunk, parse_mode=parse_mode)
+                await self._send_prepared_text_message(context, chunk, parse_mode=parse_mode, reply_to=reply_to)
             text = chunks[-1]
             visible_text = self._linkify_bare_urls_for_verbatim_mrkdwn(text) if linkify_verbatim_urls else text
 
@@ -1412,6 +1425,8 @@ class SlackBot(BaseIMClient):
             # Handle thread replies
             if context.thread_id:
                 kwargs["thread_ts"] = context.thread_id
+            elif reply_to:
+                kwargs["thread_ts"] = reply_to
 
             response = await self._post_message_with_dm_recovery(
                 context,
@@ -1420,10 +1435,11 @@ class SlackBot(BaseIMClient):
             )
 
             # Mark thread as active if we sent a message to a thread
-            if self.settings_manager and context.thread_id:
+            if self.settings_manager and (context.thread_id or reply_to):
+                thread_ts = context.thread_id or reply_to
                 if self.sessions:
-                    self.sessions.mark_thread_active(context.user_id, context.channel_id, context.thread_id)
-                logger.debug(f"Marked thread {context.thread_id} as active after bot message with buttons")
+                    self.sessions.mark_thread_active(context.user_id, context.channel_id, thread_ts)
+                logger.debug(f"Marked thread {thread_ts} as active after bot message with buttons")
 
             return response["ts"]
 
