@@ -108,6 +108,7 @@
       "codexBaseUrlHint": "留空则使用 OpenAI 默认接口。兼容网关(如 Azure OpenAI、OpenRouter)可填入各自的 URL。",
       "codexBaseUrlReset": "重置为默认",
       "codexHasChatgptTokens": "检测到上一次 `codex login` 缓存的 ChatGPT 凭据。",
+      "codexCredentialsStoreKeyringWarn": "Codex 当前设置为把凭据存储在系统钥匙串中({{store}})。保存后将切换为文件存储,Vibe Remote 才能直接读写 API key。",
       "codexInfoHint": "保存会写入 `~/.codex/auth.json` 与 `~/.codex/config.toml`,并重启常驻 app-server 以加载新配置。",
       "codexSave": "保存并重启 Codex",
       "codexSaving": "保存中…",

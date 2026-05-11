@@ -108,6 +108,7 @@
       "codexBaseUrlHint": "Leave empty to use OpenAI's default endpoint. Compatible relays (e.g. Azure OpenAI, OpenRouter) accept their own URL here.",
       "codexBaseUrlReset": "Reset to default",
       "codexHasChatgptTokens": "Codex has cached ChatGPT credentials from a previous `codex login`.",
+      "codexCredentialsStoreKeyringWarn": "Codex is currently set to store credentials in the OS keychain ({{store}}). Saving here will switch it to file storage so Vibe Remote can manage the API key directly.",
       "codexInfoHint": "Saving here writes `~/.codex/auth.json` and `~/.codex/config.toml`, then restarts the persistent app-server so the next request uses the new settings.",
       "codexSave": "Save and restart Codex",
       "codexSaving": "Saving…",

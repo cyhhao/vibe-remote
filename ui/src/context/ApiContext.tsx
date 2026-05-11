@@ -121,6 +121,13 @@ export type BackendRestartResult = {
 
 export type CodexAuthMode = 'oauth' | 'api_key';
 
+// Mirrors Codex CLI's ``cli_auth_credentials_store`` setting. ``auto`` is
+// Codex's documented default and is treated as keyring-preferred — when
+// the live store is not ``file`` the on-disk ``auth.json`` may not be
+// the source of truth, so the UI must not interpret ``has_api_key=false``
+// as "no key configured" in that case.
+export type CodexCredentialsStore = 'file' | 'keyring' | 'auto' | (string & {});
+
 export type CodexAuthState = {
   ok: boolean;
   auth_mode: CodexAuthMode;
@@ -128,6 +135,8 @@ export type CodexAuthState = {
   api_key_length: number;
   base_url: string | null;
   has_chatgpt_tokens: boolean;
+  credentials_store: CodexCredentialsStore;
+  file_store_active: boolean;
   message?: string;
 };
 

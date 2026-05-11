@@ -176,6 +176,15 @@ export const SettingsCodexProviderPage: React.FC = () => {
                   {t('settings.backends.codexHasChatgptTokens')}
                 </p>
               )}
+              {authMode === 'api_key' && state && !state.file_store_active && (
+                // Codex's documented default is ``auto`` (keyring-preferred), so
+                // the API-key UX is honest about what saving will do: we pin
+                // ``cli_auth_credentials_store = "file"`` on save, otherwise
+                // Codex would ignore ``auth.json`` and keep reading the keychain.
+                <p className="text-[12px] text-gold">
+                  {t('settings.backends.codexCredentialsStoreKeyringWarn', { store: state.credentials_store })}
+                </p>
+              )}
             </div>
 
             {authMode === 'api_key' && (

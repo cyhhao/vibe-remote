@@ -152,6 +152,52 @@ def test_read_codex_api_key_missing_returns_none(tmp_path: Path) -> None:
     assert codex_config.read_codex_api_key(home=tmp_path) is None
 
 
+def test_apply_api_key_pins_credentials_store_to_file(tmp_path: Path) -> None:
+    """Codex's default ``cli_auth_credentials_store`` is ``auto`` (keyring-
+    preferred). When the UI writes an API key, the live process must
+    actually read from ``auth.json`` — pin it to ``file`` explicitly."""
+    home = tmp_path
+    codex_config.apply_codex_auth(
+        auth_mode="api_key",
+        api_key="sk-test",
+        base_url=None,
+        home=home,
+    )
+    parsed = tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    assert parsed[codex_config.CREDENTIALS_STORE_KEY] == codex_config.CREDENTIALS_STORE_FILE
+
+    state = codex_config.read_codex_auth_state(home=home)
+    assert state["credentials_store"] == "file"
+    assert state["file_store_active"] is True
+
+
+def test_apply_oauth_leaves_credentials_store_untouched(tmp_path: Path) -> None:
+    """Switching back to OAuth must not flip the user's chosen store —
+    ``codex login`` may legitimately want keyring storage."""
+    home = tmp_path
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        f'{codex_config.CREDENTIALS_STORE_KEY} = "keyring"\n', encoding="utf-8"
+    )
+    (codex_home / "auth.json").write_text(
+        json.dumps({"OPENAI_API_KEY": "sk-old"}), encoding="utf-8"
+    )
+    codex_config.apply_codex_auth(auth_mode="oauth", api_key=None, base_url=None, home=home)
+    parsed = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
+    assert parsed[codex_config.CREDENTIALS_STORE_KEY] == "keyring"
+
+
+def test_read_state_reports_default_store_as_auto(tmp_path: Path) -> None:
+    """Absent ``cli_auth_credentials_store`` means Codex's documented
+    ``auto`` default; the UI gate on ``file_store_active`` depends on
+    this being reported faithfully rather than silently masked as
+    ``file``."""
+    state = codex_config.read_codex_auth_state(home=tmp_path)
+    assert state["credentials_store"] == "auto"
+    assert state["file_store_active"] is False
+
+
 def test_apply_oauth_mode_clears_managed_base_url(tmp_path: Path) -> None:
     """Switching back to oauth strips the managed base_url and api_key."""
     home = tmp_path

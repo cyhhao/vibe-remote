@@ -37,6 +37,16 @@ _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # leave their fields alone except for ``base_url`` when one is supplied.
 MANAGED_PROVIDER_ID = "openai"
 
+# Codex's top-level ``cli_auth_credentials_store`` controls where the CLI
+# reads/writes cached credentials: ``file`` → ``~/.codex/auth.json``,
+# ``keyring`` → OS keychain, ``auto`` → keyring-preferred. The Settings
+# UI manages key material through ``auth.json`` exclusively (we have no
+# cross-platform keyring backend), so we pin this to ``file`` whenever
+# we write an API key — otherwise Codex would silently look in the
+# keychain and behave as if no key was configured.
+CREDENTIALS_STORE_KEY = "cli_auth_credentials_store"
+CREDENTIALS_STORE_FILE = "file"
+
 
 def get_codex_home(home: Path | None = None) -> Path:
     """Resolve the directory Codex actually reads ``config.toml`` from.
@@ -272,6 +282,12 @@ def apply_codex_auth(
             raise ValueError("api_key is required when auth_mode='api_key'")
         auth_data["OPENAI_API_KEY"] = api_key
         toml_data["model_provider"] = MANAGED_PROVIDER_ID
+        # Pin Codex to file-based credentials so it actually reads the
+        # ``OPENAI_API_KEY`` we just wrote. Without this, the documented
+        # default (``auto``) prefers the OS keychain, and Codex would
+        # behave as if no key was configured even though ``auth.json``
+        # has one. See CREDENTIALS_STORE_KEY for the rationale.
+        toml_data[CREDENTIALS_STORE_KEY] = CREDENTIALS_STORE_FILE
         managed.setdefault("name", "OpenAI")
         if base_url:
             managed["base_url"] = base_url
@@ -279,9 +295,10 @@ def apply_codex_auth(
             managed.pop("base_url", None)
     else:  # oauth
         auth_data.pop("OPENAI_API_KEY", None)
-        # Leave model_provider as-is — switching back to ChatGPT/OAuth is
-        # the user's responsibility via ``codex login``; we just stop
-        # pinning the keyed provider's overrides.
+        # Leave model_provider and cli_auth_credentials_store as-is —
+        # switching back to ChatGPT/OAuth is the user's responsibility
+        # via ``codex login`` (which may legitimately want keyring
+        # storage); we just stop pinning the keyed provider's overrides.
         managed.pop("base_url", None)
         # If our managed entry is now empty, drop it entirely so we don't
         # leave a noisy ``[model_providers.openai]`` table behind.
@@ -315,6 +332,13 @@ def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
     Reads both files and reports back what the user would see — no
     secrets in the response (the UI receives the key length, never the
     plaintext key).
+
+    ``credentials_store`` reflects Codex's current ``cli_auth_credentials_store``
+    setting; when it is not ``"file"``, the live key may live in the OS
+    keychain and ``has_api_key`` is a file-only signal. Callers that
+    need to surface the "we can't see your key, it's in the keyring"
+    case should branch on this field rather than treating
+    ``has_api_key=false`` as definitive.
     """
     config_path, auth_path = get_codex_config_paths(home)
     auth_data = _load_auth(auth_path)
@@ -331,6 +355,13 @@ def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
             if isinstance(raw, str) and raw.strip():
                 base_url = raw.strip()
 
+    store_raw = toml_data.get(CREDENTIALS_STORE_KEY)
+    credentials_store = store_raw if isinstance(store_raw, str) else None
+    # Codex's default when the key is absent is ``auto`` (keyring-preferred);
+    # report that explicitly so the UI doesn't have to know the default.
+    effective_store = credentials_store or "auto"
+    file_store_active = effective_store == CREDENTIALS_STORE_FILE
+
     inferred_mode = "api_key" if isinstance(api_key, str) and api_key else "oauth"
     return {
         "auth_mode": inferred_mode,
@@ -338,4 +369,6 @@ def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
         "api_key_length": len(api_key) if isinstance(api_key, str) else 0,
         "base_url": base_url,
         "has_chatgpt_tokens": has_chatgpt_tokens,
+        "credentials_store": effective_store,
+        "file_store_active": file_store_active,
     }
