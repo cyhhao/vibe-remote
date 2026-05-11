@@ -5,6 +5,7 @@
 ```bash
 vibe              # Start Vibe Remote (opens web UI)
 vibe status       # Check service status
+vibe restart      # Restart all services (use --delay-seconds when agent-triggered)
 vibe remote       # Guided Vibe Cloud remote-access setup
 vibe screenshot   # Capture a local desktop screenshot
 vibe stop         # Stop all services
@@ -50,6 +51,20 @@ vibe stop
 - Stops the main service
 - Stops the web UI server
 - **Terminates OpenCode server** — Use this when you need to restart OpenCode
+
+### `vibe restart`
+
+Restart Vibe Remote (main service + Web UI). The OpenCode server is terminated as part of the restart.
+
+```bash
+vibe restart
+vibe restart --delay-seconds 60
+```
+
+**Behavior:**
+- Stops the main service and Web UI, then re-starts them
+- Terminates the OpenCode server
+- With `--delay-seconds N`, schedules the restart `N` seconds in the future so an active conversation can receive its reply before the restart lands. Prefer this form when an agent is triggering the restart from inside Slack, Discord, Telegram, Lark/Feishu, or WeChat.
 
 ### `vibe status`
 
@@ -157,6 +172,33 @@ vibe hook send --session-key 'slack::channel::C123::thread::171717.123' --post-t
 ```
 
 Use this when you want one delayed or background follow-up without persisting a task in `scheduled_tasks.json`.
+
+### `vibe watch`
+
+Create, inspect, pause, resume, or remove a managed background watch. A watch
+runs a long-lived waiter command (for example a build or a status poll) and,
+when the command finishes successfully, prepends `--prefix` to the captured
+stdout and delivers it through the chosen session as a follow-up message.
+
+```bash
+vibe watch add \
+  --session-key 'slack::channel::C123' \
+  --command './scripts/run_tests.sh' \
+  --prefix 'Test run finished. Summarize the failures and propose next steps.'
+
+vibe watch list --brief
+vibe watch show <watch-id>
+vibe watch pause <watch-id>
+vibe watch resume <watch-id>
+vibe watch remove <watch-id>
+```
+
+Use `vibe watch add --help` for the full surface, including `--cwd`,
+`--timeout-seconds`, `--max-cycles`, `--post-to channel`, `--deliver-key`, and
+`--name`. Watches share `--session-key`, `--post-to`, and `--deliver-key`
+semantics with `vibe task` and `vibe hook send`. Prefer `vibe watch` over
+ad-hoc `nohup` jobs when the user wants a managed background task with a
+guaranteed follow-up message.
 
 ### `vibe version`
 
@@ -282,10 +324,15 @@ The web UI (`http://127.0.0.1:5123`) provides the same controls:
 | Path | Description |
 |------|-------------|
 | `~/.vibe_remote/config/config.json` | Main configuration |
-| `~/.vibe_remote/state/settings.json` | Channel routing settings |
+| `~/.vibe_remote/state/vibe.sqlite` | Primary persistent store (settings, users, sessions, discovered chats) |
+| `~/.vibe_remote/state/settings.json` | Legacy JSON snapshot of channel routing settings |
 | `~/.vibe_remote/state/scheduled_tasks.json` | Persisted scheduled task definitions |
+| `~/.vibe_remote/state/watches.json` | Persisted managed watch definitions |
 | `~/.vibe_remote/state/task_requests/` | Queued task run and hook execution requests |
 | `~/.vibe_remote/state/user_preferences.md` | Shared long-term user preference notes |
+| `~/.vibe_remote/state/backups/` | Automatic state backups taken before migrations |
+| `~/.vibe_remote/runtime/remote-access-cloudflared.pid` | cloudflared tunnel PID for Vibe Cloud remote access |
+| `~/.vibe_remote/screenshots/` | Default output directory for `vibe screenshot` |
 | `~/.vibe_remote/logs/vibe_remote.log` | Application logs |
 | `~/.vibe_remote/logs/opencode_server.json` | OpenCode server PID file |
 
