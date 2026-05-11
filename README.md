@@ -363,6 +363,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 - **[Official Docs](https://docs.avibe.bot)** — Quickstart, platform guides, agent setup, troubleshooting, and AI-readable install instructions
 - **[CLI Reference](docs/CLI.md)** — Command-line usage and service lifecycle
 - **[Install via AI Agent](docs/INSTALL_FOR_AI.md)** — Give this to Claude Code, Codex, or OpenCode for guided setup
+- **[Incus Tenant Scaffold](docs/INCUS_TENANTS.md)** — Create isolated Vibe Remote tenants on one Incus host
 - **[Slack Setup Guide](docs/SLACK_SETUP.md)** — Detailed setup with screenshots
 - **[Discord Setup Guide](docs/DISCORD_SETUP.md)** — Detailed setup with screenshots
 - **[Telegram Setup Guide](docs/TELEGRAM_SETUP.md)** — BotFather setup, token validation, and chat discovery
