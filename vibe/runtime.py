@@ -8,6 +8,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from config import paths
@@ -466,6 +468,27 @@ def start_service():
         )
 
 
+def _ui_health_url(host: str, port: int) -> str:
+    health_host = (host or "127.0.0.1").strip()
+    if health_host in {"0.0.0.0", ""}:
+        health_host = "127.0.0.1"
+    elif health_host in {"::", "::0"}:
+        health_host = "[::1]"
+    elif health_host.startswith("[") and health_host.endswith("]"):
+        pass
+    elif ":" in health_host:
+        health_host = f"[{health_host}]"
+    return f"http://{health_host}:{port}/health"
+
+
+def ui_server_healthy(host: str, port: int, timeout: float = 0.5) -> bool:
+    try:
+        with urllib.request.urlopen(_ui_health_url(host, port), timeout=timeout) as response:
+            return response.status == 200
+    except (OSError, urllib.error.URLError, TimeoutError, ValueError):
+        return False
+
+
 def resolve_localhost_family() -> str:
     """Return the loopback family ``localhost`` actually maps to on this host.
 
@@ -534,7 +557,7 @@ def start_ui(host, port):
             existing_pid = int(pid_path.read_text(encoding="utf-8").strip())
         except Exception:
             existing_pid = 0
-        if existing_pid and pid_alive(existing_pid):
+        if existing_pid and pid_alive(existing_pid) and ui_server_healthy(host, port):
             return existing_pid
         pid_path.unlink(missing_ok=True)
 
