@@ -25,7 +25,7 @@ from typing import Sequence
 
 PROJECT_PREFIX = "vr-"
 INSTANCE_NAME = "vibe"
-TENANT_USER = "vibe"
+TENANT_USER = "vibey"
 TENANT_HOME = f"/home/{TENANT_USER}"
 TENANT_WORKDIR = f"{TENANT_HOME}/work"
 DEFAULT_IMAGE = "images:ubuntu/24.04/cloud"
@@ -252,7 +252,7 @@ def cloud_init_user_data(spec: TenantSpec) -> str:
         "  - python3-venv",
         "  - sudo",
         "users:",
-        "  - name: vibe",
+        f"  - name: {TENANT_USER}",
         "    groups: sudo",
         "    shell: /bin/bash",
         "    sudo: ALL=(ALL) NOPASSWD:ALL",

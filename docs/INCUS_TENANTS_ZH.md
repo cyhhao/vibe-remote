@@ -36,8 +36,8 @@ python3 scripts/incus_tenant.py create alice \
 
 - Incus project：`vr-alice`
 - 实例名：`vibe`
-- 实例内 Linux 用户：`vibe`
-- 工作目录：`/home/vibe/work`
+- 实例内 Linux 用户：`vibey`
+- 工作目录：`/home/vibey/work`
 - 实例内 Vibe Remote Web UI：`5123`
 - 可选宿主机 Web UI 代理：`http://127.0.0.1:15123`
 

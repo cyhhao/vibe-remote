@@ -18,7 +18,7 @@ control plane yet.
 - One Incus project per tenant: `vr-<tenant>`.
 - One tenant instance per project: `vibe`.
 - Per-tenant limits live on both the project and the default profile.
-- Cloud-init installs Vibe Remote for a non-root `vibe` user and creates a
+- Cloud-init installs Vibe Remote for a non-root `vibey` user and creates a
   systemd unit that starts/stops the local `vibe` runtime.
 - Optional host port proxy exposes the tenant Web UI for local setup.
 - The script stays standalone Python with no dependencies beyond the Incus CLI.
