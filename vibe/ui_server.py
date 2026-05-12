@@ -9,7 +9,10 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import socket
+import subprocess
+import time
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -293,6 +296,9 @@ _WILDCARD_TRUST_LAN_INTERFACE_PREFIXES = (
 _WILDCARD_TRUST_OVERLAY_INTERFACE_PREFIXES = (
     "tailscale",
 )
+_TAILSCALE_UTUN_INTERFACE_PREFIXES = ("utun",)
+_TAILSCALE_IP_CACHE_TTL_SECONDS = 30.0
+_TAILSCALE_IP_CACHE: tuple[float, frozenset[ipaddress._BaseAddress]] | None = None
 
 
 def _is_private_address(address: ipaddress._BaseAddress) -> bool:
@@ -496,15 +502,74 @@ def _is_wildcard_setup_host(setup_host: str) -> bool:
     return setup_host in {"0.0.0.0", "::", "*"}
 
 
-def _allows_wildcard_setup_host_trust(interface_name: str, address: ipaddress._BaseAddress) -> bool:
-    normalized_name = interface_name.lower()
-    if (
+def _is_tailscale_overlay_address(address: ipaddress._BaseAddress) -> bool:
+    return (
         isinstance(address, ipaddress.IPv4Address)
         and address in _SHARED_ADDRESS_SPACE
         or isinstance(address, ipaddress.IPv6Address)
         and address in _TAILSCALE_IPV6_ADDRESS_SPACE
-    ):
-        return normalized_name.startswith(_WILDCARD_TRUST_OVERLAY_INTERFACE_PREFIXES)
+    )
+
+
+def _tailscale_cli_candidates() -> list[str]:
+    candidates: list[str] = []
+    path = shutil.which("tailscale")
+    if path:
+        candidates.append(path)
+    macos_app_cli = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+    if macos_app_cli.exists():
+        candidates.append(str(macos_app_cli))
+    return list(dict.fromkeys(candidates))
+
+
+def _tailscale_local_addresses() -> frozenset[ipaddress._BaseAddress]:
+    global _TAILSCALE_IP_CACHE
+
+    now = time.monotonic()
+    if _TAILSCALE_IP_CACHE is not None:
+        cached_at, cached_addresses = _TAILSCALE_IP_CACHE
+        if now - cached_at < _TAILSCALE_IP_CACHE_TTL_SECONDS:
+            return cached_addresses
+
+    addresses: set[ipaddress._BaseAddress] = set()
+    env = {**os.environ, "TAILSCALE_BE_CLI": "1"}
+    for candidate in _tailscale_cli_candidates():
+        try:
+            result = subprocess.run(
+                [candidate, "ip"],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=False,
+                env=env,
+            )
+        except Exception:
+            continue
+        if result.returncode != 0:
+            continue
+        for line in result.stdout.splitlines():
+            try:
+                address = ipaddress.ip_address(line.strip())
+            except ValueError:
+                continue
+            if _is_tailscale_overlay_address(address):
+                addresses.add(address)
+        if addresses:
+            break
+
+    cached = frozenset(addresses)
+    _TAILSCALE_IP_CACHE = (now, cached)
+    return cached
+
+
+def _allows_wildcard_setup_host_trust(interface_name: str, address: ipaddress._BaseAddress) -> bool:
+    normalized_name = interface_name.lower()
+    if _is_tailscale_overlay_address(address):
+        if normalized_name.startswith(_WILDCARD_TRUST_OVERLAY_INTERFACE_PREFIXES):
+            return True
+        if normalized_name.startswith(_TAILSCALE_UTUN_INTERFACE_PREFIXES):
+            return address in _tailscale_local_addresses()
+        return False
     return normalized_name.startswith(_WILDCARD_TRUST_LAN_INTERFACE_PREFIXES)
 
 

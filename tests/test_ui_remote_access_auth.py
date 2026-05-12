@@ -1363,6 +1363,7 @@ def test_setup_host_wildcard_does_not_trust_generic_utun_tunnel(monkeypatch, tmp
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "0.0.0.0")
     _mock_interface(monkeypatch, "100.97.103.112", 32, name="utun4")
+    monkeypatch.setattr(ui_server, "_tailscale_local_addresses", lambda: frozenset())
 
     response = app.test_client().get(
         "/dashboard",
@@ -1375,10 +1376,27 @@ def test_setup_host_wildcard_does_not_trust_generic_utun_tunnel(monkeypatch, tmp
     assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
+def test_setup_host_wildcard_trusts_utun_when_tailscale_reports_local_ip(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "0.0.0.0")
+    address = ipaddress.ip_address("100.97.103.112")
+    _mock_interface(monkeypatch, str(address), 32, name="utun4")
+    monkeypatch.setattr(ui_server, "_tailscale_local_addresses", lambda: frozenset({address}))
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://100.97.103.112:5123",
+        environ_base={"REMOTE_ADDR": "100.97.103.5"},
+    )
+
+    assert response.status_code == 200
+
+
 def test_setup_host_ipv6_wildcard_does_not_trust_generic_utun_tunnel(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "::")
     _mock_interface(monkeypatch, "fd7a:115c:a1e0::5", 128, name="utun4")
+    monkeypatch.setattr(ui_server, "_tailscale_local_addresses", lambda: frozenset())
 
     response = app.test_client().get(
         "/dashboard",
@@ -1389,6 +1407,22 @@ def test_setup_host_ipv6_wildcard_does_not_trust_generic_utun_tunnel(monkeypatch
 
     assert response.status_code == 503
     assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_ipv6_wildcard_trusts_utun_when_tailscale_reports_local_ip(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "::")
+    address = ipaddress.ip_address("fd7a:115c:a1e0::5")
+    _mock_interface(monkeypatch, str(address), 128, name="utun4")
+    monkeypatch.setattr(ui_server, "_tailscale_local_addresses", lambda: frozenset({address}))
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://[fd7a:115c:a1e0::5]:5123",
+        environ_base={"REMOTE_ADDR": "fd7a:115c:a1e0::20"},
+    )
+
+    assert response.status_code == 200
 
 
 def test_setup_host_with_cloudflare_metadata_is_not_local(monkeypatch, tmp_path):
