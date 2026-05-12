@@ -432,6 +432,28 @@ def read_status():
     return read_json(paths.get_runtime_status_path()) or {}
 
 
+def _command_references_path(command: str | None, expected_path: Path) -> bool:
+    if not command:
+        return False
+    try:
+        args = shlex.split(command, posix=(os.name != "nt"))
+    except ValueError:
+        return False
+    expected_resolved = expected_path.resolve()
+    for arg in args:
+        cleaned_arg = arg.strip("\"'")
+        try:
+            if Path(cleaned_arg).resolve() == expected_resolved:
+                return True
+        except (OSError, RuntimeError):
+            continue
+    return False
+
+
+def _pid_matches_service(pid: int) -> bool:
+    return _command_references_path(get_process_command(pid), get_service_main_path())
+
+
 def render_status():
     status = read_status()
     pid_path = paths.get_runtime_pid_path()
@@ -451,7 +473,12 @@ def start_service():
             except Exception:
                 existing_pid = 0
             if existing_pid and pid_alive(existing_pid):
-                return existing_pid
+                if _pid_matches_service(existing_pid):
+                    return existing_pid
+                logger.warning(
+                    "Ignoring stale service pid file pid=%s because it does not match the Vibe service",
+                    existing_pid,
+                )
             pid_path.unlink(missing_ok=True)
 
         main_path = get_service_main_path()
