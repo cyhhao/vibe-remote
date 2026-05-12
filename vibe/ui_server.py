@@ -273,15 +273,19 @@ _OVERLAY_TRUST_NETWORKS_V4 = (
     ipaddress.IPv4Network("169.254.0.0/16"),
 )
 _OVERLAY_TRUST_NETWORKS_V6 = (ipaddress.IPv6Network("fe80::/10"),)
-_WILDCARD_TRUST_EXCLUDED_INTERFACE_PREFIXES = (
-    "br-",
-    "bridge",
-    "docker",
-    "podman",
-    "vboxnet",
-    "veth",
-    "virbr",
-    "vmnet",
+_WILDCARD_TRUST_LAN_INTERFACE_PREFIXES = (
+    "en",
+    "eth",
+    "ethernet",
+    "local area connection",
+    "wi-fi",
+    "wifi",
+    "wl",
+    "wwan",
+)
+_WILDCARD_TRUST_OVERLAY_INTERFACE_PREFIXES = (
+    "tailscale",
+    "utun",
 )
 
 
@@ -487,11 +491,10 @@ def _is_wildcard_setup_host(setup_host: str) -> bool:
 
 
 def _allows_wildcard_setup_host_trust(interface_name: str, address: ipaddress._BaseAddress) -> bool:
-    if isinstance(address, ipaddress.IPv4Address) and address in _SHARED_ADDRESS_SPACE:
-        return True
-
     normalized_name = interface_name.lower()
-    return not normalized_name.startswith(_WILDCARD_TRUST_EXCLUDED_INTERFACE_PREFIXES)
+    if isinstance(address, ipaddress.IPv4Address) and address in _SHARED_ADDRESS_SPACE:
+        return normalized_name.startswith(_WILDCARD_TRUST_OVERLAY_INTERFACE_PREFIXES)
+    return normalized_name.startswith(_WILDCARD_TRUST_LAN_INTERFACE_PREFIXES)
 
 
 def _is_wildcard_setup_host_request(config: V2Config | None) -> bool:
@@ -499,8 +502,9 @@ def _is_wildcard_setup_host_request(config: V2Config | None) -> bool:
 
     ``0.0.0.0``/``::`` is a listen address, not a trusted browser host. For
     compatibility with LAN direct access, accept requests to a concrete local
-    private interface IP while keeping arbitrary private Host spoofing and
-    public-IP exposure behind the normal remote-access checks.
+    private IP on a small allowlist of LAN/overlay interfaces while keeping
+    arbitrary private Host spoofing, container bridge networks, and public-IP
+    exposure behind the normal remote-access checks.
     """
     if config is None:
         return False
