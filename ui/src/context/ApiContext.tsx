@@ -148,11 +148,22 @@ export type CodexAuthMode = 'oauth' | 'api_key';
 // as "no key configured" in that case.
 export type CodexCredentialsStore = 'file' | 'keyring' | 'auto' | (string & {});
 
+export type ActiveAuthMode = 'oauth' | 'api_key' | 'none';
+
 export type CodexAuthState = {
   ok: boolean;
   auth_mode: CodexAuthMode;
+  // What the running Codex CLI is actually using at launch — separate
+  // from ``auth_mode`` which is the user's saved intent. Lets the UI
+  // surface "Currently active: …" so the two-radio choice is no longer
+  // ambiguous about which mode is live.
+  active_auth_mode: ActiveAuthMode;
   has_api_key: boolean;
   api_key_length: number;
+  // Server-masked preview (e.g. ``sk-proj-•••••••••H8mN``). Used to
+  // pre-fill the API Key input so the page reflects the saved state
+  // instead of looking empty. Plaintext keys never leave the server.
+  api_key_masked: string | null;
   base_url: string | null;
   has_chatgpt_tokens: boolean;
   credentials_store: CodexCredentialsStore;
@@ -187,8 +198,14 @@ export type ClaudeAuthMode = 'oauth' | 'api_key';
 export type ClaudeAuthState = {
   ok: boolean;
   auth_mode: ClaudeAuthMode;
+  // Live source the CLI is actually inheriting at launch (api_key when
+  // V2Config injects ``ANTHROPIC_API_KEY`` and strips OAuth env vars,
+  // oauth when ``~/.claude/credentials.json`` has a usable token).
+  active_auth_mode: ActiveAuthMode;
   has_api_key: boolean;
   api_key_length: number;
+  api_key_masked: string | null;
+  has_oauth_credentials: boolean;
   base_url: string | null;
   settings_path: string | null;
   settings_exists: boolean;

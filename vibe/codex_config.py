@@ -401,6 +401,10 @@ def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
         "auth_mode": inferred_mode,
         "has_api_key": isinstance(api_key, str) and bool(api_key),
         "api_key_length": len(api_key) if isinstance(api_key, str) else 0,
+        # Plaintext API key — only consumed by ``vibe.api.get_codex_auth``
+        # which masks it before returning to the UI. Never serialized to
+        # JSON directly.
+        "api_key_raw": api_key if isinstance(api_key, str) and api_key else None,
         "base_url": base_url,
         "has_chatgpt_tokens": has_chatgpt_tokens,
         "credentials_store": effective_store,

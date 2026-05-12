@@ -4,11 +4,13 @@ import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
   ArrowLeft,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Download,
   Info,
   KeyRound,
+  Pencil,
   RefreshCw,
   RotateCcw,
   Save,
@@ -17,6 +19,7 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 
+import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Card, CardContent } from '../ui/card';
 import { Input } from '../ui/input';
@@ -100,6 +103,10 @@ export const SettingsClaudeProviderPage: React.FC = () => {
   const [authSaving, setAuthSaving] = useState(false);
   const [authMode, setAuthMode] = useState<ClaudeAuthMode>('oauth');
   const [apiKey, setApiKey] = useState('');
+  // ``editingKey`` mirrors the Codex page convention: false = show the
+  // saved key as a read-only mask (``sk-ant-•••cd34``) with a pencil to
+  // replace it; true = empty editable input ready for a fresh secret.
+  const [editingKey, setEditingKey] = useState(false);
   const [baseUrl, setBaseUrl] = useState('');
 
   useEffect(() => {
@@ -131,9 +138,10 @@ export const SettingsClaudeProviderPage: React.FC = () => {
         setAuthState(data);
         setAuthMode(data.auth_mode);
         setBaseUrl(data.base_url || '');
-        // Never preload api_key; only its length is returned. Empty input
-        // means "keep whatever is stored" on save.
+        // The masked preview lives in ``authState.api_key_masked``;
+        // ``apiKey`` stays empty until the user clicks "Replace".
         setApiKey('');
+        setEditingKey(false);
       })
       .catch(() => {
         // ApiContext already toasted; leave the page on its defaults.
@@ -245,6 +253,7 @@ export const SettingsClaudeProviderPage: React.FC = () => {
       setAuthMode(result.auth_mode);
       setBaseUrl(result.base_url || '');
       setApiKey('');
+      setEditingKey(false);
       // Claude restart is synthetic (one-shot CLI) so result.restart.ok
       // is always true; treat any falsy state defensively just in case.
       if (result.restart?.ok === false) {
@@ -433,9 +442,27 @@ export const SettingsClaudeProviderPage: React.FC = () => {
             <Card>
               <CardContent className="flex flex-col gap-5 p-6">
                 <div className="flex flex-col gap-2">
-                  <Label className="text-xs font-medium uppercase text-muted">
-                    {t('settings.backends.claudeAuthModeLabel')}
-                  </Label>
+                  <div className="flex items-center justify-between gap-3">
+                    <Label className="text-xs font-medium uppercase text-muted">
+                      {t('settings.backends.claudeAuthModeLabel')}
+                    </Label>
+                    {authState?.active_auth_mode && authState.active_auth_mode !== 'none' && (
+                      <Badge
+                        variant={authState.active_auth_mode === 'oauth' ? 'success' : 'info'}
+                        className="font-mono uppercase tracking-[0.06em]"
+                      >
+                        <CheckCircle2 className="size-3" />
+                        {authState.active_auth_mode === 'oauth'
+                          ? t('settings.backends.activeAuthOauth')
+                          : t('settings.backends.activeAuthApiKey')}
+                      </Badge>
+                    )}
+                    {authState?.active_auth_mode === 'none' && (
+                      <Badge variant="secondary" className="font-mono uppercase tracking-[0.06em]">
+                        {t('settings.backends.activeAuthNone')}
+                      </Badge>
+                    )}
+                  </div>
                   <SegmentedRadio
                     value={authMode}
                     onChange={setAuthMode}
@@ -452,12 +479,12 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                 {authMode === 'oauth' && (
                   <BackendOAuthPanel
                     backend={BACKEND_ID}
-                    // Claude OAuth credentials live in the keychain on Mac,
-                    // ``~/.claude/credentials.json`` elsewhere — we don't probe
-                    // either here. The panel always offers a Sign-in button;
-                    // a successful in-session login flips the label to
-                    // "Re-authenticate" via its own state.
-                    signedIn={false}
+                    // ``has_oauth_credentials`` flips when ``~/.claude/credentials.json``
+                    // carries a usable token bundle — that's a real signal we can
+                    // trust on Linux/Docker. macOS keychain installs still report
+                    // false, but a successful in-session login flips the panel's
+                    // own state anyway.
+                    signedIn={!!authState?.has_oauth_credentials}
                     title={t('settings.backends.claudeOauthPanelTitle')}
                     subtitle={t('settings.backends.claudeOauthPanelSubtitle')}
                     onSuccess={() => {
@@ -484,21 +511,60 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                       <Label htmlFor="claude-api-key" className="text-xs font-medium uppercase text-muted">
                         {t('settings.backends.claudeApiKeyLabel')}
                       </Label>
-                      <div className="relative">
-                        <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
-                        <Input
-                          id="claude-api-key"
-                          type="password"
-                          autoComplete="off"
-                          spellCheck={false}
-                          placeholder={t('settings.backends.claudeApiKeyPlaceholder') as string}
-                          value={apiKey}
-                          onChange={(e) => setApiKey(e.target.value)}
-                          className="pl-9 font-mono"
-                          disabled={authSaving}
-                        />
+                      {authState?.has_api_key && !editingKey ? (
+                        // Same masked-preview affordance the Codex page uses;
+                        // keeps the user from re-typing the secret when they
+                        // are only changing the Base URL.
+                        <div className="flex items-center gap-2 rounded-md border border-border bg-foreground/[0.04] px-3 py-2">
+                          <KeyRound className="size-4 shrink-0 text-muted" />
+                          <code className="flex-1 truncate font-mono text-[13px] text-foreground">
+                            {authState.api_key_masked || '••••••••'}
+                          </code>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => {
+                              setEditingKey(true);
+                              setApiKey('');
+                            }}
+                          >
+                            <Pencil className="size-3" />
+                            {t('settings.backends.replaceApiKey')}
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="relative">
+                          <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                          <Input
+                            id="claude-api-key"
+                            type="password"
+                            autoComplete="off"
+                            spellCheck={false}
+                            placeholder={t('settings.backends.claudeApiKeyPlaceholder') as string}
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                            className="pl-9 font-mono"
+                            disabled={authSaving}
+                            autoFocus={editingKey}
+                          />
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[12px] text-muted">{apiKeyStatus}</p>
+                        {authState?.has_api_key && editingKey && (
+                          <button
+                            type="button"
+                            className="text-[12px] text-muted underline-offset-2 transition hover:text-foreground hover:underline"
+                            onClick={() => {
+                              setEditingKey(false);
+                              setApiKey('');
+                            }}
+                          >
+                            {t('common.cancel')}
+                          </button>
+                        )}
                       </div>
-                      <p className="text-[12px] text-muted">{apiKeyStatus}</p>
                     </div>
 
                     <div className="flex flex-col gap-2">

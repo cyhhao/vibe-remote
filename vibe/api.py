@@ -2060,6 +2060,30 @@ def restart_backend(name: str) -> dict:
 _VALID_AUTH_MODES = {"oauth", "api_key"}
 
 
+def _mask_api_key(api_key: str | None) -> str | None:
+    """Return a UI-safe preview of an API key.
+
+    Pattern: keep the prefix up to (and including) the first ``-`` block
+    (e.g. ``sk-proj-``, ``sk-ant-``) so the user can still recognize
+    the key type, then dots, then the last 4 characters. Short keys
+    (<= 12 chars) get a uniform 6-dots-plus-last-4 pattern so we never
+    accidentally render plaintext for a malformed key.
+    """
+    if not isinstance(api_key, str) or not api_key.strip():
+        return None
+    key = api_key.strip()
+    last4 = key[-4:]
+    if len(key) > 12 and "-" in key:
+        # Take the recognizable prefix up to and including the second dash
+        # (handles both ``sk-...`` and ``sk-proj-...`` shapes).
+        first_dash = key.find("-")
+        second_dash = key.find("-", first_dash + 1)
+        prefix_end = second_dash + 1 if second_dash != -1 else first_dash + 1
+        prefix = key[:prefix_end]
+        return f"{prefix}{'•' * 9}{last4}"
+    return f"{'•' * 6}{last4}"
+
+
 # ---------------------------------------------------------------------------
 # Web Settings → Backends OAuth flow plumbing
 #
@@ -2287,13 +2311,29 @@ def get_codex_auth() -> dict:
         auth_mode = configured_mode
     else:
         auth_mode = disk_state.get("auth_mode")
+    # The *active* auth source the running Codex CLI uses at launch is
+    # determined entirely by ``~/.codex/auth.json``: a stored API key wins;
+    # else ChatGPT tokens; else "not configured". This is what the user
+    # cares about ("which one is actually working"), separate from the
+    # ``auth_mode`` field above (which is the *intent* we'd save next).
+    has_api_key_live = bool(disk_state.get("has_api_key"))
+    has_chatgpt_live = bool(disk_state.get("has_chatgpt_tokens"))
+    if has_api_key_live:
+        active_auth_mode = "api_key"
+    elif has_chatgpt_live:
+        active_auth_mode = "oauth"
+    else:
+        active_auth_mode = "none"
+
     return {
         "ok": True,
         "auth_mode": auth_mode or "oauth",
-        "has_api_key": bool(disk_state.get("has_api_key")),
+        "active_auth_mode": active_auth_mode,
+        "has_api_key": has_api_key_live,
         "api_key_length": int(disk_state.get("api_key_length") or 0),
+        "api_key_masked": _mask_api_key(disk_state.get("api_key_raw")),
         "base_url": disk_state.get("base_url"),
-        "has_chatgpt_tokens": bool(disk_state.get("has_chatgpt_tokens")),
+        "has_chatgpt_tokens": has_chatgpt_live,
         # Forward the live Codex credentials-store status so the UI can
         # warn when the user is about to switch storage backends
         # (Codex's documented default is ``auto`` → keyring-preferred).
@@ -2443,9 +2483,10 @@ def get_claude_auth() -> dict:
     env). The UI surfaces a warning so users aren't confused by stale
     keys silently overriding what they just saved.
     """
-    from vibe.claude_config import read_claude_auth_state
+    from vibe.claude_config import read_claude_auth_state, read_claude_oauth_signed_in
 
     disk_state = read_claude_auth_state()
+    oauth_signed_in = read_claude_oauth_signed_in()
     try:
         config = load_config()
         cfg = getattr(getattr(config, "agents", None), "claude", None)
@@ -2472,11 +2513,32 @@ def get_claude_auth() -> dict:
     # in effect.
     settings_conflict = bool(disk_state.get("settings_env_has_key")) and has_api_key
 
+    # ``active_auth_mode`` reflects what the running CLI is actually using
+    # at launch — separate from ``auth_mode`` (the user's saved intent).
+    # V2Config drives ``build_claude_subprocess_env``: api_key mode injects
+    # ``ANTHROPIC_API_KEY`` and strips OAuth-related env vars; oauth mode
+    # leaves those keys alone and relies on ``~/.claude/credentials.json``
+    # / the OS keychain. So in api_key mode the key wins; in oauth mode
+    # the credentials file is what counts.
+    if auth_mode == "api_key" and has_api_key:
+        active_auth_mode = "api_key"
+    elif auth_mode == "oauth" and oauth_signed_in:
+        active_auth_mode = "oauth"
+    elif has_api_key:
+        active_auth_mode = "api_key"
+    elif oauth_signed_in:
+        active_auth_mode = "oauth"
+    else:
+        active_auth_mode = "none"
+
     return {
         "ok": True,
         "auth_mode": auth_mode,
+        "active_auth_mode": active_auth_mode,
         "has_api_key": has_api_key,
         "api_key_length": len(configured_key),
+        "api_key_masked": _mask_api_key(configured_key),
+        "has_oauth_credentials": oauth_signed_in,
         "base_url": configured_base or None,
         "settings_path": disk_state.get("settings_path"),
         "settings_exists": bool(disk_state.get("settings_exists")),

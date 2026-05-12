@@ -69,6 +69,49 @@ def get_claude_settings_path(home: Path | None = None) -> Path:
     return get_claude_home(home) / "settings.json"
 
 
+def get_claude_credentials_path(home: Path | None = None) -> Path:
+    """Return the absolute path to ``~/.claude/credentials.json``.
+
+    The Claude CLI writes OAuth tokens here on platforms that lack a
+    usable keychain (notably Linux/Docker, including the regression
+    container). The Settings UI uses presence + a token field as a
+    best-effort signal for "Claude is signed in via OAuth" since the
+    macOS keychain is not portably introspectable.
+    """
+    return get_claude_home(home) / "credentials.json"
+
+
+def read_claude_oauth_signed_in(home: Path | None = None) -> bool:
+    """Best-effort probe for whether Claude has a usable OAuth session.
+
+    True iff ``~/.claude/credentials.json`` exists and carries something
+    that looks like an OAuth token bundle. We don't attempt to introspect
+    keychain-backed installs (macOS) — those return False here but the UI
+    can still light up the OAuth banner after a successful in-app login.
+    """
+    path = get_claude_credentials_path(home)
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    # Claude writes nested ``claudeAiOauth`` payloads in newer builds; flat
+    # ``access_token``/``refresh_token`` keys also occur. Accept either.
+    nested = data.get("claudeAiOauth") if isinstance(data.get("claudeAiOauth"), dict) else None
+    if nested and any(
+        isinstance(nested.get(field), str) and nested.get(field)
+        for field in ("access_token", "refresh_token", "accessToken", "refreshToken")
+    ):
+        return True
+    for field in ("access_token", "refresh_token", "accessToken", "refreshToken"):
+        if isinstance(data.get(field), str) and data.get(field):
+            return True
+    return False
+
+
 def _load_settings(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}

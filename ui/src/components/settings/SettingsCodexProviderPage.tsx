@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Info, KeyRound, RotateCcw, Save } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Info, KeyRound, Pencil, RotateCcw, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 
+import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Card, CardContent } from '../ui/card';
 import { Input } from '../ui/input';
@@ -61,6 +62,11 @@ export const SettingsCodexProviderPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [authMode, setAuthMode] = useState<CodexAuthMode>('oauth');
   const [apiKey, setApiKey] = useState('');
+  // ``editingKey`` distinguishes "showing the saved masked key" (false,
+  // input is read-only and pre-filled with ``api_key_masked``) from "user
+  // is typing a fresh secret" (true, input is editable + empty). The
+  // pencil button flips it on; saving or reloading flips it back off.
+  const [editingKey, setEditingKey] = useState(false);
   const [baseUrl, setBaseUrl] = useState('');
 
   useEffect(() => {
@@ -72,10 +78,10 @@ export const SettingsCodexProviderPage: React.FC = () => {
         setState(data);
         setAuthMode(data.auth_mode);
         setBaseUrl(data.base_url || '');
-        // Never preload the api_key field: the server only returns its
-        // length, and an empty input here is interpreted as "keep what's
-        // stored" on save unless the user types a fresh value.
+        // Empty + read-only input + masked preview rendered separately
+        // (see below) reflects the saved state without leaking plaintext.
         setApiKey('');
+        setEditingKey(false);
       })
       .catch(() => {
         // Errors are already surfaced via ToastContext by ApiContext;
@@ -134,6 +140,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
       setAuthMode(result.auth_mode);
       setBaseUrl(result.base_url || '');
       setApiKey('');
+      setEditingKey(false);
       if (result.restart?.ok === false) {
         // Config saved, restart failed — make the partial success visible.
         showToast(result.restart.message || result.message || t('settings.backends.codexSaveSuccess'), 'warning');
@@ -165,9 +172,27 @@ export const SettingsCodexProviderPage: React.FC = () => {
         <Card>
           <CardContent className="flex flex-col gap-5 p-6">
             <div className="flex flex-col gap-2">
-              <Label className="text-xs font-medium uppercase text-muted">
-                {t('settings.backends.codexAuthModeLabel')}
-              </Label>
+              <div className="flex items-center justify-between gap-3">
+                <Label className="text-xs font-medium uppercase text-muted">
+                  {t('settings.backends.codexAuthModeLabel')}
+                </Label>
+                {state?.active_auth_mode && state.active_auth_mode !== 'none' && (
+                  <Badge
+                    variant={state.active_auth_mode === 'oauth' ? 'success' : 'info'}
+                    className="font-mono uppercase tracking-[0.06em]"
+                  >
+                    <CheckCircle2 className="size-3" />
+                    {state.active_auth_mode === 'oauth'
+                      ? t('settings.backends.activeAuthOauth')
+                      : t('settings.backends.activeAuthApiKey')}
+                  </Badge>
+                )}
+                {state?.active_auth_mode === 'none' && (
+                  <Badge variant="secondary" className="font-mono uppercase tracking-[0.06em]">
+                    {t('settings.backends.activeAuthNone')}
+                  </Badge>
+                )}
+              </div>
               <SegmentedRadio
                 value={authMode}
                 onChange={setAuthMode}
@@ -230,20 +255,61 @@ export const SettingsCodexProviderPage: React.FC = () => {
                   <Label htmlFor="codex-api-key" className="text-xs font-medium uppercase text-muted">
                     {t('settings.backends.codexApiKeyLabel')}
                   </Label>
-                  <div className="relative">
-                    <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
-                    <Input
-                      id="codex-api-key"
-                      type="password"
-                      autoComplete="off"
-                      spellCheck={false}
-                      placeholder={t('settings.backends.codexApiKeyPlaceholder') as string}
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      className="pl-9 font-mono"
-                    />
+                  {state?.has_api_key && !editingKey ? (
+                    // Saved-key preview: render the server-masked value
+                    // (``sk-proj-•••H8mN``) read-only with a pencil to swap
+                    // in a fresh key. Same affordance shown in design.pen
+                    // ``cxApiVal`` — saves the user from typing the secret
+                    // again when they only want to change the Base URL.
+                    <div className="flex items-center gap-2 rounded-md border border-border bg-foreground/[0.04] px-3 py-2">
+                      <KeyRound className="size-4 shrink-0 text-muted" />
+                      <code className="flex-1 truncate font-mono text-[13px] text-foreground">
+                        {state.api_key_masked || '••••••••'}
+                      </code>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => {
+                          setEditingKey(true);
+                          setApiKey('');
+                        }}
+                      >
+                        <Pencil className="size-3" />
+                        {t('settings.backends.replaceApiKey')}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                      <Input
+                        id="codex-api-key"
+                        type="password"
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder={t('settings.backends.codexApiKeyPlaceholder') as string}
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        className="pl-9 font-mono"
+                        autoFocus={editingKey}
+                      />
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[12px] text-muted">{apiKeyStatus}</p>
+                    {state?.has_api_key && editingKey && (
+                      <button
+                        type="button"
+                        className="text-[12px] text-muted underline-offset-2 transition hover:text-foreground hover:underline"
+                        onClick={() => {
+                          setEditingKey(false);
+                          setApiKey('');
+                        }}
+                      >
+                        {t('common.cancel')}
+                      </button>
+                    )}
                   </div>
-                  <p className="text-[12px] text-muted">{apiKeyStatus}</p>
                 </div>
 
                 <div className="flex flex-col gap-2">
