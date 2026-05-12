@@ -340,7 +340,15 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
     setExpandedId(provider.id);
     setEditByProvider((prev) => {
       if (prev[provider.id]) return prev;
-      return { ...prev, [provider.id]: emptyEdit() };
+      // Pre-populate baseUrl from the persisted opencode.json override so
+      // the input round-trips: open card → see existing value → edit →
+      // save. Leaving it blank on every open would let a re-save wipe the
+      // value because the form is the only baseURL signal we forward.
+      const seeded = emptyEdit();
+      if (provider.base_url) {
+        seeded.baseUrl = provider.base_url;
+      }
+      return { ...prev, [provider.id]: seeded };
     });
   };
 
@@ -381,9 +389,17 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
       });
       return;
     }
+    // The Base URL field is the only signal the form sends for the
+    // ``provider.<id>.options.baseURL`` override in ``opencode.json``.
+    // Forwarding the trimmed value verbatim — including the empty
+    // string for "clear" — is critical: if we dropped to ``undefined``
+    // for blanks, the server would interpret it as "leave unchanged"
+    // and a user who removed the value in the form would silently keep
+    // the old override on disk.
+    const baseUrl = state.baseUrl.trim();
     updateEdit(provider.id, { saving: true, error: null });
     try {
-      const result = await api.setOpencodeProviderAuth(provider.id, key);
+      const result = await api.setOpencodeProviderAuth(provider.id, key, baseUrl);
       if (!result.ok) {
         updateEdit(provider.id, {
           saving: false,

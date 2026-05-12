@@ -639,10 +639,13 @@ class AgentAuthService:
         if not os.path.exists(working_path):
             os.makedirs(working_path, exist_ok=True)
 
-        claude_env = {}
-        for key in os.environ:
-            if key.startswith("ANTHROPIC_") or key.startswith("CLAUDE_"):
-                claude_env[key] = os.environ[key]
+        # Reuse the session-handler env composition so the auth_mode /
+        # api_key / base_url overrides apply uniformly. Without this, an
+        # OAuth-mode user with ``ANTHROPIC_API_KEY`` in their shell would
+        # still get the key into the control-channel SDK client.
+        from vibe.claude_config import build_claude_subprocess_env
+
+        claude_env = build_claude_subprocess_env(getattr(self.controller.config, "claude", None))
 
         should_force_sandbox = getattr(session_handler, "_should_force_claude_sandbox", None)
         if callable(should_force_sandbox) and should_force_sandbox():

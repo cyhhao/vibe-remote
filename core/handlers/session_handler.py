@@ -559,24 +559,12 @@ class SessionHandler(BaseHandler):
             if len(claude_stderr_lines) > 40:
                 del claude_stderr_lines[:-40]
 
-        # Collect Anthropic-related environment variables to pass to Claude
-        claude_env = {}
-        for key in os.environ:
-            if key.startswith("ANTHROPIC_") or key.startswith("CLAUDE_"):
-                claude_env[key] = os.environ[key]
-        # V2Config-driven overrides win over ambient shell env: the user
-        # opted in to these via Settings → Backends, so they should beat a
-        # stale ``ANTHROPIC_API_KEY`` exported in the parent shell.
-        claude_cfg = getattr(self.config, "claude", None)
-        if claude_cfg is not None:
-            auth_mode = getattr(claude_cfg, "auth_mode", "oauth")
-            if auth_mode == "api_key":
-                configured_key = (getattr(claude_cfg, "api_key", None) or "").strip()
-                if configured_key:
-                    claude_env["ANTHROPIC_API_KEY"] = configured_key
-            configured_base = (getattr(claude_cfg, "base_url", None) or "").strip()
-            if configured_base:
-                claude_env["ANTHROPIC_BASE_URL"] = configured_base
+        # V2Config-driven Anthropic env composition, centralised so the
+        # control-channel client (``agent_auth_service``) cannot drift
+        # away from this site's auth_mode handling.
+        from vibe.claude_config import build_claude_subprocess_env
+
+        claude_env = build_claude_subprocess_env(getattr(self.config, "claude", None))
         if self._should_force_claude_sandbox():
             claude_env["IS_SANDBOX"] = "1"
             logger.info("Detected Claude bypassPermissions running as root; forcing IS_SANDBOX=1 for Claude subprocess")

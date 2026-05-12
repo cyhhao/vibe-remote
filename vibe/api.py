@@ -10,7 +10,7 @@ import time
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from config import paths
 from config.v2_config import CONFIG_LOCK, V2Config
@@ -2113,6 +2113,16 @@ def get_codex_auth() -> dict:
         # warning even when the store is already ``file``.
         "credentials_store": disk_state.get("credentials_store") or "auto",
         "file_store_active": bool(disk_state.get("file_store_active")),
+        # Surface "we can't read your key — it may live in the OS
+        # keychain" so the UI doesn't claim "no key configured" when
+        # Codex is in keyring-preferred mode and we have no disk
+        # evidence. We suppress the flag when V2Config has a stored
+        # ``auth_mode`` (the user already saved through our flow), since
+        # we then know the mode and the next save will pin file storage.
+        "auth_mode_uncertain": (
+            bool(disk_state.get("auth_mode_uncertain"))
+            and configured_mode not in _VALID_AUTH_MODES
+        ),
     }
 
 
@@ -2460,6 +2470,31 @@ async def _get_opencode_providers_async() -> dict:
     except Exception:
         pass
 
+    # Pre-load the user-config base-URL overrides once so we can attach
+    # them to each row without re-parsing the JSON file per provider.
+    try:
+        from vibe.opencode_config import load_first_opencode_user_config
+
+        opencode_probe = await asyncio.to_thread(
+            load_first_opencode_user_config, logger_instance=logger
+        )
+    except Exception as exc:
+        logger.debug("Could not read opencode.json for baseURL pre-population: %s", exc)
+        opencode_probe = None
+    base_url_index: dict = {}
+    if opencode_probe is not None and isinstance(opencode_probe.config, dict):
+        provider_block = opencode_probe.config.get("provider")
+        if isinstance(provider_block, dict):
+            for pid_key, pid_config in provider_block.items():
+                if not isinstance(pid_config, dict):
+                    continue
+                options = pid_config.get("options")
+                if not isinstance(options, dict):
+                    continue
+                candidate = options.get("baseURL")
+                if isinstance(candidate, str) and candidate.strip():
+                    base_url_index[pid_key] = candidate.strip()
+
     out_providers = []
     for pid, entry in all_providers.items():
         if not isinstance(entry, dict):
@@ -2497,6 +2532,7 @@ async def _get_opencode_providers_async() -> dict:
                 "local": local,
                 "models": model_ids,
                 "default_model": default_model,
+                "base_url": base_url_index.get(pid),
             }
         )
 
@@ -2518,7 +2554,22 @@ def get_opencode_providers() -> dict:
         return {"ok": False, "message": str(exc)}
 
 
-async def _save_opencode_provider_auth_async(provider_id: str, api_key: str) -> dict:
+# Sentinel used by ``save_opencode_provider_auth`` to distinguish three
+# states of the optional ``base_url`` field:
+#   * key absent from payload      → ``_BASE_URL_UNCHANGED`` (no-op)
+#   * key present, value blank     → ``None``                (clear stored)
+#   * key present, value non-blank → ``str``                 (upsert)
+# Without this, a payload like ``{"api_key": "..."}`` (re-saving just
+# the API key) would silently wipe the stored ``baseURL`` because the
+# server cannot tell "omitted" from "explicitly empty".
+_BASE_URL_UNCHANGED: object = object()
+
+
+async def _save_opencode_provider_auth_async(
+    provider_id: str,
+    api_key: str,
+    base_url: Any = _BASE_URL_UNCHANGED,
+) -> dict:
     server = await _opencode_get_server()
     if server is None:
         return {"ok": False, "message": "OpenCode is disabled in V2Config"}
@@ -2527,19 +2578,74 @@ async def _save_opencode_provider_auth_async(provider_id: str, api_key: str) -> 
         await server.set_api_key_auth(provider_id, api_key)
     finally:
         await server.close_http_session(loop=request_loop)
-    # Also clean the legacy ``opencode.json`` provider block so the UI
-    # source of truth (OpenCode's own auth store) wins on next launch.
-    try:
-        from vibe.opencode_config import remove_opencode_provider_api_key
 
-        await asyncio.to_thread(remove_opencode_provider_api_key, provider_id, logger_instance=logger)
+    # Two-source-of-truth pruning: drop the legacy ``opencode.json``
+    # ``apiKey`` entry now that the daemon's auth store owns the key.
+    # This is best-effort: a JSON-write failure here is non-fatal because
+    # the daemon already has the key.
+    from vibe.opencode_config import (
+        remove_opencode_provider_api_key,
+        remove_opencode_provider_base_url,
+        upsert_opencode_provider_base_url,
+    )
+
+    try:
+        await asyncio.to_thread(
+            remove_opencode_provider_api_key, provider_id, logger_instance=logger
+        )
     except Exception as exc:
-        logger.debug("Legacy opencode.json cleanup skipped for %s: %s", provider_id, exc)
+        logger.debug("Legacy opencode.json apiKey cleanup skipped for %s: %s", provider_id, exc)
+
+    # ``baseURL`` is different: OpenCode's auth endpoint has no field for
+    # it, so this write is the *only* place it gets persisted. A silent
+    # failure would surface as "save success, value lost on reload" — the
+    # exact UX bug Codex flagged. Surface those errors to the caller so
+    # the UI can show a useful message.
+    if base_url is _BASE_URL_UNCHANGED:
+        return {"ok": True}
+
+    try:
+        if base_url:
+            await asyncio.to_thread(
+                upsert_opencode_provider_base_url,
+                provider_id,
+                base_url,
+                logger_instance=logger,
+            )
+        else:
+            await asyncio.to_thread(
+                remove_opencode_provider_base_url,
+                provider_id,
+                logger_instance=logger,
+            )
+    except Exception as exc:
+        logger.warning(
+            "OpenCode base_url persist failed for %s: %s", provider_id, exc, exc_info=True
+        )
+        return {
+            "ok": False,
+            "message": (
+                "API key saved, but base URL persistence failed: "
+                f"{exc}"
+            ),
+        }
     return {"ok": True}
 
 
 def save_opencode_provider_auth(provider_id: str, payload: dict) -> dict:
-    """Persist a single OpenCode provider's API key via the live daemon."""
+    """Persist a single OpenCode provider's API key (and optional base URL).
+
+    The api key is forwarded to OpenCode's own ``PUT /auth`` endpoint so
+    the daemon's auth store remains the source of truth. The optional
+    ``base_url`` override is persisted into ``opencode.json`` because
+    OpenCode's auth endpoint has no field for it — without this fan-out
+    the Settings UI's Base URL input would be a no-op.
+
+    ``base_url`` field semantics in the payload:
+      * absent              → leave the stored value untouched
+      * empty / whitespace  → clear the stored value
+      * non-empty string    → upsert (must start with http:// or https://)
+    """
     if not isinstance(provider_id, str) or not provider_id.strip():
         return {"ok": False, "message": "provider_id is required"}
     if not isinstance(payload, dict):
@@ -2548,8 +2654,30 @@ def save_opencode_provider_auth(provider_id: str, payload: dict) -> dict:
     if not isinstance(raw_key, str) or not raw_key.strip():
         return {"ok": False, "message": "api_key is required"}
     api_key = raw_key.strip()
+
+    base_url: Any = _BASE_URL_UNCHANGED
+    if "base_url" in payload:
+        raw_base_url = payload.get("base_url")
+        if raw_base_url is None:
+            base_url = None
+        elif isinstance(raw_base_url, str):
+            candidate = raw_base_url.strip()
+            if not candidate:
+                base_url = None
+            else:
+                if not candidate.lower().startswith(("http://", "https://")):
+                    return {
+                        "ok": False,
+                        "message": "base_url must start with http:// or https://",
+                    }
+                base_url = candidate
+        else:
+            return {"ok": False, "message": "base_url must be a string"}
+
     try:
-        return asyncio.run(_save_opencode_provider_auth_async(provider_id.strip(), api_key))
+        return asyncio.run(
+            _save_opencode_provider_auth_async(provider_id.strip(), api_key, base_url)
+        )
     except Exception as exc:
         logger.warning("OpenCode set-auth failed for %s: %s", provider_id, exc, exc_info=True)
         return {"ok": False, "message": str(exc)}

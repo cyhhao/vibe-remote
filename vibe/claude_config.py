@@ -154,3 +154,58 @@ def read_claude_api_key_from_settings(home: Path | None = None) -> Optional[str]
     """
     env_block = read_claude_settings_env(home)
     return env_block.get("ANTHROPIC_API_KEY")
+
+
+def build_claude_subprocess_env(
+    claude_cfg: Any,
+    base_env: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Build the env dict passed to every Claude subprocess / SDK client.
+
+    Both ``core/handlers/session_handler.py`` (one-shot CLI launches) and
+    ``core/agent_auth_service.py`` (control-channel SDK clients) need the
+    same Anthropic/Claude env composition: inherit relevant vars from the
+    parent process, then let V2Config's ``auth_mode`` / ``api_key`` /
+    ``base_url`` overrides win.
+
+    The ``auth_mode`` toggle is the load-bearing piece — if a user picks
+    OAuth in Settings but their shell exports ``ANTHROPIC_API_KEY``, the
+    Claude CLI silently keeps API-key auth and never reaches
+    ``~/.claude/credentials.json``. Stripping both ``ANTHROPIC_API_KEY``
+    and ``ANTHROPIC_AUTH_TOKEN`` (header-semantics switch) in OAuth mode
+    makes the Settings toggle authoritative.
+
+    Centralising the logic prevents the next env-var path (control
+    client, future MCP launch, etc.) from forgetting the strip and
+    re-introducing the same bug.
+    """
+
+    env_source = base_env if base_env is not None else os.environ
+    claude_env: Dict[str, str] = {}
+    for key, value in env_source.items():
+        if key.startswith("ANTHROPIC_") or key.startswith("CLAUDE_"):
+            claude_env[key] = value
+
+    if claude_cfg is None:
+        return claude_env
+
+    auth_mode = getattr(claude_cfg, "auth_mode", "oauth")
+    if auth_mode == "oauth":
+        # OAuth means Claude Code reads credentials from
+        # ``~/.claude/credentials.json``; any inherited API-key / bearer-
+        # token var would suppress that path. Strip both.
+        claude_env.pop("ANTHROPIC_API_KEY", None)
+        claude_env.pop("ANTHROPIC_AUTH_TOKEN", None)
+    elif auth_mode == "api_key":
+        configured_key = (getattr(claude_cfg, "api_key", None) or "").strip()
+        if configured_key:
+            claude_env["ANTHROPIC_API_KEY"] = configured_key
+            # When we set an explicit API key, drop any inherited bearer
+            # token so the SDK can't pick the wrong Authorization header.
+            claude_env.pop("ANTHROPIC_AUTH_TOKEN", None)
+
+    configured_base = (getattr(claude_cfg, "base_url", None) or "").strip()
+    if configured_base:
+        claude_env["ANTHROPIC_BASE_URL"] = configured_base
+
+    return claude_env

@@ -26,7 +26,11 @@ export type ApiContextType = {
   getClaudeAuth: () => Promise<ClaudeAuthState>;
   saveClaudeAuth: (payload: ClaudeAuthPayload) => Promise<ClaudeAuthSaveResult>;
   getOpencodeProviders: () => Promise<OpencodeProviderListResult>;
-  setOpencodeProviderAuth: (providerId: string, apiKey: string) => Promise<OpencodeMutationResult>;
+  setOpencodeProviderAuth: (
+    providerId: string,
+    apiKey: string,
+    baseUrl?: string,
+  ) => Promise<OpencodeMutationResult>;
   deleteOpencodeProviderAuth: (providerId: string) => Promise<OpencodeMutationResult>;
   setOpencodeDefaultProvider: (providerId: string) => Promise<OpencodeMutationResult>;
   slackAuthTest: (botToken: string, proxyUrl?: string) => Promise<any>;
@@ -143,6 +147,12 @@ export type CodexAuthState = {
   has_chatgpt_tokens: boolean;
   credentials_store: CodexCredentialsStore;
   file_store_active: boolean;
+  // True when Codex is in keyring-preferred mode and disk shows no
+  // key/tokens — the live auth may live in the OS keychain (we cannot
+  // portably read it). UI must not claim "no key configured" in that
+  // case; it should prompt the user to choose a mode (saving will pin
+  // file storage so subsequent reads work).
+  auth_mode_uncertain?: boolean;
   message?: string;
 };
 
@@ -204,6 +214,10 @@ export type OpencodeProvider = {
   local: boolean;
   models: string[];
   default_model: string | null;
+  // Optional ``baseURL`` override persisted in opencode.json. Surfaced so
+  // the Settings page can pre-populate the Base URL input with the last
+  // saved value instead of starting empty on every reload.
+  base_url?: string | null;
 };
 
 export type OpencodeProviderListResult = {
@@ -315,8 +329,16 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getClaudeAuth: () => getJson('/backend/claude/auth'),
     saveClaudeAuth: (payload) => postJson('/backend/claude/auth', payload),
     getOpencodeProviders: () => getJson('/backend/opencode/providers'),
-    setOpencodeProviderAuth: (providerId, apiKey) =>
-      postJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`, { api_key: apiKey }),
+    setOpencodeProviderAuth: (providerId, apiKey, baseUrl) =>
+      // Forward ``base_url`` only when the caller passed something
+      // (including an explicit empty string for "clear"); omitting it
+      // entirely tells the server to leave the stored value untouched,
+      // which is the right default for callers that don't care about
+      // the base-URL override.
+      postJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`, {
+        api_key: apiKey,
+        ...(baseUrl !== undefined ? { base_url: baseUrl } : {}),
+      }),
     deleteOpencodeProviderAuth: (providerId) =>
       deleteJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`),
     setOpencodeDefaultProvider: (providerId) =>
