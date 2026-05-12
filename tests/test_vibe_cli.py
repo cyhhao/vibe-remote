@@ -435,6 +435,16 @@ def test_start_ui_replaces_stale_live_pid_when_health_check_fails(tmp_path, monk
 
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 12345)
     monkeypatch.setattr(runtime, "ui_server_healthy", lambda host, port: False)
+    monkeypatch.setattr(
+        runtime,
+        "get_process_command",
+        lambda pid: (
+            f"{sys.executable} -c "
+            "\"from vibe.ui_server import run_ui_server; run_ui_server('127.0.0.1', 5123)\""
+            if pid == 12345
+            else None
+        ),
+    )
     monkeypatch.setattr(runtime, "stop_pid", lambda pid: stopped.append(pid) or True)
     monkeypatch.setattr(runtime, "wait_for_ui_server", lambda host, port: True)
 
@@ -447,6 +457,30 @@ def test_start_ui_replaces_stale_live_pid_when_health_check_fails(tmp_path, monk
 
     assert runtime.start_ui("127.0.0.1", 5123) == 67890
     assert stopped == [12345]
+    assert paths.get_runtime_ui_pid_path().read_text(encoding="utf-8") == "67890"
+
+
+def test_start_ui_does_not_stop_unrelated_reused_pid(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    paths.get_runtime_ui_pid_path().write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 12345)
+    monkeypatch.setattr(runtime, "ui_server_healthy", lambda host, port: False)
+    monkeypatch.setattr(runtime, "get_process_command", lambda pid: "/usr/bin/unrelated --work" if pid == 12345 else None)
+    monkeypatch.setattr(runtime, "wait_for_ui_server", lambda host, port: True)
+
+    def fail_stop(pid, timeout=5):
+        raise AssertionError(f"unrelated pid should not be stopped: {pid}")
+
+    def fake_spawn(args, pid_path, stdout_name, stderr_name, env=None):
+        pid_path.write_text("67890", encoding="utf-8")
+        return 67890
+
+    monkeypatch.setattr(runtime, "stop_pid", fail_stop)
+    monkeypatch.setattr(runtime, "spawn_background", fake_spawn)
+
+    assert runtime.start_ui("127.0.0.1", 5123) == 67890
     assert paths.get_runtime_ui_pid_path().read_text(encoding="utf-8") == "67890"
 
 
