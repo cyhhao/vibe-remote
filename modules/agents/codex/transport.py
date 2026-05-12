@@ -10,6 +10,8 @@ import signal
 from asyncio.subprocess import Process
 from typing import Any, Awaitable, Callable, Optional
 
+from core.process_isolation import KILL_SIGNAL, isolated_subprocess_kwargs, signal_process_tree
+
 logger = logging.getLogger(__name__)
 
 STREAM_BUFFER_LIMIT = 128 * 1024 * 1024  # 128 MB
@@ -70,7 +72,7 @@ class CodexTransport:
             stderr=asyncio.subprocess.PIPE,
             cwd=self._cwd,
             limit=STREAM_BUFFER_LIMIT,
-            **({"preexec_fn": os.setsid} if hasattr(os, "setsid") else {}),
+            **isolated_subprocess_kwargs(),
         )
         logger.info("Codex app-server started (pid=%s)", self._process.pid)
 
@@ -116,18 +118,12 @@ class CodexTransport:
         except asyncio.TimeoutError:
             logger.warning("Codex app-server did not exit gracefully, sending SIGTERM")
             try:
-                if hasattr(os, "getpgid"):
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                else:
-                    proc.terminate()
+                signal_process_tree(proc, signal.SIGTERM, logger, "Codex app-server")
                 await asyncio.wait_for(proc.wait(), timeout=3.0)
             except (asyncio.TimeoutError, ProcessLookupError):
                 logger.warning("Codex app-server did not respond to SIGTERM, sending SIGKILL")
                 try:
-                    if hasattr(os, "getpgid"):
-                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                    else:
-                        proc.kill()
+                    signal_process_tree(proc, KILL_SIGNAL, logger, "Codex app-server")
                     await proc.wait()
                 except ProcessLookupError:
                     pass

@@ -13,6 +13,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from config import paths
+from core.process_isolation import isolated_subprocess_kwargs, terminate_and_communicate
 from core.scheduled_tasks import TaskExecutionStore
 
 logger = logging.getLogger(__name__)
@@ -467,6 +468,7 @@ class ManagedWatchService:
                 cwd=watch.cwd or None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **isolated_subprocess_kwargs(),
             )
         else:
             process = await asyncio.create_subprocess_exec(
@@ -474,6 +476,7 @@ class ManagedWatchService:
                 cwd=watch.cwd or None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **isolated_subprocess_kwargs(),
             )
         self._active_pids[watch.id] = process.pid
         self._write_runtime_state()
@@ -484,12 +487,10 @@ class ManagedWatchService:
                 stdout, stderr = await process.communicate()
             timed_out = False
         except asyncio.CancelledError:
-            process.kill()
-            await process.communicate()
+            await terminate_and_communicate(process, logger, f"watch {watch.id}")
             raise
         except asyncio.TimeoutError:
-            process.kill()
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await terminate_and_communicate(process, logger, f"watch {watch.id}")
             return _CycleResult(exit_code=124, stdout="", stderr=stderr.decode("utf-8", errors="replace"), timed_out=True)
         finally:
             self._active_pids.pop(watch.id, None)
