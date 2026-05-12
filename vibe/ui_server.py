@@ -267,13 +267,19 @@ _TAILSCALE_IPV6_ADDRESS_SPACE = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 #   * 100.64.0.0/10 — Tailscale CGNAT. Tailscale assigns each peer a /32 in
 #     this range and routes peers via its overlay; legitimate peers can be
 #     anywhere in the /10 even though they share the same logical network.
+#   * fd7a:115c:a1e0::/48 — Tailscale IPv6 ULA. Like the IPv4 CGNAT
+#     range, Tailscale can assign interface addresses as host routes while
+#     legitimate peers live elsewhere in the overlay prefix.
 #   * 169.254.0.0/16 / fe80::/10 — link-local. Confined to the same L2
 #     segment by the kernel.
 _OVERLAY_TRUST_NETWORKS_V4 = (
     ipaddress.IPv4Network("100.64.0.0/10"),
     ipaddress.IPv4Network("169.254.0.0/16"),
 )
-_OVERLAY_TRUST_NETWORKS_V6 = (ipaddress.IPv6Network("fe80::/10"),)
+_OVERLAY_TRUST_NETWORKS_V6 = (
+    _TAILSCALE_IPV6_ADDRESS_SPACE,
+    ipaddress.IPv6Network("fe80::/10"),
+)
 _WILDCARD_TRUST_LAN_INTERFACE_PREFIXES = (
     "en",
     "eth",

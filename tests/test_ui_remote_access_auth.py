@@ -1332,7 +1332,7 @@ def test_setup_host_ipv6_wildcard_allows_actual_private_interface_host(monkeypat
 def test_setup_host_ipv6_wildcard_allows_tailscale_ula_interface_host(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "::")
-    _mock_interface(monkeypatch, "fd7a:115c:a1e0::5", 64, name="tailscale0")
+    _mock_interface(monkeypatch, "fd7a:115c:a1e0::5", 128, name="tailscale0")
 
     response = app.test_client().get(
         "/health",
