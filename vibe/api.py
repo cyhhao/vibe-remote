@@ -2483,10 +2483,18 @@ def get_claude_auth() -> dict:
     env). The UI surfaces a warning so users aren't confused by stale
     keys silently overriding what they just saved.
     """
-    from vibe.claude_config import read_claude_auth_state, read_claude_oauth_signed_in
+    from vibe.claude_config import (
+        read_claude_auth_state,
+        read_claude_oauth_signed_in,
+        read_claude_settings_env,
+    )
 
     disk_state = read_claude_auth_state()
     oauth_signed_in = read_claude_oauth_signed_in()
+    settings_env = read_claude_settings_env()
+    settings_key = settings_env.get("ANTHROPIC_API_KEY") or settings_env.get("ANTHROPIC_AUTH_TOKEN") or ""
+    settings_base = settings_env.get("ANTHROPIC_BASE_URL") or ""
+
     try:
         config = load_config()
         cfg = getattr(getattr(config, "agents", None), "claude", None)
@@ -2501,45 +2509,63 @@ def get_claude_auth() -> dict:
     configured_key = configured_key.strip() if isinstance(configured_key, str) else ""
     configured_base = configured_base.strip() if isinstance(configured_base, str) else ""
 
-    has_api_key = bool(configured_key)
+    # Effective values surface to the UI. V2Config wins when populated
+    # (that's what we'd write next), else fall back to whatever the
+    # running CLI actually inherits from ``settings.json``. This is the
+    # difference between "no key configured" (truly empty) and "key lives
+    # in settings.json from a hand-edit or older tool" (looks empty in
+    # V2Config but actually drives the live CLI).
+    effective_key = configured_key or settings_key
+    effective_base = configured_base or settings_base
+    has_api_key = bool(effective_key)
+
     if configured_mode in _VALID_AUTH_MODES:
         auth_mode = configured_mode
+    elif effective_key:
+        auth_mode = "api_key"
     else:
-        auth_mode = "api_key" if has_api_key else "oauth"
+        auth_mode = "oauth"
 
-    # When settings.json also defines a key, the live CLI uses that one
-    # rather than the V2Config-injected one. Flag the conflict so the
-    # UI can warn the user before they assume their newly-saved key is
-    # in effect.
-    settings_conflict = bool(disk_state.get("settings_env_has_key")) and has_api_key
+    # ``settings_conflict`` keeps the original meaning: BOTH V2Config and
+    # settings.json have a key, in which case settings.json wins at launch
+    # (Claude Code layers ``env`` on top of inherited env). The new
+    # "settings.json is sole source" case is not a conflict — it's just
+    # the effective value and we now render it instead of blanking out.
+    settings_conflict = bool(disk_state.get("settings_env_has_key")) and bool(configured_key)
 
     # ``active_auth_mode`` reflects what the running CLI is actually using
-    # at launch — separate from ``auth_mode`` (the user's saved intent).
-    # V2Config drives ``build_claude_subprocess_env``: api_key mode injects
-    # ``ANTHROPIC_API_KEY`` and strips OAuth-related env vars; oauth mode
-    # leaves those keys alone and relies on ``~/.claude/credentials.json``
-    # / the OS keychain. So in api_key mode the key wins; in oauth mode
-    # the credentials file is what counts.
-    if auth_mode == "api_key" and has_api_key:
+    # at launch.
+    if effective_key and auth_mode == "api_key":
         active_auth_mode = "api_key"
-    elif auth_mode == "oauth" and oauth_signed_in:
+    elif oauth_signed_in and auth_mode == "oauth":
         active_auth_mode = "oauth"
-    elif has_api_key:
+    elif effective_key:
         active_auth_mode = "api_key"
     elif oauth_signed_in:
         active_auth_mode = "oauth"
     else:
         active_auth_mode = "none"
 
+    # Which storage the live API key came from — helps the UI explain the
+    # state ("Key configured in settings.json"). Plaintext never leaves
+    # the server; only the mask is forwarded.
+    if configured_key:
+        api_key_source = "v2config"
+    elif settings_key:
+        api_key_source = "settings_json"
+    else:
+        api_key_source = None
+
     return {
         "ok": True,
         "auth_mode": auth_mode,
         "active_auth_mode": active_auth_mode,
         "has_api_key": has_api_key,
-        "api_key_length": len(configured_key),
-        "api_key_masked": _mask_api_key(configured_key),
+        "api_key_length": len(effective_key),
+        "api_key_masked": _mask_api_key(effective_key),
+        "api_key_source": api_key_source,
         "has_oauth_credentials": oauth_signed_in,
-        "base_url": configured_base or None,
+        "base_url": effective_base or None,
         "settings_path": disk_state.get("settings_path"),
         "settings_exists": bool(disk_state.get("settings_exists")),
         "settings_env_has_key": bool(disk_state.get("settings_env_has_key")),

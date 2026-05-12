@@ -195,6 +195,14 @@ export type ClaudeAuthMode = 'oauth' | 'api_key';
 // inspect ``~/.claude/settings.json`` so the UI can warn when a
 // hand-edited ``env`` block would override the V2Config-injected key at
 // launch (Claude Code layers settings.json env on top of inherited env).
+// Which on-disk source the live API key came from. ``v2config`` means
+// the user (or a prior save) put it in Vibe Remote's V2Config and we
+// inject it as ``ANTHROPIC_API_KEY`` at launch. ``settings_json`` means
+// ``~/.claude/settings.json``'s ``env`` block already carries the key —
+// the live CLI reads it directly and our V2Config is empty (typically a
+// pre-existing setup that predates our Settings UI). ``null`` = no key.
+export type ClaudeApiKeySource = 'v2config' | 'settings_json' | null;
+
 export type ClaudeAuthState = {
   ok: boolean;
   auth_mode: ClaudeAuthMode;
@@ -205,6 +213,7 @@ export type ClaudeAuthState = {
   has_api_key: boolean;
   api_key_length: number;
   api_key_masked: string | null;
+  api_key_source?: ClaudeApiKeySource;
   has_oauth_credentials: boolean;
   base_url: string | null;
   settings_path: string | null;

@@ -371,9 +371,21 @@ def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
     providers = toml_data.get("model_providers")
     base_url: Optional[str] = None
     if isinstance(providers, dict):
-        managed = providers.get(MANAGED_PROVIDER_ID)
-        if isinstance(managed, dict):
-            raw = managed.get("base_url")
+        # Codex's runtime selects the provider named by top-level
+        # ``model_provider``. When that's a user-defined section (e.g.
+        # ``[model_providers.OpenAI]`` for a relay), our managed-id
+        # lookup would miss the user's actual ``base_url``. Prefer the
+        # active provider's section; fall back to the managed id we
+        # ourselves write so the UI still reflects a vibe-initiated
+        # save before the user customises ``config.toml`` by hand.
+        active_provider = toml_data.get("model_provider")
+        active_section: Optional[dict] = None
+        if isinstance(active_provider, str) and isinstance(providers.get(active_provider), dict):
+            active_section = providers[active_provider]
+        elif isinstance(providers.get(MANAGED_PROVIDER_ID), dict):
+            active_section = providers[MANAGED_PROVIDER_ID]
+        if isinstance(active_section, dict):
+            raw = active_section.get("base_url")
             if isinstance(raw, str) and raw.strip():
                 base_url = raw.strip()
 
