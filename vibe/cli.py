@@ -1813,10 +1813,6 @@ def cmd_vibe():
     paths.ensure_data_dirs()
     config = _ensure_config()
 
-    # Always restart both processes
-    runtime.stop_service()
-    runtime.stop_ui()
-
     has_configured_platform_credentials = getattr(config, "has_configured_platform_credentials", None)
     if callable(has_configured_platform_credentials):
         ready = bool(has_configured_platform_credentials())

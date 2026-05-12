@@ -411,6 +411,21 @@ def test_stop_pid_writes_shutdown_intent_before_sigterm(monkeypatch):
     assert calls[1] == (12345, signal.SIGTERM)
 
 
+def test_start_ui_reuses_existing_live_pid(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    paths.get_runtime_ui_pid_path().write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 12345)
+
+    def fail_spawn(*_args, **_kwargs):
+        raise AssertionError("start_ui should not spawn when an existing UI process is alive")
+
+    monkeypatch.setattr(runtime, "spawn_background", fail_spawn)
+
+    assert runtime.start_ui("127.0.0.1", 5123) == 12345
+
+
 def test_shutdown_intent_round_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
     runtime.ensure_dirs()

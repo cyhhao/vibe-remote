@@ -528,10 +528,20 @@ def effective_ui_bind_host(config: V2Config, requested_host: str | None = None) 
 
 
 def start_ui(host, port):
+    pid_path = paths.get_runtime_ui_pid_path()
+    if pid_path.exists():
+        try:
+            existing_pid = int(pid_path.read_text(encoding="utf-8").strip())
+        except Exception:
+            existing_pid = 0
+        if existing_pid and pid_alive(existing_pid):
+            return existing_pid
+        pid_path.unlink(missing_ok=True)
+
     command = "from vibe.ui_server import run_ui_server; run_ui_server('{}', {})".format(host, port)
     return spawn_background(
         [sys.executable, "-c", command],
-        paths.get_runtime_ui_pid_path(),
+        pid_path,
         "ui_stdout.log",
         "ui_stderr.log",
     )

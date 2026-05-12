@@ -20,8 +20,8 @@ def test_cmd_vibe_marks_setup_when_no_enabled_platform_has_credentials(capsys) -
     with (
         patch("vibe.cli.paths.ensure_data_dirs"),
         patch("vibe.cli._ensure_config", return_value=config),
-        patch("vibe.cli.runtime.stop_service"),
-        patch("vibe.cli.runtime.stop_ui"),
+        patch("vibe.cli.runtime.stop_service") as stop_service,
+        patch("vibe.cli.runtime.stop_ui") as stop_ui,
         patch("vibe.cli.runtime.start_service", return_value=101),
         patch("vibe.cli.runtime.start_ui", return_value=202),
         patch("vibe.cli.runtime.write_status"),
@@ -29,6 +29,8 @@ def test_cmd_vibe_marks_setup_when_no_enabled_platform_has_credentials(capsys) -
     ):
         cli.cmd_vibe()
 
+    stop_service.assert_not_called()
+    stop_ui.assert_not_called()
     write_status.assert_called_once_with("setup", "missing platform credentials")
     output = capsys.readouterr().out
     assert "Run: vibe remote" in output
@@ -41,8 +43,8 @@ def test_cmd_vibe_marks_starting_when_non_slack_platform_is_configured() -> None
     with (
         patch("vibe.cli.paths.ensure_data_dirs"),
         patch("vibe.cli._ensure_config", return_value=config),
-        patch("vibe.cli.runtime.stop_service"),
-        patch("vibe.cli.runtime.stop_ui"),
+        patch("vibe.cli.runtime.stop_service") as stop_service,
+        patch("vibe.cli.runtime.stop_ui") as stop_ui,
         patch("vibe.cli.runtime.start_service", return_value=101),
         patch("vibe.cli.runtime.start_ui", return_value=202),
         patch("vibe.cli.runtime.write_status"),
@@ -50,4 +52,6 @@ def test_cmd_vibe_marks_starting_when_non_slack_platform_is_configured() -> None
     ):
         cli.cmd_vibe()
 
+    stop_service.assert_not_called()
+    stop_ui.assert_not_called()
     write_status.assert_called_once_with("starting")
