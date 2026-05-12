@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 import json
 import logging
 import os
-import signal
 import socket
 import subprocess
 import time
@@ -18,6 +17,7 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 from config import paths
+from core.process_isolation import isolated_subprocess_kwargs, terminate_process_tree
 from vibe import runtime
 from vibe.opencode_config import load_first_opencode_user_config
 
@@ -450,11 +450,7 @@ class OpenCodeServerManager:
 
     async def _start_server(self) -> None:
         if self._process and self._process.returncode is None:
-            try:
-                self._process.terminate()
-                await asyncio.wait_for(self._process.wait(), timeout=5)
-            except Exception:
-                self._process.kill()
+            await terminate_process_tree(self._process, logger, "OpenCode server", terminate_timeout=5)
 
         # Ensure any stale pid file is cleared before starting.
         self._clear_pid_file()
@@ -477,6 +473,7 @@ class OpenCodeServerManager:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
                 env=env,
+                **isolated_subprocess_kwargs(),
             )
             if self._process and self._process.pid:
                 self._write_pid_file(self._process.pid)

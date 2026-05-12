@@ -231,7 +231,7 @@ def test_managed_watch_service_stop_terminates_running_waiter(tmp_path: Path) ->
         runtime_store=runtime_store,
     )
 
-    async def _run() -> int:
+    async def _run() -> tuple[int, int | None]:
         service.start()
         for _ in range(100):
             pid = service._active_pids.get(watch.id)
@@ -240,10 +240,14 @@ def test_managed_watch_service_stop_terminates_running_waiter(tmp_path: Path) ->
             await asyncio.sleep(0.02)
         else:
             raise AssertionError("waiter pid was never recorded")
+        pgid = os.getpgid(pid) if hasattr(os, "getpgid") else None
         await service.stop()
-        return pid
+        return pid, pgid
 
-    pid = asyncio.run(_run())
+    pid, pgid = asyncio.run(_run())
+
+    if pgid is not None:
+        assert pgid != os.getpgrp()
 
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
