@@ -363,6 +363,7 @@ vibe stop && uv tool uninstall vibe-remote && rm -rf ~/.vibe_remote
 - **[官方文档](https://docs.avibe.bot)** — Quickstart、平台配置、Agent 设置、排错和 AI 可读安装说明
 - **[CLI 参考手册](docs/CLI_ZH.md)** — 命令行使用和服务生命周期
 - **[让 AI Agent 帮你安装](docs/INSTALL_FOR_AI_ZH.md)** — 交给 Claude Code、Codex 或 OpenCode 的引导式安装说明
+- **[Incus 租户脚手架](docs/INCUS_TENANTS_ZH.md)** — 在一台 Incus 宿主机上创建隔离的 Vibe Remote 租户
 - **[Slack 配置指南](docs/SLACK_SETUP_ZH.md)** — 详细配置和截图
 - **[Discord 配置指南](docs/DISCORD_SETUP_ZH.md)** — 详细配置和截图
 - **[Telegram 配置指南](docs/TELEGRAM_SETUP_ZH.md)** — BotFather 初始化、令牌验证与会话发现

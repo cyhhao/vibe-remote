@@ -1,8 +1,8 @@
 ---
 name: use-vibe-remote
 slug: use-vibe-remote
-description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, watches, scheduled tasks, and operational state.
-version: 0.2.2
+description: Safely inspect and modify local Vibe Remote configuration, routing, runtime settings, watches, scheduled tasks, Vibe Cloud remote access, and operational state.
+version: 0.3.0
 ---
 
 # Use Vibe Remote
@@ -16,9 +16,12 @@ Typical requests include:
 - set a working directory for a channel or DM user
 - choose a backend model, subagent, or reasoning level
 - show or hide intermediate message types
+- configure an outbound proxy (`proxy_url`) for an IM platform that cannot reach its API directly
+- pair, start, stop, or inspect Vibe Cloud remote Web UI access
 - create, inspect, pause, resume, or remove a managed background watch with `vibe watch`
 - create, inspect, run, pause, resume, or remove a scheduled task with `vibe task`
 - queue a one-shot asynchronous hook with `vibe hook send`
+- check or apply Vibe Remote updates (`vibe check-update`, `vibe upgrade`)
 - inspect logs, run doctor, check service status, or explain where Vibe Remote stores state
 - decide whether a requested change belongs in Vibe Remote config or in the host backend's own config
 
@@ -33,11 +36,12 @@ Follow this skill as an operations playbook for agents, not as end-user marketin
 5. Use the smallest viable API call and verify by reading back the API response.
 6. For `POST /settings`, preserve every existing channel for that platform; the endpoint replaces the platform's channel map.
 7. For `POST /api/users`, merge each edited user with its current user payload first; missing user fields are not a patch.
-8. Do not hand-edit `sessions.json` unless the user explicitly asks for low-level recovery work.
-9. Do not restart the service by default. Use `POST /doctor`, `GET /status`, and read-back checks first.
-10. Only start, stop, restart, or reload Vibe Remote when the user explicitly asks or when a change cannot take effect otherwise; explain why before doing it.
-11. If an agent must restart Vibe Remote from an active conversation, use `vibe restart --delay-seconds 60` so the current session can receive the reply before the restart lands.
-12. Tell the user whether the change is global or scope-specific.
+8. Make every persistent-state change through the Web UI API or the `vibe` CLI. Vibe Remote's internal storage is opaque — do not read, query, or hand-edit it.
+9. `POST /config` persists the new payload but does not restart running platform adapters by itself. When the change is platform credentials, `proxy_url`, or other transport-level settings, plan an explicit restart afterwards; prefer the delayed CLI form (`vibe restart --delay-seconds 60`) when triggering it from inside an active conversation. The only credential save that restarts on its own is the WeChat QR-login completion through `POST /wechat/qr_login/poll`.
+10. Do not restart the service by default. Use `POST /doctor`, `GET /status`, and read-back checks first.
+11. Only start, stop, restart, or reload Vibe Remote when the user explicitly asks or when a change cannot take effect otherwise; explain why before doing it.
+12. If an agent must restart Vibe Remote from an active conversation, use `vibe restart --delay-seconds 60` so the current session can receive the reply before the restart lands.
+13. Tell the user whether the change is global or scope-specific.
 
 ## API First Workflow
 
@@ -45,12 +49,14 @@ Use this order when changing Vibe Remote configuration:
 
 1. Determine the Web UI base URL.
    - Default is `http://127.0.0.1:5123`.
-   - If the user has a custom UI host or port, use that exact origin.
+   - If the user has a custom UI host or port (from `ui.setup_host` / `ui.setup_port`), use that exact origin.
+   - When Vibe Cloud remote access is active, the public origin (e.g. `https://<slug>.avibe.bot`) also speaks the same API and requires OIDC session cookies — prefer the local origin from the host running Vibe Remote.
    - Check liveness with `GET /health` or `GET /status`.
 2. Decide whether the request belongs in:
-   - `POST /config` for global defaults, platform credentials, runtime config, agent defaults, UI config, or global display toggles
+   - `POST /config` for global defaults, platform credentials, runtime config, agent defaults, UI config, remote-access provider settings, update policy, or global display toggles
    - `POST /settings` for channel-level routing, working directory, visibility, enablement, and mention policy
    - `/api/users` and `/api/bind-codes` for DM user binding and user-scope settings
+   - `/remote-access/*` for Vibe Cloud pairing and tunnel control
    - host backend config instead of Vibe Remote when the request is OpenCode, Claude Code, or Codex native behavior
 3. Fetch the current state from the matching GET endpoint.
 4. Merge the requested change in memory.
@@ -86,6 +92,8 @@ curl -fsS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
 ```
 
 For `DELETE`, use the same cookie jar, `Origin`, and CSRF header.
+
+When the Web UI is served through Vibe Cloud, the same calls require an authenticated OIDC session cookie issued by `/auth/callback`. Prefer hitting `127.0.0.1:5123` directly from the local machine for maintenance work.
 
 Do not log full request bodies when they contain tokens or secrets.
 
@@ -142,24 +150,14 @@ python3 "$API_HELPER" GET '/settings?platform=slack'
 
 ## Runtime Layout
 
-Vibe Remote stores runtime data under `~/.vibe_remote/` by default. If `VIBE_REMOTE_HOME` is set, use that directory instead.
+Vibe Remote stores runtime data under `~/.vibe_remote/` by default (or `VIBE_REMOTE_HOME` if set). The only paths an agent normally needs:
 
-Important paths:
+- `~/.vibe_remote/config/config.json` — global config; mutate through `POST /config`, not by editing the file
+- `~/.vibe_remote/logs/vibe_remote.log` — main application log; read via `POST /logs`
+- `~/.vibe_remote/screenshots/` — default output directory for `vibe screenshot`
+- `~/.vibe_remote/state/user_preferences.md` — shared long-term preference file (safe to read and update)
 
-- `~/.vibe_remote/config/config.json`: global config persisted by `POST /config`
-- `~/.vibe_remote/state/settings.json`: scope settings persisted by `/settings`, `/api/users`, and `/api/bind-codes`
-- `~/.vibe_remote/state/scheduled_tasks.json`: persisted scheduled tasks created by `vibe task`
-- `~/.vibe_remote/state/watches.json`: persisted managed watches
-- `~/.vibe_remote/state/task_requests/`: queued task-run and hook-send requests plus completion receipts
-- `~/.vibe_remote/state/user_preferences.md`: shared long-term preference file
-- `~/.vibe_remote/state/sessions.json`: runtime session state; do not edit during normal config work
-- `~/.vibe_remote/logs/vibe_remote.log`: main application log
-- `~/.vibe_remote/runtime/status.json`: runtime status file
-- `~/.vibe_remote/runtime/doctor.json`: latest doctor result
-- `~/.vibe_remote/runtime/watch_runtime.json`: live watch runtime state, including active PIDs
-- `~/.vibe_remote/attachments/`: attachment staging area
-
-Only use direct file editing as a recovery fallback when the Web UI API is unavailable or the user explicitly asks for low-level repair. If you must edit files directly, back up the file first, validate JSON, and explain why the API path was not usable.
+Scheduled tasks and watches are managed through `vibe task` / `vibe watch` (or their API endpoints), not by editing their persistence files. Everything else under `state/` and `runtime/` is internal — treat it as opaque.
 
 ## API Endpoint Reference
 
@@ -178,6 +176,10 @@ Only use direct file editing as a recovery fallback when the Web UI API is unava
   - `source` can be `service` or another source listed in the response; use `all` for aggregated logs
 - `GET /version`
   - returns current version and update metadata
+- `GET /api/csrf-token`
+  - issues the `vibe_csrf_token` cookie and returns the matching token value for `X-Vibe-CSRF-Token`
+- `GET /platforms`
+  - returns the static catalog of supported IM platforms only (id, config_key, title/description i18n keys, credential field names, capabilities). It does not include enablement or credential-presence state — fetch `/config` to see which platforms are enabled and whether credentials are configured.
 
 ### Global config
 
@@ -185,7 +187,8 @@ Only use direct file editing as a recovery fallback when the Web UI API is unava
   - returns the current V2 config payload
 - `POST /config`
   - accepts a partial object, deep-merges it with current config, validates it through `V2Config.from_payload`, then persists it
-  - use for platform credentials, enabled platforms, primary platform, runtime defaults, agent defaults, UI config, update policy, and global toggles
+  - use for platform credentials, enabled platforms, primary platform, runtime defaults, agent defaults, UI config, remote-access provider settings, update policy, and global toggles
+  - the handler only persists and (for `remote_access`) reconciles the cloudflared tunnel; running platform adapters keep using their previous credentials and transport until a restart. Plan a `vibe restart --delay-seconds 60` after any credential, `proxy_url`, or transport-level change.
 
 Important config payload shape:
 
@@ -205,12 +208,18 @@ Important config payload shape:
     "team_id": "T...",
     "team_name": "...",
     "app_id": "A...",
-    "require_mention": false
+    "require_mention": false,
+    "disable_link_unfurl": false,
+    "proxy_url": null
   },
   "discord": {
     "bot_token": "...",
     "application_id": "...",
-    "require_mention": false
+    "require_mention": false,
+    "thread_auto_archive_minutes": 10080,
+    "guild_allowlist": null,
+    "guild_denylist": null,
+    "proxy_url": null
   },
   "telegram": {
     "bot_token": "123:abc",
@@ -220,20 +229,22 @@ Important config payload shape:
     "webhook_url": null,
     "webhook_secret_token": null,
     "allowed_chat_ids": null,
-    "allowed_user_ids": null
+    "allowed_user_ids": null,
+    "proxy_url": null
   },
   "lark": {
     "app_id": "...",
     "app_secret": "...",
     "require_mention": false,
-    "domain": "feishu"
+    "domain": "feishu",
+    "proxy_url": null
   },
   "wechat": {
     "bot_token": "...",
     "base_url": "https://ilinkai.weixin.qq.com",
     "cdn_base_url": "https://novac2c.cdn.weixin.qq.com/c2c",
-    "proxy_url": null,
-    "require_mention": false
+    "require_mention": false,
+    "proxy_url": null
   },
   "runtime": {
     "default_cwd": "/path/to/workdir",
@@ -262,6 +273,37 @@ Important config payload shape:
       "idle_timeout_seconds": 600
     }
   },
+  "ui": {
+    "setup_host": "127.0.0.1",
+    "setup_port": 5123,
+    "open_browser": true
+  },
+  "remote_access": {
+    "provider": "vibe_cloud",
+    "vibe_cloud": {
+      "enabled": false,
+      "backend_url": "https://avibe.bot",
+      "public_url": "",
+      "instance_id": "",
+      "client_id": "",
+      "issuer": "",
+      "authorization_endpoint": "",
+      "token_endpoint": "",
+      "jwks_uri": "",
+      "redirect_uri": "",
+      "tunnel_token": "",
+      "instance_secret": "",
+      "session_secret": "",
+      "cloudflared_path": "",
+      "dev_login_hint": ""
+    }
+  },
+  "update": {
+    "auto_update": true,
+    "check_interval_minutes": 60,
+    "idle_minutes": 30,
+    "notify_admins": true
+  },
   "ack_mode": "typing",
   "language": "en",
   "show_duration": false,
@@ -287,6 +329,18 @@ servers under `guilds`, next to channel settings:
 
 When switching the active platform, update `platforms.primary` and make sure `platforms.enabled` contains the new primary. Keep the legacy `platform` field aligned for readability, but `platforms.primary` is the real multi-platform source of truth.
 
+Per-platform fields worth knowing about:
+
+- every platform inherits `proxy_url` from the shared `BaseIMConfig`. Set it when the host machine cannot reach the upstream API directly. Accepts standard HTTP/HTTPS proxy URLs and any `socks*://` URL (`socks4`, `socks4a`, `socks5`, `socks5h`). SOCKS variants route through `aiohttp_socks`.
+- `slack.disable_link_unfurl` suppresses link previews when posting messages.
+- `discord.thread_auto_archive_minutes` must be one of `60`, `1440`, `4320`, or `10080`.
+- `discord.guild_allowlist` / `guild_denylist` are legacy input lists; current runtime server access lives in `/settings` under `guilds`.
+- `telegram.forum_auto_topic` enables automatic topic creation in forum chats; `use_webhook` plus `webhook_url` / `webhook_secret_token` switches Telegram delivery to the webhook transport.
+- `telegram.allowed_chat_ids` / `allowed_user_ids` restrict which chats and users Telegram will respond to.
+- `wechat.cdn_base_url` controls the CDN host used for fetching WeChat media; the default `novac2c.cdn.weixin.qq.com` is the official c2c CDN.
+- `update.auto_update`, `check_interval_minutes`, and `idle_minutes` control unattended upgrades; `notify_admins` posts the upgrade announcement to bound admins.
+- `ui.setup_host`, `setup_port`, and `open_browser` configure the local Web UI server; changing host or port requires `POST /ui/reload`.
+
 Secret-bearing config fields that you should not print:
 
 - `slack.bot_token`
@@ -300,6 +354,11 @@ Secret-bearing config fields that you should not print:
 - `wechat.bot_token`
 - `gateway.workspace_token`
 - `gateway.client_secret`
+- `remote_access.vibe_cloud.tunnel_token`
+- `remote_access.vibe_cloud.instance_secret`
+- `remote_access.vibe_cloud.session_secret`
+- `remote_access.vibe_cloud.client_id`
+- any `proxy_url` value that embeds credentials such as `user:pass@host`
 
 ### Channel settings
 
@@ -433,6 +492,32 @@ DM caveat: current DM authorization checks whether the user is bound, not whethe
 
 WeChat QR login is special: when login is confirmed and a token is returned, the API auto-binds the WeChat user and schedules an internal service restart so the new token can take effect. Do not add an extra restart unless the user asks.
 
+### Remote access (Vibe Cloud)
+
+These endpoints drive the managed `avibe.bot` tunnel that exposes the local Web UI to other devices. They are paired with the `remote_access.vibe_cloud` block under `/config`.
+
+- `GET /remote-access/status`
+  - returns `enabled`, `paired`, `public_url`, `running` (tunnel up), `pid`, `pid_state`, plus `binary_found` / `binary_path` / `binary_version` for the resolved `cloudflared` executable. Use `running: true` to assert the tunnel is up.
+- `POST /remote-access/vibe-cloud/pair`
+  - payload: `{"pairing_key": "vrp_..."}`
+  - exchanges the one-time key for an OIDC client, tunnel token, and persists the full `remote_access.vibe_cloud` block; on success Vibe Remote launches the cloudflared tunnel
+- `POST /remote-access/start`
+  - payload: `{}`
+  - starts the cloudflared tunnel using the persisted pairing config
+- `POST /remote-access/stop`
+  - payload: `{}`
+  - stops the cloudflared tunnel; configuration is preserved so `start` can resume later
+- `GET /auth/callback`
+  - OIDC redirect target used by avibe.bot during sign-in. Browser-driven; do not call directly from automation.
+- `GET /api/session`
+  - always returns `200` with an auth-state payload, never `401`. Three shapes: `{"remote": false}` when remote access is not configured for this request, `{"remote": true, "authenticated": false}` when remote access is on but the caller has no valid session cookie, and `{"remote": true, "authenticated": true, "email": "..."}` when signed in. Check `authenticated` to gate behavior; do not poll for HTTP status codes.
+- `POST /auth/logout`
+  - clears the avibe.bot session cookie on this device. Does not stop the tunnel.
+
+The session cookie is bound to the tunnel session and expires after roughly 24 hours; the server slides the TTL when activity reaches the half-life. Do not invent custom auth headers — rely on the existing cookie issued by `/auth/callback`.
+
+Treat `tunnel_token`, `instance_secret`, `session_secret`, and `client_id` from `remote_access.vibe_cloud` as opaque secrets.
+
 ### Backend and local helper endpoints
 
 - `GET /cli/detect?binary=<name-or-path>`
@@ -457,8 +542,11 @@ WeChat QR login is special: when login is confirmed and a token is returned, the
   - payload: `{"action": "start"}`, `{"action": "stop"}`, or `{"action": "restart"}`
 - `POST /ui/reload`
   - payload: `{"host": "127.0.0.1", "port": 5123}`
+- `POST /upgrade`
+  - payload: `{}`
+  - triggers an in-place upgrade to the latest released version using the same code path as `vibe upgrade`
 
-Avoid these for routine configuration. `POST /control` starts, stops, or restarts the service. `POST /ui/reload` restarts only the Web UI server to apply host or port changes. Use them only with explicit user intent or a concrete need.
+Avoid these for routine configuration. `POST /control` starts, stops, or restarts the service. `POST /ui/reload` restarts only the Web UI server to apply host or port changes. `POST /upgrade` reinstalls Vibe Remote and then restarts the service. Use them only with explicit user intent or a concrete need.
 
 When the restart is initiated by an agent from an active conversation, use the CLI delayed form `vibe restart --delay-seconds 60` so the transport does not cut off the current reply.
 
@@ -595,6 +683,48 @@ Use `POST /config` and keep `platforms.enabled` complete:
 
 Make sure the target platform config section exists and validates. Do not delete old platform config unless the user explicitly asks.
 
+### Configure an outbound proxy for an IM platform
+
+When the host cannot reach a platform API directly, set `proxy_url` on that platform's config block.
+
+Use `POST /config` with only the proxy field for the affected platform:
+
+```json
+{
+  "telegram": {
+    "proxy_url": "http://proxy.internal:3128"
+  }
+}
+```
+
+Notes:
+
+- `proxy_url` accepts `http://`, `https://`, and any `socks*://` scheme (`socks4`, `socks4a`, `socks5`, `socks5h`). The SOCKS variants route through `aiohttp_socks` (bundled).
+- Set the field to `null` (or omit it on a fresh save) to disable the proxy.
+- `POST /config` only persists the new value; running platform adapters keep their old transport until the service restarts. After saving, run `vibe restart --delay-seconds 60` (or `POST /control {"action":"restart"}` with the user's confirmation) so the proxy applies to live connections.
+- Do not paste credentialed proxy URLs (`user:pass@host`) into logs or chat replies; mask the credentials portion when reporting back.
+
+### Pair Vibe Cloud remote access
+
+Goal: connect the local Web UI to `avibe.bot` so it is reachable from another device.
+
+1. The user signs in at `https://avibe.bot`, creates a remote-access bot, and copies the one-time pairing key (format `vrp_...`).
+2. Call `POST /remote-access/vibe-cloud/pair` with `{"pairing_key": "vrp_..."}` from the local Web UI origin.
+3. Verify with `GET /remote-access/status` — `enabled: true`, `paired: true`, `public_url` populated, `running: true`.
+4. Have the user open `public_url` and sign in with the same avibe.bot account.
+
+Alternatively, drive the same flow from the CLI:
+
+```bash
+vibe remote                       # guided flow
+vibe remote pair vrp_abc123       # paste key directly
+vibe remote status --json         # inspect tunnel state
+vibe remote stop                  # stop tunnel; keep config
+vibe remote start                 # bring tunnel back up
+```
+
+Treat the pairing key, tunnel token, instance secret, and session secret as opaque. Never echo them in chat replies.
+
 ### Generate a DM bind code
 
 Use `POST /api/bind-codes`:
@@ -616,24 +746,25 @@ For an expiring code:
 
 Do not expose bind codes unless the user explicitly asks for them.
 
-## Scheduled Tasks
+## Scheduled Tasks and Watches
 
-Use scheduled tasks when the user wants Vibe Remote to inject a prompt later or repeatedly into an existing chat scope.
+Use scheduled tasks and watches when the user wants Vibe Remote to inject a prompt later or repeatedly into an existing chat scope, or wait on a background condition before sending a follow-up.
 
 Preferred CLI shape:
 
-- recurring: `vibe task add --session-key '<key>' --cron '<expr>' --prompt '...'`
-- one-off: `vibe task add --session-key '<key>' --at '<ISO-8601>' --prompt '...'`
+- recurring task: `vibe task add --session-key '<key>' --cron '<expr>' --prompt '...'`
+- one-off task: `vibe task add --session-key '<key>' --at '<ISO-8601>' --prompt '...'`
 - immediate rerun: `vibe task run <id>`
 - one-shot async hook: `vibe hook send --session-key '<key>' --prompt '...'`
+- managed background watch: `vibe watch add --session-key '<key>' --prefix '...' -- <cmd>` (or `--shell '<cmd>'` to pass a single shell string)
 
-Delivery controls:
+Delivery controls (apply to `vibe task add`, `vibe hook send`, and `vibe watch add`):
 
 - `session_key` controls which session Vibe Remote continues using
 - when you want to keep the current session, keep using the current `session_key`
 - when you do not want to keep the current thread session and instead want to start or reuse the higher-level session, switch to the higher-level key
 - example: `slack::channel::C123::thread::171717.123` keeps the current thread session, while `slack::channel::C123` creates or reuses the channel-scoped session
-- use `--post-to channel` when the task or hook should keep the session chosen by `session_key` but publish to the parent channel
+- use `--post-to channel` when the task, hook, or watch should keep the session chosen by `session_key` but publish to the parent channel
 - use `--deliver-key '<key>'` only when delivery must go to a different explicit target than `session_key`
 - do not combine `--post-to` and `--deliver-key` in the same command
 - `vibe task add` stores the text from `--prompt` or `--prompt-file` and injects it each time the task runs
@@ -648,13 +779,15 @@ Session key format:
 
 Operational guidance:
 
-- use `vibe task list` before editing or deleting an existing task
-- if this is the first time using `vibe task add`, `vibe watch add`, or `vibe hook send`, read the matching `--help` output first
+- use `vibe task list` before editing or deleting an existing task; use `vibe watch list` before touching a managed watch
+- if this is the first time using `vibe task add`, `vibe hook send`, or `vibe watch add`, read the matching `--help` output first — watches accept additional flags like `--shell`, `--timeout` (per-cycle), `--lifetime-timeout` (overall), `--forever`, `--retry-exit-code`, and `--retry-delay`
 - use `vibe task update <id>` to keep the same task ID while changing name, schedule, prompt, or target
-- use `vibe task list --brief` for scheduling-focused summaries
+- watches do not have an `update` subcommand; remove and re-add when you must change the waiter
+- use `vibe task list --brief` and `vibe watch list --brief` for scheduling-focused summaries
 - `vibe task list` hides completed one-shot tasks by default; use `vibe task list --all` when you need full history
-- use `vibe task show <id>` to inspect stored fields and derived scheduling state such as `next_run_at`
-- treat `warnings` from task or hook commands as delivery-risk hints to fix proactively
+- use `vibe task show <id>` or `vibe watch show <id>` to inspect stored fields and derived runtime state (such as `next_run_at` or `pid`)
+- use `vibe task pause` / `vibe task resume` and `vibe watch pause` / `vibe watch resume` to disable a task or watch without deleting it
+- treat `warnings` from task, hook, or watch commands as delivery-risk hints to fix proactively
 
 ## Backend Capability Matrix
 
@@ -767,6 +900,50 @@ Relevant docs:
 
 Inside Vibe Remote, Codex scope routing controls backend choice, subagent, model, and reasoning effort.
 
+## CLI Reference
+
+Use the CLI only when the Web UI API cannot cover the request, when the user explicitly asks for the command, or when restarting/upgrading from an active conversation.
+
+Service lifecycle:
+
+- `vibe` — start (or restart) Vibe Remote and open the local Web UI
+- `vibe status` — print service status, PID metadata, and last action
+- `vibe stop` — stop main service, Web UI, and any background helpers
+- `vibe restart` — stop and re-start the service. Pass `--delay-seconds N` when triggering from inside an active conversation so the current reply has time to deliver before the restart lands.
+- `vibe doctor` — run diagnostics and print the latest result
+- `vibe version` — print the installed version
+
+Updates:
+
+- `vibe check-update` — query the release feed and print whether an upgrade is available
+- `vibe upgrade` — reinstall Vibe Remote to the latest release. The CLI does not restart the service for you; it prints "Please restart vibe..." and exits. Run `vibe restart` (or `vibe restart --delay-seconds 60` from inside an active conversation) yourself after the upgrade reports success. The Web UI's `POST /upgrade` endpoint is the path that performs an automatic restart.
+
+Remote access:
+
+- `vibe remote` — guided Vibe Cloud pairing
+- `vibe remote pair <key>` — pair using an existing one-time key
+- `vibe remote status [--json]` — show tunnel + OIDC state
+- `vibe remote start` / `vibe remote stop` — manage the cloudflared tunnel after pairing
+
+Screenshots:
+
+- `vibe screenshot` — capture the local desktop to `~/.vibe_remote/screenshots/`
+- `vibe screenshot --output <path>` / `--json` — pick an explicit output path or get machine-readable output
+
+Scheduled tasks:
+
+- `vibe task add`, `vibe task update`, `vibe task list [--all|--brief]`, `vibe task show <id>`, `vibe task run <id>`, `vibe task pause <id>`, `vibe task resume <id>`, `vibe task remove <id>`
+
+Async hooks:
+
+- `vibe hook send` — one-shot prompt injection without persisting a task
+
+Watches:
+
+- `vibe watch add`, `vibe watch list [--brief]`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, `vibe watch remove <id>`
+
+For any subcommand, prefer `<command> --help` before composing a new invocation. The delivery flags shared by all three commands are `--session-key`, `--post-to`, and `--deliver-key`. The remaining surface differs: `vibe task add` and `vibe hook send` take `--prompt` / `--prompt-file`; `vibe task add` and `vibe watch add` take `--name`; only `vibe task add` takes `--cron` / `--at` / `--timezone`; and `vibe watch add` takes its own set (`--prefix`, `--shell` or a positional command after `--`, `--cwd`, `--timeout`, `--forever`, `--lifetime-timeout`, `--retry-exit-code`, `--retry-delay`). Do not copy task or hook flags into a watch invocation, and do not pass `--name` to `vibe hook send`.
+
 ## Troubleshooting
 
 Start with evidence:
@@ -783,28 +960,15 @@ Common cases:
 - channel does not respond: verify `/settings?platform=<platform>` contains the channel and `enabled` is true
 - wrong repository/cwd: inspect `custom_cwd` and `runtime.default_cwd`
 - DM access denied: inspect `/api/users?platform=<platform>` and bind-code state
+- platform cannot reach API: inspect `proxy_url` on that platform's config block; check logs for proxy/TLS errors; for SOCKS proxies confirm `aiohttp_socks` is installed
+- remote URL is unreachable: `GET /remote-access/status` should show `running: true` and `binary_found: true`; if not, run `POST /doctor` and check the configured `cloudflared_path`
+- remote session expired: instruct the user to re-sign in at the public URL (24h TTL with sliding renewal); use `POST /auth/logout` to clear a stale session on the current device
+- upgrade did not apply: inspect the response from `POST /upgrade` (auto-restart on success) or `vibe upgrade` (does not auto-restart — run `vibe restart` manually), then verify with `vibe status` that the new PID is running
 - startup failure: use `GET /status`, `POST /doctor`, then inspect logs
 
 Do not use `vibe restart`, `POST /control {"action":"restart"}`, or `POST /ui/reload` as a first response to config problems.
 
 If a restart is still required and you are replying through an active Vibe Remote conversation, use `vibe restart --delay-seconds 60` so the current reply can be delivered before the restart lands.
-
-## Direct File Recovery Fallback
-
-Use file edits only when:
-
-- the Web UI API is down and cannot be recovered through normal service start
-- the config file is malformed and prevents the API from starting
-- the user explicitly asks for low-level file repair
-
-Recovery rules:
-
-1. Identify `VIBE_REMOTE_HOME` or default to `~/.vibe_remote`.
-2. Back up the target file before writing.
-3. Preserve unrelated keys and secrets.
-4. Validate JSON after editing.
-5. Start or restart only when needed to bring the API back.
-6. After recovery, return to the API workflow for further changes.
 
 ## Safety Boundaries
 
@@ -813,8 +977,9 @@ Always follow these constraints:
 - never delete unrelated platform scopes
 - never blank out tokens or secrets as part of an unrelated config task
 - never claim a backend feature exists if current Vibe Remote behavior does not support it
-- never manually rewrite `sessions.json` for routine routing changes
-- never expose bind codes unless the user explicitly asks
+- never read, query, or hand-edit Vibe Remote's internal state storage — go through the Web UI API or `vibe` CLI
+- never expose bind codes, pairing keys, tunnel tokens, instance secrets, or session secrets unless the user explicitly asks
+- never paste a credentialed `proxy_url` (`user:pass@host`) back into chat — mask the credentials portion when echoing the value
 - always say when a requested change actually belongs in OpenCode, Claude Code, or Codex config instead of Vibe Remote
 
 ## Escalation
