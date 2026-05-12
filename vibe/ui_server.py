@@ -9,11 +9,14 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import socket
+import subprocess
+import time
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 
 import psutil
@@ -259,6 +262,7 @@ def _is_loopback_host(value: str | None) -> bool:
 # such as Tailscale assign 100.x.y.z addresses that should be trusted as local
 # setup-host peers when the request's Host header otherwise matches.
 _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+_TAILSCALE_IPV6_ADDRESS_SPACE = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 
 # Networks that are scoped by the overlay/link itself rather than by the
 # kernel's interface routing, so peers anywhere in the block are trusted
@@ -266,13 +270,38 @@ _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 #   * 100.64.0.0/10 — Tailscale CGNAT. Tailscale assigns each peer a /32 in
 #     this range and routes peers via its overlay; legitimate peers can be
 #     anywhere in the /10 even though they share the same logical network.
+#   * fd7a:115c:a1e0::/48 — Tailscale IPv6 ULA. Like the IPv4 CGNAT
+#     range, Tailscale can assign interface addresses as host routes while
+#     legitimate peers live elsewhere in the overlay prefix.
 #   * 169.254.0.0/16 / fe80::/10 — link-local. Confined to the same L2
 #     segment by the kernel.
 _OVERLAY_TRUST_NETWORKS_V4 = (
     ipaddress.IPv4Network("100.64.0.0/10"),
     ipaddress.IPv4Network("169.254.0.0/16"),
 )
-_OVERLAY_TRUST_NETWORKS_V6 = (ipaddress.IPv6Network("fe80::/10"),)
+_OVERLAY_TRUST_NETWORKS_V6 = (
+    _TAILSCALE_IPV6_ADDRESS_SPACE,
+    ipaddress.IPv6Network("fe80::/10"),
+)
+_WILDCARD_TRUST_LAN_INTERFACE_PREFIXES = (
+    "en",
+    "eth",
+    "ethernet",
+    "local area connection",
+    "wi-fi",
+    "wifi",
+    "wl",
+    "wwan",
+)
+_WILDCARD_TRUST_OVERLAY_INTERFACE_PREFIXES = (
+    "tailscale",
+)
+_TAILSCALE_UTUN_INTERFACE_PREFIXES = ("utun",)
+_TAILSCALE_IP_CACHE_TTL_SECONDS = 30.0
+_TAILSCALE_IP_CACHE: tuple[float, frozenset[ipaddress._BaseAddress]] | None = None
+_TAILSCALE_PEER_CACHE_TTL_SECONDS = 30.0
+_TAILSCALE_PEER_CACHE: dict[ipaddress._BaseAddress, tuple[float, bool]] = {}
+_CONTAINER_CGROUP_MARKERS = ("docker", "kubepods", "containerd", "libpod", "podman")
 
 
 def _is_private_address(address: ipaddress._BaseAddress) -> bool:
@@ -281,23 +310,40 @@ def _is_private_address(address: ipaddress._BaseAddress) -> bool:
     return isinstance(address, ipaddress.IPv4Address) and address in _SHARED_ADDRESS_SPACE
 
 
-def _is_private_peer() -> bool:
-    remote_addr = (request.remote_addr or "").strip()
-    if not remote_addr or remote_addr == "localhost":
-        return False
-    try:
-        address = ipaddress.ip_address(remote_addr)
-    except ValueError:
-        return False
-    if _is_private_address(address):
+def _is_containerized_runtime() -> bool:
+    if Path("/.dockerenv").exists() or Path("/run/.containerenv").exists():
         return True
-    mapped = getattr(address, "ipv4_mapped", None)
-    if mapped is not None:
-        return _is_private_address(mapped)
+    for cgroup_path in (Path("/proc/self/cgroup"), Path("/proc/1/cgroup")):
+        try:
+            cgroup = cgroup_path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        if any(marker in cgroup for marker in _CONTAINER_CGROUP_MARKERS):
+            return True
     return False
 
 
-def _local_interface_network(setup_address: ipaddress._BaseAddress) -> ipaddress._BaseNetwork | None:
+def _is_private_peer() -> bool:
+    address = _request_peer_address()
+    return address is not None and _is_private_address(address)
+
+
+def _request_peer_address() -> ipaddress._BaseAddress | None:
+    remote_addr = (request.remote_addr or "").strip()
+    if not remote_addr or remote_addr == "localhost":
+        return None
+    try:
+        address = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return None
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped or address
+
+
+def _local_interface_network(
+    setup_address: ipaddress._BaseAddress,
+    interface_filter: Callable[[str, ipaddress._BaseAddress], bool] | None = None,
+) -> ipaddress._BaseNetwork | None:
     """Return the network ``setup_host`` is configured on locally.
 
     Reads the interface's actual netmask via ``psutil.net_if_addrs`` so
@@ -315,7 +361,7 @@ def _local_interface_network(setup_address: ipaddress._BaseAddress) -> ipaddress
     except Exception:
         return None
     target_family = socket.AF_INET if setup_address.version == 4 else socket.AF_INET6
-    for addrs in interfaces.values():
+    for interface_name, addrs in interfaces.items():
         for snic in addrs:
             if snic.family != target_family:
                 continue
@@ -325,6 +371,8 @@ def _local_interface_network(setup_address: ipaddress._BaseAddress) -> ipaddress
             except ValueError:
                 continue
             if addr != setup_address:
+                continue
+            if interface_filter is not None and not interface_filter(interface_name, addr):
                 continue
             netmask = snic.netmask
             if not netmask:
@@ -467,12 +515,202 @@ def _is_trusted_docker_loopback_probe() -> bool:
     return _is_trusted_docker_peer()
 
 
+def _is_wildcard_setup_host(setup_host: str) -> bool:
+    return setup_host in {"0.0.0.0", "::", "*"}
+
+
+def _is_tailscale_overlay_address(address: ipaddress._BaseAddress) -> bool:
+    return (
+        isinstance(address, ipaddress.IPv4Address)
+        and address in _SHARED_ADDRESS_SPACE
+        or isinstance(address, ipaddress.IPv6Address)
+        and address in _TAILSCALE_IPV6_ADDRESS_SPACE
+    )
+
+
+def _tailscale_cli_candidates() -> list[str]:
+    candidates: list[str] = []
+    path = shutil.which("tailscale")
+    if path:
+        candidates.append(path)
+    macos_app_cli = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+    if macos_app_cli.exists():
+        candidates.append(str(macos_app_cli))
+    return list(dict.fromkeys(candidates))
+
+
+def _tailscale_local_addresses() -> frozenset[ipaddress._BaseAddress]:
+    global _TAILSCALE_IP_CACHE
+
+    now = time.monotonic()
+    if _TAILSCALE_IP_CACHE is not None:
+        cached_at, cached_addresses = _TAILSCALE_IP_CACHE
+        if now - cached_at < _TAILSCALE_IP_CACHE_TTL_SECONDS:
+            return cached_addresses
+
+    addresses: set[ipaddress._BaseAddress] = set()
+    env = {**os.environ, "TAILSCALE_BE_CLI": "1"}
+    for candidate in _tailscale_cli_candidates():
+        try:
+            result = subprocess.run(
+                [candidate, "ip"],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=False,
+                env=env,
+            )
+        except Exception:
+            continue
+        if result.returncode != 0:
+            continue
+        for line in result.stdout.splitlines():
+            try:
+                address = ipaddress.ip_address(line.strip())
+            except ValueError:
+                continue
+            if _is_tailscale_overlay_address(address):
+                addresses.add(address)
+        if addresses:
+            break
+
+    cached = frozenset(addresses)
+    _TAILSCALE_IP_CACHE = (now, cached)
+    return cached
+
+
+def _tailscale_whois(peer_address: ipaddress._BaseAddress) -> dict[str, Any] | None:
+    env = {**os.environ, "TAILSCALE_BE_CLI": "1"}
+    for candidate in _tailscale_cli_candidates():
+        try:
+            result = subprocess.run(
+                [candidate, "whois", "--json", str(peer_address)],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=False,
+                env=env,
+            )
+        except Exception:
+            continue
+        if result.returncode != 0:
+            continue
+        try:
+            payload = json.loads(result.stdout)
+        except Exception:
+            continue
+        return payload if isinstance(payload, dict) else None
+    return None
+
+
+def _json_list(payload: dict[str, Any], *keys: str) -> list[Any]:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _is_tailscale_host_route(network: ipaddress._BaseNetwork) -> bool:
+    if network.prefixlen != network.max_prefixlen:
+        return False
+    return _is_tailscale_overlay_address(network.network_address)
+
+
+def _is_trusted_tailscale_peer(peer_address: ipaddress._BaseAddress) -> bool:
+    global _TAILSCALE_PEER_CACHE
+
+    if not _is_tailscale_overlay_address(peer_address):
+        return False
+
+    now = time.monotonic()
+    cached = _TAILSCALE_PEER_CACHE.get(peer_address)
+    if cached is not None:
+        cached_at, trusted = cached
+        if now - cached_at < _TAILSCALE_PEER_CACHE_TTL_SECONDS:
+            return trusted
+
+    payload = _tailscale_whois(peer_address)
+    trusted = False
+    if payload is not None:
+        machine = payload.get("Machine") or payload.get("machine") or {}
+        if isinstance(machine, dict):
+            addresses = set()
+            for raw_address in _json_list(machine, "Addresses", "addresses"):
+                try:
+                    addresses.add(ipaddress.ip_address(str(raw_address)))
+                except ValueError:
+                    continue
+            allowed_networks = []
+            for raw_network in _json_list(machine, "AllowedIPs", "allowedIPs", "allowedIps"):
+                try:
+                    allowed_networks.append(ipaddress.ip_network(str(raw_network), strict=False))
+                except ValueError:
+                    continue
+            trusted = bool(addresses and peer_address in addresses and allowed_networks)
+            if trusted:
+                trusted = all(_is_tailscale_host_route(network) for network in allowed_networks)
+
+    _TAILSCALE_PEER_CACHE[peer_address] = (now, trusted)
+    return trusted
+
+
+def _allows_wildcard_setup_host_trust(interface_name: str, address: ipaddress._BaseAddress) -> bool:
+    normalized_name = interface_name.lower()
+    if _is_tailscale_overlay_address(address):
+        if normalized_name.startswith(_WILDCARD_TRUST_OVERLAY_INTERFACE_PREFIXES):
+            return True
+        if normalized_name.startswith(_TAILSCALE_UTUN_INTERFACE_PREFIXES):
+            return address in _tailscale_local_addresses()
+        return False
+    if _is_containerized_runtime():
+        return False
+    return normalized_name.startswith(_WILDCARD_TRUST_LAN_INTERFACE_PREFIXES)
+
+
+def _is_wildcard_setup_host_request(config: V2Config | None) -> bool:
+    """Treat wildcard binds as local only through an actual private interface.
+
+    ``0.0.0.0``/``::`` is a listen address, not a trusted browser host. For
+    compatibility with LAN direct access, accept requests to a concrete local
+    private IP on a small allowlist of LAN/overlay interfaces while keeping
+    arbitrary private Host spoofing, container bridge networks, and public-IP
+    exposure behind the normal remote-access checks.
+    """
+    if config is None:
+        return False
+    setup_host = _normalized_host(getattr(config.ui, "setup_host", ""))
+    if not _is_wildcard_setup_host(setup_host):
+        return False
+    if _has_forwarded_metadata():
+        return False
+
+    try:
+        host_address = ipaddress.ip_address(_normalized_host(request.host))
+    except ValueError:
+        return False
+    if host_address.is_unspecified:
+        return False
+    if not _is_private_address(host_address):
+        return False
+    if _local_interface_network(host_address, interface_filter=_allows_wildcard_setup_host_trust) is None:
+        return False
+    if not _is_private_peer():
+        return False
+    if _is_tailscale_overlay_address(host_address):
+        peer_address = _request_peer_address()
+        return peer_address is not None and _is_trusted_tailscale_peer(peer_address)
+    return _peer_shares_setup_host_network(host_address)
+
+
 def _is_setup_host_request(config: V2Config | None) -> bool:
     if config is None:
         return False
     setup_host = _normalized_host(getattr(config.ui, "setup_host", ""))
-    if not setup_host or setup_host in {"0.0.0.0", "::", "*"}:
+    if not setup_host:
         return False
+    if _is_wildcard_setup_host(setup_host):
+        return _is_wildcard_setup_host_request(config)
     if _is_loopback_host(setup_host):
         return False
     # Only trust setup-host requests when setup_host parses to a private/CGNAT
