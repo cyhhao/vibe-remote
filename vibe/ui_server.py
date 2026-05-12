@@ -1615,6 +1615,53 @@ def backend_claude_auth_post():
     return jsonify(api.save_claude_auth(payload))
 
 
+@app.route("/backend/<backend>/auth/oauth/start", methods=["POST"])
+def backend_oauth_web_start(backend: str):
+    """Kick off a Settings → Backends OAuth flow for Claude or Codex.
+
+    Body: ``{force_reset?: bool}``. Returns ``{flow_id, state, url?,
+    device_code?, awaiting_code?}``. The caller polls ``GET .../status/<flow_id>``
+    while the user completes login externally.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    force_reset = bool(payload.get("force_reset", True))
+    return jsonify(api.start_oauth_web(backend, force_reset=force_reset))
+
+
+@app.route("/backend/<backend>/auth/oauth/status/<flow_id>", methods=["GET"])
+def backend_oauth_web_status(backend: str, flow_id: str):
+    """Poll an in-flight Settings OAuth flow."""
+    from vibe import api
+
+    _ = backend  # backend is encoded in the flow itself; path arg kept for symmetry
+    return jsonify(api.get_oauth_web_status(flow_id))
+
+
+@app.route("/backend/<backend>/auth/oauth/submit-code", methods=["POST"])
+def backend_oauth_web_submit_code(backend: str):
+    """Submit the Claude OAuth callback code (Codex device-auth ignores this)."""
+    from vibe import api
+
+    _ = backend
+    payload = request.json or {}
+    flow_id = str(payload.get("flow_id") or "").strip()
+    code = str(payload.get("code") or "")
+    return jsonify(api.submit_oauth_web_code(flow_id, code))
+
+
+@app.route("/backend/<backend>/auth/oauth/cancel", methods=["POST"])
+def backend_oauth_web_cancel(backend: str):
+    """Cancel an in-flight Settings OAuth flow."""
+    from vibe import api
+
+    _ = backend
+    payload = request.json or {}
+    flow_id = str(payload.get("flow_id") or "").strip()
+    return jsonify(api.cancel_oauth_web(flow_id))
+
+
 @app.route("/backend/opencode/providers", methods=["GET"])
 def backend_opencode_providers():
     """Return the merged OpenCode provider catalog for the Settings UI.

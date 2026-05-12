@@ -9,8 +9,9 @@ import logging
 import os
 import re
 import signal
+import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from modules.claude_sdk_compat import (
@@ -151,6 +152,30 @@ class AgentAuthFlow:
         return f"{self.settings_key}:{self.backend}"
 
 
+# Web Settings → Backends OAuth flows live alongside the IM ``AgentAuthFlow``
+# but share none of its IM coupling: no MessageContext, no ``_send_message``,
+# no settings_key. State is exposed to the browser via a polling endpoint, so
+# every transition the UI needs to render lives in plain fields here.
+WebFlowState = str  # "starting" | "awaiting_code" | "verifying" | "success" | "failed" | "cancelled"
+
+
+@dataclass
+class WebAuthFlow:
+    flow_id: str
+    backend: str  # "claude" | "codex"
+    state: WebFlowState = "starting"
+    process: asyncio.subprocess.Process | None = None
+    reader_task: asyncio.Task[None] | None = None
+    waiter_task: asyncio.Task[None] | None = None
+    claude_client: ClaudeSDKClient | None = None
+    url: str | None = None
+    device_code: str | None = None
+    awaiting_code: bool = False
+    error: str | None = None
+    last_status_text: str | None = None
+    created_at: float = field(default_factory=time.time)
+
+
 class AgentAuthService:
     """Manage backend-specific login flows triggered through IM."""
 
@@ -160,6 +185,15 @@ class AgentAuthService:
         self._flows_by_id: dict[str, AgentAuthFlow] = {}
         self._flow_lock = asyncio.Lock()
         self.setup_timeout_seconds = 900.0
+        # Web-initiated OAuth flows are keyed by ``flow_id`` only; no IM
+        # context exists for them, so they cannot live in ``_flows``.
+        self._web_flows: dict[str, WebAuthFlow] = {}
+        self._web_flow_lock = asyncio.Lock()
+        # Optional callable invoked after a successful *web* auth flow so
+        # the UI-server process can ask the long-running controller to
+        # reload V2Config-backed credentials. The hook receives ``(backend,)``
+        # and runs in a worker thread to avoid blocking the auth event loop.
+        self._post_web_success_hook: Optional[Any] = None
 
     def _t(self, key: str, **kwargs) -> str:
         lang = getattr(self.controller, "_get_lang", lambda: getattr(self.controller.config, "language", "en"))()
@@ -598,7 +632,7 @@ class AgentAuthService:
 
     async def _start_claude_control_flow(
         self,
-        context: MessageContext,
+        context: Optional[MessageContext] = None,
         *,
         force_reset: bool,
         login_with_claude_ai: bool,
@@ -628,12 +662,17 @@ class AgentAuthService:
             raise RuntimeError("Claude auth flow did not return a manual login URL")
         return client, manual_url
 
-    async def _create_claude_control_client(self, context: MessageContext) -> ClaudeSDKClient:
+    async def _create_claude_control_client(
+        self, context: Optional[MessageContext] = None
+    ) -> ClaudeSDKClient:
         session_handler = getattr(self.controller, "session_handler", None)
-        get_working_path = getattr(session_handler, "get_working_path", None)
-        if callable(get_working_path):
+        get_working_path = getattr(session_handler, "get_working_path", None) if session_handler else None
+        if context is not None and callable(get_working_path):
             working_path = get_working_path(context)
         else:
+            # Web-initiated flows do not have an IM session; fall back to the
+            # process cwd so the SDK client still has a stable cwd to attach
+            # its OAuth callback transport to.
             working_path = os.getcwd()
 
         if not os.path.exists(working_path):
@@ -1214,3 +1253,272 @@ class AgentAuthService:
         if self._flows.get(flow.flow_key) is flow:
             self._flows.pop(flow.flow_key, None)
         self._flows_by_id.pop(flow.flow_id, None)
+
+    # ------------------------------------------------------------------
+    # Web Settings → Backends OAuth flows
+    #
+    # These methods power ``Settings → Backends → {Claude,Codex} → Sign in``
+    # in the browser. They reuse the same subprocess / SDK plumbing the IM
+    # ``/setup`` command uses (``_start_codex_process``,
+    # ``_start_claude_control_flow``, ``_verify_login``,
+    # ``_refresh_backend_runtime``) but never call ``_send_message`` — every
+    # piece of state the UI needs is parked on the ``WebAuthFlow`` record
+    # and read by a polling endpoint.
+    # ------------------------------------------------------------------
+
+    WEB_BACKENDS = {"claude", "codex"}
+
+    async def start_web_setup(self, backend: str, *, force_reset: bool = True) -> WebAuthFlow:
+        """Start an OAuth flow initiated from the Settings page.
+
+        Returns the freshly-created ``WebAuthFlow``. For Codex the caller
+        should poll ``get_web_flow_status`` until ``state == "awaiting_code"``
+        appears (URL + device code surfaced) and then again until the user
+        completes the device auth on OpenAI's side. For Claude the call
+        returns once the manual URL is available; the user then submits the
+        callback code via ``submit_web_code``.
+        """
+        if backend not in self.WEB_BACKENDS:
+            raise ValueError(f"unsupported_backend:{backend}")
+
+        flow_id = uuid.uuid4().hex[:12]
+        flow = WebAuthFlow(flow_id=flow_id, backend=backend, state="starting")
+
+        async with self._web_flow_lock:
+            self._web_flows[flow_id] = flow
+
+        try:
+            if backend == "codex":
+                flow.process = await self._start_codex_process(force_reset=force_reset)
+                flow.reader_task = asyncio.create_task(self._read_codex_output_web(flow))
+                flow.waiter_task = asyncio.create_task(self._wait_for_codex_completion_web(flow))
+            else:  # claude
+                client, manual_url = await self._start_claude_control_flow(
+                    context=None,
+                    force_reset=force_reset,
+                    login_with_claude_ai=True,
+                )
+                flow.claude_client = client
+                flow.url = manual_url
+                flow.awaiting_code = True
+                flow.state = "awaiting_code"
+                flow.waiter_task = asyncio.create_task(self._wait_for_claude_completion_web(flow))
+        except Exception as err:  # noqa: BLE001
+            logger.error("Web auth start failed for %s: %s", backend, err, exc_info=True)
+            flow.state = "failed"
+            flow.error = str(err)
+        return flow
+
+    async def submit_web_code(self, flow_id: str, code: str) -> dict[str, Any]:
+        flow = self._web_flows.get(flow_id)
+        if flow is None:
+            return {"ok": False, "error": "flow_not_found"}
+        if flow.backend != "claude":
+            return {"ok": False, "error": "code_not_supported"}
+        if not flow.awaiting_code or flow.claude_client is None:
+            return {"ok": False, "error": "not_awaiting_code"}
+
+        raw = (code or "").strip()
+        if "#" not in raw:
+            return {"ok": False, "error": "invalid_format"}
+        auth_code, state_val = raw.split("#", 1)
+        auth_code = auth_code.strip()
+        state_val = state_val.strip()
+        if not auth_code or not state_val:
+            return {"ok": False, "error": "invalid_format"}
+
+        try:
+            await self._send_claude_callback(flow.claude_client, auth_code, state_val)
+        except Exception as err:  # noqa: BLE001
+            logger.error("Web Claude callback submit failed: %s", err, exc_info=True)
+            return {"ok": False, "error": "submit_failed", "detail": str(err)}
+
+        flow.awaiting_code = False
+        flow.state = "verifying"
+        return {"ok": True}
+
+    def get_web_flow_status(self, flow_id: str) -> dict[str, Any]:
+        flow = self._web_flows.get(flow_id)
+        if flow is None:
+            return {"ok": False, "error": "flow_not_found"}
+        return {
+            "ok": True,
+            "flow_id": flow_id,
+            "backend": flow.backend,
+            "state": flow.state,
+            "url": flow.url,
+            "device_code": flow.device_code,
+            "awaiting_code": flow.awaiting_code,
+            "error": flow.error,
+        }
+
+    async def cancel_web_flow(self, flow_id: str) -> dict[str, Any]:
+        async with self._web_flow_lock:
+            flow = self._web_flows.pop(flow_id, None)
+        if flow is None:
+            return {"ok": False, "error": "flow_not_found"}
+        await self._terminate_web_flow(flow, final_state="cancelled")
+        return {"ok": True}
+
+    async def _read_codex_output_web(self, flow: WebAuthFlow) -> None:
+        """Parse ``codex login --device-auth`` stdout for URL + device code.
+
+        Mirrors ``_read_codex_output`` but writes the parsed fields onto the
+        ``WebAuthFlow`` instead of pushing an IM message.
+        """
+        process = flow.process
+        if process is None or process.stdout is None:
+            return
+        try:
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace")
+                clean = sanitize_process_output(text)
+                if not clean:
+                    continue
+                flow.last_status_text = clean
+                maybe_url = CODEX_URL_RE.search(clean)
+                if maybe_url:
+                    flow.url = maybe_url.group(0)
+                maybe_code = CODEX_DEVICE_CODE_RE.search(clean)
+                if maybe_code:
+                    flow.device_code = maybe_code.group(0)
+                if flow.url and flow.device_code and flow.state == "starting":
+                    flow.state = "awaiting_code"
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            logger.warning("Codex web reader stopped: %s", err)
+
+    async def _wait_for_codex_completion_web(self, flow: WebAuthFlow) -> None:
+        try:
+            assert flow.process is not None
+            await asyncio.wait_for(flow.process.wait(), timeout=self.setup_timeout_seconds)
+            if flow.reader_task and not flow.reader_task.done():
+                try:
+                    await flow.reader_task
+                except asyncio.CancelledError:
+                    pass
+            flow.state = "verifying"
+            ok, detail = await self._verify_web_login(flow.backend)
+            if ok:
+                await self._refresh_backend_runtime(flow.backend)
+                await self._invoke_post_web_success_hook(flow.backend)
+                flow.state = "success"
+            else:
+                flow.state = "failed"
+                flow.error = detail or "unknown_failure"
+        except asyncio.TimeoutError:
+            await self._terminate_web_flow(flow, final_state="failed", error="timed_out")
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            logger.error("Web Codex auth flow failed: %s", err, exc_info=True)
+            flow.state = "failed"
+            flow.error = str(err)
+
+    async def _wait_for_claude_completion_web(self, flow: WebAuthFlow) -> None:
+        try:
+            if flow.claude_client is None:
+                raise RuntimeError("missing_sdk_client")
+            await asyncio.wait_for(
+                self._send_claude_control_request(
+                    flow.claude_client,
+                    {"subtype": "claude_oauth_wait_for_completion"},
+                    timeout=self.setup_timeout_seconds,
+                ),
+                timeout=self.setup_timeout_seconds,
+            )
+            flow.state = "verifying"
+            ok, detail = await self._verify_web_login(flow.backend)
+            if ok:
+                await self._refresh_backend_runtime(flow.backend)
+                await self._invoke_post_web_success_hook(flow.backend)
+                flow.state = "success"
+            else:
+                flow.state = "failed"
+                flow.error = detail or "unknown_failure"
+        except asyncio.TimeoutError:
+            flow.state = "failed"
+            flow.error = "timed_out"
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            logger.error("Web Claude auth flow failed: %s", err, exc_info=True)
+            flow.state = "failed"
+            flow.error = str(err)
+        finally:
+            if flow.claude_client is not None:
+                await self._disconnect_claude_client(flow.claude_client)
+                flow.claude_client = None
+
+    async def _verify_web_login(self, backend: str) -> tuple[bool, str]:
+        """Re-run the same CLI status probes ``_verify_login`` uses for IM.
+
+        Builds a temporary IM-shaped ``AgentAuthFlow`` shell so the existing
+        verifier can run unchanged — the only fields it touches are
+        ``backend`` and the controller binary lookup, so the placeholder
+        process / context / tasks are safe to leave as ``None``-ish stubs.
+        """
+        dummy = AgentAuthFlow(
+            flow_id="web-verify",
+            backend=backend,
+            settings_key="web",
+            initiator_user_id="web",
+            context=None,  # type: ignore[arg-type]
+            process=None,
+            reader_task=asyncio.create_task(asyncio.sleep(0)),
+            waiter_task=asyncio.create_task(asyncio.sleep(0)),
+        )
+        try:
+            return await self._verify_login(dummy)
+        finally:
+            for task in (dummy.reader_task, dummy.waiter_task):
+                if task and not task.done():
+                    task.cancel()
+
+    async def _invoke_post_web_success_hook(self, backend: str) -> None:
+        hook = self._post_web_success_hook
+        if not callable(hook):
+            return
+        try:
+            await asyncio.to_thread(hook, backend)
+        except Exception as err:  # noqa: BLE001
+            logger.warning("post_web_success_hook failed for %s: %s", backend, err)
+
+    async def _terminate_web_flow(
+        self,
+        flow: WebAuthFlow,
+        *,
+        final_state: WebFlowState,
+        error: str | None = None,
+    ) -> None:
+        if flow.reader_task and not flow.reader_task.done():
+            flow.reader_task.cancel()
+            try:
+                await flow.reader_task
+            except asyncio.CancelledError:
+                pass
+        if flow.waiter_task and not flow.waiter_task.done():
+            flow.waiter_task.cancel()
+            try:
+                await flow.waiter_task
+            except asyncio.CancelledError:
+                pass
+        if flow.process is not None and flow.process.returncode is None:
+            try:
+                flow.process.terminate()
+                await asyncio.wait_for(flow.process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                flow.process.kill()
+                await flow.process.wait()
+            except ProcessLookupError:
+                pass
+        if flow.claude_client is not None:
+            await self._disconnect_claude_client(flow.claude_client)
+            flow.claude_client = None
+        flow.state = final_state
+        if error:
+            flow.error = error

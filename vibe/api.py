@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import uuid
@@ -2057,6 +2058,168 @@ def restart_backend(name: str) -> dict:
 
 
 _VALID_AUTH_MODES = {"oauth", "api_key"}
+
+
+# ---------------------------------------------------------------------------
+# Web Settings → Backends OAuth flow plumbing
+#
+# Mirrors the IM ``/setup`` flow but runs in the UI server's own process.
+# OAuth subprocess + Claude SDK client require a long-lived event loop —
+# Flask routes are sync, so we host one on a dedicated thread and bridge
+# every call with ``run_coroutine_threadsafe``. On success we drop a
+# ``restart-<backend>.cmd`` marker so the live controller refreshes its
+# in-process agent state (mirroring what ``_refresh_backend_runtime`` does
+# in-process for IM-driven flows).
+# ---------------------------------------------------------------------------
+
+
+class _WebControllerStub:
+    """Minimal ``Controller``-shaped facade for the web OAuth flow service.
+
+    ``AgentAuthService`` only touches ``controller.config`` (for
+    ``cli_path``) and gracefully no-ops when ``agent_service`` /
+    ``session_handler`` are absent. The stub re-reads V2Config from disk on
+    every access so a freshly-saved ``cli_path`` is picked up on the next
+    flow without restarting the UI server.
+    """
+
+    @property
+    def config(self):
+        return load_config()
+
+    # The following attributes are inspected via ``getattr(..., None)`` in
+    # ``AgentAuthService`` and gate platform-specific paths that web flows
+    # never traverse (IM message dispatch, session lookup, agent refresh).
+    agent_service = None
+    session_handler = None
+    im_client = None
+
+
+_oauth_service_lock = threading.Lock()
+_oauth_service: Any = None
+_oauth_loop: Any = None
+_oauth_loop_thread: Any = None
+
+
+def _start_oauth_event_loop() -> Any:
+    loop = asyncio.new_event_loop()
+
+    def _runner() -> None:
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    thread = threading.Thread(target=_runner, daemon=True, name="vibe-oauth-loop")
+    thread.start()
+    return loop, thread
+
+
+def _on_web_auth_success(backend: str) -> None:
+    """Tell the live controller to refresh its agent after web OAuth success."""
+    try:
+        handled, err = _request_controller_restart(backend, timeout=4.0)
+        if handled and err:
+            logger.warning("Controller refresh after web auth reported error: %s", err)
+        elif not handled:
+            logger.info("Controller did not pick up web-auth refresh marker for %s", backend)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to notify controller after web auth: %s", exc)
+
+
+def _get_oauth_service() -> Any:
+    """Lazily build the (singleton) AgentAuthService for web flows."""
+    global _oauth_service, _oauth_loop, _oauth_loop_thread
+    with _oauth_service_lock:
+        if _oauth_service is not None:
+            return _oauth_service
+        from core.agent_auth_service import AgentAuthService
+
+        _oauth_loop, _oauth_loop_thread = _start_oauth_event_loop()
+        controller = _WebControllerStub()
+        _oauth_service = AgentAuthService(controller)
+        _oauth_service._post_web_success_hook = _on_web_auth_success
+        return _oauth_service
+
+
+def _submit_oauth_coro(coro, *, timeout: float = 30.0):
+    service = _get_oauth_service()  # ensures loop  # noqa: F841
+    future = asyncio.run_coroutine_threadsafe(coro, _oauth_loop)
+    return future.result(timeout=timeout)
+
+
+def _serialize_web_flow_status(payload: dict) -> dict:
+    """Strip server-only keys before returning to the browser."""
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "invalid_payload"}
+    return payload
+
+
+_WEB_OAUTH_BACKENDS = {"claude", "codex"}
+
+
+def start_oauth_web(backend: str, force_reset: bool = True) -> dict:
+    backend = (backend or "").strip().lower()
+    if backend not in _WEB_OAUTH_BACKENDS:
+        return {"ok": False, "error": "unsupported_backend"}
+    service = _get_oauth_service()
+    try:
+        flow = _submit_oauth_coro(
+            service.start_web_setup(backend, force_reset=force_reset),
+            timeout=60.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Web OAuth start failed for %s: %s", backend, exc, exc_info=True)
+        return {"ok": False, "error": "start_failed", "detail": str(exc)}
+
+    if flow.state == "failed":
+        return {
+            "ok": False,
+            "error": flow.error or "start_failed",
+            "flow_id": flow.flow_id,
+        }
+    return {
+        "ok": True,
+        "flow_id": flow.flow_id,
+        "backend": flow.backend,
+        "state": flow.state,
+        "url": flow.url,
+        "device_code": flow.device_code,
+        "awaiting_code": flow.awaiting_code,
+    }
+
+
+def get_oauth_web_status(flow_id: str) -> dict:
+    flow_id = (flow_id or "").strip()
+    if not flow_id:
+        return {"ok": False, "error": "missing_flow_id"}
+    service = _get_oauth_service()
+    return _serialize_web_flow_status(service.get_web_flow_status(flow_id))
+
+
+def submit_oauth_web_code(flow_id: str, code: str) -> dict:
+    flow_id = (flow_id or "").strip()
+    if not flow_id:
+        return {"ok": False, "error": "missing_flow_id"}
+    service = _get_oauth_service()
+    try:
+        return _submit_oauth_coro(
+            service.submit_web_code(flow_id, code or ""),
+            timeout=30.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Web OAuth code submit failed: %s", exc, exc_info=True)
+        return {"ok": False, "error": "submit_failed", "detail": str(exc)}
+
+
+def cancel_oauth_web(flow_id: str) -> dict:
+    flow_id = (flow_id or "").strip()
+    if not flow_id:
+        return {"ok": False, "error": "missing_flow_id"}
+    service = _get_oauth_service()
+    try:
+        return _submit_oauth_coro(service.cancel_web_flow(flow_id), timeout=15.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Web OAuth cancel failed: %s", exc, exc_info=True)
+        return {"ok": False, "error": "cancel_failed", "detail": str(exc)}
 
 
 def get_codex_auth() -> dict:
