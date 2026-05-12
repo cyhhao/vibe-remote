@@ -10,6 +10,7 @@ import signal
 from asyncio.subprocess import Process
 from typing import Any, Awaitable, Callable, Optional
 
+from core.process_diagnostics import log_process_snapshot, process_identity
 from core.process_isolation import KILL_SIGNAL, isolated_subprocess_kwargs, signal_process_tree
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,15 @@ class CodexTransport:
             limit=STREAM_BUFFER_LIMIT,
             **isolated_subprocess_kwargs(),
         )
-        logger.info("Codex app-server started (pid=%s)", self._process.pid)
+        identity = process_identity(self._process.pid)
+        logger.info(
+            "Codex app-server started (pid=%s pgid=%s sid=%s service_pgid=%s)",
+            self._process.pid,
+            identity.get("pgid"),
+            identity.get("sid"),
+            os.getpgrp() if hasattr(os, "getpgrp") else None,
+        )
+        log_process_snapshot(logger, "codex-app-server-start", pid=self._process.pid, limit=10)
 
         # Start background readers
         self._reader_task = asyncio.create_task(self._reader_loop())
@@ -330,7 +339,7 @@ class CodexTransport:
                 if not line:
                     break
                 decoded = line.decode(errors="ignore").rstrip()
-                logger.debug("Codex stderr: %s", decoded)
+                logger.info("Codex stderr: %s", decoded[:2000])
         except asyncio.CancelledError:
             return
         except Exception:

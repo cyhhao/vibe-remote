@@ -8,6 +8,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from config import paths
@@ -23,6 +25,8 @@ from config.v2_config import (
 
 
 logger = logging.getLogger(__name__)
+SHUTDOWN_INTENT_TTL_SECONDS = 30
+SHUTDOWN_INTENT_ENV = "VIBE_REQUIRE_SHUTDOWN_INTENT"
 
 
 def get_package_root() -> Path:
@@ -127,6 +131,63 @@ def read_json(path):
         # Status files are best-effort: a partially written or corrupted
         # payload should not break write_status() or read_status().
         return None
+
+
+def get_shutdown_intent_path() -> Path:
+    return paths.get_runtime_dir() / "shutdown_intent.json"
+
+
+def write_shutdown_intent(
+    target_pid: int,
+    *,
+    signum: int = signal.SIGTERM,
+    reason: str = "managed-stop",
+) -> None:
+    """Record a short-lived intent before sending a managed shutdown signal."""
+    if not isinstance(target_pid, int) or target_pid <= 0:
+        return
+    payload = {
+        "target_pid": target_pid,
+        "signum": int(signum),
+        "reason": reason,
+        "created_at": time.time(),
+        "sender_pid": os.getpid(),
+        "sender_command": get_process_command(os.getpid()),
+        "target_command": get_process_command(target_pid),
+    }
+    try:
+        write_json(get_shutdown_intent_path(), payload)
+        logger.info("Recorded managed shutdown intent: %s", payload)
+    except OSError:
+        logger.warning("Failed to write shutdown intent for pid=%s", target_pid, exc_info=True)
+
+
+def consume_shutdown_intent(target_pid: int, signum: int = signal.SIGTERM) -> dict | None:
+    """Return and remove a valid managed shutdown intent for this process."""
+    path = get_shutdown_intent_path()
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        return None
+    try:
+        age = time.time() - float(payload.get("created_at", 0))
+        matches = (
+            payload.get("target_pid") == target_pid
+            and int(payload.get("signum", 0)) == int(signum)
+            and 0 <= age <= SHUTDOWN_INTENT_TTL_SECONDS
+        )
+    except (TypeError, ValueError):
+        matches = False
+    if not matches:
+        return None
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("Failed to remove consumed shutdown intent", exc_info=True)
+    return payload
+
+
+def shutdown_intent_required() -> bool:
+    return os.environ.get(SHUTDOWN_INTENT_ENV, "").lower() in {"1", "true", "yes"}
 
 
 def _pid_alive_windows(pid: int) -> bool:
@@ -274,7 +335,13 @@ def stop_pid(pid: int, timeout: float = 5) -> bool:
     if os.name == "nt":
         return _terminate_process_windows(pid, timeout=timeout)
 
+    write_shutdown_intent(pid, signum=signal.SIGTERM, reason="stop_pid")
     try:
+        logger.info(
+            "Sending managed SIGTERM to pid=%s command=%s",
+            pid,
+            get_process_command(pid),
+        )
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         return False
@@ -286,6 +353,7 @@ def stop_pid(pid: int, timeout: float = 5) -> bool:
             return True
         time.sleep(0.2)
     try:
+        logger.warning("Sending managed SIGKILL to pid=%s command=%s", pid, get_process_command(pid))
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         return True
@@ -364,6 +432,35 @@ def read_status():
     return read_json(paths.get_runtime_status_path()) or {}
 
 
+def _command_references_path(command: str | None, expected_path: Path) -> bool:
+    if not command:
+        return False
+    try:
+        args = shlex.split(command, posix=(os.name != "nt"))
+    except ValueError:
+        return False
+    expected_resolved = expected_path.resolve()
+    for arg in args:
+        cleaned_arg = arg.strip("\"'")
+        try:
+            if Path(cleaned_arg).resolve() == expected_resolved:
+                return True
+        except (OSError, RuntimeError):
+            continue
+    return False
+
+
+def _pid_mismatches_service(pid: int) -> bool:
+    command = get_process_command(pid)
+    if not command:
+        logger.warning(
+            "Reusing existing service pid=%s because its command line could not be inspected",
+            pid,
+        )
+        return False
+    return not _command_references_path(command, get_service_main_path())
+
+
 def render_status():
     status = read_status()
     pid_path = paths.get_runtime_pid_path()
@@ -383,7 +480,12 @@ def start_service():
             except Exception:
                 existing_pid = 0
             if existing_pid and pid_alive(existing_pid):
-                return existing_pid
+                if not _pid_mismatches_service(existing_pid):
+                    return existing_pid
+                logger.warning(
+                    "Ignoring stale service pid file pid=%s because it does not match the Vibe service",
+                    existing_pid,
+                )
             pid_path.unlink(missing_ok=True)
 
         main_path = get_service_main_path()
@@ -395,8 +497,46 @@ def start_service():
             env={
                 **os.environ,
                 "VIBE_DISABLE_STDOUT_LOGGING": "1",
+                SHUTDOWN_INTENT_ENV: "1",
             },
         )
+
+
+def _ui_health_url(host: str, port: int) -> str:
+    health_host = (host or "127.0.0.1").strip()
+    if health_host in {"0.0.0.0", ""}:
+        health_host = "127.0.0.1"
+    elif health_host in {"::", "::0"}:
+        health_host = "[::1]"
+    elif health_host.startswith("[") and health_host.endswith("]"):
+        pass
+    elif ":" in health_host:
+        health_host = f"[{health_host}]"
+    return f"http://{health_host}:{port}/health"
+
+
+def ui_server_healthy(host: str, port: int, timeout: float = 0.5) -> bool:
+    try:
+        with urllib.request.urlopen(_ui_health_url(host, port), timeout=timeout) as response:
+            return response.status == 200
+    except (OSError, urllib.error.URLError, TimeoutError, ValueError):
+        return False
+
+
+def wait_for_ui_server(host: str, port: int, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if ui_server_healthy(host, port):
+            return True
+        time.sleep(0.1)
+    return ui_server_healthy(host, port)
+
+
+def _pid_matches_ui_server(pid: int) -> bool:
+    command = get_process_command(pid)
+    if not command:
+        return False
+    return "vibe.ui_server" in command and "run_ui_server" in command
 
 
 def resolve_localhost_family() -> str:
@@ -461,13 +601,39 @@ def effective_ui_bind_host(config: V2Config, requested_host: str | None = None) 
 
 
 def start_ui(host, port):
+    pid_path = paths.get_runtime_ui_pid_path()
+    if pid_path.exists():
+        try:
+            existing_pid = int(pid_path.read_text(encoding="utf-8").strip())
+        except Exception:
+            existing_pid = 0
+        if existing_pid and pid_alive(existing_pid):
+            if _pid_matches_ui_server(existing_pid) and ui_server_healthy(host, port):
+                return existing_pid
+            if _pid_matches_ui_server(existing_pid):
+                logger.warning(
+                    "Stopping stale UI process pid=%s because health check failed for %s",
+                    existing_pid,
+                    _ui_health_url(host, port),
+                )
+                stop_pid(existing_pid)
+            else:
+                logger.warning(
+                    "Ignoring stale UI pid file pid=%s because it does not match the Vibe UI server",
+                    existing_pid,
+                )
+        pid_path.unlink(missing_ok=True)
+
     command = "from vibe.ui_server import run_ui_server; run_ui_server('{}', {})".format(host, port)
-    return spawn_background(
+    pid = spawn_background(
         [sys.executable, "-c", command],
-        paths.get_runtime_ui_pid_path(),
+        pid_path,
         "ui_stdout.log",
         "ui_stderr.log",
     )
+    if not wait_for_ui_server(host, port):
+        logger.warning("Started UI pid=%s but health check did not pass for %s", pid, _ui_health_url(host, port))
+    return pid
 
 
 def stop_service():

@@ -28,16 +28,16 @@ The command walks you through signing in at `https://avibe.bot`, creating a remo
 
 ### `vibe`
 
-Start or restart Vibe Remote. Opens the web UI in your browser.
+Start Vibe Remote if needed. Opens the web UI in your browser.
 
 ```bash
 vibe
 ```
 
 **Behavior:**
-- Restarts the main service if already running
+- Reuses the main service if it is already running
 - Opens the setup wizard at `http://127.0.0.1:5123`
-- **Preserves OpenCode server** — Running tasks are not interrupted
+- **Preserves running processes** — Use `vibe restart` when you need an explicit restart
 
 ### `vibe stop`
 

@@ -368,6 +368,7 @@ def test_restart_parser_rejects_non_finite_delay_seconds(raw_value):
 def test_stop_pid_handles_process_lookup_race(monkeypatch):
     monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(runtime, "write_shutdown_intent", lambda *args, **kwargs: None)
 
     def _kill(pid, sig):
         raise ProcessLookupError()
@@ -380,6 +381,7 @@ def test_stop_pid_handles_process_lookup_race(monkeypatch):
 def test_stop_pid_handles_permission_error(monkeypatch):
     monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(runtime, "write_shutdown_intent", lambda *args, **kwargs: None)
 
     def _kill(pid, sig):
         raise PermissionError()
@@ -387,3 +389,178 @@ def test_stop_pid_handles_permission_error(monkeypatch):
     monkeypatch.setattr(runtime.os, "kill", _kill)
 
     assert runtime.stop_pid(12345) is False
+
+
+def test_stop_pid_writes_shutdown_intent_before_sigterm(monkeypatch):
+    monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
+    alive_results = iter([True, False])
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: next(alive_results))
+    calls = []
+
+    def _kill(pid, sig):
+        calls.append((pid, sig))
+
+    monkeypatch.setattr(runtime.os, "kill", _kill)
+    monkeypatch.setattr(runtime.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(runtime, "write_shutdown_intent", lambda *args, **kwargs: calls.append(("intent", args, kwargs)))
+
+    assert runtime.stop_pid(12345) is True
+    assert calls[0][0] == "intent"
+    assert calls[0][1] == (12345,)
+    assert calls[0][2]["signum"] == signal.SIGTERM
+    assert calls[1] == (12345, signal.SIGTERM)
+
+
+def test_start_ui_reuses_existing_live_pid(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    paths.get_runtime_ui_pid_path().write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 12345)
+    monkeypatch.setattr(runtime, "ui_server_healthy", lambda host, port: host == "127.0.0.1" and port == 5123)
+    monkeypatch.setattr(
+        runtime,
+        "get_process_command",
+        lambda pid: (
+            f"{sys.executable} -c "
+            "\"from vibe.ui_server import run_ui_server; run_ui_server('127.0.0.1', 5123)\""
+            if pid == 12345
+            else None
+        ),
+    )
+
+    def fail_spawn(*_args, **_kwargs):
+        raise AssertionError("start_ui should not spawn when an existing UI process is healthy")
+
+    monkeypatch.setattr(runtime, "spawn_background", fail_spawn)
+
+    assert runtime.start_ui("127.0.0.1", 5123) == 12345
+
+
+def test_start_ui_does_not_reuse_unrelated_pid_with_healthy_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    paths.get_runtime_ui_pid_path().write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 12345)
+    monkeypatch.setattr(runtime, "ui_server_healthy", lambda host, port: True)
+    monkeypatch.setattr(runtime, "get_process_command", lambda pid: "/usr/bin/unrelated --work" if pid == 12345 else None)
+    monkeypatch.setattr(runtime, "wait_for_ui_server", lambda host, port: True)
+
+    def fail_stop(pid, timeout=5):
+        raise AssertionError(f"unrelated pid should not be stopped: {pid}")
+
+    def fake_spawn(args, pid_path, stdout_name, stderr_name, env=None):
+        pid_path.write_text("67890", encoding="utf-8")
+        return 67890
+
+    monkeypatch.setattr(runtime, "stop_pid", fail_stop)
+    monkeypatch.setattr(runtime, "spawn_background", fake_spawn)
+
+    assert runtime.start_ui("127.0.0.1", 5123) == 67890
+    assert paths.get_runtime_ui_pid_path().read_text(encoding="utf-8") == "67890"
+
+
+def test_start_ui_replaces_stale_live_pid_when_health_check_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    paths.get_runtime_ui_pid_path().write_text("12345", encoding="utf-8")
+    stopped = []
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 12345)
+    monkeypatch.setattr(runtime, "ui_server_healthy", lambda host, port: False)
+    monkeypatch.setattr(
+        runtime,
+        "get_process_command",
+        lambda pid: (
+            f"{sys.executable} -c "
+            "\"from vibe.ui_server import run_ui_server; run_ui_server('127.0.0.1', 5123)\""
+            if pid == 12345
+            else None
+        ),
+    )
+    monkeypatch.setattr(runtime, "stop_pid", lambda pid: stopped.append(pid) or True)
+    monkeypatch.setattr(runtime, "wait_for_ui_server", lambda host, port: True)
+
+    def fake_spawn(args, pid_path, stdout_name, stderr_name, env=None):
+        assert args[-1] == "from vibe.ui_server import run_ui_server; run_ui_server('127.0.0.1', 5123)"
+        pid_path.write_text("67890", encoding="utf-8")
+        return 67890
+
+    monkeypatch.setattr(runtime, "spawn_background", fake_spawn)
+
+    assert runtime.start_ui("127.0.0.1", 5123) == 67890
+    assert stopped == [12345]
+    assert paths.get_runtime_ui_pid_path().read_text(encoding="utf-8") == "67890"
+
+
+def test_start_ui_does_not_stop_unrelated_reused_pid(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    paths.get_runtime_ui_pid_path().write_text("12345", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 12345)
+    monkeypatch.setattr(runtime, "ui_server_healthy", lambda host, port: False)
+    monkeypatch.setattr(runtime, "get_process_command", lambda pid: "/usr/bin/unrelated --work" if pid == 12345 else None)
+    monkeypatch.setattr(runtime, "wait_for_ui_server", lambda host, port: True)
+
+    def fail_stop(pid, timeout=5):
+        raise AssertionError(f"unrelated pid should not be stopped: {pid}")
+
+    def fake_spawn(args, pid_path, stdout_name, stderr_name, env=None):
+        pid_path.write_text("67890", encoding="utf-8")
+        return 67890
+
+    monkeypatch.setattr(runtime, "stop_pid", fail_stop)
+    monkeypatch.setattr(runtime, "spawn_background", fake_spawn)
+
+    assert runtime.start_ui("127.0.0.1", 5123) == 67890
+    assert paths.get_runtime_ui_pid_path().read_text(encoding="utf-8") == "67890"
+
+
+def test_start_ui_waits_for_replacement_health(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    waited = []
+
+    monkeypatch.setattr(runtime, "wait_for_ui_server", lambda host, port: waited.append((host, port)) or True)
+    monkeypatch.setattr(runtime, "spawn_background", lambda *args, **kwargs: 67890)
+
+    assert runtime.start_ui("127.0.0.1", 5123) == 67890
+    assert waited == [("127.0.0.1", 5123)]
+
+
+def test_ui_health_url_uses_loopback_for_wildcard_bind():
+    assert runtime._ui_health_url("0.0.0.0", 5100) == "http://127.0.0.1:5100/health"
+    assert runtime._ui_health_url("::", 5100) == "http://[::1]:5100/health"
+
+
+def test_shutdown_intent_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    monkeypatch.setattr(runtime.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(runtime, "get_process_command", lambda pid: f"cmd-{pid}")
+
+    runtime.write_shutdown_intent(12345, reason="test")
+    payload = runtime.consume_shutdown_intent(12345, signal.SIGTERM)
+
+    assert payload is not None
+    assert payload["target_pid"] == 12345
+    assert payload["sender_pid"] == os.getpid()
+    assert not runtime.get_shutdown_intent_path().exists()
+
+
+def test_shutdown_intent_rejects_stale_payload(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    monkeypatch.setattr(runtime.time, "time", lambda: 1000.0)
+    runtime.write_json(
+        runtime.get_shutdown_intent_path(),
+        {
+            "target_pid": 12345,
+            "signum": signal.SIGTERM,
+            "created_at": 900.0,
+        },
+    )
+
+    assert runtime.consume_shutdown_intent(12345, signal.SIGTERM) is None

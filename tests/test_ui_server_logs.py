@@ -228,3 +228,22 @@ def test_status_endpoint_degrades_when_pid_probe_raises(monkeypatch, tmp_path):
     assert payload["running"] is False
     assert payload["pid"] is None
     assert payload["state"] == "stopped"
+
+
+def test_control_start_reuses_running_service_without_stop(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    paths.ensure_data_dirs()
+    runtime.write_status("running", detail="already running", service_pid=12345, ui_pid=67890)
+    calls = []
+
+    monkeypatch.setattr(runtime, "ensure_config", lambda: calls.append("ensure_config"))
+    monkeypatch.setattr(runtime, "stop_service", lambda: calls.append("stop_service"))
+    monkeypatch.setattr(runtime, "start_service", lambda: calls.append("start_service") or 12345)
+
+    client = app.test_client()
+    response = client.post("/control", json={"action": "start"}, headers=csrf_headers(client))
+
+    assert response.status_code == 200
+    assert calls == ["ensure_config", "start_service"]
+    payload = response.get_json()
+    assert payload["status"]["service_pid"] == 12345

@@ -1209,7 +1209,6 @@ def control():
     status["last_action"] = action
     if action == "start":
         runtime.ensure_config()
-        runtime.stop_service()
         service_pid = runtime.start_service()
         runtime.write_status("running", "started", service_pid, status.get("ui_pid"))
     elif action == "stop":

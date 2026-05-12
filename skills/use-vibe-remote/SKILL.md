@@ -906,7 +906,7 @@ Use the CLI only when the Web UI API cannot cover the request, when the user exp
 
 Service lifecycle:
 
-- `vibe` — start (or restart) Vibe Remote and open the local Web UI
+- `vibe` — start Vibe Remote if needed and open the local Web UI; it does not stop an already-running service
 - `vibe status` — print service status, PID metadata, and last action
 - `vibe stop` — stop main service, Web UI, and any background helpers
 - `vibe restart` — stop and re-start the service. Pass `--delay-seconds N` when triggering from inside an active conversation so the current reply has time to deliver before the restart lands.

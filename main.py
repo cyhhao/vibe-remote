@@ -7,8 +7,10 @@ import asyncio
 from config.paths import ensure_data_dirs, get_logs_dir
 from config.v2_config import V2Config
 from core.controller import Controller
+from core.process_diagnostics import log_process_snapshot
 from storage.importer import ensure_sqlite_state
 from vibe.sentry_integration import init_sentry
+from vibe.runtime import consume_shutdown_intent, shutdown_intent_required
 
 
 def _build_logging_handlers(logs_dir: str) -> list[logging.Handler]:
@@ -67,6 +69,33 @@ def prepare_sqlite_state(config: V2Config):
     return ensure_sqlite_state(primary_platform=config.platform)
 
 
+def _log_shutdown_signal(logger: logging.Logger, signum: int) -> None:
+    try:
+        logger.info(
+            "Received signal %s pid=%s ppid=%s pgid=%s sid=%s",
+            signum,
+            os.getpid(),
+            os.getppid(),
+            os.getpgid(0),
+            os.getsid(0),
+        )
+    except Exception:
+        logger.info("Received signal %s", signum)
+
+
+def _log_shutdown_intent(logger: logging.Logger, signum: int) -> None:
+    if signum != signal.SIGTERM or not shutdown_intent_required():
+        return
+    intent = consume_shutdown_intent(os.getpid(), signum)
+    if intent is None:
+        logger.warning(
+            "No managed shutdown intent found for SIGTERM pid=%s; honoring signal",
+            os.getpid(),
+        )
+        return
+    logger.info("Accepted managed shutdown intent: %s", intent)
+
+
 def main():
     """Main entry point"""
     try:
@@ -82,6 +111,12 @@ def main():
         
         logger.info("Starting vibe-remote service...")
         logger.info(f"Working directory: {config.runtime.default_cwd}")
+        logger.info(
+            "Shutdown intent diagnostics enabled=%s env=%s",
+            shutdown_intent_required(),
+            os.environ.get("VIBE_REQUIRE_SHUTDOWN_INTENT"),
+        )
+        log_process_snapshot(logger, "service-start")
         report = prepare_sqlite_state(config)
         logger.info(
             "SQLite state ready: imported=%s db_path=%s backup_path=%s",
@@ -103,7 +138,9 @@ def main():
                 return
             shutdown_initiated = True
             try:
-                logger.info(f"Received signal {signum}, shutting down...")
+                _log_shutdown_signal(logger, signum)
+                _log_shutdown_intent(logger, signum)
+                logger.info("Shutting down after signal %s", signum)
             except Exception:
                 pass
             try:
