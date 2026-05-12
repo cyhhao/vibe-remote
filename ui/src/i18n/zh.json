@@ -182,7 +182,7 @@
       "opencodeProvidersEmpty": "OpenCode 未返回任何服务商，建议在终端执行 `opencode auth list` 检查。",
       "opencodeProvidersFilterEmpty": "没有符合当前搜索或筛选的服务商。",
       "opencodeProvidersError": "无法读取 OpenCode 服务商列表。",
-      "opencodeProvidersInfo": "服务商数据从 OpenCode 服务器实时拉取。保存 API Key 会通过 Server 的 `/auth` 接口写入 `~/.local/share/opencode/auth.json`。",
+      "opencodeProvidersInfo": "服务商数据从 OpenCode 服务器实时拉取。",
       "opencodeProviderModelsCount": "{{count}} 个模型",
       "opencodeProviderModelsEmpty": "该服务商未上报模型。",
       "opencodeProviderModels": "模型列表",

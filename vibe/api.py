@@ -2413,6 +2413,38 @@ def _is_local_provider(provider_id: str, auth_methods: list) -> bool:
     return False
 
 
+def _coerce_opencode_provider_catalog(providers_raw) -> dict:
+    """Normalize OpenCode ``/provider`` payloads into an id-keyed map.
+
+    OpenCode 1.x returns ``{all: [Provider, ...], default: {...},
+    connected: [...]}`` where ``all`` is a list. A pre-1.x prototype
+    returned ``{all: {pid: Provider}}`` (dict). The original legacy shape
+    was ``{providers: [...]}`` under a different top-level key. Tolerate
+    all three so an OpenCode upgrade-in-place or a stale client cannot
+    leave the Settings grid empty.
+    """
+    if not isinstance(providers_raw, dict):
+        return {}
+    out: dict = {}
+    raw_all = providers_raw.get("all")
+    if isinstance(raw_all, dict):
+        return raw_all
+    if isinstance(raw_all, list):
+        for entry in raw_all:
+            if isinstance(entry, dict):
+                pid = entry.get("id")
+                if pid:
+                    out[pid] = entry
+        return out
+    legacy = providers_raw.get("providers")
+    if isinstance(legacy, list):
+        for entry in legacy:
+            pid = entry.get("id") if isinstance(entry, dict) else None
+            if pid:
+                out[pid] = entry
+    return out
+
+
 async def _get_opencode_providers_async() -> dict:
     """Build the merged provider catalog reported to the Settings UI."""
     server = await _opencode_get_server()
@@ -2430,19 +2462,7 @@ async def _get_opencode_providers_async() -> dict:
     finally:
         await server.close_http_session(loop=request_loop)
 
-    # OpenCode 0.5+: ``/provider`` returns ``{all: {...}, default: {...},
-    # connected: [...]}``. Older builds returned just ``{providers: [...]}``;
-    # accept both shapes so an upgrade-in-place doesn't break the UI.
-    all_providers: dict = {}
-    if isinstance(providers_raw, dict):
-        if isinstance(providers_raw.get("all"), dict):
-            all_providers = providers_raw["all"]
-        elif isinstance(providers_raw.get("providers"), list):
-            # legacy shape — coerce list of dicts into id-keyed map
-            for entry in providers_raw["providers"]:
-                pid = entry.get("id") if isinstance(entry, dict) else None
-                if pid:
-                    all_providers[pid] = entry
+    all_providers = _coerce_opencode_provider_catalog(providers_raw)
 
     connected = providers_raw.get("connected") if isinstance(providers_raw, dict) else None
     connected_set = {pid for pid in connected if isinstance(pid, str)} if isinstance(connected, list) else set()

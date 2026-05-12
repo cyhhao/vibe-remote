@@ -182,7 +182,7 @@
       "opencodeProvidersEmpty": "OpenCode returned no providers. Run `opencode auth list` from a terminal to diagnose.",
       "opencodeProvidersFilterEmpty": "No providers match the current search or filter.",
       "opencodeProvidersError": "Could not load the OpenCode provider catalog.",
-      "opencodeProvidersInfo": "Provider data is fetched live from the OpenCode server. Saving an API key writes to `~/.local/share/opencode/auth.json` via the server's `/auth` endpoint.",
+      "opencodeProvidersInfo": "Provider data is fetched live from the OpenCode server.",
       "opencodeProviderModelsCount": "{{count}} models",
       "opencodeProviderModelsEmpty": "No models reported by this provider.",
       "opencodeProviderModels": "Models",
