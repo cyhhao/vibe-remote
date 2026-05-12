@@ -24,6 +24,7 @@ import { Label } from '../ui/label';
 import { SettingsPageShell } from './SettingsPageShell';
 import { BackendLifecycleChip } from './BackendLifecycleChip';
 import { BackendOAuthPanel } from './BackendOAuthPanel';
+import { BackendTestPanel } from './BackendTestPanel';
 import { ToggleSwitch } from './SettingsPrimitives';
 import { useApi } from '@/context/ApiContext';
 import type { ClaudeAuthMode, ClaudeAuthState } from '@/context/ApiContext';
@@ -560,15 +561,27 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                   </p>
                 </div>
 
-                <div className="flex justify-end">
-                  <Button variant="brand" size="default" onClick={onSaveAuth} disabled={authSaving}>
-                    <Save className="size-3.5" />
-                    {authSaving ? t('settings.backends.claudeSaving') : t('settings.backends.claudeSave')}
-                  </Button>
-                </div>
+                {/* OAuth mode persists ``auth_mode=oauth`` automatically on
+                    successful sign-in (see ``_invoke_post_web_success_hook``),
+                    so the Save button only needs to surface in API-key mode
+                    where the user still has to commit the key / Base URL. */}
+                {authMode === 'api_key' && (
+                  <div className="flex justify-end">
+                    <Button variant="brand" size="default" onClick={onSaveAuth} disabled={authSaving}>
+                      <Save className="size-3.5" />
+                      {authSaving ? t('settings.backends.claudeSaving') : t('settings.backends.claudeSave')}
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
+
+          {/* Connectivity probe — matches design.pen cdTest2 panel.
+              Works in both OAuth and API-key modes because the underlying
+              ``claude -p "Hi"`` subprocess inherits whichever auth source
+              V2Config selects at launch. */}
+          {!authLoading && <BackendTestPanel backend={BACKEND_ID} />}
         </div>
       )}
     </SettingsPageShell>

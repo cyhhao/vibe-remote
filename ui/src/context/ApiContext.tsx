@@ -33,6 +33,8 @@ export type ApiContextType = {
     code: string,
   ) => Promise<OAuthWebMutationResult>;
   cancelOAuthWeb: (backend: 'claude' | 'codex', flowId: string) => Promise<OAuthWebMutationResult>;
+  removeBackendAuth: (backend: 'claude' | 'codex') => Promise<OAuthWebMutationResult>;
+  testBackendAuth: (backend: 'claude' | 'codex') => Promise<BackendAuthTestResult>;
   getOpencodeProviders: () => Promise<OpencodeProviderListResult>;
   setOpencodeProviderAuth: (
     providerId: string,
@@ -250,6 +252,15 @@ export type OAuthWebMutationResult = {
   detail?: string;
 };
 
+export type BackendAuthTestResult = {
+  ok: boolean;
+  duration_ms?: number;
+  excerpt?: string;
+  exit_code?: number;
+  error?: string;
+  detail?: string;
+};
+
 export type OpencodeProvider = {
   id: string;
   name: string;
@@ -390,6 +401,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/cancel`, {
         flow_id: flowId,
       }),
+    removeBackendAuth: (backend) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/remove`, {}),
+    testBackendAuth: (backend) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/test`, {}),
     getOpencodeProviders: () => getJson('/backend/opencode/providers'),
     setOpencodeProviderAuth: (providerId, apiKey, baseUrl) =>
       // Forward ``base_url`` only when the caller passed something

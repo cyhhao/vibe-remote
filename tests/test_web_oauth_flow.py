@@ -197,3 +197,96 @@ def test_post_web_success_hook_swallows_exceptions(service: AgentAuthService) ->
 def test_post_web_success_hook_unset_is_safe(service: AgentAuthService) -> None:
     service._post_web_success_hook = None
     _run(service._invoke_post_web_success_hook("claude"))
+
+
+def test_remove_web_auth_rejects_unsupported_backend(service: AgentAuthService) -> None:
+    result = _run(service.remove_web_auth("opencode"))
+    assert result == {"ok": False, "error": "unsupported_backend"}
+
+
+def test_remove_web_auth_runs_logout_and_returns_ok(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_cmd = AsyncMock()
+    monkeypatch.setattr(service, "_run_utility_command", run_cmd)
+    hook_calls: list[str] = []
+    service._post_web_success_hook = lambda b: hook_calls.append(b)
+
+    result = _run(service.remove_web_auth("claude"))
+    assert result == {"ok": True}
+    # Claude logout subcommand is ``claude auth logout``.
+    run_cmd.assert_awaited_once()
+    args = run_cmd.call_args.args
+    assert "auth" in args and "logout" in args
+    # Hook fires so the live controller can refresh.
+    assert hook_calls == ["claude"]
+
+
+def test_remove_web_auth_codex_uses_logout_subcommand(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_cmd = AsyncMock()
+    monkeypatch.setattr(service, "_run_utility_command", run_cmd)
+    result = _run(service.remove_web_auth("codex"))
+    assert result == {"ok": True}
+    # Codex uses just ``codex logout`` (no nested ``auth`` subcommand).
+    args = run_cmd.call_args.args
+    assert "logout" in args and "auth" not in args
+
+
+def test_test_web_auth_rejects_unsupported_backend(service: AgentAuthService) -> None:
+    result = _run(service.test_web_auth("opencode"))
+    assert result == {"ok": False, "error": "unsupported_backend"}
+
+
+def test_test_web_auth_surfaces_cli_not_found(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _spawn(*_args, **_kwargs):
+        raise FileNotFoundError("no such cli")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+    result = _run(service.test_web_auth("codex"))
+    assert result["ok"] is False
+    assert result["error"] == "cli_not_found"
+
+
+def test_test_web_auth_happy_path_returns_excerpt(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A passing probe surfaces the first non-blank stdout line + duration."""
+
+    class _FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return (b"\nHello from the model\nmore text", b"")
+
+    async def _spawn(*_args, **_kwargs):
+        return _FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+    result = _run(service.test_web_auth("codex"))
+    assert result["ok"] is True
+    assert result["excerpt"] == "Hello from the model"
+    assert isinstance(result["duration_ms"], int)
+
+
+def test_test_web_auth_failure_surfaces_stderr(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _FakeProcess:
+        returncode = 7
+
+        async def communicate(self):
+            return (b"", b"Authentication failed: no credentials configured")
+
+    async def _spawn(*_args, **_kwargs):
+        return _FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+    result = _run(service.test_web_auth("claude"))
+    assert result["ok"] is False
+    assert result["error"] == "cli_failed"
+    assert result["exit_code"] == 7
+    assert "Authentication failed" in (result.get("detail") or "")

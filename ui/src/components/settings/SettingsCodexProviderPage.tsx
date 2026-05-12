@@ -12,6 +12,7 @@ import { useApi } from '@/context/ApiContext';
 import type { CodexAuthMode, CodexAuthState } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
 import { BackendOAuthPanel } from './BackendOAuthPanel';
+import { BackendTestPanel } from './BackendTestPanel';
 import { SettingsPageShell } from './SettingsPageShell';
 
 // Mirrors the segmented-radio pattern in shared/RoutingConfigPanel.tsx so
@@ -283,14 +284,24 @@ export const SettingsCodexProviderPage: React.FC = () => {
               </p>
             </div>
 
-            <div className="flex justify-end">
-              <Button variant="brand" size="default" onClick={onSave} disabled={saving}>
-                <Save className="size-3.5" />
-                {saving ? t('settings.backends.codexSaving') : t('settings.backends.codexSave')}
-              </Button>
-            </div>
+            {/* OAuth mode persists ``auth_mode=oauth`` automatically on
+                successful sign-in, so the Save button only surfaces for
+                api_key mode. */}
+            {authMode === 'api_key' && (
+              <div className="flex justify-end">
+                <Button variant="brand" size="default" onClick={onSave} disabled={saving}>
+                  <Save className="size-3.5" />
+                  {saving ? t('settings.backends.codexSaving') : t('settings.backends.codexSave')}
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
+      )}
+      {!loading && (
+        <div className="mt-4">
+          <BackendTestPanel backend="codex" />
+        </div>
       )}
     </SettingsPageShell>
   );

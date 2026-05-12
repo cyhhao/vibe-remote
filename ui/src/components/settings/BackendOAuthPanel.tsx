@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, CheckCircle2, Copy, ExternalLink, LogIn, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, ExternalLink, LogIn, Trash2, X } from 'lucide-react';
 import clsx from 'clsx';
 
 import { Button } from '../ui/button';
@@ -68,6 +68,7 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
   const [code, setCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollTimer = useRef<number | null>(null);
   const pollDeadlineRef = useRef<number | null>(null);
@@ -204,6 +205,33 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
       setError(err?.message || 'submit_failed');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const removeAuth = async () => {
+    setRemoving(true);
+    setError(null);
+    try {
+      const result = await api.removeBackendAuth(backend);
+      if (!result.ok) {
+        showToast(
+          t('settings.backends.oauthRemoveFailed', {
+            detail: result.error || result.detail || 'unknown',
+          }),
+          'error',
+        );
+        return;
+      }
+      resetToIdle();
+      showToast(t('settings.backends.oauthRemoved'), 'success');
+      onSuccessRef.current?.();
+    } catch (err: any) {
+      showToast(
+        t('settings.backends.oauthRemoveFailed', { detail: err?.message || 'unknown' }),
+        'error',
+      );
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -363,7 +391,7 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
             variant="brand"
             size="default"
             onClick={() => void startFlow()}
-            disabled={starting}
+            disabled={starting || removing}
           >
             <LogIn className="size-3.5" />
             {starting ? t('common.loading') : startLabel}
@@ -372,6 +400,19 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
           <span className="text-[12px] text-muted">
             {t('settings.backends.oauthInProgress')}
           </span>
+        )}
+        {(signedIn || state === 'success') && state !== 'starting' && state !== 'awaiting_code' && state !== 'verifying' && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => void removeAuth()}
+            disabled={removing || starting}
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 className="size-3.5" />
+            {removing ? t('common.removing') : t('settings.backends.oauthRemove')}
+          </Button>
         )}
         {isActive && (
           <Button

@@ -1352,6 +1352,149 @@ class AgentAuthService:
             "error": flow.error,
         }
 
+    async def remove_web_auth(self, backend: str) -> dict[str, Any]:
+        """Drop the stored credentials for a Claude/Codex backend.
+
+        Runs the backend's own ``logout`` subcommand so the on-disk state
+        is in sync, then clears the V2Config ``api_key`` / ``base_url`` and
+        flips ``auth_mode`` back to ``oauth`` so the next "Sign in" click
+        starts clean. Idempotent — repeated calls return ``ok: true``.
+        """
+        if backend not in self.WEB_BACKENDS:
+            return {"ok": False, "error": "unsupported_backend"}
+
+        binary = self._get_cli_binary(backend)
+        if backend == "codex":
+            await self._run_utility_command(binary, "logout")
+        else:
+            await self._run_utility_command(binary, "auth", "logout")
+
+        try:
+            config = getattr(self.controller, "config", None)
+            target = getattr(getattr(config, "agents", None), backend, None)
+            saver = getattr(config, "save", None) if config is not None else None
+            if target is not None and callable(saver):
+                try:
+                    from config.v2_config import CONFIG_LOCK
+
+                    with CONFIG_LOCK:
+                        target.auth_mode = "oauth"
+                        target.api_key = None
+                        saver()
+                except ImportError:
+                    target.auth_mode = "oauth"
+                    target.api_key = None
+                    saver()
+        except Exception as err:  # noqa: BLE001
+            # Disk state has already been cleared; surface the V2Config
+            # write failure but report partial success so the UI shows
+            # the auth as removed (which is the user-visible truth).
+            logger.warning("Failed to clear V2Config after remove for %s: %s", backend, err)
+
+        # Notify the live controller — reuse the same hook path the
+        # OAuth-success flow uses, but skip the auth_mode persistence
+        # since we just rewrote those fields ourselves.
+        hook = self._post_web_success_hook
+        if callable(hook):
+            try:
+                await asyncio.to_thread(hook, backend)
+            except Exception as err:  # noqa: BLE001
+                logger.warning("post_web_success_hook failed after remove for %s: %s", backend, err)
+        return {"ok": True}
+
+    async def test_web_auth(self, backend: str, *, timeout: float = 45.0) -> dict[str, Any]:
+        """Send a 1-token probe ("Hi") through the backend CLI.
+
+        Validates both the credentials and the endpoint (when ``base_url``
+        is configured) by running ``claude --print "Hi"`` /
+        ``codex exec "Hi"``. Returns elapsed milliseconds + a short
+        response excerpt on success; surfaces stderr on failure.
+        """
+        if backend not in self.WEB_BACKENDS:
+            return {"ok": False, "error": "unsupported_backend"}
+
+        binary = self._get_cli_binary(backend)
+        prompt = "Hi"
+        if backend == "claude":
+            # ``-p`` switches Claude Code into non-interactive print mode
+            # and exits after the first complete reply. ``--bare`` strips
+            # the launch-time scaffolding (hooks, MCP, CLAUDE.md
+            # auto-discovery) so the probe never fails on environment
+            # quirks; we only care that the auth + endpoint round-trip
+            # works.
+            cmd = [binary, "-p", "--bare", prompt]
+            env_override = dict(os.environ)
+            # Layer V2Config-driven env on top so the test reflects what
+            # the live IM session would do at launch.
+            try:
+                from vibe.claude_config import build_claude_subprocess_env
+
+                env_override.update(
+                    build_claude_subprocess_env(
+                        getattr(self.controller.config, "claude", None),
+                        base_env=env_override,
+                    )
+                )
+            except Exception:
+                pass
+        else:
+            # Codex single-shot mode. ``-q`` would silence the rendered
+            # response — we want stdout so the UI can show a one-line
+            # excerpt as proof the round-trip succeeded.
+            cmd = [binary, "exec", prompt]
+            env_override = dict(os.environ)
+
+        started = time.monotonic()
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env_override,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                return {
+                    "ok": False,
+                    "error": "timed_out",
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                }
+        except FileNotFoundError:
+            return {"ok": False, "error": "cli_not_found", "detail": binary}
+        except Exception as err:  # noqa: BLE001
+            return {"ok": False, "error": "spawn_failed", "detail": str(err)}
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        stdout_text = (stdout or b"").decode("utf-8", errors="replace").strip()
+        stderr_text = (stderr or b"").decode("utf-8", errors="replace").strip()
+
+        if process.returncode != 0:
+            return {
+                "ok": False,
+                "error": "cli_failed",
+                "exit_code": process.returncode,
+                "detail": (stderr_text or stdout_text)[:600],
+                "duration_ms": duration_ms,
+            }
+
+        # Trim the response to a one-line excerpt — chunked output (Codex
+        # in particular emits multi-line markdown) would overflow the
+        # toast and isn't the point of the probe.
+        excerpt = ""
+        for line in stdout_text.splitlines():
+            line = line.strip()
+            if line:
+                excerpt = line[:240]
+                break
+        return {
+            "ok": True,
+            "duration_ms": duration_ms,
+            "excerpt": excerpt,
+        }
+
     async def cancel_web_flow(self, flow_id: str) -> dict[str, Any]:
         async with self._web_flow_lock:
             flow = self._web_flows.pop(flow_id, None)
@@ -1480,6 +1623,14 @@ class AgentAuthService:
                     task.cancel()
 
     async def _invoke_post_web_success_hook(self, backend: str) -> None:
+        # OAuth completed via the web UI implies the user wants
+        # ``auth_mode = "oauth"``. Persist it before the controller-refresh
+        # hook fires so the live agent reloads with the right mode rather
+        # than waiting for the user to click an extra Save button. We
+        # intentionally do not touch ``api_key`` here: the user may have
+        # configured one earlier and we should preserve it for the moment
+        # they decide to switch back via Remove auth.
+        await self._persist_web_auth_mode(backend, "oauth")
         hook = self._post_web_success_hook
         if not callable(hook):
             return
@@ -1487,6 +1638,34 @@ class AgentAuthService:
             await asyncio.to_thread(hook, backend)
         except Exception as err:  # noqa: BLE001
             logger.warning("post_web_success_hook failed for %s: %s", backend, err)
+
+    async def _persist_web_auth_mode(self, backend: str, auth_mode: str) -> None:
+        """Update V2Config.agents.<backend>.auth_mode if the controller has
+        a writable config. Skipped silently in test contexts where the
+        stub controller exposes a non-savable config object.
+        """
+        try:
+            config = getattr(self.controller, "config", None)
+            target = getattr(getattr(config, "agents", None), backend, None)
+            saver = getattr(config, "save", None) if config is not None else None
+            if target is None or not callable(saver):
+                return
+            if getattr(target, "auth_mode", None) == auth_mode:
+                return
+            try:
+                from config.v2_config import CONFIG_LOCK
+
+                with CONFIG_LOCK:
+                    target.auth_mode = auth_mode
+                    saver()
+            except ImportError:
+                target.auth_mode = auth_mode
+                saver()
+        except Exception as err:  # noqa: BLE001
+            logger.warning(
+                "Failed to persist auth_mode=%s after web flow for %s: %s",
+                auth_mode, backend, err,
+            )
 
     async def _terminate_web_flow(
         self,

@@ -2210,6 +2210,32 @@ def submit_oauth_web_code(flow_id: str, code: str) -> dict:
         return {"ok": False, "error": "submit_failed", "detail": str(exc)}
 
 
+def remove_backend_auth(backend: str) -> dict:
+    """Clear stored credentials for Claude or Codex (web Settings)."""
+    backend = (backend or "").strip().lower()
+    if backend not in _WEB_OAUTH_BACKENDS:
+        return {"ok": False, "error": "unsupported_backend"}
+    service = _get_oauth_service()
+    try:
+        return _submit_oauth_coro(service.remove_web_auth(backend), timeout=30.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Web auth remove failed for %s: %s", backend, exc, exc_info=True)
+        return {"ok": False, "error": "remove_failed", "detail": str(exc)}
+
+
+def test_backend_auth(backend: str) -> dict:
+    """Send a single-token ``Hi`` probe through the backend CLI."""
+    backend = (backend or "").strip().lower()
+    if backend not in _WEB_OAUTH_BACKENDS:
+        return {"ok": False, "error": "unsupported_backend"}
+    service = _get_oauth_service()
+    try:
+        return _submit_oauth_coro(service.test_web_auth(backend), timeout=60.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Web auth test failed for %s: %s", backend, exc, exc_info=True)
+        return {"ok": False, "error": "test_failed", "detail": str(exc)}
+
+
 def cancel_oauth_web(flow_id: str) -> dict:
     flow_id = (flow_id or "").strip()
     if not flow_id:

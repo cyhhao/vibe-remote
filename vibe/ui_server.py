@@ -1662,6 +1662,22 @@ def backend_oauth_web_cancel(backend: str):
     return jsonify(api.cancel_oauth_web(flow_id))
 
 
+@app.route("/backend/<backend>/auth/oauth/remove", methods=["POST"])
+def backend_oauth_web_remove(backend: str):
+    """Clear stored credentials for a Claude/Codex backend."""
+    from vibe import api
+
+    return jsonify(api.remove_backend_auth(backend))
+
+
+@app.route("/backend/<backend>/auth/test", methods=["POST"])
+def backend_auth_test(backend: str):
+    """Send a single-token probe through the backend CLI to verify auth."""
+    from vibe import api
+
+    return jsonify(api.test_backend_auth(backend))
+
+
 @app.route("/backend/opencode/providers", methods=["GET"])
 def backend_opencode_providers():
     """Return the merged OpenCode provider catalog for the Settings UI.
