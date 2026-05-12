@@ -76,7 +76,16 @@ export const SettingsCodexProviderPage: React.FC = () => {
       .then((data) => {
         if (cancelled) return;
         setState(data);
-        setAuthMode(data.auth_mode);
+        // Default the radio to whichever auth source the running CLI is
+        // *actually* using (``active_auth_mode``). V2Config's
+        // ``auth_mode`` defaults to ``"oauth"`` on fresh installs, which
+        // would otherwise force the OAuth tab even when the user has a
+        // working API key on disk (e.g. they pre-configured ``auth.json``
+        // by hand, or a prior Sign out wiped V2Config but the relay
+        // config in ``config.toml`` still points at a custom endpoint).
+        // ``active_auth_mode === "none"`` means we have nothing on disk
+        // either, so honour V2Config's saved intent in that fallback case.
+        setAuthMode(data.active_auth_mode !== 'none' ? data.active_auth_mode : data.auth_mode);
         setBaseUrl(data.base_url || '');
         // Empty + read-only input + masked preview rendered separately
         // (see below) reflects the saved state without leaking plaintext.
@@ -239,7 +248,11 @@ export const SettingsCodexProviderPage: React.FC = () => {
                     .getCodexAuth()
                     .then((data) => {
                       setState(data);
-                      setAuthMode(data.auth_mode);
+                      setAuthMode(
+                        data.active_auth_mode !== 'none'
+                          ? data.active_auth_mode
+                          : data.auth_mode,
+                      );
                       setBaseUrl(data.base_url || '');
                     })
                     .catch(() => {

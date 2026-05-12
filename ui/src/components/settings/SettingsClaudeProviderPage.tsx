@@ -136,7 +136,11 @@ export const SettingsClaudeProviderPage: React.FC = () => {
       .then((data) => {
         if (cancelled) return;
         setAuthState(data);
-        setAuthMode(data.auth_mode);
+        // Prefer the live-effective tab. V2Config defaults to ``"oauth"``
+        // even when settings.json carries the actual key, so reading
+        // ``auth_mode`` alone would land the user on the wrong tab. Fall
+        // back to V2Config only when nothing on disk is configured.
+        setAuthMode(data.active_auth_mode !== 'none' ? data.active_auth_mode : data.auth_mode);
         setBaseUrl(data.base_url || '');
         // The masked preview lives in ``authState.api_key_masked``;
         // ``apiKey`` stays empty until the user clicks "Replace".
@@ -495,7 +499,11 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                         .getClaudeAuth()
                         .then((data) => {
                           setAuthState(data);
-                          setAuthMode(data.auth_mode);
+                          setAuthMode(
+                            data.active_auth_mode !== 'none'
+                              ? data.active_auth_mode
+                              : data.auth_mode,
+                          );
                           setBaseUrl(data.base_url || '');
                         })
                         .catch(() => {
