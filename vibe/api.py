@@ -2313,12 +2313,19 @@ def save_codex_auth(payload: dict) -> dict:
         return {"ok": False, "message": "api_key must be a string"}
     api_key = raw_api_key.strip() if isinstance(raw_api_key, str) else None
 
-    raw_base_url = payload.get("base_url")
-    if raw_base_url is not None and not isinstance(raw_base_url, str):
+    # Three-state ``base_url`` payload (matches the OpenCode provider save
+    # handler and the new web Settings → OAuth flow): omitting the key
+    # means "leave the stored value alone" so toggling auth_mode does not
+    # accidentally clear a relay URL the user had set up in api_key mode.
+    base_url_present = "base_url" in payload
+    raw_base_url = payload.get("base_url") if base_url_present else None
+    if base_url_present and raw_base_url is not None and not isinstance(raw_base_url, str):
         return {"ok": False, "message": "base_url must be a string"}
-    base_url = raw_base_url.strip() if isinstance(raw_base_url, str) else None
-    if base_url == "":
-        base_url = None
+    base_url_change: Optional[str] = None
+    if base_url_present:
+        base_url_change = raw_base_url.strip() if isinstance(raw_base_url, str) else None
+        if base_url_change == "":
+            base_url_change = None
 
     if auth_mode == "api_key" and not api_key:
         # Allow callers to PATCH base_url alone by reusing the stored key.
@@ -2346,10 +2353,23 @@ def save_codex_auth(payload: dict) -> dict:
         if not api_key:
             return {"ok": False, "message": "api_key is required when auth_mode='api_key'"}
 
+    # Resolve the effective base_url: explicit payload wins, otherwise
+    # preserve whatever V2Config currently has.
+    if base_url_present:
+        effective_base_url = base_url_change
+    else:
+        with CONFIG_LOCK:
+            try:
+                existing_cfg = load_config()
+                stored_codex = getattr(getattr(existing_cfg, "agents", None), "codex", None)
+                effective_base_url = getattr(stored_codex, "base_url", None) or None
+            except Exception:
+                effective_base_url = None
+
     from vibe.codex_config import apply_codex_auth
 
     try:
-        apply_codex_auth(auth_mode=auth_mode, api_key=api_key, base_url=base_url)
+        apply_codex_auth(auth_mode=auth_mode, api_key=api_key, base_url=effective_base_url)
     except ValueError as exc:
         return {"ok": False, "message": str(exc)}
     except OSError as exc:
@@ -2363,7 +2383,7 @@ def save_codex_auth(payload: dict) -> dict:
             config = V2Config()
         config.agents.codex.auth_mode = auth_mode
         config.agents.codex.api_key = api_key if auth_mode == "api_key" else None
-        config.agents.codex.base_url = base_url
+        config.agents.codex.base_url = effective_base_url
         config.save()
 
     restart_result = restart_backend("codex")
@@ -2467,12 +2487,17 @@ def save_claude_auth(payload: dict) -> dict:
         return {"ok": False, "message": "api_key must be a string"}
     api_key = raw_api_key.strip() if isinstance(raw_api_key, str) else None
 
-    raw_base_url = payload.get("base_url")
-    if raw_base_url is not None and not isinstance(raw_base_url, str):
+    # Three-state ``base_url`` payload semantics (matches Codex/OpenCode):
+    # absent key → keep stored value; null/blank → clear; non-blank → set.
+    base_url_present = "base_url" in payload
+    raw_base_url = payload.get("base_url") if base_url_present else None
+    if base_url_present and raw_base_url is not None and not isinstance(raw_base_url, str):
         return {"ok": False, "message": "base_url must be a string"}
-    base_url = raw_base_url.strip() if isinstance(raw_base_url, str) else None
-    if base_url == "":
-        base_url = None
+    base_url_change: Optional[str] = None
+    if base_url_present:
+        base_url_change = raw_base_url.strip() if isinstance(raw_base_url, str) else None
+        if base_url_change == "":
+            base_url_change = None
 
     if auth_mode == "api_key" and not api_key:
         # Reuse stored key for base-URL-only updates. Unlike Codex we
@@ -2504,7 +2529,9 @@ def save_claude_auth(payload: dict) -> dict:
             config = V2Config()
         config.agents.claude.auth_mode = auth_mode
         config.agents.claude.api_key = api_key if auth_mode == "api_key" else None
-        config.agents.claude.base_url = base_url
+        if base_url_present:
+            config.agents.claude.base_url = base_url_change
+        # else: keep whatever is already stored (omitted payload key).
         config.save()
 
     # Claude is one-shot per request — no daemon to restart. Return a

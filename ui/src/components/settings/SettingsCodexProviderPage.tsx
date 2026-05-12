@@ -11,6 +11,7 @@ import { Label } from '../ui/label';
 import { useApi } from '@/context/ApiContext';
 import type { CodexAuthMode, CodexAuthState } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
+import { BackendOAuthPanel } from './BackendOAuthPanel';
 import { SettingsPageShell } from './SettingsPageShell';
 
 // Mirrors the segmented-radio pattern in shared/RoutingConfigPanel.tsx so
@@ -104,15 +105,21 @@ export const SettingsCodexProviderPage: React.FC = () => {
   const onSave = async () => {
     setSaving(true);
     try {
-      const payload = {
+      // In OAuth mode base_url does not apply, so omit it entirely — the
+      // backend's three-state payload semantics preserve whatever is
+      // already stored. This keeps a relay URL the user had configured in
+      // api_key mode intact when they toggle to OAuth and back.
+      const payload: Record<string, unknown> = {
         auth_mode: authMode,
         // Send a fresh key only when the user typed one; an empty string
         // lets the server reuse the stored key (useful when the user is
         // just updating the base URL).
         api_key: authMode === 'api_key' ? (apiKey || undefined) : null,
-        base_url: baseUrl.trim() || null,
       };
-      const result = await api.saveCodexAuth(payload);
+      if (authMode === 'api_key') {
+        payload.base_url = baseUrl.trim() || null;
+      }
+      const result = await api.saveCodexAuth(payload as any);
       if (result.ok === false) {
         // The server returns ok:false for validation/persist failures
         // (e.g. missing api_key when auth_mode is "api_key") with HTTP 200,
@@ -171,11 +178,6 @@ export const SettingsCodexProviderPage: React.FC = () => {
                   ? t('settings.backends.codexAuthModeApiKeyHint')
                   : t('settings.backends.codexAuthModeOauthHint')}
               </p>
-              {authMode === 'oauth' && state?.has_chatgpt_tokens && (
-                <p className="text-[12px] text-mint">
-                  {t('settings.backends.codexHasChatgptTokens')}
-                </p>
-              )}
               {state?.auth_mode_uncertain && (
                 // Codex stores credentials in the OS keychain by default
                 // (``cli_auth_credentials_store=auto``). When there's no
@@ -197,56 +199,82 @@ export const SettingsCodexProviderPage: React.FC = () => {
               )}
             </div>
 
-            {authMode === 'api_key' && (
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="codex-api-key" className="text-xs font-medium uppercase text-muted">
-                  {t('settings.backends.codexApiKeyLabel')}
-                </Label>
-                <div className="relative">
-                  <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
-                  <Input
-                    id="codex-api-key"
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder={t('settings.backends.codexApiKeyPlaceholder') as string}
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    className="pl-9 font-mono"
-                  />
-                </div>
-                <p className="text-[12px] text-muted">{apiKeyStatus}</p>
-              </div>
+            {authMode === 'oauth' && (
+              <BackendOAuthPanel
+                backend="codex"
+                signedIn={!!state?.has_chatgpt_tokens}
+                title={t('settings.backends.codexOauthPanelTitle')}
+                subtitle={t('settings.backends.codexOauthPanelSubtitle')}
+                onSuccess={() => {
+                  // Re-read Codex auth state so the "ChatGPT tokens detected"
+                  // line and any keychain hints catch up with the freshly
+                  // minted credential without a manual page reload.
+                  void api
+                    .getCodexAuth()
+                    .then((data) => {
+                      setState(data);
+                      setAuthMode(data.auth_mode);
+                      setBaseUrl(data.base_url || '');
+                    })
+                    .catch(() => {
+                      /* ApiContext already toasted; leave existing state. */
+                    });
+                }}
+              />
             )}
 
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="codex-base-url" className="text-xs font-medium uppercase text-muted">
-                {t('settings.backends.codexBaseUrlLabel')}
-              </Label>
-              <div className="flex gap-2">
-                <Input
-                  id="codex-base-url"
-                  type="url"
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder={t('settings.backends.codexBaseUrlPlaceholder') as string}
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  className="font-mono"
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setBaseUrl('')}
-                  disabled={!baseUrl}
-                >
-                  <RotateCcw className="size-3.5" />
-                  {t('settings.backends.codexBaseUrlReset')}
-                </Button>
-              </div>
-              <p className="text-[12px] text-muted">{t('settings.backends.codexBaseUrlHint')}</p>
-            </div>
+            {authMode === 'api_key' && (
+              <>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="codex-api-key" className="text-xs font-medium uppercase text-muted">
+                    {t('settings.backends.codexApiKeyLabel')}
+                  </Label>
+                  <div className="relative">
+                    <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                    <Input
+                      id="codex-api-key"
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder={t('settings.backends.codexApiKeyPlaceholder') as string}
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      className="pl-9 font-mono"
+                    />
+                  </div>
+                  <p className="text-[12px] text-muted">{apiKeyStatus}</p>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="codex-base-url" className="text-xs font-medium uppercase text-muted">
+                    {t('settings.backends.codexBaseUrlLabel')}
+                  </Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="codex-base-url"
+                      type="url"
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder={t('settings.backends.codexBaseUrlPlaceholder') as string}
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      className="font-mono"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setBaseUrl('')}
+                      disabled={!baseUrl}
+                    >
+                      <RotateCcw className="size-3.5" />
+                      {t('settings.backends.codexBaseUrlReset')}
+                    </Button>
+                  </div>
+                  <p className="text-[12px] text-muted">{t('settings.backends.codexBaseUrlHint')}</p>
+                </div>
+              </>
+            )}
 
             <div className="flex items-start gap-2 rounded-lg border border-border bg-surface-2/60 px-3 py-2.5">
               <Info className="mt-0.5 size-3.5 shrink-0 text-muted" />

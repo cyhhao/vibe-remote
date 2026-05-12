@@ -25,6 +25,14 @@ export type ApiContextType = {
   saveCodexAuth: (payload: CodexAuthPayload) => Promise<CodexAuthSaveResult>;
   getClaudeAuth: () => Promise<ClaudeAuthState>;
   saveClaudeAuth: (payload: ClaudeAuthPayload) => Promise<ClaudeAuthSaveResult>;
+  startOAuthWeb: (backend: 'claude' | 'codex', forceReset?: boolean) => Promise<OAuthWebStartResult>;
+  getOAuthWebStatus: (backend: 'claude' | 'codex', flowId: string) => Promise<OAuthWebStatus>;
+  submitOAuthWebCode: (
+    backend: 'claude' | 'codex',
+    flowId: string,
+    code: string,
+  ) => Promise<OAuthWebMutationResult>;
+  cancelOAuthWeb: (backend: 'claude' | 'codex', flowId: string) => Promise<OAuthWebMutationResult>;
   getOpencodeProviders: () => Promise<OpencodeProviderListResult>;
   setOpencodeProviderAuth: (
     providerId: string,
@@ -205,6 +213,43 @@ export type ClaudeAuthSaveResult = ClaudeAuthState & {
 // + ``/config/providers`` — there is **no** hard-coded list in the UI.
 // ``local`` is inferred from the absence of network auth methods (Ollama,
 // LM Studio); the page renders its own "Local" badge for those rows.
+export type OAuthWebState =
+  | 'starting'
+  | 'awaiting_code'
+  | 'verifying'
+  | 'success'
+  | 'failed'
+  | 'cancelled';
+
+export type OAuthWebStartResult = {
+  ok: boolean;
+  flow_id?: string;
+  backend?: 'claude' | 'codex';
+  state?: OAuthWebState;
+  url?: string | null;
+  device_code?: string | null;
+  awaiting_code?: boolean;
+  error?: string;
+  detail?: string;
+};
+
+export type OAuthWebStatus = {
+  ok: boolean;
+  flow_id?: string;
+  backend?: 'claude' | 'codex';
+  state?: OAuthWebState;
+  url?: string | null;
+  device_code?: string | null;
+  awaiting_code?: boolean;
+  error?: string | null;
+};
+
+export type OAuthWebMutationResult = {
+  ok: boolean;
+  error?: string;
+  detail?: string;
+};
+
 export type OpencodeProvider = {
   id: string;
   name: string;
@@ -328,6 +373,23 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveCodexAuth: (payload) => postJson('/backend/codex/auth', payload),
     getClaudeAuth: () => getJson('/backend/claude/auth'),
     saveClaudeAuth: (payload) => postJson('/backend/claude/auth', payload),
+    startOAuthWeb: (backend, forceReset = true) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/start`, {
+        force_reset: forceReset,
+      }),
+    getOAuthWebStatus: (backend, flowId) =>
+      getJson(
+        `/backend/${encodeURIComponent(backend)}/auth/oauth/status/${encodeURIComponent(flowId)}`,
+      ),
+    submitOAuthWebCode: (backend, flowId, code) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/submit-code`, {
+        flow_id: flowId,
+        code,
+      }),
+    cancelOAuthWeb: (backend, flowId) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/cancel`, {
+        flow_id: flowId,
+      }),
     getOpencodeProviders: () => getJson('/backend/opencode/providers'),
     setOpencodeProviderAuth: (providerId, apiKey, baseUrl) =>
       // Forward ``base_url`` only when the caller passed something

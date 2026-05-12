@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
   ArrowLeft,
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Download,
@@ -24,6 +23,7 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { SettingsPageShell } from './SettingsPageShell';
 import { BackendLifecycleChip } from './BackendLifecycleChip';
+import { BackendOAuthPanel } from './BackendOAuthPanel';
 import { ToggleSwitch } from './SettingsPrimitives';
 import { useApi } from '@/context/ApiContext';
 import type { ClaudeAuthMode, ClaudeAuthState } from '@/context/ApiContext';
@@ -225,12 +225,17 @@ export const SettingsClaudeProviderPage: React.FC = () => {
   const onSaveAuth = async () => {
     setAuthSaving(true);
     try {
-      const payload = {
+      // Omit base_url when in OAuth mode so toggling auth_mode does not
+      // clear a relay URL the user configured in api_key mode — the
+      // backend treats "absent" as "preserve stored value".
+      const payload: Record<string, unknown> = {
         auth_mode: authMode,
         api_key: authMode === 'api_key' ? (apiKey || undefined) : null,
-        base_url: baseUrl.trim() || null,
       };
-      const result = await api.saveClaudeAuth(payload);
+      if (authMode === 'api_key') {
+        payload.base_url = baseUrl.trim() || null;
+      }
+      const result = await api.saveClaudeAuth(payload as any);
       if (result.ok === false) {
         showToast(result.message || t('settings.backends.claudeSaveFailed'), 'error');
         return;
@@ -444,71 +449,88 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                 </div>
 
                 {authMode === 'oauth' && (
-                  <div className="flex items-start gap-2 rounded-lg border border-mint/30 bg-mint-soft/40 px-3 py-2.5">
-                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-mint" />
-                    <div className="flex flex-col gap-1">
-                      <p className="text-[12px] font-medium text-mint">
-                        {t('settings.backends.claudeOauthSignedIn')}
-                      </p>
-                      <p className="text-[12px] leading-relaxed text-muted">
-                        {t('settings.backends.claudeOauthHint')}
-                      </p>
-                    </div>
-                  </div>
+                  <BackendOAuthPanel
+                    backend={BACKEND_ID}
+                    // Claude OAuth credentials live in the keychain on Mac,
+                    // ``~/.claude/credentials.json`` elsewhere — we don't probe
+                    // either here. The panel always offers a Sign-in button;
+                    // a successful in-session login flips the label to
+                    // "Re-authenticate" via its own state.
+                    signedIn={false}
+                    title={t('settings.backends.claudeOauthPanelTitle')}
+                    subtitle={t('settings.backends.claudeOauthPanelSubtitle')}
+                    onSuccess={() => {
+                      // Re-fetch the auth state so the "Signed in" pill and
+                      // any masked-key indicators reflect the fresh login
+                      // immediately rather than waiting for a page reload.
+                      void api
+                        .getClaudeAuth()
+                        .then((data) => {
+                          setAuthState(data);
+                          setAuthMode(data.auth_mode);
+                          setBaseUrl(data.base_url || '');
+                        })
+                        .catch(() => {
+                          // Already toasted upstream; leave UI on previous state.
+                        });
+                    }}
+                  />
                 )}
 
                 {authMode === 'api_key' && (
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="claude-api-key" className="text-xs font-medium uppercase text-muted">
-                      {t('settings.backends.claudeApiKeyLabel')}
-                    </Label>
-                    <div className="relative">
-                      <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
-                      <Input
-                        id="claude-api-key"
-                        type="password"
-                        autoComplete="off"
-                        spellCheck={false}
-                        placeholder={t('settings.backends.claudeApiKeyPlaceholder') as string}
-                        value={apiKey}
-                        onChange={(e) => setApiKey(e.target.value)}
-                        className="pl-9 font-mono"
-                        disabled={authSaving}
-                      />
+                  <>
+                    <div className="flex flex-col gap-2">
+                      <Label htmlFor="claude-api-key" className="text-xs font-medium uppercase text-muted">
+                        {t('settings.backends.claudeApiKeyLabel')}
+                      </Label>
+                      <div className="relative">
+                        <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                        <Input
+                          id="claude-api-key"
+                          type="password"
+                          autoComplete="off"
+                          spellCheck={false}
+                          placeholder={t('settings.backends.claudeApiKeyPlaceholder') as string}
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          className="pl-9 font-mono"
+                          disabled={authSaving}
+                        />
+                      </div>
+                      <p className="text-[12px] text-muted">{apiKeyStatus}</p>
                     </div>
-                    <p className="text-[12px] text-muted">{apiKeyStatus}</p>
-                  </div>
-                )}
 
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="claude-base-url" className="text-xs font-medium uppercase text-muted">
-                    {t('settings.backends.claudeBaseUrlLabel')}
-                  </Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="claude-base-url"
-                      type="url"
-                      autoComplete="off"
-                      spellCheck={false}
-                      placeholder={t('settings.backends.claudeBaseUrlPlaceholder') as string}
-                      value={baseUrl}
-                      onChange={(e) => setBaseUrl(e.target.value)}
-                      className="font-mono"
-                      disabled={authSaving}
-                    />
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setBaseUrl('')}
-                      disabled={!baseUrl || authSaving}
-                    >
-                      <RotateCcw className="size-3.5" />
-                      {t('settings.backends.claudeBaseUrlReset')}
-                    </Button>
-                  </div>
-                  <p className="text-[12px] text-muted">{t('settings.backends.claudeBaseUrlHint')}</p>
-                </div>
+                    <div className="flex flex-col gap-2">
+                      <Label htmlFor="claude-base-url" className="text-xs font-medium uppercase text-muted">
+                        {t('settings.backends.claudeBaseUrlLabel')}
+                      </Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="claude-base-url"
+                          type="url"
+                          autoComplete="off"
+                          spellCheck={false}
+                          placeholder={t('settings.backends.claudeBaseUrlPlaceholder') as string}
+                          value={baseUrl}
+                          onChange={(e) => setBaseUrl(e.target.value)}
+                          className="font-mono"
+                          disabled={authSaving}
+                        />
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setBaseUrl('')}
+                          disabled={!baseUrl || authSaving}
+                        >
+                          <RotateCcw className="size-3.5" />
+                          {t('settings.backends.claudeBaseUrlReset')}
+                        </Button>
+                      </div>
+                      <p className="text-[12px] text-muted">{t('settings.backends.claudeBaseUrlHint')}</p>
+                    </div>
+                  </>
+                )}
 
                 {authState?.settings_conflict && (
                   // Claude Code applies its own ``env`` block on top of inherited
