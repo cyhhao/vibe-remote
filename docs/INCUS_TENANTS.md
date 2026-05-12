@@ -42,8 +42,8 @@ This creates:
 
 - Incus project: `vr-alice`
 - Instance: `vibe`
-- Linux user inside the instance: `vibe`
-- Work directory: `/home/vibe/work`
+- Linux user inside the instance: `vibey`
+- Work directory: `/home/vibey/work`
 - Vibe Remote Web UI inside the instance: port `5123`
 - Optional host Web UI proxy: `http://127.0.0.1:15123`
 

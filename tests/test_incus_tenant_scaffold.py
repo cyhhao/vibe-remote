@@ -50,7 +50,9 @@ def test_cloud_init_configures_vibe_user_service_and_ui():
     data = incus_tenant.cloud_init_user_data(tenant_spec())
 
     assert "#cloud-config" in data
-    assert "name: vibe" in data
+    assert "name: vibey" in data
+    assert "User=vibey" in data
+    assert '"default_cwd": "/home/vibey/work"' in data
     assert "ExecStart=/bin/bash -lc 'vibe'" in data
     assert '"setup_host": "0.0.0.0"' in data
     assert '"setup_port": 5123' in data
@@ -113,7 +115,7 @@ def test_exec_dry_run_strips_command_separator(capsys):
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "--user 1000" not in output
-    assert "sudo -H -u vibe" in output
+    assert "sudo -H -u vibey" in output
     assert "exec \"$@\"' bash pwd" in output
 
 
@@ -123,7 +125,7 @@ def test_shell_dry_run_uses_tenant_username(capsys):
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "--user 1000" not in output
-    assert "sudo -H -u vibe" in output
+    assert "sudo -H -u vibey" in output
     assert "exec bash -l" in output
 
 
