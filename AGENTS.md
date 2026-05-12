@@ -101,6 +101,14 @@ Rules:
 - after running the script, verify the service is healthy before handing back to the user
 - prefer Docker regression over local `vibe` whenever validating cross-platform behavior, setup wizard behavior, or user-facing IM flows
 
+Worktree gotcha — `_tmp/three-regression/vibe/` is per-worktree:
+
+- the regression container bind-mounts `${PWD}/_tmp/three-regression/vibe` to `/data/vibe_remote`, so the volume points at whichever worktree ran the script most recently
+- running `./scripts/run_three_regression.sh` from a different worktree silently swaps the bound volume — the new container sees a fresh/empty state, losing pairing (`remote_access` config), agent CLI binaries, sessions, etc.
+- symptom: `test-app.avibe.bot` (or any paired `vibe_cloud` URL) returns Cloudflare **1033** because cloudflared never starts inside the new container — no `tunnel_token` in `config.json`
+- before switching worktrees for regression, either sync the state directory (`cp -a` from old to new worktree's `_tmp/three-regression/`) or copy at minimum the `remote_access` block in `config/config.json`, then `docker exec ... vibe remote start` to re-spawn cloudflared
+- the simplest discipline: always run regression from the same worktree until the user explicitly says to move
+
 ## 4. Configuration and Routing Model
 
 Persistent configuration is centered on `config/v2_config.py` and the Web UI.
