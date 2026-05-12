@@ -75,7 +75,8 @@ flagging with the user before committing to bundling.
 
 - **Claude** — one-shot CLI per request. API-key mode is realized by
   injecting `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` env vars at
-  invocation time (the SDK already honors these).
+  invocation time (the SDK already honors these). **No restart needed**:
+  the next user message picks up new V2Config values automatically.
 - **Codex** — persistent `codex app-server` per cwd. API-key mode is
   realized by writing `~/.codex/config.toml`; the daemon picks up
   changes via `restart_backend('codex')` (PR #282 wires this).
@@ -83,6 +84,138 @@ flagging with the user before committing to bundling.
   through the existing `vibe/opencode_config.py::upsert_opencode_provider_api_key`
   plus `set_api_key_auth(provider_id, key)` HTTP call; the server is
   hot-reloaded via the existing `_install_opencode_api_key()` flow.
+
+### Audit status (resolved 2026-05-12, post-codex landing)
+
+| Layer | Claude | Codex | OpenCode |
+| --- | --- | --- | --- |
+| V2Config schema | ✅ done | ✅ done | ✅ done (`default_provider`) |
+| On-disk writer / state reader | ❌ none yet | ✅ `vibe/codex_config.py` | ✅ existing `vibe/opencode_config.py` + `OpenCodeServer.set_api_key_auth` |
+| HTTP API in `vibe/api.py` | ❌ missing | ✅ `get_codex_auth/save_codex_auth` | ❌ missing |
+| Route in `vibe/ui_server.py` | ❌ missing | ✅ `/backend/codex/auth` GET+POST | ❌ missing |
+| Env / process glue | ✅ `session_handler.py:570` injects V2Config-driven `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` before `ClaudeSDKClient` | ✅ `restart_backend('codex')` | ✅ existing OpenCode server hot-reload |
+| Settings page UI | ❌ stub only (CLI detect) | ✅ `SettingsCodexProviderPage.tsx` | ❌ stub only (CLI detect + permissions) |
+| ApiContext methods | ❌ missing | ✅ `getCodexAuth/saveCodexAuth` | ❌ missing |
+| i18n keys | partial (`settings.backends.claudeTitle/Subtitle/Description`) | ✅ full Codex set | partial (`settings.backends.opencodeTitle/Subtitle/Description`) |
+
+The remaining work is therefore **Claude end-to-end (E + B)** and
+**OpenCode end-to-end (E + D)** — plus the Phase F i18n strings. Phases
+A (scaffolding) and Codex are complete from the prior commits on this
+branch.
+
+### Product UX considerations
+
+Treat the three pages as **edit-only surfaces** the user reaches when
+they want to *change* an existing setup. First-run still uses the
+`AgentDetection` wizard. Each page must work for three user journeys:
+
+**J1 · First-time inspection** — user signed in via `claude login`
+yesterday, opens the page today. Expected: page renders quickly, shows
+"OAuth signed in" without prompting for anything, exposes the API-key
+fallback panel collapsed by default so it doesn't shout.
+
+**J2 · Switch to API gateway / proxy** — user wants to point Claude at
+their corporate Anthropic gateway, or Codex at Azure OpenAI, or
+OpenCode at openrouter. Expected: toggle auth_mode → paste key → set
+Base URL → Save. The page must clearly say "the next message goes
+through this gateway" so the user trusts the change took effect (no
+silent fallback to the old endpoint).
+
+**J3 · Rotate a leaked key** — user got a security alert; needs to
+paste a fresh key and confirm the old one is gone everywhere. Expected:
+saving a non-empty key overwrites the stored one *and* the
+masked-length display updates immediately (e.g. "key configured ·
+sk-...64 chars"). Saving an empty key while in api_key mode must NOT
+silently revert — it must either keep the existing key (with a clear
+hint that we did) or reject the form.
+
+**Trust & safety details (apply to all three pages):**
+
+- API key input is `type="password"`; never log or render plaintext.
+- The page never *preloads* the stored key into the input. Empty input
+  = "keep whatever is stored"; a non-empty value = "replace it". A
+  status line ("Configured · 48 chars" / "Not configured") tells the
+  user which state they are in.
+- **No copy button on the key field.** A copy button on a password
+  input invites users to leave the plaintext in their clipboard; we
+  don't ship that affordance for credentials. (The Codex page already
+  follows this rule.)
+- Base URL is plain text; we do show a Reset button that clears it back
+  to the SDK / Codex / OpenCode default.
+- Inputs disabled while a save is in flight; toast surfaces both
+  success and "saved but restart failed" partial states.
+
+**Cross-page consistency** — the three pages reuse the same building
+blocks: `SettingsPageShell` (breadcrumb + title + subtitle),
+`BackendLifecycleChip` in the header right cluster, `SegmentedRadio`
+for binary auth-mode choices (cloned from `RoutingConfigPanel`), and
+the same Input / Label / Button primitives from
+`ui/src/components/ui/*`. No bespoke styled buttons or pills.
+
+### OpenCode page — detailed UX
+
+**Header / toolbar layout** (matches `design.pen` frame `x53H1P`):
+
+- Header left (`ocHeadL`): violet code icon + title "OpenCode" + status
+  chip (Running / Stopped) + count chip (`14 providers` from
+  introspection) + subtitle "Lazy-loaded from CLI · auth handled via
+  API key or `opencode auth login`".
+- Header right (`ocHeadR`): Refresh-providers button (re-runs the
+  introspection fan-out) + Backend-enabled toggle.
+- Toolbar row (`ocToolbar`): full-text search across provider id +
+  name + model ids, filter chips (`All · Configured · OAuth available ·
+  Local`), and a **Default-provider** pill on the right showing the
+  current pick with a chevron-down (clicks → popover with the same
+  provider list).
+
+**Provider grid** — fully dynamic, sourced from `GET /backend/opencode/providers`.
+Cards render a uniform shape:
+
+- Top row: provider name + per-card status badge
+  (`Configured` mint / `OAuth available` info / `Local` secondary /
+  `Not set` outline-muted) + a chevron / disclosure affordance.
+- Middle: `<id> · N models · <one-line description>` in monospace muted
+  text (read from the provider's catalog entry).
+- Footer: contextual call-to-action for unconfigured cloud providers
+  ("Set API key") or local providers ("Start <provider> + load a
+  model").
+
+Cards are clickable; clicking expands one card inline (single
+expansion at a time, like the design's `ocAnthropicExp` example):
+
+- Expanded header repeats the badge + adds three actions: **Test**
+  (punted to Phase D), **Remove key** (DELETE auth, with confirm), and
+  **Collapse**.
+- Expanded body has two columns:
+  - Left: auth mode segmented control (when both OAuth and API key
+    are supported) + API Key input (password + Configured/length
+    line) + Base URL input + Reset.
+  - Right: searchable models list (read from the provider catalog) —
+    read-only for v1 (whitelist editing is out of scope).
+
+**Default-provider selector** — only **configured** providers are
+selectable. Picking a non-configured provider must first prompt the
+user to set its key (auto-expand that card). Saved via
+`POST /backend/opencode/default-provider`. The pill updates
+immediately on success; the change is also reflected in
+`V2Config.agents.opencode.default_provider` so it persists across
+restarts and shows up in the lifecycle chip's "default" label.
+
+**Empty / error states:**
+
+- Backend disabled → grid is hidden, replaced by a banner "Enable
+  OpenCode in the header to manage providers". The auth-mode toggle is
+  the only interactive control.
+- Backend enabled but server not running → grid renders with a thin
+  "Server starting…" banner; introspection retries every 3s up to 5
+  attempts. After that, fall back to a stub catalog from
+  `~/.config/opencode/opencode.json` plus a "Server not reachable —
+  showing stored configuration" warning so the user can still edit.
+- Introspection succeeded but `providers` is empty → render a single
+  "OpenCode returned no providers; run `opencode auth list` from a
+  terminal to diagnose" panel.
+- Per-provider 4xx/5xx on save → keep the expanded panel open, show
+  the error inline, do not collapse.
 
 ### V2Config schema (Python)
 

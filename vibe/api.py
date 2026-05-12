@@ -2204,6 +2204,405 @@ def save_codex_auth(payload: dict) -> dict:
     return state
 
 
+def get_claude_auth() -> dict:
+    """Return the user-facing Claude auth state for the Settings UI.
+
+    Claude differs from Codex in two structural ways:
+
+    1. We never write to ``~/.claude/settings.json``. V2Config is the sole
+       writer; the Claude CLI subprocess inherits ``ANTHROPIC_*`` vars
+       from the env we set in ``session_handler.py`` at launch time.
+    2. OAuth tokens minted by ``claude login`` live in the OS keychain,
+       which we cannot portably inspect. The "OAuth signed in" signal is
+       therefore inferred from "no API key is configured" — the UI shows
+       a hint pointing users at ``claude login`` if they need to switch.
+
+    We still inspect ``settings.json`` because the user (or their tooling)
+    may have put ``ANTHROPIC_AUTH_TOKEN`` / ``ANTHROPIC_BASE_URL`` there.
+    When that happens *and* V2Config also has a key, settings.json wins
+    at launch (Claude Code applies its ``env`` block on top of inherited
+    env). The UI surfaces a warning so users aren't confused by stale
+    keys silently overriding what they just saved.
+    """
+    from vibe.claude_config import read_claude_auth_state
+
+    disk_state = read_claude_auth_state()
+    try:
+        config = load_config()
+        cfg = getattr(getattr(config, "agents", None), "claude", None)
+        configured_mode = getattr(cfg, "auth_mode", None)
+        configured_key = getattr(cfg, "api_key", None) or ""
+        configured_base = getattr(cfg, "base_url", None) or ""
+    except Exception:
+        configured_mode = None
+        configured_key = ""
+        configured_base = ""
+
+    configured_key = configured_key.strip() if isinstance(configured_key, str) else ""
+    configured_base = configured_base.strip() if isinstance(configured_base, str) else ""
+
+    has_api_key = bool(configured_key)
+    if configured_mode in _VALID_AUTH_MODES:
+        auth_mode = configured_mode
+    else:
+        auth_mode = "api_key" if has_api_key else "oauth"
+
+    # When settings.json also defines a key, the live CLI uses that one
+    # rather than the V2Config-injected one. Flag the conflict so the
+    # UI can warn the user before they assume their newly-saved key is
+    # in effect.
+    settings_conflict = bool(disk_state.get("settings_env_has_key")) and has_api_key
+
+    return {
+        "ok": True,
+        "auth_mode": auth_mode,
+        "has_api_key": has_api_key,
+        "api_key_length": len(configured_key),
+        "base_url": configured_base or None,
+        "settings_path": disk_state.get("settings_path"),
+        "settings_exists": bool(disk_state.get("settings_exists")),
+        "settings_env_has_key": bool(disk_state.get("settings_env_has_key")),
+        "settings_env_key_length": int(disk_state.get("settings_env_key_length") or 0),
+        "settings_env_key_var": disk_state.get("settings_env_key_var"),
+        "settings_env_base_url": disk_state.get("settings_env_base_url"),
+        "settings_conflict": settings_conflict,
+    }
+
+
+def save_claude_auth(payload: dict) -> dict:
+    """Persist Claude auth into V2Config.
+
+    No disk writes — V2Config is the source of truth and
+    ``session_handler.py`` injects the resulting env vars at each
+    one-shot CLI launch. Claude is a per-request subprocess so there is
+    no daemon to restart; the *next* user message picks up the change.
+
+    Empty ``api_key`` while in ``api_key`` mode is treated as "keep the
+    stored key" — same UX promise as Codex — so callers can PATCH the
+    base URL without re-typing the secret. An empty key with no stored
+    fallback is rejected.
+    """
+    if not isinstance(payload, dict):
+        return {"ok": False, "message": "Payload must be an object"}
+
+    auth_mode = payload.get("auth_mode")
+    if auth_mode not in _VALID_AUTH_MODES:
+        return {"ok": False, "message": f"auth_mode must be one of {sorted(_VALID_AUTH_MODES)}"}
+
+    raw_api_key = payload.get("api_key")
+    if raw_api_key is not None and not isinstance(raw_api_key, str):
+        return {"ok": False, "message": "api_key must be a string"}
+    api_key = raw_api_key.strip() if isinstance(raw_api_key, str) else None
+
+    raw_base_url = payload.get("base_url")
+    if raw_base_url is not None and not isinstance(raw_base_url, str):
+        return {"ok": False, "message": "base_url must be a string"}
+    base_url = raw_base_url.strip() if isinstance(raw_base_url, str) else None
+    if base_url == "":
+        base_url = None
+
+    if auth_mode == "api_key" and not api_key:
+        # Reuse stored key for base-URL-only updates. Unlike Codex we
+        # have no live-disk fallback (V2Config is sole writer), so we
+        # only consult ``settings.json`` for legacy installs where the
+        # user pre-configured the relay there and never re-typed the
+        # secret into the Settings UI.
+        with CONFIG_LOCK:
+            try:
+                existing = load_config()
+                stored = getattr(getattr(existing, "agents", None), "claude", None)
+                api_key = getattr(stored, "api_key", None) or None
+            except Exception:
+                api_key = None
+        if not api_key:
+            try:
+                from vibe.claude_config import read_claude_api_key_from_settings
+
+                api_key = read_claude_api_key_from_settings()
+            except Exception:
+                api_key = None
+        if not api_key:
+            return {"ok": False, "message": "api_key is required when auth_mode='api_key'"}
+
+    with CONFIG_LOCK:
+        try:
+            config = load_config()
+        except FileNotFoundError:
+            config = V2Config()
+        config.agents.claude.auth_mode = auth_mode
+        config.agents.claude.api_key = api_key if auth_mode == "api_key" else None
+        config.agents.claude.base_url = base_url
+        config.save()
+
+    # Claude is one-shot per request — no daemon to restart. Return a
+    # synthetic restart result so the UI handles the same response shape
+    # as Codex / OpenCode and the toast wording can stay consistent.
+    state = get_claude_auth()
+    state["restart"] = {
+        "ok": True,
+        "message": "Claude relaunches per request; the next message uses the new auth.",
+    }
+    return state
+
+
+# ---------------------------------------------------------------------------
+# OpenCode provider configuration
+# ---------------------------------------------------------------------------
+#
+# The OpenCode page in Settings → Backends is fully dynamic: we never ship
+# a hard-coded provider list. Instead we fan out to the running OpenCode
+# server (``GET /provider`` for the catalog, ``GET /provider/auth`` for
+# the auth-method index, ``GET /config/providers`` for model lists) and
+# merge the responses into a per-card view with ``configured`` /
+# ``oauth_available`` / ``local`` flags.
+#
+# Writes go through OpenCode's own ``PUT /auth/<id>`` /
+# ``DELETE /auth/<id>`` endpoints (already wrapped by
+# ``OpenCodeServer.set_api_key_auth`` / ``remove_provider_auth``); we
+# also persist ``default_provider`` into ``V2Config`` so the chip and
+# routing layers stay in sync across restarts.
+
+
+async def _opencode_get_server():
+    """Spin up a transient OpenCodeServerManager instance for HTTP calls.
+
+    Mirrors the pattern used by ``opencode_options_async``: pull the
+    OpenCode config from V2Config, request a manager instance, ensure
+    the daemon is reachable, and let the caller drive its HTTP methods.
+    Returns ``None`` if OpenCode is disabled — callers translate that
+    into a UI-friendly error.
+    """
+    from config.v2_compat import to_app_config
+    from modules.agents.opencode import OpenCodeServerManager
+
+    config = to_app_config(V2Config.load())
+    if not config.opencode:
+        return None
+    opencode_config = config.opencode
+    server = await OpenCodeServerManager.get_instance(
+        binary=opencode_config.binary,
+        port=opencode_config.port,
+        request_timeout_seconds=opencode_config.request_timeout_seconds,
+    )
+    await server.ensure_running()
+    return server
+
+
+def _is_local_provider(provider_id: str, auth_methods: list) -> bool:
+    """Heuristic: a provider is "local" if it has no network auth methods.
+
+    OpenCode reports Ollama / LM Studio with an empty auth-method list
+    (no API key, no OAuth — they listen on localhost). The Settings UI
+    surfaces these with a dedicated "Local" badge so users understand
+    why there is no key field to fill in.
+    """
+    if not auth_methods:
+        return True
+    if isinstance(provider_id, str) and provider_id.lower() in {"ollama", "lmstudio", "lm-studio"}:
+        return True
+    return False
+
+
+async def _get_opencode_providers_async() -> dict:
+    """Build the merged provider catalog reported to the Settings UI."""
+    server = await _opencode_get_server()
+    if server is None:
+        return {"ok": False, "message": "OpenCode is disabled in V2Config"}
+
+    request_loop = asyncio.get_running_loop()
+    try:
+        providers_raw, auth_raw, config_raw = await asyncio.gather(
+            server.get_providers(),
+            server.get_provider_auth(),
+            server.get_available_models(os.path.expanduser("~")),
+            return_exceptions=False,
+        )
+    finally:
+        await server.close_http_session(loop=request_loop)
+
+    # OpenCode 0.5+: ``/provider`` returns ``{all: {...}, default: {...},
+    # connected: [...]}``. Older builds returned just ``{providers: [...]}``;
+    # accept both shapes so an upgrade-in-place doesn't break the UI.
+    all_providers: dict = {}
+    if isinstance(providers_raw, dict):
+        if isinstance(providers_raw.get("all"), dict):
+            all_providers = providers_raw["all"]
+        elif isinstance(providers_raw.get("providers"), list):
+            # legacy shape — coerce list of dicts into id-keyed map
+            for entry in providers_raw["providers"]:
+                pid = entry.get("id") if isinstance(entry, dict) else None
+                if pid:
+                    all_providers[pid] = entry
+
+    connected = providers_raw.get("connected") if isinstance(providers_raw, dict) else None
+    connected_set = {pid for pid in connected if isinstance(pid, str)} if isinstance(connected, list) else set()
+
+    model_index: dict = {}
+    if isinstance(config_raw, dict):
+        for entry in config_raw.get("providers", []) or []:
+            pid = entry.get("id") if isinstance(entry, dict) else None
+            if pid:
+                model_index[pid] = entry
+
+    auth_index = auth_raw if isinstance(auth_raw, dict) else {}
+
+    # Resolve the user-configured default provider (V2Config wins because
+    # the chip / lifecycle layer reads it from there; OpenCode's own
+    # ``default`` block is a runtime hint we fall back to only when
+    # V2Config has the schema default).
+    default_provider = "anthropic"
+    try:
+        config = load_config()
+        cfg = getattr(getattr(config, "agents", None), "opencode", None)
+        configured_default = getattr(cfg, "default_provider", None)
+        if isinstance(configured_default, str) and configured_default.strip():
+            default_provider = configured_default.strip()
+    except Exception:
+        pass
+
+    out_providers = []
+    for pid, entry in all_providers.items():
+        if not isinstance(entry, dict):
+            continue
+        auth_methods = auth_index.get(pid)
+        auth_methods_list = auth_methods if isinstance(auth_methods, list) else []
+        oauth_available = any(
+            isinstance(method, dict) and method.get("type") == "oauth"
+            for method in auth_methods_list
+        )
+        local = _is_local_provider(pid, auth_methods_list)
+        configured = pid in connected_set
+        models_for_provider = model_index.get(pid, {})
+        provider_models = models_for_provider.get("models")
+        if isinstance(provider_models, dict):
+            model_ids = sorted(provider_models.keys())
+        elif isinstance(provider_models, list):
+            model_ids = [m.get("id") for m in provider_models if isinstance(m, dict) and m.get("id")]
+        else:
+            model_ids = []
+        default_model = None
+        defaults_block = config_raw.get("default") if isinstance(config_raw, dict) else None
+        if isinstance(defaults_block, dict):
+            raw_default = defaults_block.get(pid)
+            if isinstance(raw_default, str):
+                default_model = raw_default
+
+        out_providers.append(
+            {
+                "id": pid,
+                "name": entry.get("name") or pid,
+                "description": entry.get("description") or "",
+                "configured": configured,
+                "oauth_available": oauth_available,
+                "local": local,
+                "models": model_ids,
+                "default_model": default_model,
+            }
+        )
+
+    out_providers.sort(key=lambda p: (not p["configured"], p["local"], p["id"]))
+
+    return {
+        "ok": True,
+        "providers": out_providers,
+        "default_provider": default_provider,
+    }
+
+
+def get_opencode_providers() -> dict:
+    """Sync wrapper for the OpenCode provider catalog."""
+    try:
+        return asyncio.run(_get_opencode_providers_async())
+    except Exception as exc:
+        logger.warning("OpenCode providers fetch failed: %s", exc, exc_info=True)
+        return {"ok": False, "message": str(exc)}
+
+
+async def _save_opencode_provider_auth_async(provider_id: str, api_key: str) -> dict:
+    server = await _opencode_get_server()
+    if server is None:
+        return {"ok": False, "message": "OpenCode is disabled in V2Config"}
+    request_loop = asyncio.get_running_loop()
+    try:
+        await server.set_api_key_auth(provider_id, api_key)
+    finally:
+        await server.close_http_session(loop=request_loop)
+    # Also clean the legacy ``opencode.json`` provider block so the UI
+    # source of truth (OpenCode's own auth store) wins on next launch.
+    try:
+        from vibe.opencode_config import remove_opencode_provider_api_key
+
+        await asyncio.to_thread(remove_opencode_provider_api_key, provider_id, logger_instance=logger)
+    except Exception as exc:
+        logger.debug("Legacy opencode.json cleanup skipped for %s: %s", provider_id, exc)
+    return {"ok": True}
+
+
+def save_opencode_provider_auth(provider_id: str, payload: dict) -> dict:
+    """Persist a single OpenCode provider's API key via the live daemon."""
+    if not isinstance(provider_id, str) or not provider_id.strip():
+        return {"ok": False, "message": "provider_id is required"}
+    if not isinstance(payload, dict):
+        return {"ok": False, "message": "Payload must be an object"}
+    raw_key = payload.get("api_key")
+    if not isinstance(raw_key, str) or not raw_key.strip():
+        return {"ok": False, "message": "api_key is required"}
+    api_key = raw_key.strip()
+    try:
+        return asyncio.run(_save_opencode_provider_auth_async(provider_id.strip(), api_key))
+    except Exception as exc:
+        logger.warning("OpenCode set-auth failed for %s: %s", provider_id, exc, exc_info=True)
+        return {"ok": False, "message": str(exc)}
+
+
+async def _delete_opencode_provider_auth_async(provider_id: str) -> dict:
+    server = await _opencode_get_server()
+    if server is None:
+        return {"ok": False, "message": "OpenCode is disabled in V2Config"}
+    request_loop = asyncio.get_running_loop()
+    try:
+        await server.remove_provider_auth(provider_id)
+    finally:
+        await server.close_http_session(loop=request_loop)
+    return {"ok": True}
+
+
+def delete_opencode_provider_auth(provider_id: str) -> dict:
+    """Drop a single provider's stored credentials."""
+    if not isinstance(provider_id, str) or not provider_id.strip():
+        return {"ok": False, "message": "provider_id is required"}
+    try:
+        return asyncio.run(_delete_opencode_provider_auth_async(provider_id.strip()))
+    except Exception as exc:
+        logger.warning("OpenCode delete-auth failed for %s: %s", provider_id, exc, exc_info=True)
+        return {"ok": False, "message": str(exc)}
+
+
+def set_opencode_default_provider(payload: dict) -> dict:
+    """Persist ``V2Config.agents.opencode.default_provider``.
+
+    No daemon contact required — OpenCode itself accepts a per-request
+    ``provider`` field on messages, so the "default" is purely our
+    routing concern. Storing it in V2Config keeps the chip and the
+    routing layer in sync across restarts.
+    """
+    if not isinstance(payload, dict):
+        return {"ok": False, "message": "Payload must be an object"}
+    raw = payload.get("provider_id")
+    if not isinstance(raw, str) or not raw.strip():
+        return {"ok": False, "message": "provider_id is required"}
+    provider_id = raw.strip()
+
+    with CONFIG_LOCK:
+        try:
+            config = load_config()
+        except FileNotFoundError:
+            config = V2Config()
+        config.agents.opencode.default_provider = provider_id
+        config.save()
+    return {"ok": True, "default_provider": provider_id}
+
+
 def codex_models() -> dict:
     """Best-effort merged list of Codex model options.
 

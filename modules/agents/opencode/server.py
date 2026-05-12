@@ -805,6 +805,72 @@ class OpenCodeServerManager:
                     error_text = await resp.text()
                     raise RuntimeError(f"Failed to set OpenCode auth: {resp.status} {error_text}")
 
+    async def remove_provider_auth(self, provider_id: str) -> None:
+        """Drop a provider's stored credentials via OpenCode's auth endpoint.
+
+        Used by the Settings UI's "Remove key" action. OpenCode treats 404
+        as already-removed, which we silently accept so the UI can issue
+        DELETE optimistically without first checking presence.
+        """
+
+        await self.ensure_running()
+
+        async with self._request_scope():
+            session = await self._get_http_session()
+            async with session.delete(
+                f"{self.base_url}/auth/{provider_id}",
+            ) as resp:
+                if resp.status in (200, 204, 404):
+                    return
+                error_text = await resp.text()
+                raise RuntimeError(
+                    f"Failed to remove OpenCode auth for {provider_id}: {resp.status} {error_text}"
+                )
+
+    async def get_providers(self) -> Dict[str, Any]:
+        """Fetch the full provider catalog from the running OpenCode server.
+
+        Returns the raw shape OpenCode reports: ``{all: {...}, default:
+        {...}, connected: [...]}``. Callers (``vibe.api.get_opencode_providers``)
+        merge this with the auth-method map from ``get_provider_auth`` to
+        produce the per-card ``configured`` / ``oauth_available`` /
+        ``local`` flags surfaced in the Settings UI.
+        """
+
+        await self.ensure_running()
+
+        async with self._request_scope():
+            session = await self._get_http_session()
+            try:
+                async with session.get(f"{self.base_url}/provider") as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    return {}
+            except Exception as e:
+                logger.warning(f"Failed to get OpenCode providers: {e}")
+                return {}
+
+    async def get_provider_auth(self) -> Dict[str, Any]:
+        """Fetch the per-provider auth-method index from OpenCode.
+
+        Shape is ``{providerId: [{type, label?, ...}, ...]}`` — providers
+        that support OAuth surface a ``{"type": "oauth", ...}`` entry,
+        local providers (Ollama / LM Studio) report an empty list.
+        """
+
+        await self.ensure_running()
+
+        async with self._request_scope():
+            session = await self._get_http_session()
+            try:
+                async with session.get(f"{self.base_url}/provider/auth") as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    return {}
+            except Exception as e:
+                logger.warning(f"Failed to get OpenCode provider/auth: {e}")
+                return {}
+
     def _load_opencode_user_config(self) -> Optional[Dict[str, Any]]:
         """Load and cache opencode.json config file.
 

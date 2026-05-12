@@ -23,6 +23,12 @@ export type ApiContextType = {
   restartBackend: (name: string) => Promise<BackendRestartResult>;
   getCodexAuth: () => Promise<CodexAuthState>;
   saveCodexAuth: (payload: CodexAuthPayload) => Promise<CodexAuthSaveResult>;
+  getClaudeAuth: () => Promise<ClaudeAuthState>;
+  saveClaudeAuth: (payload: ClaudeAuthPayload) => Promise<ClaudeAuthSaveResult>;
+  getOpencodeProviders: () => Promise<OpencodeProviderListResult>;
+  setOpencodeProviderAuth: (providerId: string, apiKey: string) => Promise<OpencodeMutationResult>;
+  deleteOpencodeProviderAuth: (providerId: string) => Promise<OpencodeMutationResult>;
+  setOpencodeDefaultProvider: (providerId: string) => Promise<OpencodeMutationResult>;
   slackAuthTest: (botToken: string, proxyUrl?: string) => Promise<any>;
   slackChannels: (botToken: string, browseAll?: boolean) => Promise<any>;
   slackManifest: () => Promise<{ ok: boolean; manifest?: string; manifest_compact?: string; error?: string }>;
@@ -150,6 +156,69 @@ export type CodexAuthSaveResult = CodexAuthState & {
   restart?: BackendRestartResult;
 };
 
+export type ClaudeAuthMode = 'oauth' | 'api_key';
+
+// Claude's auth surface differs structurally from Codex: V2Config is the
+// sole writer (no disk-side ``apply_claude_auth``) and the CLI inherits
+// env vars per request rather than via a persistent daemon. We still
+// inspect ``~/.claude/settings.json`` so the UI can warn when a
+// hand-edited ``env`` block would override the V2Config-injected key at
+// launch (Claude Code layers settings.json env on top of inherited env).
+export type ClaudeAuthState = {
+  ok: boolean;
+  auth_mode: ClaudeAuthMode;
+  has_api_key: boolean;
+  api_key_length: number;
+  base_url: string | null;
+  settings_path: string | null;
+  settings_exists: boolean;
+  settings_env_has_key: boolean;
+  settings_env_key_length: number;
+  settings_env_key_var: 'ANTHROPIC_API_KEY' | 'ANTHROPIC_AUTH_TOKEN' | null;
+  settings_env_base_url: string | null;
+  settings_conflict: boolean;
+  message?: string;
+};
+
+export type ClaudeAuthPayload = {
+  auth_mode: ClaudeAuthMode;
+  api_key?: string | null;
+  base_url?: string | null;
+};
+
+export type ClaudeAuthSaveResult = ClaudeAuthState & {
+  restart?: BackendRestartResult;
+};
+
+// One entry in the OpenCode provider grid. The full catalog is built
+// dynamically on the server by merging ``/provider`` + ``/provider/auth``
+// + ``/config/providers`` — there is **no** hard-coded list in the UI.
+// ``local`` is inferred from the absence of network auth methods (Ollama,
+// LM Studio); the page renders its own "Local" badge for those rows.
+export type OpencodeProvider = {
+  id: string;
+  name: string;
+  description: string;
+  configured: boolean;
+  oauth_available: boolean;
+  local: boolean;
+  models: string[];
+  default_model: string | null;
+};
+
+export type OpencodeProviderListResult = {
+  ok: boolean;
+  message?: string;
+  providers?: OpencodeProvider[];
+  default_provider?: string;
+};
+
+export type OpencodeMutationResult = {
+  ok: boolean;
+  message?: string;
+  default_provider?: string;
+};
+
 const ApiContext = createContext<ApiContextType | undefined>(undefined);
 
 export const useApi = () => {
@@ -210,6 +279,19 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return res.json();
   };
 
+  // DELETE wrapper that routes 4xx/5xx through ``handleApiError`` so the
+  // global toast and console-error surface stay consistent with
+  // ``getJson``/``postJson``. Legacy callers (removeUser, deleteBindCode)
+  // still call ``apiFetch().then(r => r.json())`` directly — that's a
+  // separate cleanup; new endpoints should use this helper.
+  const deleteJson = async (path: string) => {
+    const res = await apiFetch(path, { method: 'DELETE' });
+    if (!res.ok) {
+      await handleApiError(res, path);
+    }
+    return res.json();
+  };
+
   const value: ApiContextType = {
     getConfig: () => getJson('/config'),
     getPlatformCatalog: () => getJson('/platforms'),
@@ -230,6 +312,15 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     restartBackend: (name) => postJson(`/backend/${encodeURIComponent(name)}/restart`, {}),
     getCodexAuth: () => getJson('/backend/codex/auth'),
     saveCodexAuth: (payload) => postJson('/backend/codex/auth', payload),
+    getClaudeAuth: () => getJson('/backend/claude/auth'),
+    saveClaudeAuth: (payload) => postJson('/backend/claude/auth', payload),
+    getOpencodeProviders: () => getJson('/backend/opencode/providers'),
+    setOpencodeProviderAuth: (providerId, apiKey) =>
+      postJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`, { api_key: apiKey }),
+    deleteOpencodeProviderAuth: (providerId) =>
+      deleteJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`),
+    setOpencodeDefaultProvider: (providerId) =>
+      postJson('/backend/opencode/default-provider', { provider_id: providerId }),
     slackAuthTest: (botToken, proxyUrl) => postJson('/slack/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
     slackChannels: (botToken, browseAll) => postJson('/slack/channels', { bot_token: botToken, browse_all: browseAll || false }),
     slackManifest: () => getJson('/slack/manifest'),

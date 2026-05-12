@@ -1593,6 +1593,75 @@ def backend_codex_auth_post():
     return jsonify(api.save_codex_auth(payload))
 
 
+@app.route("/backend/claude/auth", methods=["GET"])
+def backend_claude_auth_get():
+    """Read the user-facing Claude auth state (masked secrets)."""
+    from vibe import api
+
+    return jsonify(api.get_claude_auth())
+
+
+@app.route("/backend/claude/auth", methods=["POST"])
+def backend_claude_auth_post():
+    """Persist Claude auth into V2Config.
+
+    Body: ``{auth_mode: 'oauth'|'api_key', api_key?: string, base_url?: string}``.
+    Claude relaunches per request, so no daemon restart is necessary —
+    the next user message picks up the new env injection automatically.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.save_claude_auth(payload))
+
+
+@app.route("/backend/opencode/providers", methods=["GET"])
+def backend_opencode_providers():
+    """Return the merged OpenCode provider catalog for the Settings UI.
+
+    Fans out to the live OpenCode daemon's ``/provider``, ``/provider/auth``,
+    and ``/config/providers`` endpoints and merges them into a list of
+    ``{id, name, configured, oauth_available, local, models, default_model}``.
+    """
+    from vibe import api
+
+    return jsonify(api.get_opencode_providers())
+
+
+@app.route("/backend/opencode/provider/<provider_id>/auth", methods=["POST"])
+def backend_opencode_provider_auth_post(provider_id: str):
+    """Persist an API key for a single OpenCode provider.
+
+    Body: ``{api_key: string}``. The key is forwarded to OpenCode via
+    its ``PUT /auth/<id>`` endpoint.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.save_opencode_provider_auth(provider_id, payload))
+
+
+@app.route("/backend/opencode/provider/<provider_id>/auth", methods=["DELETE"])
+def backend_opencode_provider_auth_delete(provider_id: str):
+    """Drop the stored API key for a single OpenCode provider."""
+    from vibe import api
+
+    return jsonify(api.delete_opencode_provider_auth(provider_id))
+
+
+@app.route("/backend/opencode/default-provider", methods=["POST"])
+def backend_opencode_default_provider():
+    """Persist the user's default OpenCode provider into V2Config.
+
+    Body: ``{provider_id: string}``. No daemon contact — the default
+    is consulted at session-routing time, not by OpenCode itself.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.set_opencode_default_provider(payload))
+
+
 @app.route("/browse", methods=["POST"])
 def browse_directory():
     """List sub-directories of a given path for the directory picker UI."""

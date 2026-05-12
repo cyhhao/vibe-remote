@@ -67,10 +67,10 @@ const deriveVisual = (
   // that window the local detection is the fresher signal — trust it and
   // do not flip the chip to error just because the saved config is stale.
   if (cliStatus !== 'ok' && runtime && runtime.installed === false) return 'error';
-  // A daemon-backed backend whose process was killed externally must surface
-  // as error so the popover offers Restart — a stopped daemon outranks both
-  // "update available" and "ready".
-  if (runtime?.supports_restart && runtime.process_status === 'stopped') return 'error';
+  // ``opencode serve`` and ``codex app-server`` are lazy-spawn daemons: they
+  // stay stopped until a session needs them, so ``process_status === 'stopped'``
+  // is the normal idle state, not an error. Restart still works on demand
+  // from the popover.
   if (runtime?.has_update) return 'update';
   if (cliStatus === 'ok') return 'ready';
   return 'loading';
