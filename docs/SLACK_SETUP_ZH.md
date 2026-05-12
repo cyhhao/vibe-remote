@@ -12,7 +12,7 @@ vibe
 
 ## 第 1 步：选一个 Agent 后端
 
-运行 `vibe`，浏览器自动打开设置向导。第一步检测本机已安装的 Agent（Claude Code、OpenCode、Codex），引导你登录或粘贴 API Key。同一份配置也能从 **设置 -> Backends** 进入：
+运行 `vibe` 打开浏览器向导。在欢迎页点击 **开始设置**，下一步会检测本机已安装的 Agent（Claude Code、OpenCode、Codex），引导你登录或粘贴 API Key。同一份配置也能从 **设置 -> Backends** 进入：
 
 ![后端设置](../assets/screenshots/backend-settings-zh.png)
 
