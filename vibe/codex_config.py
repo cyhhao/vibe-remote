@@ -385,6 +385,18 @@ def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
     file_store_active = effective_store == CREDENTIALS_STORE_FILE
 
     inferred_mode = "api_key" if isinstance(api_key, str) and api_key else "oauth"
+    # When Codex is configured to use the OS keychain (``auto`` /
+    # ``keyring``) and ``auth.json`` carries no key and no ChatGPT tokens,
+    # we genuinely cannot tell whether the user is in api_key mode (key
+    # in keychain) or oauth/not-signed-in. ``has_api_key`` is a file-only
+    # signal in that case; callers must treat ``auth_mode`` as a best
+    # guess rather than the truth and surface ``auth_mode_uncertain`` so
+    # the UI can say "we can't read your auth here" instead of "no key".
+    auth_mode_uncertain = (
+        not file_store_active
+        and not (isinstance(api_key, str) and api_key)
+        and not has_chatgpt_tokens
+    )
     return {
         "auth_mode": inferred_mode,
         "has_api_key": isinstance(api_key, str) and bool(api_key),
@@ -393,4 +405,5 @@ def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
         "has_chatgpt_tokens": has_chatgpt_tokens,
         "credentials_store": effective_store,
         "file_store_active": file_store_active,
+        "auth_mode_uncertain": auth_mode_uncertain,
     }

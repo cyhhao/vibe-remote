@@ -176,7 +176,17 @@ export const SettingsCodexProviderPage: React.FC = () => {
                   {t('settings.backends.codexHasChatgptTokens')}
                 </p>
               )}
-              {authMode === 'api_key' && state && !state.file_store_active && (
+              {state?.auth_mode_uncertain && (
+                // Codex stores credentials in the OS keychain by default
+                // (``cli_auth_credentials_store=auto``). When there's no
+                // disk key/tokens we cannot tell whether the user is
+                // signed in via keychain or not — say so honestly rather
+                // than rendering "no key configured" with an oauth toggle.
+                <p className="text-[12px] text-gold">
+                  {t('settings.backends.codexAuthModeUncertain', { store: state.credentials_store })}
+                </p>
+              )}
+              {authMode === 'api_key' && state && !state.file_store_active && !state.auth_mode_uncertain && (
                 // Codex's documented default is ``auto`` (keyring-preferred), so
                 // the API-key UX is honest about what saving will do: we pin
                 // ``cli_auth_credentials_store = "file"`` on save, otherwise

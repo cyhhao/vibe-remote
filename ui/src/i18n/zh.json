@@ -122,6 +122,7 @@
       "codexBaseUrlReset": "重置为默认",
       "codexHasChatgptTokens": "检测到上一次 `codex login` 缓存的 ChatGPT 凭据。",
       "codexCredentialsStoreKeyringWarn": "Codex 当前设置为把凭据存储在系统钥匙串中({{store}})。保存后将切换为文件存储,Vibe Remote 才能直接读写 API key。",
+      "codexAuthModeUncertain": "Codex 当前设置为把凭据存储在系统钥匙串中({{store}}),此处读不到登录状态。请在下方选择一种模式并保存——Vibe Remote 会将 Codex 切换为文件存储,后续读取就能保持准确。",
       "codexInfoHint": "保存会写入 `~/.codex/auth.json` 与 `~/.codex/config.toml`,并重启常驻 app-server 以加载新配置。",
       "codexSave": "保存并重启 Codex",
       "codexSaving": "保存中…",
