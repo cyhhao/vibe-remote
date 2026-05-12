@@ -27,16 +27,16 @@ vibe remote
 
 ### `vibe`
 
-启动或重启 Vibe Remote。会在浏览器中打开 Web UI。
+按需启动 Vibe Remote。会在浏览器中打开 Web UI。
 
 ```bash
 vibe
 ```
 
 **行为：**
-- 如果已在运行，则重启主服务
+- 如果主服务已在运行，则复用现有进程
 - 打开设置向导 `http://127.0.0.1:5123`
-- **保留 OpenCode 服务器** — 正在执行的任务不会被中断
+- **保留已运行的进程** — 需要明确重启时请使用 `vibe restart`
 
 ### `vibe stop`
 

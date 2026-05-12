@@ -496,7 +496,7 @@ bind vr-a3x9k2
 
 | 命令 | 作用 |
 | --- | --- |
-| `vibe` | 启动或重启服务与 Web UI |
+| `vibe` | 按需启动服务与 Web UI；已运行时复用现有进程 |
 | `vibe stop` | 停止服务与 UI，同时终止 OpenCode server |
 | `vibe restart` | 停止后重新启动 |
 | `vibe status` | 输出运行状态 JSON |
@@ -515,9 +515,9 @@ bind vr-a3x9k2
 vibe
 ```
 
-- 启动或重启主服务
+- 如果主服务尚未运行，则启动主服务
 - 打开 Web UI
-- 尽量保留正在运行的 OpenCode server
+- 保留已运行的服务、Web UI 与 OpenCode server；需要明确重启时使用 `vibe restart`
 
 ### `vibe stop`
 
