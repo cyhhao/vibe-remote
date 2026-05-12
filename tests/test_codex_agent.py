@@ -909,13 +909,13 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["threadId"], "thread-existing")
         developer_instructions = params["developerInstructions"]
         self.assertEqual(developer_instructions.count("Focus on regressions."), 1)
-        self.assertEqual(developer_instructions.count("Default session key:"), 1)
+        self.assertEqual(developer_instructions.count("Current session key:"), 1)
         self.assertEqual(developer_instructions.count("If you generate an image with Codex"), 1)
         self.assertIn(
-            "Default session key: `slack::channel::C1::thread::171717.123`",
+            "Current session key: `slack::channel::C1::thread::171717.123`",
             developer_instructions,
         )
-        self.assertIn("Channel-level session key: `slack::channel::C1`", developer_instructions)
+        self.assertNotIn("Channel-level session key:", developer_instructions)
 
     async def test_resume_thread_keeps_system_prompt_injection_when_quick_replies_are_disabled(self):
         agent = object.__new__(CodexAgent)

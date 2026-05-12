@@ -76,12 +76,10 @@ Use `vibe watch add` for managed background waiters that should keep running unt
 Use `vibe hook send --session-key ... --prompt ...` for one-shot asynchronous sends without saving a task or watch.
 
 Current conversation targeting:
-- Default session key: `{default_session_key}`
-- Channel-level session key: `{channel_session_key}`
+- Current session key: `{default_session_key}`
 
 Rules:
 - `session_key` controls the conversation scope that Vibe Remote will continue using.
-- When you do not want to keep the current session and instead want to start or reuse a higher-level session, usually use the higher-level session key. For example, if the default key is `slack::channel::C123::thread::171717.123`, then `slack::channel::C123` creates or reuses the channel-scoped session.
 - `--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.
 - Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
 - Use `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, and `vibe watch remove` to manage background work after creation.
@@ -132,14 +130,8 @@ def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform:
         include_thread=True,
         fallback_platform=fallback_platform,
     )
-    channel_key = _build_prompt_session_key(
-        context,
-        include_thread=False,
-        fallback_platform=fallback_platform,
-    )
     return _SCHEDULED_TASKS_PROMPT.format(
         default_session_key=default_key,
-        channel_session_key=channel_key,
     )
 
 

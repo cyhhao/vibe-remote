@@ -147,12 +147,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             "Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.",
             prompt,
         )
-        self.assertIn("Default session key: `slack::channel::C1::thread::171717.123`", prompt)
-        self.assertIn("Channel-level session key: `slack::channel::C1`", prompt)
-        self.assertIn(
-            "When you do not want to keep the current session and instead want to start or reuse a higher-level session, usually use the higher-level session key.",
-            prompt,
-        )
+        self.assertIn("Current session key: `slack::channel::C1::thread::171717.123`", prompt)
+        self.assertNotIn("Channel-level session key:", prompt)
         self.assertIn(
             "`--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.",
             prompt,
@@ -198,8 +194,8 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
                 fallback_platform="slack",
             )
 
-        self.assertIn("Default session key: `slack::channel::C1::thread::171717.123`", prompt)
-        self.assertIn("Channel-level session key: `slack::channel::C1`", prompt)
+        self.assertIn("Current session key: `slack::channel::C1::thread::171717.123`", prompt)
+        self.assertNotIn("Channel-level session key:", prompt)
         self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
 
     def test_prompt_handles_missing_platform_specific(self):
