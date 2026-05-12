@@ -7,8 +7,10 @@ import asyncio
 from config.paths import ensure_data_dirs, get_logs_dir
 from config.v2_config import V2Config
 from core.controller import Controller
+from core.process_diagnostics import log_process_snapshot
 from storage.importer import ensure_sqlite_state
 from vibe.sentry_integration import init_sentry
+from vibe.runtime import consume_shutdown_intent, shutdown_intent_required
 
 
 def _build_logging_handlers(logs_dir: str) -> list[logging.Handler]:
@@ -82,6 +84,7 @@ def main():
         
         logger.info("Starting vibe-remote service...")
         logger.info(f"Working directory: {config.runtime.default_cwd}")
+        log_process_snapshot(logger, "service-start")
         report = prepare_sqlite_state(config)
         logger.info(
             "SQLite state ready: imported=%s db_path=%s backup_path=%s",
@@ -104,6 +107,17 @@ def main():
             shutdown_initiated = True
             try:
                 logger.info(f"Received signal {signum}, shutting down...")
+                log_process_snapshot(logger, f"signal-{signum}")
+                if signum == signal.SIGTERM and shutdown_intent_required():
+                    intent = consume_shutdown_intent(os.getpid(), signum)
+                    if intent is None:
+                        logger.warning(
+                            "Ignoring unmanaged SIGTERM for pid=%s because no valid shutdown intent was present",
+                            os.getpid(),
+                        )
+                        shutdown_initiated = False
+                        return
+                    logger.info("Accepted managed shutdown intent: %s", intent)
             except Exception:
                 pass
             try:

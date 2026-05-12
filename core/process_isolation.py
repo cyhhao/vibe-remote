@@ -39,6 +39,14 @@ def _safe_signal_process_group(pid: int, sig: int, logger: logging.Logger, label
         )
         return False
     try:
+        logger.info(
+            "Signaling %s process group pgid=%s pid=%s signal=%s service_pgid=%s",
+            label,
+            pgid,
+            pid,
+            sig,
+            own_pgid,
+        )
         os.killpg(pgid, sig)
         return True
     except ProcessLookupError:
@@ -55,6 +63,7 @@ def signal_process_tree(process: Any, sig: int, logger: logging.Logger, label: s
         return
 
     try:
+        logger.info("Signaling %s direct process pid=%s signal=%s", label, pid, sig)
         if sig == signal.SIGTERM:
             process.terminate()
         elif sig == KILL_SIGNAL:

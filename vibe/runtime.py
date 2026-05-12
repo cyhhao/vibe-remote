@@ -23,6 +23,8 @@ from config.v2_config import (
 
 
 logger = logging.getLogger(__name__)
+SHUTDOWN_INTENT_TTL_SECONDS = 30
+SHUTDOWN_INTENT_ENV = "VIBE_REQUIRE_SHUTDOWN_INTENT"
 
 
 def get_package_root() -> Path:
@@ -127,6 +129,62 @@ def read_json(path):
         # Status files are best-effort: a partially written or corrupted
         # payload should not break write_status() or read_status().
         return None
+
+
+def get_shutdown_intent_path() -> Path:
+    return paths.get_runtime_dir() / "shutdown_intent.json"
+
+
+def write_shutdown_intent(
+    target_pid: int,
+    *,
+    signum: int = signal.SIGTERM,
+    reason: str = "managed-stop",
+) -> None:
+    """Record a short-lived intent before sending a managed shutdown signal."""
+    if not isinstance(target_pid, int) or target_pid <= 0:
+        return
+    payload = {
+        "target_pid": target_pid,
+        "signum": int(signum),
+        "reason": reason,
+        "created_at": time.time(),
+        "sender_pid": os.getpid(),
+        "sender_command": get_process_command(os.getpid()),
+        "target_command": get_process_command(target_pid),
+    }
+    try:
+        write_json(get_shutdown_intent_path(), payload)
+    except OSError:
+        logger.warning("Failed to write shutdown intent for pid=%s", target_pid, exc_info=True)
+
+
+def consume_shutdown_intent(target_pid: int, signum: int = signal.SIGTERM) -> dict | None:
+    """Return and remove a valid managed shutdown intent for this process."""
+    path = get_shutdown_intent_path()
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        return None
+    try:
+        age = time.time() - float(payload.get("created_at", 0))
+        matches = (
+            payload.get("target_pid") == target_pid
+            and int(payload.get("signum", 0)) == int(signum)
+            and 0 <= age <= SHUTDOWN_INTENT_TTL_SECONDS
+        )
+    except (TypeError, ValueError):
+        matches = False
+    if not matches:
+        return None
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("Failed to remove consumed shutdown intent", exc_info=True)
+    return payload
+
+
+def shutdown_intent_required() -> bool:
+    return os.environ.get(SHUTDOWN_INTENT_ENV, "").lower() in {"1", "true", "yes"}
 
 
 def _pid_alive_windows(pid: int) -> bool:
@@ -274,6 +332,7 @@ def stop_pid(pid: int, timeout: float = 5) -> bool:
     if os.name == "nt":
         return _terminate_process_windows(pid, timeout=timeout)
 
+    write_shutdown_intent(pid, signum=signal.SIGTERM, reason="stop_pid")
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -395,6 +454,7 @@ def start_service():
             env={
                 **os.environ,
                 "VIBE_DISABLE_STDOUT_LOGGING": "1",
+                SHUTDOWN_INTENT_ENV: "1",
             },
         )
 

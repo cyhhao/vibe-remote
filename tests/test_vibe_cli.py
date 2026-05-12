@@ -368,6 +368,7 @@ def test_restart_parser_rejects_non_finite_delay_seconds(raw_value):
 def test_stop_pid_handles_process_lookup_race(monkeypatch):
     monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(runtime, "write_shutdown_intent", lambda *args, **kwargs: None)
 
     def _kill(pid, sig):
         raise ProcessLookupError()
@@ -380,6 +381,7 @@ def test_stop_pid_handles_process_lookup_race(monkeypatch):
 def test_stop_pid_handles_permission_error(monkeypatch):
     monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(runtime, "write_shutdown_intent", lambda *args, **kwargs: None)
 
     def _kill(pid, sig):
         raise PermissionError()
@@ -387,3 +389,54 @@ def test_stop_pid_handles_permission_error(monkeypatch):
     monkeypatch.setattr(runtime.os, "kill", _kill)
 
     assert runtime.stop_pid(12345) is False
+
+
+def test_stop_pid_writes_shutdown_intent_before_sigterm(monkeypatch):
+    monkeypatch.setattr(runtime.os, "name", "posix", raising=False)
+    alive_results = iter([True, False])
+    monkeypatch.setattr(runtime, "pid_alive", lambda pid: next(alive_results))
+    calls = []
+
+    def _kill(pid, sig):
+        calls.append((pid, sig))
+
+    monkeypatch.setattr(runtime.os, "kill", _kill)
+    monkeypatch.setattr(runtime.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(runtime, "write_shutdown_intent", lambda *args, **kwargs: calls.append(("intent", args, kwargs)))
+
+    assert runtime.stop_pid(12345) is True
+    assert calls[0][0] == "intent"
+    assert calls[0][1] == (12345,)
+    assert calls[0][2]["signum"] == signal.SIGTERM
+    assert calls[1] == (12345, signal.SIGTERM)
+
+
+def test_shutdown_intent_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    monkeypatch.setattr(runtime.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(runtime, "get_process_command", lambda pid: f"cmd-{pid}")
+
+    runtime.write_shutdown_intent(12345, reason="test")
+    payload = runtime.consume_shutdown_intent(12345, signal.SIGTERM)
+
+    assert payload is not None
+    assert payload["target_pid"] == 12345
+    assert payload["sender_pid"] == os.getpid()
+    assert not runtime.get_shutdown_intent_path().exists()
+
+
+def test_shutdown_intent_rejects_stale_payload(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    monkeypatch.setattr(runtime.time, "time", lambda: 1000.0)
+    runtime.write_json(
+        runtime.get_shutdown_intent_path(),
+        {
+            "target_pid": 12345,
+            "signum": signal.SIGTERM,
+            "created_at": 900.0,
+        },
+    )
+
+    assert runtime.consume_shutdown_intent(12345, signal.SIGTERM) is None
