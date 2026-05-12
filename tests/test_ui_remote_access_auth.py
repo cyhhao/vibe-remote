@@ -1329,6 +1329,36 @@ def test_setup_host_ipv6_wildcard_allows_actual_private_interface_host(monkeypat
     assert response.status_code == 200
 
 
+def test_setup_host_ipv6_wildcard_allows_tailscale_ula_interface_host(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "::")
+    _mock_interface(monkeypatch, "fd7a:115c:a1e0::5", 64, name="tailscale0")
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://[fd7a:115c:a1e0::5]:5123",
+        environ_base={"REMOTE_ADDR": "fd7a:115c:a1e0::20"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_ipv6_wildcard_does_not_trust_bridge_in_tailscale_ula_range(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "::")
+    _mock_interface(monkeypatch, "fd7a:115c:a1e0::5", 64, name="docker0")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://[fd7a:115c:a1e0::5]:5123",
+        environ_base={"REMOTE_ADDR": "fd7a:115c:a1e0::20"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
 def test_setup_host_with_cloudflare_metadata_is_not_local(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "192.168.2.3")

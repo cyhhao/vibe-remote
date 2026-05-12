@@ -259,6 +259,7 @@ def _is_loopback_host(value: str | None) -> bool:
 # such as Tailscale assign 100.x.y.z addresses that should be trusted as local
 # setup-host peers when the request's Host header otherwise matches.
 _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+_TAILSCALE_IPV6_ADDRESS_SPACE = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 
 # Networks that are scoped by the overlay/link itself rather than by the
 # kernel's interface routing, so peers anywhere in the block are trusted
@@ -492,7 +493,12 @@ def _is_wildcard_setup_host(setup_host: str) -> bool:
 
 def _allows_wildcard_setup_host_trust(interface_name: str, address: ipaddress._BaseAddress) -> bool:
     normalized_name = interface_name.lower()
-    if isinstance(address, ipaddress.IPv4Address) and address in _SHARED_ADDRESS_SPACE:
+    if (
+        isinstance(address, ipaddress.IPv4Address)
+        and address in _SHARED_ADDRESS_SPACE
+        or isinstance(address, ipaddress.IPv6Address)
+        and address in _TAILSCALE_IPV6_ADDRESS_SPACE
+    ):
         return normalized_name.startswith(_WILDCARD_TRUST_OVERLAY_INTERFACE_PREFIXES)
     return normalized_name.startswith(_WILDCARD_TRUST_LAN_INTERFACE_PREFIXES)
 
