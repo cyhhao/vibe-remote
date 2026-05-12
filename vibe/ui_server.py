@@ -301,12 +301,26 @@ _TAILSCALE_IP_CACHE_TTL_SECONDS = 30.0
 _TAILSCALE_IP_CACHE: tuple[float, frozenset[ipaddress._BaseAddress]] | None = None
 _TAILSCALE_PEER_CACHE_TTL_SECONDS = 30.0
 _TAILSCALE_PEER_CACHE: dict[ipaddress._BaseAddress, tuple[float, bool]] = {}
+_CONTAINER_CGROUP_MARKERS = ("docker", "kubepods", "containerd", "libpod", "podman")
 
 
 def _is_private_address(address: ipaddress._BaseAddress) -> bool:
     if address.is_loopback or address.is_private or address.is_link_local:
         return True
     return isinstance(address, ipaddress.IPv4Address) and address in _SHARED_ADDRESS_SPACE
+
+
+def _is_containerized_runtime() -> bool:
+    if Path("/.dockerenv").exists() or Path("/run/.containerenv").exists():
+        return True
+    for cgroup_path in (Path("/proc/self/cgroup"), Path("/proc/1/cgroup")):
+        try:
+            cgroup = cgroup_path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        if any(marker in cgroup for marker in _CONTAINER_CGROUP_MARKERS):
+            return True
+    return False
 
 
 def _is_private_peer() -> bool:
@@ -648,6 +662,8 @@ def _allows_wildcard_setup_host_trust(interface_name: str, address: ipaddress._B
             return True
         if normalized_name.startswith(_TAILSCALE_UTUN_INTERFACE_PREFIXES):
             return address in _tailscale_local_addresses()
+        return False
+    if _is_containerized_runtime():
         return False
     return normalized_name.startswith(_WILDCARD_TRUST_LAN_INTERFACE_PREFIXES)
 

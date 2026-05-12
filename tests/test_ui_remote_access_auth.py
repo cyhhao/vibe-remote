@@ -1168,6 +1168,7 @@ def test_setup_host_mismatched_host_header_is_not_local(monkeypatch, tmp_path):
 
 def test_setup_host_wildcard_allows_actual_lan_interface_host(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setattr(ui_server, "_is_containerized_runtime", lambda: False)
     _save_config_with_setup_host(tmp_path, "0.0.0.0")
     _mock_interface(monkeypatch, "192.168.2.3", 24)
 
@@ -1178,6 +1179,38 @@ def test_setup_host_wildcard_allows_actual_lan_interface_host(monkeypatch, tmp_p
     )
 
     assert response.status_code == 200
+
+
+def test_setup_host_wildcard_allows_bare_metal_eth_lan_interface(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setattr(ui_server, "_is_containerized_runtime", lambda: False)
+    _save_config_with_setup_host(tmp_path, "0.0.0.0")
+    _mock_interface(monkeypatch, "192.168.2.3", 24, name="eth0")
+
+    response = app.test_client().get(
+        "/health",
+        base_url="http://192.168.2.3:5123",
+        environ_base={"REMOTE_ADDR": "192.168.2.5"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_setup_host_wildcard_does_not_trust_container_eth_interface(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setattr(ui_server, "_is_containerized_runtime", lambda: True)
+    _save_config_with_setup_host(tmp_path, "0.0.0.0")
+    _mock_interface(monkeypatch, "192.168.2.3", 24, name="eth0")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://192.168.2.3:5123",
+        environ_base={"REMOTE_ADDR": "192.168.2.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
 def test_setup_host_wildcard_does_not_trust_unconfigured_lan_host(monkeypatch, tmp_path):
@@ -1398,6 +1431,7 @@ def test_setup_host_wildcard_does_not_trust_unconfigured_tailscale_host(monkeypa
 
 def test_setup_host_ipv6_wildcard_allows_actual_private_interface_host(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    monkeypatch.setattr(ui_server, "_is_containerized_runtime", lambda: False)
     _save_config_with_setup_host(tmp_path, "::")
     _mock_interface(monkeypatch, "fd00::5", 64)
 
