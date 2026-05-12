@@ -50,6 +50,10 @@ class OpenCodeCompatConfig:
     port: int
     request_timeout_seconds: int
     error_retry_limit: int = DEFAULT_OPENCODE_ERROR_RETRY_LIMIT  # Max retries on LLM stream errors (0 = no retry)
+    # User's saved default provider from Settings → Backends → OpenCode.
+    # Used as the ``providerID`` when a routed model string has no ``provider/``
+    # prefix (most agents.opencode model entries are bare model IDs).
+    default_provider: Optional[str] = None
 
 
 @dataclass
@@ -88,6 +92,13 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         default_model=v2.agents.claude.default_model,
         cli_path=v2.agents.claude.cli_path,
         idle_timeout_seconds=v2.agents.claude.idle_timeout_seconds,
+        # Forward V2Config auth fields so ``session_handler`` can inject the
+        # right ``ANTHROPIC_API_KEY`` / ``ANTHROPIC_BASE_URL`` env vars when
+        # launching the Claude CLI; without this the runtime ignores values
+        # saved via ``/backend/claude/auth`` and falls back to ambient env.
+        auth_mode=v2.agents.claude.auth_mode,
+        api_key=v2.agents.claude.api_key,
+        base_url=v2.agents.claude.base_url,
     )
     codex = None
     if v2.agents.codex.enabled:
@@ -106,6 +117,9 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
             port=4096,
             request_timeout_seconds=60,
             error_retry_limit=v2.agents.opencode.error_retry_limit,
+            # Surface the user's saved provider choice so the OpenCode agent
+            # adapter can prepend it as ``providerID`` for bare-model strings.
+            default_provider=v2.agents.opencode.default_provider,
         )
     slack = SlackConfig(**v2.slack.__dict__)
     return AppCompatConfig(

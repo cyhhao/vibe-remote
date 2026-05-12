@@ -210,6 +210,14 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 parts = model_str.split("/", 1)
                 if len(parts) == 2:
                     model_dict = {"providerID": parts[0], "modelID": parts[1]}
+                else:
+                    # Bare model id (no ``provider/`` prefix): fall back to the
+                    # saved Settings → Backends → OpenCode default provider so
+                    # the user's chosen provider actually drives routing.
+                    opencode_cfg = getattr(self.controller.config, "opencode", None)
+                    default_provider = getattr(opencode_cfg, "default_provider", None)
+                    if default_provider:
+                        model_dict = {"providerID": default_provider, "modelID": model_str}
 
             reasoning_effort = override_reasoning
             if not reasoning_effort:
