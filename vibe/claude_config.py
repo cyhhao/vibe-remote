@@ -136,12 +136,21 @@ def read_claude_auth_state(home: Path | None = None) -> Dict[str, Any]:
 
 
 def read_claude_api_key_from_settings(home: Path | None = None) -> Optional[str]:
-    """Return whichever Anthropic key ``settings.json`` has, if any.
+    """Return ``settings.json``'s ``ANTHROPIC_API_KEY`` if it has one.
 
     Used as a fallback when the UI sends a base-URL-only update: V2Config
     may be stale (older installs lacked ``api_key``), but the CLI still
     picks up whatever is in ``settings.json``. Prefer that over silently
     blanking the live key.
+
+    Restricted to ``ANTHROPIC_API_KEY`` on purpose. ``ANTHROPIC_AUTH_TOKEN``
+    is the bearer-token relay variant — Claude Code applies it from
+    ``settings.json`` directly, and our ``api_key`` field always injects
+    ``ANTHROPIC_API_KEY`` at launch (see ``session_handler``). Pulling an
+    auth-token value into V2Config.api_key would silently switch the
+    header semantics on the next save and break bearer-token gateways.
+    Bearer-token users should rely on the existing settings.json path or
+    re-enter their key into the form.
     """
     env_block = read_claude_settings_env(home)
-    return env_block.get("ANTHROPIC_API_KEY") or env_block.get("ANTHROPIC_AUTH_TOKEN")
+    return env_block.get("ANTHROPIC_API_KEY")
