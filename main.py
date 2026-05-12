@@ -84,6 +84,11 @@ def main():
         
         logger.info("Starting vibe-remote service...")
         logger.info(f"Working directory: {config.runtime.default_cwd}")
+        logger.info(
+            "Shutdown intent guard enabled=%s env=%s",
+            shutdown_intent_required(),
+            os.environ.get("VIBE_REQUIRE_SHUTDOWN_INTENT"),
+        )
         log_process_snapshot(logger, "service-start")
         report = prepare_sqlite_state(config)
         logger.info(
@@ -106,8 +111,18 @@ def main():
                 return
             shutdown_initiated = True
             try:
-                logger.info(f"Received signal {signum}, shutting down...")
-                log_process_snapshot(logger, f"signal-{signum}")
+                logger.info("Received signal %s", signum)
+                log_process_snapshot(
+                    logger,
+                    f"signal-{signum}",
+                    related_terms=(
+                        "codex app-server",
+                        "/codex ",
+                        " claude",
+                        "/vibe restart",
+                        ".local/bin/vibe restart",
+                    ),
+                )
                 if signum == signal.SIGTERM and shutdown_intent_required():
                     intent = consume_shutdown_intent(os.getpid(), signum)
                     if intent is None:
@@ -118,6 +133,7 @@ def main():
                         shutdown_initiated = False
                         return
                     logger.info("Accepted managed shutdown intent: %s", intent)
+                logger.info("Shutting down after signal %s", signum)
             except Exception:
                 pass
             try:

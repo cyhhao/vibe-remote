@@ -155,6 +155,7 @@ def write_shutdown_intent(
     }
     try:
         write_json(get_shutdown_intent_path(), payload)
+        logger.info("Recorded managed shutdown intent: %s", payload)
     except OSError:
         logger.warning("Failed to write shutdown intent for pid=%s", target_pid, exc_info=True)
 
@@ -334,6 +335,11 @@ def stop_pid(pid: int, timeout: float = 5) -> bool:
 
     write_shutdown_intent(pid, signum=signal.SIGTERM, reason="stop_pid")
     try:
+        logger.info(
+            "Sending managed SIGTERM to pid=%s command=%s",
+            pid,
+            get_process_command(pid),
+        )
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         return False
@@ -345,6 +351,7 @@ def stop_pid(pid: int, timeout: float = 5) -> bool:
             return True
         time.sleep(0.2)
     try:
+        logger.warning("Sending managed SIGKILL to pid=%s command=%s", pid, get_process_command(pid))
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         return True

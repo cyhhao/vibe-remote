@@ -339,7 +339,7 @@ class CodexTransport:
                 if not line:
                     break
                 decoded = line.decode(errors="ignore").rstrip()
-                logger.debug("Codex stderr: %s", decoded)
+                logger.info("Codex stderr: %s", decoded[:2000])
         except asyncio.CancelledError:
             return
         except Exception:
