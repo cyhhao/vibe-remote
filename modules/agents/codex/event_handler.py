@@ -361,8 +361,6 @@ class CodexEventHandler:
         snapshot = self._image_snapshots_by_turn.pop(turn_id, None)
         if snapshot is None:
             return None
-        if not self._reply_enhancements_enabled():
-            return None
         thread_id, before = snapshot
 
         current = self._list_generated_images(thread_id)
@@ -418,11 +416,6 @@ class CodexEventHandler:
             return None
         codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
         return codex_home / "generated_images" / thread_id
-
-    def _reply_enhancements_enabled(self) -> bool:
-        controller = getattr(self._agent, "controller", None)
-        config = getattr(controller, "config", None)
-        return getattr(config, "reply_enhancements", True)
 
     def _extract_thread_id(self, params: dict[str, Any]) -> str:
         thread_id = params.get("threadId", "")

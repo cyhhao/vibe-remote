@@ -269,7 +269,7 @@ class V2Config:
     ack_mode: str = "typing"
     show_duration: bool = False  # Show task duration in result messages
     include_user_info: bool = True  # Prepend user identity to agent messages
-    reply_enhancements: bool = True  # Enable file sending & quick-reply buttons
+    reply_enhancements: bool = True  # Enable quick-reply buttons
     language: str = "en"  # Global language setting (see vibe/i18n)
 
     @classmethod

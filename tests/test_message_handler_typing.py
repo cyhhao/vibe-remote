@@ -421,7 +421,7 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
         _, request = controller.agent_service.requests[0]
         self.assertEqual(request.subagent_name, "reviewer")
         self.assertEqual(request.subagent_key, "reviewer")
-        self.assertEqual(request.message, "[Agent Identity] Slack bot mention: <@U_BOT>\ncheck this")
+        self.assertEqual(request.message, "check this")
         self.assertEqual(controller.im_client.reactions, [("C1", "m1", "👀"), ("C1", "m1", "🤖")])
 
     async def test_scheduled_turn_returns_error_string_after_notifying_im(self):

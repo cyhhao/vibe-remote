@@ -1,3 +1,4 @@
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -6,7 +7,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.message_dispatcher import ConsolidatedMessageDispatcher
-from core.reply_enhancer import build_reply_enhancements_prompt, process_reply
+from core.reply_enhancer import process_reply
+from core.system_prompt_injection import build_system_prompt_injection
 from config import paths
 from modules.im import MessageContext
 
@@ -74,7 +76,7 @@ class _StubController:
 class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
     def test_prompt_can_exclude_quick_replies(self):
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
-            prompt = build_reply_enhancements_prompt(include_quick_replies=False)
+            prompt = build_system_prompt_injection(include_quick_replies=False)
 
         self.assertIn("## Silent replies", prompt)
         self.assertIn("<silent>reason not shown to the user</silent>", prompt)
@@ -90,6 +92,21 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("`/tmp/user_preferences.md`", prompt)
         self.assertIn("`<platform>/<user_id>`", prompt)
 
+    def test_prompt_can_include_codex_generated_image_instructions(self):
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": "/Users/test/.codex"}),
+            patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")),
+        ):
+            prompt = build_system_prompt_injection(
+                include_quick_replies=False,
+                include_codex_generated_images=True,
+            )
+
+        self.assertIn("### Codex-generated images", prompt)
+        self.assertIn("If you generate an image with Codex", prompt)
+        self.assertIn("file:///Users/test/.codex/generated_images/thread-id/image-file.png", prompt)
+        self.assertIn("Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`", prompt)
+
     def test_process_reply_strips_silent_blocks_before_enhancements(self):
         reply = process_reply(
             "Visible\n<silent>skip [secret](file:///tmp/secret.txt)\n---\n[Hidden]</silent>\nDone"
@@ -97,6 +114,16 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(reply.text, "Visible\n\nDone")
         self.assertEqual(reply.files, [])
+        self.assertEqual(reply.buttons, [])
+
+    def test_process_reply_can_disable_quick_reply_button_parsing_only(self):
+        reply = process_reply(
+            "Report [file](file:///tmp/report.txt)\n\n---\n[Continue] | [Stop]",
+            include_quick_replies=False,
+        )
+
+        self.assertEqual(reply.text, "Report file\n\n---\n[Continue] | [Stop]")
+        self.assertEqual([file.path for file in reply.files], ["/tmp/report.txt"])
         self.assertEqual(reply.buttons, [])
 
     def test_prompt_includes_task_watch_and_hook_usage_with_thread_default_session_key(self):
@@ -109,7 +136,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
-            prompt = build_reply_enhancements_prompt(include_quick_replies=True, context=context)
+            prompt = build_system_prompt_injection(include_quick_replies=True, context=context)
 
         self.assertIn("## 3. Scheduled tasks, watches, and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
@@ -165,7 +192,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
-            prompt = build_reply_enhancements_prompt(
+            prompt = build_system_prompt_injection(
                 include_quick_replies=True,
                 context=context,
                 fallback_platform="slack",
@@ -184,7 +211,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
-            prompt = build_reply_enhancements_prompt(
+            prompt = build_system_prompt_injection(
                 include_quick_replies=True,
                 context=context,
                 fallback_platform="slack",

@@ -488,7 +488,7 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
         assert agent.emit_result_message.await_args.args[1] is None
         assert handler._image_snapshots_by_turn == {}
 
-    async def test_generated_image_fallback_respects_reply_enhancements_setting(self):
+    async def test_generated_image_fallback_ignores_quick_reply_button_setting(self):
         agent = _StubAgent()
         agent.controller.config.reply_enhancements = False
         handler = CodexEventHandler(agent)
@@ -512,7 +512,8 @@ class CodexEventHandlerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         agent.emit_result_message.assert_awaited_once()
-        assert agent.emit_result_message.await_args.args[1] is None
+        result = agent.emit_result_message.await_args.args[1]
+        assert "![generated image](" in result
 
     def test_generated_images_dir_rejects_dot_segment_thread_ids(self):
         agent = _StubAgent()
