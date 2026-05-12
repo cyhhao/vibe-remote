@@ -69,6 +69,33 @@ def prepare_sqlite_state(config: V2Config):
     return ensure_sqlite_state(primary_platform=config.platform)
 
 
+def _log_shutdown_signal(logger: logging.Logger, signum: int) -> None:
+    try:
+        logger.info(
+            "Received signal %s pid=%s ppid=%s pgid=%s sid=%s",
+            signum,
+            os.getpid(),
+            os.getppid(),
+            os.getpgid(0),
+            os.getsid(0),
+        )
+    except Exception:
+        logger.info("Received signal %s", signum)
+
+
+def _log_shutdown_intent(logger: logging.Logger, signum: int) -> None:
+    if signum != signal.SIGTERM or not shutdown_intent_required():
+        return
+    intent = consume_shutdown_intent(os.getpid(), signum)
+    if intent is None:
+        logger.warning(
+            "No managed shutdown intent found for SIGTERM pid=%s; honoring signal",
+            os.getpid(),
+        )
+        return
+    logger.info("Accepted managed shutdown intent: %s", intent)
+
+
 def main():
     """Main entry point"""
     try:
@@ -85,7 +112,7 @@ def main():
         logger.info("Starting vibe-remote service...")
         logger.info(f"Working directory: {config.runtime.default_cwd}")
         logger.info(
-            "Shutdown intent guard enabled=%s env=%s",
+            "Shutdown intent diagnostics enabled=%s env=%s",
             shutdown_intent_required(),
             os.environ.get("VIBE_REQUIRE_SHUTDOWN_INTENT"),
         )
@@ -111,28 +138,8 @@ def main():
                 return
             shutdown_initiated = True
             try:
-                logger.info("Received signal %s", signum)
-                log_process_snapshot(
-                    logger,
-                    f"signal-{signum}",
-                    related_terms=(
-                        "codex app-server",
-                        "/codex ",
-                        " claude",
-                        "/vibe restart",
-                        ".local/bin/vibe restart",
-                    ),
-                )
-                if signum == signal.SIGTERM and shutdown_intent_required():
-                    intent = consume_shutdown_intent(os.getpid(), signum)
-                    if intent is None:
-                        logger.warning(
-                            "Ignoring unmanaged SIGTERM for pid=%s because no valid shutdown intent was present",
-                            os.getpid(),
-                        )
-                        shutdown_initiated = False
-                        return
-                    logger.info("Accepted managed shutdown intent: %s", intent)
+                _log_shutdown_signal(logger, signum)
+                _log_shutdown_intent(logger, signum)
                 logger.info("Shutting down after signal %s", signum)
             except Exception:
                 pass

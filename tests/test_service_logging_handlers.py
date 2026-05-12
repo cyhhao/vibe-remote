@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import signal
 from pathlib import Path
 
 import main
@@ -52,3 +53,27 @@ def test_start_service_disables_stdout_logging_for_background_process(monkeypatc
     assert captured["stderr_name"] == "service_stderr.log"
     assert isinstance(captured["env"], dict)
     assert captured["env"]["VIBE_DISABLE_STDOUT_LOGGING"] == "1"
+
+
+def test_shutdown_intent_missing_is_logged_not_ignored(monkeypatch, caplog):
+    monkeypatch.setattr(main, "shutdown_intent_required", lambda: True)
+    monkeypatch.setattr(main, "consume_shutdown_intent", lambda pid, signum: None)
+
+    logger = logging.getLogger("test.shutdown")
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        main._log_shutdown_intent(logger, signal.SIGTERM)
+
+    assert "honoring signal" in caplog.text
+
+
+def test_shutdown_signal_logging_is_lightweight(monkeypatch, caplog):
+    monkeypatch.setattr(main.os, "getpid", lambda: 123)
+    monkeypatch.setattr(main.os, "getppid", lambda: 1)
+    monkeypatch.setattr(main.os, "getpgid", lambda pid: 123)
+    monkeypatch.setattr(main.os, "getsid", lambda pid: 123)
+
+    logger = logging.getLogger("test.shutdown")
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        main._log_shutdown_signal(logger, signal.SIGTERM)
+
+    assert "Received signal 15 pid=123 ppid=1 pgid=123 sid=123" in caplog.text

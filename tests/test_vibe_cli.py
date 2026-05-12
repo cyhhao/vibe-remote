@@ -431,9 +431,12 @@ def test_start_ui_replaces_stale_live_pid_when_health_check_fails(tmp_path, monk
     monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
     runtime.ensure_dirs()
     paths.get_runtime_ui_pid_path().write_text("12345", encoding="utf-8")
+    stopped = []
 
     monkeypatch.setattr(runtime, "pid_alive", lambda pid: pid == 12345)
     monkeypatch.setattr(runtime, "ui_server_healthy", lambda host, port: False)
+    monkeypatch.setattr(runtime, "stop_pid", lambda pid: stopped.append(pid) or True)
+    monkeypatch.setattr(runtime, "wait_for_ui_server", lambda host, port: True)
 
     def fake_spawn(args, pid_path, stdout_name, stderr_name, env=None):
         assert args[-1] == "from vibe.ui_server import run_ui_server; run_ui_server('127.0.0.1', 5123)"
@@ -443,7 +446,20 @@ def test_start_ui_replaces_stale_live_pid_when_health_check_fails(tmp_path, monk
     monkeypatch.setattr(runtime, "spawn_background", fake_spawn)
 
     assert runtime.start_ui("127.0.0.1", 5123) == 67890
+    assert stopped == [12345]
     assert paths.get_runtime_ui_pid_path().read_text(encoding="utf-8") == "67890"
+
+
+def test_start_ui_waits_for_replacement_health(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
+    runtime.ensure_dirs()
+    waited = []
+
+    monkeypatch.setattr(runtime, "wait_for_ui_server", lambda host, port: waited.append((host, port)) or True)
+    monkeypatch.setattr(runtime, "spawn_background", lambda *args, **kwargs: 67890)
+
+    assert runtime.start_ui("127.0.0.1", 5123) == 67890
+    assert waited == [("127.0.0.1", 5123)]
 
 
 def test_ui_health_url_uses_loopback_for_wildcard_bind():

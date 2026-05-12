@@ -489,6 +489,15 @@ def ui_server_healthy(host: str, port: int, timeout: float = 0.5) -> bool:
         return False
 
 
+def wait_for_ui_server(host: str, port: int, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if ui_server_healthy(host, port):
+            return True
+        time.sleep(0.1)
+    return ui_server_healthy(host, port)
+
+
 def resolve_localhost_family() -> str:
     """Return the loopback family ``localhost`` actually maps to on this host.
 
@@ -559,15 +568,25 @@ def start_ui(host, port):
             existing_pid = 0
         if existing_pid and pid_alive(existing_pid) and ui_server_healthy(host, port):
             return existing_pid
+        if existing_pid and pid_alive(existing_pid):
+            logger.warning(
+                "Stopping stale UI process pid=%s because health check failed for %s",
+                existing_pid,
+                _ui_health_url(host, port),
+            )
+            stop_pid(existing_pid)
         pid_path.unlink(missing_ok=True)
 
     command = "from vibe.ui_server import run_ui_server; run_ui_server('{}', {})".format(host, port)
-    return spawn_background(
+    pid = spawn_background(
         [sys.executable, "-c", command],
         pid_path,
         "ui_stdout.log",
         "ui_stderr.log",
     )
+    if not wait_for_ui_server(host, port):
+        logger.warning("Started UI pid=%s but health check did not pass for %s", pid, _ui_health_url(host, port))
+    return pid
 
 
 def stop_service():
