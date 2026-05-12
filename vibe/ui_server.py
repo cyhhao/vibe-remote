@@ -13,7 +13,7 @@ import socket
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote, unquote, urlparse, urlsplit, urlunsplit
 
 import psutil
@@ -273,6 +273,16 @@ _OVERLAY_TRUST_NETWORKS_V4 = (
     ipaddress.IPv4Network("169.254.0.0/16"),
 )
 _OVERLAY_TRUST_NETWORKS_V6 = (ipaddress.IPv6Network("fe80::/10"),)
+_WILDCARD_TRUST_EXCLUDED_INTERFACE_PREFIXES = (
+    "br-",
+    "bridge",
+    "docker",
+    "podman",
+    "vboxnet",
+    "veth",
+    "virbr",
+    "vmnet",
+)
 
 
 def _is_private_address(address: ipaddress._BaseAddress) -> bool:
@@ -297,7 +307,10 @@ def _is_private_peer() -> bool:
     return False
 
 
-def _local_interface_network(setup_address: ipaddress._BaseAddress) -> ipaddress._BaseNetwork | None:
+def _local_interface_network(
+    setup_address: ipaddress._BaseAddress,
+    interface_filter: Callable[[str, ipaddress._BaseAddress], bool] | None = None,
+) -> ipaddress._BaseNetwork | None:
     """Return the network ``setup_host`` is configured on locally.
 
     Reads the interface's actual netmask via ``psutil.net_if_addrs`` so
@@ -315,7 +328,7 @@ def _local_interface_network(setup_address: ipaddress._BaseAddress) -> ipaddress
     except Exception:
         return None
     target_family = socket.AF_INET if setup_address.version == 4 else socket.AF_INET6
-    for addrs in interfaces.values():
+    for interface_name, addrs in interfaces.items():
         for snic in addrs:
             if snic.family != target_family:
                 continue
@@ -325,6 +338,8 @@ def _local_interface_network(setup_address: ipaddress._BaseAddress) -> ipaddress
             except ValueError:
                 continue
             if addr != setup_address:
+                continue
+            if interface_filter is not None and not interface_filter(interface_name, addr):
                 continue
             netmask = snic.netmask
             if not netmask:
@@ -471,6 +486,14 @@ def _is_wildcard_setup_host(setup_host: str) -> bool:
     return setup_host in {"0.0.0.0", "::", "*"}
 
 
+def _allows_wildcard_setup_host_trust(interface_name: str, address: ipaddress._BaseAddress) -> bool:
+    if isinstance(address, ipaddress.IPv4Address) and address in _SHARED_ADDRESS_SPACE:
+        return True
+
+    normalized_name = interface_name.lower()
+    return not normalized_name.startswith(_WILDCARD_TRUST_EXCLUDED_INTERFACE_PREFIXES)
+
+
 def _is_wildcard_setup_host_request(config: V2Config | None) -> bool:
     """Treat wildcard binds as local only through an actual private interface.
 
@@ -493,7 +516,7 @@ def _is_wildcard_setup_host_request(config: V2Config | None) -> bool:
         return False
     if not _is_private_address(host_address):
         return False
-    if _local_interface_network(host_address) is None:
+    if _local_interface_network(host_address, interface_filter=_allows_wildcard_setup_host_trust) is None:
         return False
     if _has_forwarded_metadata():
         return False

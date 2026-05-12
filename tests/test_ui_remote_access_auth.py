@@ -16,7 +16,7 @@ from vibe.ui_server import app
 _FakeSnicaddr = namedtuple("snicaddr", ["family", "address", "netmask", "broadcast", "ptp"])
 
 
-def _mock_interface(monkeypatch, ip: str, prefix: int) -> None:
+def _mock_interface(monkeypatch, ip: str, prefix: int, name: str = "en0") -> None:
     """Make ``psutil.net_if_addrs()`` report ``ip`` with the given prefix
     length so ``_local_interface_network`` returns the expected subnet.
     Tests that exercise the RFC1918/ULA trust path need this because the
@@ -30,7 +30,7 @@ def _mock_interface(monkeypatch, ip: str, prefix: int) -> None:
         family = socket.AF_INET6
         netmask = str(ipaddress.IPv6Network(f"::/{prefix}").netmask)
     snic = _FakeSnicaddr(family=family, address=ip, netmask=netmask, broadcast=None, ptp=None)
-    monkeypatch.setattr("vibe.ui_server.psutil.net_if_addrs", lambda: {"en0": [snic]})
+    monkeypatch.setattr("vibe.ui_server.psutil.net_if_addrs", lambda: {name: [snic]})
 
 
 def _mock_no_interfaces(monkeypatch) -> None:
@@ -1165,6 +1165,22 @@ def test_setup_host_wildcard_does_not_trust_unconfigured_lan_host(monkeypatch, t
         "/dashboard",
         base_url="http://192.168.2.3:5123",
         environ_base={"REMOTE_ADDR": "192.168.2.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_wildcard_does_not_trust_docker_bridge_interface(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "0.0.0.0")
+    _mock_interface(monkeypatch, "172.17.0.1", 16, name="docker0")
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://172.17.0.1:5123",
+        environ_base={"REMOTE_ADDR": "172.17.0.2"},
         follow_redirects=False,
     )
 
