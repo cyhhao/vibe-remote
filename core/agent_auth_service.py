@@ -1438,16 +1438,24 @@ class AgentAuthService:
             except Exception:
                 pass
         else:
-            # Codex single-shot mode. ``-q`` would silence the rendered
-            # response — we want stdout so the UI can show a one-line
-            # excerpt as proof the round-trip succeeded.
-            cmd = [binary, "exec", prompt]
+            # Codex single-shot mode. ``--skip-git-repo-check`` bypasses
+            # Codex's per-project trust gate — the UI server's cwd is
+            # never in the user's trusted-projects list, so without it
+            # Codex bails before talking to the API. ``-q`` would silence
+            # the rendered response; we want stdout so the UI can show a
+            # one-line excerpt as proof the round-trip succeeded.
+            cmd = [binary, "exec", "--skip-git-repo-check", prompt]
             env_override = dict(os.environ)
 
         started = time.monotonic()
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
+                # Close stdin explicitly — Codex's ``exec`` mode reads a
+                # second prompt from stdin when the parent's stdin is
+                # open (e.g. ``codex exec "Hi" < /dev/null`` works fine,
+                # but inheriting an open stdin makes it block forever).
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env_override,
