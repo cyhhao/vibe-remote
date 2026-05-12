@@ -600,9 +600,9 @@ def start_ui(host, port):
             existing_pid = int(pid_path.read_text(encoding="utf-8").strip())
         except Exception:
             existing_pid = 0
-        if existing_pid and pid_alive(existing_pid) and ui_server_healthy(host, port):
-            return existing_pid
         if existing_pid and pid_alive(existing_pid):
+            if _pid_matches_ui_server(existing_pid) and ui_server_healthy(host, port):
+                return existing_pid
             if _pid_matches_ui_server(existing_pid):
                 logger.warning(
                     "Stopping stale UI process pid=%s because health check failed for %s",
