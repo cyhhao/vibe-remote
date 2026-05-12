@@ -151,10 +151,13 @@ class OpenCodeConfig:
     default_model: Optional[str] = None
     default_reasoning_effort: Optional[str] = None
     error_retry_limit: int = DEFAULT_OPENCODE_ERROR_RETRY_LIMIT  # Max retries on LLM stream errors (0 = no retry)
-    # Provider chosen by default when starting a new session. The provider
-    # catalog itself lives in ~/.config/opencode/opencode.json (OpenCode's
-    # own state file); we only persist the user's UI-selected default here.
-    default_provider: str = "anthropic"
+    # Provider the user picked in Settings → Backends → OpenCode. The provider
+    # catalog itself lives in ~/.config/opencode/opencode.json (OpenCode's own
+    # state file). Stays ``None`` until the user explicitly chooses so legacy
+    # installs (e.g. Ollama/OpenAI users) keep falling back to OpenCode's own
+    # routing for bare-model strings instead of being silently rerouted to
+    # Anthropic on upgrade.
+    default_provider: Optional[str] = None
 
 
 @dataclass
