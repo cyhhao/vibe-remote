@@ -450,8 +450,15 @@ def _command_references_path(command: str | None, expected_path: Path) -> bool:
     return False
 
 
-def _pid_matches_service(pid: int) -> bool:
-    return _command_references_path(get_process_command(pid), get_service_main_path())
+def _pid_mismatches_service(pid: int) -> bool:
+    command = get_process_command(pid)
+    if not command:
+        logger.warning(
+            "Reusing existing service pid=%s because its command line could not be inspected",
+            pid,
+        )
+        return False
+    return not _command_references_path(command, get_service_main_path())
 
 
 def render_status():
@@ -473,7 +480,7 @@ def start_service():
             except Exception:
                 existing_pid = 0
             if existing_pid and pid_alive(existing_pid):
-                if _pid_matches_service(existing_pid):
+                if not _pid_mismatches_service(existing_pid):
                     return existing_pid
                 logger.warning(
                     "Ignoring stale service pid file pid=%s because it does not match the Vibe service",
