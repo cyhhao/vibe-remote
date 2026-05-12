@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -17,18 +16,6 @@ from modules.agents.codex.transport import CodexTransport
 from modules.agents.codex.turn_state import CodexTurnRegistry
 
 logger = logging.getLogger(__name__)
-
-def _codex_generated_image_prompt() -> str:
-    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser().resolve()
-    example_uri = (codex_home / "generated_images" / "thread-id" / "image-file.png").as_uri()
-    return (
-        "If you generate an image with Codex, include it in the final reply with Markdown image syntax, "
-        f"using a real file URI under the local Codex generated_images directory, for example: "
-        f"`![generated image]({example_uri})`. "
-        "Replace the example thread id and filename with the actual generated image path. "
-        "Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`; "
-        "if you cannot determine the real path, leave the final reply empty."
-    )
 
 
 class CodexAgent(BaseAgent):
@@ -624,16 +611,17 @@ class CodexAgent(BaseAgent):
         if agent_instructions:
             instruction_parts.append(agent_instructions)
 
-        if getattr(self.controller.config, "reply_enhancements", True):
-            from core.reply_enhancer import build_reply_enhancements_prompt
+        from core.system_prompt_injection import build_system_prompt_injection
 
-            instruction_parts.append(
-                build_reply_enhancements_prompt(
-                    include_quick_replies=platform != "wechat",
-                    context=request.context,
-                    fallback_platform=platform,
-                )
+        instruction_parts.append(
+            build_system_prompt_injection(
+                include_quick_replies=getattr(self.controller.config, "reply_enhancements", True)
+                and platform != "wechat",
+                include_codex_generated_images=True,
+                context=request.context,
+                fallback_platform=platform,
             )
+        )
 
         return "\n\n".join(part for part in instruction_parts if part) or None
 
@@ -701,7 +689,7 @@ class CodexAgent(BaseAgent):
         items: list[Dict[str, Any]] = []
 
         # Text input
-        message = self._build_turn_message(request.message)
+        message = request.message
         if request.files:
             # Append file info like Claude agent does
             file_lines = ["", "[User Attachments]"]
@@ -727,15 +715,6 @@ class CodexAgent(BaseAgent):
             items.insert(0, {"type": "text", "text": message})
 
         return items
-
-    def _build_turn_message(self, message: str) -> str:
-        if not message:
-            return message
-        controller = getattr(self, "controller", None)
-        config = getattr(controller, "config", None)
-        if not getattr(config, "reply_enhancements", True):
-            return message
-        return f"{_codex_generated_image_prompt()}\n\n{message}"
 
     # ------------------------------------------------------------------
     # Callback handlers (wired to transport)

@@ -236,16 +236,14 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 or self.controller.config.platform
             )
 
-            # Inject reply-enhancement instructions via the system field (appended by OpenCode)
-            reply_system: Optional[str] = None
-            if getattr(self.controller.config, "reply_enhancements", True):
-                from core.reply_enhancer import build_reply_enhancements_prompt
+            from core.system_prompt_injection import build_system_prompt_injection
 
-                reply_system = build_reply_enhancements_prompt(
-                    include_quick_replies=platform != "wechat",
-                    context=request.context,
-                    fallback_platform=platform,
-                )
+            system_prompt_injection = build_system_prompt_injection(
+                include_quick_replies=getattr(self.controller.config, "reply_enhancements", True)
+                and platform != "wechat",
+                context=request.context,
+                fallback_platform=platform,
+            )
 
             request_tools = {"question": False} if platform == "wechat" else None
 
@@ -256,7 +254,7 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 agent=agent_to_use,
                 model=model_dict,
                 reasoning_effort=reasoning_effort,
-                system=reply_system,
+                system=system_prompt_injection,
                 tools=request_tools,
             )
             await server.mark_run_active(session_id)

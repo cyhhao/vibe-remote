@@ -779,14 +779,13 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         thread_id = await agent._start_thread(transport, request)
 
         self.assertEqual(thread_id, "thread-1")
-        transport.send_request.assert_awaited_once_with(
-            "thread/start",
-            {
-                "cwd": "/tmp/work",
-                "approvalPolicy": "never",
-                "sandbox": "danger-full-access",
-            },
-        )
+        method, params = transport.send_request.await_args.args
+        self.assertEqual(method, "thread/start")
+        self.assertEqual(params["cwd"], "/tmp/work")
+        self.assertEqual(params["approvalPolicy"], "never")
+        self.assertEqual(params["sandbox"], "danger-full-access")
+        self.assertIn("# Vibe Remote", params["developerInstructions"])
+        self.assertNotIn("## 2. Quick-reply buttons", params["developerInstructions"])
 
     async def test_start_thread_includes_codex_agent_developer_instructions(self):
         agent = object.__new__(CodexAgent)
@@ -824,17 +823,16 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             await agent._start_thread(transport, request)
 
         load_subagent.assert_called_once_with("reviewer", project_root=Path("/tmp/work"))
-        transport.send_request.assert_awaited_once_with(
-            "thread/start",
-            {
-                "cwd": "/tmp/work",
-                "approvalPolicy": "never",
-                "sandbox": "danger-full-access",
-                "developerInstructions": "Focus on regressions.",
-            },
-        )
+        method, params = transport.send_request.await_args.args
+        self.assertEqual(method, "thread/start")
+        self.assertEqual(params["cwd"], "/tmp/work")
+        self.assertEqual(params["approvalPolicy"], "never")
+        self.assertEqual(params["sandbox"], "danger-full-access")
+        self.assertIn("Focus on regressions.", params["developerInstructions"])
+        self.assertIn("# Vibe Remote", params["developerInstructions"])
+        self.assertNotIn("## 2. Quick-reply buttons", params["developerInstructions"])
 
-    async def test_start_thread_does_not_add_codex_generated_image_prompt_to_thread_instructions(self):
+    async def test_start_thread_adds_codex_generated_image_prompt_to_thread_instructions(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
         agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
@@ -858,10 +856,14 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         )
         transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-1"}}))
 
-        await agent._start_thread(transport, request)
+        with patch.dict(os.environ, {"CODEX_HOME": "/Users/test/.codex"}):
+            await agent._start_thread(transport, request)
 
         params = transport.send_request.await_args.args[1]
-        self.assertNotIn("If you generate an image with Codex", params["developerInstructions"])
+        self.assertIn("## 1. Send files", params["developerInstructions"])
+        self.assertIn("### Codex-generated images", params["developerInstructions"])
+        self.assertIn("If you generate an image with Codex", params["developerInstructions"])
+        self.assertIn("file:///Users/test/.codex/generated_images/thread-id/image-file.png", params["developerInstructions"])
 
     async def test_resume_thread_refreshes_developer_instructions_without_appending(self):
         agent = object.__new__(CodexAgent)
@@ -907,14 +909,15 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["threadId"], "thread-existing")
         developer_instructions = params["developerInstructions"]
         self.assertEqual(developer_instructions.count("Focus on regressions."), 1)
-        self.assertEqual(developer_instructions.count("Default session key:"), 1)
+        self.assertEqual(developer_instructions.count("Current session key:"), 1)
+        self.assertEqual(developer_instructions.count("If you generate an image with Codex"), 1)
         self.assertIn(
-            "Default session key: `slack::channel::C1::thread::171717.123`",
+            "Current session key: `slack::channel::C1::thread::171717.123`",
             developer_instructions,
         )
-        self.assertIn("Channel-level session key: `slack::channel::C1`", developer_instructions)
+        self.assertNotIn("Channel-level session key:", developer_instructions)
 
-    async def test_resume_thread_sends_explicit_null_when_developer_instructions_are_disabled(self):
+    async def test_resume_thread_keeps_system_prompt_injection_when_quick_replies_are_disabled(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=False))
         agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
@@ -946,9 +949,11 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         method, params = transport.send_request.await_args.args
         self.assertEqual(method, "thread/resume")
         self.assertIn("developerInstructions", params)
-        self.assertIsNone(params["developerInstructions"])
+        self.assertIn("# Vibe Remote", params["developerInstructions"])
+        self.assertIn("If you generate an image with Codex", params["developerInstructions"])
+        self.assertNotIn("## 2. Quick-reply buttons", params["developerInstructions"])
 
-    def test_build_input_adds_codex_generated_image_prompt_to_each_turn(self):
+    def test_build_input_does_not_add_codex_generated_image_prompt_to_each_turn(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(reply_enhancements=True))
         request = SimpleNamespace(message="hello", files=None)
@@ -956,13 +961,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {"CODEX_HOME": "/Users/test/.codex"}):
             items = agent._build_input(request)
 
-        self.assertTrue(items[0]["text"].startswith("If you generate an image with Codex"))
-        self.assertIn("file:///Users/test/.codex/generated_images/thread-id/image-file.png", items[0]["text"])
-        self.assertIn("local Codex generated_images directory", items[0]["text"])
-        self.assertIn("Replace the example thread id and filename with the actual", items[0]["text"])
-        self.assertIn("Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`", items[0]["text"])
-        self.assertIn("leave the final reply empty", items[0]["text"])
-        self.assertTrue(items[0]["text"].endswith("hello"))
+        self.assertEqual(items, [{"type": "text", "text": "hello"}])
 
     async def test_start_turn_uses_sandbox_policy_object(self):
         agent = object.__new__(CodexAgent)

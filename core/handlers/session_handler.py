@@ -516,33 +516,30 @@ class SessionHandler(BaseHandler):
         effective_effort = normalize_claude_reasoning_effort(effective_model, explicit_effort)
 
         # Determine final system prompt: agent prompt takes precedence over config.
-        # When reply_enhancements is enabled and no explicit prompt is set,
-        # use the claude_code preset with our enhancements appended so the
-        # built-in tools/instructions remain intact.
+        # Always append Vibe Remote system prompt injection so transport
+        # capabilities remain available; reply_enhancements only controls
+        # quick-reply button instructions.
         base_prompt = agent_system_prompt or self.config.claude.system_prompt
-        reply_enhancements_on = getattr(self.config, "reply_enhancements", True)
+        quick_replies_on = getattr(self.config, "reply_enhancements", True)
 
-        if reply_enhancements_on:
-            from core.reply_enhancer import build_reply_enhancements_prompt
+        from core.system_prompt_injection import build_system_prompt_injection
 
-            platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
 
-            reply_prompt = build_reply_enhancements_prompt(
-                include_quick_replies=platform != "wechat",
-                context=context,
-                fallback_platform=platform,
-            )
+        system_prompt_injection = build_system_prompt_injection(
+            include_quick_replies=quick_replies_on and platform != "wechat",
+            context=context,
+            fallback_platform=platform,
+        )
 
-            if base_prompt:
-                final_system_prompt = f"{base_prompt}\n\n{reply_prompt}"
-            else:
-                final_system_prompt = {
-                    "type": "preset",
-                    "preset": "claude_code",
-                    "append": reply_prompt,
-                }
+        if base_prompt:
+            final_system_prompt = f"{base_prompt}\n\n{system_prompt_injection}"
         else:
-            final_system_prompt = base_prompt
+            final_system_prompt = {
+                "type": "preset",
+                "preset": "claude_code",
+                "append": system_prompt_injection,
+            }
 
         # Create extra_args for CLI passthrough (fallback for model)
         extra_args: Dict[str, str | None] = {}

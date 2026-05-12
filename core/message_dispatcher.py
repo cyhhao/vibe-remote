@@ -337,14 +337,10 @@ class ConsolidatedMessageDispatcher:
             scheduled_anchor_message_id: Optional[str] = None
             delivered_as_attachment = False
 
-            # --- Reply enhancements: extract file links & quick-reply buttons ---
-            reply_enhancements_on = getattr(self.controller.config, "reply_enhancements", True)
-            if reply_enhancements_on:
-                enhanced = process_reply(text)
-                display_text = enhanced.text if enhanced.text.strip() else text
-            else:
-                enhanced = None
-                display_text = text
+            # Extract file links and optional quick-reply buttons.
+            quick_replies_on = getattr(self.controller.config, "reply_enhancements", True)
+            enhanced = process_reply(text, include_quick_replies=quick_replies_on)
+            display_text = enhanced.text if enhanced.text.strip() else text
 
             if self._result_within_limit(context, display_text):
                 try:
@@ -493,11 +489,7 @@ class ConsolidatedMessageDispatcher:
             )
             return None
 
-        reply_enhancements_on = getattr(self.controller.config, "reply_enhancements", True)
-        if reply_enhancements_on:
-            chunk = strip_file_links(text).strip()
-        else:
-            chunk = text.strip()
+        chunk = strip_file_links(text).strip()
 
         if not chunk:
             return None
