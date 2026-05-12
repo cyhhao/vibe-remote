@@ -37,6 +37,30 @@ def _mock_no_interfaces(monkeypatch) -> None:
     monkeypatch.setattr("vibe.ui_server.psutil.net_if_addrs", lambda: {})
 
 
+def _mock_tailscale_whois(
+    monkeypatch,
+    peer: str,
+    *,
+    addresses: list[str] | None = None,
+    allowed_ips: list[str] | None = None,
+) -> None:
+    peer_address = ipaddress.ip_address(peer)
+    prefix = peer_address.max_prefixlen
+    monkeypatch.setattr(ui_server, "_TAILSCALE_PEER_CACHE", {})
+    monkeypatch.setattr(
+        ui_server,
+        "_tailscale_whois",
+        lambda address: {
+            "Machine": {
+                "Addresses": addresses or [str(peer_address)],
+                "AllowedIPs": allowed_ips or [f"{peer_address}/{prefix}"],
+            }
+        }
+        if address == peer_address
+        else None,
+    )
+
+
 def _save_config(tmp_path) -> V2Config:
     config = V2Config(
         mode="self_host",
@@ -1285,10 +1309,32 @@ def test_setup_host_wildcard_with_reverse_proxy_header_is_not_local(monkeypatch,
     assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
+def test_setup_host_wildcard_with_reverse_proxy_header_skips_interface_probe(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "0.0.0.0")
+    monkeypatch.setattr(
+        ui_server,
+        "_local_interface_network",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("interface probe should be skipped")),
+    )
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://100.97.103.112:5123",
+        environ_base={"REMOTE_ADDR": "100.97.103.5"},
+        headers={"X-Forwarded-For": "203.0.113.10"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
 def test_setup_host_wildcard_allows_actual_tailscale_interface_host(monkeypatch, tmp_path):
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "0.0.0.0")
     _mock_interface(monkeypatch, "100.97.103.112", 32, name="tailscale0")
+    _mock_tailscale_whois(monkeypatch, "100.97.103.5")
 
     response = app.test_client().get(
         "/health",
@@ -1297,6 +1343,41 @@ def test_setup_host_wildcard_allows_actual_tailscale_interface_host(monkeypatch,
     )
 
     assert response.status_code == 200
+
+
+def test_setup_host_wildcard_rejects_tailscale_peer_without_whois(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "0.0.0.0")
+    _mock_interface(monkeypatch, "100.97.103.112", 32, name="tailscale0")
+    monkeypatch.setattr(ui_server, "_TAILSCALE_PEER_CACHE", {})
+    monkeypatch.setattr(ui_server, "_tailscale_whois", lambda address: None)
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://100.97.103.112:5123",
+        environ_base={"REMOTE_ADDR": "100.97.103.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
+
+
+def test_setup_host_wildcard_rejects_tailscale_subnet_router_peer(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    _save_config_with_setup_host(tmp_path, "0.0.0.0")
+    _mock_interface(monkeypatch, "100.97.103.112", 32, name="tailscale0")
+    _mock_tailscale_whois(monkeypatch, "100.97.103.5", allowed_ips=["100.97.103.5/32", "192.168.50.0/24"])
+
+    response = app.test_client().get(
+        "/dashboard",
+        base_url="http://100.97.103.112:5123",
+        environ_base={"REMOTE_ADDR": "100.97.103.5"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"] == "remote_access_host_mismatch"
 
 
 def test_setup_host_wildcard_does_not_trust_unconfigured_tailscale_host(monkeypatch, tmp_path):
@@ -1333,6 +1414,7 @@ def test_setup_host_ipv6_wildcard_allows_tailscale_ula_interface_host(monkeypatc
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     _save_config_with_setup_host(tmp_path, "::")
     _mock_interface(monkeypatch, "fd7a:115c:a1e0::5", 128, name="tailscale0")
+    _mock_tailscale_whois(monkeypatch, "fd7a:115c:a1e0::20")
 
     response = app.test_client().get(
         "/health",
@@ -1382,6 +1464,7 @@ def test_setup_host_wildcard_trusts_utun_when_tailscale_reports_local_ip(monkeyp
     address = ipaddress.ip_address("100.97.103.112")
     _mock_interface(monkeypatch, str(address), 32, name="utun4")
     monkeypatch.setattr(ui_server, "_tailscale_local_addresses", lambda: frozenset({address}))
+    _mock_tailscale_whois(monkeypatch, "100.97.103.5")
 
     response = app.test_client().get(
         "/health",
@@ -1415,6 +1498,7 @@ def test_setup_host_ipv6_wildcard_trusts_utun_when_tailscale_reports_local_ip(mo
     address = ipaddress.ip_address("fd7a:115c:a1e0::5")
     _mock_interface(monkeypatch, str(address), 128, name="utun4")
     monkeypatch.setattr(ui_server, "_tailscale_local_addresses", lambda: frozenset({address}))
+    _mock_tailscale_whois(monkeypatch, "fd7a:115c:a1e0::20")
 
     response = app.test_client().get(
         "/health",
