@@ -10,13 +10,13 @@ vibe
 
 ---
 
-## 第 1 步：欢迎页面
+## 第 1 步：选一个 Agent 后端
 
-运行 `vibe` 启动设置向导，浏览器会自动打开：
+运行 `vibe` 打开浏览器向导。在欢迎页点击 **开始设置**，下一步会检测本机已安装的 Agent（Claude Code、OpenCode、Codex），引导你登录或粘贴 API Key。同一份配置也能从 **设置 -> Backends** 进入：
 
-![设置向导欢迎页](../assets/screenshots/setup-welcome-zh.png)
+![后端设置](../assets/screenshots/backend-settings-zh.png)
 
-点击 **开始设置** 开始。
+至少启用一个后端，然后继续。
 
 ---
 

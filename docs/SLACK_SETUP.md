@@ -10,13 +10,13 @@ Browser opens -> Follow the wizard -> Done!
 
 ---
 
-## Step 1: Welcome
+## Step 1: Pick an agent backend
 
-Run `vibe` to launch the setup wizard. Your browser opens automatically:
+Run `vibe` to open the browser wizard. Click **Get started** on the welcome screen, then the next step detects installed agents (Claude Code, OpenCode, Codex) and asks you to sign in or paste a key. The same config also lives at **Settings -> Backends**:
 
-![Setup Welcome](../assets/screenshots/setup-welcome-en.png)
+![Backend Settings](../assets/screenshots/backend-settings-en.png)
 
-Click **Get started** to begin.
+Enable at least one backend, then continue.
 
 ---
 
