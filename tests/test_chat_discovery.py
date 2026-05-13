@@ -141,7 +141,10 @@ def test_refresh_marks_absent_rows_not_returned_without_deleting_settings(tmp_pa
         "slack",
         "C_OLD",
         name="old",
-        metadata={chat_discovery.METADATA_AUTH_CONTEXT: _auth_context("slack", bot_token="x")},
+        metadata={
+            chat_discovery.METADATA_AUTH_CONTEXT: _auth_context("slack", bot_token="x"),
+            chat_discovery.METADATA_IS_MEMBER: True,
+        },
         db_path=db_path,
     )
 
@@ -298,6 +301,86 @@ def test_slack_cached_response_respects_member_only_browse_mode(tmp_path: Path) 
 
     assert [channel["id"] for channel in member_only["channels"]] == ["C_MEMBER"]
     assert {channel["id"] for channel in browse_all["channels"]} == {"C_MEMBER", "C_OTHER"}
+
+
+def test_slack_member_only_response_excludes_not_returned_member_channels(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    auth_context = _auth_context("slack", bot_token="x")
+    chat_discovery.remember_chat(
+        "slack",
+        "C_GONE",
+        name="gone",
+        metadata={
+            chat_discovery.METADATA_IS_MEMBER: True,
+            chat_discovery.METADATA_VISIBILITY_STATUS: chat_discovery.VISIBILITY_NOT_RETURNED,
+            chat_discovery.METADATA_AUTH_CONTEXT: auth_context,
+        },
+        db_path=db_path,
+    )
+    chat_discovery.remember_chat(
+        "slack",
+        "C_PRESENT",
+        name="present",
+        metadata={
+            chat_discovery.METADATA_IS_MEMBER: True,
+            chat_discovery.METADATA_AUTH_CONTEXT: auth_context,
+        },
+        db_path=db_path,
+    )
+    chat_discovery.set_state_meta(
+        f"channel_refresh.slack.{auth_context}",
+        {"last_attempt_at": "2999-01-01T00:00:00+00:00", "last_success_at": "2999-01-01T00:00:00+00:00", "last_error": None},
+        db_path=db_path,
+    )
+
+    response = chat_discovery.channels_response("slack", require_member=True, bot_token="x", db_path=db_path)
+
+    assert [channel["id"] for channel in response["channels"]] == ["C_PRESENT"]
+
+
+def test_slack_browse_all_refreshes_after_member_only_cache_hit(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    calls: list[bool] = []
+
+    from vibe import api
+
+    def fake_list_channels_live(_token: str, browse_all: bool = False) -> dict:
+        calls.append(browse_all)
+        channels = [{"id": "C_MEMBER", "name": "member", "is_private": False, "is_member": True}]
+        if browse_all:
+            channels.append({"id": "C_OTHER", "name": "other", "is_private": False, "is_member": False})
+        return {"ok": True, "channels": channels, "is_member_only": not browse_all}
+
+    monkeypatch.setattr(api, "list_channels_live", fake_list_channels_live)
+
+    member_only = chat_discovery.channels_response(
+        "slack",
+        bot_token="x",
+        browse_all=False,
+        require_member=True,
+        db_path=db_path,
+    )
+    browse_all = chat_discovery.channels_response(
+        "slack",
+        bot_token="x",
+        browse_all=True,
+        require_member=False,
+        db_path=db_path,
+    )
+    cached_browse_all = chat_discovery.channels_response(
+        "slack",
+        bot_token="x",
+        browse_all=True,
+        require_member=False,
+        db_path=db_path,
+    )
+
+    assert calls == [False, True]
+    assert [channel["id"] for channel in member_only["channels"]] == ["C_MEMBER"]
+    assert {channel["id"] for channel in browse_all["channels"]} == {"C_MEMBER", "C_OTHER"}
+    assert {channel["id"] for channel in cached_browse_all["channels"]} == {"C_MEMBER", "C_OTHER"}
 
 
 def test_slack_channel_cache_is_scoped_by_auth_context(tmp_path: Path, monkeypatch) -> None:

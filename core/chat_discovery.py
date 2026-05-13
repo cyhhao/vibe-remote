@@ -173,6 +173,8 @@ def _refresh_scope_for(platform: str, kwargs: dict[str, Any]) -> str | None:
     auth_context = _auth_context_for(platform, kwargs)
     if auth_context:
         parts.append(auth_context)
+    if platform == "slack" and bool(kwargs.get("browse_all", False)):
+        parts.append("browse_all")
     return ".".join(parts) or None
 
 
@@ -500,9 +502,12 @@ def refresh_platform(
                     refreshed_at=success_at,
                     parent_scope_id=refreshed_parent,
                     auth_context=auth_context,
+                    require_member=platform == "slack" and not bool(kwargs.get("browse_all", False)),
                 )
                 state = RefreshState(last_attempt_at=now, last_success_at=success_at, last_error=None)
                 _write_refresh_state(conn, platform, state, now=success_at, refresh_scope=refresh_scope)
+                if platform == "slack" and bool(kwargs.get("browse_all", False)) and auth_context:
+                    _write_refresh_state(conn, platform, state, now=success_at, refresh_scope=auth_context)
                 return RefreshResult(ok=True, refresh_state=state)
         finally:
             engine.dispose()
@@ -605,7 +610,8 @@ def channels_response(
     refreshing = False
     error = state.last_error
 
-    if can_refresh and (force or not chats):
+    cache_requires_refresh = _response_cache_requires_refresh(platform, state, refresh_kwargs)
+    if can_refresh and (force or not chats or cache_requires_refresh):
         result = refresh_platform(platform, force=force, db_path=db_path, **refresh_kwargs)
         state = result.refresh_state
         error = result.error or state.last_error
@@ -730,6 +736,7 @@ def _mark_not_returned(
     refreshed_at: str,
     parent_scope_id: str | None,
     auth_context: str | None,
+    require_member: bool = False,
 ) -> None:
     conditions = [scopes.c.platform == platform, scopes.c.scope_type == CHANNEL_SCOPE_TYPE]
     if parent_scope_id is not None:
@@ -741,6 +748,8 @@ def _mark_not_returned(
             continue
         metadata = _json_loads(row["metadata_json"], {})
         if auth_context is not None and metadata.get(METADATA_AUTH_CONTEXT) != auth_context:
+            continue
+        if require_member and metadata.get(METADATA_IS_MEMBER) is not True:
             continue
         metadata[METADATA_VISIBILITY_STATUS] = VISIBILITY_NOT_RETURNED
         metadata[METADATA_LAST_MISSING_AT] = refreshed_at
@@ -847,8 +856,18 @@ def _filter_response_chats(
     if not include_private:
         result = [chat for chat in result if not chat.is_private]
     if require_member:
-        result = [chat for chat in result if chat.is_member is True]
+        result = [
+            chat
+            for chat in result
+            if chat.is_member is True and chat.visibility_status != VISIBILITY_NOT_RETURNED
+        ]
     return result
+
+
+def _response_cache_requires_refresh(platform: str, state: RefreshState, refresh_kwargs: dict[str, Any]) -> bool:
+    if platform != "slack" or not bool(refresh_kwargs.get("browse_all", False)):
+        return False
+    return state.last_success_at is None
 
 
 def _payload_native_type(native_type: str) -> str | int:
