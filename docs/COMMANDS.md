@@ -517,7 +517,8 @@ The `vibe` executable controls the local service and async automation features.
 
 | Command | Purpose |
 | --- | --- |
-| `vibe` | Start the service and Web UI if needed; reuse already-running processes |
+| `vibe` | Alias for `vibe start` |
+| `vibe start` | Start the service and Web UI if needed; reuse already-running processes |
 | `vibe stop` | Stop the service and UI; also terminates OpenCode server |
 | `vibe restart` | Stop then start again |
 | `vibe status` | Print runtime status JSON |
@@ -534,6 +535,17 @@ The `vibe` executable controls the local service and async automation features.
 
 ```bash
 vibe
+```
+
+- alias for `vibe start`
+- starts the main service if it is not already running
+- opens the Web UI
+- preserves already-running service, Web UI, and OpenCode processes; use `vibe restart` for an explicit restart
+
+### `vibe start`
+
+```bash
+vibe start
 ```
 
 - starts the main service if it is not already running

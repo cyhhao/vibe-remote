@@ -43,8 +43,8 @@ from vibe.upgrade import (
     build_upgrade_plan,
     cache_running_vibe_path,
     get_latest_version_info,
-    get_restart_command,
     get_restart_environment,
+    get_restart_invocation_command,
     get_safe_cwd,
 )
 
@@ -1809,7 +1809,7 @@ def _doctor():
     return result
 
 
-def cmd_vibe():
+def cmd_start():
     paths.ensure_data_dirs()
     config = _ensure_config()
 
@@ -1848,6 +1848,11 @@ def cmd_vibe():
             print("")
 
     return 0
+
+
+def cmd_vibe():
+    """Compatibility default: bare `vibe` restarts during the migration window."""
+    return _cmd_restart_with_delay(0.0)
 
 
 def _stop_opencode_server():
@@ -2322,9 +2327,8 @@ def _format_restart_delay(delay_seconds: float) -> str:
 
 def _schedule_delayed_restart(delay_seconds: float) -> int:
     current_vibe_path = cache_running_vibe_path()
-    restart_command = [*get_restart_command(vibe_path=current_vibe_path), "restart"]
     api._spawn_delayed_restart(
-        restart_command,
+        get_restart_invocation_command(vibe_path=current_vibe_path),
         get_safe_cwd(),
         delay_seconds=delay_seconds,
         env=get_restart_environment(vibe_path=current_vibe_path),
@@ -2342,7 +2346,7 @@ def _cmd_restart_with_delay(delay_seconds: float) -> int:
     cmd_stop()
     print("Waiting 3 seconds...")
     time.sleep(3)
-    return cmd_vibe()
+    return cmd_start()
 
 
 def build_parser():
@@ -2350,6 +2354,7 @@ def build_parser():
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("stop", help="Stop all services")
+    subparsers.add_parser("start", help="Start services if needed without stopping running processes")
     restart_parser = subparsers.add_parser("restart", help="Restart all services")
     restart_parser.add_argument(
         "--delay-seconds",
@@ -2802,6 +2807,8 @@ def main():
 
     if args.command == "stop":
         sys.exit(cmd_stop())
+    if args.command == "start":
+        sys.exit(cmd_start())
     if args.command == "restart":
         sys.exit(_cmd_restart_with_delay(args.delay_seconds))
     if args.command == "status":

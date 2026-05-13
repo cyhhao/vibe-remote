@@ -60,6 +60,5 @@ class RuntimeServiceLockTests(unittest.TestCase):
             self.assertEqual(pid, 12345)
             spawn_background.assert_not_called()
 
-
 if __name__ == "__main__":
     unittest.main()

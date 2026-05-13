@@ -3,7 +3,8 @@
 ## Quick Start
 
 ```bash
-vibe              # Start Vibe Remote (opens web UI)
+vibe              # Alias for vibe start
+vibe start        # Start Vibe Remote if needed (opens web UI)
 vibe status       # Check service status
 vibe restart      # Restart all services (use --delay-seconds when agent-triggered)
 vibe remote       # Guided Vibe Cloud remote-access setup
@@ -28,14 +29,27 @@ The command walks you through signing in at `https://avibe.bot`, creating a remo
 
 ### `vibe`
 
-Start Vibe Remote if needed. Opens the web UI in your browser.
+Alias for `vibe start`.
 
 ```bash
 vibe
 ```
 
 **Behavior:**
-- Reuses the main service if it is already running
+- Starts Vibe Remote if needed
+- Reuses already-running processes
+- Opens the web UI in your browser
+
+### `vibe start`
+
+Start Vibe Remote if needed. Opens the web UI in your browser.
+
+```bash
+vibe start
+```
+
+**Behavior:**
+- Reuses the main service and Web UI if they are already running
 - Opens the setup wizard at `http://127.0.0.1:5123`
 - **Preserves running processes** — Use `vibe restart` when you need an explicit restart
 
@@ -247,6 +261,8 @@ The key difference between commands:
 
 | Command | Main Service | OpenCode Server |
 |---------|--------------|-----------------|
+| `vibe` | Start/reuse | Preserved |
+| `vibe start` | Start/reuse | Preserved |
 | `vibe restart` | Restart | **Terminated** |
 | `vibe stop` | Stop | **Terminated** |
 
@@ -323,7 +339,7 @@ The web UI (`http://127.0.0.1:5123`) provides the same controls:
 
 | Button | Equivalent CLI | OpenCode Behavior |
 |--------|---------------|-------------------|
-| **Start** | `vibe` | Starts on demand |
+| **Start** | `vibe start` | Starts on demand |
 | **Restart** | `vibe restart` | Terminated |
 | **Stop** | `vibe stop` | Terminated |
 
