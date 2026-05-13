@@ -1891,16 +1891,30 @@ def _process_matches_codex_binary(cmdline: list[str], resolved_binary: str | Non
     except Exception:
         target = resolved_binary
 
+    target_basename = os.path.basename(target) if target else None
+
     def _matches(token: str) -> bool:
         try:
             resolved = str(Path(token).expanduser().resolve())
         except Exception:
             resolved = token
+        token_basename = os.path.basename(token) if token else ""
         if target is not None:
-            # When we know the configured binary, require an exact match
-            # against either the raw or the resolved token. A second codex
-            # install elsewhere on the system is *not* ours to kill.
-            return resolved == target or token == target
+            # Exact-path match (absolute argv[0] / shim path) — strongest signal.
+            if resolved == target or token == target:
+                return True
+            # Bare-name argv[0]: ``codex`` launched via PATH lookup. The
+            # kernel records argv[0] verbatim, so ``token == "codex"`` and
+            # ``Path("codex").resolve()`` becomes a cwd-relative path that
+            # never equals ``target``. Fall back to a basename match —
+            # combined with the upstream ``app-server`` marker check this
+            # still excludes random unrelated tools. The cost of matching
+            # a sibling codex install (different absolute path, same
+            # basename) is acceptable: the lifecycle chip reflects "a
+            # codex app-server is running", which is what users want.
+            if token_basename and target_basename and token_basename == target_basename:
+                return True
+            return False
         # No resolved binary: best-effort basename match so the chip still
         # works when the configured CLI isn't on PATH right now.
         return os.path.basename(resolved).startswith("codex")
