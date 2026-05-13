@@ -10,7 +10,7 @@ import { useApi } from '@/context/ApiContext';
 import type { OAuthWebState } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
 
-type Backend = 'claude' | 'codex';
+type Backend = 'claude' | 'codex' | 'opencode';
 
 type LocalState = 'idle' | OAuthWebState;
 
@@ -23,6 +23,10 @@ const POLL_DEADLINE_MS = 16 * 60 * 1000;
 
 export type BackendOAuthPanelProps = {
   backend: Backend;
+  /** Required when ``backend === "opencode"``; the OpenCode daemon needs
+   *  to know which provider's OAuth flow to kick off (each provider has
+   *  its own authorize endpoint). Ignored for claude / codex. */
+  opencodeProviderId?: string;
   /** When ``true`` the user is already signed in (read from the backend's
    *  ``get*Auth`` endpoint). We still render a "re-authenticate" button so
    *  rotating credentials without dropping to a terminal stays one click. */
@@ -36,6 +40,9 @@ export type BackendOAuthPanelProps = {
    *  ``null`` / undefined the banner shows only the generic "signed in"
    *  copy. Plaintext only — never leak tokens here. */
   signedInDetail?: string | null;
+  /** Hide the Sign out / Remove auth button (e.g. OpenCode providers
+   *  expose their own DELETE-credentials affordance inline). */
+  hideRemove?: boolean;
   /** Optional callback fired once after the flow lands on ``state === "success"``.
    *  The parent typically re-reads ``getClaudeAuth`` / ``getCodexAuth`` here so
    *  the on-screen "signed in" indicators move. */
@@ -57,10 +64,12 @@ export type BackendOAuthPanelProps = {
  */
 export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
   backend,
+  opencodeProviderId,
   signedIn,
   title,
   subtitle,
   signedInDetail,
+  hideRemove,
   onSuccess,
 }) => {
   const { t } = useTranslation();
@@ -155,7 +164,10 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
     setError(null);
     setCode('');
     try {
-      const result = await api.startOAuthWeb(backend, true);
+      const result =
+        backend === 'opencode'
+          ? await api.startOAuthWebForOpencodeProvider(opencodeProviderId || '', true)
+          : await api.startOAuthWeb(backend, true);
       if (!result.ok || !result.flow_id) {
         setError(result.error || result.detail || 'start_failed');
         setState('failed');
@@ -193,6 +205,12 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
 
   const submitCallback = async () => {
     if (!flowId) return;
+    if (backend === 'opencode') {
+      // OpenCode flows never ask for a user-submitted code (device or
+      // localhost callback handle completion). Guard so the type system
+      // for ``api.submitOAuthWebCode`` (claude/codex only) is honoured.
+      return;
+    }
     const trimmed = code.trim();
     if (!trimmed) return;
     setSubmitting(true);
@@ -215,6 +233,12 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
   };
 
   const removeAuth = async () => {
+    if (backend === 'opencode') {
+      // OpenCode providers expose their own Remove-key affordance inline
+      // on the parent page (DELETE /backend/opencode/provider/<id>/auth);
+      // the OAuth panel just shouldn't render this button there.
+      return;
+    }
     setRemoving(true);
     setError(null);
     try {
@@ -264,11 +288,21 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
   const isActive = state !== 'idle' && state !== 'success' && state !== 'failed' && state !== 'cancelled';
   const showStartButton = state === 'idle' || state === 'success' || state === 'failed' || state === 'cancelled';
   const claudeAwaitingCode = backend === 'claude' && state === 'awaiting_code';
+  // OpenCode device flows (openai headless, github-copilot) carry the
+  // user-facing code in the same payload as Codex; reuse the same UI
+  // affordance. Browser-redirect flows (gitlab, poe, openai browser)
+  // don't surface a code — only the URL.
   const codexShowDevice = backend === 'codex' && state === 'awaiting_code' && url && deviceCode;
+  const opencodeShowDevice = backend === 'opencode' && state === 'awaiting_code' && url && deviceCode;
+  const showDeviceBlock = codexShowDevice || opencodeShowDevice;
 
   const startLabel = signedIn
     ? t('settings.backends.oauthReauthenticate')
-    : t(`settings.backends.${backend === 'claude' ? 'claudeSignInButton' : 'codexSignInButton'}`);
+    : (() => {
+        if (backend === 'claude') return t('settings.backends.claudeSignInButton');
+        if (backend === 'codex') return t('settings.backends.codexSignInButton');
+        return t('settings.backends.opencodeProviderSignIn');
+      })();
 
   return (
     <div className="flex flex-col gap-4 rounded-lg border border-border bg-surface-2/60 p-4">
@@ -282,7 +316,11 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
           <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-mint" />
           <div className="flex flex-col gap-0.5">
             <p className="text-[12px] text-mint">
-              {t(`settings.backends.${backend === 'claude' ? 'claudeOauthSignedIn' : 'codexOauthSignedIn'}`)}
+              {(() => {
+                if (backend === 'claude') return t('settings.backends.claudeOauthSignedIn');
+                if (backend === 'codex') return t('settings.backends.codexOauthSignedIn');
+                return t('settings.backends.opencodeProviderOauthSignedIn');
+              })()}
             </p>
             {signedInDetail && (
               <p className="font-mono text-[11px] text-mint/80">{signedInDetail}</p>
@@ -342,7 +380,7 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
         </div>
       )}
 
-      {codexShowDevice && (
+      {showDeviceBlock && (
         <div className="flex flex-col gap-2 rounded-md border border-border bg-background px-3 py-2.5">
           <Label className="text-[11px] font-medium uppercase tracking-wide text-muted">
             {t('settings.backends.codexDeviceCodeLabel')}
@@ -412,7 +450,7 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
             {t('settings.backends.oauthInProgress')}
           </span>
         )}
-        {(signedIn || state === 'success') && state !== 'starting' && state !== 'awaiting_code' && state !== 'verifying' && (
+        {!hideRemove && (signedIn || state === 'success') && state !== 'starting' && state !== 'awaiting_code' && state !== 'verifying' && (
           <Button
             type="button"
             variant="ghost"

@@ -2177,17 +2177,27 @@ def _serialize_web_flow_status(payload: dict) -> dict:
     return payload
 
 
-_WEB_OAUTH_BACKENDS = {"claude", "codex"}
+_WEB_OAUTH_BACKENDS = {"claude", "codex", "opencode"}
 
 
-def start_oauth_web(backend: str, force_reset: bool = True) -> dict:
+def start_oauth_web(
+    backend: str,
+    force_reset: bool = True,
+    provider_id: Optional[str] = None,
+) -> dict:
     backend = (backend or "").strip().lower()
     if backend not in _WEB_OAUTH_BACKENDS:
         return {"ok": False, "error": "unsupported_backend"}
+    if backend == "opencode" and not (isinstance(provider_id, str) and provider_id.strip()):
+        return {"ok": False, "error": "opencode_provider_id_required"}
     service = _get_oauth_service()
     try:
         flow = _submit_oauth_coro(
-            service.start_web_setup(backend, force_reset=force_reset),
+            service.start_web_setup(
+                backend,
+                force_reset=force_reset,
+                provider_id=(provider_id.strip() if isinstance(provider_id, str) else None),
+            ),
             timeout=60.0,
         )
     except Exception as exc:  # noqa: BLE001
@@ -2208,6 +2218,7 @@ def start_oauth_web(backend: str, force_reset: bool = True) -> dict:
         "url": flow.url,
         "device_code": flow.device_code,
         "awaiting_code": flow.awaiting_code,
+        "provider": flow.provider,
     }
 
 

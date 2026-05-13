@@ -53,7 +53,17 @@ def _run(coro):
 
 def test_unsupported_backend_raises(service: AgentAuthService) -> None:
     with pytest.raises(ValueError, match="unsupported_backend"):
-        _run(service.start_web_setup("opencode"))
+        _run(service.start_web_setup("gemini"))
+
+
+def test_opencode_requires_provider_id(service: AgentAuthService) -> None:
+    """OpenCode auth is per-provider; ``start_web_setup`` must reject a
+    bare backend name with no ``provider_id`` rather than crash deep in
+    the OAuth bootstrap. (The error is surfaced as a failed flow record
+    so the UI can render a clear sentence.)"""
+    flow = _run(service.start_web_setup("opencode"))
+    assert flow.state == "failed"
+    assert flow.error == "opencode_provider_id_required"
 
 
 def test_status_for_unknown_flow_returns_flow_not_found(service: AgentAuthService) -> None:
@@ -199,9 +209,132 @@ def test_post_web_success_hook_unset_is_safe(service: AgentAuthService) -> None:
     _run(service._invoke_post_web_success_hook("claude"))
 
 
+# ---------------------------------------------------------------------------
+# OpenCode per-provider OAuth web flow
+# ---------------------------------------------------------------------------
+
+
+class _FakeOpencodeServer:
+    """In-memory stub of ``OpenCodeServer`` for the OAuth path.
+
+    ``start_provider_oauth`` returns the authorize-stub the test sets up
+    via ``next_authorize``; ``wait_provider_oauth`` blocks on a future
+    the test resolves manually so we can drive completion deterministically.
+    """
+
+    def __init__(self) -> None:
+        self.next_authorize: dict = {}
+        self.auth_map: dict = {}
+        self.wait_future: asyncio.Future = asyncio.get_event_loop_policy().new_event_loop().create_future()
+        self.start_calls: list[tuple[str, int, dict]] = []
+        self.wait_calls: list[tuple[str, int, dict]] = []
+
+    async def get_provider_auth(self):
+        return self.auth_map
+
+    async def start_provider_oauth(self, provider_id, *, method, prompt_answers):
+        self.start_calls.append((provider_id, method, prompt_answers))
+        return self.next_authorize
+
+    async def wait_provider_oauth(self, provider_id, *, method, prompt_answers, timeout):
+        self.wait_calls.append((provider_id, method, prompt_answers))
+        return await self.wait_future
+
+
+def test_start_web_setup_opencode_extracts_url_and_device_code(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeOpencodeServer()
+    fake.auth_map = {
+        "openai": [
+            {"type": "oauth", "label": "ChatGPT Pro/Plus (browser)"},
+            {"type": "oauth", "label": "ChatGPT Pro/Plus (headless)"},
+            {"type": "api", "label": "Manually enter API Key"},
+        ]
+    }
+    fake.next_authorize = {
+        "url": "https://auth.openai.com/codex/device",
+        "instructions": "Enter code: YR8I-QJJUH",
+    }
+    monkeypatch.setattr(service, "_opencode_server", AsyncMock(return_value=fake))
+
+    flow = _run(service.start_web_setup("opencode", provider_id="openai"))
+
+    # Headless variant (index 1) wins because the resolver walks the
+    # auth list in reverse — important for remote sessions where the
+    # localhost-callback "browser" variant (index 0) can't complete.
+    assert fake.start_calls == [("openai", 1, {})]
+    assert flow.state == "awaiting_code"
+    assert flow.url == "https://auth.openai.com/codex/device"
+    assert flow.device_code == "YR8I-QJJUH"
+    # OpenCode device flow auto-completes; UI must not show a code-submit input.
+    assert flow.awaiting_code is False
+
+
+def test_start_web_setup_opencode_github_copilot_passes_prompt_answer(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """github-copilot's first method has a ``deploymentType`` prompt; the
+    resolver pre-fills ``github.com`` so the user doesn't have to pick
+    enterprise vs public on first sign-in."""
+    fake = _FakeOpencodeServer()
+    fake.auth_map = {
+        "github-copilot": [
+            {"type": "oauth", "label": "Login with GitHub Copilot"},
+        ]
+    }
+    fake.next_authorize = {
+        "url": "https://github.com/login/device",
+        "instructions": "Enter code: 335B-09BE",
+    }
+    monkeypatch.setattr(service, "_opencode_server", AsyncMock(return_value=fake))
+
+    _run(service.start_web_setup("opencode", provider_id="github-copilot"))
+
+    assert fake.start_calls == [
+        ("github-copilot", 0, {"deploymentType": "github.com"}),
+    ]
+
+
+def test_start_web_setup_opencode_url_only_flow_has_no_device_code(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Browser-redirect flows (gitlab, poe) return ``url`` only — no
+    "Enter code: XXX" line. ``device_code`` must stay ``None`` so the UI
+    skips the device-code block."""
+    fake = _FakeOpencodeServer()
+    fake.auth_map = {"gitlab": [{"type": "oauth", "label": "GitLab OAuth"}]}
+    fake.next_authorize = {
+        "url": "https://gitlab.com/oauth/authorize?...",
+        "instructions": "Your browser will open for authentication.",
+    }
+    monkeypatch.setattr(service, "_opencode_server", AsyncMock(return_value=fake))
+
+    flow = _run(service.start_web_setup("opencode", provider_id="gitlab"))
+    assert flow.state == "awaiting_code"
+    assert flow.url is not None
+    assert flow.device_code is None
+
+
+def test_start_web_setup_opencode_surfaces_server_failure(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the OpenCode daemon isn't reachable, the flow lands in
+    ``failed`` with a typed error string so the UI can render an
+    actionable sentence rather than ``cli_failed``."""
+    monkeypatch.setattr(service, "_opencode_server", AsyncMock(return_value=None))
+    flow = _run(service.start_web_setup("opencode", provider_id="openai"))
+    assert flow.state == "failed"
+    assert flow.error == "opencode_server_unavailable"
+
+
 def test_remove_web_auth_rejects_unsupported_backend(service: AgentAuthService) -> None:
-    result = _run(service.remove_web_auth("opencode"))
-    assert result == {"ok": False, "error": "unsupported_backend"}
+    # OpenCode joined ``WEB_BACKENDS`` for OAuth, but ``remove_web_auth``
+    # is claude / codex specific — opencode providers use the
+    # per-provider DELETE endpoint instead. Both ``opencode`` and any
+    # other name are rejected here.
+    assert _run(service.remove_web_auth("opencode")) == {"ok": False, "error": "unsupported_backend"}
+    assert _run(service.remove_web_auth("gemini")) == {"ok": False, "error": "unsupported_backend"}
 
 
 def test_remove_web_auth_runs_logout_and_returns_ok(
@@ -235,8 +368,10 @@ def test_remove_web_auth_codex_uses_logout_subcommand(
 
 
 def test_test_web_auth_rejects_unsupported_backend(service: AgentAuthService) -> None:
-    result = _run(service.test_web_auth("opencode"))
-    assert result == {"ok": False, "error": "unsupported_backend"}
+    # OpenCode joins ``WEB_BACKENDS`` for OAuth start; ``test_web_auth``
+    # still rejects it (probe is run by the OpenCode daemon itself).
+    assert _run(service.test_web_auth("opencode")) == {"ok": False, "error": "unsupported_backend"}
+    assert _run(service.test_web_auth("gemini")) == {"ok": False, "error": "unsupported_backend"}
 
 
 def test_test_web_auth_surfaces_cli_not_found(

@@ -1691,6 +1691,24 @@ def backend_opencode_providers():
     return jsonify(api.get_opencode_providers())
 
 
+@app.route(
+    "/backend/opencode/provider/<provider_id>/auth/oauth/start",
+    methods=["POST"],
+)
+def backend_opencode_provider_oauth_start(provider_id: str):
+    """Kick off a Settings → Backends OAuth flow for a single OpenCode provider.
+
+    Body: ``{force_reset?: bool}``. Returns ``{flow_id, state, url?,
+    device_code?}``. The status/cancel endpoints are the same generic
+    ``/backend/opencode/auth/oauth/status/<flow_id>`` etc.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    force_reset = bool(payload.get("force_reset", True))
+    return jsonify(api.start_oauth_web("opencode", force_reset=force_reset, provider_id=provider_id))
+
+
 @app.route("/backend/opencode/provider/<provider_id>/auth", methods=["POST"])
 def backend_opencode_provider_auth_post(provider_id: str):
     """Persist an API key for a single OpenCode provider.

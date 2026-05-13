@@ -1356,9 +1356,26 @@ class AgentAuthService:
     # and read by a polling endpoint.
     # ------------------------------------------------------------------
 
-    WEB_BACKENDS = {"claude", "codex"}
+    WEB_BACKENDS = {"claude", "codex", "opencode"}
 
-    async def start_web_setup(self, backend: str, *, force_reset: bool = True) -> WebAuthFlow:
+    # OpenCode OAuth providers route through the daemon's HTTP API rather
+    # than a CLI subprocess. The Settings UI hands us the provider_id and
+    # we pick the friendliest method index — see
+    # ``_resolve_opencode_oauth_method`` for the heuristic.
+    _OPENCODE_OAUTH_PROMPT_ANSWERS: dict[str, dict[str, Any]] = {
+        # github-copilot's first prompt is a deployment-type select. We
+        # ship github.com support out of the box; enterprise users can
+        # still configure via terminal until we surface a select in the UI.
+        "github-copilot": {"deploymentType": "github.com"},
+    }
+
+    async def start_web_setup(
+        self,
+        backend: str,
+        *,
+        force_reset: bool = True,
+        provider_id: Optional[str] = None,
+    ) -> WebAuthFlow:
         """Start an OAuth flow initiated from the Settings page.
 
         Returns the freshly-created ``WebAuthFlow``. For Codex the caller
@@ -1366,13 +1383,19 @@ class AgentAuthService:
         appears (URL + device code surfaced) and then again until the user
         completes the device auth on OpenAI's side. For Claude the call
         returns once the manual URL is available; the user then submits the
-        callback code via ``submit_web_code``.
+        callback code via ``submit_web_code``. For OpenCode the caller
+        must pass ``provider_id``; the URL (and optional device code) are
+        surfaced via ``WebAuthFlow.url`` / ``WebAuthFlow.device_code`` and
+        completion is auto-detected by OpenCode's daemon — no code submit
+        from the user.
         """
         if backend not in self.WEB_BACKENDS:
             raise ValueError(f"unsupported_backend:{backend}")
 
         flow_id = uuid.uuid4().hex[:12]
         flow = WebAuthFlow(flow_id=flow_id, backend=backend, state="starting")
+        if backend == "opencode":
+            flow.provider = provider_id
 
         async with self._web_flow_lock:
             self._web_flows[flow_id] = flow
@@ -1382,7 +1405,7 @@ class AgentAuthService:
                 flow.process = await self._start_codex_process(force_reset=force_reset)
                 flow.reader_task = asyncio.create_task(self._read_codex_output_web(flow))
                 flow.waiter_task = asyncio.create_task(self._wait_for_codex_completion_web(flow))
-            else:  # claude
+            elif backend == "claude":
                 client, manual_url = await self._start_claude_control_flow(
                     context=None,
                     force_reset=force_reset,
@@ -1393,6 +1416,10 @@ class AgentAuthService:
                 flow.awaiting_code = True
                 flow.state = "awaiting_code"
                 flow.waiter_task = asyncio.create_task(self._wait_for_claude_completion_web(flow))
+            else:  # opencode
+                if not isinstance(provider_id, str) or not provider_id.strip():
+                    raise ValueError("opencode_provider_id_required")
+                await self._start_opencode_oauth_web(flow, provider_id.strip())
         except Exception as err:  # noqa: BLE001
             logger.error("Web auth start failed for %s: %s", backend, err, exc_info=True)
             flow.state = "failed"
@@ -1450,7 +1477,10 @@ class AgentAuthService:
         flips ``auth_mode`` back to ``oauth`` so the next "Sign in" click
         starts clean. Idempotent — repeated calls return ``ok: true``.
         """
-        if backend not in self.WEB_BACKENDS:
+        # remove_web_auth and test_web_auth are claude / codex specific
+        # (single-backend subprocess invocations). OpenCode uses the
+        # per-provider DELETE / dedicated probe endpoints elsewhere.
+        if backend not in {"claude", "codex"}:
             return {"ok": False, "error": "unsupported_backend"}
 
         binary = self._get_cli_binary(backend)
@@ -1500,7 +1530,10 @@ class AgentAuthService:
         ``codex exec "Hi"``. Returns elapsed milliseconds + a short
         response excerpt on success; surfaces stderr on failure.
         """
-        if backend not in self.WEB_BACKENDS:
+        # remove_web_auth and test_web_auth are claude / codex specific
+        # (single-backend subprocess invocations). OpenCode uses the
+        # per-provider DELETE / dedicated probe endpoints elsewhere.
+        if backend not in {"claude", "codex"}:
             return {"ok": False, "error": "unsupported_backend"}
 
         binary = self._get_cli_binary(backend)
@@ -1601,6 +1634,138 @@ class AgentAuthService:
             return {"ok": False, "error": "flow_not_found"}
         await self._terminate_web_flow(flow, final_state="cancelled")
         return {"ok": True}
+
+    async def _opencode_server(self):
+        """Lazy lookup of the live OpenCode server client.
+
+        The web auth service runs in the UI process (no controller-level
+        ``agent_service``), so we go through ``OpenCodeServer.get_instance``
+        rather than ``self.controller.agent_service.agents['opencode']``.
+        Falls back to ``None`` if OpenCode is disabled in V2Config — the
+        caller then surfaces a ``failed`` flow state with a clear reason.
+        """
+        try:
+            from modules.agents.opencode.server import OpenCodeServer
+        except ImportError:
+            return None
+        config = getattr(self.controller, "config", None)
+        agents_cfg = getattr(config, "agents", None) if config is not None else None
+        opencode_cfg = getattr(agents_cfg, "opencode", None) if agents_cfg is not None else None
+        if opencode_cfg is None or not getattr(opencode_cfg, "enabled", False):
+            return None
+        try:
+            return await OpenCodeServer.get_instance(opencode_cfg)
+        except Exception as err:  # noqa: BLE001
+            logger.warning("OpenCodeServer.get_instance failed for web OAuth: %s", err)
+            return None
+
+    async def _resolve_opencode_oauth_method(
+        self, server, provider_id: str
+    ) -> tuple[int, dict[str, Any]]:
+        """Pick the friendliest OAuth method index for a provider.
+
+        OpenCode's ``/provider/auth`` exposes an ordered list of methods
+        per provider. We prefer the **last** ``oauth`` entry — for OpenAI
+        that's the headless device-auth flow (better for remote sessions
+        than the localhost-callback browser flow). For providers with a
+        single oauth method (github-copilot, gitlab, poe) it returns
+        that one. Errors fall back to method 0.
+        """
+        prompt_answers = self._OPENCODE_OAUTH_PROMPT_ANSWERS.get(provider_id, {})
+        try:
+            auth_map = await server.get_provider_auth()
+        except Exception:  # noqa: BLE001
+            return 0, prompt_answers
+        methods = auth_map.get(provider_id) if isinstance(auth_map, dict) else None
+        if not isinstance(methods, list):
+            return 0, prompt_answers
+        # Walk in reverse so the last oauth method wins. For OpenAI this
+        # picks "ChatGPT Pro/Plus (headless)" over the browser variant.
+        chosen = 0
+        for idx in range(len(methods) - 1, -1, -1):
+            entry = methods[idx]
+            if isinstance(entry, dict) and entry.get("type") == "oauth":
+                chosen = idx
+                break
+        return chosen, prompt_answers
+
+    # Matches OpenCode's ``"Enter code: AB1C-D2E3"`` instructions line so
+    # we can surface device codes inline rather than asking the user to
+    # squint at a copy-pasted URL.
+    _OPENCODE_DEVICE_CODE_RE = re.compile(r"Enter code:\s*([A-Za-z0-9-]+)")
+
+    async def _start_opencode_oauth_web(self, flow: WebAuthFlow, provider_id: str) -> None:
+        server = await self._opencode_server()
+        if server is None:
+            raise RuntimeError("opencode_server_unavailable")
+        method_index, prompt_answers = await self._resolve_opencode_oauth_method(
+            server, provider_id
+        )
+        flow.last_status_text = None
+        authorize = await server.start_provider_oauth(
+            provider_id,
+            method=method_index,
+            prompt_answers=prompt_answers,
+        )
+        url = authorize.get("url") if isinstance(authorize, dict) else None
+        instructions = authorize.get("instructions") if isinstance(authorize, dict) else None
+        if not isinstance(url, str) or not url.strip():
+            raise RuntimeError("opencode_authorize_missing_url")
+        flow.url = url.strip()
+        if isinstance(instructions, str):
+            match = self._OPENCODE_DEVICE_CODE_RE.search(instructions)
+            if match:
+                flow.device_code = match.group(1)
+            flow.last_status_text = instructions
+        flow.state = "awaiting_code"
+        # OpenCode auto-detects completion (device poll or local callback);
+        # no user-submitted code to enter. The waiter long-polls the
+        # daemon's /callback endpoint and flips ``state`` when done.
+        flow.awaiting_code = False
+        flow.waiter_task = asyncio.create_task(
+            self._wait_for_opencode_oauth_web(
+                flow,
+                provider_id,
+                method_index,
+                prompt_answers,
+            )
+        )
+
+    async def _wait_for_opencode_oauth_web(
+        self,
+        flow: WebAuthFlow,
+        provider_id: str,
+        method_index: int,
+        prompt_answers: dict[str, Any],
+    ) -> None:
+        try:
+            server = await self._opencode_server()
+            if server is None:
+                raise RuntimeError("opencode_server_unavailable")
+            await server.wait_provider_oauth(
+                provider_id,
+                method=method_index,
+                prompt_answers=prompt_answers,
+                timeout=self.setup_timeout_seconds,
+            )
+            flow.state = "verifying"
+            # OpenCode persists into auth.json itself; no extra subprocess
+            # verifier needed. We still ping the controller-refresh hook so
+            # the running OpenCode agent (and the Settings page on the
+            # next poll) sees the new auth state.
+            await self._invoke_post_web_success_hook(flow.backend)
+            flow.state = "success"
+        except asyncio.TimeoutError:
+            flow.state = "failed"
+            flow.error = "timed_out"
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            logger.error(
+                "Web OpenCode OAuth flow failed for %s: %s", provider_id, err, exc_info=True
+            )
+            flow.state = "failed"
+            flow.error = str(err)
 
     async def _read_codex_output_web(self, flow: WebAuthFlow) -> None:
         """Parse ``codex login --device-auth`` stdout for URL + device code.
@@ -1729,7 +1894,12 @@ class AgentAuthService:
         # intentionally do not touch ``api_key`` here: the user may have
         # configured one earlier and we should preserve it for the moment
         # they decide to switch back via Remove auth.
-        await self._persist_web_auth_mode(backend, "oauth")
+        #
+        # Skipped for opencode: ``OpenCodeConfig`` has no ``auth_mode``
+        # field (auth is per-provider, not global), so persisting one
+        # would add a stray attribute and could mislead future readers.
+        if backend != "opencode":
+            await self._persist_web_auth_mode(backend, "oauth")
         hook = self._post_web_success_hook
         if not callable(hook):
             return

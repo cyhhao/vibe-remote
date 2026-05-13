@@ -850,6 +850,82 @@ class OpenCodeServerManager:
                 logger.warning(f"Failed to get OpenCode providers: {e}")
                 return {}
 
+    async def start_provider_oauth(
+        self,
+        provider_id: str,
+        *,
+        method: int = 0,
+        prompt_answers: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Kick off a per-provider OAuth authorize via OpenCode's HTTP API.
+
+        OpenCode 1.14 exposes ``POST /provider/<id>/oauth/authorize`` with
+        ``{method, ...prompt_answers}`` (the method index is the position
+        in ``/provider/auth[provider_id]``) and returns
+        ``{url, method, instructions}``. ``instructions`` carries the
+        user-facing device code for device-auth flows (e.g.
+        ``"Enter code: AB1C-D2E3"``); browser-redirect flows omit it.
+
+        For providers with prompts (e.g. github-copilot's deployment
+        type), ``prompt_answers`` is merged into the body so the caller
+        can pre-answer (e.g. ``{"deploymentType": "github.com"}``).
+        """
+        await self.ensure_running()
+        payload = {"method": method}
+        if prompt_answers:
+            payload.update(prompt_answers)
+        async with self._request_scope():
+            session = await self._get_http_session()
+            async with session.post(
+                f"{self.base_url}/provider/{provider_id}/oauth/authorize",
+                json=payload,
+            ) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    raise RuntimeError(
+                        f"OpenCode authorize failed for {provider_id}: {resp.status} {text}"
+                    )
+                try:
+                    return await resp.json()
+                except Exception:  # pragma: no cover - parse-defensive
+                    return json.loads(text) if text else {}
+
+    async def wait_provider_oauth(
+        self,
+        provider_id: str,
+        *,
+        method: int = 0,
+        prompt_answers: Optional[Dict[str, Any]] = None,
+        timeout: float = 900.0,
+    ) -> Dict[str, Any]:
+        """Block until ``POST /provider/<id>/oauth/callback`` resolves.
+
+        OpenCode polls the provider's token endpoint (device flow) or
+        catches the local HTTP callback (browser flow) and returns when
+        the credentials have been minted and persisted into auth.json.
+        We bound the wait at 900 s — same as the IM ``/setup`` timeout.
+        """
+        await self.ensure_running()
+        payload = {"method": method}
+        if prompt_answers:
+            payload.update(prompt_answers)
+        async with self._request_scope():
+            session = await self._get_http_session()
+            async with session.post(
+                f"{self.base_url}/provider/{provider_id}/oauth/callback",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    raise RuntimeError(
+                        f"OpenCode callback failed for {provider_id}: {resp.status} {text}"
+                    )
+                try:
+                    return await resp.json()
+                except Exception:  # pragma: no cover - parse-defensive
+                    return json.loads(text) if text else {}
+
     async def get_provider_auth(self) -> Dict[str, Any]:
         """Fetch the per-provider auth-method index from OpenCode.
 

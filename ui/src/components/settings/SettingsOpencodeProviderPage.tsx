@@ -33,6 +33,7 @@ import { Label } from '../ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { SettingsPageShell } from './SettingsPageShell';
 import { BackendLifecycleChip } from './BackendLifecycleChip';
+import { BackendOAuthPanel } from './BackendOAuthPanel';
 import { ToggleSwitch } from './SettingsPrimitives';
 import { useApi } from '@/context/ApiContext';
 import type { OpencodeProvider } from '@/context/ApiContext';
@@ -1099,16 +1100,31 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                                   <div className="flex flex-col gap-3">
                                     {provider.oauth_available && (
-                                      <div className="rounded-md border border-cyan/30 bg-cyan/[0.06] px-3 py-2">
-                                        <p className="text-[11px] font-medium text-cyan">
-                                          {t('settings.backends.opencodeProviderOauthAvailable')}
-                                        </p>
-                                        <p className="text-[11px] leading-relaxed text-muted">
-                                          {t('settings.backends.opencodeProviderOauthHint', {
-                                            id: provider.id,
-                                          })}
-                                        </p>
-                                      </div>
+                                      // In-card OAuth panel: reuses the
+                                      // same component Claude / Codex use,
+                                      // configured for OpenCode's
+                                      // per-provider HTTP flow. Drives the
+                                      // ``/backend/opencode/provider/<id>/auth/oauth/start``
+                                      // endpoint and polls for completion
+                                      // — no terminal commands required.
+                                      <BackendOAuthPanel
+                                        backend="opencode"
+                                        opencodeProviderId={provider.id}
+                                        signedIn={provider.configured}
+                                        title={t('settings.backends.opencodeProviderOauthPanelTitle', {
+                                          name: provider.name,
+                                        })}
+                                        subtitle={t('settings.backends.opencodeProviderOauthPanelSubtitle')}
+                                        hideRemove
+                                        onSuccess={() => {
+                                          // Refresh the providers list so
+                                          // the just-authorised provider
+                                          // flips to "configured" and the
+                                          // masked-key block (if any)
+                                          // appears.
+                                          void loadProviders();
+                                        }}
+                                      />
                                     )}
 
                                     <div className="flex flex-col gap-1.5">

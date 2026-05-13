@@ -26,13 +26,23 @@ export type ApiContextType = {
   getClaudeAuth: () => Promise<ClaudeAuthState>;
   saveClaudeAuth: (payload: ClaudeAuthPayload) => Promise<ClaudeAuthSaveResult>;
   startOAuthWeb: (backend: 'claude' | 'codex', forceReset?: boolean) => Promise<OAuthWebStartResult>;
-  getOAuthWebStatus: (backend: 'claude' | 'codex', flowId: string) => Promise<OAuthWebStatus>;
+  startOAuthWebForOpencodeProvider: (
+    providerId: string,
+    forceReset?: boolean,
+  ) => Promise<OAuthWebStartResult>;
+  getOAuthWebStatus: (
+    backend: 'claude' | 'codex' | 'opencode',
+    flowId: string,
+  ) => Promise<OAuthWebStatus>;
   submitOAuthWebCode: (
     backend: 'claude' | 'codex',
     flowId: string,
     code: string,
   ) => Promise<OAuthWebMutationResult>;
-  cancelOAuthWeb: (backend: 'claude' | 'codex', flowId: string) => Promise<OAuthWebMutationResult>;
+  cancelOAuthWeb: (
+    backend: 'claude' | 'codex' | 'opencode',
+    flowId: string,
+  ) => Promise<OAuthWebMutationResult>;
   removeBackendAuth: (backend: 'claude' | 'codex') => Promise<OAuthWebMutationResult>;
   testBackendAuth: (backend: 'claude' | 'codex') => Promise<BackendAuthTestResult>;
   getOpencodeProviders: () => Promise<OpencodeProviderListResult>;
@@ -442,6 +452,11 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/start`, {
         force_reset: forceReset,
       }),
+    startOAuthWebForOpencodeProvider: (providerId, forceReset = true) =>
+      postJson(
+        `/backend/opencode/provider/${encodeURIComponent(providerId)}/auth/oauth/start`,
+        { force_reset: forceReset },
+      ),
     getOAuthWebStatus: (backend, flowId) =>
       getJson(
         `/backend/${encodeURIComponent(backend)}/auth/oauth/status/${encodeURIComponent(flowId)}`,
