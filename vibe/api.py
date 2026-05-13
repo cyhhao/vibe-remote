@@ -704,13 +704,24 @@ def discord_list_guilds(bot_token: str) -> dict:
 
 
 def discord_list_channels(bot_token: str, guild_id: str, force: bool = False) -> dict:
+    guild_id = str(guild_id or "").strip()
+    if not guild_id:
+        return {
+            "ok": False,
+            "channels": [],
+            "chats": [],
+            "refreshing": False,
+            "last_attempt_at": None,
+            "last_success_at": None,
+            "error": "Discord guild_id is required",
+            "summary": {"discovered_count": 0, "visible_count": 0, "hidden_private_count": 0, "forum_count": 0},
+        }
+
     from core import chat_discovery
 
-    parent_scope_id = None
-    if guild_id:
-        from storage.settings_service import make_scope_id
+    from storage.settings_service import make_scope_id
 
-        parent_scope_id = make_scope_id("discord", "guild", guild_id)
+    parent_scope_id = make_scope_id("discord", "guild", guild_id)
     return chat_discovery.channels_response(
         "discord",
         bot_token=bot_token,

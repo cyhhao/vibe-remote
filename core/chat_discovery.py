@@ -51,6 +51,8 @@ _debounce_cache: dict[tuple[str, str], tuple[float, tuple[Any, ...]]] = {}
 
 _refresh_locks_lock = threading.Lock()
 _refresh_locks: dict[str, threading.Lock] = {}
+_scheduled_refreshes_lock = threading.Lock()
+_scheduled_refreshes: set[str] = set()
 _migration_lock = threading.Lock()
 _migrated_db_paths: set[Path] = set()
 
@@ -511,7 +513,10 @@ def should_refresh(
     ttl_seconds: float = _REFRESH_TTL_SECONDS,
 ) -> bool:
     state = refresh_state(platform, refresh_scope=refresh_scope, db_path=db_path)
-    return _seconds_since(state.last_success_at) >= ttl_seconds
+    return (
+        _seconds_since(state.last_success_at) >= ttl_seconds
+        and _seconds_since(state.last_attempt_at) >= _MIN_REFRESH_INTERVAL_SECONDS
+    )
 
 
 def migrate_legacy_discovered_chats(*, db_path: Path | None = None, legacy_path: Path | None = None) -> None:
@@ -610,8 +615,7 @@ def channels_response(
         )
         chats = _filter_response_chats(all_chats, include_private=include_private, require_member=require_member)
     elif can_refresh and should_refresh(platform, refresh_scope=refresh_scope, db_path=db_path):
-        _schedule_refresh(platform, db_path=db_path, **refresh_kwargs)
-        refreshing = True
+        refreshing = _schedule_refresh(platform, db_path=db_path, **refresh_kwargs)
 
     channels = [chat.to_channel_payload() for chat in chats]
     return {
@@ -793,13 +797,32 @@ def _store_refresh_state(
         engine.dispose()
 
 
-def _schedule_refresh(platform: str, *, db_path: Path | None = None, **kwargs: Any) -> None:
+def _schedule_refresh(platform: str, *, db_path: Path | None = None, **kwargs: Any) -> bool:
+    refresh_scope = _refresh_scope_for(platform, kwargs)
+    key = _refresh_state_key(platform, refresh_scope)
+    with _scheduled_refreshes_lock:
+        if key in _scheduled_refreshes:
+            return True
+        _scheduled_refreshes.add(key)
+
+    def _run_refresh() -> None:
+        try:
+            refresh_platform(platform=platform, db_path=db_path, **kwargs)
+        finally:
+            with _scheduled_refreshes_lock:
+                _scheduled_refreshes.discard(key)
+
     thread = threading.Thread(
-        target=refresh_platform,
-        kwargs={"platform": platform, "db_path": db_path, **kwargs},
+        target=_run_refresh,
         daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception:
+        with _scheduled_refreshes_lock:
+            _scheduled_refreshes.discard(key)
+        raise
+    return True
 
 
 def _summary(all_chats: list[ChannelInfo], visible_chats: list[ChannelInfo], *, include_private: bool) -> dict[str, int]:

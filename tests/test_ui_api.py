@@ -212,6 +212,20 @@ def test_install_codex_uses_resolved_npm(monkeypatch):
     assert result["path"] == "/Users/test/.nvm/versions/node/v22.18.0/bin/codex"
 
 
+def test_discord_list_channels_rejects_empty_guild_id(monkeypatch):
+    monkeypatch.setattr(
+        chat_discovery,
+        "channels_response",
+        lambda *args, **kwargs: pytest.fail("channels_response should not be called without guild_id"),
+    )
+
+    result = api.discord_list_channels("token", "")
+
+    assert result["ok"] is False
+    assert result["channels"] == []
+    assert result["error"] == "Discord guild_id is required"
+
+
 def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
     npm_path = tmp_path / "node" / "bin" / "npm"
     npm_path.parent.mkdir(parents=True, exist_ok=True)

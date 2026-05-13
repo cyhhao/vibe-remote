@@ -197,6 +197,50 @@ def test_empty_cache_channel_response_respects_refresh_backoff(tmp_path: Path, m
     assert second["error"] == "bad token"
 
 
+def test_stale_cache_schedules_only_one_background_refresh(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    auth_context = _auth_context("slack", bot_token="x")
+    chat_discovery.remember_chat(
+        "slack",
+        "C_STALE",
+        name="stale",
+        metadata={chat_discovery.METADATA_AUTH_CONTEXT: auth_context},
+        db_path=db_path,
+    )
+    chat_discovery.set_state_meta(
+        f"channel_refresh.slack.{auth_context}",
+        {
+            "last_attempt_at": "2000-01-01T00:00:00+00:00",
+            "last_success_at": "2000-01-01T00:00:00+00:00",
+            "last_error": None,
+        },
+        db_path=db_path,
+    )
+    starts = 0
+
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            nonlocal starts
+            starts += 1
+
+    monkeypatch.setattr(chat_discovery.threading, "Thread", FakeThread)
+
+    try:
+        first = chat_discovery.channels_response("slack", bot_token="x", db_path=db_path)
+        second = chat_discovery.channels_response("slack", bot_token="x", db_path=db_path)
+    finally:
+        with chat_discovery._scheduled_refreshes_lock:
+            chat_discovery._scheduled_refreshes.clear()
+
+    assert starts == 1
+    assert first["refreshing"] is True
+    assert second["refreshing"] is True
+
+
 def test_slack_cached_response_respects_member_only_browse_mode(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     run_migrations(db_path)
