@@ -302,7 +302,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       Object.values(refreshFollowupTimersRef.current).forEach((timer) => clearTimeout(timer));
       refreshFollowupTimersRef.current = {};
     };
-  }, [platform, selectedGuild, pageTab]);
+  }, [platform, selectedGuild, pageTab, botToken, larkAppId, larkAppSecret, larkDomain]);
 
   useEffect(() => {
     if (platform !== 'discord') return;

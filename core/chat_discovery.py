@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import tempfile
@@ -38,6 +39,7 @@ METADATA_SUPPORTS_TOPICS = "supports_topics"
 METADATA_CHANNEL_POSITION = "channel_position"
 METADATA_CHANNEL_CATEGORY_ID = "channel_category_id"
 METADATA_CHAT_MODE = "chat_mode"
+METADATA_AUTH_CONTEXT = "auth_context"
 
 _STICKY_TRUE_KEYS = {METADATA_IS_FORUM, METADATA_SUPPORTS_TOPICS}
 _DEBOUNCE_SECONDS = 60.0
@@ -161,11 +163,33 @@ def _refresh_state_key(platform: str, refresh_scope: str | None = None) -> str:
 
 
 def _refresh_scope_for(platform: str, kwargs: dict[str, Any]) -> str | None:
+    parts: list[str] = []
     if platform == "discord":
         guild_id = str(kwargs.get("guild_id") or "").strip()
         if guild_id:
-            return f"guild.{guild_id}"
+            parts.append(f"guild.{guild_id}")
+    auth_context = _auth_context_for(platform, kwargs)
+    if auth_context:
+        parts.append(auth_context)
+    return ".".join(parts) or None
+
+
+def _auth_context_for(platform: str, kwargs: dict[str, Any]) -> str | None:
+    if platform in {"slack", "discord"}:
+        bot_token = str(kwargs.get("bot_token") or "").strip()
+        if bot_token:
+            return f"auth.{_stable_secret_hash(bot_token)}"
+    if platform == "lark":
+        app_id = str(kwargs.get("app_id") or "").strip()
+        app_secret = str(kwargs.get("app_secret") or "").strip()
+        domain = str(kwargs.get("domain") or "feishu").strip()
+        if app_id and app_secret:
+            return f"auth.{_stable_secret_hash(chr(0).join([domain, app_id, app_secret]))}"
     return None
+
+
+def _stable_secret_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
 def get_state_meta(key: str, *, db_path: Path | None = None) -> Any:
@@ -321,6 +345,7 @@ def list_chats(
     include_private: bool = True,
     include_not_returned: bool = True,
     parent_scope_id: str | None = None,
+    auth_context: str | None = None,
     db_path: Path | None = None,
 ) -> list[ChannelInfo]:
     engine = _engine(db_path)
@@ -351,6 +376,8 @@ def list_chats(
             result: list[ChannelInfo] = []
             for row in conn.execute(query).mappings():
                 metadata = _json_loads(row["metadata_json"], {})
+                if auth_context is not None and metadata.get(METADATA_AUTH_CONTEXT) != auth_context:
+                    continue
                 visibility = str(metadata.get(METADATA_VISIBILITY_STATUS) or VISIBILITY_UNKNOWN)
                 if visibility == VISIBILITY_NOT_RETURNED and not include_not_returned:
                     continue
@@ -390,6 +417,7 @@ def refresh_platform(
 ) -> RefreshResult:
     platform = str(platform)
     refresh_scope = _refresh_scope_for(platform, kwargs)
+    auth_context = _auth_context_for(platform, kwargs)
     lock = _refresh_lock(platform, refresh_scope)
     with lock:
         existing_state = refresh_state(platform, refresh_scope=refresh_scope, db_path=db_path)
@@ -444,6 +472,7 @@ def refresh_platform(
                             METADATA_VISIBILITY_STATUS: VISIBILITY_VISIBLE,
                             METADATA_LAST_REFRESHED_AT: success_at,
                             METADATA_LAST_MISSING_AT: None,
+                            METADATA_AUTH_CONTEXT: auth_context,
                         },
                     )
                     upsert_scope(
@@ -465,6 +494,7 @@ def refresh_platform(
                     seen_ids,
                     refreshed_at=success_at,
                     parent_scope_id=refreshed_parent,
+                    auth_context=auth_context,
                 )
                 state = RefreshState(last_attempt_at=now, last_success_at=success_at, last_error=None)
                 _write_refresh_state(conn, platform, state, now=success_at, refresh_scope=refresh_scope)
@@ -542,7 +572,14 @@ def channels_response(
 ) -> dict[str, Any]:
     migrate_legacy_discovered_chats(db_path=db_path)
     refresh_scope = _refresh_scope_for(platform, refresh_kwargs)
-    all_chats = list_chats(platform, include_private=True, parent_scope_id=parent_scope_id, db_path=db_path)
+    auth_context = _auth_context_for(platform, refresh_kwargs)
+    all_chats = list_chats(
+        platform,
+        include_private=True,
+        parent_scope_id=parent_scope_id,
+        auth_context=auth_context,
+        db_path=db_path,
+    )
     chats = _filter_response_chats(all_chats, include_private=include_private, require_member=require_member)
     state = refresh_state(platform, refresh_scope=refresh_scope, db_path=db_path)
     refreshing = False
@@ -553,7 +590,13 @@ def channels_response(
         result = refresh_platform(platform, force=force, db_path=db_path, **refresh_kwargs)
         state = result.refresh_state
         error = result.error or state.last_error
-        all_chats = list_chats(platform, include_private=True, parent_scope_id=parent_scope_id, db_path=db_path)
+        all_chats = list_chats(
+            platform,
+            include_private=True,
+            parent_scope_id=parent_scope_id,
+            auth_context=auth_context,
+            db_path=db_path,
+        )
         chats = _filter_response_chats(all_chats, include_private=include_private, require_member=require_member)
     elif can_refresh and should_refresh(platform, refresh_scope=refresh_scope, db_path=db_path):
         _schedule_refresh(platform, db_path=db_path, **refresh_kwargs)
@@ -668,6 +711,7 @@ def _mark_not_returned(
     *,
     refreshed_at: str,
     parent_scope_id: str | None,
+    auth_context: str | None,
 ) -> None:
     conditions = [scopes.c.platform == platform, scopes.c.scope_type == CHANNEL_SCOPE_TYPE]
     if parent_scope_id is not None:
@@ -678,6 +722,8 @@ def _mark_not_returned(
         if native_id in seen_ids:
             continue
         metadata = _json_loads(row["metadata_json"], {})
+        if auth_context is not None and metadata.get(METADATA_AUTH_CONTEXT) != auth_context:
+            continue
         metadata[METADATA_VISIBILITY_STATUS] = VISIBILITY_NOT_RETURNED
         metadata[METADATA_LAST_MISSING_AT] = refreshed_at
         conn.execute(

@@ -9,6 +9,12 @@ from storage.migrations import run_migrations
 from storage.settings_service import SQLiteSettingsService
 
 
+def _auth_context(platform: str, **kwargs) -> str:
+    value = chat_discovery._auth_context_for(platform, kwargs)
+    assert value is not None
+    return value
+
+
 def test_metadata_merge_preserves_unknown_keys_and_sticky_true_flags() -> None:
     merged = chat_discovery.merge_metadata(
         {
@@ -103,7 +109,13 @@ def test_legacy_discovered_chats_migration_is_idempotent(tmp_path: Path) -> None
 def test_refresh_marks_absent_rows_not_returned_without_deleting_settings(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "vibe.sqlite"
     run_migrations(db_path)
-    chat_discovery.remember_chat("slack", "C_OLD", name="old", db_path=db_path)
+    chat_discovery.remember_chat(
+        "slack",
+        "C_OLD",
+        name="old",
+        metadata={chat_discovery.METADATA_AUTH_CONTEXT: _auth_context("slack", bot_token="x")},
+        db_path=db_path,
+    )
 
     service = SQLiteSettingsService(db_path)
     try:
@@ -135,7 +147,13 @@ def test_refresh_marks_absent_rows_not_returned_without_deleting_settings(tmp_pa
 def test_refresh_failure_keeps_stale_cache_and_records_error(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "vibe.sqlite"
     run_migrations(db_path)
-    chat_discovery.remember_chat("slack", "C_KEEP", name="keep", db_path=db_path)
+    chat_discovery.remember_chat(
+        "slack",
+        "C_KEEP",
+        name="keep",
+        metadata={chat_discovery.METADATA_AUTH_CONTEXT: _auth_context("slack", bot_token="x")},
+        db_path=db_path,
+    )
 
     from vibe import api
 
@@ -143,7 +161,7 @@ def test_refresh_failure_keeps_stale_cache_and_records_error(tmp_path: Path, mon
 
     result = chat_discovery.refresh_platform("slack", force=True, bot_token="x", db_path=db_path)
     chats = chat_discovery.list_chats("slack", db_path=db_path)
-    state = chat_discovery.refresh_state("slack", db_path=db_path)
+    state = chat_discovery.refresh_state("slack", refresh_scope=_auth_context("slack", bot_token="x"), db_path=db_path)
     response = chat_discovery.channels_response("slack", bot_token="x", db_path=db_path)
 
     assert result.ok is False
@@ -182,22 +200,23 @@ def test_empty_cache_channel_response_respects_refresh_backoff(tmp_path: Path, m
 def test_slack_cached_response_respects_member_only_browse_mode(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     run_migrations(db_path)
+    auth_context = _auth_context("slack", bot_token="x")
     chat_discovery.remember_chat(
         "slack",
         "C_MEMBER",
         name="member",
-        metadata={chat_discovery.METADATA_IS_MEMBER: True},
+        metadata={chat_discovery.METADATA_IS_MEMBER: True, chat_discovery.METADATA_AUTH_CONTEXT: auth_context},
         db_path=db_path,
     )
     chat_discovery.remember_chat(
         "slack",
         "C_OTHER",
         name="other",
-        metadata={chat_discovery.METADATA_IS_MEMBER: False},
+        metadata={chat_discovery.METADATA_IS_MEMBER: False, chat_discovery.METADATA_AUTH_CONTEXT: auth_context},
         db_path=db_path,
     )
     chat_discovery.set_state_meta(
-        "channel_refresh.slack",
+        f"channel_refresh.slack.{auth_context}",
         {"last_attempt_at": "2999-01-01T00:00:00+00:00", "last_success_at": "2999-01-01T00:00:00+00:00", "last_error": None},
         db_path=db_path,
     )
@@ -207,6 +226,34 @@ def test_slack_cached_response_respects_member_only_browse_mode(tmp_path: Path) 
 
     assert [channel["id"] for channel in member_only["channels"]] == ["C_MEMBER"]
     assert {channel["id"] for channel in browse_all["channels"]} == {"C_MEMBER", "C_OTHER"}
+
+
+def test_slack_channel_cache_is_scoped_by_auth_context(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    calls: list[str] = []
+
+    from vibe import api
+
+    def fake_list_channels_live(token: str, browse_all: bool = False) -> dict:
+        calls.append(token)
+        suffix = token[-1].upper()
+        return {
+            "ok": True,
+            "channels": [{"id": f"C_{suffix}", "name": f"workspace-{suffix}", "is_private": False, "is_member": True}],
+            "is_member_only": not browse_all,
+        }
+
+    monkeypatch.setattr(api, "list_channels_live", fake_list_channels_live)
+
+    first = chat_discovery.channels_response("slack", bot_token="token-a", db_path=db_path)
+    second = chat_discovery.channels_response("slack", bot_token="token-b", db_path=db_path)
+    cached_first = chat_discovery.channels_response("slack", bot_token="token-a", db_path=db_path)
+
+    assert calls == ["token-a", "token-b"]
+    assert [channel["id"] for channel in first["channels"]] == ["C_A"]
+    assert [channel["id"] for channel in second["channels"]] == ["C_B"]
+    assert [channel["id"] for channel in cached_first["channels"]] == ["C_A"]
 
 
 def test_discord_refresh_state_is_scoped_by_guild(tmp_path: Path, monkeypatch) -> None:
@@ -231,8 +278,22 @@ def test_discord_refresh_state_is_scoped_by_guild(tmp_path: Path, monkeypatch) -
     assert first.ok is True
     assert second.ok is True
     assert calls == ["G1", "G2"]
-    assert chat_discovery.refresh_state("discord", refresh_scope="guild.G1", db_path=db_path).last_success_at is not None
-    assert chat_discovery.refresh_state("discord", refresh_scope="guild.G2", db_path=db_path).last_success_at is not None
+    assert (
+        chat_discovery.refresh_state(
+            "discord",
+            refresh_scope=f"guild.G1.{_auth_context('discord', bot_token='x')}",
+            db_path=db_path,
+        ).last_success_at
+        is not None
+    )
+    assert (
+        chat_discovery.refresh_state(
+            "discord",
+            refresh_scope=f"guild.G2.{_auth_context('discord', bot_token='x')}",
+            db_path=db_path,
+        ).last_success_at
+        is not None
+    )
     assert chat_discovery.refresh_state("discord", db_path=db_path).last_success_at is None
 
 
