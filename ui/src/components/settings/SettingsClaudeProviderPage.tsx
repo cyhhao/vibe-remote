@@ -108,6 +108,11 @@ export const SettingsClaudeProviderPage: React.FC = () => {
   // replace it; true = empty editable input ready for a fresh secret.
   const [editingKey, setEditingKey] = useState(false);
   const [baseUrl, setBaseUrl] = useState('');
+  // Snapshot the last loaded/saved auth-mode + base_url so we can hide
+  // the Save button when nothing has changed (page feedback: no-op
+  // Save buttons are noise).
+  const [savedAuthMode, setSavedAuthMode] = useState<ClaudeAuthMode>('oauth');
+  const [savedBaseUrl, setSavedBaseUrl] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -140,8 +145,13 @@ export const SettingsClaudeProviderPage: React.FC = () => {
         // even when settings.json carries the actual key, so reading
         // ``auth_mode`` alone would land the user on the wrong tab. Fall
         // back to V2Config only when nothing on disk is configured.
-        setAuthMode(data.active_auth_mode !== 'none' ? data.active_auth_mode : data.auth_mode);
-        setBaseUrl(data.base_url || '');
+        const initialMode =
+          data.active_auth_mode !== 'none' ? data.active_auth_mode : data.auth_mode;
+        const initialBase = data.base_url || '';
+        setAuthMode(initialMode);
+        setBaseUrl(initialBase);
+        setSavedAuthMode(initialMode);
+        setSavedBaseUrl(initialBase);
         // The masked preview lives in ``authState.api_key_masked``;
         // ``apiKey`` stays empty until the user clicks "Replace".
         setApiKey('');
@@ -254,8 +264,13 @@ export const SettingsClaudeProviderPage: React.FC = () => {
         return;
       }
       setAuthState(result);
-      setAuthMode(result.auth_mode);
-      setBaseUrl(result.base_url || '');
+      const nextMode =
+        result.active_auth_mode !== 'none' ? result.active_auth_mode : result.auth_mode;
+      const nextBase = result.base_url || '';
+      setAuthMode(nextMode);
+      setBaseUrl(nextBase);
+      setSavedAuthMode(nextMode);
+      setSavedBaseUrl(nextBase);
       setApiKey('');
       setEditingKey(false);
       // Claude restart is synthetic (one-shot CLI) so result.restart.ok
@@ -607,7 +622,11 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                   </>
                 )}
 
-                {authState?.settings_conflict && (
+                {/* The settings.json conflict warning + Info hint only
+                    speak to the API-key flow (where saving collides with
+                    a hand-edited ``env`` block, or writes into V2Config).
+                    Showing them under OAuth is just clutter. */}
+                {authMode === 'api_key' && authState?.settings_conflict && (
                   // Claude Code applies its own ``env`` block on top of inherited
                   // env, so a hand-edited ``settings.json`` will override the
                   // V2Config-injected key at launch. Warn loudly — silently
@@ -628,25 +647,35 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                   </div>
                 )}
 
-                <div className="flex items-start gap-2 rounded-lg border border-border bg-surface-2/60 px-3 py-2.5">
-                  <Info className="mt-0.5 size-3.5 shrink-0 text-muted" />
-                  <p className="text-[12px] leading-relaxed text-muted">
-                    {t('settings.backends.claudeInfoHint')}
-                  </p>
-                </div>
+                {authMode === 'api_key' && (
+                  <div className="flex items-start gap-2 rounded-lg border border-border bg-surface-2/60 px-3 py-2.5">
+                    <Info className="mt-0.5 size-3.5 shrink-0 text-muted" />
+                    <p className="text-[12px] leading-relaxed text-muted">
+                      {t('settings.backends.claudeInfoHint')}
+                    </p>
+                  </div>
+                )}
 
                 {/* OAuth mode persists ``auth_mode=oauth`` automatically on
                     successful sign-in (see ``_invoke_post_web_success_hook``),
                     so the Save button only needs to surface in API-key mode
-                    where the user still has to commit the key / Base URL. */}
-                {authMode === 'api_key' && (
-                  <div className="flex justify-end">
-                    <Button variant="brand" size="default" onClick={onSaveAuth} disabled={authSaving}>
-                      <Save className="size-3.5" />
-                      {authSaving ? t('settings.backends.claudeSaving') : t('settings.backends.claudeSave')}
-                    </Button>
-                  </div>
-                )}
+                    where the user still has to commit the key / Base URL —
+                    and even there, only when something has actually changed. */}
+                {authMode === 'api_key' && (() => {
+                  const dirty =
+                    authMode !== savedAuthMode ||
+                    apiKey.trim().length > 0 ||
+                    baseUrl.trim() !== savedBaseUrl.trim();
+                  if (!dirty) return null;
+                  return (
+                    <div className="flex justify-end">
+                      <Button variant="brand" size="default" onClick={onSaveAuth} disabled={authSaving}>
+                        <Save className="size-3.5" />
+                        {authSaving ? t('settings.backends.claudeSaving') : t('settings.backends.claudeSave')}
+                      </Button>
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
           )}

@@ -68,6 +68,12 @@ export const SettingsCodexProviderPage: React.FC = () => {
   // pencil button flips it on; saving or reloading flips it back off.
   const [editingKey, setEditingKey] = useState(false);
   const [baseUrl, setBaseUrl] = useState('');
+  // ``savedAuthMode`` / ``savedBaseUrl`` snapshot the last successfully
+  // loaded (or saved) values so we can show the Save button only when
+  // the user has actually changed something. Page feedback: a Save
+  // button that never has a no-op state is noisy and confusing.
+  const [savedAuthMode, setSavedAuthMode] = useState<CodexAuthMode>('oauth');
+  const [savedBaseUrl, setSavedBaseUrl] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -85,8 +91,13 @@ export const SettingsCodexProviderPage: React.FC = () => {
         // config in ``config.toml`` still points at a custom endpoint).
         // ``active_auth_mode === "none"`` means we have nothing on disk
         // either, so honour V2Config's saved intent in that fallback case.
-        setAuthMode(data.active_auth_mode !== 'none' ? data.active_auth_mode : data.auth_mode);
-        setBaseUrl(data.base_url || '');
+        const initialMode =
+          data.active_auth_mode !== 'none' ? data.active_auth_mode : data.auth_mode;
+        const initialBase = data.base_url || '';
+        setAuthMode(initialMode);
+        setBaseUrl(initialBase);
+        setSavedAuthMode(initialMode);
+        setSavedBaseUrl(initialBase);
         // Empty + read-only input + masked preview rendered separately
         // (see below) reflects the saved state without leaking plaintext.
         setApiKey('');
@@ -146,8 +157,13 @@ export const SettingsCodexProviderPage: React.FC = () => {
         return;
       }
       setState(result);
-      setAuthMode(result.auth_mode);
-      setBaseUrl(result.base_url || '');
+      const nextMode =
+        result.active_auth_mode !== 'none' ? result.active_auth_mode : result.auth_mode;
+      const nextBase = result.base_url || '';
+      setAuthMode(nextMode);
+      setBaseUrl(nextBase);
+      setSavedAuthMode(nextMode);
+      setSavedBaseUrl(nextBase);
       setApiKey('');
       setEditingKey(false);
       if (result.restart?.ok === false) {
@@ -356,24 +372,40 @@ export const SettingsCodexProviderPage: React.FC = () => {
               </>
             )}
 
-            <div className="flex items-start gap-2 rounded-lg border border-border bg-surface-2/60 px-3 py-2.5">
-              <Info className="mt-0.5 size-3.5 shrink-0 text-muted" />
-              <p className="text-[12px] leading-relaxed text-muted">
-                {t('settings.backends.codexInfoHint')}
-              </p>
-            </div>
+            {/* Info hint describes ``~/.codex/{auth.json,config.toml}``
+                writes that only happen on api_key saves. Skip it under
+                OAuth so the panel doesn't carry irrelevant copy. */}
+            {authMode === 'api_key' && (
+              <div className="flex items-start gap-2 rounded-lg border border-border bg-surface-2/60 px-3 py-2.5">
+                <Info className="mt-0.5 size-3.5 shrink-0 text-muted" />
+                <p className="text-[12px] leading-relaxed text-muted">
+                  {t('settings.backends.codexInfoHint')}
+                </p>
+              </div>
+            )}
 
             {/* OAuth mode persists ``auth_mode=oauth`` automatically on
                 successful sign-in, so the Save button only surfaces for
-                api_key mode. */}
-            {authMode === 'api_key' && (
-              <div className="flex justify-end">
-                <Button variant="brand" size="default" onClick={onSave} disabled={saving}>
-                  <Save className="size-3.5" />
-                  {saving ? t('settings.backends.codexSaving') : t('settings.backends.codexSave')}
-                </Button>
-              </div>
-            )}
+                api_key mode — and even then only when something has
+                actually changed (page feedback: a permanent Save button
+                with no dirty signal is noisy). ``dirty`` watches the
+                three things this card mutates against their saved
+                snapshot. */}
+            {authMode === 'api_key' && (() => {
+              const dirty =
+                authMode !== savedAuthMode ||
+                apiKey.trim().length > 0 ||
+                baseUrl.trim() !== savedBaseUrl.trim();
+              if (!dirty) return null;
+              return (
+                <div className="flex justify-end">
+                  <Button variant="brand" size="default" onClick={onSave} disabled={saving}>
+                    <Save className="size-3.5" />
+                    {saving ? t('settings.backends.codexSaving') : t('settings.backends.codexSave')}
+                  </Button>
+                </div>
+              );
+            })()}
           </CardContent>
         </Card>
       )}
