@@ -69,6 +69,34 @@ def test_remember_chat_lists_inventory_with_configured_state(tmp_path: Path) -> 
     assert chats[0].visibility_status == chat_discovery.VISIBILITY_VISIBLE
 
 
+def test_remember_chat_debounce_does_not_suppress_retry_after_persist_failure(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    original_upsert_scope = chat_discovery.upsert_scope
+    calls = 0
+
+    def flaky_upsert_scope(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("database is locked")
+        return original_upsert_scope(*args, **kwargs)
+
+    monkeypatch.setattr(chat_discovery, "upsert_scope", flaky_upsert_scope)
+
+    try:
+        chat_discovery.remember_chat("telegram", "retry", name="Retry", db_path=db_path)
+    except RuntimeError as exc:
+        assert str(exc) == "database is locked"
+
+    chat_discovery.remember_chat("telegram", "retry", name="Retry", db_path=db_path)
+
+    chats = chat_discovery.list_chats("telegram", db_path=db_path)
+
+    assert calls == 2
+    assert [chat.chat_id for chat in chats] == ["retry"]
+
+
 def test_legacy_discovered_chats_migration_is_idempotent(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     run_migrations(db_path)

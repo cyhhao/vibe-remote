@@ -293,7 +293,6 @@ def remember_chat(
         cached = _debounce_cache.get(debounce_key)
         if cached is not None and monotonic_now - cached[0] < _DEBOUNCE_SECONDS and cached[1] == debounce_payload:
             return
-        _debounce_cache[debounce_key] = (monotonic_now, debounce_payload)
 
     now = _utc_now_iso()
     engine = _engine(db_path)
@@ -320,6 +319,8 @@ def remember_chat(
                     and _seconds_since(row["last_seen_at"]) < _DEBOUNCE_SECONDS
                 )
                 if unchanged:
+                    with _debounce_lock:
+                        _debounce_cache[debounce_key] = (monotonic_now, debounce_payload)
                     return
                 is_private = final_is_private
                 supports_threads = final_supports_threads
@@ -339,6 +340,8 @@ def remember_chat(
             )
     finally:
         engine.dispose()
+    with _debounce_lock:
+        _debounce_cache[debounce_key] = (monotonic_now, debounce_payload)
 
 
 def list_chats(
