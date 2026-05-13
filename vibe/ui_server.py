@@ -1675,7 +1675,10 @@ def backend_auth_test(backend: str):
     """Send a single-token probe through the backend CLI to verify auth."""
     from vibe import api
 
-    return jsonify(api.test_backend_auth(backend))
+    payload = request.json or {}
+    raw_model = payload.get("model")
+    model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
+    return jsonify(api.test_backend_auth(backend, model=model))
 
 
 @app.route("/backend/opencode/providers", methods=["GET"])

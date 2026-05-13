@@ -2258,14 +2258,22 @@ def remove_backend_auth(backend: str) -> dict:
         return {"ok": False, "error": "remove_failed", "detail": str(exc)}
 
 
-def test_backend_auth(backend: str) -> dict:
-    """Send a single-token ``Hi`` probe through the backend CLI."""
+def test_backend_auth(backend: str, model: Optional[str] = None) -> dict:
+    """Send a single-token ``Hi`` probe through the backend CLI.
+
+    ``model`` lets the caller override the CLI's configured default —
+    important for Codex users whose ``config.toml`` selects a slow
+    reasoning model, where even "Hi" can blow past the test timeout.
+    """
     backend = (backend or "").strip().lower()
     if backend not in _WEB_OAUTH_BACKENDS:
         return {"ok": False, "error": "unsupported_backend"}
     service = _get_oauth_service()
     try:
-        return _submit_oauth_coro(service.test_web_auth(backend), timeout=60.0)
+        return _submit_oauth_coro(
+            service.test_web_auth(backend, model=model),
+            timeout=60.0,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error("Web auth test failed for %s: %s", backend, exc, exc_info=True)
         return {"ok": False, "error": "test_failed", "detail": str(exc)}

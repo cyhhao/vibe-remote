@@ -37,6 +37,55 @@ CLAUDE_LOGIN_METHODS = {"claudeai", "console"}
 OPENCODE_DIRECT_SETUP_URLS = {"opencode": "https://opencode.ai/auth"}
 
 
+def _pick_probe_response_excerpt(stdout_text: str) -> str:
+    """Return the first content-bearing line from Codex/Claude probe stdout.
+
+    The CLIs emit decorations the user doesn't care about: warnings
+    (``warning:``, ``ERROR:``, bubblewrap notices), session
+    bookkeeping (``codex``, ``tokens used``, ``Reconnecting...``),
+    and timestamped headers. Skip those and take the first real
+    response line so the "Last run" status shows what the model
+    actually said.
+    """
+    skip_prefixes = (
+        "warning:",
+        "error:",
+        "info:",
+        "debug:",
+        "trace:",
+        "codex",
+        "claude",
+        "reconnecting",
+        "tokens used",
+        "thinking",
+        "session id",
+        "user instructions",
+        "system",
+        "[",  # rich-tty escape sequence remnants like "[1m..."
+    )
+    candidate = ""
+    for line in stdout_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if any(lowered.startswith(p) for p in skip_prefixes):
+            continue
+        if stripped.startswith(">") or stripped.startswith("#"):
+            continue
+        candidate = stripped[:240]
+        break
+    if not candidate:
+        # Fall back to the first non-blank line even if it looks
+        # decorative — better something than empty.
+        for line in stdout_text.splitlines():
+            stripped = line.strip()
+            if stripped:
+                candidate = stripped[:240]
+                break
+    return candidate
+
+
 def _classify_test_failure(stdout: str, stderr: str) -> str:
     """Map a backend CLI's failure output to a specific UI error code.
 
@@ -1530,13 +1579,26 @@ class AgentAuthService:
                 logger.warning("post_web_success_hook failed after remove for %s: %s", backend, err)
         return {"ok": True}
 
-    async def test_web_auth(self, backend: str, *, timeout: float = 45.0) -> dict[str, Any]:
+    async def test_web_auth(
+        self,
+        backend: str,
+        *,
+        timeout: float = 45.0,
+        model: str | None = None,
+    ) -> dict[str, Any]:
         """Send a 1-token probe ("Hi") through the backend CLI.
 
         Validates both the credentials and the endpoint (when ``base_url``
         is configured) by running ``claude --print "Hi"`` /
         ``codex exec "Hi"``. Returns elapsed milliseconds + a short
         response excerpt on success; surfaces stderr on failure.
+
+        ``model`` overrides the CLI's configured default — useful for
+        users whose ``config.toml`` selects a slow reasoning model
+        (e.g. ``gpt-5.4`` with ``model_reasoning_effort=xhigh``) where
+        even "Hi" can take minutes to round-trip. The frontend's Test
+        panel exposes a small select pre-filled from the routing
+        catalog so the user can probe a specific model.
         """
         # remove_web_auth and test_web_auth are claude / codex specific
         # (single-backend subprocess invocations). OpenCode uses the
@@ -1553,7 +1615,10 @@ class AgentAuthService:
             # auto-discovery) so the probe never fails on environment
             # quirks; we only care that the auth + endpoint round-trip
             # works.
-            cmd = [binary, "-p", "--bare", prompt]
+            cmd = [binary, "-p", "--bare"]
+            if isinstance(model, str) and model.strip():
+                cmd.extend(["--model", model.strip()])
+            cmd.append(prompt)
             env_override = dict(os.environ)
             # Layer V2Config-driven env on top so the test reflects what
             # the live IM session would do at launch.
@@ -1570,12 +1635,23 @@ class AgentAuthService:
                 pass
         else:
             # Codex single-shot mode. ``--skip-git-repo-check`` bypasses
-            # Codex's per-project trust gate — the UI server's cwd is
-            # never in the user's trusted-projects list, so without it
-            # Codex bails before talking to the API. ``-q`` would silence
-            # the rendered response; we want stdout so the UI can show a
-            # one-line excerpt as proof the round-trip succeeded.
-            cmd = [binary, "exec", "--skip-git-repo-check", prompt]
+            # Codex's per-project trust gate. We also force
+            # ``model_reasoning_effort=minimal`` so a config.toml that
+            # selects ``xhigh`` reasoning (deep thinking + 30 s+ for any
+            # prompt) doesn't blow past our 45 s test timeout — the
+            # probe is "auth + endpoint reachable", not "exercise the
+            # reasoning chain". ``-c key=value`` overrides config.toml
+            # entries per invocation.
+            cmd = [
+                binary,
+                "exec",
+                "--skip-git-repo-check",
+                "-c",
+                "model_reasoning_effort=minimal",
+            ]
+            if isinstance(model, str) and model.strip():
+                cmd.extend(["-c", f"model={model.strip()}"])
+            cmd.append(prompt)
             env_override = dict(os.environ)
 
         started = time.monotonic()
@@ -1620,15 +1696,13 @@ class AgentAuthService:
                 "duration_ms": duration_ms,
             }
 
-        # Trim the response to a one-line excerpt — chunked output (Codex
-        # in particular emits multi-line markdown) would overflow the
-        # toast and isn't the point of the probe.
-        excerpt = ""
-        for line in stdout_text.splitlines():
-            line = line.strip()
-            if line:
-                excerpt = line[:240]
-                break
+        # Pick the model's actual response out of chatty CLI output.
+        # Codex in particular prepends a session header, a "codex"
+        # label line, "tokens used" footer, ``Reconnecting...`` retry
+        # warnings, and bubblewrap notices — the first non-blank line
+        # would always be a warning or label. Skip known non-content
+        # lines and take the first remaining one as the excerpt.
+        excerpt = _pick_probe_response_excerpt(stdout_text)
         return {
             "ok": True,
             "duration_ms": duration_ms,

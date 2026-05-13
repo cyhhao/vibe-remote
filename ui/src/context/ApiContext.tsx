@@ -44,7 +44,10 @@ export type ApiContextType = {
     flowId: string,
   ) => Promise<OAuthWebMutationResult>;
   removeBackendAuth: (backend: 'claude' | 'codex') => Promise<OAuthWebMutationResult>;
-  testBackendAuth: (backend: 'claude' | 'codex') => Promise<BackendAuthTestResult>;
+  testBackendAuth: (
+    backend: 'claude' | 'codex',
+    options?: { model?: string },
+  ) => Promise<BackendAuthTestResult>;
   getOpencodeProviders: () => Promise<OpencodeProviderListResult>;
   setOpencodeProviderAuth: (
     providerId: string,
@@ -478,8 +481,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }),
     removeBackendAuth: (backend) =>
       postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/remove`, {}),
-    testBackendAuth: (backend) =>
-      postJson(`/backend/${encodeURIComponent(backend)}/auth/test`, {}),
+    testBackendAuth: (backend, options) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/test`, {
+        ...(options?.model ? { model: options.model } : {}),
+      }),
     getOpencodeProviders: () => getJson('/backend/opencode/providers'),
     setOpencodeProviderAuth: (providerId, apiKey, baseUrl) =>
       // Forward ``base_url`` only when the caller passed something
