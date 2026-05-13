@@ -1728,6 +1728,228 @@ class AgentAuthService:
             "excerpt": excerpt,
         }
 
+    async def test_opencode_provider(
+        self,
+        provider_id: str,
+        *,
+        model: str | None = None,
+        timeout: float = 60.0,
+    ) -> dict[str, Any]:
+        """Probe a single OpenCode provider via the live ``opencode serve`` HTTP API.
+
+        Unlike Claude / Codex (each have one global credential), OpenCode
+        ships with N providers and the user typically configures only a
+        few. A single backend-wide test button would either fail when one
+        provider is unhealthy or silently mask which provider works — so
+        each provider card gets its own probe.
+
+        Flow: create a temp session → ``send_message("Hi", model=...)``
+        → poll messages until the assistant message either completes
+        with text or surfaces an ``info.error`` block → abort the
+        session. The session record stays on disk (OpenCode doesn't
+        expose ``DELETE /session``), but ``abort`` releases the run
+        slot, which is what matters for the probe.
+
+        ``model`` is the model id (e.g. ``"gpt-4o-mini"``); we wrap it
+        into the ``{providerID, modelID}`` shape OpenCode expects. When
+        ``None``, OpenCode uses the provider's configured default.
+        """
+        provider_id = (provider_id or "").strip()
+        if not provider_id:
+            return {"ok": False, "error": "missing_provider"}
+
+        server = await self._opencode_server()
+        if server is None:
+            return {"ok": False, "error": "opencode_server_unavailable"}
+
+        # Resolve the model id: caller-supplied wins; otherwise look up
+        # the provider's default from the live catalog so the probe
+        # doesn't fail with "model is required" on providers that don't
+        # carry a config-level default.
+        chosen_model = (model or "").strip()
+        if not chosen_model:
+            try:
+                catalog = await server.get_available_models(os.path.expanduser("~"))
+            except Exception:  # noqa: BLE001
+                catalog = None
+            if isinstance(catalog, dict):
+                default_map = catalog.get("default") or {}
+                if isinstance(default_map, dict):
+                    raw_default = default_map.get(provider_id)
+                    if isinstance(raw_default, str) and raw_default.strip():
+                        chosen_model = raw_default.strip()
+                if not chosen_model:
+                    providers = catalog.get("providers") or []
+                    if isinstance(providers, list):
+                        for entry in providers:
+                            if not isinstance(entry, dict):
+                                continue
+                            if entry.get("id") != provider_id:
+                                continue
+                            models_field = entry.get("models")
+                            if isinstance(models_field, dict):
+                                keys = sorted(models_field.keys())
+                                if keys:
+                                    chosen_model = keys[0]
+                            elif isinstance(models_field, list):
+                                for m in models_field:
+                                    if isinstance(m, dict) and isinstance(m.get("id"), str):
+                                        chosen_model = m["id"]
+                                        break
+                                    if isinstance(m, str):
+                                        chosen_model = m
+                                        break
+                            break
+        if not chosen_model:
+            return {"ok": False, "error": "no_models_available"}
+
+        # OpenCode picks a workdir per request; the probe doesn't touch
+        # files so the home dir is fine and matches what the IM /setup
+        # flow uses.
+        directory = os.path.expanduser("~")
+        started = time.monotonic()
+        session_id: str | None = None
+        try:
+            try:
+                created = await server.create_session(directory, title="vibe-test-probe")
+            except Exception as err:  # noqa: BLE001
+                detail = str(err)
+                return {
+                    "ok": False,
+                    "error": _classify_test_failure("", detail),
+                    "detail": detail[:600],
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                }
+            session_id = None
+            if isinstance(created, dict):
+                info = created.get("info") if isinstance(created.get("info"), dict) else created
+                session_id = info.get("id") if isinstance(info, dict) else None
+            if not session_id:
+                return {
+                    "ok": False,
+                    "error": "session_create_failed",
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                }
+
+            baseline_ids: set[str] = set()
+            try:
+                pre_msgs = await server.list_messages(session_id, directory)
+                for msg in pre_msgs:
+                    mid = msg.get("info", {}).get("id") if isinstance(msg, dict) else None
+                    if mid:
+                        baseline_ids.add(mid)
+            except Exception:  # noqa: BLE001
+                pass
+
+            try:
+                await server.send_message(
+                    session_id,
+                    directory,
+                    "Hi",
+                    model={"providerID": provider_id, "modelID": chosen_model},
+                )
+            except Exception as err:  # noqa: BLE001
+                detail = str(err)
+                return {
+                    "ok": False,
+                    "error": _classify_test_failure("", detail),
+                    "detail": detail[:600],
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                }
+
+            # Poll until the assistant message completes (``info.time.completed``
+            # is set) or carries an ``info.error`` block — both are
+            # terminal. Cap on ``timeout`` so a hung provider never wedges
+            # the request.
+            deadline = started + timeout
+            final_text = ""
+            error_payload: dict[str, Any] | None = None
+            poll_interval = 1.5
+            while time.monotonic() < deadline:
+                try:
+                    messages = await server.list_messages(session_id, directory)
+                except Exception as poll_err:  # noqa: BLE001
+                    detail = str(poll_err)
+                    return {
+                        "ok": False,
+                        "error": _classify_test_failure("", detail),
+                        "detail": detail[:600],
+                        "duration_ms": int((time.monotonic() - started) * 1000),
+                    }
+                terminal = None
+                for msg in messages or []:
+                    if not isinstance(msg, dict):
+                        continue
+                    info = msg.get("info") or {}
+                    mid = info.get("id")
+                    if not mid or mid in baseline_ids:
+                        continue
+                    if info.get("role") != "assistant":
+                        continue
+                    if info.get("error"):
+                        terminal = msg
+                        error_payload = info.get("error")
+                        break
+                    completed = (info.get("time") or {}).get("completed")
+                    if completed and info.get("finish") != "tool-calls":
+                        terminal = msg
+                        break
+                if terminal is not None:
+                    if error_payload:
+                        break
+                    parts = terminal.get("parts") or []
+                    pieces: list[str] = []
+                    for part in parts:
+                        if not isinstance(part, dict):
+                            continue
+                        if part.get("type") == "text":
+                            text_val = part.get("text") or ""
+                            if isinstance(text_val, str) and text_val.strip():
+                                pieces.append(text_val.strip())
+                    final_text = "\n\n".join(pieces).strip()
+                    break
+                await asyncio.sleep(poll_interval)
+            else:
+                return {
+                    "ok": False,
+                    "error": "timed_out",
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                }
+
+            duration_ms = int((time.monotonic() - started) * 1000)
+            if error_payload:
+                error_name = ""
+                error_msg = ""
+                if isinstance(error_payload, dict):
+                    error_name = str(error_payload.get("name") or "")
+                    data = error_payload.get("data")
+                    if isinstance(data, dict):
+                        error_msg = str(data.get("message") or "")
+                    elif isinstance(data, str):
+                        error_msg = data
+                blob = f"{error_name} {error_msg}".strip() or "OpenCode reported an error"
+                classified = _classify_test_failure("", blob)
+                return {
+                    "ok": False,
+                    "error": classified,
+                    "detail": blob[:600],
+                    "duration_ms": duration_ms,
+                }
+
+            excerpt = _pick_probe_response_excerpt(final_text) if final_text else ""
+            return {
+                "ok": True,
+                "duration_ms": duration_ms,
+                "excerpt": excerpt or final_text[:240],
+                "model": chosen_model,
+            }
+        finally:
+            if session_id:
+                try:
+                    await server.abort_session(session_id, directory)
+                except Exception:  # noqa: BLE001
+                    pass
+
     async def cancel_web_flow(self, flow_id: str) -> dict[str, Any]:
         async with self._web_flow_lock:
             flow = self._web_flows.pop(flow_id, None)

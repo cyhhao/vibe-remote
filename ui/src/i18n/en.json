@@ -281,7 +281,14 @@
       "opencodeProviderRemoveOauthConfirm": "Sign out of {{name}}? This removes the stored OAuth credentials.",
       "opencodeProviderRemoved": "Provider credentials removed.",
       "opencodeProviderRemoveFailed": "Could not remove provider credentials.",
-      "opencodeProviderCollapse": "Collapse"
+      "opencodeProviderCollapse": "Collapse",
+      "opencodeTestTitle": "Test {{name}}",
+      "opencodeTestSubtitle": "Send a one-token \"Hi\" through OpenCode using this provider only.",
+      "opencodeTestModelDefault": "Provider default",
+      "testFailureOpencodeServerUnavailable": "OpenCode's local server is not reachable. Start it from the Runtime page and retry.",
+      "testFailureNoModels": "This provider has not reported any models yet. Save a key first, or open the provider catalog.",
+      "testFailureSessionCreate": "OpenCode rejected the test session — check the server logs for a deeper error.",
+      "testFailureMissingProvider": "Provider id is missing — reload the page and try again."
     },
     "messagingTitle": "Messaging",
     "messagingSubtitle": "Tune global reply behavior, acknowledgements, and message visibility defaults.",

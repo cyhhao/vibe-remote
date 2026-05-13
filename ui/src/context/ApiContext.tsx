@@ -54,6 +54,10 @@ export type ApiContextType = {
     backend: 'claude' | 'codex',
     options?: { model?: string },
   ) => Promise<BackendAuthTestResult>;
+  testOpencodeProvider: (
+    providerId: string,
+    options?: { model?: string },
+  ) => Promise<BackendAuthTestResult>;
   getOpencodeProviders: () => Promise<OpencodeProviderListResult>;
   setOpencodeProviderAuth: (
     providerId: string,
@@ -491,6 +495,10 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       postJson(`/backend/${encodeURIComponent(backend)}/auth/api-key/remove`, {}),
     testBackendAuth: (backend, options) =>
       postJson(`/backend/${encodeURIComponent(backend)}/auth/test`, {
+        ...(options?.model ? { model: options.model } : {}),
+      }),
+    testOpencodeProvider: (providerId, options) =>
+      postJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/test`, {
         ...(options?.model ? { model: options.model } : {}),
       }),
     getOpencodeProviders: () => getJson('/backend/opencode/providers'),

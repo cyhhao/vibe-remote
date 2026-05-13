@@ -2347,6 +2347,34 @@ def test_backend_auth(backend: str, model: Optional[str] = None) -> dict:
         return {"ok": False, "error": "test_failed", "detail": str(exc)}
 
 
+def test_opencode_provider(provider_id: str, model: Optional[str] = None) -> dict:
+    """Probe a single OpenCode provider over the live ``opencode serve`` HTTP API.
+
+    OpenCode users typically wire up multiple providers (OpenAI, Poe,
+    Anthropic, ...) but only a few will be active at any time. A single
+    backend-wide button would either spuriously fail when one is broken
+    or hide which one works. Per-provider probes echo the model's
+    response so the user knows the round-trip actually returned text.
+    """
+    provider_id = (provider_id or "").strip()
+    if not provider_id:
+        return {"ok": False, "error": "missing_provider"}
+    service = _get_oauth_service()
+    try:
+        return _submit_oauth_coro(
+            service.test_opencode_provider(provider_id, model=model),
+            timeout=90.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "OpenCode provider test failed for %s: %s",
+            provider_id,
+            exc,
+            exc_info=True,
+        )
+        return {"ok": False, "error": "test_failed", "detail": str(exc)}
+
+
 def cancel_oauth_web(flow_id: str) -> dict:
     flow_id = (flow_id or "").strip()
     if not flow_id:

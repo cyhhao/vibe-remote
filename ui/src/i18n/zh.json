@@ -281,7 +281,14 @@
       "opencodeProviderRemoveOauthConfirm": "确定要退出 {{name}} 的登录吗？这会移除已保存的 OAuth 凭据。",
       "opencodeProviderRemoved": "服务商凭据已删除。",
       "opencodeProviderRemoveFailed": "移除服务商凭据失败。",
-      "opencodeProviderCollapse": "收起"
+      "opencodeProviderCollapse": "收起",
+      "opencodeTestTitle": "测试 {{name}}",
+      "opencodeTestSubtitle": "通过 OpenCode 向当前服务商发送一句 \"Hi\"，验证凭据与 Base URL 是否可达。",
+      "opencodeTestModelDefault": "服务商默认",
+      "testFailureOpencodeServerUnavailable": "本地 OpenCode 服务未启动。请到 Runtime 页面启动后再试。",
+      "testFailureNoModels": "该服务商当前没有可用模型。请先保存 API Key，或重新刷新服务商列表。",
+      "testFailureSessionCreate": "OpenCode 拒绝创建测试会话——请查看 OpenCode 服务日志获取详细错误。",
+      "testFailureMissingProvider": "服务商 ID 缺失，请刷新页面后重试。"
     },
     "messagingTitle": "消息",
     "messagingSubtitle": "统一配置全局回复行为、ACK 策略以及消息显示默认值。",

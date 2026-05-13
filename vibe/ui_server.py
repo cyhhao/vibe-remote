@@ -1743,6 +1743,21 @@ def backend_opencode_provider_auth_delete(provider_id: str):
     return jsonify(api.delete_opencode_provider_auth(provider_id))
 
 
+@app.route("/backend/opencode/provider/<provider_id>/test", methods=["POST"])
+def backend_opencode_provider_test(provider_id: str):
+    """Run a per-provider connectivity probe through OpenCode's HTTP API.
+
+    Body: ``{model?: string}``. The model id is wrapped server-side
+    into the ``{providerID, modelID}`` shape OpenCode expects.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    raw_model = payload.get("model")
+    model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
+    return jsonify(api.test_opencode_provider(provider_id, model=model))
+
+
 @app.route("/backend/opencode/default-provider", methods=["POST"])
 def backend_opencode_default_provider():
     """Persist the user's default OpenCode provider into V2Config.

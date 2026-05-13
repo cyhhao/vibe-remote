@@ -34,6 +34,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { SettingsPageShell } from './SettingsPageShell';
 import { BackendLifecycleChip } from './BackendLifecycleChip';
 import { BackendOAuthPanel } from './BackendOAuthPanel';
+import { OpencodeProviderTestPanel } from './OpencodeProviderTestPanel';
 import { ToggleSwitch } from './SettingsPrimitives';
 import { useApi } from '@/context/ApiContext';
 import type { OpencodeProvider } from '@/context/ApiContext';
@@ -1319,6 +1320,23 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                                         </div>
                                       );
                                     })()}
+
+                                    {/* Per-provider connectivity probe.
+                                        Gated on ``configured`` because
+                                        testing an unconfigured provider
+                                        always fails with
+                                        ``invalid_credentials`` — adds
+                                        noise without signal. Each card
+                                        owns its own panel so users can
+                                        debug providers independently. */}
+                                    {provider.configured && (
+                                      <OpencodeProviderTestPanel
+                                        providerId={provider.id}
+                                        providerName={provider.name}
+                                        models={provider.models}
+                                        defaultModel={provider.default_model}
+                                      />
+                                    )}
                                   </div>
 
                                   <div className="flex flex-col gap-2">
