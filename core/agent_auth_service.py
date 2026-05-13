@@ -252,7 +252,7 @@ WebFlowState = str  # "starting" | "awaiting_code" | "verifying" | "success" | "
 @dataclass
 class WebAuthFlow:
     flow_id: str
-    backend: str  # "claude" | "codex"
+    backend: str  # "claude" | "codex" | "opencode"
     state: WebFlowState = "starting"
     process: asyncio.subprocess.Process | None = None
     reader_task: asyncio.Task[None] | None = None
@@ -263,6 +263,12 @@ class WebAuthFlow:
     awaiting_code: bool = False
     error: str | None = None
     last_status_text: str | None = None
+    # Per-provider context for OpenCode flows; ``None`` for Claude / Codex
+    # which authenticate at the backend level. Declared on the dataclass
+    # so ``api.py::start_oauth_web`` can serialise it unconditionally
+    # — accessing a runtime-assigned attribute on Claude/Codex flows
+    # would AttributeError out and 500 the start endpoint.
+    provider: str | None = None
     created_at: float = field(default_factory=time.time)
 
 

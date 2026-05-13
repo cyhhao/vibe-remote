@@ -278,12 +278,13 @@ export const SettingsCodexProviderPage: React.FC = () => {
                   void api
                     .getCodexAuth()
                     .then((data) => {
+                      // Refresh underlying state but DO NOT clobber the
+                      // radio tab — that's a user-controlled affordance
+                      // after first load. Forcing a re-sync here would
+                      // bounce the user back to whatever
+                      // ``active_auth_mode`` reports every time OAuth
+                      // completes / Sign out runs.
                       setState(data);
-                      setAuthMode(
-                        data.active_auth_mode !== 'none'
-                          ? data.active_auth_mode
-                          : data.auth_mode,
-                      );
                       setBaseUrl(data.base_url || '');
                     })
                     .catch(() => {

@@ -513,12 +513,16 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                       void api
                         .getClaudeAuth()
                         .then((data) => {
+                          // Refresh the underlying state (active badge,
+                          // masked key, settings.json conflict warning)
+                          // but DO NOT clobber ``authMode``. The radio
+                          // tab is a *user-controlled* affordance after
+                          // first load — re-syncing it from the server
+                          // here would force a tab change every time
+                          // OAuth completes / Sign out fires, even when
+                          // the user wants to stay on the OAuth tab to
+                          // re-authenticate.
                           setAuthState(data);
-                          setAuthMode(
-                            data.active_auth_mode !== 'none'
-                              ? data.active_auth_mode
-                              : data.auth_mode,
-                          );
                           setBaseUrl(data.base_url || '');
                         })
                         .catch(() => {
