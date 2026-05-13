@@ -381,9 +381,16 @@ class AgentAuthService:
         return f"{self._get_settings_key(context)}:{backend}"
 
     def _get_cli_binary(self, backend: str) -> str:
-        agents_cfg = getattr(getattr(self.controller, "config", None), "agents", None)
-        backend_cfg = getattr(agents_cfg, backend, None) if agents_cfg is not None else None
-        cli_path = getattr(backend_cfg, "cli_path", None)
+        # Same dual-shape issue as ``_resolve_backend_config``: V2Config
+        # carries the binary under ``config.agents.<backend>.cli_path``,
+        # but ``AppCompatConfig`` (the shape live IM controllers run on)
+        # exposes it at the top level — and renames it: ``config.claude.
+        # cli_path``, ``config.codex.binary``, ``config.opencode.
+        # binary``. Without these fallbacks, setup / logout / test
+        # flows ignore a non-default cli_path and fall through to
+        # ``$PATH``, breaking installs that pin a specific binary.
+        backend_cfg = self._resolve_backend_config(backend)
+        cli_path = getattr(backend_cfg, "cli_path", None) or getattr(backend_cfg, "binary", None)
         return cli_path or backend
 
     async def _resolve_opencode_provider(self, context: MessageContext) -> str:

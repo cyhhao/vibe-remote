@@ -181,6 +181,7 @@
       "oauthRemove": "退出登录",
       "oauthRemoved": "已移除凭据。",
       "oauthRemoveFailed": "移除凭据失败：{{detail}}",
+      "oauthRemovePartial": "已清除 Vibe Remote 内的凭据，但 CLI logout 返回错误：{{detail}}。CLI 自己的凭据文件可能仍在磁盘上。",
       "testConnectionTitle": "测试连通性",
       "testConnectionSubtitle": "发送一条 \"Hi\" 测试 prompt，用来验证账号、模型和自定义 Base URL 是否可用。",
       "testConnectionRun": "运行测试",

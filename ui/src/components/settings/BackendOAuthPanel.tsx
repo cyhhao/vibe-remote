@@ -273,7 +273,21 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
         return;
       }
       resetToIdle();
-      showToast(t('settings.backends.oauthRemoved'), 'success');
+      if (result.partial) {
+        // V2Config got cleared, but the CLI logout subprocess failed —
+        // credentials may still live on disk. Surface a warning toast
+        // with the detail so the user knows to investigate (e.g.
+        // ``codex logout`` returning "Not logged in" is harmless;
+        // a real failure means the user has to run logout manually).
+        showToast(
+          t('settings.backends.oauthRemovePartial', {
+            detail: result.detail || result.warning || 'logout_failed',
+          }),
+          'warning',
+        );
+      } else {
+        showToast(t('settings.backends.oauthRemoved'), 'success');
+      }
       onSuccessRef.current?.();
     } catch (err: any) {
       showToast(

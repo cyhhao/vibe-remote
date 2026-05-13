@@ -328,6 +328,14 @@ export type OAuthWebMutationResult = {
   error?: string;
   detail?: string;
   notices?: BackendNotice[];
+  // ``partial: true`` rides on ``ok: true`` when the V2Config side of
+  // the operation succeeded but the CLI subprocess (``codex logout`` /
+  // ``claude auth logout``) reported a non-zero exit. The caller should
+  // show a warning rather than a green success — credentials may still
+  // be on disk. Pairs with ``warning`` (machine-readable code) and
+  // ``detail`` (human-readable excerpt).
+  partial?: boolean;
+  warning?: string;
 };
 
 export type BackendAuthTestResult = {
