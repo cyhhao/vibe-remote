@@ -3427,14 +3427,48 @@ def delete_opencode_provider_auth(provider_id: str) -> dict:
     ``restart_backend("opencode")`` so the UI's next refresh reflects
     reality. The restart status comes back under ``restart`` so the
     page can warn on "removed, but daemon refresh failed".
+
+    If the deleted provider is still recorded as
+    ``agents.opencode.default_provider``, clear the saved default too.
+    ``OpenCodeAgent`` injects that ``providerID`` for bare model IDs,
+    so leaving a stale default behind makes every subsequent request
+    target an unconfigured provider and fail.
     """
     if not isinstance(provider_id, str) or not provider_id.strip():
         return {"ok": False, "message": "provider_id is required"}
+    pid = provider_id.strip()
     try:
-        result = asyncio.run(_delete_opencode_provider_auth_async(provider_id.strip()))
+        result = asyncio.run(_delete_opencode_provider_auth_async(pid))
     except Exception as exc:
         logger.warning("OpenCode delete-auth failed for %s: %s", provider_id, exc, exc_info=True)
         return {"ok": False, "message": str(exc)}
+
+    # Revalidate the saved default. Best-effort: a V2Config write
+    # failure here is non-fatal because the daemon already dropped the
+    # credential, but log it so the user can investigate if the
+    # default sticks around after a "Remove key" click.
+    try:
+        with CONFIG_LOCK:
+            try:
+                cfg = load_config()
+            except FileNotFoundError:
+                cfg = V2Config()
+            opencode_cfg = getattr(getattr(cfg, "agents", None), "opencode", None)
+            current_default = getattr(opencode_cfg, "default_provider", None)
+            if isinstance(current_default, str) and current_default.strip() == pid:
+                opencode_cfg.default_provider = None
+                cfg.save()
+                logger.info(
+                    "delete_opencode_provider_auth: cleared default_provider after removing %s",
+                    pid,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to revalidate opencode.default_provider after delete for %s: %s",
+            pid,
+            exc,
+        )
+
     try:
         result["restart"] = restart_backend("opencode")
     except Exception as exc:
