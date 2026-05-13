@@ -573,6 +573,18 @@ def channels_response(
     migrate_legacy_discovered_chats(db_path=db_path)
     refresh_scope = _refresh_scope_for(platform, refresh_kwargs)
     auth_context = _auth_context_for(platform, refresh_kwargs)
+    can_refresh = platform in {"slack", "discord", "lark"}
+    if can_refresh and auth_context is None:
+        return {
+            "ok": False,
+            "channels": [],
+            "chats": [],
+            "refreshing": False,
+            "last_attempt_at": None,
+            "last_success_at": None,
+            "error": f"Missing {platform} channel refresh credentials",
+            "summary": _summary([], [], include_private=include_private),
+        }
     all_chats = list_chats(
         platform,
         include_private=True,
@@ -585,7 +597,6 @@ def channels_response(
     refreshing = False
     error = state.last_error
 
-    can_refresh = platform in {"slack", "discord", "lark"}
     if can_refresh and (force or not chats):
         result = refresh_platform(platform, force=force, db_path=db_path, **refresh_kwargs)
         state = result.refresh_state

@@ -256,6 +256,24 @@ def test_slack_channel_cache_is_scoped_by_auth_context(tmp_path: Path, monkeypat
     assert [channel["id"] for channel in cached_first["channels"]] == ["C_A"]
 
 
+def test_active_channel_response_rejects_missing_auth_context_without_cache_read(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    chat_discovery.remember_chat(
+        "slack",
+        "C_OLD",
+        name="old workspace",
+        metadata={chat_discovery.METADATA_AUTH_CONTEXT: _auth_context("slack", bot_token="x")},
+        db_path=db_path,
+    )
+
+    response = chat_discovery.channels_response("slack", bot_token="", db_path=db_path)
+
+    assert response["ok"] is False
+    assert response["channels"] == []
+    assert response["error"] == "Missing slack channel refresh credentials"
+
+
 def test_discord_refresh_state_is_scoped_by_guild(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "vibe.sqlite"
     run_migrations(db_path)

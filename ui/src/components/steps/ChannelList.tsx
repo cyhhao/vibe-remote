@@ -296,12 +296,15 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const larkAppSecret = config.lark?.app_secret || data.lark?.app_secret || '';
   const larkDomain = config.lark?.domain || data.lark?.domain || 'feishu';
 
-  useEffect(() => {
-    return () => {
-      refreshFollowupVersionRef.current += 1;
-      Object.values(refreshFollowupTimersRef.current).forEach((timer) => clearTimeout(timer));
-      refreshFollowupTimersRef.current = {};
-    };
+  const invalidateRefreshFollowups = () => {
+    refreshFollowupVersionRef.current += 1;
+    Object.values(refreshFollowupTimersRef.current).forEach((timer) => clearTimeout(timer));
+    refreshFollowupTimersRef.current = {};
+    return refreshFollowupVersionRef.current;
+  };
+
+  useEffect(() => () => {
+    invalidateRefreshFollowups();
   }, [platform, selectedGuild, pageTab, botToken, larkAppId, larkAppSecret, larkDomain]);
 
   useEffect(() => {
@@ -388,6 +391,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   };
 
   const loadChannels = async (all?: boolean, force = false) => {
+    const requestVersion = invalidateRefreshFollowups();
     if (platform === 'lark') {
       if (!larkAppId || !larkAppSecret) return;
     } else if (!botToken) {
@@ -402,6 +406,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     try {
       if (platform === 'lark') {
         const result = await api.larkChats(larkAppId, larkAppSecret, larkDomain, force);
+        if (refreshFollowupVersionRef.current !== requestVersion) return;
         recordRefreshMeta(platform, result);
         if (result.ok) {
           setChannels(result.channels || []);
@@ -409,6 +414,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         }
       } else if (platform === 'telegram') {
         const result = await api.telegramChats(false);
+        if (refreshFollowupVersionRef.current !== requestVersion) return;
         recordRefreshMeta(platform, result);
         if (result.ok) {
           setChannels(result.channels || []);
@@ -420,6 +426,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           return;
         }
         const result = await api.discordChannels(botToken, selectedGuild, force);
+        if (refreshFollowupVersionRef.current !== requestVersion) return;
         recordRefreshMeta(platform, result);
         if (result.ok) {
           const filtered = (result.channels || []).filter((c: any) => c.type === 0 || c.type === 5);
@@ -428,6 +435,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         }
       } else {
         const result = await api.slackChannels(botToken, isAll, force);
+        if (refreshFollowupVersionRef.current !== requestVersion) return;
         recordRefreshMeta(platform, result);
         if (result.ok) {
           setChannels(result.channels || []);
@@ -438,8 +446,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     } catch (e) {
       console.error('Failed to load channels:', e);
     } finally {
-      setLoading(false);
-      setLoadingAll(false);
+      if (refreshFollowupVersionRef.current === requestVersion) {
+        setLoading(false);
+        setLoadingAll(false);
+      }
     }
   };
 
