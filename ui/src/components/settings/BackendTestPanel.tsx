@@ -202,6 +202,22 @@ export const BackendTestPanel: React.FC<BackendTestPanelProps> = ({ backend }) =
           </p>
         </div>
       )}
+
+      {/* Failure detail block — surfaces the raw stderr / stdout snippet
+          the backend captured ("detail" field) instead of pointing the
+          user at a non-clickable toast. Previously the i18n copy said
+          "click the toast to see raw output" but no such affordance
+          existed. */}
+      {lastResult && !lastResult.ok && lastResult.detail && (
+        <details className="rounded-md border border-destructive/30 bg-destructive/[0.04] px-3 py-2 [&[open]>summary]:mb-2">
+          <summary className="cursor-pointer font-mono text-[11px] uppercase tracking-wide text-destructive">
+            {t('settings.backends.testConnectionRawOutputLabel')}
+          </summary>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-background px-3 py-2 font-mono text-[11px] leading-relaxed text-muted">
+            {lastResult.detail}
+          </pre>
+        </details>
+      )}
     </div>
   );
 };
