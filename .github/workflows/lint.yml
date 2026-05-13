@@ -51,6 +51,7 @@ jobs:
         working-directory: ui
         run: |
           npm ci
+          npm run validate:theme
           npm run build
 
       - uses: actions/setup-python@v6
@@ -90,6 +91,7 @@ jobs:
         working-directory: ui
         run: |
           npm ci
+          npm run validate:theme
           npm run build
 
       - uses: actions/setup-python@v6

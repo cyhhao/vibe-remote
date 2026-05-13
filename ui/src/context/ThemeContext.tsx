@@ -41,7 +41,12 @@ function applyTheme(mode: ThemeMode) {
     return;
   }
 
-  document.documentElement.setAttribute('data-theme', resolveTheme(mode));
+  if (mode === 'system') {
+    document.documentElement.removeAttribute('data-theme');
+    return;
+  }
+
+  document.documentElement.setAttribute('data-theme', mode);
 }
 
 function readStoredTheme(): ThemeMode {
@@ -69,7 +74,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     applyTheme(mode);
-  }, [mode, systemTheme]);
+  }, [mode]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') {
