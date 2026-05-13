@@ -72,7 +72,16 @@ const deriveVisual = (
   // is the normal idle state, not an error. Restart still works on demand
   // from the popover.
   if (runtime?.has_update) return 'update';
-  if (cliStatus === 'ok') return 'ready';
+  // After a successful upgrade, ``cliStatus`` can briefly hang at ``unknown``
+  // — the chip's own ``loadRuntime`` already returned a fresh runtime
+  // (``installed=true``) but the parent's separate ``detect()`` call (which
+  // owns the prop) is still in flight. Without the second clause here,
+  // ``deriveVisual`` falls through to ``loading`` and the user sees
+  // "未检测" until the parent's detect resolves and triggers a re-render.
+  // Treating ``runtime.installed=true`` as a ready signal closes that
+  // race — the runtime probe is the authoritative source on whether the
+  // binary is on disk and produces a version string.
+  if (cliStatus === 'ok' || runtime?.installed === true) return 'ready';
   return 'loading';
 };
 

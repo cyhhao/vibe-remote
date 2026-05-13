@@ -220,7 +220,39 @@ def resolve_cli_path(binary: str) -> str | None:
             return str(candidate)
 
     path = shutil.which(os.path.expanduser(binary)) if binary else None
-    return path or None
+    if path:
+        return path
+
+    # The stored cli_path was an absolute path that no longer exists. Most
+    # common cause: an upstream installer moved the binary out from under us.
+    # Real-world example: Claude Code's official ``install.sh`` puts the
+    # native binary at ``~/.local/bin/claude`` (via ``~/.local/share/claude/
+    # versions/<ver>``), while the legacy ``npm install -g
+    # @anthropic-ai/claude-code`` install used ``/usr/local/bin/claude``.
+    # After clicking "Upgrade" in the UI, V2Config still points at the
+    # /usr/local/bin path, so the runtime probe reports ``installed=false``
+    # and the chip flips to "not installed". Fall back to discovery using
+    # only the basename — if a binary with that name is on any of the
+    # standard candidate paths (~/.local/bin, /opt/homebrew/bin, npm/nvm/bun
+    # globals, etc.) we treat that as the live install. The basename
+    # restriction means custom callers passing ``"/path/to/my-claude"``
+    # don't get silently redirected to the system claude.
+    if not binary:
+        return None
+    expanded = Path(os.path.expanduser(binary))
+    has_path_separator = os.sep in binary or (os.altsep is not None and os.altsep in binary)
+    if expanded.is_absolute() or has_path_separator:
+        basename = expanded.name
+        if basename and basename != binary:
+            for candidate in _candidate_cli_paths(basename):
+                if _is_executable_file(candidate):
+                    logger.info(
+                        "resolve_cli_path: stored path %s missing; falling back to %s",
+                        binary,
+                        candidate,
+                    )
+                    return str(candidate)
+    return None
 
 
 def _command_env_for(binary_path: str | None) -> dict[str, str]:
@@ -1511,6 +1543,41 @@ def install_agent(name: str) -> dict:
             # 30s version cache so it reads the new `--version` instead of the
             # pre-upgrade value.
             _invalidate_version_cache(name)
+
+            # Persist the freshly-discovered install path to V2Config so the
+            # next ``get_backend_runtime`` reads it directly instead of
+            # relying on the resolver's stale-path fallback. Without this,
+            # the stored cli_path drifts whenever an upstream installer
+            # moves the binary (real-world example: Claude Code's official
+            # ``install.sh`` migrates from ``/usr/local/bin/claude`` —
+            # the npm-era path the Dockerfile bootstraps with — to
+            # ``~/.local/bin/claude``).
+            if installed_path:
+                try:
+                    with CONFIG_LOCK:
+                        try:
+                            cfg = load_config()
+                        except FileNotFoundError:
+                            cfg = V2Config()
+                        target = getattr(getattr(cfg, "agents", None), name, None)
+                        if target is not None:
+                            previous = getattr(target, "cli_path", "") or ""
+                            if previous != installed_path:
+                                target.cli_path = installed_path
+                                cfg.save()
+                                logger.info(
+                                    "install_agent: updated V2Config cli_path for %s: %s -> %s",
+                                    name,
+                                    previous or "<unset>",
+                                    installed_path,
+                                )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "install_agent: failed to persist cli_path for %s: %s",
+                        name,
+                        exc,
+                    )
+
             return {
                 "ok": True,
                 "message": f"{name} installed successfully",
