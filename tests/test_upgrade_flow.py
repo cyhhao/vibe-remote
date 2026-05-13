@@ -17,6 +17,8 @@ from vibe.upgrade import (
     get_latest_version_info,
     get_restart_command,
     get_restart_environment,
+    get_restart_invocation_command,
+    get_restart_shell_command,
     get_running_vibe_path,
     get_safe_cwd,
 )
@@ -268,6 +270,27 @@ def test_get_restart_command_falls_back_to_python_module(monkeypatch):
     assert command == ["/usr/bin/python3", "-c", "from vibe.cli import main; main()"]
 
 
+def test_restart_invocation_command_adds_explicit_restart(monkeypatch, tmp_path):
+    vibe_path = tmp_path / "bin" / "vibe"
+    vibe_path.parent.mkdir()
+    vibe_path.write_text("#!/bin/sh\n", encoding="utf-8")
+    vibe_path.chmod(0o755)
+    monkeypatch.setenv("VIBE_CURRENT_EXECUTABLE", str(vibe_path))
+
+    command = get_restart_invocation_command()
+
+    assert command == [str(vibe_path), "restart"]
+
+
+def test_restart_shell_command_adds_explicit_restart(monkeypatch):
+    monkeypatch.delenv("VIBE_CURRENT_EXECUTABLE", raising=False)
+    monkeypatch.setattr("vibe.upgrade.shutil.which", lambda *args, **kwargs: None)
+
+    command = get_restart_shell_command(python_executable="/usr/bin/python3", argv0="python")
+
+    assert command == "/usr/bin/python3 -c 'from vibe.cli import main; main()' restart"
+
+
 def test_get_restart_environment_adds_source_root_for_python_fallback(monkeypatch):
     monkeypatch.delenv("VIBE_CURRENT_EXECUTABLE", raising=False)
     monkeypatch.setattr("vibe.upgrade.shutil.which", lambda *args, **kwargs: None)
@@ -301,7 +324,7 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
 
     monkeypatch.setattr(api, "build_upgrade_plan", lambda **kwargs: plan)
     monkeypatch.setattr(api, "get_running_vibe_path", lambda: "/custom/bin/vibe")
-    monkeypatch.setattr(api, "get_restart_command", lambda **kwargs: ["/custom/bin/vibe"])
+    monkeypatch.setattr(api, "get_restart_invocation_command", lambda **kwargs: ["/custom/bin/vibe", "restart"])
     monkeypatch.setattr(api, "get_restart_environment", lambda **kwargs: None)
     monkeypatch.setattr(api, "_delayed_restart_helper_command", lambda: ["/usr/bin/python3"])
 

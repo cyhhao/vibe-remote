@@ -148,6 +148,24 @@ def get_restart_command(
     return [python_executable or sys.executable, "-c", "from vibe.cli import main; main()"]
 
 
+def get_restart_invocation_command(
+    *,
+    vibe_path: str | None = None,
+    python_executable: str | None = None,
+    argv0: str | None = None,
+    search_path: str | None = None,
+) -> list[str]:
+    return [
+        *get_restart_command(
+            vibe_path=vibe_path,
+            python_executable=python_executable,
+            argv0=argv0,
+            search_path=search_path,
+        ),
+        "restart",
+    ]
+
+
 def _get_source_checkout_root() -> str | None:
     source_root = Path(__file__).resolve().parent.parent
     if not source_root.is_dir():
@@ -211,14 +229,13 @@ def get_restart_shell_command(
     argv0: str | None = None,
     search_path: str | None = None,
 ) -> str:
-    return shlex.join(
-        get_restart_command(
-            vibe_path=vibe_path,
-            python_executable=python_executable,
-            argv0=argv0,
-            search_path=search_path,
-        )
+    command = get_restart_invocation_command(
+        vibe_path=vibe_path,
+        python_executable=python_executable,
+        argv0=argv0,
+        search_path=search_path,
     )
+    return shlex.join(command)
 
 
 def get_update_metadata_url() -> str:

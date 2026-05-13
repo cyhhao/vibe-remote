@@ -109,7 +109,7 @@ def test_cmd_restart_schedules_delayed_restart(monkeypatch, capsys):
     start_called = []
 
     monkeypatch.setattr(cli, "cache_running_vibe_path", lambda: "/usr/local/bin/vibe")
-    monkeypatch.setattr(cli, "get_restart_command", lambda vibe_path=None: [vibe_path or "vibe"])
+    monkeypatch.setattr(cli, "get_restart_invocation_command", lambda vibe_path=None: [vibe_path or "vibe", "restart"])
     monkeypatch.setattr(cli, "get_restart_environment", lambda vibe_path=None: None)
     monkeypatch.setattr(cli, "get_safe_cwd", lambda: "/tmp")
     monkeypatch.setattr(
@@ -143,8 +143,8 @@ def test_cmd_restart_schedules_delayed_restart_with_import_env(monkeypatch):
     monkeypatch.setattr(cli, "cache_running_vibe_path", lambda: None)
     monkeypatch.setattr(
         cli,
-        "get_restart_command",
-        lambda vibe_path=None: [sys.executable, "-c", "from vibe.cli import main; main()"],
+        "get_restart_invocation_command",
+        lambda vibe_path=None: [sys.executable, "-c", "from vibe.cli import main; main()", "restart"],
     )
     monkeypatch.setattr(cli, "get_restart_environment", lambda vibe_path=None: {"PYTHONPATH": "/repo"})
     monkeypatch.setattr(cli, "get_safe_cwd", lambda: "/tmp")

@@ -43,8 +43,8 @@ from vibe.upgrade import (
     build_upgrade_plan,
     cache_running_vibe_path,
     get_latest_version_info,
-    get_restart_command,
     get_restart_environment,
+    get_restart_invocation_command,
     get_safe_cwd,
 )
 
@@ -2322,9 +2322,8 @@ def _format_restart_delay(delay_seconds: float) -> str:
 
 def _schedule_delayed_restart(delay_seconds: float) -> int:
     current_vibe_path = cache_running_vibe_path()
-    restart_command = [*get_restart_command(vibe_path=current_vibe_path), "restart"]
     api._spawn_delayed_restart(
-        restart_command,
+        get_restart_invocation_command(vibe_path=current_vibe_path),
         get_safe_cwd(),
         delay_seconds=delay_seconds,
         env=get_restart_environment(vibe_path=current_vibe_path),

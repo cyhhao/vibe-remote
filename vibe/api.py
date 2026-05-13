@@ -33,8 +33,8 @@ from vibe.opencode_config import (
 from vibe.upgrade import (
     build_upgrade_plan,
     get_latest_version_info,
-    get_restart_command,
     get_restart_environment,
+    get_restart_invocation_command,
     get_running_vibe_path,
     get_safe_cwd,
 )
@@ -1009,9 +1009,8 @@ def do_upgrade(auto_restart: bool = True) -> dict:
         if result.returncode == 0:
             restarting = False
             if auto_restart:
-                restart_command = [*get_restart_command(vibe_path=current_vibe_path), "restart"]
                 _spawn_delayed_restart(
-                    restart_command,
+                    get_restart_invocation_command(vibe_path=current_vibe_path),
                     safe_cwd,
                     env=get_restart_environment(vibe_path=current_vibe_path),
                 )
