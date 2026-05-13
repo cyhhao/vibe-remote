@@ -207,6 +207,8 @@
       "opencodeProviderOauthSignedIn": "OAuth credentials stored.",
       "opencodeProviderOauthPanelTitle": "Sign in to {{name}}",
       "opencodeProviderOauthPanelSubtitle": "Open the URL, complete login in your browser; the OpenCode daemon detects completion automatically.",
+      "opencodeCallbackUrlLabel": "Callback URL",
+      "opencodeCallbackUrlHint": "After authorizing, your browser will land on `http://127.0.0.1:<port>/callback?code=...` — copy that exact URL from the address bar and paste it here. Vibe Remote replays it inside the container so OpenCode's listener receives the credential.",
       "opencodeProvidersTitle": "Providers",
       "opencodeProvidersSubtitle": "Lazy-loaded from the OpenCode server · auth handled via API key or OAuth sign-in",
       "opencodeProvidersCount": "{{configured}}/{{total}} configured",

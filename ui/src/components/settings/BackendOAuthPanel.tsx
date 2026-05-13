@@ -205,17 +205,15 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
 
   const submitCallback = async () => {
     if (!flowId) return;
-    if (backend === 'opencode') {
-      // OpenCode flows never ask for a user-submitted code (device or
-      // localhost callback handle completion). Guard so the type system
-      // for ``api.submitOAuthWebCode`` (claude/codex only) is honoured.
-      return;
-    }
     const trimmed = code.trim();
     if (!trimmed) return;
     setSubmitting(true);
     setError(null);
     try {
+      // Claude → ``code#state`` (Anthropic's callback fragment).
+      // OpenCode browser-redirect → ``http://127.0.0.1:<port>/callback?...``
+      // (the URL the provider redirected to). Both flow through the
+      // same endpoint; the server side dispatches by backend type.
       const result = await api.submitOAuthWebCode(backend, flowId, trimmed);
       if (!result.ok) {
         setError(result.error || result.detail || 'submit_failed');
@@ -288,6 +286,14 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
   const isActive = state !== 'idle' && state !== 'success' && state !== 'failed' && state !== 'cancelled';
   const showStartButton = state === 'idle' || state === 'success' || state === 'failed' || state === 'cancelled';
   const claudeAwaitingCode = backend === 'claude' && state === 'awaiting_code';
+  // OpenCode browser-redirect providers (poe, gitlab, openai-browser)
+  // return only ``url`` with no device code — the provider then redirects
+  // to ``http://127.0.0.1:<port>/callback?…``. From a remote browser
+  // that loopback is unreachable, so we ask the user to paste the URL
+  // their browser landed on; the backend replays it from inside the
+  // container so OpenCode's listener consumes it.
+  const opencodeAwaitingCallback =
+    backend === 'opencode' && state === 'awaiting_code' && url && !deviceCode;
   // OpenCode device flows (openai headless, github-copilot) carry the
   // user-facing code in the same payload as Codex; reuse the same UI
   // affordance. Browser-redirect flows (gitlab, poe, openai browser)
@@ -429,6 +435,39 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
           </div>
           <p className="text-[12px] leading-relaxed text-muted">
             {t('settings.backends.claudeCallbackCodeHint')}
+          </p>
+        </div>
+      )}
+
+      {opencodeAwaitingCallback && (
+        <div className="flex flex-col gap-2">
+          <Label htmlFor={`oauth-code-${backend}`} className="text-xs font-medium uppercase text-muted">
+            {t('settings.backends.opencodeCallbackUrlLabel')}
+          </Label>
+          <div className="flex gap-2">
+            <Input
+              id={`oauth-code-${backend}`}
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="http://127.0.0.1:..../callback?code=..."
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              className="font-mono"
+              disabled={submitting}
+            />
+            <Button
+              type="button"
+              variant="brand"
+              size="sm"
+              onClick={() => void submitCallback()}
+              disabled={submitting || !code.trim()}
+            >
+              {submitting ? t('common.submitting') : t('common.submit')}
+            </Button>
+          </div>
+          <p className="text-[12px] leading-relaxed text-muted">
+            {t('settings.backends.opencodeCallbackUrlHint')}
           </p>
         </div>
       )}

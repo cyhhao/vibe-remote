@@ -1430,6 +1430,8 @@ class AgentAuthService:
         flow = self._web_flows.get(flow_id)
         if flow is None:
             return {"ok": False, "error": "flow_not_found"}
+        if flow.backend == "opencode":
+            return await self._submit_opencode_callback_url(flow, code)
         if flow.backend != "claude":
             return {"ok": False, "error": "code_not_supported"}
         if not flow.awaiting_code or flow.claude_client is None:
@@ -1741,6 +1743,38 @@ class AgentAuthService:
                 prompt_answers,
             )
         )
+
+    async def _submit_opencode_callback_url(self, flow: WebAuthFlow, code: str) -> dict[str, Any]:
+        """Forward a manually-pasted 127.0.0.1 callback URL to OpenCode.
+
+        Browser-redirect flows (poe, gitlab, openai-browser) leave the
+        user staring at ``http://127.0.0.1:<port>/callback?code=...`` in
+        their address bar — but that loopback belongs to the container,
+        not their machine, so the redirect can't complete on its own.
+        The Settings UI exposes a paste box; we GET the URL from inside
+        the container so OpenCode's own listener consumes it.
+        """
+        callback_url = (code or "").strip()
+        if not callback_url.lower().startswith(("http://127.0.0.1", "http://localhost")):
+            return {"ok": False, "error": "invalid_callback_url"}
+        provider_id = flow.provider
+        if not provider_id:
+            return {"ok": False, "error": "flow_missing_provider"}
+        server = await self._opencode_server()
+        if server is None:
+            return {"ok": False, "error": "opencode_server_unavailable"}
+        try:
+            await server.forward_oauth_redirect(provider_id, callback_url)
+        except Exception as err:  # noqa: BLE001
+            logger.error(
+                "Failed to forward OpenCode OAuth callback for %s: %s",
+                provider_id, err, exc_info=True,
+            )
+            return {"ok": False, "error": "forward_failed", "detail": str(err)}
+        # The blocking ``wait_provider_oauth`` task observes completion
+        # on its own — the flow's state will flip to ``verifying`` then
+        # ``success`` within seconds.
+        return {"ok": True}
 
     async def _wait_for_opencode_oauth_web(
         self,

@@ -11,6 +11,7 @@ import signal
 import socket
 import subprocess
 import time
+import urllib.parse
 import threading
 from asyncio.subprocess import Process
 from typing import Any, Dict, List, Optional
@@ -904,13 +905,26 @@ class OpenCodeServerManager:
         catches the local HTTP callback (browser flow) and returns when
         the credentials have been minted and persisted into auth.json.
         We bound the wait at 900 s — same as the IM ``/setup`` timeout.
+
+        Uses a dedicated short-lived ``ClientSession`` rather than the
+        shared ``_get_http_session()`` cache. Any other code path that
+        runs on a different event loop (e.g. a Flask request hitting
+        ``_get_opencode_providers_async`` via ``asyncio.run``) would
+        otherwise notice the cached session is bound to a stale loop,
+        close it, and recreate — which would mid-flight disconnect the
+        long-poll on the OAuth event loop with
+        ``aiohttp.ServerDisconnectedError``.
         """
         await self.ensure_running()
         payload = {"method": method}
         if prompt_answers:
             payload.update(prompt_answers)
-        async with self._request_scope():
-            session = await self._get_http_session()
+        # Skip ``_request_scope`` (the per-call semaphore) too — it
+        # serialises all OpenCode HTTP calls behind a single lock, so
+        # holding it for 15 minutes would block every other UI request
+        # (provider list, save, restart, ...). The OAuth callback is
+        # idempotent server-side and safe to run concurrently.
+        async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{self.base_url}/provider/{provider_id}/oauth/callback",
                 json=payload,
@@ -925,6 +939,52 @@ class OpenCodeServerManager:
                     return await resp.json()
                 except Exception:  # pragma: no cover - parse-defensive
                     return json.loads(text) if text else {}
+
+    async def forward_oauth_redirect(
+        self,
+        provider_id: str,
+        callback_url: str,
+        *,
+        timeout: float = 15.0,
+    ) -> None:
+        """Forward a manually-pasted callback URL to OpenCode's listener.
+
+        Browser-redirect OAuth flows (poe, gitlab, openai-browser) end
+        with the provider redirecting to ``http://127.0.0.1:<port>/callback?...``
+        — a port OpenCode opens fresh per flow. From a *local* browser
+        that's automatic; from a remote browser (Vibe Remote regression
+        env, vibe_cloud tunnel, …) that URL is unreachable because the
+        loopback address belongs to the daemon's host, not the user's
+        machine.
+
+        This helper takes the URL the user pastes, validates that it
+        targets a 127.0.0.1 callback (don't blindly fetch external
+        URLs), and replays it from inside the container so OpenCode's
+        listener consumes it. ``wait_provider_oauth`` then returns
+        success on its own thread.
+        """
+        parsed = urllib.parse.urlparse(callback_url)
+        if parsed.hostname not in {"127.0.0.1", "localhost"}:
+            raise ValueError(
+                f"callback_url must target 127.0.0.1, got host={parsed.hostname!r}"
+            )
+        # ``provider_id`` isn't part of the OpenCode-managed URL — keep
+        # the parameter so the caller doesn't need to special-case
+        # which provider matches the loopback port. Forwarding any
+        # 127.0.0.1/<path> URL to OpenCode is safe because only the
+        # listener bound by ``authorize`` will accept it.
+        _ = provider_id  # noqa: F841 — kept for symmetry / future routing
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                callback_url,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+                allow_redirects=False,
+            ) as resp:
+                # OpenCode replies with 200 + HTML on success or 4xx on
+                # bad state; we don't try to interpret the body — the
+                # blocking ``wait_provider_oauth`` will surface the real
+                # outcome via flow state.
+                _ = await resp.read()
 
     async def get_provider_auth(self) -> Dict[str, Any]:
         """Fetch the per-provider auth-method index from OpenCode.

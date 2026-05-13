@@ -35,7 +35,7 @@ export type ApiContextType = {
     flowId: string,
   ) => Promise<OAuthWebStatus>;
   submitOAuthWebCode: (
-    backend: 'claude' | 'codex',
+    backend: 'claude' | 'codex' | 'opencode',
     flowId: string,
     code: string,
   ) => Promise<OAuthWebMutationResult>;
