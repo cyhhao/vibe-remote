@@ -3049,11 +3049,14 @@ async def _get_opencode_providers_async() -> dict:
 
     auth_index = auth_raw if isinstance(auth_raw, dict) else {}
 
-    # Resolve the user-configured default provider (V2Config wins because
-    # the chip / lifecycle layer reads it from there; OpenCode's own
-    # ``default`` block is a runtime hint we fall back to only when
-    # V2Config has the schema default).
-    default_provider = "anthropic"
+    # Resolve the user-configured default provider. ``None`` means
+    # the user has not picked one — the UI surfaces that as "no
+    # default selected" so clicking a provider actually persists the
+    # choice. Previously we fell back to ``"anthropic"`` here, which
+    # made the UI render Anthropic as already-selected, and clicking
+    # it became a no-op (no state change to persist), silently
+    # blocking users from picking Anthropic explicitly.
+    default_provider: str | None = None
     try:
         config = load_config()
         cfg = getattr(getattr(config, "agents", None), "opencode", None)
