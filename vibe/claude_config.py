@@ -233,21 +233,33 @@ def build_claude_subprocess_env(
         return claude_env
 
     auth_mode = getattr(claude_cfg, "auth_mode", "oauth")
+    configured_key_raw = (getattr(claude_cfg, "api_key", None) or "").strip()
+    configured_base = (getattr(claude_cfg, "base_url", None) or "").strip()
+
     if auth_mode == "oauth":
-        # OAuth means Claude Code reads credentials from
-        # ``~/.claude/credentials.json``; any inherited API-key / bearer-
-        # token var would suppress that path. Strip both.
-        claude_env.pop("ANTHROPIC_API_KEY", None)
-        claude_env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        # ``ClaudeConfig.auth_mode`` defaults to ``"oauth"`` in the
+        # schema, so an upgraded install that never touched the new
+        # Settings UI ends up here too — even though the user is still
+        # running on env-var auth (legacy path: ``ANTHROPIC_API_KEY``
+        # exported from the shell). Stripping in that case would break
+        # working deployments. Only strip when there is some explicit
+        # signal that the user has committed to OAuth via the new UI:
+        # a stored ``api_key`` (always None in oauth mode, kept as a
+        # safety check) or a stored ``base_url`` (set by an api_key →
+        # oauth transition where we preserved the relay URL). When
+        # nothing is stored, treat the config as legacy / unset and
+        # forward whatever the shell exported.
+        has_explicit_signal = bool(configured_key_raw) or bool(configured_base)
+        if has_explicit_signal:
+            claude_env.pop("ANTHROPIC_API_KEY", None)
+            claude_env.pop("ANTHROPIC_AUTH_TOKEN", None)
     elif auth_mode == "api_key":
-        configured_key = (getattr(claude_cfg, "api_key", None) or "").strip()
-        if configured_key:
-            claude_env["ANTHROPIC_API_KEY"] = configured_key
+        if configured_key_raw:
+            claude_env["ANTHROPIC_API_KEY"] = configured_key_raw
             # When we set an explicit API key, drop any inherited bearer
             # token so the SDK can't pick the wrong Authorization header.
             claude_env.pop("ANTHROPIC_AUTH_TOKEN", None)
 
-    configured_base = (getattr(claude_cfg, "base_url", None) or "").strip()
     if configured_base:
         claude_env["ANTHROPIC_BASE_URL"] = configured_base
 
