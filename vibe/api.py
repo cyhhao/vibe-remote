@@ -2334,6 +2334,7 @@ def get_codex_auth() -> dict:
         "api_key_masked": _mask_api_key(disk_state.get("api_key_raw")),
         "base_url": disk_state.get("base_url"),
         "has_chatgpt_tokens": has_chatgpt_live,
+        "chatgpt_account": disk_state.get("chatgpt_account"),
         # Forward the live Codex credentials-store status so the UI can
         # warn when the user is about to switch storage backends
         # (Codex's documented default is ``auto`` → keyring-preferred).

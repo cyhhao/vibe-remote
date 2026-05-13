@@ -31,6 +31,11 @@ export type BackendOAuthPanelProps = {
   title: string;
   /** Short paragraph under the heading describing what login does. */
   subtitle: string;
+  /** Optional one-line identifier rendered under the "signed in" banner
+   *  (e.g. "alice@example.com · Pro" for Codex's ChatGPT account). When
+   *  ``null`` / undefined the banner shows only the generic "signed in"
+   *  copy. Plaintext only — never leak tokens here. */
+  signedInDetail?: string | null;
   /** Optional callback fired once after the flow lands on ``state === "success"``.
    *  The parent typically re-reads ``getClaudeAuth`` / ``getCodexAuth`` here so
    *  the on-screen "signed in" indicators move. */
@@ -55,6 +60,7 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
   signedIn,
   title,
   subtitle,
+  signedInDetail,
   onSuccess,
 }) => {
   const { t } = useTranslation();
@@ -274,9 +280,14 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
       {signedIn && state === 'idle' && (
         <div className="flex items-start gap-2 rounded-md border border-mint/30 bg-mint-soft/40 px-3 py-2">
           <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-mint" />
-          <p className="text-[12px] text-mint">
-            {t(`settings.backends.${backend === 'claude' ? 'claudeOauthSignedIn' : 'codexOauthSignedIn'}`)}
-          </p>
+          <div className="flex flex-col gap-0.5">
+            <p className="text-[12px] text-mint">
+              {t(`settings.backends.${backend === 'claude' ? 'claudeOauthSignedIn' : 'codexOauthSignedIn'}`)}
+            </p>
+            {signedInDetail && (
+              <p className="font-mono text-[11px] text-mint/80">{signedInDetail}</p>
+            )}
+          </div>
         </div>
       )}
 

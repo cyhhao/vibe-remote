@@ -254,6 +254,21 @@ export const SettingsCodexProviderPage: React.FC = () => {
               <BackendOAuthPanel
                 backend="codex"
                 signedIn={!!state?.has_chatgpt_tokens}
+                signedInDetail={(() => {
+                  // Compose a single-line identity (``email · plan ·
+                  // org``) from the JWT-decoded ``chatgpt_account``
+                  // bundle. We render only the pieces present so a
+                  // partial JWT still surfaces something useful.
+                  const acct = state?.chatgpt_account;
+                  if (!acct) return null;
+                  const parts: string[] = [];
+                  if (acct.email) parts.push(acct.email);
+                  if (acct.plan_type) parts.push(acct.plan_type);
+                  const defaultOrg = acct.organizations?.find((o) => o.is_default)
+                    || acct.organizations?.[0];
+                  if (defaultOrg?.title) parts.push(defaultOrg.title);
+                  return parts.length ? parts.join(' · ') : null;
+                })()}
                 title={t('settings.backends.codexOauthPanelTitle')}
                 subtitle={t('settings.backends.codexOauthPanelSubtitle')}
                 onSuccess={() => {

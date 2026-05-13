@@ -348,6 +348,68 @@ def read_codex_api_key(home: Path | None = None) -> Optional[str]:
     return None
 
 
+def _extract_chatgpt_account(auth_data: dict) -> Optional[Dict[str, Any]]:
+    """Best-effort decode of the ChatGPT identity stored in ``auth.json``.
+
+    Codex stores the OAuth bundle as ``{"tokens": {"id_token": "<JWT>",
+    ...}}``. The id_token's payload carries an ``email`` and a nested
+    ChatGPT-specific block with plan + org info. Decoding is signature-
+    free (we don't verify it — these are tokens we received from
+    ``codex login`` and we trust them at-rest); failures fall back to
+    ``None`` so the Settings UI just shows the generic "signed in"
+    banner instead of crashing.
+    """
+    tokens = auth_data.get("tokens") if isinstance(auth_data, dict) else None
+    if not isinstance(tokens, dict):
+        return None
+    id_token = tokens.get("id_token")
+    if not isinstance(id_token, str):
+        return None
+    parts = id_token.split(".")
+    if len(parts) < 2:
+        return None
+    payload_b64 = parts[1]
+    # Pad base64 to a multiple of 4 (JWTs strip ``=`` padding).
+    pad = "=" * (-len(payload_b64) % 4)
+    try:
+        import base64
+
+        decoded = base64.urlsafe_b64decode((payload_b64 + pad).encode("ascii"))
+        claims = json.loads(decoded)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(claims, dict):
+        return None
+
+    email = claims.get("email") if isinstance(claims.get("email"), str) else None
+    name = claims.get("name") if isinstance(claims.get("name"), str) else None
+    chatgpt = claims.get("https://api.openai.com/auth")
+    plan_type: Optional[str] = None
+    organizations: list[Dict[str, Any]] = []
+    if isinstance(chatgpt, dict):
+        if isinstance(chatgpt.get("chatgpt_plan_type"), str):
+            plan_type = chatgpt["chatgpt_plan_type"]
+        orgs_raw = chatgpt.get("organizations")
+        if isinstance(orgs_raw, list):
+            for entry in orgs_raw:
+                if not isinstance(entry, dict):
+                    continue
+                organizations.append(
+                    {
+                        "id": entry.get("id") if isinstance(entry.get("id"), str) else None,
+                        "title": entry.get("title") if isinstance(entry.get("title"), str) else None,
+                        "role": entry.get("role") if isinstance(entry.get("role"), str) else None,
+                        "is_default": bool(entry.get("is_default")),
+                    }
+                )
+    return {
+        "email": email,
+        "name": name,
+        "plan_type": plan_type,
+        "organizations": organizations or None,
+    }
+
+
 def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
     """Return the user-visible auth state for the Settings UI.
 
@@ -367,6 +429,7 @@ def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
     toml_data = _load_toml(config_path)
     api_key = auth_data.get("OPENAI_API_KEY")
     has_chatgpt_tokens = isinstance(auth_data.get("tokens"), dict)
+    chatgpt_account = _extract_chatgpt_account(auth_data) if has_chatgpt_tokens else None
 
     providers = toml_data.get("model_providers")
     base_url: Optional[str] = None
@@ -419,6 +482,12 @@ def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
         "api_key_raw": api_key if isinstance(api_key, str) and api_key else None,
         "base_url": base_url,
         "has_chatgpt_tokens": has_chatgpt_tokens,
+        # ``chatgpt_account``: best-effort identity from the OAuth JWT in
+        # ``auth.json`` so the Settings page can show "Signed in as
+        # gpt1@example.com (Pro)" instead of just "ChatGPT credentials
+        # detected". Returns ``None`` when no JWT is available or the
+        # claims are missing — the UI degrades to the generic banner.
+        "chatgpt_account": chatgpt_account,
         "credentials_store": effective_store,
         "file_store_active": file_store_active,
         "auth_mode_uncertain": auth_mode_uncertain,

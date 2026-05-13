@@ -150,6 +150,21 @@ export type CodexCredentialsStore = 'file' | 'keyring' | 'auto' | (string & {});
 
 export type ActiveAuthMode = 'oauth' | 'api_key' | 'none';
 
+// Identity decoded from the ChatGPT JWT inside ``~/.codex/auth.json``.
+// All fields are best-effort — the OAuth bundle may carry partial
+// claims, in which case the panel renders only what's present.
+export type CodexChatGptAccount = {
+  email: string | null;
+  name: string | null;
+  plan_type: string | null;
+  organizations: Array<{
+    id: string | null;
+    title: string | null;
+    role: string | null;
+    is_default: boolean;
+  }> | null;
+};
+
 export type CodexAuthState = {
   ok: boolean;
   auth_mode: CodexAuthMode;
@@ -166,6 +181,7 @@ export type CodexAuthState = {
   api_key_masked: string | null;
   base_url: string | null;
   has_chatgpt_tokens: boolean;
+  chatgpt_account?: CodexChatGptAccount | null;
   credentials_store: CodexCredentialsStore;
   file_store_active: boolean;
   // True when Codex is in keyring-preferred mode and disk shows no
