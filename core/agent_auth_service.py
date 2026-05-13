@@ -1754,9 +1754,23 @@ class AgentAuthService:
         The Settings UI exposes a paste box; we GET the URL from inside
         the container so OpenCode's own listener consumes it.
         """
-        callback_url = (code or "").strip()
-        if not callback_url.lower().startswith(("http://127.0.0.1", "http://localhost")):
+        raw = (code or "").strip()
+        if not raw:
             return {"ok": False, "error": "invalid_callback_url"}
+        # Browsers strip the ``http://`` prefix when the user copies
+        # from the address bar in some setups, so accept the bare
+        # ``127.0.0.1:port/...`` shape too — re-add the scheme before
+        # validating so the rest of the flow sees a normal URL.
+        lowered = raw.lower()
+        if not lowered.startswith(("http://", "https://")):
+            raw = "http://" + raw.lstrip("/")
+            lowered = raw.lower()
+        if not (
+            lowered.startswith("http://127.0.0.1")
+            or lowered.startswith("http://localhost")
+        ):
+            return {"ok": False, "error": "invalid_callback_url"}
+        callback_url = raw
         provider_id = flow.provider
         if not provider_id:
             return {"ok": False, "error": "flow_missing_provider"}
