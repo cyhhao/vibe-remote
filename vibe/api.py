@@ -3225,7 +3225,7 @@ _BASE_URL_UNCHANGED: object = object()
 
 async def _save_opencode_provider_auth_async(
     provider_id: str,
-    api_key: str,
+    api_key: str | None,
     base_url: Any = _BASE_URL_UNCHANGED,
 ) -> dict:
     server = await _opencode_get_server()
@@ -3233,7 +3233,12 @@ async def _save_opencode_provider_auth_async(
         return {"ok": False, "message": "OpenCode is disabled in V2Config"}
     request_loop = asyncio.get_running_loop()
     try:
-        await server.set_api_key_auth(provider_id, api_key)
+        # Only upsert auth when the caller provided a fresh key. The
+        # base-URL-only edit path reuses the existing key on disk
+        # (already validated upstream), so re-PUTting it would be
+        # redundant and could even churn the daemon's connected cache.
+        if api_key:
+            await server.set_api_key_auth(provider_id, api_key)
     finally:
         await server.close_http_session(loop=request_loop)
 
@@ -3309,9 +3314,30 @@ def save_opencode_provider_auth(provider_id: str, payload: dict) -> dict:
     if not isinstance(payload, dict):
         return {"ok": False, "message": "Payload must be an object"}
     raw_key = payload.get("api_key")
-    if not isinstance(raw_key, str) or not raw_key.strip():
-        return {"ok": False, "message": "api_key is required"}
-    api_key = raw_key.strip()
+    # ``api_key`` is optional when the provider is already configured: the
+    # UI's "Replace" flow hides the plaintext and only sends ``base_url``
+    # for relay-URL fixes. Without this, base-URL-only edits fail unless
+    # the user retypes the secret. We detect "already configured" by
+    # consulting OpenCode's own auth store (``~/.local/share/opencode/
+    # auth.json``) — same source the provider catalog reads, so an empty
+    # api_key here matches the UX state where the masked key is shown.
+    api_key: str | None = raw_key.strip() if isinstance(raw_key, str) and raw_key.strip() else None
+    has_existing_key = False
+    if api_key is None:
+        try:
+            from vibe.opencode_config import read_opencode_provider_keys
+
+            existing_keys = read_opencode_provider_keys(logger_instance=logger)
+            has_existing_key = bool(existing_keys.get(provider_id.strip()))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "OpenCode auth lookup failed during base-url-only save for %s: %s",
+                provider_id,
+                exc,
+            )
+            has_existing_key = False
+        if not has_existing_key:
+            return {"ok": False, "message": "api_key is required"}
 
     base_url: Any = _BASE_URL_UNCHANGED
     if "base_url" in payload:

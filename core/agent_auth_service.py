@@ -960,16 +960,34 @@ class AgentAuthService:
             os.close(slave_fd)
         return process, master_fd, provider
 
-    async def _run_utility_command(self, *cmd: str) -> None:
+    async def _run_utility_command(self, *cmd: str) -> tuple[bool, str | None]:
+        """Run a short CLI side-call. Returns ``(ok, error_excerpt)``.
+
+        Callers that don't care about the outcome (setup preflight)
+        can ignore the return; ``remove_web_auth`` uses it to surface
+        ``codex logout`` / ``claude auth logout`` failures so the UI
+        doesn't lie about a partial sign-out.
+        """
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-            await asyncio.wait_for(process.communicate(), timeout=20)
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=20)
+            if process.returncode == 0:
+                return True, None
+            output = (stdout or b"").decode("utf-8", errors="replace").strip()
+            logger.info(
+                "Utility command failed (exit=%s) for %s: %s",
+                process.returncode,
+                " ".join(cmd),
+                output[:400] or "<no output>",
+            )
+            return False, output[:400] or f"exit {process.returncode}"
         except Exception as err:  # noqa: BLE001
-            logger.info("Ignoring setup preflight command failure for %s: %s", " ".join(cmd), err)
+            logger.info("Utility command raised for %s: %s", " ".join(cmd), err)
+            return False, str(err)
 
     async def _read_codex_output(
         self,
@@ -1566,9 +1584,9 @@ class AgentAuthService:
 
         binary = self._get_cli_binary(backend)
         if backend == "codex":
-            await self._run_utility_command(binary, "logout")
+            logout_ok, logout_error = await self._run_utility_command(binary, "logout")
         else:
-            await self._run_utility_command(binary, "auth", "logout")
+            logout_ok, logout_error = await self._run_utility_command(binary, "auth", "logout")
 
         try:
             config = getattr(self.controller, "config", None)
@@ -1609,6 +1627,18 @@ class AgentAuthService:
                 await asyncio.to_thread(hook, backend)
             except Exception as err:  # noqa: BLE001
                 logger.warning("post_web_success_hook failed after remove for %s: %s", backend, err)
+        # Surface logout failures even though V2Config was cleared. The
+        # on-disk credentials may still be intact (e.g. ``codex logout``
+        # missing, exited non-zero, or timed out), and the user needs
+        # to know about that partial sign-out rather than seeing a
+        # green toast and assuming the backend is fully signed out.
+        if not logout_ok:
+            return {
+                "ok": True,
+                "partial": True,
+                "warning": "logout_failed",
+                "detail": logout_error or "logout subprocess exited non-zero",
+            }
         return {"ok": True}
 
     async def test_web_auth(

@@ -340,7 +340,11 @@ def test_remove_web_auth_rejects_unsupported_backend(service: AgentAuthService) 
 def test_remove_web_auth_runs_logout_and_returns_ok(
     service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    run_cmd = AsyncMock()
+    # ``_run_utility_command`` now returns ``(ok, error_excerpt)`` so
+    # ``remove_web_auth`` can surface a partial failure when ``codex
+    # logout`` / ``claude auth logout`` exits non-zero. The success
+    # path mocks must yield ``(True, None)``.
+    run_cmd = AsyncMock(return_value=(True, None))
     monkeypatch.setattr(service, "_run_utility_command", run_cmd)
     hook_calls: list[str] = []
     service._post_web_success_hook = lambda b: hook_calls.append(b)
@@ -358,13 +362,31 @@ def test_remove_web_auth_runs_logout_and_returns_ok(
 def test_remove_web_auth_codex_uses_logout_subcommand(
     service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    run_cmd = AsyncMock()
+    run_cmd = AsyncMock(return_value=(True, None))
     monkeypatch.setattr(service, "_run_utility_command", run_cmd)
     result = _run(service.remove_web_auth("codex"))
     assert result == {"ok": True}
     # Codex uses just ``codex logout`` (no nested ``auth`` subcommand).
     args = run_cmd.call_args.args
     assert "logout" in args and "auth" not in args
+
+
+def test_remove_web_auth_surfaces_logout_failure(
+    service: AgentAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codex P2: a failed ``logout`` previously got swallowed and the
+    # API returned ``ok: true``, misleading the UI into showing a
+    # green sign-out toast while the backend creds remained intact.
+    # Now the failure rides back as ``partial`` + ``warning`` so the
+    # frontend can show a warning toast and the on-disk state can be
+    # cleaned up manually.
+    run_cmd = AsyncMock(return_value=(False, "exit 1: not logged in"))
+    monkeypatch.setattr(service, "_run_utility_command", run_cmd)
+    result = _run(service.remove_web_auth("claude"))
+    assert result["ok"] is True
+    assert result["partial"] is True
+    assert result["warning"] == "logout_failed"
+    assert "exit 1" in result["detail"]
 
 
 def test_test_web_auth_rejects_unsupported_backend(service: AgentAuthService) -> None:

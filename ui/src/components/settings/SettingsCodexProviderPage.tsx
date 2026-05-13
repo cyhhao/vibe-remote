@@ -23,11 +23,16 @@ const SegmentedRadio: React.FC<{
   onChange: (next: CodexAuthMode) => void;
   options: ReadonlyArray<{ id: CodexAuthMode; label: string }>;
   ariaLabel: string;
-}> = ({ value, onChange, options, ariaLabel }) => (
+  disabled?: boolean;
+}> = ({ value, onChange, options, ariaLabel, disabled }) => (
   <div
     role="radiogroup"
     aria-label={ariaLabel}
-    className="flex h-9 items-stretch gap-0.5 rounded-md border border-border bg-foreground/[0.03] p-0.5"
+    aria-disabled={disabled || undefined}
+    className={clsx(
+      'flex h-9 items-stretch gap-0.5 rounded-md border border-border bg-foreground/[0.03] p-0.5',
+      disabled && 'opacity-60',
+    )}
   >
     {options.map((opt) => {
       const active = value === opt.id;
@@ -37,12 +42,14 @@ const SegmentedRadio: React.FC<{
           type="button"
           role="radio"
           aria-checked={active}
+          disabled={disabled}
           onClick={() => onChange(opt.id)}
           className={clsx(
             'flex-1 rounded-[4px] px-3 text-[12px] transition-colors',
             active
               ? 'border border-mint/30 bg-mint-soft font-bold text-mint'
-              : 'font-medium text-muted hover:text-foreground'
+              : 'font-medium text-muted hover:text-foreground',
+            disabled && 'cursor-not-allowed',
           )}
         >
           {opt.label}
@@ -75,6 +82,11 @@ export const SettingsCodexProviderPage: React.FC = () => {
   // button that never has a no-op state is noisy and confusing.
   const [savedAuthMode, setSavedAuthMode] = useState<CodexAuthMode>('oauth');
   const [savedBaseUrl, setSavedBaseUrl] = useState('');
+  // When the OAuth panel is mid-flow (device code visible, polling),
+  // freeze the auth-mode segmented radio. Without this lock, an
+  // accidental tap (iOS Safari emits one after the "Copy" tap in
+  // testing) tears down the in-progress login.
+  const [oauthFlowActive, setOauthFlowActive] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -291,6 +303,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
                 onChange={setAuthMode}
                 options={modeOptions}
                 ariaLabel={t('settings.backends.codexAuthModeLabel') as string}
+                disabled={oauthFlowActive}
               />
               <p className="text-[12px] leading-relaxed text-muted">
                 {authMode === 'api_key'
@@ -339,6 +352,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
                 })()}
                 title={t('settings.backends.codexOauthPanelTitle')}
                 subtitle={t('settings.backends.codexOauthPanelSubtitle')}
+                onActiveChange={setOauthFlowActive}
                 onSuccess={() => {
                   // Re-read Codex auth state so the "ChatGPT tokens detected"
                   // line and any keychain hints catch up with the freshly

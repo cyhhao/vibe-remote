@@ -47,6 +47,14 @@ export type BackendOAuthPanelProps = {
    *  The parent typically re-reads ``getClaudeAuth`` / ``getCodexAuth`` here so
    *  the on-screen "signed in" indicators move. */
   onSuccess?: () => void;
+  /** Fires whenever the panel's internal flow is mid-handshake
+   *  (``state`` ∈ {starting, awaiting_code, verifying}). The parent
+   *  uses this to disable auth-mode switching: on iOS Safari the
+   *  device-code "Copy" tap was bouncing the surrounding OAuth /
+   *  API-Key radio, which would tear down the in-progress flow. The
+   *  callback keeps the source of truth here in the panel and lets
+   *  the parent freeze the tab without duplicating state. */
+  onActiveChange?: (active: boolean) => void;
 };
 
 /**
@@ -71,6 +79,7 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
   signedInDetail,
   hideRemove,
   onSuccess,
+  onActiveChange,
 }) => {
   const { t } = useTranslation();
   const api = useApi();
@@ -107,6 +116,19 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
     setCode('');
     setError(null);
   };
+
+  // Broadcast in-progress flow state to the parent so it can lock the
+  // auth-mode segmented radio. On iOS Safari the device-code "Copy" tap
+  // was bouncing that radio mid-flow — we can't reproduce the exact
+  // event path in code, but freezing the radio while in-flight makes
+  // the bug impossible to trigger regardless of how the rogue event
+  // gets there.
+  const onActiveChangeRef = useRef(onActiveChange);
+  onActiveChangeRef.current = onActiveChange;
+  useEffect(() => {
+    const active = state === 'starting' || state === 'awaiting_code' || state === 'verifying';
+    onActiveChangeRef.current?.(active);
+  }, [state]);
 
   // Poll the status endpoint until the flow lands on a terminal state.
   // The server holds the flow alive across requests on its own event loop,

@@ -48,11 +48,16 @@ const SegmentedRadio: React.FC<{
   onChange: (next: ClaudeAuthMode) => void;
   options: ReadonlyArray<{ id: ClaudeAuthMode; label: string }>;
   ariaLabel: string;
-}> = ({ value, onChange, options, ariaLabel }) => (
+  disabled?: boolean;
+}> = ({ value, onChange, options, ariaLabel, disabled }) => (
   <div
     role="radiogroup"
     aria-label={ariaLabel}
-    className="flex h-9 items-stretch gap-0.5 rounded-md border border-border bg-foreground/[0.03] p-0.5"
+    aria-disabled={disabled || undefined}
+    className={clsx(
+      'flex h-9 items-stretch gap-0.5 rounded-md border border-border bg-foreground/[0.03] p-0.5',
+      disabled && 'opacity-60',
+    )}
   >
     {options.map((opt) => {
       const active = value === opt.id;
@@ -62,12 +67,14 @@ const SegmentedRadio: React.FC<{
           type="button"
           role="radio"
           aria-checked={active}
+          disabled={disabled}
           onClick={() => onChange(opt.id)}
           className={clsx(
             'flex-1 rounded-[4px] px-3 text-[12px] transition-colors',
             active
               ? 'border border-mint/30 bg-mint-soft font-bold text-mint'
-              : 'font-medium text-muted hover:text-foreground'
+              : 'font-medium text-muted hover:text-foreground',
+            disabled && 'cursor-not-allowed',
           )}
         >
           {opt.label}
@@ -115,6 +122,10 @@ export const SettingsClaudeProviderPage: React.FC = () => {
   // Save buttons are noise).
   const [savedAuthMode, setSavedAuthMode] = useState<ClaudeAuthMode>('oauth');
   const [savedBaseUrl, setSavedBaseUrl] = useState('');
+  // Freeze the auth-mode segmented radio while the OAuth panel is mid-
+  // handshake. Same iOS Safari issue as the Codex page: a Copy tap
+  // can bounce the radio and tear down the in-flight login.
+  const [oauthFlowActive, setOauthFlowActive] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -526,6 +537,7 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                     onChange={setAuthMode}
                     options={modeOptions}
                     ariaLabel={t('settings.backends.claudeAuthModeLabel') as string}
+                    disabled={oauthFlowActive}
                   />
                   <p className="text-[12px] leading-relaxed text-muted">
                     {authMode === 'api_key'
@@ -545,6 +557,7 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                     signedIn={!!authState?.has_oauth_credentials}
                     title={t('settings.backends.claudeOauthPanelTitle')}
                     subtitle={t('settings.backends.claudeOauthPanelSubtitle')}
+                    onActiveChange={setOauthFlowActive}
                     onSuccess={() => {
                       // Re-fetch the auth state so the "Signed in" pill and
                       // any masked-key indicators reflect the fresh login
