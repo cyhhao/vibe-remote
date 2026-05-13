@@ -14,8 +14,13 @@ from modules.im import MessageContext
 def _load_message_handler_class():
     with patch.dict(sys.modules, {}, clear=False):
         agents_module = types.ModuleType("modules.agents")
-        setattr(agents_module, "AgentRequest", type("AgentRequest", (), {}))
+        agents_module.__path__ = []
+        agent_request = type("AgentRequest", (), {})
+        setattr(agents_module, "AgentRequest", agent_request)
         sys.modules["modules.agents"] = agents_module
+        agents_base_module = types.ModuleType("modules.agents.base")
+        setattr(agents_base_module, "AgentRequest", agent_request)
+        sys.modules["modules.agents.base"] = agents_base_module
 
         core_pkg = types.ModuleType("core")
         core_pkg.__path__ = [str(ROOT / "core")]
@@ -72,7 +77,7 @@ class MessageHandlerUserInfoTests(unittest.IsolatedAsyncioTestCase):
 
         result = await handler._prepend_user_info(context, "hello")
 
-        self.assertEqual(result, "[Alex<U0E0FM3QT>] hello")
+        self.assertEqual(result, "[Alex<U0E0FM3QT>]\nhello")
 
     async def test_prepend_user_info_uses_display_name_when_present(self):
         handler = MessageHandler(_StubController({"display_name": "Alex Chen", "real_name": "Alex", "name": "cyh"}))
@@ -80,7 +85,7 @@ class MessageHandlerUserInfoTests(unittest.IsolatedAsyncioTestCase):
 
         result = await handler._prepend_user_info(context, "hello")
 
-        self.assertEqual(result, "[Alex Chen<U0E0FM3QT>] hello")
+        self.assertEqual(result, "[Alex Chen<U0E0FM3QT>]\nhello")
 
 
 if __name__ == "__main__":
