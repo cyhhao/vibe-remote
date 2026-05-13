@@ -550,9 +550,9 @@ def channels_response(
 
     can_refresh = platform in {"slack", "discord", "lark"}
     if can_refresh and (force or not chats):
-        result = refresh_platform(platform, force=True, db_path=db_path, **refresh_kwargs)
+        result = refresh_platform(platform, force=force, db_path=db_path, **refresh_kwargs)
         state = result.refresh_state
-        error = result.error
+        error = result.error or state.last_error
         all_chats = list_chats(platform, include_private=True, parent_scope_id=parent_scope_id, db_path=db_path)
         chats = _filter_response_chats(all_chats, include_private=include_private, require_member=require_member)
     elif can_refresh and should_refresh(platform, refresh_scope=refresh_scope, db_path=db_path):

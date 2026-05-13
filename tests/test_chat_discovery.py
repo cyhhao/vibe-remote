@@ -155,6 +155,30 @@ def test_refresh_failure_keeps_stale_cache_and_records_error(tmp_path: Path, mon
     assert response["error"] == "boom"
 
 
+def test_empty_cache_channel_response_respects_refresh_backoff(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    calls = 0
+
+    from vibe import api
+
+    def fail_refresh(_token: str, browse_all: bool = False) -> dict:
+        nonlocal calls
+        calls += 1
+        return {"ok": False, "error": "bad token"}
+
+    monkeypatch.setattr(api, "list_channels_live", fail_refresh)
+
+    first = chat_discovery.channels_response("slack", bot_token="x", db_path=db_path)
+    second = chat_discovery.channels_response("slack", bot_token="x", db_path=db_path)
+
+    assert calls == 1
+    assert first["ok"] is False
+    assert first["error"] == "bad token"
+    assert second["ok"] is False
+    assert second["error"] == "bad token"
+
+
 def test_slack_cached_response_respects_member_only_browse_mode(tmp_path: Path) -> None:
     db_path = tmp_path / "vibe.sqlite"
     run_migrations(db_path)

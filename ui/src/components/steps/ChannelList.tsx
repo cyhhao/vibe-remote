@@ -296,6 +296,13 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const larkDomain = config.lark?.domain || data.lark?.domain || 'feishu';
 
   useEffect(() => {
+    return () => {
+      Object.values(refreshFollowupTimersRef.current).forEach((timer) => clearTimeout(timer));
+      refreshFollowupTimersRef.current = {};
+    };
+  }, [platform, selectedGuild, pageTab]);
+
+  useEffect(() => {
     if (platform !== 'discord') return;
     if (selectedGuild) return;
     const preferredGuild = selectedGuildIdsRef.current[0] || getDiscordGuildAllowlist(data)[0] || '';
@@ -371,6 +378,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     const existing = refreshFollowupTimersRef.current[platformId];
     if (existing) clearTimeout(existing);
     refreshFollowupTimersRef.current[platformId] = setTimeout(() => {
+      delete refreshFollowupTimersRef.current[platformId];
       void loadChannels(all, false);
     }, 3000);
   };
