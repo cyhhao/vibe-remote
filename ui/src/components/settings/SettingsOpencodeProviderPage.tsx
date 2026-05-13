@@ -404,7 +404,13 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
   const onSaveProviderAuth = async (provider: OpencodeProvider) => {
     const state = editByProvider[provider.id] || emptyEdit();
     const key = state.apiKey.trim();
-    if (!key) {
+    // Reject an empty key only when the provider has no saved
+    // credentials. For already-configured providers the UI hides the
+    // plaintext key behind a "Replace" pencil; the backend save
+    // endpoint reuses the on-disk key in that case so a base-URL-only
+    // edit can land without re-typing the secret. Without this branch
+    // a user with a saved key can never persist a relay-URL fix.
+    if (!key && !provider.configured) {
       updateEdit(provider.id, {
         error: t('settings.backends.opencodeProviderApiKeyRequired') as string,
       });

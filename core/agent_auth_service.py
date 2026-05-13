@@ -2259,6 +2259,24 @@ class AgentAuthService:
                     await flow.reader_task
                 except asyncio.CancelledError:
                     pass
+            # If the login process emitted an explicit error line before
+            # exiting (e.g. ``Error logging in with device code: device
+            # code request failed with status 403 Forbidden`` when
+            # ``auth.openai.com`` rate-limits or blocks the request),
+            # surface THAT instead of falling through to
+            # ``_verify_web_login`` — the verify probe runs ``codex login
+            # status``, which reports "Not logged in" after every failed
+            # login attempt, masking the real cause. The reader writes
+            # each non-empty stdout line into ``last_status_text``;
+            # checking for the ``error``-prefix on that line catches the
+            # device-flow failure modes Codex CLI emits before exit.
+            last_line = (flow.last_status_text or "").strip()
+            if last_line:
+                lowered = last_line.lower()
+                if lowered.startswith("error") or "failed with status" in lowered:
+                    flow.state = "failed"
+                    flow.error = last_line[:400]
+                    return
             flow.state = "verifying"
             ok, detail = await self._verify_web_login(flow.backend)
             if ok:
