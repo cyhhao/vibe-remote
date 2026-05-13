@@ -16,6 +16,7 @@ import {
   Save,
   Search,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -101,6 +102,7 @@ export const SettingsClaudeProviderPage: React.FC = () => {
   const [authState, setAuthState] = useState<ClaudeAuthState | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authSaving, setAuthSaving] = useState(false);
+  const [removingKey, setRemovingKey] = useState(false);
   const [authMode, setAuthMode] = useState<ClaudeAuthMode>('oauth');
   const [apiKey, setApiKey] = useState('');
   // ``editingKey`` mirrors the Codex page convention: false = show the
@@ -244,6 +246,43 @@ export const SettingsClaudeProviderPage: React.FC = () => {
   const apiKeyStatus = authState?.has_api_key
     ? t('settings.backends.claudeApiKeyConfigured', { length: authState.api_key_length })
     : t('settings.backends.claudeApiKeyMissing');
+
+  const onRemoveApiKey = async () => {
+    // Drop just the API key from V2Config; leaves any OAuth tokens in
+    // ``~/.claude/credentials.json`` (or the OS keychain) alone. Lets
+    // the user clear a stale key without having to also re-do OAuth.
+    const confirmed = window.confirm(
+      t('settings.backends.claudeApiKeyRemoveConfirm') as string,
+    );
+    if (!confirmed) return;
+    setRemovingKey(true);
+    try {
+      const result = await api.removeBackendApiKey('claude');
+      if (!result.ok) {
+        showToast(
+          t('settings.backends.claudeApiKeyRemoveFailed', {
+            detail: result.error || result.detail || 'unknown',
+          }),
+          'error',
+        );
+        return;
+      }
+      const fresh = await api.getClaudeAuth();
+      setAuthState(fresh);
+      setBaseUrl(fresh.base_url || '');
+      setSavedBaseUrl(fresh.base_url || '');
+      setApiKey('');
+      setEditingKey(false);
+      showToast(t('settings.backends.claudeApiKeyRemoved'), 'success');
+    } catch (err: any) {
+      showToast(
+        t('settings.backends.claudeApiKeyRemoveFailed', { detail: err?.message || 'unknown' }),
+        'error',
+      );
+    } finally {
+      setRemovingKey(false);
+    }
+  };
 
   const onSaveAuth = async () => {
     setAuthSaving(true);
@@ -555,9 +594,29 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                               setEditingKey(true);
                               setApiKey('');
                             }}
+                            disabled={removingKey}
                           >
                             <Pencil className="size-3" />
                             {t('settings.backends.replaceApiKey')}
+                          </Button>
+                          {/* Symmetric to OpenCode's Remove affordance:
+                              clear the saved API key while leaving OAuth
+                              tokens in ``~/.claude/credentials.json`` /
+                              keychain intact. Without this, a stuck key
+                              keeps forcing the env-var path even after
+                              the user signed in via OAuth. */}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => void onRemoveApiKey()}
+                            disabled={removingKey || editingKey}
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            <Trash2 className="size-3" />
+                            {removingKey
+                              ? t('common.removing')
+                              : t('settings.backends.claudeApiKeyRemove')}
                           </Button>
                         </div>
                       ) : (

@@ -1670,6 +1670,16 @@ def backend_oauth_web_remove(backend: str):
     return jsonify(api.remove_backend_auth(backend))
 
 
+@app.route("/backend/<backend>/auth/api-key/remove", methods=["POST"])
+def backend_auth_api_key_remove(backend: str):
+    """Clear the stored API key (V2Config + Codex auth.json) without
+    touching OAuth credentials. Per-backend symmetry of OpenCode's
+    per-provider DELETE."""
+    from vibe import api
+
+    return jsonify(api.remove_backend_api_key(backend))
+
+
 @app.route("/backend/<backend>/auth/test", methods=["POST"])
 def backend_auth_test(backend: str):
     """Send a single-token probe through the backend CLI to verify auth."""

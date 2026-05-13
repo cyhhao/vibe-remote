@@ -2258,6 +2258,74 @@ def remove_backend_auth(backend: str) -> dict:
         return {"ok": False, "error": "remove_failed", "detail": str(exc)}
 
 
+def remove_backend_api_key(backend: str) -> dict:
+    """Clear the stored API key for Claude / Codex without touching OAuth.
+
+    Mirrors OpenCode's "Remove key" vs "Sign out" split: Claude and
+    Codex can both carry ``api_key`` *and* OAuth credentials at the
+    same time, and the CLI picks api_key when both are present. Without
+    a way to drop just the API key, a stale or rejected key keeps
+    forcing 401s even after the user signed in via OAuth.
+
+    - **Codex**: re-applies ``apply_codex_auth(auth_mode='oauth')``
+      which pops ``OPENAI_API_KEY`` from ``~/.codex/auth.json`` and
+      keeps any ``tokens`` blob intact. V2Config's
+      ``agents.codex.api_key`` is also cleared and ``auth_mode`` is
+      flipped to ``oauth``. Triggers ``restart_backend('codex')`` so
+      the persistent daemon reloads.
+    - **Claude**: V2Config is the sole writer; we clear
+      ``agents.claude.api_key`` + ``base_url`` and flip ``auth_mode``
+      to ``oauth``. ``~/.claude/credentials.json`` (the OAuth token
+      file) is left alone. No daemon to restart — Claude relaunches
+      per request.
+    """
+    backend = (backend or "").strip().lower()
+    if backend not in {"claude", "codex"}:
+        return {"ok": False, "error": "unsupported_backend"}
+
+    if backend == "codex":
+        from vibe.codex_config import apply_codex_auth
+
+        try:
+            apply_codex_auth(auth_mode="oauth", api_key=None, base_url=None)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("apply_codex_auth(oauth) during remove-key failed: %s", exc, exc_info=True)
+            return {"ok": False, "error": "remove_failed", "detail": str(exc)}
+
+    # Clear V2Config api_key for both backends.
+    try:
+        with CONFIG_LOCK:
+            try:
+                config = load_config()
+            except FileNotFoundError:
+                config = V2Config()
+            target = getattr(getattr(config, "agents", None), backend, None)
+            if target is not None:
+                target.auth_mode = "oauth"
+                target.api_key = None
+                if backend == "codex":
+                    target.base_url = None
+                config.save()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("V2Config clear during remove-key failed for %s: %s", backend, exc)
+
+    # Codex has a persistent daemon — refresh it so the cleared key
+    # actually takes effect on the next request. Claude is one-shot per
+    # request so a synthetic restart is enough.
+    restart: dict
+    if backend == "codex":
+        try:
+            restart = restart_backend("codex")
+        except Exception as exc:  # noqa: BLE001
+            restart = {"ok": False, "message": str(exc)}
+    else:
+        restart = {
+            "ok": True,
+            "message": "Claude relaunches per request; the next message uses the new auth.",
+        }
+    return {"ok": True, "restart": restart}
+
+
 def test_backend_auth(backend: str, model: Optional[str] = None) -> dict:
     """Send a single-token ``Hi`` probe through the backend CLI.
 

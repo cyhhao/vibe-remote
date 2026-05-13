@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Info, KeyRound, Pencil, RotateCcw, Save } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Info, KeyRound, Pencil, RotateCcw, Save, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 
@@ -60,6 +60,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
   const [state, setState] = useState<CodexAuthState | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [removingKey, setRemovingKey] = useState(false);
   const [authMode, setAuthMode] = useState<CodexAuthMode>('oauth');
   const [apiKey, setApiKey] = useState('');
   // ``editingKey`` distinguishes "showing the saved masked key" (false,
@@ -128,6 +129,44 @@ export const SettingsCodexProviderPage: React.FC = () => {
   const apiKeyStatus = state?.has_api_key
     ? t('settings.backends.codexApiKeyConfigured', { length: state.api_key_length })
     : t('settings.backends.codexApiKeyMissing');
+
+  const onRemoveApiKey = async () => {
+    // Drop just the API key (V2Config + auth.json's OPENAI_API_KEY),
+    // leave OAuth tokens intact. Codex's CLI prefers the API key when
+    // both are present — without this affordance a stale/invalid key
+    // keeps forcing 401s even after the user signed in via OAuth.
+    const confirmed = window.confirm(
+      t('settings.backends.codexApiKeyRemoveConfirm') as string,
+    );
+    if (!confirmed) return;
+    setRemovingKey(true);
+    try {
+      const result = await api.removeBackendApiKey('codex');
+      if (!result.ok) {
+        showToast(
+          t('settings.backends.codexApiKeyRemoveFailed', {
+            detail: result.error || result.detail || 'unknown',
+          }),
+          'error',
+        );
+        return;
+      }
+      const fresh = await api.getCodexAuth();
+      setState(fresh);
+      setBaseUrl(fresh.base_url || '');
+      setSavedBaseUrl(fresh.base_url || '');
+      setApiKey('');
+      setEditingKey(false);
+      showToast(t('settings.backends.codexApiKeyRemoved'), 'success');
+    } catch (err: any) {
+      showToast(
+        t('settings.backends.codexApiKeyRemoveFailed', { detail: err?.message || 'unknown' }),
+        'error',
+      );
+    } finally {
+      setRemovingKey(false);
+    }
+  };
 
   const onSave = async () => {
     setSaving(true);
@@ -319,9 +358,30 @@ export const SettingsCodexProviderPage: React.FC = () => {
                           setEditingKey(true);
                           setApiKey('');
                         }}
+                        disabled={removingKey}
                       >
                         <Pencil className="size-3" />
                         {t('settings.backends.replaceApiKey')}
+                      </Button>
+                      {/* Symmetric to OpenCode's Remove affordance: lets
+                          the user drop a stale / invalid key without
+                          re-signing in. Important for Codex specifically
+                          because the CLI prefers ``OPENAI_API_KEY`` when
+                          both api_key and OAuth tokens live in
+                          ``auth.json`` — a stuck key keeps forcing 401s
+                          even after a successful OAuth sign-in. */}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => void onRemoveApiKey()}
+                        disabled={removingKey || editingKey}
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        <Trash2 className="size-3" />
+                        {removingKey
+                          ? t('common.removing')
+                          : t('settings.backends.codexApiKeyRemove')}
                       </Button>
                     </div>
                   ) : (

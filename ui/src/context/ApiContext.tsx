@@ -44,6 +44,12 @@ export type ApiContextType = {
     flowId: string,
   ) => Promise<OAuthWebMutationResult>;
   removeBackendAuth: (backend: 'claude' | 'codex') => Promise<OAuthWebMutationResult>;
+  // Selectively clear just the stored API key — leave OAuth credentials
+  // intact. Symmetric to OpenCode's per-provider DELETE: lets the user
+  // drop a stale key without re-signing in. Codex also restarts its
+  // persistent daemon so the cleared key takes effect on the next
+  // request.
+  removeBackendApiKey: (backend: 'claude' | 'codex') => Promise<OAuthWebMutationResult>;
   testBackendAuth: (
     backend: 'claude' | 'codex',
     options?: { model?: string },
@@ -481,6 +487,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }),
     removeBackendAuth: (backend) =>
       postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/remove`, {}),
+    removeBackendApiKey: (backend) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/api-key/remove`, {}),
     testBackendAuth: (backend, options) =>
       postJson(`/backend/${encodeURIComponent(backend)}/auth/test`, {
         ...(options?.model ? { model: options.model } : {}),
