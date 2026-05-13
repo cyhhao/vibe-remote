@@ -356,6 +356,7 @@ def config_to_payload(config: V2Config, *, include_secrets: bool = False) -> dic
         "ack_mode": config.ack_mode,
         "language": config.language,
         "show_duration": config.show_duration,
+        "include_time_info": config.include_time_info,
         "include_user_info": config.include_user_info,
         "reply_enhancements": config.reply_enhancements,
     }

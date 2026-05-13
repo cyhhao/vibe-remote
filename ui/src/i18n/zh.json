@@ -688,6 +688,8 @@
     "errorRetryLimitHint": "当 LLM 流式响应出错时，自动发送 'continue' 重试（0 = 不重试）",
     "showDuration": "显示耗时",
     "showDurationHint": "在结果消息中显示任务耗时",
+    "includeTimeInfo": "携带时间信息",
+    "includeTimeInfoHint": "在发给 Agent 的消息前添加当前本地时间（精确到秒，包含 UTC 时区偏移）",
     "includeUserInfo": "携带用户信息",
     "includeUserInfoHint": "在发给 Agent 的消息前添加 [用户名<用户ID>]",
     "replyEnhancements": "快捷回复按钮",

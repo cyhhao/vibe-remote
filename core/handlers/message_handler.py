@@ -1,6 +1,7 @@
 """Message routing and Agent communication handlers"""
 
 import logging
+from datetime import datetime
 from typing import List, Optional, Tuple
 
 from modules.agents.base import AgentRequest
@@ -250,9 +251,7 @@ class MessageHandler(BaseHandler):
                 if processed_files:
                     logger.info(f"Processed {len(processed_files)} file attachments for message")
 
-            # Prepend user identity when include_user_info is enabled
-            if is_human and self.config.include_user_info:
-                message = await self._prepend_user_info(context, message)
+            message = await self._prepend_message_metadata(context, message, include_user_info=is_human)
 
             message = self._append_attachment_errors(message, attachment_errors)
 
@@ -312,6 +311,40 @@ class MessageHandler(BaseHandler):
 
     async def _prepend_user_info(self, context: MessageContext, message: str) -> str:
         """Prepend user identity as [username<user_id>] to the message."""
+        user_info_line = await self._build_user_info_line(context)
+        return f"{user_info_line}\n{message}"
+
+    async def _prepend_message_metadata(
+        self,
+        context: MessageContext,
+        message: str,
+        *,
+        include_user_info: bool,
+    ) -> str:
+        """Prepend configured per-turn metadata lines to the agent message."""
+        metadata_lines: list[str] = []
+        if getattr(self.config, "include_time_info", True):
+            metadata_lines.append(self._build_current_time_line())
+        if include_user_info and getattr(self.config, "include_user_info", True):
+            metadata_lines.append(await self._build_user_info_line(context))
+
+        if not metadata_lines:
+            return message
+        return "\n".join([*metadata_lines, message])
+
+    @staticmethod
+    def _build_current_time_line(now: datetime | None = None) -> str:
+        """Return the current local time with seconds and UTC offset."""
+        current = now or datetime.now().astimezone()
+        if current.tzinfo is None:
+            current = current.astimezone()
+        offset = current.strftime("%z")
+        if len(offset) == 5:
+            offset = f"{offset[:3]}:{offset[3:]}"
+        return f"[Current Time: {current.strftime('%Y-%m-%d %H:%M:%S')} UTC{offset}]"
+
+    async def _build_user_info_line(self, context: MessageContext) -> str:
+        """Return user identity as [username<user_id>]."""
         try:
             user_info = await self._get_im_client(context).get_user_info(context.user_id)
             raw_name = self._resolve_user_display_name(user_info, context.user_id)
@@ -320,7 +353,7 @@ class MessageHandler(BaseHandler):
             raw_name = context.user_id
         name = self._sanitize_identity(raw_name)
         uid = self._sanitize_identity(context.user_id)
-        return f"[{name}<{uid}>]\n{message}"
+        return f"[{name}<{uid}>]"
 
     @staticmethod
     def _get_control_message(context: MessageContext, message: str) -> str:

@@ -23,6 +23,7 @@ const SAVE_KEYS = [
   'platforms',
   'ack_mode',
   'show_duration',
+  'include_time_info',
   'include_user_info',
   'reply_enhancements',
   'slack',
@@ -104,6 +105,7 @@ export const SettingsMessagingPage: React.FC = () => {
     { value: 'reaction', label: t('dashboard.ackReaction'), disabled: !reactionSupported },
     { value: 'message', label: t('dashboard.ackMessage'), disabled: false },
   ];
+  const includeTimeInfoEnabled = config.include_time_info !== false;
 
   return (
     <SettingsPageShell
@@ -191,6 +193,19 @@ export const SettingsMessagingPage: React.FC = () => {
             <ToggleSwitch
               enabled={config.show_duration !== false}
               onClick={() => void persist({ ...config, show_duration: !config.show_duration })}
+            />
+          }
+        />
+
+        <SettingsRow
+          title={t('dashboard.includeTimeInfo')}
+          description={t('dashboard.includeTimeInfoHint')}
+          control={
+            <ToggleSwitch
+              enabled={includeTimeInfoEnabled}
+              onClick={() =>
+                void persist({ ...config, include_time_info: !includeTimeInfoEnabled })
+              }
             />
           }
         />

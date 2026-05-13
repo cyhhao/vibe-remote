@@ -65,6 +65,7 @@ class AppCompatConfig:
     codex: Optional[CodexCompatConfig] = None
     opencode: Optional[OpenCodeCompatConfig] = None
     show_duration: bool = False
+    include_time_info: bool = True
     include_user_info: bool = True
     reply_enhancements: bool = True
     default_backend: str = DEFAULT_AGENT_BACKEND
@@ -123,6 +124,7 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         ack_mode=v2.ack_mode,
         language=v2.language,
         show_duration=v2.show_duration,
+        include_time_info=v2.include_time_info,
         include_user_info=v2.include_user_info,
         reply_enhancements=v2.reply_enhancements,
         default_backend=v2.agents.default_backend,

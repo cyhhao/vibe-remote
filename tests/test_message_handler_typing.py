@@ -163,7 +163,13 @@ class _StubController:
         self.config = type(
             "Config",
             (),
-            {"platform": platform, "ack_mode": ack_mode, "include_user_info": False, "language": "en"},
+            {
+                "platform": platform,
+                "ack_mode": ack_mode,
+                "include_time_info": False,
+                "include_user_info": False,
+                "language": "en",
+            },
         )()
         self.im_client = _StubIMClient(typing_result=typing_result)
         self.settings_manager = _StubSettingsManager()

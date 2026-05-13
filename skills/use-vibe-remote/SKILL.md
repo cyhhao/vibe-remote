@@ -307,6 +307,7 @@ Important config payload shape:
   "ack_mode": "typing",
   "language": "en",
   "show_duration": false,
+  "include_time_info": true,
   "include_user_info": true,
   "reply_enhancements": true
 }
