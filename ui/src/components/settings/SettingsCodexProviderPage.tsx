@@ -10,7 +10,7 @@ import { Card, CardContent } from '../ui/card';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { useApi } from '@/context/ApiContext';
-import type { CodexAuthMode, CodexAuthState } from '@/context/ApiContext';
+import type { BackendNotice, CodexAuthMode, CodexAuthState } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
 import { BackendOAuthPanel } from './BackendOAuthPanel';
 import { BackendTestPanel } from './BackendTestPanel';
@@ -130,6 +130,33 @@ export const SettingsCodexProviderPage: React.FC = () => {
     ? t('settings.backends.codexApiKeyConfigured', { length: state.api_key_length })
     : t('settings.backends.codexApiKeyMissing');
 
+  // Surface non-fatal config-rewrite warnings from the server as warning
+  // toasts. Today the only emitter is ``cleared_custom_relay_pointer``
+  // (an OAuth switch where the user's ``model_provider`` pointed at a
+  // custom relay whose ``base_url`` won't accept OAuth tokens — we
+  // cleared the pointer so Codex falls back to OpenAI's default
+  // endpoint). Without this banner the user sees a green "saved" toast
+  // and then a 401 on their next message.
+  const surfaceNotices = (notices: BackendNotice[] | undefined) => {
+    if (!notices || notices.length === 0) return;
+    for (const notice of notices) {
+      if (notice.code === 'cleared_custom_relay_pointer') {
+        showToast(
+          t('settings.backends.codexNoticeClearedRelayPointer', {
+            provider: notice.provider_id || 'custom',
+            url: notice.base_url || '',
+          }),
+          'warning',
+        );
+      } else {
+        showToast(
+          t('settings.backends.codexNoticeGeneric', { code: notice.code }),
+          'warning',
+        );
+      }
+    }
+  };
+
   const onRemoveApiKey = async () => {
     // Drop just the API key (V2Config + auth.json's OPENAI_API_KEY),
     // leave OAuth tokens intact. Codex's CLI prefers the API key when
@@ -158,6 +185,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
       setApiKey('');
       setEditingKey(false);
       showToast(t('settings.backends.codexApiKeyRemoved'), 'success');
+      surfaceNotices(result.notices);
     } catch (err: any) {
       showToast(
         t('settings.backends.codexApiKeyRemoveFailed', { detail: err?.message || 'unknown' }),
@@ -211,6 +239,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
       } else {
         showToast(t('settings.backends.codexSaveSuccess'), 'success');
       }
+      surfaceNotices(result.notices);
     } catch (err: any) {
       showToast(err?.message || t('settings.backends.codexSaveFailed'), 'error');
     } finally {

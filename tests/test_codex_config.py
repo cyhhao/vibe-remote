@@ -317,3 +317,90 @@ def test_apply_oauth_mode_clears_managed_base_url(tmp_path: Path) -> None:
 
     parsed = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
     assert "model_providers" not in parsed
+
+
+def test_apply_oauth_clears_user_owned_relay_pointer_with_base_url(tmp_path: Path) -> None:
+    """OAuth tokens don't validate against custom relays — clear the pointer.
+
+    Real-world failure mode: user originally set up API-key auth through a
+    relay (``model_provider = "OpenAI"`` → ``[model_providers.OpenAI]``
+    with ``base_url = "https://ai-relay.example.com"``). They switch to
+    OAuth via the UI; we previously preserved the user-owned pointer,
+    which sent OAuth bearer tokens to the relay. The relay returned
+    ``401 INVALID_API_KEY`` (it only accepts API keys), bricking the
+    save. Now: when switching to OAuth, clear the pointer if it targets
+    a section with a custom base_url. The section itself stays for the
+    user to re-point later (or for switching back to api_key mode).
+    """
+    home = tmp_path
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    seed = (
+        'model_provider = "OpenAI"\n'
+        'cli_auth_credentials_store = "file"\n'
+        "\n"
+        "[model_providers.OpenAI]\n"
+        'name = "OpenAI"\n'
+        'base_url = "https://ai-relay.example.com"\n'
+        'wire_api = "responses"\n'
+    )
+    (codex_home / "config.toml").write_text(seed, encoding="utf-8")
+    (codex_home / "auth.json").write_text(
+        json.dumps({"OPENAI_API_KEY": "sk-old", "tokens": {"id_token": "abc"}}),
+        encoding="utf-8",
+    )
+
+    result = codex_config.apply_codex_auth(
+        auth_mode="oauth",
+        api_key=None,
+        base_url=None,
+        home=home,
+    )
+
+    # The pointer is gone — Codex now falls back to the built-in
+    # ``openai`` provider with the default endpoint, where OAuth tokens
+    # actually validate.
+    parsed = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
+    assert "model_provider" not in parsed
+    # The user's section is left intact so they can manually re-point
+    # later or re-use it when switching back to api_key mode.
+    assert parsed["model_providers"]["OpenAI"]["base_url"] == "https://ai-relay.example.com"
+    assert parsed["model_providers"]["OpenAI"]["wire_api"] == "responses"
+
+    notices = result["notices"]
+    assert len(notices) == 1
+    assert notices[0]["code"] == "cleared_custom_relay_pointer"
+    assert notices[0]["provider_id"] == "OpenAI"
+    assert notices[0]["base_url"] == "https://ai-relay.example.com"
+
+
+def test_apply_oauth_leaves_user_owned_pointer_when_no_base_url(tmp_path: Path) -> None:
+    """A pointer to a section without ``base_url`` isn't a relay — leave it.
+
+    Some users wire ``model_provider`` at a built-in alias (e.g. one that
+    inherits OpenAI's default endpoint via an inherited ``[provider]``
+    block) for naming reasons. Without a ``base_url`` there is no relay
+    conflict — OAuth tokens go to the default endpoint and validate.
+    """
+    home = tmp_path
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    seed = (
+        'model_provider = "CustomLabel"\n'
+        "\n"
+        "[model_providers.CustomLabel]\n"
+        'name = "Custom"\n'
+        'wire_api = "responses"\n'
+    )
+    (codex_home / "config.toml").write_text(seed, encoding="utf-8")
+
+    result = codex_config.apply_codex_auth(
+        auth_mode="oauth",
+        api_key=None,
+        base_url=None,
+        home=home,
+    )
+
+    parsed = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
+    assert parsed["model_provider"] == "CustomLabel"
+    assert result["notices"] == []

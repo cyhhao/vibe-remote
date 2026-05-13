@@ -2283,11 +2283,16 @@ def remove_backend_api_key(backend: str) -> dict:
     if backend not in {"claude", "codex"}:
         return {"ok": False, "error": "unsupported_backend"}
 
+    notices: list = []
     if backend == "codex":
         from vibe.codex_config import apply_codex_auth
 
         try:
-            apply_codex_auth(auth_mode="oauth", api_key=None, base_url=None)
+            result = apply_codex_auth(auth_mode="oauth", api_key=None, base_url=None)
+            if isinstance(result, dict):
+                raw_notices = result.get("notices")
+                if isinstance(raw_notices, list):
+                    notices = raw_notices
         except Exception as exc:  # noqa: BLE001
             logger.error("apply_codex_auth(oauth) during remove-key failed: %s", exc, exc_info=True)
             return {"ok": False, "error": "remove_failed", "detail": str(exc)}
@@ -2323,7 +2328,10 @@ def remove_backend_api_key(backend: str) -> dict:
             "ok": True,
             "message": "Claude relaunches per request; the next message uses the new auth.",
         }
-    return {"ok": True, "restart": restart}
+    response: dict = {"ok": True, "restart": restart}
+    if notices:
+        response["notices"] = notices
+    return response
 
 
 def test_backend_auth(backend: str, model: Optional[str] = None) -> dict:
@@ -2550,8 +2558,15 @@ def save_codex_auth(payload: dict) -> dict:
 
     from vibe.codex_config import apply_codex_auth
 
+    notices: list = []
     try:
-        apply_codex_auth(auth_mode=auth_mode, api_key=api_key, base_url=effective_base_url)
+        result = apply_codex_auth(
+            auth_mode=auth_mode, api_key=api_key, base_url=effective_base_url
+        )
+        if isinstance(result, dict):
+            raw_notices = result.get("notices")
+            if isinstance(raw_notices, list):
+                notices = raw_notices
     except ValueError as exc:
         return {"ok": False, "message": str(exc)}
     except OSError as exc:
@@ -2571,6 +2586,13 @@ def save_codex_auth(payload: dict) -> dict:
     restart_result = restart_backend("codex")
     state = get_codex_auth()
     state["restart"] = restart_result
+    if notices:
+        # Surface non-fatal config-rewrite notices (e.g. "we cleared a
+        # custom relay pointer because OAuth tokens won't validate
+        # against ai-relay.chainbot.io") so the UI can show a one-time
+        # banner. Without this the user sees a green "saved" toast then
+        # hits a confusing 401 on their next request.
+        state["notices"] = notices
     if not restart_result.get("ok", False):
         # Config written, restart failed — tell the UI both so the toast
         # can say "saved, but you may need to restart Codex manually".

@@ -222,8 +222,20 @@ export type CodexAuthPayload = {
   base_url?: string | null;
 };
 
+// Non-fatal warning the server attached to a config-mutation response.
+// Used today for "we cleared a custom relay pointer because OAuth tokens
+// won't validate against your custom base_url"; new codes can be added
+// without touching the type.
+export type BackendNotice = {
+  code: string;
+  provider_id?: string;
+  base_url?: string;
+  detail?: string;
+};
+
 export type CodexAuthSaveResult = CodexAuthState & {
   restart?: BackendRestartResult;
+  notices?: BackendNotice[];
 };
 
 export type ClaudeAuthMode = 'oauth' | 'api_key';
@@ -315,6 +327,7 @@ export type OAuthWebMutationResult = {
   ok: boolean;
   error?: string;
   detail?: string;
+  notices?: BackendNotice[];
 };
 
 export type BackendAuthTestResult = {

@@ -276,16 +276,21 @@ def apply_codex_auth(
     api_key: Optional[str],
     base_url: Optional[str],
     home: Path | None = None,
-) -> None:
+) -> Dict[str, Any]:
     """Persist the requested auth mode into Codex's on-disk config files.
 
     - ``api_key`` mode: write ``OPENAI_API_KEY`` into ``auth.json``,
-      optionally set ``[model_providers.openai].base_url`` if a non-default
-      URL was supplied, and pin top-level ``model_provider = "openai"`` so
-      Codex actually uses the keyed provider.
+      optionally set ``[model_providers.openai-managed].base_url`` if a
+      non-default URL was supplied, and pin top-level ``model_provider``
+      to the managed entry so Codex actually uses the keyed provider.
     - ``oauth`` mode: drop ``OPENAI_API_KEY`` from ``auth.json``, leave any
       ``tokens`` blob in place, and clear our managed ``base_url`` so the
       next launch goes back to OpenAI's default endpoint.
+
+    Returns ``{"notices": [{code, ...}, ...]}`` — non-fatal warnings the
+    caller may want to surface in the UI (e.g. "we cleared a custom
+    relay pointer that won't accept OAuth tokens"). An empty list means
+    the save was a no-op transformation.
     """
     if auth_mode not in {"oauth", "api_key"}:
         raise ValueError(f"Unsupported codex auth_mode: {auth_mode!r}")
@@ -293,6 +298,7 @@ def apply_codex_auth(
     config_path, auth_path = get_codex_config_paths(home)
     auth_data = _load_auth(auth_path)
     toml_data = _load_toml(config_path)
+    notices: list[Dict[str, Any]] = []
 
     providers = toml_data.setdefault("model_providers", {})
     if not isinstance(providers, dict):
@@ -340,11 +346,34 @@ def apply_codex_auth(
         # leaving it behind under the legacy reserved name (``openai``)
         # makes newer Codex versions refuse to load the config at all.
         providers.pop(MANAGED_PROVIDER_ID, None)
-        # Revert top-level ``model_provider`` if we own it.
         current_mp = toml_data.get("model_provider")
         managed_known = {MANAGED_PROVIDER_ID, *LEGACY_MANAGED_PROVIDER_IDS}
         if isinstance(current_mp, str) and current_mp in managed_known:
+            # Revert top-level ``model_provider`` if we own it.
             toml_data.pop("model_provider", None)
+        elif isinstance(current_mp, str) and current_mp:
+            # User-owned pointer (e.g. a TitleCase ``[model_providers.OpenAI]``
+            # relay block). OAuth tokens are issued by ``auth.openai.com``
+            # and only validated by OpenAI's official Responses endpoint —
+            # a custom relay almost never accepts them and returns
+            # ``401 INVALID_API_KEY``. If the pointed section has a
+            # ``base_url``, clear the pointer so Codex falls back to its
+            # built-in ``openai`` provider with the default endpoint.
+            # The section itself stays untouched, so switching back to
+            # api_key mode can manually re-point at the relay if the user
+            # wants.
+            ptr_section = providers.get(current_mp)
+            if isinstance(ptr_section, dict):
+                ptr_base = ptr_section.get("base_url")
+                if isinstance(ptr_base, str) and ptr_base.strip():
+                    toml_data.pop("model_provider", None)
+                    notices.append(
+                        {
+                            "code": "cleared_custom_relay_pointer",
+                            "provider_id": current_mp,
+                            "base_url": ptr_base.strip(),
+                        }
+                    )
 
     # Always purge any legacy reserved-name section we may have written
     # in older releases. Codex 1.x refuses to load a config that defines
@@ -357,6 +386,7 @@ def apply_codex_auth(
 
     _atomic_write(auth_path, json.dumps(auth_data, indent=2) + "\n", mode=0o600)
     _atomic_write(config_path, _dump_toml(toml_data), mode=0o600)
+    return {"notices": notices}
 
 
 def read_codex_api_key(home: Path | None = None) -> Optional[str]:
