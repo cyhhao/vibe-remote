@@ -719,7 +719,7 @@
     "cliPathDetection": "CLI path detection and enablement",
     "recommended": "(recommended)",
     "permissionHint": "OpenCode requires permission config to skip approval prompts.",
-    "permissionHintStrong": "OpenCode will block every tool call with an interactive approval prompt unless ``permission`` is set to ``allow`` in ``opencode.json``. Vibe Remote can't reply to those prompts — without this, the agent stalls on the first action it takes. Click to write the setting now.",
+    "permissionHintStrong": "Without this, OpenCode prompts for approval on every tool call. Vibe Remote can't auto-reply, so the agent stalls.",
     "setupPermission": "Allow tool calls in opencode.json",
     "installHint": "Agent not found. Click to install automatically.",
     "installAgent": "Install",

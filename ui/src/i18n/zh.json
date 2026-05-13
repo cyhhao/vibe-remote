@@ -719,7 +719,7 @@
     "cliPathDetection": "CLI 路径检测和启用设置",
     "recommended": "（推荐）",
     "permissionHint": "OpenCode 需要配置权限以跳过审批提示。",
-    "permissionHintStrong": "如果不在 ``opencode.json`` 里把 ``permission`` 设成 ``allow``，OpenCode 会在每次工具调用前弹审批提示。Vibe Remote 没法替你回复这些提示，结果是 Agent 一开始就卡住。点击立即写入。",
+    "permissionHintStrong": "不设置时 OpenCode 每次工具调用都会等审批，Vibe Remote 无法代答，Agent 会卡住。",
     "setupPermission": "在 opencode.json 写入 allow",
     "installHint": "未找到 Agent，点击自动安装。",
     "installAgent": "一键安装",
