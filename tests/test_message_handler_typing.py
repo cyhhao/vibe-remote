@@ -359,7 +359,7 @@ class MessageHandlerTypingTests(unittest.IsolatedAsyncioTestCase):
 
         result = await handler._prepend_user_info(context, "hello")
 
-        self.assertEqual(result, "[WeChat User<wx-user>] hello")
+        self.assertEqual(result, "[WeChat User<wx-user>]\nhello")
 
     async def test_control_text_handles_mentioned_inline_stop(self):
         controller = _StubController(platform="slack", ack_mode="reaction", typing_result=True)

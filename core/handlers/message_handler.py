@@ -320,7 +320,7 @@ class MessageHandler(BaseHandler):
             raw_name = context.user_id
         name = self._sanitize_identity(raw_name)
         uid = self._sanitize_identity(context.user_id)
-        return f"[{name}<{uid}>] {message}"
+        return f"[{name}<{uid}>]\n{message}"
 
     @staticmethod
     def _get_control_message(context: MessageContext, message: str) -> str:
