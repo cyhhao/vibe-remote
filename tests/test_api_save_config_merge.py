@@ -76,6 +76,7 @@ def _full_config_payload() -> dict:
         },
         "ack_mode": "reaction",
         "show_duration": True,
+        "include_time_info": True,
         "include_user_info": True,
         "reply_enhancements": True,
         "language": "en",
@@ -87,11 +88,13 @@ def test_save_config_merges_partial_payload(monkeypatch, tmp_path):
 
     original = api.save_config(_full_config_payload())
     assert original.show_duration is True
+    assert original.include_time_info is True
     assert original.update.auto_update is False
 
-    updated = api.save_config({"show_duration": False, "update": {"auto_update": True}})
+    updated = api.save_config({"show_duration": False, "include_time_info": False, "update": {"auto_update": True}})
 
     assert updated.show_duration is False
+    assert updated.include_time_info is False
     assert updated.update.auto_update is True
     assert updated.platform == "discord"
     assert updated.discord is not None
@@ -108,6 +111,17 @@ def test_save_config_defaults_show_duration_to_false_for_new_config(monkeypatch,
     created = api.save_config(payload)
 
     assert created.show_duration is False
+
+
+def test_save_config_defaults_include_time_info_to_true_for_new_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+
+    payload = _full_config_payload()
+    payload.pop("include_time_info")
+
+    created = api.save_config(payload)
+
+    assert created.include_time_info is True
 
 
 def test_save_config_accepts_typing_ack_mode(monkeypatch, tmp_path):

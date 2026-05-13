@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import types
 import unittest
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,6 +72,13 @@ class _StubController:
 
 
 class MessageHandlerUserInfoTests(unittest.IsolatedAsyncioTestCase):
+    def test_build_current_time_line_uses_readable_utc_offset(self):
+        line = MessageHandler._build_current_time_line(
+            datetime(2026, 5, 13, 11, 42, 8, tzinfo=timezone(timedelta(hours=8)))
+        )
+
+        self.assertEqual(line, "[Current Time: 2026-05-13 11:42:08 UTC+08:00]")
+
     async def test_prepend_user_info_prefers_real_name_over_name(self):
         handler = MessageHandler(_StubController({"display_name": "", "real_name": "Alex", "name": "cyh"}))
         context = MessageContext(user_id="U0E0FM3QT", channel_id="C1")
@@ -86,6 +94,28 @@ class MessageHandlerUserInfoTests(unittest.IsolatedAsyncioTestCase):
         result = await handler._prepend_user_info(context, "hello")
 
         self.assertEqual(result, "[Alex Chen<U0E0FM3QT>]\nhello")
+
+    async def test_prepend_message_metadata_includes_time_above_user_info(self):
+        handler = MessageHandler(_StubController({"display_name": "", "real_name": "Alex", "name": "cyh"}))
+        handler.config.include_time_info = True
+        handler.config.include_user_info = True
+        handler._build_current_time_line = lambda: "[Current Time: 2026-05-13 11:42:08 UTC+08:00]"  # type: ignore[method-assign]
+        context = MessageContext(user_id="U0E0FM3QT", channel_id="C1")
+
+        result = await handler._prepend_message_metadata(context, "hello", include_user_info=True)
+
+        self.assertEqual(result, "[Current Time: 2026-05-13 11:42:08 UTC+08:00]\n[Alex<U0E0FM3QT>]\nhello")
+
+    async def test_prepend_message_metadata_can_include_time_without_user_info(self):
+        handler = MessageHandler(_StubController({"display_name": "", "real_name": "Alex", "name": "cyh"}))
+        handler.config.include_time_info = True
+        handler.config.include_user_info = True
+        handler._build_current_time_line = lambda: "[Current Time: 2026-05-13 11:42:08 UTC+08:00]"  # type: ignore[method-assign]
+        context = MessageContext(user_id="U0E0FM3QT", channel_id="C1")
+
+        result = await handler._prepend_message_metadata(context, "scheduled work", include_user_info=False)
+
+        self.assertEqual(result, "[Current Time: 2026-05-13 11:42:08 UTC+08:00]\nscheduled work")
 
 
 if __name__ == "__main__":

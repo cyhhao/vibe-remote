@@ -183,6 +183,7 @@ def default_config(spec: TenantSpec) -> dict:
         "update": {},
         "ack_mode": "typing",
         "show_duration": False,
+        "include_time_info": True,
         "include_user_info": True,
         "reply_enhancements": True,
         "language": "en",

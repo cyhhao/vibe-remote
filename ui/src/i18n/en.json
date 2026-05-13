@@ -688,6 +688,8 @@
     "errorRetryLimitHint": "Auto-retry with 'continue' when LLM stream errors occur (0 = no retry)",
     "showDuration": "Show Duration",
     "showDurationHint": "Display task elapsed time in result messages",
+    "includeTimeInfo": "Include Current Time",
+    "includeTimeInfoHint": "Prepend the current local time, including seconds and UTC offset, to messages sent to agents",
     "includeUserInfo": "Include User Info",
     "includeUserInfoHint": "Prepend [username<user_id>] to messages sent to agents",
     "replyEnhancements": "Quick-reply Buttons",

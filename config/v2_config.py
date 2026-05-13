@@ -268,6 +268,7 @@ class V2Config:
     update: UpdateConfig = field(default_factory=UpdateConfig)
     ack_mode: str = "typing"
     show_duration: bool = False  # Show task duration in result messages
+    include_time_info: bool = True  # Prepend current local time to agent messages
     include_user_info: bool = True  # Prepend user identity to agent messages
     reply_enhancements: bool = True  # Enable quick-reply buttons
     language: str = "en"  # Global language setting (see vibe/i18n)
@@ -421,6 +422,10 @@ class V2Config:
         if not isinstance(include_user_info, bool):
             include_user_info = True
 
+        include_time_info = payload.get("include_time_info", True)
+        if not isinstance(include_time_info, bool):
+            include_time_info = True
+
         reply_enhancements = payload.get("reply_enhancements", True)
         if not isinstance(reply_enhancements, bool):
             reply_enhancements = True
@@ -446,6 +451,7 @@ class V2Config:
             update=update,
             ack_mode=ack_mode,
             show_duration=show_duration,
+            include_time_info=include_time_info,
             include_user_info=include_user_info,
             reply_enhancements=reply_enhancements,
             language=language,
@@ -493,6 +499,7 @@ class V2Config:
             "update": self.update.__dict__,
             "ack_mode": self.ack_mode,
             "show_duration": self.show_duration,
+            "include_time_info": self.include_time_info,
             "include_user_info": self.include_user_info,
             "reply_enhancements": self.reply_enhancements,
             "language": self.language,

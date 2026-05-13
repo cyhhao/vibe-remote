@@ -178,7 +178,7 @@ class Controller:
         """Hot-reload mutable message-processing settings from config.json.
 
         Called on every ``_t()`` invocation (guarded by mtime check).
-        Refreshes: language, show_duration, ack_mode, include_user_info,
+        Refreshes: language, show_duration, ack_mode, include_time_info, include_user_info,
         reply_enhancements, and mutable platform message filters.
         """
         try:
@@ -193,6 +193,7 @@ class Controller:
                 self.config.language = v2_config.language
                 self.config.show_duration = v2_config.show_duration
                 self.config.ack_mode = v2_config.ack_mode
+                self.config.include_time_info = v2_config.include_time_info
                 self.config.include_user_info = v2_config.include_user_info
                 self.config.reply_enhancements = v2_config.reply_enhancements
 

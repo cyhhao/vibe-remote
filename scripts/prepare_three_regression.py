@@ -220,6 +220,7 @@ def _build_config_payload() -> dict:
         },
         "ack_mode": "reaction",
         "show_duration": True,
+        "include_time_info": True,
         "include_user_info": True,
         "reply_enhancements": True,
         "language": _env("THREE_REGRESSION_LANGUAGE", "en"),

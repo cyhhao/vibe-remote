@@ -95,7 +95,13 @@ class _StubIMClient:
 
 class _StubController:
     def __init__(self):
-        self.config = types.SimpleNamespace(platform="slack", ack_mode="reaction", include_user_info=False, language="en")
+        self.config = types.SimpleNamespace(
+            platform="slack",
+            ack_mode="reaction",
+            include_time_info=False,
+            include_user_info=False,
+            language="en",
+        )
         self.im_client = _StubIMClient()
         self.settings_manager = _StubSettingsManager()
         self.session_manager = object()
