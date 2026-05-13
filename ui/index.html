@@ -11,31 +11,24 @@
     <script>
       (function () {
         var key = "vibe-remote-theme";
-        var validModes = ["system", "light", "dark"];
-        var mode = "system";
+        var mode = null;
 
         try {
           var queryMode = new URLSearchParams(window.location.search).get("theme");
           var storedMode = window.localStorage.getItem(key);
 
-          if (validModes.indexOf(queryMode) !== -1) {
+          if (queryMode === "light" || queryMode === "dark" || queryMode === "system") {
             mode = queryMode;
-          } else if (validModes.indexOf(storedMode) !== -1) {
+          } else if (storedMode === "light" || storedMode === "dark" || storedMode === "system") {
             mode = storedMode;
           }
         } catch (error) {
-          mode = "system";
+          mode = null;
         }
 
-        var resolvedTheme = mode;
-        if (mode === "system") {
-          resolvedTheme =
-            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
-              ? "light"
-              : "dark";
+        if (mode === "light" || mode === "dark") {
+          document.documentElement.setAttribute("data-theme", mode);
         }
-
-        document.documentElement.setAttribute("data-theme", resolvedTheme);
       })();
     </script>
   </head>

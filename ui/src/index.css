@@ -64,6 +64,8 @@
 
 :root,
 [data-theme="dark"] {
+  color-scheme: dark;
+
   --background: #080812;
   --foreground: #f5f1e8;
   --surface: #0e0e18;
@@ -132,7 +134,85 @@
   --bg-page: var(--gradient-console);
 }
 
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --background: #f4f6fb;
+    --foreground: #0a0a14;
+    --surface: #ffffff;
+    --surface-2: #ffffff;
+    --surface-3: #eef1f7;
+    --card: #ffffff;
+    --card-foreground: #0a0a14;
+    --popover: #ffffff;
+    --popover-foreground: #0a0a14;
+
+    --primary: #10b981;
+    --primary-foreground: #ffffff;
+    --secondary: #eef1f7;
+    --secondary-foreground: #0a0a14;
+    --muted: #5c6079;
+    --muted-soft: #eef1f7;
+    --accent: #0891b2;
+    --accent-foreground: #ffffff;
+    --destructive: #e11d48;
+    --destructive-foreground: #ffffff;
+
+    --border: rgba(8, 8, 18, 0.08);
+    --border-strong: rgba(8, 8, 18, 0.14);
+    --input: rgba(8, 8, 18, 0.12);
+    --ring: rgba(16, 185, 129, 0.5);
+
+    --mint: #10b981;
+    --mint-soft: rgba(16, 185, 129, 0.14);
+    --cyan: #0891b2;
+    --cyan-soft: rgba(8, 145, 178, 0.14);
+    --violet: #7c3aed;
+    --violet-soft: rgba(124, 58, 237, 0.14);
+    --gold: #d97706;
+    --gold-foreground: #ffffff;
+
+    /* Light-theme page gradients (softer alphas over light base). */
+    --gradient-console:
+      radial-gradient(50% 40% at 5% 5%, rgba(16, 185, 129, 0.10), rgba(16, 185, 129, 0) 100%),
+      radial-gradient(40% 50% at 95% 40%, rgba(8, 145, 178, 0.08), rgba(8, 145, 178, 0) 100%),
+      radial-gradient(60% 50% at 50% 100%, rgba(124, 58, 237, 0.06), rgba(124, 58, 237, 0) 100%),
+      #f4f6fb;
+    --gradient-settings:
+      radial-gradient(50% 40% at 5% 5%, rgba(16, 185, 129, 0.10), rgba(16, 185, 129, 0) 100%),
+      radial-gradient(50% 50% at 95% 50%, rgba(124, 58, 237, 0.08), rgba(124, 58, 237, 0) 100%),
+      #f4f6fb;
+    --gradient-wizard-welcome:
+      radial-gradient(70% 60% at 50% 30%, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0) 100%),
+      radial-gradient(50% 50% at 85% 70%, rgba(8, 145, 178, 0.08), rgba(8, 145, 178, 0) 100%),
+      #f4f6fb;
+    --gradient-wizard-backends:
+      radial-gradient(60% 50% at 50% 20%, rgba(124, 58, 237, 0.10), rgba(124, 58, 237, 0) 100%),
+      #f4f6fb;
+    --gradient-wizard-platforms:
+      radial-gradient(60% 50% at 50% 20%, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0) 100%),
+      radial-gradient(40% 40% at 85% 70%, rgba(8, 145, 178, 0.08), rgba(8, 145, 178, 0) 100%),
+      radial-gradient(40% 40% at 15% 70%, rgba(124, 58, 237, 0.08), rgba(124, 58, 237, 0) 100%),
+      #f4f6fb;
+    --gradient-wizard-slack:
+      radial-gradient(50% 50% at 30% 20%, rgba(224, 30, 90, 0.08), rgba(224, 30, 90, 0) 100%),
+      #f4f6fb;
+    --gradient-wizard-summary:
+      radial-gradient(60% 50% at 30% 30%, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0) 100%),
+      #f4f6fb;
+
+    --bg-page: var(--gradient-console);
+
+    /* Light card glow — much softer than dark. */
+    --shadow-mint-card: 0 12px 24px -16px rgba(16, 185, 129, 0.20);
+    --shadow-mint-card-lg: 0 16px 32px -16px rgba(16, 185, 129, 0.22);
+  }
+}
+
 [data-theme="light"] {
+  color-scheme: light;
+
   --background: #f4f6fb;
   --foreground: #0a0a14;
   --surface: #ffffff;

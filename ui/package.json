@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "validate:theme": "node scripts/validate-theme.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
