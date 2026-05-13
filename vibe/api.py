@@ -1009,8 +1009,9 @@ def do_upgrade(auto_restart: bool = True) -> dict:
         if result.returncode == 0:
             restarting = False
             if auto_restart:
+                restart_command = [*get_restart_command(vibe_path=current_vibe_path), "restart"]
                 _spawn_delayed_restart(
-                    get_restart_command(vibe_path=current_vibe_path),
+                    restart_command,
                     safe_cwd,
                     env=get_restart_environment(vibe_path=current_vibe_path),
                 )

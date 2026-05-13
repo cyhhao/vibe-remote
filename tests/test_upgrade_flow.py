@@ -336,6 +336,7 @@ def test_do_upgrade_uses_upgrade_plan_env_and_restarts(monkeypatch):
     assert calls["popen_cmd"][1] == "-c"
     assert "time.sleep(2.0)" in calls["popen_cmd"][2]
     assert "/custom/bin/vibe" in calls["popen_cmd"][2]
+    assert "['/custom/bin/vibe', 'restart']" in calls["popen_cmd"][2]
     assert calls["popen_kwargs"]["start_new_session"] is True
     popen_cwd = calls["popen_kwargs"].get("cwd")
     assert popen_cwd and os.path.isabs(popen_cwd), f"Popen cwd must be an absolute path, got {popen_cwd!r}"
