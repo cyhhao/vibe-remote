@@ -210,3 +210,65 @@ def test_discord_refresh_state_is_scoped_by_guild(tmp_path: Path, monkeypatch) -
     assert chat_discovery.refresh_state("discord", refresh_scope="guild.G1", db_path=db_path).last_success_at is not None
     assert chat_discovery.refresh_state("discord", refresh_scope="guild.G2", db_path=db_path).last_success_at is not None
     assert chat_discovery.refresh_state("discord", db_path=db_path).last_success_at is None
+
+
+def test_discord_cached_payload_preserves_numeric_channel_type(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+
+    from vibe import api
+
+    monkeypatch.setattr(
+        api,
+        "discord_list_channels_live",
+        lambda _token, _guild_id: {
+            "ok": True,
+            "channels": [{"id": "C_TEXT", "name": "text", "type": 0}],
+        },
+    )
+
+    response = chat_discovery.channels_response(
+        "discord",
+        bot_token="x",
+        guild_id="G1",
+        parent_scope_id="discord::guild::G1",
+        db_path=db_path,
+    )
+    cached = chat_discovery.channels_response(
+        "discord",
+        bot_token="x",
+        guild_id="G1",
+        parent_scope_id="discord::guild::G1",
+        db_path=db_path,
+    )
+
+    assert response["channels"][0]["type"] == 0
+    assert cached["channels"][0]["type"] == 0
+    assert cached["channels"][0]["native_type"] == "0"
+
+
+def test_malformed_legacy_discovered_chats_does_not_break_channel_response(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    legacy_path = tmp_path / "discovered_chats.json"
+    legacy_path.write_text("{bad json", encoding="utf-8")
+    monkeypatch.setattr(chat_discovery.paths, "get_discovered_chats_path", lambda: legacy_path)
+
+    from vibe import api
+
+    monkeypatch.setattr(
+        api,
+        "list_channels_live",
+        lambda _token, browse_all=False: {
+            "ok": True,
+            "channels": [{"id": "C1", "name": "general", "is_private": False, "is_member": True}],
+            "is_member_only": not browse_all,
+        },
+    )
+
+    response = chat_discovery.channels_response("slack", bot_token="x", require_member=True, db_path=db_path)
+
+    assert response["ok"] is True
+    assert response["channels"][0]["id"] == "C1"
+    assert legacy_path.exists()
+    assert chat_discovery.get_state_meta("migrations.discovered_chats_to_scopes", db_path=db_path) is None

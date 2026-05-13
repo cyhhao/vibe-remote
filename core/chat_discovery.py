@@ -74,7 +74,7 @@ class ChannelInfo:
         payload = {
             "id": self.chat_id,
             "name": self.name or self.chat_id,
-            "type": self.native_type,
+            "type": _payload_native_type(self.native_type),
             "native_type": self.native_type,
             "is_private": self.is_private,
             "supports_threads": self.supports_threads,
@@ -494,10 +494,15 @@ def migrate_legacy_discovered_chats(*, db_path: Path | None = None, legacy_path:
         set_state_meta(marker, "done", db_path=db_path)
         return
 
-    payload = json.loads(source.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Skipping malformed legacy discovered chats file %s: %s", source, exc)
+        return
     platforms = payload.get("platforms") if isinstance(payload, dict) else {}
     if not isinstance(platforms, dict):
-        raise ValueError("discovered_chats.json platforms must be an object")
+        logger.warning("Skipping legacy discovered chats file %s: platforms must be an object", source)
+        return
 
     for platform, chats in platforms.items():
         if not isinstance(chats, dict):
@@ -605,13 +610,14 @@ def _fetch_platform_channels(platform: str, **kwargs: Any) -> tuple[list[dict[st
             raise RuntimeError(str(result.get("error") or "Discord channel refresh failed"))
         rows = []
         for channel in result.get("channels") or []:
+            channel_type = channel.get("type")
             rows.append(
                 {
                     "id": channel.get("id"),
                     "name": channel.get("name"),
-                    "native_type": str(channel.get("type") or ""),
+                    "native_type": "" if channel_type is None else str(channel_type),
                     "is_private": False,
-                    "supports_threads": channel.get("type") in (0, 5),
+                    "supports_threads": channel_type in (0, 5),
                     "parent_scope_id": parent_scope_id,
                     "metadata": {
                         METADATA_CHANNEL_POSITION: channel.get("position"),
@@ -760,6 +766,15 @@ def _filter_response_chats(
     if require_member:
         result = [chat for chat in result if chat.is_member is True]
     return result
+
+
+def _payload_native_type(native_type: str) -> str | int:
+    if native_type.isdecimal():
+        try:
+            return int(native_type)
+        except ValueError:
+            return native_type
+    return native_type
 
 
 def _rename_preserving_existing(source: Path, target: Path) -> None:
