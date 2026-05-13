@@ -135,6 +135,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [telegramSummary, setTelegramSummary] = useState<TelegramDiscoverySummary | null>(null);
   const [refreshMetaByPlatform, setRefreshMetaByPlatform] = useState<Record<string, ChannelRefreshMeta>>({});
   const refreshFollowupTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const refreshFollowupVersionRef = useRef(0);
   // Directory browser state — tracks which channel's cwd picker is open
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
   // Page-mode tab/search/collapse state (only used when isPage is true)
@@ -297,6 +298,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
   useEffect(() => {
     return () => {
+      refreshFollowupVersionRef.current += 1;
       Object.values(refreshFollowupTimersRef.current).forEach((timer) => clearTimeout(timer));
       refreshFollowupTimersRef.current = {};
     };
@@ -377,8 +379,10 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const scheduleRefreshFollowup = (platformId: string, all?: boolean) => {
     const existing = refreshFollowupTimersRef.current[platformId];
     if (existing) clearTimeout(existing);
+    const scheduledVersion = refreshFollowupVersionRef.current;
     refreshFollowupTimersRef.current[platformId] = setTimeout(() => {
       delete refreshFollowupTimersRef.current[platformId];
+      if (refreshFollowupVersionRef.current !== scheduledVersion) return;
       void loadChannels(all, false);
     }, 3000);
   };
