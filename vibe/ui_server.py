@@ -1466,6 +1466,7 @@ def slack_channels():
         api.list_channels(
             payload.get("bot_token", ""),
             browse_all=payload.get("browse_all", False),
+            force=payload.get("force", False) or request.args.get("force") == "1",
         )
     )
 
@@ -1495,7 +1496,13 @@ def discord_channels():
     from vibe import api
 
     payload = request.json or {}
-    return jsonify(api.discord_list_channels(payload.get("bot_token", ""), payload.get("guild_id", "")))
+    return jsonify(
+        api.discord_list_channels(
+            payload.get("bot_token", ""),
+            payload.get("guild_id", ""),
+            force=payload.get("force", False) or request.args.get("force") == "1",
+        )
+    )
 
 
 @app.route("/telegram/auth_test", methods=["POST"])
@@ -1538,7 +1545,12 @@ def lark_chats():
 
     payload = request.json or {}
     return jsonify(
-        api.lark_list_chats(payload.get("app_id", ""), payload.get("app_secret", ""), payload.get("domain", "feishu"))
+        api.lark_list_chats(
+            payload.get("app_id", ""),
+            payload.get("app_secret", ""),
+            payload.get("domain", "feishu"),
+            force=payload.get("force", False) or request.args.get("force") == "1",
+        )
     )
 
 
