@@ -8,6 +8,36 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@600&display=swap" rel="stylesheet">
+    <script>
+      (function () {
+        var key = "vibe-remote-theme";
+        var validModes = ["system", "light", "dark"];
+        var mode = "system";
+
+        try {
+          var queryMode = new URLSearchParams(window.location.search).get("theme");
+          var storedMode = window.localStorage.getItem(key);
+
+          if (validModes.indexOf(queryMode) !== -1) {
+            mode = queryMode;
+          } else if (validModes.indexOf(storedMode) !== -1) {
+            mode = storedMode;
+          }
+        } catch (error) {
+          mode = "system";
+        }
+
+        var resolvedTheme = mode;
+        if (mode === "system") {
+          resolvedTheme =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+
+        document.documentElement.setAttribute("data-theme", resolvedTheme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
