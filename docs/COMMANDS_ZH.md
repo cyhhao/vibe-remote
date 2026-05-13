@@ -496,7 +496,7 @@ bind vr-a3x9k2
 
 | 命令 | 作用 |
 | --- | --- |
-| `vibe` | 兼容期默认重启服务与 Web UI |
+| `vibe` | 兼容期重启别名；优先使用显式 `vibe restart` |
 | `vibe start` | 按需启动服务与 Web UI；已运行时复用现有进程 |
 | `vibe stop` | 停止服务与 UI，同时终止 OpenCode server |
 | `vibe restart` | 停止后重新启动 |
@@ -516,9 +516,9 @@ bind vr-a3x9k2
 vibe
 ```
 
-- 兼容期默认停止并重新启动 Vibe Remote
+- 兼容期重启别名：停止并重新启动 Vibe Remote
 - 重启过程中会终止 OpenCode server
-- 如果需要不停止现有进程的 ensure-start 行为，请使用 `vibe start`
+- 用于兼容旧版本升级流程；脚本和文档中优先使用显式 `vibe start` 或 `vibe restart`
 
 ### `vibe start`
 
