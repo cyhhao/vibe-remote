@@ -2925,7 +2925,18 @@ def save_claude_auth(payload: dict) -> dict:
         config.agents.claude.api_key = api_key if auth_mode == "api_key" else None
         if base_url_present:
             config.agents.claude.base_url = base_url_change
-        # else: keep whatever is already stored (omitted payload key).
+        elif auth_mode == "oauth":
+            # Switching to OAuth: drop any stored relay base_url even when
+            # the UI omitted the field (the OAuth tab hides it). Without
+            # this, ``build_claude_subprocess_env`` keeps exporting
+            # ``ANTHROPIC_BASE_URL`` on every launch, so OAuth traffic
+            # gets routed through the api-key-only relay and is rejected
+            # with 401 — same root pattern as the Codex relay-pointer fix
+            # in ``apply_codex_auth`` (commit 28efd8b).
+            config.agents.claude.base_url = None
+        # else: keep whatever is already stored (omitted payload key) for
+        # the api_key branch — the user may be doing a key-only update
+        # against a previously-saved relay.
         config.save()
 
     # Claude is one-shot per request — no daemon to restart. Return a
