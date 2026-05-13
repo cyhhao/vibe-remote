@@ -287,6 +287,9 @@ def test_test_web_auth_failure_surfaces_stderr(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
     result = _run(service.test_web_auth("claude"))
     assert result["ok"] is False
-    assert result["error"] == "cli_failed"
+    # The classifier turns "Authentication failed" stderr into the
+    # specific ``invalid_credentials`` code so the UI can render the
+    # actionable "Replace your API key or re-authenticate" sentence.
+    assert result["error"] == "invalid_credentials"
     assert result["exit_code"] == 7
     assert "Authentication failed" in (result.get("detail") or "")

@@ -29,6 +29,34 @@ export const BackendTestPanel: React.FC<BackendTestPanelProps> = ({ backend }) =
   const [testing, setTesting] = useState(false);
   const [lastResult, setLastResult] = useState<BackendAuthTestResult | null>(null);
 
+  // Map the backend's structured error codes to UI sentences. Anything
+  // we don't recognise falls back to the generic ``cli_failed`` line,
+  // and the raw ``detail`` is still surfaced in the toast for inspection.
+  const failureSentence = (result: BackendAuthTestResult): string => {
+    const detail = (result.detail || '').trim();
+    const code = (result.error || '').trim();
+    const map: Record<string, string> = {
+      invalid_credentials: 'settings.backends.testFailureInvalidCredentials',
+      forbidden: 'settings.backends.testFailureForbidden',
+      model_not_found: 'settings.backends.testFailureModelNotFound',
+      rate_limited: 'settings.backends.testFailureRateLimited',
+      endpoint_unreachable: 'settings.backends.testFailureEndpointUnreachable',
+      server_error: 'settings.backends.testFailureServerError',
+      trust_check_failed: 'settings.backends.testFailureTrustCheck',
+      cli_not_found: 'settings.backends.testFailureCliNotFound',
+      spawn_failed: 'settings.backends.testFailureSpawnFailed',
+      timed_out: 'settings.backends.testFailureTimedOut',
+      cli_failed: 'settings.backends.testFailureCliFailed',
+    };
+    const key = map[code];
+    if (key) {
+      return t(key, { detail: detail || code });
+    }
+    return t('settings.backends.testConnectionFailedToast', {
+      detail: detail || code || 'unknown',
+    });
+  };
+
   const runTest = async () => {
     setTesting(true);
     try {
@@ -40,12 +68,7 @@ export const BackendTestPanel: React.FC<BackendTestPanelProps> = ({ backend }) =
           'success',
         );
       } else {
-        showToast(
-          t('settings.backends.testConnectionFailedToast', {
-            detail: result.error || result.detail || 'unknown',
-          }),
-          'error',
-        );
+        showToast(failureSentence(result), 'error');
       }
     } catch (err: any) {
       const fallback = { ok: false, error: err?.message || 'test_failed' } as BackendAuthTestResult;
@@ -63,8 +86,9 @@ export const BackendTestPanel: React.FC<BackendTestPanelProps> = ({ backend }) =
         ms: lastResult.duration_ms ?? '?',
       });
     }
-    const detail = lastResult.error || lastResult.detail || 'unknown';
-    return t('settings.backends.testConnectionLastFail', { detail });
+    return t('settings.backends.testConnectionLastFail', {
+      detail: failureSentence(lastResult),
+    });
   })();
 
   return (

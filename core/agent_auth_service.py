@@ -37,6 +37,96 @@ CLAUDE_LOGIN_METHODS = {"claudeai", "console"}
 OPENCODE_DIRECT_SETUP_URLS = {"opencode": "https://opencode.ai/auth"}
 
 
+def _classify_test_failure(stdout: str, stderr: str) -> str:
+    """Map a backend CLI's failure output to a specific UI error code.
+
+    The Settings → Backends "Test connection" panel routes the returned
+    ``error`` string into an i18n key (``settings.backends.testFailure*``),
+    so the user gets a sentence they can act on instead of the opaque
+    ``cli_failed``. Order matters: more specific patterns (HTTP status
+    codes, named error strings) are checked before generic substrings.
+
+    The classifier is conservative — anything it doesn't recognise stays
+    as ``cli_failed`` and the raw stderr is preserved in ``detail`` for
+    inspection. Adding a new class is a one-line append below.
+    """
+    text = f"{stderr}\n{stdout}".lower()
+    if not text.strip():
+        return "cli_failed"
+
+    # Auth-side rejections (key wrong / revoked / not present).
+    auth_needles = (
+        "401",
+        "unauthorized",
+        "invalid api key",
+        "invalid_api_key",
+        "api key not valid",
+        "authentication",
+        "auth failed",
+        "not logged in",
+        "missing api key",
+        "no api key",
+    )
+    if any(needle in text for needle in auth_needles):
+        return "invalid_credentials"
+
+    # Quota / rate limiting.
+    if any(needle in text for needle in ("429", "rate limit", "quota", "usage limit", "too many requests")):
+        return "rate_limited"
+
+    # Authorization (key valid but not allowed).
+    if any(needle in text for needle in ("403", "forbidden", "permission denied", "access denied")):
+        return "forbidden"
+
+    # Model / endpoint mismatches.
+    if any(
+        needle in text
+        for needle in (
+            "model not found",
+            "model_not_found",
+            "unknown model",
+            "model does not exist",
+            "no such model",
+        )
+    ):
+        return "model_not_found"
+
+    # Network-side failures: the relay / endpoint isn't reachable at all.
+    if any(
+        needle in text
+        for needle in (
+            "connection refused",
+            "could not resolve",
+            "getaddrinfo",
+            "name or service not known",
+            "name resolution failed",
+            "eai_again",
+            "enotfound",
+            "econnrefused",
+            "network is unreachable",
+            "no route to host",
+            "ssl",
+            "certificate",
+            "timed out",
+            "request timeout",
+            "deadline exceeded",
+        )
+    ):
+        return "endpoint_unreachable"
+
+    # 5xx from the upstream.
+    if any(needle in text for needle in ("502", "503", "504", "bad gateway", "service unavailable", "internal server error")):
+        return "server_error"
+
+    # Codex's own trust-gate / sandbox blockers (shouldn't fire now that
+    # we pass --skip-git-repo-check, but kept for observability if a
+    # future Codex release changes the flag).
+    if "trusted directory" in text or "--skip-git-repo-check" in text:
+        return "trust_check_failed"
+
+    return "cli_failed"
+
+
 def classify_auth_error(backend: str, error_text: str) -> bool:
     """Return True when the error likely requires an OAuth reset."""
     text = (error_text or "").strip().lower()
@@ -1480,9 +1570,10 @@ class AgentAuthService:
         stderr_text = (stderr or b"").decode("utf-8", errors="replace").strip()
 
         if process.returncode != 0:
+            classified = _classify_test_failure(stdout_text, stderr_text)
             return {
                 "ok": False,
-                "error": "cli_failed",
+                "error": classified,
                 "exit_code": process.returncode,
                 "detail": (stderr_text or stdout_text)[:600],
                 "duration_ms": duration_ms,
