@@ -176,44 +176,21 @@ def test_cmd_restart_runs_synchronously_by_default(monkeypatch):
     assert calls == ["stop", ("sleep", 3), "start"]
 
 
-def test_cmd_vibe_treats_legacy_delayed_helper_as_restart(monkeypatch):
+def test_cmd_vibe_restarts_stale_runtime_processes(monkeypatch):
     calls = []
     config = SimpleNamespace(
         has_configured_platform_credentials=lambda: True,
         ui=SimpleNamespace(setup_host="127.0.0.1", setup_port=5123, open_browser=False),
     )
 
-    monkeypatch.delenv(cli.LEGACY_DELAYED_RESTART_HANDLED_ENV, raising=False)
     monkeypatch.setattr(cli.paths, "ensure_data_dirs", lambda: None)
     monkeypatch.setattr(cli, "_ensure_config", lambda: config)
-    monkeypatch.setattr(cli, "_write_status", lambda *args, **kwargs: calls.append(("status", args)))
-    monkeypatch.setattr(cli, "cmd_stop", lambda: calls.append("stop") or 0)
-    monkeypatch.setattr(cli.time, "sleep", lambda seconds: calls.append(("sleep", seconds)))
-    monkeypatch.setattr(cli.runtime, "start_service", lambda: calls.append("start_service") or 1234)
-    monkeypatch.setattr(cli.runtime, "effective_ui_bind_host", lambda cfg: "127.0.0.1")
-    monkeypatch.setattr(cli.runtime, "start_ui", lambda host, port: calls.append(("start_ui", host, port)) or 5678)
-    monkeypatch.setattr(cli.runtime, "write_status", lambda *args: calls.append(("runtime_status", args)))
-    monkeypatch.setattr(cli, "_open_browser", lambda url: calls.append(("open", url)) or True)
-    monkeypatch.setattr(
-        cli.runtime,
-        "get_process_command",
-        lambda pid: "python -c \"import subprocess, time; time.sleep(2); subprocess.Popen(['vibe'], "
-        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\"",
-    )
+    monkeypatch.setattr(cli.runtime, "runtime_processes_stale_after_package_update", lambda: True)
+    monkeypatch.setattr(cli, "_cmd_restart_with_delay", lambda delay: calls.append(("restart", delay)) or 0)
 
     assert cli.cmd_vibe() == 0
 
-    assert calls[:2] == ["stop", ("sleep", 3)]
-    assert "start_service" in calls
-    assert ("start_ui", "127.0.0.1", 5123) in calls
-    assert os.environ[cli.LEGACY_DELAYED_RESTART_HANDLED_ENV] == "1"
-
-
-def test_legacy_delayed_helper_detection_ignores_normal_parent(monkeypatch):
-    monkeypatch.delenv(cli.LEGACY_DELAYED_RESTART_HANDLED_ENV, raising=False)
-    monkeypatch.setattr(cli.runtime, "get_process_command", lambda pid: "zsh")
-
-    assert cli._launched_by_legacy_delayed_restart_helper() is False
+    assert calls == [("restart", 0.0)]
 
 
 def test_restart_parser_accepts_delay_seconds():
