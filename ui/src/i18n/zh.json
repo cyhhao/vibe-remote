@@ -264,7 +264,9 @@
       "opencodeProviderSaved": "服务商凭据已保存。",
       "opencodeProviderSaveFailed": "保存服务商凭据失败。",
       "opencodeProviderRemove": "移除 Key",
+      "opencodeProviderRemoveOauth": "退出登录",
       "opencodeProviderRemoveConfirm": "确定要删除 {{name}} 的已保存 Key 吗？",
+      "opencodeProviderRemoveOauthConfirm": "确定要退出 {{name}} 的登录吗？这会移除已保存的 OAuth 凭据。",
       "opencodeProviderRemoved": "服务商凭据已删除。",
       "opencodeProviderRemoveFailed": "移除服务商凭据失败。",
       "opencodeProviderCollapse": "收起"

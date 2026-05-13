@@ -264,7 +264,9 @@
       "opencodeProviderSaved": "Provider credentials saved.",
       "opencodeProviderSaveFailed": "Could not save provider credentials.",
       "opencodeProviderRemove": "Remove key",
+      "opencodeProviderRemoveOauth": "Sign out",
       "opencodeProviderRemoveConfirm": "Remove the saved key for {{name}}?",
+      "opencodeProviderRemoveOauthConfirm": "Sign out of {{name}}? This removes the stored OAuth credentials.",
       "opencodeProviderRemoved": "Provider credentials removed.",
       "opencodeProviderRemoveFailed": "Could not remove provider credentials.",
       "opencodeProviderCollapse": "Collapse"

@@ -444,8 +444,13 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
   };
 
   const onRemoveProviderAuth = async (provider: OpencodeProvider) => {
+    // Confirm copy matches what's actually about to be removed.
+    const confirmKey =
+      provider.active_auth_type === 'oauth'
+        ? 'settings.backends.opencodeProviderRemoveOauthConfirm'
+        : 'settings.backends.opencodeProviderRemoveConfirm';
     const confirmed = window.confirm(
-      t('settings.backends.opencodeProviderRemoveConfirm', { name: provider.name }) as string
+      t(confirmKey, { name: provider.name }) as string,
     );
     if (!confirmed) return;
     updateEdit(provider.id, { removing: true, error: null });
@@ -1097,7 +1102,17 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                                       ) : (
                                         <Trash2 className="size-3.5" />
                                       )}
-                                      {t('settings.backends.opencodeProviderRemove')}
+                                      {/* Label reflects what's actually
+                                          about to be removed (OpenCode's
+                                          auth.json carries exactly one
+                                          entry per provider at a time —
+                                          ``api`` or ``oauth`` — so the
+                                          single DELETE drops whichever
+                                          is set; we just need to be
+                                          honest in the label). */}
+                                      {provider.active_auth_type === 'oauth'
+                                        ? t('settings.backends.opencodeProviderRemoveOauth')
+                                        : t('settings.backends.opencodeProviderRemove')}
                                     </Button>
                                   )}
                                   {!provider.configured && !isDefault && provider.local && (
@@ -1269,24 +1284,41 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                                       </div>
                                     )}
 
-                                    <div className="flex flex-wrap items-center justify-end gap-2">
-                                      <Button
-                                        type="button"
-                                        variant="brand"
-                                        size="sm"
-                                        onClick={() => void onSaveProviderAuth(provider)}
-                                        disabled={edit.saving}
-                                      >
-                                        {edit.saving ? (
-                                          <RefreshCw className="size-3.5 animate-spin" />
-                                        ) : (
-                                          <Save className="size-3.5" />
-                                        )}
-                                        {edit.saving
-                                          ? t('common.saving')
-                                          : t('settings.backends.opencodeProviderSave')}
-                                      </Button>
-                                    </div>
+                                    {(() => {
+                                      // Save button only renders when the
+                                      // user has something to commit:
+                                      // typed a fresh key, or modified
+                                      // the Base URL relative to what's
+                                      // saved on the provider. Mirrors
+                                      // the Claude / Codex dirty-state
+                                      // pattern — a permanent Save button
+                                      // is noisy and confusing.
+                                      const keyDirty = edit.apiKey.trim().length > 0;
+                                      const savedBase = (provider.base_url || '').trim();
+                                      const baseDirty = edit.baseUrl.trim() !== savedBase;
+                                      const dirty = keyDirty || baseDirty;
+                                      if (!dirty) return null;
+                                      return (
+                                        <div className="flex flex-wrap items-center justify-end gap-2">
+                                          <Button
+                                            type="button"
+                                            variant="brand"
+                                            size="sm"
+                                            onClick={() => void onSaveProviderAuth(provider)}
+                                            disabled={edit.saving}
+                                          >
+                                            {edit.saving ? (
+                                              <RefreshCw className="size-3.5 animate-spin" />
+                                            ) : (
+                                              <Save className="size-3.5" />
+                                            )}
+                                            {edit.saving
+                                              ? t('common.saving')
+                                              : t('settings.backends.opencodeProviderSave')}
+                                          </Button>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
 
                                   <div className="flex flex-col gap-2">
