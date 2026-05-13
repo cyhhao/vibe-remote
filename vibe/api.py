@@ -2714,19 +2714,22 @@ async def _opencode_get_server():
     return server
 
 
-def _is_local_provider(provider_id: str, auth_methods: list) -> bool:
-    """Heuristic: a provider is "local" if it has no network auth methods.
+_LOCAL_PROVIDER_IDS = {"ollama", "lmstudio", "lm-studio"}
 
-    OpenCode reports Ollama / LM Studio with an empty auth-method list
-    (no API key, no OAuth — they listen on localhost). The Settings UI
-    surfaces these with a dedicated "Local" badge so users understand
-    why there is no key field to fill in.
+
+def _is_local_provider(provider_id: str, auth_methods: list) -> bool:
+    """Whether the provider runs on localhost and needs no credentials.
+
+    Earlier this also tagged ``no auth methods → local`` but OpenCode
+    1.14's ``/provider/auth`` only enumerates providers that have OAuth
+    or special prompts — bare API-key providers (minimax, openrouter,
+    poe…) are simply absent from that map. Treating absence as "local"
+    pushed them into a fallback that kept ``configured`` True even
+    after the user removed their key. Narrow to a known-local
+    whitelist; the auth-methods param is kept for symmetry / future use.
     """
-    if not auth_methods:
-        return True
-    if isinstance(provider_id, str) and provider_id.lower() in {"ollama", "lmstudio", "lm-studio"}:
-        return True
-    return False
+    _ = auth_methods  # noqa: F841 — kept for callsite symmetry
+    return isinstance(provider_id, str) and provider_id.lower() in _LOCAL_PROVIDER_IDS
 
 
 def _coerce_opencode_provider_catalog(providers_raw) -> dict:
