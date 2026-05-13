@@ -1670,13 +1670,32 @@ class AgentAuthService:
             try:
                 stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
             except asyncio.TimeoutError:
+                # Drain whatever the CLI managed to emit before we kill it
+                # so we can still classify the failure. Codex in particular
+                # retries 401 / network errors several times before exit;
+                # the killed-mid-retry case loses the real error code if we
+                # just report ``timed_out``. Read with a tight wait so the
+                # kill path stays fast.
                 process.kill()
-                await process.wait()
-                return {
+                partial_stdout = b""
+                partial_stderr = b""
+                try:
+                    partial_stdout, partial_stderr = await asyncio.wait_for(
+                        process.communicate(), timeout=3.0
+                    )
+                except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                    pass
+                stdout_partial = (partial_stdout or b"").decode("utf-8", errors="replace").strip()
+                stderr_partial = (partial_stderr or b"").decode("utf-8", errors="replace").strip()
+                classified = _classify_test_failure(stdout_partial, stderr_partial)
+                result = {
                     "ok": False,
-                    "error": "timed_out",
+                    "error": classified if classified != "cli_failed" else "timed_out",
                     "duration_ms": int((time.monotonic() - started) * 1000),
                 }
+                if stderr_partial or stdout_partial:
+                    result["detail"] = (stderr_partial or stdout_partial)[:600]
+                return result
         except FileNotFoundError:
             return {"ok": False, "error": "cli_not_found", "detail": binary}
         except Exception as err:  # noqa: BLE001
