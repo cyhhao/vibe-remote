@@ -1809,13 +1809,9 @@ def _doctor():
     return result
 
 
-def cmd_vibe():
+def cmd_start():
     paths.ensure_data_dirs()
     config = _ensure_config()
-
-    if runtime.runtime_processes_stale_after_package_update():
-        logger.info("Running Vibe processes predate the installed package; running explicit restart")
-        return _cmd_restart_with_delay(0.0)
 
     has_configured_platform_credentials = getattr(config, "has_configured_platform_credentials", None)
     if callable(has_configured_platform_credentials):
@@ -1852,6 +1848,11 @@ def cmd_vibe():
             print("")
 
     return 0
+
+
+def cmd_vibe():
+    """Compatibility default: bare `vibe` restarts during the migration window."""
+    return _cmd_restart_with_delay(0.0)
 
 
 def _stop_opencode_server():
@@ -2345,7 +2346,7 @@ def _cmd_restart_with_delay(delay_seconds: float) -> int:
     cmd_stop()
     print("Waiting 3 seconds...")
     time.sleep(3)
-    return cmd_vibe()
+    return cmd_start()
 
 
 def build_parser():
@@ -2353,6 +2354,7 @@ def build_parser():
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("stop", help="Stop all services")
+    subparsers.add_parser("start", help="Start services if needed without stopping running processes")
     restart_parser = subparsers.add_parser("restart", help="Restart all services")
     restart_parser.add_argument(
         "--delay-seconds",
@@ -2805,6 +2807,8 @@ def main():
 
     if args.command == "stop":
         sys.exit(cmd_stop())
+    if args.command == "start":
+        sys.exit(cmd_start())
     if args.command == "restart":
         sys.exit(_cmd_restart_with_delay(args.delay_seconds))
     if args.command == "status":

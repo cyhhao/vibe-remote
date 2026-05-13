@@ -169,14 +169,24 @@ def test_cmd_restart_runs_synchronously_by_default(monkeypatch):
     calls = []
 
     monkeypatch.setattr(cli, "cmd_stop", lambda: calls.append("stop") or 0)
-    monkeypatch.setattr(cli, "cmd_vibe", lambda: calls.append("start") or 0)
+    monkeypatch.setattr(cli, "cmd_start", lambda: calls.append("start") or 0)
     monkeypatch.setattr(cli.time, "sleep", lambda seconds: calls.append(("sleep", seconds)))
 
     assert cli._cmd_restart_with_delay(0) == 0
     assert calls == ["stop", ("sleep", 3), "start"]
 
 
-def test_cmd_vibe_restarts_stale_runtime_processes(monkeypatch):
+def test_cmd_vibe_uses_restart_compatibility_default(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(cli, "_cmd_restart_with_delay", lambda delay: calls.append(("restart", delay)) or 0)
+
+    assert cli.cmd_vibe() == 0
+
+    assert calls == [("restart", 0.0)]
+
+
+def test_cmd_start_ensures_services_without_stopping(monkeypatch):
     calls = []
     config = SimpleNamespace(
         has_configured_platform_credentials=lambda: True,
@@ -185,12 +195,17 @@ def test_cmd_vibe_restarts_stale_runtime_processes(monkeypatch):
 
     monkeypatch.setattr(cli.paths, "ensure_data_dirs", lambda: None)
     monkeypatch.setattr(cli, "_ensure_config", lambda: config)
-    monkeypatch.setattr(cli.runtime, "runtime_processes_stale_after_package_update", lambda: True)
-    monkeypatch.setattr(cli, "_cmd_restart_with_delay", lambda delay: calls.append(("restart", delay)) or 0)
+    monkeypatch.setattr(cli, "_write_status", lambda *args, **kwargs: calls.append(("status", args)))
+    monkeypatch.setattr(cli.runtime, "start_service", lambda: calls.append("start_service") or 1234)
+    monkeypatch.setattr(cli.runtime, "effective_ui_bind_host", lambda cfg: "127.0.0.1")
+    monkeypatch.setattr(cli.runtime, "start_ui", lambda host, port: calls.append(("start_ui", host, port)) or 5678)
+    monkeypatch.setattr(cli.runtime, "write_status", lambda *args: calls.append(("runtime_status", args)))
 
-    assert cli.cmd_vibe() == 0
+    assert cli.cmd_start() == 0
 
-    assert calls == [("restart", 0.0)]
+    assert "start_service" in calls
+    assert ("start_ui", "127.0.0.1", 5123) in calls
+    assert not any(call == "stop" for call in calls)
 
 
 def test_restart_parser_accepts_delay_seconds():
@@ -199,6 +214,13 @@ def test_restart_parser_accepts_delay_seconds():
 
     assert args.command == "restart"
     assert args.delay_seconds == 60
+
+
+def test_start_parser_accepts_start_command():
+    parser = cli.build_parser()
+    args = parser.parse_args(["start"])
+
+    assert args.command == "start"
 
 
 def test_remote_parser_accepts_pairing_command():

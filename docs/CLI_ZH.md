@@ -3,7 +3,8 @@
 ## 快速开始
 
 ```bash
-vibe              # 启动 Vibe Remote（打开 Web UI）
+vibe              # 兼容期内重启 Vibe Remote
+vibe start        # 按需启动 Vibe Remote（打开 Web UI）
 vibe status       # 查看服务状态
 vibe remote       # 引导式配置 Vibe Cloud 远程访问
 vibe screenshot   # 截取本机桌面截图
@@ -27,14 +28,27 @@ vibe remote
 
 ### `vibe`
 
-按需启动 Vibe Remote。会在浏览器中打开 Web UI。
+兼容期默认重启 Vibe Remote，然后在浏览器中打开 Web UI。
 
 ```bash
 vibe
 ```
 
 **行为：**
-- 如果主服务已在运行，则复用现有进程
+- 停止并重启主服务与 Web UI
+- 重启过程中会终止 OpenCode 服务器
+- 为兼容旧版本升级流程，裸 `vibe` 暂时保持重启语义；如果只想按需启动并保留现有进程，请使用 `vibe start`
+
+### `vibe start`
+
+按需启动 Vibe Remote。会在浏览器中打开 Web UI。
+
+```bash
+vibe start
+```
+
+**行为：**
+- 如果主服务与 Web UI 已在运行，则复用现有进程
 - 打开设置向导 `http://127.0.0.1:5123`
 - **保留已运行的进程** — 需要明确重启时请使用 `vibe restart`
 
@@ -197,6 +211,8 @@ Vibe Remote 管理两类进程：
 
 | 命令 | 主服务 | OpenCode 服务器 |
 |------|--------|-----------------|
+| `vibe start` | 启动/复用 | 保留 |
+| `vibe` | 重启 | **终止** |
 | `vibe restart` | 重启 | **终止** |
 | `vibe stop` | 停止 | **终止** |
 
@@ -273,7 +289,7 @@ Web UI (`http://127.0.0.1:5123`) 提供相同的控制功能：
 
 | 按钮 | 等效 CLI | OpenCode 行为 |
 |------|---------|---------------|
-| **Start** | `vibe` | 按需启动 |
+| **Start** | `vibe start` | 按需启动 |
 | **Restart** | `vibe restart` | 终止 |
 | **Stop** | `vibe stop` | 终止 |
 
