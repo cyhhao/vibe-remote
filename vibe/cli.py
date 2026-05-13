@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 WATCH_STARTUP_STABLE_RUNNING_SECONDS = 1.5
 WATCH_STARTUP_JITTER_BUFFER_SECONDS = 1.0
+LEGACY_DELAYED_RESTART_HANDLED_ENV = "VIBE_LEGACY_DELAYED_RESTART_HANDLED"
 
 
 class VibeArgumentParser(argparse.ArgumentParser):
@@ -1813,6 +1814,11 @@ def cmd_vibe():
     paths.ensure_data_dirs()
     config = _ensure_config()
 
+    if _launched_by_legacy_delayed_restart_helper():
+        os.environ[LEGACY_DELAYED_RESTART_HANDLED_ENV] = "1"
+        logger.info("Bare vibe command launched by legacy delayed restart helper; running explicit restart")
+        return _cmd_restart_with_delay(0.0)
+
     has_configured_platform_credentials = getattr(config, "has_configured_platform_credentials", None)
     if callable(has_configured_platform_credentials):
         ready = bool(has_configured_platform_credentials())
@@ -1848,6 +1854,20 @@ def cmd_vibe():
             print("")
 
     return 0
+
+
+def _launched_by_legacy_delayed_restart_helper() -> bool:
+    if os.environ.get(LEGACY_DELAYED_RESTART_HANDLED_ENV):
+        return False
+    parent_command = runtime.get_process_command(os.getppid())
+    if not parent_command:
+        return False
+    return (
+        "subprocess.Popen" in parent_command
+        and "time.sleep(" in parent_command
+        and "stdout=subprocess.DEVNULL" in parent_command
+        and "stderr=subprocess.DEVNULL" in parent_command
+    )
 
 
 def _stop_opencode_server():
