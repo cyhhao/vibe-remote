@@ -176,9 +176,33 @@ def test_cmd_restart_runs_synchronously_by_default(monkeypatch):
     assert calls == ["stop", ("sleep", 3), "start"]
 
 
-def test_cmd_vibe_uses_restart_compatibility_default(monkeypatch):
+def test_cmd_vibe_starts_by_default(monkeypatch):
     calls = []
+    config = SimpleNamespace(
+        has_configured_platform_credentials=lambda: True,
+        ui=SimpleNamespace(setup_host="127.0.0.1", setup_port=5123, open_browser=False),
+    )
 
+    monkeypatch.setattr(cli.paths, "ensure_data_dirs", lambda: None)
+    monkeypatch.setattr(cli, "_ensure_config", lambda: config)
+    monkeypatch.setattr(cli, "_should_restart_for_upgrade_compat", lambda cfg: False)
+    monkeypatch.setattr(cli, "_cmd_start_with_config", lambda cfg: calls.append(("start", cfg)) or 0)
+
+    assert cli.cmd_vibe() == 0
+
+    assert calls == [("start", config)]
+
+
+def test_cmd_vibe_restarts_for_upgrade_compat(monkeypatch):
+    calls = []
+    config = SimpleNamespace(
+        has_configured_platform_credentials=lambda: True,
+        ui=SimpleNamespace(setup_host="127.0.0.1", setup_port=5123, open_browser=False),
+    )
+
+    monkeypatch.setattr(cli.paths, "ensure_data_dirs", lambda: None)
+    monkeypatch.setattr(cli, "_ensure_config", lambda: config)
+    monkeypatch.setattr(cli, "_should_restart_for_upgrade_compat", lambda cfg: True)
     monkeypatch.setattr(cli, "_cmd_restart_with_delay", lambda delay: calls.append(("restart", delay)) or 0)
 
     assert cli.cmd_vibe() == 0
@@ -206,6 +230,40 @@ def test_cmd_start_ensures_services_without_stopping(monkeypatch):
     assert "start_service" in calls
     assert ("start_ui", "127.0.0.1", 5123) in calls
     assert not any(call == "stop" for call in calls)
+
+
+def test_upgrade_compat_restart_when_running_ui_version_differs(monkeypatch):
+    config = SimpleNamespace(ui=SimpleNamespace(setup_host="127.0.0.1", setup_port=5123))
+
+    monkeypatch.setattr(cli, "__version__", "2.3.2")
+    monkeypatch.setattr(cli, "_running_ui_version", lambda cfg: "2.3.1")
+    monkeypatch.setattr(cli, "_launched_by_legacy_delayed_restart_helper", lambda: False)
+
+    assert cli._should_restart_for_upgrade_compat(config) is True
+
+
+def test_upgrade_compat_does_not_restart_when_running_ui_version_matches(monkeypatch):
+    config = SimpleNamespace(ui=SimpleNamespace(setup_host="127.0.0.1", setup_port=5123))
+
+    monkeypatch.setattr(cli, "__version__", "2.3.2")
+    monkeypatch.setattr(cli, "_running_ui_version", lambda cfg: "2.3.2")
+    monkeypatch.setattr(cli, "_launched_by_legacy_delayed_restart_helper", lambda: False)
+
+    assert cli._should_restart_for_upgrade_compat(config) is False
+
+
+def test_upgrade_compat_restarts_for_legacy_helper(monkeypatch):
+    config = SimpleNamespace(ui=SimpleNamespace(setup_host="127.0.0.1", setup_port=5123))
+
+    monkeypatch.setattr(cli, "_running_ui_version", lambda cfg: None)
+    monkeypatch.setattr(cli, "_launched_by_legacy_delayed_restart_helper", lambda: True)
+
+    assert cli._should_restart_for_upgrade_compat(config) is True
+
+
+def test_ui_local_url_uses_loopback_for_wildcard_bind():
+    assert cli._ui_local_url("0.0.0.0", 5123, "/version") == "http://127.0.0.1:5123/version"
+    assert cli._ui_local_url("::", 5123, "/version") == "http://[::1]:5123/version"
 
 
 def test_restart_parser_accepts_delay_seconds():

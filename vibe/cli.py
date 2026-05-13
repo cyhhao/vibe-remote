@@ -10,6 +10,8 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent
@@ -1809,10 +1811,7 @@ def _doctor():
     return result
 
 
-def cmd_start():
-    paths.ensure_data_dirs()
-    config = _ensure_config()
-
+def _cmd_start_with_config(config) -> int:
     has_configured_platform_credentials = getattr(config, "has_configured_platform_credentials", None)
     if callable(has_configured_platform_credentials):
         ready = bool(has_configured_platform_credentials())
@@ -1850,9 +1849,74 @@ def cmd_start():
     return 0
 
 
+def cmd_start():
+    paths.ensure_data_dirs()
+    config = _ensure_config()
+    return _cmd_start_with_config(config)
+
+
+def _ui_local_url(host: str, port: int, path: str) -> str:
+    local_host = (host or "127.0.0.1").strip()
+    if local_host in {"0.0.0.0", ""}:
+        local_host = "127.0.0.1"
+    elif local_host in {"::", "::0"}:
+        local_host = "[::1]"
+    elif local_host.startswith("[") and local_host.endswith("]"):
+        pass
+    elif ":" in local_host:
+        local_host = f"[{local_host}]"
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"http://{local_host}:{port}{normalized_path}"
+
+
+def _running_ui_version(config, timeout: float = 0.75) -> str | None:
+    url = _ui_local_url(config.ui.setup_host, config.ui.setup_port, "/version")
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            if response.status != 200:
+                return None
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
+        return None
+    current = payload.get("current") if isinstance(payload, dict) else None
+    return current if isinstance(current, str) and current else None
+
+
+def _launched_by_legacy_delayed_restart_helper() -> bool:
+    parent_command = runtime.get_process_command(os.getppid())
+    if not parent_command:
+        return False
+    return (
+        "subprocess.Popen" in parent_command
+        and "time.sleep(" in parent_command
+        and "stdout=subprocess.DEVNULL" in parent_command
+        and "stderr=subprocess.DEVNULL" in parent_command
+    )
+
+
+def _should_restart_for_upgrade_compat(config) -> bool:
+    running_version = _running_ui_version(config)
+    if running_version and running_version != __version__:
+        logger.info(
+            "Bare vibe detected running UI version %s differs from installed version %s; restarting",
+            running_version,
+            __version__,
+        )
+        return True
+    if _launched_by_legacy_delayed_restart_helper():
+        logger.info("Bare vibe launched by legacy delayed restart helper; restarting")
+        return True
+    return False
+
+
 def cmd_vibe():
-    """Compatibility default: bare `vibe` restarts during the migration window."""
-    return _cmd_restart_with_delay(0.0)
+    """Bare `vibe` starts by default, with a narrow upgrade compatibility restart."""
+    paths.ensure_data_dirs()
+    config = _ensure_config()
+    if _should_restart_for_upgrade_compat(config):
+        return _cmd_restart_with_delay(0.0)
+    return _cmd_start_with_config(config)
+
 
 
 def _stop_opencode_server():
