@@ -263,7 +263,12 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
     }
   };
 
-  const copyUrl = async () => {
+  const copyUrl = async (e?: React.MouseEvent) => {
+    // Defensively stop the click from bubbling. If a parent had an
+    // accidental form / radio handler, copying the URL must never
+    // also trigger a tab switch or a save.
+    e?.preventDefault();
+    e?.stopPropagation();
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
@@ -273,7 +278,14 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
     }
   };
 
-  const copyDeviceCode = async () => {
+  const copyDeviceCode = async (e?: React.MouseEvent) => {
+    // Same defensive bubble-stop as copyUrl. Reported symptom: clicking
+    // "Copy" on the Codex device code in Settings was bouncing the auth-
+    // mode segmented radio from OAuth to API Key, interrupting the
+    // login flow. Without seeing a repro path in code, guard the
+    // click here so the side effect can't survive in any browser.
+    e?.preventDefault();
+    e?.stopPropagation();
     if (!deviceCode) return;
     try {
       await navigator.clipboard.writeText(deviceCode);
@@ -378,7 +390,7 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
               <ExternalLink className="size-3 shrink-0" />
               <span className="break-all">{url}</span>
             </a>
-            <Button type="button" variant="secondary" size="xs" onClick={() => void copyUrl()}>
+            <Button type="button" variant="secondary" size="xs" onClick={(e) => void copyUrl(e)}>
               <Copy className="size-3" />
               {t('common.copy')}
             </Button>
@@ -395,7 +407,7 @@ export const BackendOAuthPanel: React.FC<BackendOAuthPanelProps> = ({
             <code className="rounded-md bg-cyan-soft/40 px-2.5 py-1 font-mono text-[14px] font-semibold tracking-[0.18em] text-cyan">
               {deviceCode}
             </code>
-            <Button type="button" variant="secondary" size="xs" onClick={() => void copyDeviceCode()}>
+            <Button type="button" variant="secondary" size="xs" onClick={(e) => void copyDeviceCode(e)}>
               <Copy className="size-3" />
               {t('common.copy')}
             </Button>

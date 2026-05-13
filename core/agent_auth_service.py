@@ -344,6 +344,30 @@ class AgentAuthService:
         lang = getattr(self.controller, "_get_lang", lambda: getattr(self.controller.config, "language", "en"))()
         return i18n_t(key, lang, **kwargs)
 
+    def _resolve_backend_config(self, backend: str):
+        """Return the backend's config object regardless of controller shape.
+
+        The IM ``Controller`` carries an ``AppCompatConfig`` with backends at
+        the top level (``config.claude``, ``config.codex``, ...), so the long-
+        standing ``getattr(self.controller.config, backend, None)`` access
+        works there. The web OAuth flow uses ``_WebControllerStub`` which
+        exposes the raw ``V2Config`` instead — backends live under
+        ``config.agents.<backend>`` and the top-level attribute is ``None``.
+
+        Falling back through both shapes means ``build_claude_subprocess_env``
+        (and similar) consistently sees the user's stored ``auth_mode`` /
+        ``api_key`` / ``base_url`` whether the call originates from an IM
+        session or from the Settings → Backends OAuth panel.
+        """
+        cfg = getattr(self, "controller", None)
+        cfg = getattr(cfg, "config", None) if cfg is not None else None
+        if cfg is None:
+            return None
+        top = getattr(cfg, backend, None)
+        if top is not None:
+            return top
+        return getattr(getattr(cfg, "agents", None), backend, None)
+
     def _get_im_client(self, context: MessageContext):
         getter = getattr(self.controller, "get_im_client_for_context", None)
         if callable(getter):
@@ -829,7 +853,7 @@ class AgentAuthService:
         # still get the key into the control-channel SDK client.
         from vibe.claude_config import build_claude_subprocess_env
 
-        claude_env = build_claude_subprocess_env(getattr(self.controller.config, "claude", None))
+        claude_env = build_claude_subprocess_env(self._resolve_backend_config("claude"))
 
         should_force_sandbox = getattr(session_handler, "_should_force_claude_sandbox", None)
         if callable(should_force_sandbox) and should_force_sandbox():
@@ -841,7 +865,7 @@ class AgentAuthService:
             "setting_sources": ["user", "project", "local"],
             "max_buffer_size": CLAUDE_SDK_MAX_BUFFER_SIZE,
         }
-        permission_mode = getattr(getattr(self.controller.config, "claude", None), "permission_mode", None)
+        permission_mode = getattr(self._resolve_backend_config("claude"), "permission_mode", None)
         if permission_mode:
             option_kwargs["permission_mode"] = permission_mode
 
@@ -1635,7 +1659,7 @@ class AgentAuthService:
 
                 env_override.update(
                     build_claude_subprocess_env(
-                        getattr(self.controller.config, "claude", None),
+                        self._resolve_backend_config("claude"),
                         base_env=env_override,
                     )
                 )
