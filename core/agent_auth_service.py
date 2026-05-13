@@ -1636,18 +1636,27 @@ class AgentAuthService:
         else:
             # Codex single-shot mode. ``--skip-git-repo-check`` bypasses
             # Codex's per-project trust gate. We also force
-            # ``model_reasoning_effort=minimal`` so a config.toml that
+            # ``model_reasoning_effort=low`` so a config.toml that
             # selects ``xhigh`` reasoning (deep thinking + 30 s+ for any
             # prompt) doesn't blow past our 45 s test timeout — the
             # probe is "auth + endpoint reachable", not "exercise the
             # reasoning chain". ``-c key=value`` overrides config.toml
             # entries per invocation.
+            #
+            # NOT ``minimal``: OpenAI's Responses API rejects ``minimal``
+            # reasoning when ``image_gen`` / ``web_search`` tools are
+            # attached (which Codex auto-attaches for chat models with
+            # no override flag to disable). The 400 reads ``"The
+            # following tools cannot be used with reasoning.effort
+            # 'minimal'"``. ``low`` is described in the model catalog
+            # as "Fast responses with lighter reasoning" — still fast
+            # enough for a probe, compatible with all tool sets.
             cmd = [
                 binary,
                 "exec",
                 "--skip-git-repo-check",
                 "-c",
-                "model_reasoning_effort=minimal",
+                "model_reasoning_effort=low",
             ]
             if isinstance(model, str) and model.strip():
                 cmd.extend(["-c", f"model={model.strip()}"])
