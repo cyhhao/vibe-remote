@@ -390,6 +390,18 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     }, 3000);
   };
 
+  const scheduleAllPlatformsRefreshFollowup = () => {
+    const timerKey = '__all__';
+    const existing = refreshFollowupTimersRef.current[timerKey];
+    if (existing) clearTimeout(existing);
+    const scheduledVersion = refreshFollowupVersionRef.current;
+    refreshFollowupTimersRef.current[timerKey] = setTimeout(() => {
+      delete refreshFollowupTimersRef.current[timerKey];
+      if (refreshFollowupVersionRef.current !== scheduledVersion) return;
+      void loadAllPlatformsData(false);
+    }, 3000);
+  };
+
   const loadChannels = async (all?: boolean, force = false) => {
     const requestVersion = invalidateRefreshFollowups();
     if (platform === 'lark') {
@@ -689,12 +701,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     if (!isPage) return;
     const platforms = getEnabledPlatforms(config).filter((p) => platformSupportsChannels(config, p));
     if (platforms.length === 0) return;
+    const requestVersion = invalidateRefreshFollowups();
     setAllLoading(true);
     try {
       const results = await Promise.all(
         platforms.map(async (p) => {
           let channelsList: any[] = [];
           let configsMap: Record<string, ChannelConfig> = {};
+          let refreshing = false;
           try {
             const settings = await api.getSettings(p);
             configsMap = (settings.channels || {}) as Record<string, ChannelConfig>;
@@ -705,6 +719,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               if (appId && appSecret) {
                 const result = await api.larkChats(appId, appSecret, domain, force);
                 recordRefreshMeta(p, result);
+                refreshing = Boolean(result.refreshing);
                 if (result.ok) channelsList = result.channels || [];
               }
             } else if (p === 'telegram') {
@@ -719,6 +734,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               if (guildId && token) {
                 const result = await api.discordChannels(token, guildId, force);
                 recordRefreshMeta(p, result);
+                refreshing = Boolean(result.refreshing);
                 if (result.ok) {
                   channelsList = (result.channels || []).filter((c: any) => c.type === 0 || c.type === 5);
                 }
@@ -727,15 +743,17 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               if (config.slack?.bot_token) {
                 const result = await api.slackChannels(config.slack.bot_token, false, force);
                 recordRefreshMeta(p, result);
+                refreshing = Boolean(result.refreshing);
                 if (result.ok) channelsList = result.channels || [];
               }
             }
           } catch {
             // ignore individual platform failures
           }
-          return { platform: p, channels: channelsList, configs: configsMap };
+          return { platform: p, channels: channelsList, configs: configsMap, refreshing };
         })
       );
+      if (refreshFollowupVersionRef.current !== requestVersion) return;
       const channelsByPlatform: Record<string, any[]> = {};
       const configsByPlatform: Record<string, Record<string, ChannelConfig>> = {};
       for (const r of results) {
@@ -744,8 +762,11 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       }
       setAllChannelsByPlatform(channelsByPlatform);
       setAllConfigsByPlatform(configsByPlatform);
+      if (results.some((r) => r.refreshing)) scheduleAllPlatformsRefreshFollowup();
     } finally {
-      setAllLoading(false);
+      if (refreshFollowupVersionRef.current === requestVersion) {
+        setAllLoading(false);
+      }
     }
   };
 
