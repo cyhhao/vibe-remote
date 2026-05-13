@@ -1436,16 +1436,30 @@ def claude_models() -> dict:
 
 
 def install_agent(name: str) -> dict:
-    """Install an agent CLI tool.
+    """Install (or upgrade) an agent CLI tool.
 
-    Supported agents:
-    - opencode: curl -fsSL https://opencode.ai/install | bash
-    - claude: curl -fsSL https://claude.ai/install.sh | bash (macOS/Linux)
-              irm https://claude.ai/install.ps1 | iex (Windows)
-    - codex: npm install -g @openai/codex
+    Upgrade path (binary already on disk): defer to the tool's own
+    ``update`` / ``upgrade`` subcommand. Each CLI knows how it was
+    installed (npm-global, native, curl, brew, …) and updates in place
+    via the matching package manager. Without this, our previous flow
+    bricked Claude installs whenever the user's bootstrap method
+    differed from our hard-coded installer URL — e.g. the Dockerfile
+    bootstraps via ``npm install -g @anthropic-ai/claude-code`` but our
+    upgrade ran ``curl https://claude.ai/install.sh | bash``, which
+    migrated the binary to ``~/.local/bin/claude`` and left V2Config
+    pointing at the now-empty ``/usr/local/bin/claude``.
+
+    Self-update commands:
+      - ``claude update``   — auto-detects npm-global vs native install
+      - ``codex update``    — runs ``npm install -g @openai/codex`` internally
+      - ``opencode upgrade`` — auto-detects curl/npm/pnpm/bun/brew/choco/scoop
+
+    Fresh-install path (binary missing) keeps the bootstrap commands
+    below — the user has no install yet, so we have no install method
+    to defer to.
 
     Returns:
-        {"ok": bool, "message": str, "output": str | None}
+        {"ok": bool, "message": str, "output": str | None, "path": str | None}
     """
     import platform
 
@@ -1465,6 +1479,28 @@ def install_agent(name: str) -> dict:
         if len(output) <= MAX_OUTPUT_CHARS:
             return output
         return "...(truncated)\n" + output[-MAX_OUTPUT_CHARS:]
+
+    # Self-update branch: if the binary is already on disk, ask it to
+    # update itself. Each CLI's update subcommand knows the install
+    # method it lives in and updates without changing its binary path —
+    # which means V2Config's stored ``cli_path`` stays valid across
+    # upgrades, and an npm-bootstrapped install doesn't get half-
+    # migrated to ``~/.local/bin`` and orphaned.
+    existing_path = resolve_cli_path(name)
+    if existing_path:
+        if name == "claude":
+            cmd = [existing_path, "update"]
+        elif name == "codex":
+            cmd = [existing_path, "update"]
+        elif name == "opencode":
+            # ``opencode upgrade`` auto-detects the install method; we
+            # don't pass ``--method`` so the user's bootstrap choice
+            # wins (curl on our Dockerfile, brew/npm/bun on user machines).
+            cmd = [existing_path, "upgrade"]
+        else:
+            cmd = None
+        if cmd is not None:
+            return _run_install_command(name, cmd, _truncate_output, mode="upgrade")
 
     if name == "opencode":
         # OpenCode: use curl installer (not supported on Windows)
@@ -1521,24 +1557,46 @@ def install_agent(name: str) -> dict:
     else:
         return {"ok": False, "message": f"Unknown agent: {name}", "output": None}
 
+    return _run_install_command(name, cmd, _truncate_output, mode="install")
+
+
+def _run_install_command(
+    name: str,
+    cmd: list[str],
+    truncate_output,
+    *,
+    mode: str = "install",
+) -> dict:
+    """Shared subprocess + post-success bookkeeping for install / upgrade.
+
+    Factored out so the self-update branch (existing binary) and the
+    fresh-install branch (curl/npm bootstrap) share identical post-run
+    handling: log the result, invalidate the version cache, capture the
+    new install path, and persist it to V2Config when it changed.
+    """
+    label = "Upgrading" if mode == "upgrade" else "Installing"
     try:
-        logger.info("Installing agent %s with command: %s", name, cmd)
+        logger.info("%s agent %s with command: %s", label, name, cmd)
         command_env = _command_env_for(cmd[0] if cmd and os.path.isabs(cmd[0]) else None)
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minute timeout for installation
+            timeout=300,  # 5 minute timeout
             env=command_env,
         )
         output = result.stdout + ("\n" + result.stderr if result.stderr else "")
-        output = _truncate_output(output.strip())
+        output = truncate_output(output.strip())
         if result.returncode == 0:
             installed_path = resolve_cli_path(name)
             if installed_path:
-                logger.info("Agent %s installed successfully at %s", name, installed_path)
+                logger.info("Agent %s %s succeeded at %s", name, mode, installed_path)
             else:
-                logger.warning("Agent %s install command succeeded but CLI path was not detected", name)
+                logger.warning(
+                    "Agent %s %s command succeeded but CLI path was not detected",
+                    name,
+                    mode,
+                )
             # The chip refreshes runtime immediately after upgrade; drop the
             # 30s version cache so it reads the new `--version` instead of the
             # pre-upgrade value.
@@ -1546,12 +1604,10 @@ def install_agent(name: str) -> dict:
 
             # Persist the freshly-discovered install path to V2Config so the
             # next ``get_backend_runtime`` reads it directly instead of
-            # relying on the resolver's stale-path fallback. Without this,
-            # the stored cli_path drifts whenever an upstream installer
-            # moves the binary (real-world example: Claude Code's official
-            # ``install.sh`` migrates from ``/usr/local/bin/claude`` —
-            # the npm-era path the Dockerfile bootstraps with — to
-            # ``~/.local/bin/claude``).
+            # relying on the resolver's stale-path fallback. Self-update
+            # commands normally keep the binary at the same path so this is
+            # a no-op for upgrades, but fresh installs after a missing
+            # bootstrap (or an installer that moves the file) need it.
             if installed_path:
                 try:
                     with CONFIG_LOCK:
@@ -1580,22 +1636,21 @@ def install_agent(name: str) -> dict:
 
             return {
                 "ok": True,
-                "message": f"{name} installed successfully",
+                "message": f"{name} {mode}d successfully" if mode == "install" else f"{name} upgraded successfully",
                 "path": installed_path,
                 "output": output,
             }
-        else:
-            logger.warning("Agent %s installation failed: %s", name, output)
-            return {
-                "ok": False,
-                "message": f"Installation failed (exit code {result.returncode})",
-                "output": output,
-            }
+        logger.warning("Agent %s %s failed: %s", name, mode, output)
+        return {
+            "ok": False,
+            "message": f"{mode.capitalize()} failed (exit code {result.returncode})",
+            "output": output,
+        }
     except subprocess.TimeoutExpired:
-        logger.error("Agent %s installation timed out", name)
-        return {"ok": False, "message": "Installation timed out", "output": None}
+        logger.error("Agent %s %s timed out", name, mode)
+        return {"ok": False, "message": f"{mode.capitalize()} timed out", "output": None}
     except Exception as e:
-        logger.error("Agent %s installation error: %s", name, e)
+        logger.error("Agent %s %s error: %s", name, mode, e)
         return {"ok": False, "message": str(e), "output": None}
 
 
