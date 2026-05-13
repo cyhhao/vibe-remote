@@ -3,6 +3,7 @@
 ## 快速开始
 
 ```bash
+vibe              # vibe start 的别名
 vibe start        # 按需启动 Vibe Remote（打开 Web UI）
 vibe status       # 查看服务状态
 vibe remote       # 引导式配置 Vibe Cloud 远程访问
@@ -27,17 +28,16 @@ vibe remote
 
 ### `vibe`
 
-兼容期内保留为重启别名。脚本和文档里优先使用显式命令：
-按需启动使用 `vibe start`，需要重启使用 `vibe restart`。
+`vibe start` 的别名。
 
 ```bash
 vibe
 ```
 
 **行为：**
-- 停止并重启主服务与 Web UI
-- 重启过程中会终止 OpenCode 服务器
-- 仅用于兼容旧版本升级流程里已经排队的裸 `vibe`
+- 按需启动 Vibe Remote
+- 复用已运行的进程
+- 在浏览器中打开 Web UI
 
 ### `vibe start`
 
@@ -211,8 +211,8 @@ Vibe Remote 管理两类进程：
 
 | 命令 | 主服务 | OpenCode 服务器 |
 |------|--------|-----------------|
+| `vibe` | 启动/复用 | 保留 |
 | `vibe start` | 启动/复用 | 保留 |
-| `vibe` | 兼容期重启别名 | **终止** |
 | `vibe restart` | 重启 | **终止** |
 | `vibe stop` | 停止 | **终止** |
 

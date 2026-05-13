@@ -517,7 +517,7 @@ The `vibe` executable controls the local service and async automation features.
 
 | Command | Purpose |
 | --- | --- |
-| `vibe` | Compatibility alias for restart; prefer explicit `vibe restart` |
+| `vibe` | Alias for `vibe start` |
 | `vibe start` | Start the service and Web UI if needed; reuse already-running processes |
 | `vibe stop` | Stop the service and UI; also terminates OpenCode server |
 | `vibe restart` | Stop then start again |
@@ -537,9 +537,10 @@ The `vibe` executable controls the local service and async automation features.
 vibe
 ```
 
-- compatibility alias during the migration window: stops then starts Vibe Remote
-- terminates the OpenCode server as part of the restart
-- kept for older upgrade flows; use explicit `vibe start` or `vibe restart` in scripts and docs
+- alias for `vibe start`
+- starts the main service if it is not already running
+- opens the Web UI
+- preserves already-running service, Web UI, and OpenCode processes; use `vibe restart` for an explicit restart
 
 ### `vibe start`
 

@@ -3,6 +3,7 @@
 ## Quick Start
 
 ```bash
+vibe              # Alias for vibe start
 vibe start        # Start Vibe Remote if needed (opens web UI)
 vibe status       # Check service status
 vibe restart      # Restart all services (use --delay-seconds when agent-triggered)
@@ -28,17 +29,16 @@ The command walks you through signing in at `https://avibe.bot`, creating a remo
 
 ### `vibe`
 
-Compatibility alias for restart during the migration window. Prefer explicit commands in scripts and docs:
-use `vibe start` to ensure Vibe Remote is running, and `vibe restart` to restart it.
+Alias for `vibe start`.
 
 ```bash
 vibe
 ```
 
 **Behavior:**
-- Stops and restarts the main service and Web UI
-- Terminates the OpenCode server as part of the restart
-- Kept only for compatibility with older upgrade flows that scheduled bare `vibe`
+- Starts Vibe Remote if needed
+- Reuses already-running processes
+- Opens the web UI in your browser
 
 ### `vibe start`
 
@@ -261,8 +261,8 @@ The key difference between commands:
 
 | Command | Main Service | OpenCode Server |
 |---------|--------------|-----------------|
+| `vibe` | Start/reuse | Preserved |
 | `vibe start` | Start/reuse | Preserved |
-| `vibe` | Restart compatibility alias | **Terminated** |
 | `vibe restart` | Restart | **Terminated** |
 | `vibe stop` | Stop | **Terminated** |
 
