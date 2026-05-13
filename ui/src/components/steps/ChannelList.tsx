@@ -138,6 +138,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [refreshMetaByPlatform, setRefreshMetaByPlatform] = useState<Record<string, ChannelRefreshMeta>>({});
   const refreshFollowupTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const refreshFollowupVersionRef = useRef(0);
+  const channelRequestVersionRef = useRef(0);
+  const allPlatformsRequestVersionRef = useRef(0);
   // Directory browser state — tracks which channel's cwd picker is open
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
   // Page-mode tab/search/collapse state (only used when isPage is true)
@@ -298,11 +300,28 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const larkAppSecret = config.lark?.app_secret || data.lark?.app_secret || '';
   const larkDomain = config.lark?.domain || data.lark?.domain || 'feishu';
 
-  const invalidateRefreshFollowups = () => {
+  const clearRefreshFollowups = () => {
     refreshFollowupVersionRef.current += 1;
     Object.values(refreshFollowupTimersRef.current).forEach((timer) => clearTimeout(timer));
     refreshFollowupTimersRef.current = {};
-    return refreshFollowupVersionRef.current;
+  };
+
+  const invalidateChannelContext = () => {
+    clearRefreshFollowups();
+    channelRequestVersionRef.current += 1;
+    allPlatformsRequestVersionRef.current += 1;
+  };
+
+  const nextChannelRequestVersion = () => {
+    clearRefreshFollowups();
+    channelRequestVersionRef.current += 1;
+    return channelRequestVersionRef.current;
+  };
+
+  const nextAllPlatformsRequestVersion = () => {
+    clearRefreshFollowups();
+    allPlatformsRequestVersionRef.current += 1;
+    return allPlatformsRequestVersionRef.current;
   };
 
   const beginChannelLoading = (all: boolean) => {
@@ -336,7 +355,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   };
 
   useEffect(() => () => {
-    invalidateRefreshFollowups();
+    invalidateChannelContext();
   }, [platform, selectedGuild, pageTab, botToken, larkAppId, larkAppSecret, larkDomain]);
 
   useEffect(() => {
@@ -435,7 +454,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   };
 
   const loadChannels = async (all?: boolean, force = false) => {
-    const requestVersion = invalidateRefreshFollowups();
+    const requestVersion = nextChannelRequestVersion();
     if (platform === 'lark') {
       if (!larkAppId || !larkAppSecret) return;
     } else if (!botToken) {
@@ -446,7 +465,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     try {
       if (platform === 'lark') {
         const result = await api.larkChats(larkAppId, larkAppSecret, larkDomain, force);
-        if (refreshFollowupVersionRef.current !== requestVersion) return;
+        if (channelRequestVersionRef.current !== requestVersion) return;
         recordRefreshMeta(platform, result);
         if (result.ok) {
           setChannels(result.channels || []);
@@ -454,7 +473,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         }
       } else if (platform === 'telegram') {
         const result = await api.telegramChats(false);
-        if (refreshFollowupVersionRef.current !== requestVersion) return;
+        if (channelRequestVersionRef.current !== requestVersion) return;
         recordRefreshMeta(platform, result);
         if (result.ok) {
           setChannels(result.channels || []);
@@ -465,7 +484,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           return;
         }
         const result = await api.discordChannels(botToken, selectedGuild, force);
-        if (refreshFollowupVersionRef.current !== requestVersion) return;
+        if (channelRequestVersionRef.current !== requestVersion) return;
         recordRefreshMeta(platform, result);
         if (result.ok) {
           const filtered = (result.channels || []).filter((c: any) => c.type === 0 || c.type === 5);
@@ -474,7 +493,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         }
       } else {
         const result = await api.slackChannels(botToken, isAll, force);
-        if (refreshFollowupVersionRef.current !== requestVersion) return;
+        if (channelRequestVersionRef.current !== requestVersion) return;
         recordRefreshMeta(platform, result);
         if (result.ok) {
           setChannels(result.channels || []);
@@ -725,7 +744,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     if (!isPage) return;
     const platforms = getEnabledPlatforms(config).filter((p) => platformSupportsChannels(config, p));
     if (platforms.length === 0) return;
-    const requestVersion = invalidateRefreshFollowups();
+    const requestVersion = nextAllPlatformsRequestVersion();
     beginAllPlatformsLoading();
     try {
       const results = await Promise.all(
@@ -777,7 +796,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
           return { platform: p, channels: channelsList, configs: configsMap, refreshing };
         })
       );
-      if (refreshFollowupVersionRef.current !== requestVersion) return;
+      if (allPlatformsRequestVersionRef.current !== requestVersion) return;
       const channelsByPlatform: Record<string, any[]> = {};
       const configsByPlatform: Record<string, Record<string, ChannelConfig>> = {};
       for (const r of results) {
