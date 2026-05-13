@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 type ResolvedTheme = 'light' | 'dark';
@@ -12,19 +12,28 @@ type ThemeContextValue = {
 
 const STORAGE_KEY = 'vibe-remote-theme';
 const VALID_MODES: ThemeMode[] = ['system', 'light', 'dark'];
+const DEFAULT_MODE: ThemeMode = 'system';
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
+
+function getSystemTheme(): ResolvedTheme {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-color-scheme: light)').matches
+  ) {
+    return 'light';
+  }
+
+  return 'dark';
+}
 
 function resolveTheme(mode: ThemeMode): ResolvedTheme {
   if (mode !== 'system') {
     return mode;
   }
 
-  if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: light)').matches) {
-    return 'light';
-  }
-
-  return 'dark';
+  return getSystemTheme();
 }
 
 function applyTheme(mode: ThemeMode) {
@@ -47,39 +56,48 @@ function readStoredTheme(): ThemeMode {
       return value as ThemeMode;
     }
   } catch {
-    // Ignore storage issues and fall back to the design's default dark canvas.
+    // Ignore storage issues and fall back to following the system preference.
   }
 
-  return 'dark';
+  return DEFAULT_MODE;
 }
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [mode, setModeState] = useState<ThemeMode>('dark');
-  const resolvedTheme = useMemo(() => resolveTheme(mode), [mode]);
+  const [mode, setModeState] = useState<ThemeMode>(() => readStoredTheme());
+  const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() => resolveTheme(DEFAULT_MODE));
+  const resolvedTheme = mode === 'system' ? systemTheme : mode;
 
   useEffect(() => {
-    const nextMode = readStoredTheme();
-    setModeState(nextMode);
-    applyTheme(nextMode);
+    applyTheme(mode);
+  }, [mode, systemTheme]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') {
+      return;
+    }
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: light)');
     const handleChange = () => {
-      if (readStoredTheme() === 'system') {
-        applyTheme('system');
-      }
+      setSystemTheme(resolveTheme(DEFAULT_MODE));
     };
 
-    mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
+    }
+
+    mediaQuery.addListener(handleChange);
+    return () => mediaQuery.removeListener(handleChange);
   }, []);
 
   const setMode = (nextMode: ThemeMode) => {
     setModeState(nextMode);
+    setSystemTheme(resolveTheme(DEFAULT_MODE));
 
     try {
       // Persist all modes including "system" so the choice survives reloads;
-      // removing the key would let readStoredTheme() fall back to the dark
-      // default and silently drop system-follow behavior.
+      // removing the key would let readStoredTheme() fall back to the default
+      // mode and silently drop system-follow behavior.
       window.localStorage.setItem(STORAGE_KEY, nextMode);
     } catch {
       // Ignore storage issues.
