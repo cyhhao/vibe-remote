@@ -316,6 +316,13 @@ export type OpencodeProvider = {
   // the Settings page can pre-populate the Base URL input with the last
   // saved value instead of starting empty on every reload.
   base_url?: string | null;
+  // Server-masked preview of the api-type credential stored in
+  // ``~/.local/share/opencode/auth.json`` (e.g. ``sk-proj-•••H8mN``).
+  // ``null``/missing when the provider uses OAuth or hasn't been
+  // configured yet. Mirrors Claude / Codex's ``api_key_masked`` so the
+  // user can see at a glance which providers have a stored key without
+  // having to expand each card.
+  api_key_masked?: string | null;
 };
 
 export type OpencodeProviderListResult = {

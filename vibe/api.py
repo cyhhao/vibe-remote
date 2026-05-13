@@ -2820,6 +2820,25 @@ async def _get_opencode_providers_async() -> dict:
                 if isinstance(candidate, str) and candidate.strip():
                     base_url_index[pid_key] = candidate.strip()
 
+    # Per-provider stored API keys, masked server-side so the Settings UI
+    # can pre-fill the input ("sk-proj-•••H8mN") without leaking plaintext.
+    # OAuth-type providers map to ``None`` and the UI skips the mask
+    # block in that case.
+    try:
+        from vibe.opencode_config import read_opencode_provider_keys
+
+        provider_keys = await asyncio.to_thread(
+            read_opencode_provider_keys, logger_instance=logger
+        )
+    except Exception as exc:
+        logger.debug("Could not read OpenCode auth.json for masked keys: %s", exc)
+        provider_keys = {}
+    api_key_mask_index: dict = {}
+    for pid_key, raw_key in provider_keys.items():
+        masked = _mask_api_key(raw_key) if raw_key else None
+        if masked:
+            api_key_mask_index[pid_key] = masked
+
     out_providers = []
     for pid, entry in all_providers.items():
         if not isinstance(entry, dict):
@@ -2858,6 +2877,7 @@ async def _get_opencode_providers_async() -> dict:
                 "models": model_ids,
                 "default_model": default_model,
                 "base_url": base_url_index.get(pid),
+                "api_key_masked": api_key_mask_index.get(pid),
             }
         )
 

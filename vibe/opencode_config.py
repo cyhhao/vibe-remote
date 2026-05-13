@@ -575,6 +575,61 @@ def remove_opencode_provider_base_url(
     return probe.path
 
 
+def get_opencode_auth_path(home: Path | None = None) -> Path:
+    """Return the absolute path to OpenCode's per-provider auth bundle.
+
+    OpenCode stores ``{providerId: {type: "api"|"oauth", key?, ...}}`` at
+    ``~/.local/share/opencode/auth.json``. The Settings UI uses this to
+    render a masked preview ("``sk-proj-•••H8mN``") for each configured
+    cloud provider — mirroring the Claude / Codex pages so the user can
+    see at a glance which providers carry a stored key without having to
+    expand each card.
+    """
+    resolved_home = home or Path.home()
+    return resolved_home / ".local" / "share" / "opencode" / "auth.json"
+
+
+def read_opencode_provider_keys(
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Dict[str, Optional[str]]:
+    """Return ``{provider_id: plaintext_key | None}`` from auth.json.
+
+    Plaintext keys never leave the server: ``vibe.api.get_opencode_providers``
+    pipes each value through ``_mask_api_key`` before forwarding to the
+    Settings UI. ``None`` entries mark OAuth-type providers (or any
+    other ``type`` that doesn't carry a static key) — the UI can use
+    presence-vs-None to decide whether to show a masked preview vs the
+    "signed in via OAuth" affordance.
+
+    A missing or unparseable file returns an empty dict; callers should
+    not treat that as an error since OpenCode lazily creates the file
+    on first ``PUT /auth/<id>`` call.
+    """
+    active_logger = logger_instance or logger
+    path = get_opencode_auth_path(home)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        active_logger.debug("OpenCode auth.json read failed: %s", exc)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: Dict[str, Optional[str]] = {}
+    for provider_id, entry in data.items():
+        if not isinstance(provider_id, str) or not isinstance(entry, dict):
+            continue
+        if entry.get("type") == "api":
+            key = entry.get("key")
+            out[provider_id] = key if isinstance(key, str) and key else None
+        else:
+            out[provider_id] = None
+    return out
+
+
 def read_opencode_provider_base_url(
     provider_id: str,
     *,

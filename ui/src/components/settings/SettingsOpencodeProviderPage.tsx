@@ -11,6 +11,7 @@ import {
   Download,
   Info,
   KeyRound,
+  Pencil,
   RefreshCw,
   RotateCcw,
   Save,
@@ -49,6 +50,11 @@ type ProviderEditState = {
   saving: boolean;
   removing: boolean;
   error: string | null;
+  // Mirrors the Codex / Claude pattern: false = show ``api_key_masked``
+  // read-only with a Replace button; true = empty editable input ready
+  // for a fresh key. Toggled by the pencil button next to the masked
+  // preview. Reset to false on successful save / remove / reload.
+  editingKey: boolean;
 };
 
 const BACKEND_ID = 'opencode';
@@ -67,6 +73,7 @@ const emptyEdit = (): ProviderEditState => ({
   saving: false,
   removing: false,
   error: null,
+  editingKey: false,
 });
 
 const providerMatchesFilter = (provider: OpencodeProvider, mode: FilterMode): boolean => {
@@ -407,7 +414,12 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
         });
         return;
       }
-      updateEdit(provider.id, { saving: false, apiKey: '', error: null });
+      updateEdit(provider.id, {
+        saving: false,
+        apiKey: '',
+        editingKey: false,
+        error: null,
+      });
       showToast(t('settings.backends.opencodeProviderSaved'), 'success');
       await loadProviders();
     } catch (e: any) {
@@ -1090,35 +1102,83 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                                       >
                                         {t('settings.backends.opencodeProviderApiKey')}
                                       </Label>
-                                      <div className="relative">
-                                        <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
-                                        <Input
-                                          id={`opencode-key-${provider.id}`}
-                                          type="password"
-                                          autoComplete="off"
-                                          spellCheck={false}
-                                          placeholder={
-                                            provider.configured
-                                              ? (t(
-                                                  'settings.backends.opencodeProviderApiKeyPlaceholderStored'
-                                                ) as string)
-                                              : (t(
-                                                  'settings.backends.opencodeProviderApiKeyPlaceholder'
-                                                ) as string)
-                                          }
-                                          value={edit.apiKey}
-                                          onChange={(e) =>
-                                            updateEdit(provider.id, { apiKey: e.target.value })
-                                          }
-                                          className="pl-9 font-mono"
-                                          disabled={edit.saving}
-                                        />
+                                      {provider.configured && provider.api_key_masked && !edit.editingKey ? (
+                                        // Masked-preview affordance ported from
+                                        // the Claude / Codex pages: show the
+                                        // saved key as a read-only mono-typed
+                                        // value with a pencil to swap in a
+                                        // fresh one. Saves the user from
+                                        // re-typing the secret on baseURL-only
+                                        // edits.
+                                        <div className="flex items-center gap-2 rounded-md border border-border bg-foreground/[0.04] px-3 py-2">
+                                          <KeyRound className="size-4 shrink-0 text-muted" />
+                                          <code className="flex-1 truncate font-mono text-[12px] text-foreground">
+                                            {provider.api_key_masked}
+                                          </code>
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="xs"
+                                            onClick={() =>
+                                              updateEdit(provider.id, {
+                                                editingKey: true,
+                                                apiKey: '',
+                                              })
+                                            }
+                                            disabled={edit.saving || edit.removing}
+                                          >
+                                            <Pencil className="size-3" />
+                                            {t('settings.backends.replaceApiKey')}
+                                          </Button>
+                                        </div>
+                                      ) : (
+                                        <div className="relative">
+                                          <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                                          <Input
+                                            id={`opencode-key-${provider.id}`}
+                                            type="password"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            placeholder={
+                                              provider.configured
+                                                ? (t(
+                                                    'settings.backends.opencodeProviderApiKeyPlaceholderStored'
+                                                  ) as string)
+                                                : (t(
+                                                    'settings.backends.opencodeProviderApiKeyPlaceholder'
+                                                  ) as string)
+                                            }
+                                            value={edit.apiKey}
+                                            onChange={(e) =>
+                                              updateEdit(provider.id, { apiKey: e.target.value })
+                                            }
+                                            className="pl-9 font-mono"
+                                            disabled={edit.saving}
+                                            autoFocus={edit.editingKey}
+                                          />
+                                        </div>
+                                      )}
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p className="text-[11px] text-muted">
+                                          {provider.configured
+                                            ? t('settings.backends.opencodeProviderApiKeyStored')
+                                            : t('settings.backends.opencodeProviderApiKeyMissing')}
+                                        </p>
+                                        {provider.configured && edit.editingKey && (
+                                          <button
+                                            type="button"
+                                            className="text-[11px] text-muted underline-offset-2 transition hover:text-foreground hover:underline"
+                                            onClick={() =>
+                                              updateEdit(provider.id, {
+                                                editingKey: false,
+                                                apiKey: '',
+                                              })
+                                            }
+                                          >
+                                            {t('common.cancel')}
+                                          </button>
+                                        )}
                                       </div>
-                                      <p className="text-[11px] text-muted">
-                                        {provider.configured
-                                          ? t('settings.backends.opencodeProviderApiKeyStored')
-                                          : t('settings.backends.opencodeProviderApiKeyMissing')}
-                                      </p>
                                     </div>
 
                                     <div className="flex flex-col gap-1.5">
