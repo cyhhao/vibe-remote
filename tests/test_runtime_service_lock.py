@@ -3,11 +3,16 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vibe import runtime
+
+
+def subprocess_result(stdout: str = "", returncode: int = 0):
+    return SimpleNamespace(stdout=stdout, returncode=returncode)
 
 
 class RuntimeServiceLockTests(unittest.TestCase):
@@ -116,6 +121,25 @@ class RuntimeServiceLockTests(unittest.TestCase):
                                     ):
                                         with patch("vibe.runtime.get_process_start_time", return_value=1000.0):
                                             self.assertFalse(runtime.runtime_processes_stale_after_package_update())
+
+    def test_parse_ps_elapsed_seconds(self):
+        self.assertEqual(runtime._parse_ps_elapsed_seconds("00:07"), 7)
+        self.assertEqual(runtime._parse_ps_elapsed_seconds("01:02:03"), 3723)
+        self.assertEqual(runtime._parse_ps_elapsed_seconds("2-01:02:03"), 176523)
+        self.assertIsNone(runtime._parse_ps_elapsed_seconds("Wed May 13 12:00:00 2026"))
+
+    def test_ps_process_start_time_uses_locale_independent_elapsed_time(self):
+        completed = subprocess_result(stdout="01:02:03\n", returncode=0)
+        with patch("vibe.runtime.subprocess.run", return_value=completed) as run:
+            with patch("vibe.runtime.time.time", return_value=10_000.0):
+                self.assertEqual(runtime._ps_process_start_time(12345), 6277.0)
+        run.assert_called_once_with(
+            ["ps", "-p", "12345", "-o", "etime="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
 
 
 if __name__ == "__main__":

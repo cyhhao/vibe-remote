@@ -10,7 +10,6 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
 from pathlib import Path
 
 from config import paths
@@ -490,10 +489,43 @@ def _linux_process_start_time(pid: int) -> float | None:
         return None
 
 
+def _parse_ps_elapsed_seconds(value: str) -> int | None:
+    text = value.strip()
+    if not text:
+        return None
+    days = 0
+    if "-" in text:
+        day_text, text = text.split("-", 1)
+        try:
+            days = int(day_text)
+        except ValueError:
+            return None
+    parts = text.split(":")
+    if len(parts) == 2:
+        hours = 0
+        minutes_text, seconds_text = parts
+    elif len(parts) == 3:
+        hours_text, minutes_text, seconds_text = parts
+        try:
+            hours = int(hours_text)
+        except ValueError:
+            return None
+    else:
+        return None
+    try:
+        minutes = int(minutes_text)
+        seconds = int(seconds_text)
+    except ValueError:
+        return None
+    if min(days, hours, minutes, seconds) < 0 or minutes >= 60 or seconds >= 60:
+        return None
+    return (((days * 24) + hours) * 60 + minutes) * 60 + seconds
+
+
 def _ps_process_start_time(pid: int) -> float | None:
     try:
         result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "lstart="],
+            ["ps", "-p", str(pid), "-o", "etime="],
             capture_output=True,
             text=True,
             timeout=2,
@@ -504,14 +536,11 @@ def _ps_process_start_time(pid: int) -> float | None:
         return None
     if result.returncode != 0:
         return None
-    started_text = result.stdout.strip()
-    if not started_text:
+    elapsed_seconds = _parse_ps_elapsed_seconds(result.stdout)
+    if elapsed_seconds is None:
+        logger.debug("Failed to parse ps elapsed time for pid=%s: %s", pid, result.stdout.strip())
         return None
-    try:
-        return datetime.strptime(started_text, "%a %b %d %H:%M:%S %Y").timestamp()
-    except ValueError:
-        logger.debug("Failed to parse ps start time for pid=%s: %s", pid, started_text)
-        return None
+    return time.time() - elapsed_seconds
 
 
 def get_process_start_time(pid: int) -> float | None:
