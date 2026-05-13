@@ -32,10 +32,14 @@ logger = logging.getLogger(__name__)
 # so the emitter has to round-trip those correctly.
 _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
-# Provider id we manage in ``[model_providers.<id>]``. Codex ships with a
-# built-in ``openai`` provider; if the user has hand-edited that block we
-# leave their fields alone except for ``base_url`` when one is supplied.
-MANAGED_PROVIDER_ID = "openai"
+# Provider id we manage in ``[model_providers.<id>]``. Newer Codex
+# versions reserve ``openai`` as a built-in (the CLI refuses to load a
+# config that overrides it: "model_providers contains reserved built-in
+# provider IDs: openai"), so our managed section uses a non-reserved
+# suffix. ``openai`` is kept as a legacy-cleanup target — see
+# ``LEGACY_MANAGED_PROVIDER_IDS`` and the migration in ``apply_codex_auth``.
+MANAGED_PROVIDER_ID = "openai-managed"
+LEGACY_MANAGED_PROVIDER_IDS = ("openai",)
 
 # Codex's top-level ``cli_auth_credentials_store`` controls where the CLI
 # reads/writes cached credentials: ``file`` → ``~/.codex/auth.json``,
@@ -303,7 +307,16 @@ def apply_codex_auth(
         if not api_key:
             raise ValueError("api_key is required when auth_mode='api_key'")
         auth_data["OPENAI_API_KEY"] = api_key
-        toml_data["model_provider"] = MANAGED_PROVIDER_ID
+        # Only steer ``model_provider`` to our managed entry when the
+        # field is unset or still points at one of our legacy / current
+        # managed names. If the user has aimed it at a hand-rolled
+        # provider (e.g. their ``[model_providers.OpenAI]`` relay
+        # section), keep their pointer — overriding it would silently
+        # bypass their custom base_url + wire_api config.
+        current_mp = toml_data.get("model_provider")
+        managed_known = {MANAGED_PROVIDER_ID, *LEGACY_MANAGED_PROVIDER_IDS, ""}
+        if not isinstance(current_mp, str) or current_mp in managed_known:
+            toml_data["model_provider"] = MANAGED_PROVIDER_ID
         # Pin Codex to file-based credentials so it actually reads the
         # ``OPENAI_API_KEY`` we just wrote. Without this, the documented
         # default (``auto``) prefers the OS keychain, and Codex would
@@ -317,17 +330,30 @@ def apply_codex_auth(
             managed.pop("base_url", None)
     else:  # oauth
         auth_data.pop("OPENAI_API_KEY", None)
-        # Leave model_provider and cli_auth_credentials_store as-is —
-        # switching back to ChatGPT/OAuth is the user's responsibility
-        # via ``codex login`` (which may legitimately want keyring
-        # storage); we just stop pinning the keyed provider's overrides.
+        # Leave cli_auth_credentials_store as-is — switching back to
+        # ChatGPT/OAuth is the user's responsibility via ``codex login``
+        # (which may legitimately want keyring storage); we just stop
+        # pinning the keyed provider's overrides.
         managed.pop("base_url", None)
-        # If our managed entry is now empty, drop it entirely so we don't
-        # leave a noisy ``[model_providers.openai]`` table behind.
-        if not managed:
-            providers.pop(MANAGED_PROVIDER_ID, None)
-            if not providers:
-                toml_data.pop("model_providers", None)
+        # Drop the managed section entirely on oauth — the api_key path
+        # is the only thing that needs the ``name = "OpenAI"`` stub, and
+        # leaving it behind under the legacy reserved name (``openai``)
+        # makes newer Codex versions refuse to load the config at all.
+        providers.pop(MANAGED_PROVIDER_ID, None)
+        # Revert top-level ``model_provider`` if we own it.
+        current_mp = toml_data.get("model_provider")
+        managed_known = {MANAGED_PROVIDER_ID, *LEGACY_MANAGED_PROVIDER_IDS}
+        if isinstance(current_mp, str) and current_mp in managed_known:
+            toml_data.pop("model_provider", None)
+
+    # Always purge any legacy reserved-name section we may have written
+    # in older releases. Codex 1.x refuses to load a config that defines
+    # ``[model_providers.openai]`` ("Built-in providers cannot be
+    # overridden"); leaving it around bricks the CLI for the user.
+    for legacy_id in LEGACY_MANAGED_PROVIDER_IDS:
+        providers.pop(legacy_id, None)
+    if not providers:
+        toml_data.pop("model_providers", None)
 
     _atomic_write(auth_path, json.dumps(auth_data, indent=2) + "\n", mode=0o600)
     _atomic_write(config_path, _dump_toml(toml_data), mode=0o600)
@@ -447,6 +473,16 @@ def read_codex_auth_state(home: Path | None = None) -> Dict[str, Any]:
             active_section = providers[active_provider]
         elif isinstance(providers.get(MANAGED_PROVIDER_ID), dict):
             active_section = providers[MANAGED_PROVIDER_ID]
+        else:
+            # Legacy fallback: older releases wrote our managed shape
+            # under ``[model_providers.openai]``. New Codex rejects that
+            # name as reserved, so we'll purge it on the next save, but
+            # the UI should still surface the base_url until then.
+            for legacy_id in LEGACY_MANAGED_PROVIDER_IDS:
+                legacy_section = providers.get(legacy_id)
+                if isinstance(legacy_section, dict):
+                    active_section = legacy_section
+                    break
         if isinstance(active_section, dict):
             raw = active_section.get("base_url")
             if isinstance(raw, str) and raw.strip():

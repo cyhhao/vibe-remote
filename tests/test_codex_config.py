@@ -89,12 +89,86 @@ def test_apply_api_key_mode_preserves_unrelated_blocks(tmp_path: Path) -> None:
     parsed = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
     assert parsed["model"] == "gpt-5"
     assert parsed["model_provider"] == codex_config.MANAGED_PROVIDER_ID
-    assert parsed["model_providers"]["openai"]["base_url"] == "https://api.example.com/v1"
+    # Managed section now lives under the non-reserved id since
+    # newer Codex versions refuse to load configs that override the
+    # built-in ``openai`` provider.
+    assert (
+        parsed["model_providers"][codex_config.MANAGED_PROVIDER_ID]["base_url"]
+        == "https://api.example.com/v1"
+    )
+    assert "openai" not in parsed.get("model_providers", {})
     assert parsed["projects"]["/Users/alex/code/vibe-remote"]["trust_level"] == "trusted"
     assert parsed["a"]["b"]["c"]["x"] == 1
 
     auth = json.loads((codex_home / "auth.json").read_text(encoding="utf-8"))
     assert auth["OPENAI_API_KEY"] == "sk-test-1234567890"
+
+
+def test_apply_purges_legacy_reserved_openai_section(tmp_path: Path) -> None:
+    """Older releases wrote our managed shape under
+    ``[model_providers.openai]``. Newer Codex versions reject that
+    (built-in provider), so any save / oauth-switch must purge the
+    legacy section even when we'd otherwise leave provider blocks
+    alone."""
+    home = tmp_path
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    seed = (
+        'model_provider = "openai"\n'
+        "\n"
+        "[model_providers.OpenAI]\n"  # user's custom (TitleCase) relay
+        'name = "OpenAI"\n'
+        'base_url = "https://relay.example/v1"\n'
+        "\n"
+        "[model_providers.openai]\n"  # garbage we wrote previously
+        'name = "OpenAI"\n'
+    )
+    (codex_home / "config.toml").write_text(seed, encoding="utf-8")
+
+    codex_config.apply_codex_auth(
+        auth_mode="oauth",
+        api_key=None,
+        base_url=None,
+        home=home,
+    )
+    parsed = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
+    providers = parsed.get("model_providers", {})
+    # Reserved-name section is gone; user's TitleCase relay survives.
+    assert "openai" not in providers
+    assert providers["OpenAI"]["base_url"] == "https://relay.example/v1"
+    # Our previously-set top-level pointer (``model_provider = "openai"``)
+    # is no longer ours to own — reverted because it pointed at the
+    # legacy managed id, freeing the user to choose their relay name.
+    assert "model_provider" not in parsed
+
+
+def test_apply_preserves_user_owned_model_provider(tmp_path: Path) -> None:
+    """When the user has aimed ``model_provider`` at their own custom
+    section (e.g. a TitleCase relay), an api_key save must not overwrite
+    that pointer — overriding it would silently bypass their relay
+    config and route through Codex's built-in ``openai`` provider."""
+    home = tmp_path
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    seed = (
+        'model_provider = "OpenAI"\n'
+        "\n"
+        "[model_providers.OpenAI]\n"
+        'name = "OpenAI"\n'
+        'base_url = "https://relay.example/v1"\n'
+    )
+    (codex_home / "config.toml").write_text(seed, encoding="utf-8")
+
+    codex_config.apply_codex_auth(
+        auth_mode="api_key",
+        api_key="sk-test-userowned",
+        base_url=None,
+        home=home,
+    )
+    parsed = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
+    # User's pointer + section survive intact.
+    assert parsed["model_provider"] == "OpenAI"
+    assert parsed["model_providers"]["OpenAI"]["base_url"] == "https://relay.example/v1"
 
 
 def test_round_trip_datetime_scalars() -> None:
