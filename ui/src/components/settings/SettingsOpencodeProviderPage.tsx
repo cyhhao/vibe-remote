@@ -128,6 +128,11 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [serverStartAttempts, setServerStartAttempts] = useState(0);
+  // ``true`` when opencode.json carries ``permission: "allow"`` — the
+  // Settings page suppresses the "Allow tool calls" affordance once
+  // this is the case (page feedback: a permanent "Setup permission"
+  // button is misleading once permission is already set).
+  const [permissionAllowed, setPermissionAllowed] = useState(false);
 
   // Toolbar state.
   const [searchQuery, setSearchQuery] = useState('');
@@ -175,6 +180,7 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
       if (result.ok && result.providers) {
         setProviders(result.providers);
         setDefaultProvider(result.default_provider || null);
+        setPermissionAllowed(result.permission_allowed === true);
         setServerStartAttempts(0);
         setProvidersError(null);
       } else {
@@ -277,6 +283,12 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
       setPermissionState(result.ok ? 'success' : 'error');
       setPermissionMessage(result.message);
       showToast(result.message, result.ok ? 'success' : 'error');
+      if (result.ok) {
+        // Flip locally so the affordance vanishes immediately rather
+        // than waiting for the next provider refresh tick — the next
+        // ``loadProviders`` will recompute the value from disk anyway.
+        setPermissionAllowed(true);
+      }
     } catch (e: any) {
       setPermissionState('error');
       const msg = e?.message || String(e);
@@ -686,9 +698,13 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                 </div>
               )}
 
-              {cliStatus === 'ok' && (
+              {/* Hide the Allow affordance once opencode.json carries
+                  ``permission: "allow"``. Until then show the strong
+                  copy that explains why the agent will stall without
+                  this setting. */}
+              {cliStatus === 'ok' && !permissionAllowed && (
                 <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-2.5">
-                  <p className="mb-2 text-[12px] text-gold">{t('agentDetection.permissionHint')}</p>
+                  <p className="mb-2 text-[12px] text-gold">{t('agentDetection.permissionHintStrong')}</p>
                   <div className="flex flex-wrap items-center gap-3">
                     <Button
                       variant="brand-gold"

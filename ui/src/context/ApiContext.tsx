@@ -330,6 +330,11 @@ export type OpencodeProviderListResult = {
   message?: string;
   providers?: OpencodeProvider[];
   default_provider?: string;
+  // True when ``opencode.json`` has ``permission: "allow"`` — the
+  // setting that lets OpenCode skip the interactive tool-call approval
+  // prompt Vibe Remote can't reply to. The Settings page hides the
+  // "Allow tool calls" affordance when this is already true.
+  permission_allowed?: boolean;
 };
 
 export type OpencodeMutationResult = {

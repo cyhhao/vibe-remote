@@ -2824,6 +2824,15 @@ async def _get_opencode_providers_async() -> dict:
     # can pre-fill the input ("sk-proj-•••H8mN") without leaking plaintext.
     # OAuth-type providers map to ``None`` and the UI skips the mask
     # block in that case.
+    #
+    # Reading auth.json directly also doubles as the source of truth for
+    # the "configured" badge: OpenCode 1.14.48 caches its in-memory
+    # ``connected`` list at server startup, so a freshly-saved provider
+    # stays absent from ``/provider``'s ``connected`` until the daemon
+    # restarts. Our ``configured`` flag therefore unions ``connected``
+    # with "has an entry in auth.json" (regardless of api vs oauth type),
+    # giving the user immediate feedback after Save without waiting for
+    # an OpenCode restart.
     try:
         from vibe.opencode_config import read_opencode_provider_keys
 
@@ -2838,6 +2847,7 @@ async def _get_opencode_providers_async() -> dict:
         masked = _mask_api_key(raw_key) if raw_key else None
         if masked:
             api_key_mask_index[pid_key] = masked
+    auth_file_provider_set: set = set(provider_keys.keys())
 
     out_providers = []
     for pid, entry in all_providers.items():
@@ -2850,7 +2860,11 @@ async def _get_opencode_providers_async() -> dict:
             for method in auth_methods_list
         )
         local = _is_local_provider(pid, auth_methods_list)
-        configured = pid in connected_set
+        # Union OpenCode's runtime ``connected`` list with auth.json
+        # presence so a fresh PUT /auth/<id> immediately reflects as
+        # configured — OpenCode caches ``connected`` and won't refresh
+        # without a daemon restart.
+        configured = pid in connected_set or pid in auth_file_provider_set
         models_for_provider = model_index.get(pid, {})
         provider_models = models_for_provider.get("models")
         if isinstance(provider_models, dict):
@@ -2883,10 +2897,20 @@ async def _get_opencode_providers_async() -> dict:
 
     out_providers.sort(key=lambda p: (not p["configured"], p["local"], p["id"]))
 
+    # Surface the current ``permission`` setting from opencode.json so the
+    # Settings page can hide the "Allow tool calls" affordance once it's
+    # already ``allow`` — and strengthen the copy when it isn't, since a
+    # missing/blocking setting silently makes every tool call wait for an
+    # approval prompt that Vibe Remote can't reply to.
+    permission_allowed = False
+    if opencode_probe is not None and isinstance(opencode_probe.config, dict):
+        permission_allowed = opencode_probe.config.get("permission") == "allow"
+
     return {
         "ok": True,
         "providers": out_providers,
         "default_provider": default_provider,
+        "permission_allowed": permission_allowed,
     }
 
 
