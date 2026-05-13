@@ -54,6 +54,7 @@ _refresh_locks: dict[str, threading.Lock] = {}
 _scheduled_refreshes_lock = threading.Lock()
 _scheduled_refreshes: set[str] = set()
 _migration_lock = threading.Lock()
+_legacy_migration_lock = threading.Lock()
 _migrated_db_paths: set[Path] = set()
 
 
@@ -528,6 +529,11 @@ def should_refresh(
 
 
 def migrate_legacy_discovered_chats(*, db_path: Path | None = None, legacy_path: Path | None = None) -> None:
+    with _legacy_migration_lock:
+        _migrate_legacy_discovered_chats_unlocked(db_path=db_path, legacy_path=legacy_path)
+
+
+def _migrate_legacy_discovered_chats_unlocked(*, db_path: Path | None = None, legacy_path: Path | None = None) -> None:
     marker = "migrations.discovered_chats_to_scopes"
     if get_state_meta(marker, db_path=db_path) == "done":
         return
@@ -539,6 +545,9 @@ def migrate_legacy_discovered_chats(*, db_path: Path | None = None, legacy_path:
 
     try:
         payload = json.loads(source.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        set_state_meta(marker, "done", db_path=db_path)
+        return
     except Exception as exc:
         logger.warning("Skipping malformed legacy discovered chats file %s: %s", source, exc)
         return
@@ -880,8 +889,17 @@ def _payload_native_type(native_type: str) -> str | int:
 
 
 def _rename_preserving_existing(source: Path, target: Path) -> None:
+    if not source.exists():
+        return
     if not target.exists():
-        source.rename(target)
+        try:
+            source.rename(target)
+        except FileNotFoundError:
+            return
+        return
+    try:
+        payload = source.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -890,7 +908,10 @@ def _rename_preserving_existing(source: Path, target: Path) -> None:
         delete=False,
         encoding="utf-8",
     ) as handle:
-        handle.write(source.read_text(encoding="utf-8"))
+        handle.write(payload)
         temp_path = Path(handle.name)
-    source.unlink()
+    try:
+        source.unlink()
+    except FileNotFoundError:
+        return
     logger.info("Legacy discovered chats file already migrated; preserved duplicate at %s", temp_path)

@@ -134,6 +134,16 @@ def test_legacy_discovered_chats_migration_is_idempotent(tmp_path: Path) -> None
     assert chat_discovery.get_state_meta("migrations.discovered_chats_to_scopes", db_path=db_path) == "done"
 
 
+def test_legacy_migration_rename_tolerates_missing_source(tmp_path: Path) -> None:
+    source = tmp_path / "discovered_chats.json"
+    target = tmp_path / "discovered_chats.json.migrated"
+
+    chat_discovery._rename_preserving_existing(source, target)
+
+    assert source.exists() is False
+    assert target.exists() is False
+
+
 def test_refresh_marks_absent_rows_not_returned_without_deleting_settings(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "vibe.sqlite"
     run_migrations(db_path)

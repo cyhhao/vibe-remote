@@ -106,6 +106,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [channels, setChannels] = useState<any[]>([]);
   const [browseAll, setBrowseAll] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
+  const channelLoadingCountsRef = useRef({ default: 0, all: 0 });
+  const allPlatformsLoadingCountRef = useRef(0);
   // Wizard multi-platform mode: show tabs instead of separate steps
   const isWizardMultiPlatform = !isPage && Array.isArray(wizardPlatforms) && wizardPlatforms.length > 1;
   const [wizardActivePlatform, setWizardActivePlatform] = useState(forcedPlatform || wizardPlatforms?.[0] || 'slack');
@@ -303,6 +305,36 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     return refreshFollowupVersionRef.current;
   };
 
+  const beginChannelLoading = (all: boolean) => {
+    const key: 'default' | 'all' = all ? 'all' : 'default';
+    channelLoadingCountsRef.current[key] += 1;
+    if (all) {
+      setLoadingAll(true);
+    } else {
+      setLoading(true);
+    }
+    return key;
+  };
+
+  const endChannelLoading = (key: 'default' | 'all') => {
+    channelLoadingCountsRef.current[key] = Math.max(0, channelLoadingCountsRef.current[key] - 1);
+    if (key === 'all') {
+      if (channelLoadingCountsRef.current.all === 0) setLoadingAll(false);
+    } else if (channelLoadingCountsRef.current.default === 0) {
+      setLoading(false);
+    }
+  };
+
+  const beginAllPlatformsLoading = () => {
+    allPlatformsLoadingCountRef.current += 1;
+    setAllLoading(true);
+  };
+
+  const endAllPlatformsLoading = () => {
+    allPlatformsLoadingCountRef.current = Math.max(0, allPlatformsLoadingCountRef.current - 1);
+    if (allPlatformsLoadingCountRef.current === 0) setAllLoading(false);
+  };
+
   useEffect(() => () => {
     invalidateRefreshFollowups();
   }, [platform, selectedGuild, pageTab, botToken, larkAppId, larkAppSecret, larkDomain]);
@@ -410,11 +442,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       return;
     }
     const isAll = all ?? browseAll;
-    if (isAll) {
-      setLoadingAll(true);
-    } else {
-      setLoading(true);
-    }
+    const loadingKey = beginChannelLoading(isAll);
     try {
       if (platform === 'lark') {
         const result = await api.larkChats(larkAppId, larkAppSecret, larkDomain, force);
@@ -434,7 +462,6 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
         }
       } else if (platform === 'discord') {
         if (!selectedGuild) {
-          setLoading(false);
           return;
         }
         const result = await api.discordChannels(botToken, selectedGuild, force);
@@ -458,10 +485,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     } catch (e) {
       console.error('Failed to load channels:', e);
     } finally {
-      if (refreshFollowupVersionRef.current === requestVersion) {
-        setLoading(false);
-        setLoadingAll(false);
-      }
+      endChannelLoading(loadingKey);
     }
   };
 
@@ -702,7 +726,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     const platforms = getEnabledPlatforms(config).filter((p) => platformSupportsChannels(config, p));
     if (platforms.length === 0) return;
     const requestVersion = invalidateRefreshFollowups();
-    setAllLoading(true);
+    beginAllPlatformsLoading();
     try {
       const results = await Promise.all(
         platforms.map(async (p) => {
@@ -764,9 +788,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       setAllConfigsByPlatform(configsByPlatform);
       if (results.some((r) => r.refreshing)) scheduleAllPlatformsRefreshFollowup();
     } finally {
-      if (refreshFollowupVersionRef.current === requestVersion) {
-        setAllLoading(false);
-      }
+      endAllPlatformsLoading();
     }
   };
 
