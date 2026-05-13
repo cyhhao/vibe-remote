@@ -587,6 +587,7 @@ def list_channels(bot_token: str, browse_all: bool = False, force: bool = False)
         "slack",
         bot_token=bot_token,
         browse_all=browse_all,
+        require_member=not browse_all,
         force=force,
     )
 

@@ -155,8 +155,17 @@ def _engine(db_path: Path | None = None):
     return create_sqlite_engine(_ensure_sqlite(db_path))
 
 
-def _refresh_state_key(platform: str) -> str:
-    return f"channel_refresh.{platform}"
+def _refresh_state_key(platform: str, refresh_scope: str | None = None) -> str:
+    key = f"channel_refresh.{platform}"
+    return f"{key}.{refresh_scope}" if refresh_scope else key
+
+
+def _refresh_scope_for(platform: str, kwargs: dict[str, Any]) -> str | None:
+    if platform == "discord":
+        guild_id = str(kwargs.get("guild_id") or "").strip()
+        if guild_id:
+            return f"guild.{guild_id}"
+    return None
 
 
 def get_state_meta(key: str, *, db_path: Path | None = None) -> Any:
@@ -183,8 +192,8 @@ def _set_state_meta(conn: Connection, key: str, value: Any, *, now: str) -> None
     conn.execute(state_meta.insert().values(key=key, value_json=_json_dumps(value), updated_at=now))
 
 
-def refresh_state(platform: str, *, db_path: Path | None = None) -> RefreshState:
-    payload = get_state_meta(_refresh_state_key(platform), db_path=db_path)
+def refresh_state(platform: str, *, refresh_scope: str | None = None, db_path: Path | None = None) -> RefreshState:
+    payload = get_state_meta(_refresh_state_key(platform, refresh_scope), db_path=db_path)
     if not isinstance(payload, dict):
         return RefreshState()
     return RefreshState(
@@ -194,10 +203,17 @@ def refresh_state(platform: str, *, db_path: Path | None = None) -> RefreshState
     )
 
 
-def _write_refresh_state(conn: Connection, platform: str, state: RefreshState, *, now: str) -> None:
+def _write_refresh_state(
+    conn: Connection,
+    platform: str,
+    state: RefreshState,
+    *,
+    now: str,
+    refresh_scope: str | None = None,
+) -> None:
     _set_state_meta(
         conn,
-        _refresh_state_key(platform),
+        _refresh_state_key(platform, refresh_scope),
         asdict(state),
         now=now,
     )
@@ -373,9 +389,10 @@ def refresh_platform(
     **kwargs: Any,
 ) -> RefreshResult:
     platform = str(platform)
-    lock = _refresh_lock(platform)
+    refresh_scope = _refresh_scope_for(platform, kwargs)
+    lock = _refresh_lock(platform, refresh_scope)
     with lock:
-        existing_state = refresh_state(platform, db_path=db_path)
+        existing_state = refresh_state(platform, refresh_scope=refresh_scope, db_path=db_path)
         if not force and _seconds_since(existing_state.last_attempt_at) < _MIN_REFRESH_INTERVAL_SECONDS:
             return RefreshResult(ok=True, refresh_state=existing_state)
 
@@ -392,6 +409,7 @@ def refresh_platform(
                         last_error=None,
                     ),
                     now=now,
+                    refresh_scope=refresh_scope,
                 )
         finally:
             engine.dispose()
@@ -406,7 +424,7 @@ def refresh_platform(
                 last_success_at=existing_state.last_success_at,
                 last_error=error,
             )
-            _store_refresh_state(platform, failed, db_path=db_path)
+            _store_refresh_state(platform, failed, refresh_scope=refresh_scope, db_path=db_path)
             return RefreshResult(ok=False, refresh_state=failed, error=error)
 
         success_at = _utc_now_iso()
@@ -449,14 +467,20 @@ def refresh_platform(
                     parent_scope_id=refreshed_parent,
                 )
                 state = RefreshState(last_attempt_at=now, last_success_at=success_at, last_error=None)
-                _write_refresh_state(conn, platform, state, now=success_at)
+                _write_refresh_state(conn, platform, state, now=success_at, refresh_scope=refresh_scope)
                 return RefreshResult(ok=True, refresh_state=state)
         finally:
             engine.dispose()
 
 
-def should_refresh(platform: str, *, db_path: Path | None = None, ttl_seconds: float = _REFRESH_TTL_SECONDS) -> bool:
-    state = refresh_state(platform, db_path=db_path)
+def should_refresh(
+    platform: str,
+    *,
+    refresh_scope: str | None = None,
+    db_path: Path | None = None,
+    ttl_seconds: float = _REFRESH_TTL_SECONDS,
+) -> bool:
+    state = refresh_state(platform, refresh_scope=refresh_scope, db_path=db_path)
     return _seconds_since(state.last_success_at) >= ttl_seconds
 
 
@@ -506,14 +530,16 @@ def channels_response(
     *,
     force: bool = False,
     include_private: bool = True,
+    require_member: bool = False,
     parent_scope_id: str | None = None,
     db_path: Path | None = None,
     **refresh_kwargs: Any,
 ) -> dict[str, Any]:
     migrate_legacy_discovered_chats(db_path=db_path)
+    refresh_scope = _refresh_scope_for(platform, refresh_kwargs)
     all_chats = list_chats(platform, include_private=True, parent_scope_id=parent_scope_id, db_path=db_path)
-    chats = all_chats if include_private else [chat for chat in all_chats if not chat.is_private]
-    state = refresh_state(platform, db_path=db_path)
+    chats = _filter_response_chats(all_chats, include_private=include_private, require_member=require_member)
+    state = refresh_state(platform, refresh_scope=refresh_scope, db_path=db_path)
     refreshing = False
     error = state.last_error
 
@@ -523,8 +549,8 @@ def channels_response(
         state = result.refresh_state
         error = result.error
         all_chats = list_chats(platform, include_private=True, parent_scope_id=parent_scope_id, db_path=db_path)
-        chats = all_chats if include_private else [chat for chat in all_chats if not chat.is_private]
-    elif can_refresh and should_refresh(platform, db_path=db_path):
+        chats = _filter_response_chats(all_chats, include_private=include_private, require_member=require_member)
+    elif can_refresh and should_refresh(platform, refresh_scope=refresh_scope, db_path=db_path):
         _schedule_refresh(platform, db_path=db_path, **refresh_kwargs)
         refreshing = True
 
@@ -678,21 +704,28 @@ def _channel_sort_key(chat: ChannelInfo) -> tuple[int, int, str, str]:
     return (visibility_rank, configured_rank, (chat.name or chat.chat_id).lower(), chat.chat_id)
 
 
-def _refresh_lock(platform: str) -> threading.Lock:
+def _refresh_lock(platform: str, refresh_scope: str | None = None) -> threading.Lock:
+    key = _refresh_state_key(platform, refresh_scope)
     with _refresh_locks_lock:
-        lock = _refresh_locks.get(platform)
+        lock = _refresh_locks.get(key)
         if lock is None:
             lock = threading.Lock()
-            _refresh_locks[platform] = lock
+            _refresh_locks[key] = lock
         return lock
 
 
-def _store_refresh_state(platform: str, state: RefreshState, *, db_path: Path | None = None) -> None:
+def _store_refresh_state(
+    platform: str,
+    state: RefreshState,
+    *,
+    refresh_scope: str | None = None,
+    db_path: Path | None = None,
+) -> None:
     now = _utc_now_iso()
     engine = _engine(db_path)
     try:
         with engine.begin() as conn:
-            _write_refresh_state(conn, platform, state, now=now)
+            _write_refresh_state(conn, platform, state, now=now, refresh_scope=refresh_scope)
     finally:
         engine.dispose()
 
@@ -713,6 +746,20 @@ def _summary(all_chats: list[ChannelInfo], visible_chats: list[ChannelInfo], *, 
         "hidden_private_count": 0 if include_private else sum(1 for chat in all_chats if chat.is_private),
         "forum_count": sum(1 for chat in visible_chats if bool(chat.metadata.get(METADATA_SUPPORTS_TOPICS))),
     }
+
+
+def _filter_response_chats(
+    chats: list[ChannelInfo],
+    *,
+    include_private: bool,
+    require_member: bool,
+) -> list[ChannelInfo]:
+    result = chats
+    if not include_private:
+        result = [chat for chat in result if not chat.is_private]
+    if require_member:
+        result = [chat for chat in result if chat.is_member is True]
+    return result
 
 
 def _rename_preserving_existing(source: Path, target: Path) -> None:

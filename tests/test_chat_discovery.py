@@ -153,3 +153,60 @@ def test_refresh_failure_keeps_stale_cache_and_records_error(tmp_path: Path, mon
     assert response["ok"] is True
     assert response["channels"][0]["id"] == "C_KEEP"
     assert response["error"] == "boom"
+
+
+def test_slack_cached_response_respects_member_only_browse_mode(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    chat_discovery.remember_chat(
+        "slack",
+        "C_MEMBER",
+        name="member",
+        metadata={chat_discovery.METADATA_IS_MEMBER: True},
+        db_path=db_path,
+    )
+    chat_discovery.remember_chat(
+        "slack",
+        "C_OTHER",
+        name="other",
+        metadata={chat_discovery.METADATA_IS_MEMBER: False},
+        db_path=db_path,
+    )
+    chat_discovery.set_state_meta(
+        "channel_refresh.slack",
+        {"last_attempt_at": "2999-01-01T00:00:00+00:00", "last_success_at": "2999-01-01T00:00:00+00:00", "last_error": None},
+        db_path=db_path,
+    )
+
+    member_only = chat_discovery.channels_response("slack", require_member=True, bot_token="x", db_path=db_path)
+    browse_all = chat_discovery.channels_response("slack", require_member=False, bot_token="x", db_path=db_path)
+
+    assert [channel["id"] for channel in member_only["channels"]] == ["C_MEMBER"]
+    assert {channel["id"] for channel in browse_all["channels"]} == {"C_MEMBER", "C_OTHER"}
+
+
+def test_discord_refresh_state_is_scoped_by_guild(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    run_migrations(db_path)
+    calls: list[str] = []
+
+    from vibe import api
+
+    def fake_discord_channels(_token: str, guild_id: str) -> dict:
+        calls.append(guild_id)
+        return {
+            "ok": True,
+            "channels": [{"id": f"C_{guild_id}", "name": f"channel-{guild_id}", "type": 0}],
+        }
+
+    monkeypatch.setattr(api, "discord_list_channels_live", fake_discord_channels)
+
+    first = chat_discovery.refresh_platform("discord", bot_token="x", guild_id="G1", db_path=db_path)
+    second = chat_discovery.refresh_platform("discord", bot_token="x", guild_id="G2", db_path=db_path)
+
+    assert first.ok is True
+    assert second.ok is True
+    assert calls == ["G1", "G2"]
+    assert chat_discovery.refresh_state("discord", refresh_scope="guild.G1", db_path=db_path).last_success_at is not None
+    assert chat_discovery.refresh_state("discord", refresh_scope="guild.G2", db_path=db_path).last_success_at is not None
+    assert chat_discovery.refresh_state("discord", db_path=db_path).last_success_at is None
