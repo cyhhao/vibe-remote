@@ -2430,8 +2430,14 @@ def remove_backend_api_key(backend: str) -> dict:
             if target is not None:
                 target.auth_mode = "oauth"
                 target.api_key = None
-                if backend == "codex":
-                    target.base_url = None
+                # Drop base_url for both backends, not just Codex: a
+                # stale Claude relay URL stored in V2Config gets
+                # injected into the subprocess as ``ANTHROPIC_BASE_URL``
+                # on every launch via ``build_claude_subprocess_env``.
+                # After removing an API key (intent: fall back to
+                # OAuth), the OAuth credentials would still be routed
+                # to the api-key-only relay and silently 401.
+                target.base_url = None
                 config.save()
     except Exception as exc:  # noqa: BLE001
         logger.warning("V2Config clear during remove-key failed for %s: %s", backend, exc)

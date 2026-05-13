@@ -313,6 +313,20 @@ def apply_codex_auth(
         if not api_key:
             raise ValueError("api_key is required when auth_mode='api_key'")
         auth_data["OPENAI_API_KEY"] = api_key
+        # Codex routes auth via ``auth.json``'s ``auth_mode`` field:
+        # ``"apikey"`` → use OPENAI_API_KEY, ``"chatgpt"`` → use
+        # ``tokens`` (OAuth). Without this line, a user who previously
+        # signed in via OAuth keeps ``auth_mode = "chatgpt"`` on disk
+        # and Codex sends their old ChatGPT bearer to the configured
+        # base_url despite our managed API key being present — a
+        # custom relay rejects it as ``INVALID_API_KEY``.
+        auth_data["auth_mode"] = "apikey"
+        # Drop the OAuth blob: the user explicitly chose API key, so
+        # the ChatGPT tokens are stale and shouldn't linger in the file
+        # where ``codex login`` would treat them as live. ``codex login
+        # --with-api-key`` itself wipes these on switch — match that.
+        auth_data.pop("tokens", None)
+        auth_data.pop("last_refresh", None)
         # Only steer ``model_provider`` to our managed entry when the
         # field is unset or still points at one of our legacy / current
         # managed names. If the user has aimed it at a hand-rolled
@@ -330,12 +344,34 @@ def apply_codex_auth(
         # has one. See CREDENTIALS_STORE_KEY for the rationale.
         toml_data[CREDENTIALS_STORE_KEY] = CREDENTIALS_STORE_FILE
         managed.setdefault("name", "OpenAI")
+        # Match the wire_api the modern Codex CLI uses internally for
+        # api_key requests. Without explicitly setting this, the CLI
+        # may fall back to the legacy ``chat`` shape — fine against
+        # ``api.openai.com`` (which serves both endpoints) but the
+        # common custom relays (e.g. ai-relay.chainbot.io) only speak
+        # the Responses API and return 404 / wire-shape errors.
+        managed.setdefault("wire_api", "responses")
+        # Ensure the Bearer header is sent when the request travels
+        # through the user's relay. The default is reasonable but
+        # being explicit avoids a class of failures where Codex omits
+        # auth on custom providers (silent 401 on the relay).
+        managed.setdefault("requires_openai_auth", True)
         if base_url:
             managed["base_url"] = base_url
         else:
             managed.pop("base_url", None)
     else:  # oauth
         auth_data.pop("OPENAI_API_KEY", None)
+        # Flip auth_mode back to chatgpt when OAuth tokens still exist
+        # on disk — otherwise Codex sees a stale ``"apikey"`` value and
+        # rejects the request even though tokens are present. If no
+        # tokens are around (e.g. user removed the key without ever
+        # signing in to OAuth), clear ``auth_mode`` so the CLI prompts
+        # for ``codex login`` rather than failing opaquely.
+        if isinstance(auth_data.get("tokens"), dict) and auth_data["tokens"]:
+            auth_data["auth_mode"] = "chatgpt"
+        else:
+            auth_data.pop("auth_mode", None)
         # Leave cli_auth_credentials_store as-is — switching back to
         # ChatGPT/OAuth is the user's responsibility via ``codex login``
         # (which may legitimately want keyring storage); we just stop

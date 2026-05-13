@@ -1557,10 +1557,18 @@ class AgentAuthService:
                     with CONFIG_LOCK:
                         target.auth_mode = "oauth"
                         target.api_key = None
+                        # Drop the relay base_url too: if the user
+                        # signed in via OAuth after this, the stored
+                        # base_url would still get injected as
+                        # ``ANTHROPIC_BASE_URL`` / Codex provider
+                        # override, sending OAuth requests to a relay
+                        # that only accepts API keys (401).
+                        target.base_url = None
                         saver()
                 except ImportError:
                     target.auth_mode = "oauth"
                     target.api_key = None
+                    target.base_url = None
                     saver()
         except Exception as err:  # noqa: BLE001
             # Disk state has already been cleared; surface the V2Config
