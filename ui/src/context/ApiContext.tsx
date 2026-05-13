@@ -333,6 +333,12 @@ export type OpencodeProvider = {
   // user can see at a glance which providers have a stored key without
   // having to expand each card.
   api_key_masked?: string | null;
+  // ``api`` / ``oauth`` / null — the auth type currently stored for the
+  // provider. OpenCode's ``auth.json`` only carries ONE entry per
+  // provider at a time, so this is also the type that will be used at
+  // launch. Lets the UI badge dual-mode providers (e.g. openai) with
+  // which source is live, instead of leaving the user guessing.
+  active_auth_type?: 'api' | 'oauth' | string | null;
 };
 
 export type OpencodeProviderListResult = {

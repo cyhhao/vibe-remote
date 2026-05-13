@@ -1638,25 +1638,36 @@ class AgentAuthService:
     async def _opencode_server(self):
         """Lazy lookup of the live OpenCode server client.
 
-        The web auth service runs in the UI process (no controller-level
-        ``agent_service``), so we go through ``OpenCodeServer.get_instance``
-        rather than ``self.controller.agent_service.agents['opencode']``.
-        Falls back to ``None`` if OpenCode is disabled in V2Config — the
-        caller then surfaces a ``failed`` flow state with a clear reason.
+        Mirrors ``vibe.api._opencode_get_server`` rather than the IM
+        controller's ``agent_service.agents['opencode']`` (the web auth
+        service runs in the UI process — there is no controller-level
+        agent_service). Returns ``None`` when OpenCode is disabled in
+        V2Config so the caller can surface a typed error.
         """
         try:
-            from modules.agents.opencode.server import OpenCodeServer
+            from config.v2_compat import to_app_config
+            from config.v2_config import V2Config
+            from modules.agents.opencode import OpenCodeServerManager
         except ImportError:
             return None
-        config = getattr(self.controller, "config", None)
-        agents_cfg = getattr(config, "agents", None) if config is not None else None
-        opencode_cfg = getattr(agents_cfg, "opencode", None) if agents_cfg is not None else None
-        if opencode_cfg is None or not getattr(opencode_cfg, "enabled", False):
+        try:
+            compat = to_app_config(V2Config.load())
+        except Exception as err:  # noqa: BLE001
+            logger.warning("V2Config.load failed in web OAuth path: %s", err)
+            return None
+        opencode_cfg = getattr(compat, "opencode", None)
+        if opencode_cfg is None:
             return None
         try:
-            return await OpenCodeServer.get_instance(opencode_cfg)
+            server = await OpenCodeServerManager.get_instance(
+                binary=opencode_cfg.binary,
+                port=opencode_cfg.port,
+                request_timeout_seconds=opencode_cfg.request_timeout_seconds,
+            )
+            await server.ensure_running()
+            return server
         except Exception as err:  # noqa: BLE001
-            logger.warning("OpenCodeServer.get_instance failed for web OAuth: %s", err)
+            logger.warning("OpenCodeServerManager.get_instance failed for web OAuth: %s", err)
             return None
 
     async def _resolve_opencode_oauth_method(

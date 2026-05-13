@@ -224,6 +224,8 @@
       "opencodeFilterOauth": "支持 OAuth",
       "opencodeFilterLocal": "本地",
       "opencodeBadgeConfigured": "已配置",
+      "opencodeBadgeConfiguredApiKey": "API Key",
+      "opencodeBadgeConfiguredOauth": "OAuth",
       "opencodeBadgeOauth": "支持 OAuth",
       "opencodeBadgeLocal": "本地",
       "opencodeBadgeUnset": "未配置",

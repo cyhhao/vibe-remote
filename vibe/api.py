@@ -2831,34 +2831,39 @@ async def _get_opencode_providers_async() -> dict:
                 if isinstance(candidate, str) and candidate.strip():
                     base_url_index[pid_key] = candidate.strip()
 
-    # Per-provider stored API keys, masked server-side so the Settings UI
-    # can pre-fill the input ("sk-proj-•••H8mN") without leaking plaintext.
-    # OAuth-type providers map to ``None`` and the UI skips the mask
-    # block in that case.
-    #
-    # Reading auth.json directly also doubles as the source of truth for
-    # the "configured" badge: OpenCode 1.14.48 caches its in-memory
-    # ``connected`` list at server startup, so a freshly-saved provider
-    # stays absent from ``/provider``'s ``connected`` until the daemon
-    # restarts. Our ``configured`` flag therefore unions ``connected``
-    # with "has an entry in auth.json" (regardless of api vs oauth type),
-    # giving the user immediate feedback after Save without waiting for
-    # an OpenCode restart.
+    # Per-provider stored credentials, masked server-side so the
+    # Settings UI can pre-fill the API Key input
+    # ("sk-proj-•••H8mN") without leaking plaintext, and badge each
+    # provider with the *active* auth source (``api`` / ``oauth`` /
+    # absent). OpenCode 1.14 caches its in-memory ``connected`` list
+    # at server startup so we treat auth.json as authoritative for
+    # what the user has explicitly configured — both for save (cache
+    # is stale → auth.json wins as "yes") and remove (cache is stale
+    # → auth.json absence wins as "no, the user removed it").
     try:
-        from vibe.opencode_config import read_opencode_provider_keys
+        from vibe.opencode_config import read_opencode_provider_auth_entries
 
-        provider_keys = await asyncio.to_thread(
-            read_opencode_provider_keys, logger_instance=logger
+        auth_entries = await asyncio.to_thread(
+            read_opencode_provider_auth_entries, logger_instance=logger
         )
     except Exception as exc:
         logger.debug("Could not read OpenCode auth.json for masked keys: %s", exc)
-        provider_keys = {}
+        auth_entries = {}
     api_key_mask_index: dict = {}
-    for pid_key, raw_key in provider_keys.items():
-        masked = _mask_api_key(raw_key) if raw_key else None
-        if masked:
-            api_key_mask_index[pid_key] = masked
-    auth_file_provider_set: set = set(provider_keys.keys())
+    active_auth_type_index: dict = {}
+    for pid_key, entry in auth_entries.items():
+        entry_type = entry.get("type") if isinstance(entry, dict) else None
+        if entry_type == "api":
+            raw_key = entry.get("key") if isinstance(entry, dict) else None
+            masked = _mask_api_key(raw_key) if raw_key else None
+            if masked:
+                api_key_mask_index[pid_key] = masked
+            active_auth_type_index[pid_key] = "api"
+        elif entry_type == "oauth":
+            active_auth_type_index[pid_key] = "oauth"
+        elif entry_type:
+            active_auth_type_index[pid_key] = entry_type
+    auth_file_provider_set: set = set(auth_entries.keys())
 
     out_providers = []
     for pid, entry in all_providers.items():
@@ -2871,11 +2876,19 @@ async def _get_opencode_providers_async() -> dict:
             for method in auth_methods_list
         )
         local = _is_local_provider(pid, auth_methods_list)
-        # Union OpenCode's runtime ``connected`` list with auth.json
-        # presence so a fresh PUT /auth/<id> immediately reflects as
-        # configured — OpenCode caches ``connected`` and won't refresh
-        # without a daemon restart.
-        configured = pid in connected_set or pid in auth_file_provider_set
+        # Authoritative source for the "configured" badge:
+        # - If auth.json carries an entry → configured (user explicitly
+        #   set it up, even if OpenCode's cache hasn't caught up yet).
+        # - If auth.json is empty AND ``connected`` lists it → configured
+        #   only when ``local`` (Ollama / LM Studio don't need keys).
+        #   Otherwise treat ``connected`` as stale — the user just
+        #   removed the key and the daemon hasn't restarted yet.
+        if pid in auth_file_provider_set:
+            configured = True
+        elif local and pid in connected_set:
+            configured = True
+        else:
+            configured = False
         models_for_provider = model_index.get(pid, {})
         provider_models = models_for_provider.get("models")
         if isinstance(provider_models, dict):
@@ -2903,6 +2916,11 @@ async def _get_opencode_providers_async() -> dict:
                 "default_model": default_model,
                 "base_url": base_url_index.get(pid),
                 "api_key_masked": api_key_mask_index.get(pid),
+                # ``api`` / ``oauth`` / null — the type the daemon will
+                # actually use at launch. Lets the UI badge the right
+                # source for dual-mode providers (e.g. openai supports
+                # both, but only one entry lives in auth.json at a time).
+                "active_auth_type": active_auth_type_index.get(pid),
             }
         )
 
@@ -3055,12 +3073,26 @@ def save_opencode_provider_auth(provider_id: str, payload: dict) -> dict:
             return {"ok": False, "message": "base_url must be a string"}
 
     try:
-        return asyncio.run(
+        result = asyncio.run(
             _save_opencode_provider_auth_async(provider_id.strip(), api_key, base_url)
         )
     except Exception as exc:
         logger.warning("OpenCode set-auth failed for %s: %s", provider_id, exc, exc_info=True)
         return {"ok": False, "message": str(exc)}
+
+    # Ask the live controller to refresh the OpenCode server so the
+    # daemon's in-memory ``connected`` cache picks up the new auth.
+    # Without this, ``GET /provider`` keeps returning the pre-save
+    # state until OpenCode restarts on its own (typically next idle
+    # cleanup cycle). The restart is best-effort: we report it under a
+    # separate ``restart`` key so the UI can show "saved, but daemon
+    # refresh failed" when applicable.
+    try:
+        result["restart"] = restart_backend("opencode")
+    except Exception as exc:
+        logger.warning("OpenCode auto-restart after save failed for %s: %s", provider_id, exc)
+        result["restart"] = {"ok": False, "message": str(exc)}
+    return result
 
 
 async def _delete_opencode_provider_auth_async(provider_id: str) -> dict:
@@ -3076,14 +3108,28 @@ async def _delete_opencode_provider_auth_async(provider_id: str) -> dict:
 
 
 def delete_opencode_provider_auth(provider_id: str) -> dict:
-    """Drop a single provider's stored credentials."""
+    """Drop a single provider's stored credentials.
+
+    Same restart pattern as save: the daemon caches ``connected`` at
+    startup, so a fresh DELETE on ``/auth/<id>`` doesn't flip the
+    runtime state until the daemon restarts. We trigger
+    ``restart_backend("opencode")`` so the UI's next refresh reflects
+    reality. The restart status comes back under ``restart`` so the
+    page can warn on "removed, but daemon refresh failed".
+    """
     if not isinstance(provider_id, str) or not provider_id.strip():
         return {"ok": False, "message": "provider_id is required"}
     try:
-        return asyncio.run(_delete_opencode_provider_auth_async(provider_id.strip()))
+        result = asyncio.run(_delete_opencode_provider_auth_async(provider_id.strip()))
     except Exception as exc:
         logger.warning("OpenCode delete-auth failed for %s: %s", provider_id, exc, exc_info=True)
         return {"ok": False, "message": str(exc)}
+    try:
+        result["restart"] = restart_backend("opencode")
+    except Exception as exc:
+        logger.warning("OpenCode auto-restart after delete failed for %s: %s", provider_id, exc)
+        result["restart"] = {"ok": False, "message": str(exc)}
+    return result
 
 
 def set_opencode_default_provider(payload: dict) -> dict:

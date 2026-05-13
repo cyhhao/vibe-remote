@@ -607,6 +607,32 @@ def read_opencode_provider_keys(
     not treat that as an error since OpenCode lazily creates the file
     on first ``PUT /auth/<id>`` call.
     """
+    entries = read_opencode_provider_auth_entries(
+        home=home, logger_instance=logger_instance
+    )
+    out: Dict[str, Optional[str]] = {}
+    for provider_id, entry in entries.items():
+        if entry.get("type") == "api":
+            key = entry.get("key")
+            out[provider_id] = key if isinstance(key, str) and key else None
+        else:
+            out[provider_id] = None
+    return out
+
+
+def read_opencode_provider_auth_entries(
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Return the raw ``auth.json`` entries keyed by provider_id.
+
+    Useful when callers need both the ``type`` (``"api"`` / ``"oauth"`` /
+    other) AND the optional key — the Settings UI surfaces "currently
+    active: OAuth" / "API key" badges from the ``type`` field. Plaintext
+    secrets stay in process; ``vibe.api.get_opencode_providers`` masks
+    or strips before serialising.
+    """
     active_logger = logger_instance or logger
     path = get_opencode_auth_path(home)
     if not path.exists():
@@ -618,15 +644,11 @@ def read_opencode_provider_keys(
         return {}
     if not isinstance(data, dict):
         return {}
-    out: Dict[str, Optional[str]] = {}
+    out: Dict[str, Dict[str, Any]] = {}
     for provider_id, entry in data.items():
         if not isinstance(provider_id, str) or not isinstance(entry, dict):
             continue
-        if entry.get("type") == "api":
-            key = entry.get("key")
-            out[provider_id] = key if isinstance(key, str) and key else None
-        else:
-            out[provider_id] = None
+        out[provider_id] = entry
     return out
 
 

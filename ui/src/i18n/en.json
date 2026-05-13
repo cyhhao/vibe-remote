@@ -224,6 +224,8 @@
       "opencodeFilterOauth": "OAuth available",
       "opencodeFilterLocal": "Local",
       "opencodeBadgeConfigured": "Configured",
+      "opencodeBadgeConfiguredApiKey": "API Key",
+      "opencodeBadgeConfiguredOauth": "OAuth",
       "opencodeBadgeOauth": "OAuth available",
       "opencodeBadgeLocal": "Local",
       "opencodeBadgeUnset": "Not set",

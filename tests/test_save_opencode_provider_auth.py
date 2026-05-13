@@ -68,7 +68,10 @@ def test_base_url_absent_leaves_existing_value_untouched(fake_save_env) -> None:
     # Caller re-saves just the api_key: this used to wipe baseURL because
     # the server treated "absent" the same as "empty".
     result = _save("openai", {"api_key": "sk-new"})
-    assert result == {"ok": True}
+    # Save now also triggers ``restart_backend("opencode")`` so the
+    # daemon's in-memory cache picks up the new auth; ignore the
+    # ``restart`` key for the per-field assertions below.
+    assert result.get("ok") is True
     assert ("openai", "sk-new") in server.set_calls
     assert (
         read_opencode_provider_base_url("openai", home=home)
@@ -86,7 +89,10 @@ def test_base_url_explicit_empty_clears_stored_value(fake_save_env) -> None:
     upsert_opencode_provider_base_url("openai", "https://stale.example", home=home)
 
     result = _save("openai", {"api_key": "sk-new", "base_url": ""})
-    assert result == {"ok": True}
+    # Save now also triggers ``restart_backend("opencode")`` so the
+    # daemon's in-memory cache picks up the new auth; ignore the
+    # ``restart`` key for the per-field assertions below.
+    assert result.get("ok") is True
     assert read_opencode_provider_base_url("openai", home=home) is None
 
 
@@ -100,7 +106,10 @@ def test_base_url_explicit_whitespace_clears_stored_value(fake_save_env) -> None
     upsert_opencode_provider_base_url("openai", "https://stale.example", home=home)
 
     result = _save("openai", {"api_key": "sk-new", "base_url": "   "})
-    assert result == {"ok": True}
+    # Save now also triggers ``restart_backend("opencode")`` so the
+    # daemon's in-memory cache picks up the new auth; ignore the
+    # ``restart`` key for the per-field assertions below.
+    assert result.get("ok") is True
     assert read_opencode_provider_base_url("openai", home=home) is None
 
 
@@ -112,7 +121,10 @@ def test_base_url_persists_when_provided(fake_save_env) -> None:
         "openai",
         {"api_key": "sk-new", "base_url": "https://relay.example/v1"},
     )
-    assert result == {"ok": True}
+    # Save now also triggers ``restart_backend("opencode")`` so the
+    # daemon's in-memory cache picks up the new auth; ignore the
+    # ``restart`` key for the per-field assertions below.
+    assert result.get("ok") is True
     assert (
         read_opencode_provider_base_url("openai", home=home)
         == "https://relay.example/v1"
@@ -157,7 +169,10 @@ def test_base_url_null_clears_stored_value(fake_save_env) -> None:
     server, home = fake_save_env
     upsert_opencode_provider_base_url("openai", "https://stale.example", home=home)
     result = _save("openai", {"api_key": "sk-new", "base_url": None})
-    assert result == {"ok": True}
+    # Save now also triggers ``restart_backend("opencode")`` so the
+    # daemon's in-memory cache picks up the new auth; ignore the
+    # ``restart`` key for the per-field assertions below.
+    assert result.get("ok") is True
     assert read_opencode_provider_base_url("openai", home=home) is None
 
 

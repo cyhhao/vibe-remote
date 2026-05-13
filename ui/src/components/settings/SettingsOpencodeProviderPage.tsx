@@ -554,10 +554,20 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
   // signal first.
   const renderProviderBadge = (provider: OpencodeProvider) => {
     if (provider.configured) {
+      // Show *which* auth source is live so the user can distinguish
+      // OAuth-signed-in from API-key-saved without expanding the card.
+      // Dual-mode providers (openai supports both) carry only one entry
+      // in auth.json at a time, so this matches what OpenCode uses.
+      const activeLabel =
+        provider.active_auth_type === 'oauth'
+          ? t('settings.backends.opencodeBadgeConfiguredOauth')
+          : provider.active_auth_type === 'api'
+          ? t('settings.backends.opencodeBadgeConfiguredApiKey')
+          : t('settings.backends.opencodeBadgeConfigured');
       return (
         <Badge variant="success" className="gap-1">
           <Check className="size-3" />
-          {t('settings.backends.opencodeBadgeConfigured')}
+          {activeLabel}
         </Badge>
       );
     }
