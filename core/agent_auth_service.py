@@ -1613,11 +1613,21 @@ class AgentAuthService:
                         # override, sending OAuth requests to a relay
                         # that only accepts API keys (401).
                         target.base_url = None
+                        # Sign out is an explicit user choice — flip
+                        # the marker so ``build_claude_subprocess_env``
+                        # honors ``auth_mode == "oauth"`` strictly
+                        # and strips inherited ``ANTHROPIC_*`` env vars
+                        # (Codex-only field; setattr is a no-op for
+                        # other backends).
+                        if backend == "claude":
+                            target.auth_mode_set = True
                         saver()
                 except ImportError:
                     target.auth_mode = "oauth"
                     target.api_key = None
                     target.base_url = None
+                    if backend == "claude":
+                        target.auth_mode_set = True
                     saver()
         except Exception as err:  # noqa: BLE001
             # Disk state has already been cleared; surface the V2Config
@@ -2395,16 +2405,33 @@ class AgentAuthService:
             saver = getattr(config, "save", None) if config is not None else None
             if target is None or not callable(saver):
                 return
-            if getattr(target, "auth_mode", None) == auth_mode:
+            # An explicit OAuth save must also flip ``auth_mode_set``
+            # for Claude — otherwise a successful OAuth flow on a
+            # legacy install never trips the marker (auth_mode was
+            # already "oauth" from the schema default), so
+            # ``build_claude_subprocess_env`` keeps preserving env-var
+            # auth and the OAuth credentials are ignored at launch.
+            needs_mode_write = getattr(target, "auth_mode", None) != auth_mode
+            needs_marker_write = (
+                backend == "claude"
+                and not bool(getattr(target, "auth_mode_set", False))
+            )
+            if not needs_mode_write and not needs_marker_write:
                 return
             try:
                 from config.v2_config import CONFIG_LOCK
 
                 with CONFIG_LOCK:
-                    target.auth_mode = auth_mode
+                    if needs_mode_write:
+                        target.auth_mode = auth_mode
+                    if needs_marker_write:
+                        target.auth_mode_set = True
                     saver()
             except ImportError:
-                target.auth_mode = auth_mode
+                if needs_mode_write:
+                    target.auth_mode = auth_mode
+                if needs_marker_write:
+                    target.auth_mode_set = True
                 saver()
         except Exception as err:  # noqa: BLE001
             logger.warning(

@@ -235,24 +235,28 @@ def build_claude_subprocess_env(
     auth_mode = getattr(claude_cfg, "auth_mode", "oauth")
     configured_key_raw = (getattr(claude_cfg, "api_key", None) or "").strip()
     configured_base = (getattr(claude_cfg, "base_url", None) or "").strip()
+    # ``auth_mode_set`` is False on V2 configs that predate the Settings
+    # → Backends → Claude page (or that the user has simply never
+    # opened). On those installs the user is running on shell-exported
+    # ``ANTHROPIC_*`` vars and we must preserve them — stripping would
+    # break working legacy deployments. Once the user saves any auth
+    # choice through Settings (api_key save, OAuth save, Sign out,
+    # Remove key), the writer flips this to True and we honor
+    # ``auth_mode`` strictly.
+    auth_mode_set = bool(getattr(claude_cfg, "auth_mode_set", False))
 
     if auth_mode == "oauth":
-        # ``ClaudeConfig.auth_mode`` defaults to ``"oauth"`` in the
-        # schema, so an upgraded install that never touched the new
-        # Settings UI ends up here too — even though the user is still
-        # running on env-var auth (legacy path: ``ANTHROPIC_API_KEY``
-        # exported from the shell). Stripping in that case would break
-        # working deployments. Only strip when there is some explicit
-        # signal that the user has committed to OAuth via the new UI:
-        # a stored ``api_key`` (always None in oauth mode, kept as a
-        # safety check) or a stored ``base_url`` (set by an api_key →
-        # oauth transition where we preserved the relay URL). When
-        # nothing is stored, treat the config as legacy / unset and
-        # forward whatever the shell exported.
-        has_explicit_signal = bool(configured_key_raw) or bool(configured_base)
-        if has_explicit_signal:
+        if auth_mode_set:
+            # Explicit OAuth pick from the UI: Claude Code must read
+            # credentials from ``~/.claude/credentials.json``. Strip
+            # any inherited API-key / bearer-token vars so they can't
+            # suppress that path. Covers the "Sign out", "Remove
+            # key", and "save OAuth with cleared fields" flows that
+            # all land here with both ``api_key`` and ``base_url``
+            # already empty.
             claude_env.pop("ANTHROPIC_API_KEY", None)
             claude_env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        # else: legacy install — preserve inherited env vars verbatim.
     elif auth_mode == "api_key":
         if configured_key_raw:
             claude_env["ANTHROPIC_API_KEY"] = configured_key_raw

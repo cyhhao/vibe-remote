@@ -2452,6 +2452,12 @@ def remove_backend_api_key(backend: str) -> dict:
                 # OAuth), the OAuth credentials would still be routed
                 # to the api-key-only relay and silently 401.
                 target.base_url = None
+                # User explicitly chose OAuth by clicking Remove key —
+                # mark the flag so legacy env-var fallback in
+                # ``build_claude_subprocess_env`` is bypassed and the
+                # inherited ``ANTHROPIC_*`` env actually gets stripped.
+                if backend == "claude":
+                    target.auth_mode_set = True
                 config.save()
     except Exception as exc:  # noqa: BLE001
         logger.warning("V2Config clear during remove-key failed for %s: %s", backend, exc)
@@ -2922,6 +2928,12 @@ def save_claude_auth(payload: dict) -> dict:
         except FileNotFoundError:
             config = V2Config()
         config.agents.claude.auth_mode = auth_mode
+        # Flip the explicit marker so ``build_claude_subprocess_env``
+        # honors ``auth_mode`` strictly (strip inherited env in OAuth
+        # mode) for this and subsequent launches. Legacy installs that
+        # have never been through this save path keep the flag at its
+        # ``False`` default and continue to inherit shell env vars.
+        config.agents.claude.auth_mode_set = True
         config.agents.claude.api_key = api_key if auth_mode == "api_key" else None
         if base_url_present:
             config.agents.claude.base_url = base_url_change

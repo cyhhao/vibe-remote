@@ -26,6 +26,10 @@ class ClaudeCompatConfig:
     auth_mode: str = "oauth"
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    # Mirrors ``ClaudeConfig.auth_mode_set`` — see the docstring there.
+    # Defaults to ``False`` so legacy installs that never saved through
+    # the Settings UI keep their inherited ``ANTHROPIC_*`` env-var auth.
+    auth_mode_set: bool = False
 
     def __post_init__(self) -> None:
         self.permission_mode = str(self.permission_mode)
@@ -99,6 +103,7 @@ def to_app_config(v2: V2Config) -> AppCompatConfig:
         auth_mode=v2.agents.claude.auth_mode,
         api_key=v2.agents.claude.api_key,
         base_url=v2.agents.claude.base_url,
+        auth_mode_set=v2.agents.claude.auth_mode_set,
     )
     codex = None
     if v2.agents.codex.enabled:

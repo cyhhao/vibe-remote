@@ -172,6 +172,17 @@ class ClaudeConfig:
     auth_mode: Literal["oauth", "api_key"] = "oauth"
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    # ``True`` once the user has saved a Claude auth choice through the
+    # Settings UI (or removed the API key, or signed out). Legacy installs
+    # — V2 configs that predate the Settings page or have never touched
+    # it — load with ``False`` because the field defaults to ``False`` and
+    # isn't in their on-disk JSON. ``build_claude_subprocess_env`` reads
+    # this to decide whether to honor ``auth_mode`` strictly (strip
+    # inherited ``ANTHROPIC_*`` env in OAuth mode) or preserve the
+    # legacy env-var-only auth path. Without this flag the schema's
+    # ``auth_mode == "oauth"`` default is indistinguishable between
+    # "explicit OAuth pick" and "user has never opened Settings".
+    auth_mode_set: bool = False
 
 
 @dataclass
