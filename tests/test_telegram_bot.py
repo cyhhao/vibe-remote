@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import paths
-from config.discovered_chats import DiscoveredChatsStore
+from core import chat_discovery
 from modules.agents.native_sessions import NativeResumeSession
 from modules.im import MessageContext
 from modules.im.telegram import TelegramBot
@@ -222,7 +222,6 @@ def test_start_new_topic_session_allows_forum_context_without_thread_id() -> Non
 
 def test_build_message_context_records_discovered_chat(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
-    DiscoveredChatsStore.reset_instance()
     bot = TelegramBot(TelegramConfig(bot_token="123456:test-token"))
 
     context = bot._build_message_context(
@@ -236,11 +235,10 @@ def test_build_message_context_records_discovered_chat(tmp_path, monkeypatch) ->
     )
 
     assert context is not None
-    chats = DiscoveredChatsStore.get_instance().list_chats("telegram", include_private=False)
+    chats = chat_discovery.list_chats("telegram", include_private=False)
     assert len(chats) == 1
     assert chats[0].chat_id == "-100123"
-    assert chats[0].is_forum is True
-    DiscoveredChatsStore.reset_instance()
+    assert chats[0].metadata[chat_discovery.METADATA_IS_FORUM] is True
 
 
 def test_handle_message_ignores_foreign_bot_command() -> None:

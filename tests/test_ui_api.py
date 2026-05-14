@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from config import paths
-from config.discovered_chats import DiscoveredChatsStore
+from core import chat_discovery
 from vibe import api
 from vibe.opencode_config import parse_jsonc_object
 
@@ -210,6 +210,20 @@ def test_install_codex_uses_resolved_npm(monkeypatch):
     assert calls[0][0] == ["/Users/test/.nvm/versions/node/v22.18.0/bin/npm", "install", "-g", "@openai/codex"]
     assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == "/Users/test/.nvm/versions/node/v22.18.0/bin"
     assert result["path"] == "/Users/test/.nvm/versions/node/v22.18.0/bin/codex"
+
+
+def test_discord_list_channels_rejects_empty_guild_id(monkeypatch):
+    monkeypatch.setattr(
+        chat_discovery,
+        "channels_response",
+        lambda *args, **kwargs: pytest.fail("channels_response should not be called without guild_id"),
+    )
+
+    result = api.discord_list_channels("token", "")
+
+    assert result["ok"] is False
+    assert result["channels"] == []
+    assert result["error"] == "Discord guild_id is required"
 
 
 def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
@@ -741,8 +755,9 @@ def test_parse_jsonc_object_rejects_invalid_jsonc():
 
 
 def test_telegram_auth_test_returns_response(monkeypatch):
-    async def fake_get_me(bot_token: str):
+    async def fake_get_me(bot_token: str, proxy_url: str | None = None):
         assert bot_token == "123456:test-token"
+        assert proxy_url is None
         return {"id": 1, "username": "vibe_remote_bot"}
 
     monkeypatch.setattr(api, "_telegram_get_me", fake_get_me)
@@ -755,10 +770,8 @@ def test_telegram_auth_test_returns_response(monkeypatch):
 
 def test_telegram_list_chats_returns_discovered_groups(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "get_vibe_remote_dir", lambda: tmp_path / ".vibe_remote")
-    DiscoveredChatsStore.reset_instance()
-    store = DiscoveredChatsStore.get_instance()
-    store.remember_chat(platform="telegram", chat_id="-1001", name="Core Group", chat_type="supergroup")
-    store.remember_chat(platform="telegram", chat_id="42", name="Alex", chat_type="private", is_private=True)
+    chat_discovery.remember_chat("telegram", "-1001", name="Core Group", native_type="supergroup")
+    chat_discovery.remember_chat("telegram", "42", name="Alex", native_type="private", is_private=True)
 
     result = api.telegram_list_chats()
 
@@ -766,4 +779,3 @@ def test_telegram_list_chats_returns_discovered_groups(tmp_path, monkeypatch):
     assert [chat["id"] for chat in result["channels"]] == ["-1001"]
     assert result["summary"]["visible_count"] == 1
     assert result["summary"]["hidden_private_count"] == 1
-    DiscoveredChatsStore.reset_instance()

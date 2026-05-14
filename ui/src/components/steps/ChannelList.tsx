@@ -75,6 +75,13 @@ interface TelegramDiscoverySummary {
   forum_count: number;
 }
 
+interface ChannelRefreshMeta {
+  refreshing?: boolean;
+  last_success_at?: string | null;
+  last_attempt_at?: string | null;
+  error?: string | null;
+}
+
 const getDiscordGuildAllowlist = (source: any): string[] => {
   const allowlist = source?.discordGuildAllowlist || source?.guild_allowlist || source?.discord?.guild_allowlist;
   return Array.isArray(allowlist) ? allowlist : [];
@@ -99,6 +106,8 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [channels, setChannels] = useState<any[]>([]);
   const [browseAll, setBrowseAll] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
+  const channelLoadingCountsRef = useRef({ default: 0, all: 0 });
+  const allPlatformsLoadingCountRef = useRef(0);
   // Wizard multi-platform mode: show tabs instead of separate steps
   const isWizardMultiPlatform = !isPage && Array.isArray(wizardPlatforms) && wizardPlatforms.length > 1;
   const [wizardActivePlatform, setWizardActivePlatform] = useState(forcedPlatform || wizardPlatforms?.[0] || 'slack');
@@ -126,6 +135,11 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const configVersionRef = useRef(0);
   const configRef = useRef<any>(data);
   const [telegramSummary, setTelegramSummary] = useState<TelegramDiscoverySummary | null>(null);
+  const [refreshMetaByPlatform, setRefreshMetaByPlatform] = useState<Record<string, ChannelRefreshMeta>>({});
+  const refreshFollowupTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const refreshFollowupVersionRef = useRef(0);
+  const channelRequestVersionRef = useRef(0);
+  const allPlatformsRequestVersionRef = useRef(0);
   // Directory browser state — tracks which channel's cwd picker is open
   const [browsingCwdFor, setBrowsingCwdFor] = useState<string | null>(null);
   // Page-mode tab/search/collapse state (only used when isPage is true)
@@ -137,6 +151,12 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const [allChannelsByPlatform, setAllChannelsByPlatform] = useState<Record<string, any[]>>({});
   const [allConfigsByPlatform, setAllConfigsByPlatform] = useState<Record<string, Record<string, ChannelConfig>>>({});
   const [allLoading, setAllLoading] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      Object.values(refreshFollowupTimersRef.current).forEach((timer) => clearTimeout(timer));
+    };
+  }, []);
 
   const applySelectedGuildIds = (allowlist: string[]) => {
     const normalized = [...allowlist];
@@ -280,6 +300,64 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   const larkAppSecret = config.lark?.app_secret || data.lark?.app_secret || '';
   const larkDomain = config.lark?.domain || data.lark?.domain || 'feishu';
 
+  const clearRefreshFollowups = () => {
+    refreshFollowupVersionRef.current += 1;
+    Object.values(refreshFollowupTimersRef.current).forEach((timer) => clearTimeout(timer));
+    refreshFollowupTimersRef.current = {};
+  };
+
+  const invalidateChannelContext = () => {
+    clearRefreshFollowups();
+    channelRequestVersionRef.current += 1;
+    allPlatformsRequestVersionRef.current += 1;
+  };
+
+  const nextChannelRequestVersion = () => {
+    clearRefreshFollowups();
+    channelRequestVersionRef.current += 1;
+    return channelRequestVersionRef.current;
+  };
+
+  const nextAllPlatformsRequestVersion = () => {
+    clearRefreshFollowups();
+    allPlatformsRequestVersionRef.current += 1;
+    return allPlatformsRequestVersionRef.current;
+  };
+
+  const beginChannelLoading = (all: boolean) => {
+    const key: 'default' | 'all' = all ? 'all' : 'default';
+    channelLoadingCountsRef.current[key] += 1;
+    if (all) {
+      setLoadingAll(true);
+    } else {
+      setLoading(true);
+    }
+    return key;
+  };
+
+  const endChannelLoading = (key: 'default' | 'all') => {
+    channelLoadingCountsRef.current[key] = Math.max(0, channelLoadingCountsRef.current[key] - 1);
+    if (key === 'all') {
+      if (channelLoadingCountsRef.current.all === 0) setLoadingAll(false);
+    } else if (channelLoadingCountsRef.current.default === 0) {
+      setLoading(false);
+    }
+  };
+
+  const beginAllPlatformsLoading = () => {
+    allPlatformsLoadingCountRef.current += 1;
+    setAllLoading(true);
+  };
+
+  const endAllPlatformsLoading = () => {
+    allPlatformsLoadingCountRef.current = Math.max(0, allPlatformsLoadingCountRef.current - 1);
+    if (allPlatformsLoadingCountRef.current === 0) setAllLoading(false);
+  };
+
+  useEffect(() => () => {
+    invalidateChannelContext();
+  }, [platform, selectedGuild, pageTab, botToken, larkAppId, larkAppSecret, larkDomain]);
+
   useEffect(() => {
     if (platform !== 'discord') return;
     if (selectedGuild) return;
@@ -340,52 +418,93 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     }
   };
 
-  const loadChannels = async (all?: boolean) => {
+  const recordRefreshMeta = (platformId: string, result: any) => {
+    setRefreshMetaByPlatform((prev) => ({
+      ...prev,
+      [platformId]: {
+        refreshing: Boolean(result.refreshing),
+        last_success_at: result.last_success_at || null,
+        last_attempt_at: result.last_attempt_at || null,
+        error: result.error || null,
+      },
+    }));
+  };
+
+  const scheduleRefreshFollowup = (platformId: string, all?: boolean) => {
+    const existing = refreshFollowupTimersRef.current[platformId];
+    if (existing) clearTimeout(existing);
+    const scheduledVersion = refreshFollowupVersionRef.current;
+    refreshFollowupTimersRef.current[platformId] = setTimeout(() => {
+      delete refreshFollowupTimersRef.current[platformId];
+      if (refreshFollowupVersionRef.current !== scheduledVersion) return;
+      void loadChannels(all, false);
+    }, 3000);
+  };
+
+  const scheduleAllPlatformsRefreshFollowup = () => {
+    const timerKey = '__all__';
+    const existing = refreshFollowupTimersRef.current[timerKey];
+    if (existing) clearTimeout(existing);
+    const scheduledVersion = refreshFollowupVersionRef.current;
+    refreshFollowupTimersRef.current[timerKey] = setTimeout(() => {
+      delete refreshFollowupTimersRef.current[timerKey];
+      if (refreshFollowupVersionRef.current !== scheduledVersion) return;
+      void loadAllPlatformsData(false);
+    }, 3000);
+  };
+
+  const loadChannels = async (all?: boolean, force = false) => {
+    const requestVersion = nextChannelRequestVersion();
     if (platform === 'lark') {
       if (!larkAppId || !larkAppSecret) return;
     } else if (!botToken) {
       return;
     }
     const isAll = all ?? browseAll;
-    if (isAll) {
-      setLoadingAll(true);
-    } else {
-      setLoading(true);
-    }
+    const loadingKey = beginChannelLoading(isAll);
     try {
       if (platform === 'lark') {
-        const result = await api.larkChats(larkAppId, larkAppSecret, larkDomain);
+        const result = await api.larkChats(larkAppId, larkAppSecret, larkDomain, force);
+        if (channelRequestVersionRef.current !== requestVersion) return;
+        recordRefreshMeta(platform, result);
         if (result.ok) {
           setChannels(result.channels || []);
+          if (result.refreshing) scheduleRefreshFollowup(platform, isAll);
         }
       } else if (platform === 'telegram') {
         const result = await api.telegramChats(false);
+        if (channelRequestVersionRef.current !== requestVersion) return;
+        recordRefreshMeta(platform, result);
         if (result.ok) {
           setChannels(result.channels || []);
           setTelegramSummary(result.summary || null);
         }
       } else if (platform === 'discord') {
         if (!selectedGuild) {
-          setLoading(false);
           return;
         }
-        const result = await api.discordChannels(botToken, selectedGuild);
+        const result = await api.discordChannels(botToken, selectedGuild, force);
+        if (channelRequestVersionRef.current !== requestVersion) return;
+        recordRefreshMeta(platform, result);
         if (result.ok) {
           const filtered = (result.channels || []).filter((c: any) => c.type === 0 || c.type === 5);
           setChannels(filtered);
+          if (result.refreshing) scheduleRefreshFollowup(platform, isAll);
         }
       } else {
-        const result = await api.slackChannels(botToken, isAll);
+        const result = await api.slackChannels(botToken, isAll, force);
+        if (channelRequestVersionRef.current !== requestVersion) return;
+        recordRefreshMeta(platform, result);
         if (result.ok) {
           setChannels(result.channels || []);
           if (isAll) setBrowseAll(true);
+          if (result.refreshing) scheduleRefreshFollowup(platform, isAll);
         }
       }
     } catch (e) {
       console.error('Failed to load channels:', e);
     } finally {
-      setLoading(false);
-      setLoadingAll(false);
+      endChannelLoading(loadingKey);
     }
   };
 
@@ -576,6 +695,18 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
   });
 
   const selectedCount = channels.filter((channel) => isChannelEnabled(channel.id)).length;
+  const currentRefreshMeta = refreshMetaByPlatform[platform] || {};
+  const refreshStatusText = React.useMemo(() => {
+    if (currentRefreshMeta.refreshing) return t('channelList.refreshingCache');
+    if (currentRefreshMeta.error) return t('channelList.refreshFailed');
+    if (currentRefreshMeta.last_success_at) {
+      const parsed = new Date(currentRefreshMeta.last_success_at);
+      if (!Number.isNaN(parsed.getTime())) {
+        return t('channelList.lastSynced', { time: parsed.toLocaleString() });
+      }
+    }
+    return '';
+  }, [currentRefreshMeta, t]);
 
   // ---- Page-mode all-platforms aggregation ----
   const updateConfigForPlatform = async (
@@ -609,16 +740,18 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
     }
   };
 
-  const loadAllPlatformsData = async () => {
+  const loadAllPlatformsData = async (force = false) => {
     if (!isPage) return;
     const platforms = getEnabledPlatforms(config).filter((p) => platformSupportsChannels(config, p));
     if (platforms.length === 0) return;
-    setAllLoading(true);
+    const requestVersion = nextAllPlatformsRequestVersion();
+    beginAllPlatformsLoading();
     try {
       const results = await Promise.all(
         platforms.map(async (p) => {
           let channelsList: any[] = [];
           let configsMap: Record<string, ChannelConfig> = {};
+          let refreshing = false;
           try {
             const settings = await api.getSettings(p);
             configsMap = (settings.channels || {}) as Record<string, ChannelConfig>;
@@ -627,7 +760,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               const appSecret = config.lark?.app_secret || '';
               const domain = config.lark?.domain || 'feishu';
               if (appId && appSecret) {
-                const result = await api.larkChats(appId, appSecret, domain);
+                const result = await api.larkChats(appId, appSecret, domain, force);
+                recordRefreshMeta(p, result);
+                refreshing = Boolean(result.refreshing);
                 if (result.ok) channelsList = result.channels || [];
               }
             } else if (p === 'telegram') {
@@ -640,23 +775,28 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               const guildId = allowlist[0] || selectedGuildIdsRef.current[0] || selectedGuild;
               const token = config.discord?.bot_token || '';
               if (guildId && token) {
-                const result = await api.discordChannels(token, guildId);
+                const result = await api.discordChannels(token, guildId, force);
+                recordRefreshMeta(p, result);
+                refreshing = Boolean(result.refreshing);
                 if (result.ok) {
                   channelsList = (result.channels || []).filter((c: any) => c.type === 0 || c.type === 5);
                 }
               }
             } else if (p === 'slack') {
               if (config.slack?.bot_token) {
-                const result = await api.slackChannels(config.slack.bot_token, false);
+                const result = await api.slackChannels(config.slack.bot_token, false, force);
+                recordRefreshMeta(p, result);
+                refreshing = Boolean(result.refreshing);
                 if (result.ok) channelsList = result.channels || [];
               }
             }
           } catch {
             // ignore individual platform failures
           }
-          return { platform: p, channels: channelsList, configs: configsMap };
+          return { platform: p, channels: channelsList, configs: configsMap, refreshing };
         })
       );
+      if (allPlatformsRequestVersionRef.current !== requestVersion) return;
       const channelsByPlatform: Record<string, any[]> = {};
       const configsByPlatform: Record<string, Record<string, ChannelConfig>> = {};
       for (const r of results) {
@@ -665,8 +805,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
       }
       setAllChannelsByPlatform(channelsByPlatform);
       setAllConfigsByPlatform(configsByPlatform);
+      if (results.some((r) => r.refreshing)) scheduleAllPlatformsRefreshFollowup();
     } finally {
-      setAllLoading(false);
+      endAllPlatformsLoading();
     }
   };
 
@@ -880,9 +1021,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
 
     const handleRescan = () => {
       if (pageTab === 'all') {
-        void loadAllPlatformsData();
+        void loadAllPlatformsData(true);
       } else {
-        void loadChannels(false);
+        void loadChannels(false, true);
       }
     };
 
@@ -920,6 +1061,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 <RefreshCw size={14} className={isRescanLoading ? 'animate-spin' : ''} />
                 {t('channelList.rescan')}
               </Button>
+              {pageTab !== 'all' && refreshStatusText && (
+                <span className="text-xs text-muted">{refreshStatusText}</span>
+              )}
             </div>
           </div>
 
@@ -1051,7 +1195,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                   type="button"
                   variant="secondary"
                   size="xs"
-                  onClick={() => loadChannels(true)}
+                  onClick={() => loadChannels(true, true)}
                   disabled={loadingAll}
                   className="hover:border-cyan/40"
                 >
@@ -1378,7 +1522,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
               type="button"
               variant="secondary"
               size="sm"
-              onClick={() => loadChannels(browseAll)}
+              onClick={() => loadChannels(browseAll, true)}
               className="hover:border-cyan/40"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('channelList.refreshList')}
@@ -1388,7 +1532,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
                 type="button"
                 variant="secondary"
                 size="sm"
-                onClick={() => loadChannels(true)}
+                onClick={() => loadChannels(true, true)}
                 disabled={loadingAll}
                 className="hover:border-cyan/40"
               >
@@ -1398,6 +1542,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({ data = {}, onNext, onB
             )}
             {browseAll && (
               <span className="text-xs text-muted">{t('channelList.showingAll')}</span>
+            )}
+            {refreshStatusText && (
+              <span className="text-xs text-muted">{refreshStatusText}</span>
             )}
             <span className="relative group">
               <span className="flex items-center gap-1 text-sm text-muted cursor-help">

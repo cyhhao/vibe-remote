@@ -10,8 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from config.discovered_chats import DiscoveredChatsStore
 from config.v2_config import TelegramConfig
+from core import chat_discovery
 from vibe.i18n import get_supported_languages, t as i18n_t
 from vibe.proxy import resolve_proxy
 from modules.agents.native_sessions import AgentNativeSessionService, NativeResumeSession
@@ -594,15 +594,18 @@ class TelegramBot(BaseIMClient):
             chat_type = str(chat.get("type") or "")
             is_topic_message = bool((message or {}).get("is_topic_message"))
             is_forum = bool(chat.get("is_forum")) or is_topic_message
-            DiscoveredChatsStore.get_instance().remember_chat(
+            chat_discovery.remember_chat(
                 platform="telegram",
                 chat_id=str(chat.get("id")),
                 name=name,
-                username=str(chat.get("username") or ""),
-                chat_type=chat_type,
+                native_type=chat_type,
                 is_private=chat_type == "private",
-                is_forum=is_forum,
-                supports_topics=chat_type == "supergroup" and is_forum,
+                supports_threads=chat_type == "supergroup" and is_forum,
+                metadata={
+                    chat_discovery.METADATA_USERNAME: str(chat.get("username") or ""),
+                    chat_discovery.METADATA_IS_FORUM: is_forum,
+                    chat_discovery.METADATA_SUPPORTS_TOPICS: chat_type == "supergroup" and is_forum,
+                },
             )
         except Exception:
             logger.debug("Failed to remember Telegram discovered chat", exc_info=True)

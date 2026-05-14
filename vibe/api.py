@@ -23,7 +23,6 @@ from config.v2_settings import (
     _parse_routing,
     _routing_to_dict,
 )
-from config.discovered_chats import DiscoveredChatsStore
 from config.v2_sessions import SessionsStore
 from vibe.opencode_config import (
     get_opencode_config_paths,
@@ -581,7 +580,19 @@ def slack_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def list_channels(bot_token: str, browse_all: bool = False) -> dict:
+def list_channels(bot_token: str, browse_all: bool = False, force: bool = False) -> dict:
+    from core import chat_discovery
+
+    return chat_discovery.channels_response(
+        "slack",
+        bot_token=bot_token,
+        browse_all=browse_all,
+        require_member=not browse_all,
+        force=force,
+    )
+
+
+def list_channels_live(bot_token: str, browse_all: bool = False) -> dict:
     """List Slack channels.
 
     When *browse_all* is False (default), only channels the bot has joined are
@@ -645,6 +656,7 @@ def list_channels(bot_token: str, browse_all: bool = False) -> dict:
                         "id": channel.get("id"),
                         "name": channel.get("name"),
                         "is_private": channel.get("is_private", False),
+                        "is_member": channel.get("is_member"),
                     }
                 )
             cursor = response.get("response_metadata", {}).get("next_cursor")
@@ -675,31 +687,12 @@ def telegram_auth_test(bot_token: str, proxy_url: str | None = None) -> dict:
 
 
 def telegram_list_chats(include_private: bool = False) -> dict:
-    store = DiscoveredChatsStore.get_instance()
-    all_chats = store.list_chats("telegram", include_private=True)
-    chats = all_chats if include_private else [chat for chat in all_chats if not chat.is_private]
-    return {
-        "ok": True,
-        "channels": [
-            {
-                "id": chat.chat_id,
-                "name": chat.name or chat.username or chat.chat_id,
-                "username": chat.username,
-                "type": chat.chat_type,
-                "is_private": chat.is_private,
-                "is_forum": chat.is_forum,
-                "supports_topics": chat.supports_topics,
-                "last_seen_at": chat.last_seen_at,
-            }
-            for chat in chats
-        ],
-        "summary": {
-            "discovered_count": len(all_chats),
-            "visible_count": len(chats),
-            "hidden_private_count": sum(1 for chat in all_chats if chat.is_private) if not include_private else 0,
-            "forum_count": sum(1 for chat in chats if chat.supports_topics),
-        },
-    }
+    from core import chat_discovery
+
+    return chat_discovery.channels_response(
+        "telegram",
+        include_private=include_private,
+    )
 
 
 def discord_list_guilds(bot_token: str) -> dict:
@@ -710,7 +703,35 @@ def discord_list_guilds(bot_token: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def discord_list_channels(bot_token: str, guild_id: str) -> dict:
+def discord_list_channels(bot_token: str, guild_id: str, force: bool = False) -> dict:
+    guild_id = str(guild_id or "").strip()
+    if not guild_id:
+        return {
+            "ok": False,
+            "channels": [],
+            "chats": [],
+            "refreshing": False,
+            "last_attempt_at": None,
+            "last_success_at": None,
+            "error": "Discord guild_id is required",
+            "summary": {"discovered_count": 0, "visible_count": 0, "hidden_private_count": 0, "forum_count": 0},
+        }
+
+    from core import chat_discovery
+
+    from storage.settings_service import make_scope_id
+
+    parent_scope_id = make_scope_id("discord", "guild", guild_id)
+    return chat_discovery.channels_response(
+        "discord",
+        bot_token=bot_token,
+        guild_id=guild_id,
+        parent_scope_id=parent_scope_id,
+        force=force,
+    )
+
+
+def discord_list_channels_live(bot_token: str, guild_id: str) -> dict:
     try:
         data = _discord_api_get(bot_token, f"guilds/{guild_id}/channels")
         channels = []
@@ -720,6 +741,8 @@ def discord_list_channels(bot_token: str, guild_id: str) -> dict:
                     "id": channel.get("id"),
                     "name": channel.get("name"),
                     "type": channel.get("type"),
+                    "position": channel.get("position"),
+                    "parent_id": channel.get("parent_id"),
                 }
             )
         return {"ok": True, "channels": channels}
@@ -1649,7 +1672,19 @@ def lark_auth_test(
         return {"ok": False, "error": str(exc)}
 
 
-def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu") -> dict:
+def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu", force: bool = False) -> dict:
+    from core import chat_discovery
+
+    return chat_discovery.channels_response(
+        "lark",
+        app_id=app_id,
+        app_secret=app_secret,
+        domain=domain,
+        force=force,
+    )
+
+
+def lark_list_chats_live(app_id: str, app_secret: str, domain: str = "feishu") -> dict:
     """List Lark/Feishu group chats the bot has joined (with pagination)."""
     import urllib.request
 
@@ -1679,6 +1714,8 @@ def lark_list_chats(app_id: str, app_secret: str, domain: str = "feishu") -> dic
                 {
                     "id": c.get("chat_id"),
                     "name": c.get("name"),
+                    "chat_type": c.get("chat_type"),
+                    "chat_mode": c.get("chat_mode"),
                     "is_private": c.get("chat_type") == "private",
                 }
                 for c in items
