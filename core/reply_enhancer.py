@@ -9,7 +9,7 @@ Extracts special syntaxes from agent reply text:
    e.g. ``[screenshot](file:///tmp/shot.png)``
 
 3. **Quick-reply buttons** – A ``---`` separator followed by
-   ``[button text]`` or Slack-style ``<url|button text>`` tokens separated by ``|``
+   ``[button text]`` or link-formatted ``[button text](<url>)`` tokens separated by ``|``
    e.g. ``---\\n[👌好的] | [✅提交PR] | [先review一下]``
 """
 
@@ -66,15 +66,15 @@ _FILE_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\((file://(?:[^()]+|\([^)]*\))+)\)"
 
 # Matches the quick-reply button block at the end of the text.
 # A horizontal rule (``---``) on its own line, followed by bracket buttons or
-# Slack-style link buttons separated by ``|`` or full-width ``｜``.
+# link-formatted buttons separated by ``|`` or full-width ``｜``.
 _BUTTON_BLOCK_RE = re.compile(
     r"\n-{3,}\s*\n"  # --- separator line
-    r"((?:\s*(?:\[[^\]]+\]|<[^|>\n]+\|[^>\n]+>)\s*(?:[|｜]\s*)?)+)"  # button tokens
+    r"((?:\s*(?:\[[^\]]+\](?:\(<[^)>\n]+>\)|\([^)>\n]+\))?|<[^|>\n]+\|[^>\n]+>)\s*(?:[|｜]\s*)?)+)"  # button tokens
     r"\s*$",  # trailing whitespace / end of string
 )
 
-# Individual button tokens: [button text] or Slack-style <url|button text>.
-_BUTTON_TOKEN_RE = re.compile(r"\[([^\]]+)\]|<[^|>\n]+\|([^>\n]+)>")
+# Individual button tokens: [button text], [button text](<url>), or Slack-style <url|button text>.
+_BUTTON_TOKEN_RE = re.compile(r"\[([^\]]+)\](?:\(<[^)>\n]+>\)|\([^)>\n]+\))?|<[^|>\n]+\|([^>\n]+)>")
 
 # Silent output blocks are intentionally simple and model-facing.  They are
 # stripped before any reply enhancement parsing so hidden text cannot create

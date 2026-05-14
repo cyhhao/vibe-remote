@@ -126,7 +126,20 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([file.path for file in reply.files], ["/tmp/report.txt"])
         self.assertEqual(reply.buttons, [])
 
-    def test_process_reply_accepts_slack_link_style_quick_reply_button(self):
+    def test_process_reply_accepts_markdown_link_style_quick_reply_button(self):
+        reply = process_reply(
+            "Done.\n\n---\n"
+            "[:eyes: 看 PR](<https://github.com/cyhhao/vibe-remote/pull/298>) | "
+            "[:rocket: 等评审完合并] | [:test_tube: 先回归测一遍]"
+        )
+
+        self.assertEqual(reply.text, "Done.")
+        self.assertEqual(
+            [button.text for button in reply.buttons],
+            [":eyes: 看 PR", ":rocket: 等评审完合并", ":test_tube: 先回归测一遍"],
+        )
+
+    def test_process_reply_accepts_slack_angle_link_style_quick_reply_button(self):
         reply = process_reply(
             "Done.\n\n---\n"
             "<https://github.com/cyhhao/vibe-remote/pull/298|:eyes: 看 PR> | "
@@ -284,7 +297,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         keyboard = controller.im_client.sent_button_messages[0][3]
         self.assertEqual([[button.text for button in row] for row in keyboard.buttons], [["继续"], ["提交PR"]])
 
-    async def test_slack_link_style_quick_reply_dispatches_label_callbacks(self):
+    async def test_markdown_link_style_quick_reply_dispatches_label_callbacks(self):
         controller = _StubController("slack")
         dispatcher = ConsolidatedMessageDispatcher(controller)
         context = MessageContext(user_id="U1", channel_id="C1", platform="slack")
@@ -293,7 +306,7 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
             context,
             "result",
             "Done.\n---\n"
-            "<https://github.com/cyhhao/vibe-remote/pull/298|:eyes: 看 PR> | "
+            "[:eyes: 看 PR](<https://github.com/cyhhao/vibe-remote/pull/298>) | "
             "[:rocket: 等评审完合并]",
         )
 
