@@ -319,6 +319,13 @@ class WebAuthFlow:
     # would AttributeError out and 500 the start endpoint.
     provider: str | None = None
     created_at: float = field(default_factory=time.time)
+    # Timestamp the flow first entered a terminal state (success /
+    # failed / cancelled). ``None`` while the flow is still in
+    # ``starting`` / ``awaiting_code`` / ``verifying``. Used by
+    # ``get_web_flow_status`` to evict stale terminal flows after a
+    # TTL so the dict doesn't grow unboundedly across sign-in
+    # attempts on a long-lived UI server.
+    terminal_at: float | None = None
 
 
 class AgentAuthService:
@@ -1560,10 +1567,53 @@ class AgentAuthService:
         flow.state = "verifying"
         return {"ok": True}
 
+    # Terminal flows (success / failed / cancelled) linger on the
+    # registry this long so the polling client can observe the final
+    # state once before the flow disappears. Long-lived UI servers
+    # would otherwise accumulate one entry per sign-in attempt
+    # (process / task refs, captured state) and grow unboundedly.
+    _WEB_FLOW_TERMINAL_TTL_SECONDS = 300.0
+    _WEB_FLOW_TERMINAL_STATES = frozenset({"success", "failed", "cancelled"})
+
+    def _reap_stale_web_flows(self) -> None:
+        """Evict terminal web flows whose retention TTL has expired.
+
+        Runs opportunistically on every status read. The first read
+        that observes a terminal state stamps ``terminal_at`` on the
+        flow; subsequent reads through the TTL window keep returning
+        the same payload (clients may poll twice before noticing
+        success). After the TTL the flow is removed and any later
+        ``GET /status`` for that ``flow_id`` answers
+        ``flow_not_found``.
+        """
+        now = time.time()
+        stale: list[str] = []
+        for fid, flow in self._web_flows.items():
+            if flow.state not in self._WEB_FLOW_TERMINAL_STATES:
+                continue
+            if flow.terminal_at is None:
+                flow.terminal_at = now
+                continue
+            if now - flow.terminal_at > self._WEB_FLOW_TERMINAL_TTL_SECONDS:
+                stale.append(fid)
+        for fid in stale:
+            self._web_flows.pop(fid, None)
+
     def get_web_flow_status(self, flow_id: str) -> dict[str, Any]:
+        self._reap_stale_web_flows()
         flow = self._web_flows.get(flow_id)
         if flow is None:
             return {"ok": False, "error": "flow_not_found"}
+        # Stamp the terminal timestamp on the first observation so
+        # later sweeps can age the flow out. ``_reap_stale_web_flows``
+        # also does this — duplicating here keeps the timestamp
+        # accurate even if the caller hits status before the sweep
+        # walks past this entry.
+        if (
+            flow.state in self._WEB_FLOW_TERMINAL_STATES
+            and flow.terminal_at is None
+        ):
+            flow.terminal_at = time.time()
         return {
             "ok": True,
             "flow_id": flow_id,
