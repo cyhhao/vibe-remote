@@ -65,16 +65,18 @@ class EnhancedReply:
 _FILE_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\((file://(?:[^()]+|\([^)]*\))+)\)")
 
 # Matches the quick-reply button block at the end of the text.
-# A horizontal rule (``---``) on its own line, followed by one or more
-# ``[text]`` tokens separated by ``|`` or full-width ``｜``.
+# A horizontal rule (``---``) on its own line, followed by bracket buttons.
+# Accept link-formatted variants defensively because some agents accidentally
+# wrap a quick-reply label in a Markdown/Slack link.
 _BUTTON_BLOCK_RE = re.compile(
     r"\n-{3,}\s*\n"  # --- separator line
-    r"((?:\s*\[[^\]]+\]\s*(?:[|｜]\s*)?)+)"  # [text] tokens
+    r"((?:\s*(?:\[[^\]]+\](?:\(<https?://[^)>\n]+>\))?|<https?://[^|>\n]+\|[^>\n]+>)\s*(?:[|｜]\s*)?)+)"  # button tokens
     r"\s*$",  # trailing whitespace / end of string
 )
 
-# Individual button token:  [button text]
-_BUTTON_TOKEN_RE = re.compile(r"\[([^\]]+)\]")
+# Individual button tokens. Link variants are accepted for compatibility only;
+# the button label remains the quick-reply payload.
+_BUTTON_TOKEN_RE = re.compile(r"\[([^\]]+)\](?:\(<https?://[^)>\n]+>\))?|<https?://[^|>\n]+\|([^>\n]+)>")
 
 # Silent output blocks are intentionally simple and model-facing.  They are
 # stripped before any reply enhancement parsing so hidden text cannot create
@@ -176,7 +178,8 @@ def _extract_buttons(text: str) -> Tuple[List[QuickReplyButton], str]:
 
     block = m.group(1)
     buttons: List[QuickReplyButton] = []
-    for label in _BUTTON_TOKEN_RE.findall(block):
+    for bracket_label, slack_label in _BUTTON_TOKEN_RE.findall(block):
+        label = bracket_label or slack_label
         label = label.strip()
         if label:
             buttons.append(QuickReplyButton(text=label))
