@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Info, KeyRound, Pencil, RotateCcw, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, Bot, CheckCircle2, Info, KeyRound, Pencil, RotateCcw, Save, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import clsx from 'clsx';
 
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -10,59 +9,32 @@ import { Card, CardContent } from '../ui/card';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { useApi } from '@/context/ApiContext';
-import type { BackendNotice, CodexAuthMode, CodexAuthState } from '@/context/ApiContext';
+import type { CodexAuthMode, CodexAuthState } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
 import { BackendOAuthPanel } from './BackendOAuthPanel';
 import { BackendTestPanel } from './BackendTestPanel';
 import { SettingsPageShell } from './SettingsPageShell';
+import { BackendRuntimeCard } from './shared/BackendRuntimeCard';
+import { SegmentedRadio } from './shared/SegmentedRadio';
+import { surfaceBackendNotices } from './shared/surfaceBackendNotices';
+import { useBackendRuntime } from './shared/useBackendRuntime';
+import { useOAuthFlowLock } from './shared/useOAuthFlowLock';
 
-// Mirrors the segmented-radio pattern in shared/RoutingConfigPanel.tsx so
-// Codex's auth-mode toggle reads like the rest of the Settings surface.
-const SegmentedRadio: React.FC<{
-  value: CodexAuthMode;
-  onChange: (next: CodexAuthMode) => void;
-  options: ReadonlyArray<{ id: CodexAuthMode; label: string }>;
-  ariaLabel: string;
-  disabled?: boolean;
-}> = ({ value, onChange, options, ariaLabel, disabled }) => (
-  <div
-    role="radiogroup"
-    aria-label={ariaLabel}
-    aria-disabled={disabled || undefined}
-    className={clsx(
-      'flex h-9 items-stretch gap-0.5 rounded-md border border-border bg-foreground/[0.03] p-0.5',
-      disabled && 'opacity-60',
-    )}
-  >
-    {options.map((opt) => {
-      const active = value === opt.id;
-      return (
-        <button
-          key={opt.id}
-          type="button"
-          role="radio"
-          aria-checked={active}
-          disabled={disabled}
-          onClick={() => onChange(opt.id)}
-          className={clsx(
-            'flex-1 rounded-[4px] px-3 text-[12px] transition-colors',
-            active
-              ? 'border border-mint/30 bg-mint-soft font-bold text-mint'
-              : 'font-medium text-muted hover:text-foreground',
-            disabled && 'cursor-not-allowed',
-          )}
-        >
-          {opt.label}
-        </button>
-      );
-    })}
-  </div>
-);
+const BACKEND_ID = 'codex';
+const DEFAULT_CLI = 'codex';
 
 export const SettingsCodexProviderPage: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
+
+  // Runtime state — shared across all backend pages via the hook. Adds
+  // the Runtime card affordances (lifecycle chip / toggle / CLI path
+  // detect / install) that #282 omitted from the Codex page.
+  const runtime = useBackendRuntime({
+    backend: BACKEND_ID,
+    defaultCli: DEFAULT_CLI,
+  });
 
   const [state, setState] = useState<CodexAuthState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -82,40 +54,13 @@ export const SettingsCodexProviderPage: React.FC = () => {
   // button that never has a no-op state is noisy and confusing.
   const [savedAuthMode, setSavedAuthMode] = useState<CodexAuthMode>('oauth');
   const [savedBaseUrl, setSavedBaseUrl] = useState('');
-  // When the OAuth panel is mid-flow (device code visible, polling),
-  // freeze the auth-mode segmented radio. Without this lock, an
-  // accidental tap (iOS Safari emits one after the "Copy" tap in
-  // testing) tears down the in-progress login.
-  const [oauthFlowActive, setOauthFlowActive] = useState(false);
-  // We need to read the latest value of ``oauthFlowActive`` from
-  // inside the guarded setter without rebuilding the setter on every
-  // render — a ref keeps it stable for callbacks. The button's
-  // ``disabled`` attribute alone is NOT enough on iOS Safari: the
-  // user has reproduced the tab flipping while the radio is rendered
-  // disabled. We do not know the exact event path that smuggles the
-  // click through (URL-bar collapse reflow, fastclick coordinate
-  // drift, synthetic gesture), so the only bulletproof defense is
-  // rejecting the state mutation at its source.
-  const oauthFlowActiveRef = React.useRef(oauthFlowActive);
-  oauthFlowActiveRef.current = oauthFlowActive;
-  const guardedSetAuthMode = React.useCallback(
-    (next: CodexAuthMode) => {
-      if (oauthFlowActiveRef.current) {
-        // Visible warning in devtools so any future regression is
-        // attributable. The toast is for users who happen to be
-        // staring at the screen when this rejects.
-        // eslint-disable-next-line no-console
-        console.warn(
-          '[codex-auth-mode] rejected change to %s while OAuth flow active',
-          next,
-        );
-        showToast(t('settings.backends.oauthFlowLockedToast'), 'warning');
-        return;
-      }
-      setAuthMode(next);
-    },
-    [showToast, t],
-  );
+  // Freeze the auth-mode segmented radio while the OAuth panel is mid-
+  // handshake. Shared with Claude / OpenCode via ``useOAuthFlowLock``.
+  const { oauthFlowActive, setOauthFlowActive, guardedSetAuthMode } =
+    useOAuthFlowLock<CodexAuthMode>({
+      setAuthMode,
+      warnTag: 'codex-auth-mode',
+    });
 
   useEffect(() => {
     let cancelled = false;
@@ -171,33 +116,6 @@ export const SettingsCodexProviderPage: React.FC = () => {
     ? t('settings.backends.codexApiKeyConfigured', { length: state.api_key_length })
     : t('settings.backends.codexApiKeyMissing');
 
-  // Surface non-fatal config-rewrite warnings from the server as warning
-  // toasts. Today the only emitter is ``cleared_custom_relay_pointer``
-  // (an OAuth switch where the user's ``model_provider`` pointed at a
-  // custom relay whose ``base_url`` won't accept OAuth tokens — we
-  // cleared the pointer so Codex falls back to OpenAI's default
-  // endpoint). Without this banner the user sees a green "saved" toast
-  // and then a 401 on their next message.
-  const surfaceNotices = (notices: BackendNotice[] | undefined) => {
-    if (!notices || notices.length === 0) return;
-    for (const notice of notices) {
-      if (notice.code === 'cleared_custom_relay_pointer') {
-        showToast(
-          t('settings.backends.codexNoticeClearedRelayPointer', {
-            provider: notice.provider_id || 'custom',
-            url: notice.base_url || '',
-          }),
-          'warning',
-        );
-      } else {
-        showToast(
-          t('settings.backends.codexNoticeGeneric', { code: notice.code }),
-          'warning',
-        );
-      }
-    }
-  };
-
   const onRemoveApiKey = async () => {
     // Drop just the API key (V2Config + auth.json's OPENAI_API_KEY),
     // leave OAuth tokens intact. Codex's CLI prefers the API key when
@@ -226,7 +144,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
       setApiKey('');
       setEditingKey(false);
       showToast(t('settings.backends.codexApiKeyRemoved'), 'success');
-      surfaceNotices(result.notices);
+      surfaceBackendNotices(result.notices, showToast, t);
     } catch (err: any) {
       showToast(
         t('settings.backends.codexApiKeyRemoveFailed', { detail: err?.message || 'unknown' }),
@@ -280,7 +198,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
       } else {
         showToast(t('settings.backends.codexSaveSuccess'), 'success');
       }
-      surfaceNotices(result.notices);
+      surfaceBackendNotices(result.notices, showToast, t);
     } catch (err: any) {
       showToast(err?.message || t('settings.backends.codexSaveFailed'), 'error');
     } finally {
@@ -300,15 +218,26 @@ export const SettingsCodexProviderPage: React.FC = () => {
         </Link>
       }
     >
-      {loading ? (
+      {loading || !runtime.loaded ? (
         <div className="text-sm text-muted">{t('common.loading')}</div>
       ) : (
-        <Card>
-          <CardContent className="flex flex-col gap-5 p-6">
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between gap-3">
-                <Label className="text-xs font-medium uppercase text-muted">
-                  {t('settings.backends.codexAuthModeLabel')}
+        <div className="flex flex-col gap-4">
+          <BackendRuntimeCard
+            backend={BACKEND_ID}
+            label="Codex"
+            description={t('settings.backends.codexDescription')}
+            Icon={Bot}
+            iconTileClassName="bg-gold"
+            iconClassName="text-gold-foreground"
+            runtime={runtime}
+          />
+
+          <Card>
+            <CardContent className="flex flex-col gap-5 p-6">
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <Label className="text-xs font-medium uppercase text-muted">
+                    {t('settings.backends.codexAuthModeLabel')}
                 </Label>
                 {state?.active_auth_mode && state.active_auth_mode !== 'none' && (
                   <Badge
@@ -556,9 +485,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
             })()}
           </CardContent>
         </Card>
-      )}
-      {!loading && (
-        <div className="mt-4">
+
           <BackendTestPanel backend="codex" />
         </div>
       )}
