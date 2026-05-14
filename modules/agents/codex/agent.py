@@ -505,38 +505,14 @@ class CodexAgent(BaseAgent):
         self,
         request: AgentRequest,
     ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
-        request_context = getattr(request, "context", None)
-        controller = getattr(self, "controller", None)
-        routing = None
-        settings_key = request.session_key
-        used_context_settings_manager = False
-
-        if request_context is not None and controller is not None and hasattr(controller, "_get_settings_key"):
-            settings_key = controller._get_settings_key(request_context)
-            manager_getter = getattr(controller, "get_settings_manager_for_context", None)
-            if callable(manager_getter):
-                try:
-                    context_settings_manager = manager_getter(request_context)
-                except Exception:
-                    context_settings_manager = None
-                if context_settings_manager is not None:
-                    used_context_settings_manager = True
-                    channel_settings = context_settings_manager.get_channel_settings(settings_key)
-                    routing = channel_settings.routing if channel_settings else None
-
-        if routing is None and not used_context_settings_manager:
-            channel_settings = self.settings_manager.get_channel_settings(settings_key)
-            routing = channel_settings.routing if channel_settings else None
-
+        routing_agent, routing_model, routing_effort = self._get_codex_overrides(request)
         request_subagent = getattr(request, "subagent_name", None)
         request_model = getattr(request, "subagent_model", None)
         request_effort = getattr(request, "subagent_reasoning_effort", None)
 
-        effective_agent = request_subagent or (getattr(routing, "codex_agent", None) if routing else None)
-        explicit_model = request_model or (getattr(routing, "codex_model", None) if routing else None)
-        explicit_effort = request_effort or (
-            getattr(routing, "codex_reasoning_effort", None) if routing else None
-        )
+        effective_agent = request_subagent or routing_agent
+        explicit_model = request_model or routing_model
+        explicit_effort = request_effort or routing_effort
 
         agent_definition: Optional[SubagentDefinition] = None
         if effective_agent:
@@ -552,6 +528,22 @@ class CodexAgent(BaseAgent):
         developer_instructions = agent_definition.developer_instructions if agent_definition else None
 
         return effective_agent, effective_model, effective_effort, developer_instructions
+
+    def _get_codex_overrides(
+        self,
+        request: AgentRequest,
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Resolve scope routing through the controller's shared routing API."""
+        controller = getattr(self, "controller", None)
+        request_context = getattr(request, "context", None)
+        getter = getattr(controller, "get_codex_overrides", None)
+        if request_context is None or not callable(getter):
+            return None, None, None
+        try:
+            return getter(request_context)
+        except Exception as exc:
+            logger.warning("Failed to resolve Codex routing overrides: %s", exc)
+            return None, None, None
 
     async def _start_or_resume_thread(
         self,
