@@ -358,8 +358,24 @@ def apply_codex_auth(
         managed.setdefault("requires_openai_auth", True)
         if base_url:
             managed["base_url"] = base_url
+            # Custom relays almost never speak Codex's bespoke responses-
+            # over-WebSocket protocol — they reverse-proxy HTTPS to OpenAI
+            # but don't accept the WSS upgrade Codex expects on
+            # ``/responses``. Codex 0.130+ gates that transport on this
+            # field (``codex-rs/core/src/client.rs::responses_websocket_enabled``);
+            # pinning it to false routes turns through the HTTP responses
+            # path, which honors our ``base_url``. Leaving it absent lets
+            # newer Codex versions dispatch WSS via the built-in OpenAI
+            # provider's default (``wss://api.openai.com/v1/responses``),
+            # silently bypassing the user's relay and producing 401s on
+            # whatever account-bound key the relay handed out.
+            managed["supports_websockets"] = False
         else:
             managed.pop("base_url", None)
+            # No custom base_url → user is on the built-in OpenAI endpoint
+            # where WSS works the way Codex expects. Drop our override so
+            # Codex's own default-on behavior applies.
+            managed.pop("supports_websockets", None)
     else:  # oauth
         auth_data.pop("OPENAI_API_KEY", None)
         # Flip auth_mode back to chatgpt when OAuth tokens still exist
