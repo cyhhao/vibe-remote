@@ -94,6 +94,15 @@ class CodexEventHandler:
                 request.base_session_id,
                 thread_id,
             )
+            agent_session_id = self._agent.sessions.get_agent_session_row_id(
+                request.session_key,
+                request.base_session_id,
+                self._agent.name,
+            )
+            if agent_session_id:
+                payload = dict(request.context.platform_specific or {})
+                payload["agent_session_id"] = agent_session_id
+                request.context.platform_specific = payload
 
         system_text = self._agent._get_formatter(request.context).format_system_message(
             request.working_path,

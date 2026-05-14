@@ -166,13 +166,13 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply.text, text)
         self.assertEqual(reply.buttons, [])
 
-    def test_prompt_includes_task_watch_and_hook_usage_with_thread_default_session_key(self):
+    def test_prompt_includes_task_watch_and_hook_usage_with_current_session_id(self):
         context = MessageContext(
             user_id="U1",
             channel_id="C1",
             platform="slack",
             thread_id="171717.123",
-            platform_specific={"is_dm": False},
+            platform_specific={"is_dm": False, "agent_session_id": "sesk8m4q2p7x"},
         )
 
         with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
@@ -180,14 +180,16 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("## 3. Scheduled tasks, watches, and hooks", prompt)
         self.assertIn("`vibe task add`", prompt)
-        self.assertIn("`vibe hook send --session-key ... --prompt ...`", prompt)
+        self.assertIn("`vibe hook send --session-id ... --prompt ...`", prompt)
         self.assertIn("`vibe watch add`", prompt)
         self.assertIn("Use `vibe task add` for saved work that should run later on a schedule or at one exact time.", prompt)
         self.assertIn(
             "Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.",
             prompt,
         )
-        self.assertIn("Current session key: `slack::channel::C1::thread::171717.123`", prompt)
+        self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
+        self.assertNotIn("Legacy session key:", prompt)
+        self.assertNotIn("--session-key", prompt)
         self.assertNotIn("Channel-level session key:", prompt)
         self.assertIn(
             "`--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.",
@@ -234,7 +236,9 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
                 fallback_platform="slack",
             )
 
-        self.assertIn("Current session key: `slack::channel::C1::thread::171717.123`", prompt)
+        self.assertIn("Current session id: `<not available yet>`", prompt)
+        self.assertIn("do not guess a target", prompt)
+        self.assertNotIn("Legacy session key:", prompt)
         self.assertNotIn("Channel-level session key:", prompt)
         self.assertIn("usually in the current user's section: `slack/U1`.", prompt)
 

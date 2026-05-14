@@ -146,7 +146,7 @@ vibe screenshot --json
 创建、查看、更新、立即执行、暂停、恢复或删除定时任务。
 
 ```bash
-vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
+vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --prompt 'Share the hourly summary.'
 vibe task list --brief
 vibe task update <task-id> --cron '*/30 * * * *'
 vibe task run <task-id>
@@ -155,19 +155,22 @@ vibe task remove <task-id>
 
 更完整的参数说明请直接看 `vibe task add --help` 和 `vibe task update --help`。其中重点包括：
 
-- 用 `--session-key` 指定会话连续性
+- 用 `--session-id` 指定要延续的 Agent Session
 - 用 `--post-to channel` 在保留 thread 上下文的同时把消息发到父频道
 - 用 `--deliver-key` 指定显式投递目标
 - 用 `--cron` / `--at` 控制定时方式
 - 以及 `--name`、`--timezone`、`--prompt-file` 等参数
+
+`--session-key` 仍兼容旧脚本，但新任务应使用当前 Vibe Remote prompt
+里展示的 Agent Session ID。
 
 ### `vibe hook send`
 
 队列化一次异步 turn，不会把任务定义持久化到 `scheduled_tasks.json`。
 
 ```bash
-vibe hook send --session-key 'slack::channel::C123' --prompt 'The export finished. Share the summary.'
-vibe hook send --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prompt 'Share the benchmark result in the channel.'
+vibe hook send --session-id sesk8m4q2p7x --prompt 'The export finished. Share the summary.'
+vibe hook send --session-id sesk8m4q2p7x --post-to channel --prompt 'Share the benchmark result in the channel.'
 ```
 
 适合“只异步补发一次消息，不想保存成定时任务”的场景。

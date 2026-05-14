@@ -16,9 +16,14 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from config import paths
 from modules.im import MessageContext
+from storage.db import create_sqlite_engine
+from storage.background import SQLiteBackgroundTaskStore
+from storage.models import agent_sessions, scopes
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +88,84 @@ def parse_session_key(value: str) -> ParsedSessionKey:
     )
 
 
+@dataclass(frozen=True)
+class ResolvedSessionIdTarget:
+    session_id: str
+    session_key: ParsedSessionKey
+    agent_backend: str
+    agent_variant: str
+    native_session_id: str
+    workdir: Optional[str] = None
+
+
+def resolve_session_id_target(session_id: str, *, db_path: Optional[Path] = None) -> ResolvedSessionIdTarget:
+    raw = (session_id or "").strip()
+    if not raw:
+        raise ValueError("session id is required")
+
+    engine = create_sqlite_engine(db_path or paths.get_sqlite_state_path())
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                select(
+                    agent_sessions.c.id,
+                    agent_sessions.c.agent_backend,
+                    agent_sessions.c.agent_variant,
+                    agent_sessions.c.session_anchor,
+                    agent_sessions.c.workdir,
+                    agent_sessions.c.native_session_id,
+                    scopes.c.platform,
+                    scopes.c.scope_type,
+                    scopes.c.native_id,
+                )
+                .join(scopes, scopes.c.id == agent_sessions.c.scope_id, isouter=True)
+                .where(agent_sessions.c.id == raw)
+                .limit(1)
+            ).mappings().first()
+    except SQLAlchemyError as exc:
+        raise ValueError(f"agent session id not found: {raw}") from exc
+    finally:
+        engine.dispose()
+
+    if row is None:
+        raise ValueError(f"agent session id not found: {raw}")
+    platform = str(row["platform"] or "")
+    scope_type = str(row["scope_type"] or "")
+    scope_id = str(row["native_id"] or "")
+    if not platform or scope_type not in {"channel", "user"} or not scope_id:
+        raise ValueError(f"agent session id cannot be used as a task target: {raw}")
+
+    anchor = str(row["session_anchor"] or "")
+    thread_id = _thread_id_from_session_anchor(anchor, platform=platform, scope_id=scope_id)
+    return ResolvedSessionIdTarget(
+        session_id=raw,
+        session_key=ParsedSessionKey(
+            platform=platform,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            thread_id=thread_id,
+        ),
+        agent_backend=str(row["agent_backend"] or ""),
+        agent_variant=str(row["agent_variant"] or ""),
+        native_session_id=str(row["native_session_id"] or ""),
+        workdir=row["workdir"],
+    )
+
+
+def _thread_id_from_session_anchor(anchor: str, *, platform: str, scope_id: str) -> Optional[str]:
+    if not anchor:
+        return None
+    base_anchor = anchor
+    if ":" in base_anchor:
+        base_anchor = base_anchor.split(":", 1)[0]
+    prefix = f"{platform}_"
+    if base_anchor.startswith(prefix):
+        base_anchor = base_anchor[len(prefix) :]
+    if base_anchor and base_anchor != scope_id:
+        return base_anchor
+    return None
+
+
 def build_session_key_for_context(
     context: MessageContext,
     *,
@@ -109,6 +192,7 @@ class ScheduledTask:
     session_key: str
     prompt: str
     schedule_type: str
+    session_id: Optional[str] = None
     post_to: Optional[str] = None
     deliver_key: Optional[str] = None
     cron: Optional[str] = None
@@ -131,6 +215,7 @@ class ScheduledTask:
             session_key=str(payload.get("session_key") or ""),
             prompt=str(payload.get("prompt") or ""),
             schedule_type=str(payload.get("schedule_type") or ""),
+            session_id=(str(payload["session_id"]).strip() if payload.get("session_id") else None),
             post_to=payload.get("post_to"),
             deliver_key=payload.get("deliver_key"),
             cron=payload.get("cron"),
@@ -151,6 +236,7 @@ class TaskExecutionRequest:
     created_at: str = field(default_factory=_utc_now_iso)
     task_id: Optional[str] = None
     session_key: Optional[str] = None
+    session_id: Optional[str] = None
     post_to: Optional[str] = None
     deliver_key: Optional[str] = None
     prompt: Optional[str] = None
@@ -166,6 +252,7 @@ class TaskExecutionRequest:
             created_at=str(payload.get("created_at") or _utc_now_iso()),
             task_id=payload.get("task_id"),
             session_key=payload.get("session_key"),
+            session_id=payload.get("session_id"),
             post_to=payload.get("post_to"),
             deliver_key=payload.get("deliver_key"),
             prompt=payload.get("prompt"),
@@ -175,11 +262,18 @@ class TaskExecutionRequest:
 class ScheduledTaskStore:
     def __init__(self, path: Optional[Path] = None):
         self.path = path or (paths.get_state_dir() / "scheduled_tasks.json")
+        self._sqlite = SQLiteBackgroundTaskStore() if path is None else None
         self._signature: Optional[tuple[int, int, int]] = None
         self._tasks: Dict[str, ScheduledTask] = {}
         self.load()
 
     def load(self) -> None:
+        if self._sqlite is not None:
+            self._tasks = {
+                item["id"]: ScheduledTask.from_dict(item)
+                for item in self._sqlite.list_scheduled_tasks()
+            }
+            return
         if not self.path.exists():
             self._tasks = {}
             self._signature = None
@@ -203,6 +297,11 @@ class ScheduledTaskStore:
         self._signature = _path_signature(self.path)
 
     def maybe_reload(self) -> bool:
+        if self._sqlite is not None:
+            changed = self._sqlite.maybe_reload()
+            if changed:
+                self.load()
+            return changed
         signature = _path_signature(self.path)
         if signature == self._signature:
             return False
@@ -210,6 +309,8 @@ class ScheduledTaskStore:
         return True
 
     def _save(self) -> None:
+        if self._sqlite is not None:
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"tasks": [task.to_dict() for task in self.list_tasks()]}
         with tempfile.NamedTemporaryFile(
@@ -233,6 +334,9 @@ class ScheduledTaskStore:
     def upsert_task(self, task: ScheduledTask) -> ScheduledTask:
         task.updated_at = _utc_now_iso()
         self._tasks[task.id] = task
+        if self._sqlite is not None:
+            self._sqlite.upsert_scheduled_task(task.to_dict())
+            return task
         self._save()
         return task
 
@@ -241,6 +345,7 @@ class ScheduledTaskStore:
         *,
         name: Optional[str] = None,
         session_key: str,
+        session_id: Optional[str] = None,
         prompt: str,
         schedule_type: str,
         post_to: Optional[str] = None,
@@ -253,6 +358,7 @@ class ScheduledTaskStore:
             id=uuid4().hex[:12],
             name=name,
             session_key=session_key,
+            session_id=session_id,
             prompt=prompt,
             schedule_type=schedule_type,
             post_to=post_to,
@@ -267,6 +373,9 @@ class ScheduledTaskStore:
         if task_id not in self._tasks:
             return False
         del self._tasks[task_id]
+        if self._sqlite is not None:
+            self._sqlite.remove_task(task_id)
+            return True
         self._save()
         return True
 
@@ -274,6 +383,9 @@ class ScheduledTaskStore:
         task = self._tasks[task_id]
         task.enabled = enabled
         task.updated_at = _utc_now_iso()
+        if self._sqlite is not None:
+            self._sqlite.upsert_scheduled_task(task.to_dict())
+            return task
         self._save()
         return task
 
@@ -290,10 +402,12 @@ class ScheduledTaskStore:
         cron: Optional[str],
         run_at: Optional[str],
         timezone_name: str,
+        session_id: Optional[str] = None,
     ) -> ScheduledTask:
         task = self._tasks[task_id]
         task.name = name
         task.session_key = session_key
+        task.session_id = session_id
         task.prompt = prompt
         task.schedule_type = schedule_type
         task.post_to = post_to
@@ -315,6 +429,9 @@ class ScheduledTaskStore:
         if disable_one_shot and task.schedule_type == "at":
             task.enabled = False
         task.updated_at = _utc_now_iso()
+        if self._sqlite is not None:
+            self._sqlite.upsert_scheduled_task(task.to_dict())
+            return True
         self._save()
         return True
 
@@ -322,12 +439,15 @@ class ScheduledTaskStore:
 class TaskExecutionStore:
     def __init__(self, root: Optional[Path] = None):
         self.root = root or (paths.get_state_dir() / "task_requests")
+        self._sqlite = SQLiteBackgroundTaskStore() if root is None else None
         self.pending_dir = self.root / "pending"
         self.processing_dir = self.root / "processing"
         self.completed_dir = self.root / "completed"
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
+        if self._sqlite is not None:
+            return
         self.pending_dir.mkdir(parents=True, exist_ok=True)
         self.processing_dir.mkdir(parents=True, exist_ok=True)
         self.completed_dir.mkdir(parents=True, exist_ok=True)
@@ -341,6 +461,9 @@ class TaskExecutionStore:
         return directory / f"{request_id}.json"
 
     def recover_processing(self) -> None:
+        if self._sqlite is not None:
+            self._sqlite.recover_processing_runs()
+            return
         self._ensure_dirs()
         for path in self.processing_dir.glob("*.json"):
             pending_path = self.pending_dir / path.name
@@ -354,6 +477,12 @@ class TaskExecutionStore:
             path.replace(pending_path)
 
     def enqueue(self, request: TaskExecutionRequest) -> TaskExecutionRequest:
+        if self._sqlite is not None:
+            payload = request.to_dict()
+            payload["status"] = "pending"
+            payload["updated_at"] = request.created_at
+            self._sqlite.enqueue_run(payload)
+            return request
         self._ensure_dirs()
         path = self._request_path(request.id, state="pending")
         with tempfile.NamedTemporaryFile(
@@ -375,6 +504,7 @@ class TaskExecutionStore:
         self,
         *,
         session_key: str,
+        session_id: Optional[str] = None,
         prompt: str,
         post_to: Optional[str] = None,
         deliver_key: Optional[str] = None,
@@ -384,6 +514,7 @@ class TaskExecutionStore:
                 id=uuid4().hex[:12],
                 request_type="hook_send",
                 session_key=session_key,
+                session_id=session_id,
                 post_to=post_to,
                 deliver_key=deliver_key,
                 prompt=prompt,
@@ -391,6 +522,12 @@ class TaskExecutionStore:
         )
 
     def list_pending(self) -> list[TaskExecutionRequest]:
+        if self._sqlite is not None:
+            return [
+                TaskExecutionRequest.from_dict(item)
+                for item in self._sqlite.list_runs(status="pending")
+                if item.get("request_type") in {"task_run", "hook_send"}
+            ]
         self._ensure_dirs()
         requests: list[TaskExecutionRequest] = []
         for path in self.pending_dir.glob("*.json"):
@@ -405,6 +542,15 @@ class TaskExecutionStore:
         return sorted(requests, key=lambda item: (item.created_at, item.id))
 
     def claim(self, request_id: str) -> Optional[TaskExecutionRequest]:
+        if self._sqlite is not None:
+            payload = self._sqlite.get_run(request_id)
+            if not payload or payload.get("status") != "pending":
+                return None
+            now = _utc_now_iso()
+            self._sqlite.update_run_status(request_id, status="processing", started_at=now, updated_at=now)
+            payload["status"] = "processing"
+            payload["started_at"] = now
+            return TaskExecutionRequest.from_dict(payload)
         pending_path = self._request_path(request_id, state="pending")
         processing_path = self._request_path(request_id, state="processing")
         if not pending_path.exists():
@@ -414,6 +560,9 @@ class TaskExecutionStore:
         return TaskExecutionRequest.from_dict(payload)
 
     def requeue(self, request_id: str) -> None:
+        if self._sqlite is not None:
+            self._sqlite.update_run_status(request_id, status="pending", updated_at=_utc_now_iso())
+            return
         processing_path = self._request_path(request_id, state="processing")
         pending_path = self._request_path(request_id, state="pending")
         if not processing_path.exists():
@@ -431,7 +580,18 @@ class TaskExecutionStore:
         error: Optional[str] = None,
         task_id: Optional[str] = None,
         session_key: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> None:
+        if self._sqlite is not None:
+            self._sqlite.update_run_status(
+                request.id,
+                status="completed" if ok else "failed",
+                error=error,
+                completed_at=_utc_now_iso(),
+                updated_at=_utc_now_iso(),
+                metadata={"ok": ok},
+            )
+            return
         processing_path = self._request_path(request.id, state="processing")
         completed_path = self._request_path(request.id, state="completed")
         payload = request.to_dict()
@@ -442,6 +602,7 @@ class TaskExecutionStore:
                 "completed_at": _utc_now_iso(),
                 "task_id": task_id if task_id is not None else request.task_id,
                 "session_key": session_key if session_key is not None else request.session_key,
+                "session_id": session_id if session_id is not None else request.session_id,
             }
         )
         with tempfile.NamedTemporaryFile(
@@ -551,6 +712,7 @@ class ScheduledTaskService:
                 task.cron,
                 task.run_at,
                 task.timezone,
+                task.session_id,
                 task.session_key,
                 task.prompt,
                 task.enabled,
@@ -612,6 +774,7 @@ class ScheduledTaskService:
             should_complete = True
             task_id = request.task_id
             session_key = request.session_key
+            session_id = request.session_id
             try:
                 if request.request_type == "task_run":
                     self.store.maybe_reload()
@@ -620,12 +783,14 @@ class ScheduledTaskService:
                         raise ValueError(f"task '{request.task_id}' not found")
                     task_id = task.id
                     session_key = task.session_key
+                    session_id = task.session_id
                     error = await self._execute_task(task, execution_id=request.id, disable_one_shot=False)
                 elif request.request_type == "hook_send":
-                    if not request.session_key or not request.prompt:
-                        raise ValueError("hook request requires both session_key and prompt")
+                    if not (request.session_id or request.session_key) or not request.prompt:
+                        raise ValueError("hook request requires session_id or session_key, plus prompt")
                     error = await self._execute_request(
                         session_key=request.session_key,
+                        session_id=request.session_id,
                         post_to=request.post_to,
                         deliver_key=request.deliver_key,
                         prompt=request.prompt,
@@ -649,6 +814,7 @@ class ScheduledTaskService:
                         error=error,
                         task_id=task_id,
                         session_key=session_key,
+                        session_id=session_id,
                     )
 
     async def _execute_task(
@@ -662,6 +828,7 @@ class ScheduledTaskService:
         try:
             error = await self._execute_request(
                 session_key=task.session_key,
+                session_id=task.session_id,
                 post_to=task.post_to,
                 deliver_key=task.deliver_key,
                 prompt=task.prompt,
@@ -683,15 +850,17 @@ class ScheduledTaskService:
     async def _execute_request(
         self,
         *,
-        session_key: str,
+        session_key: Optional[str],
         post_to: Optional[str],
         deliver_key: Optional[str],
         prompt: str,
         execution_id: str,
         task_id: Optional[str] = None,
         trigger_kind: str,
+        session_id: Optional[str] = None,
     ) -> Optional[str]:
-        target = parse_session_key(session_key)
+        target_info = resolve_session_id_target(session_id) if session_id else None
+        target = target_info.session_key if target_info else parse_session_key(session_key or "")
         delivery_target = self._resolve_delivery_target(
             session_target=target,
             post_to=post_to,
@@ -703,6 +872,8 @@ class ScheduledTaskService:
             execution_id=execution_id,
             task_id=task_id,
             trigger_kind=trigger_kind,
+            session_id=session_id,
+            target_info=target_info,
         )
         return await self.controller.message_handler.handle_scheduled_message(
             context=context,
@@ -718,6 +889,8 @@ class ScheduledTaskService:
         execution_id: str,
         task_id: Optional[str] = None,
         trigger_kind: str = "scheduled",
+        session_id: Optional[str] = None,
+        target_info: Optional[ResolvedSessionIdTarget] = None,
     ) -> MessageContext:
         platform = target.platform
         self.validate_platform(platform)
@@ -745,6 +918,7 @@ class ScheduledTaskService:
                 "platform": platform,
                 "is_dm": target.is_dm,
                 "turn_source": "scheduled",
+                "agent_session_id": session_id,
                 "session_key_external": target.to_key(),
                 "delivery_key_external": delivery_target.to_key(),
                 "delivery_scope_session_key": delivery_target.session_scope,
@@ -758,6 +932,17 @@ class ScheduledTaskService:
                 "scheduled_delivery_alias": delivery_strategy,
                 "task_execution_id": execution_id,
                 "task_trigger_kind": trigger_kind,
+                "agent_session_target": (
+                    {
+                        "id": target_info.session_id,
+                        "agent_backend": target_info.agent_backend,
+                        "agent_variant": target_info.agent_variant,
+                        "native_session_id": target_info.native_session_id,
+                        "workdir": target_info.workdir,
+                    }
+                    if target_info
+                    else None
+                ),
             },
         )
 
@@ -793,7 +978,7 @@ class ScheduledTaskService:
         if deliver_key:
             delivery_target = parse_session_key(deliver_key)
             if delivery_target.platform != session_target.platform:
-                raise ValueError("--deliver-key must stay on the same platform as --session-key")
+                raise ValueError("--deliver-key must stay on the same platform as the session target")
             return delivery_target
         if post_to == "channel":
             return ParsedSessionKey(
@@ -804,7 +989,7 @@ class ScheduledTaskService:
             )
         if post_to == "thread":
             if not session_target.thread_id:
-                raise ValueError("--post-to thread requires a thread-bound --session-key or an explicit --deliver-key")
+                raise ValueError("--post-to thread requires a thread-bound session target or an explicit --deliver-key")
             return session_target
         return session_target
 

@@ -499,7 +499,20 @@ class CodexAgent(BaseAgent):
             request.base_session_id,
             thread_id,
         )
+        self._attach_agent_session_id(request)
         return thread_id
+
+    def _attach_agent_session_id(self, request: AgentRequest) -> Optional[str]:
+        getter = getattr(self.sessions, "get_agent_session_row_id", None)
+        if not callable(getter):
+            return None
+        agent_session_id = getter(request.session_key, request.base_session_id, self.name)
+        if not agent_session_id:
+            return None
+        payload = dict(request.context.platform_specific or {})
+        payload["agent_session_id"] = agent_session_id
+        request.context.platform_specific = payload
+        return agent_session_id
 
     def _resolve_codex_agent_settings(
         self,
@@ -559,6 +572,7 @@ class CodexAgent(BaseAgent):
         )
         if persisted:
             try:
+                self._attach_agent_session_id(request)
                 resume_params: Dict[str, Any] = {
                     "threadId": persisted,
                     "developerInstructions": self._build_thread_developer_instructions(request),

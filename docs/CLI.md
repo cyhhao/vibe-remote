@@ -161,7 +161,7 @@ vibe screenshot --json
 Create, inspect, update, run, pause, resume, or remove scheduled tasks.
 
 ```bash
-vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
+vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --prompt 'Share the hourly summary.'
 vibe task list --brief
 vibe task update <task-id> --cron '*/30 * * * *'
 vibe task run <task-id>
@@ -170,19 +170,22 @@ vibe task remove <task-id>
 
 Use `vibe task add --help` and `vibe task update --help` for the full command surface, including:
 
-- `--session-key` for session continuity
+- `--session-id` for Agent Session continuity
 - `--post-to channel` to publish into the parent channel while keeping thread context
 - `--deliver-key` for an explicit delivery target
 - `--cron` and `--at` scheduling
 - `--name`, `--timezone`, and prompt file support
+
+`--session-key` remains accepted for older scripts, but new tasks should use
+the Agent Session ID shown in the active Vibe Remote prompt.
 
 ### `vibe hook send`
 
 Queue one asynchronous turn without storing a scheduled task definition.
 
 ```bash
-vibe hook send --session-key 'slack::channel::C123' --prompt 'The export finished. Share the summary.'
-vibe hook send --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prompt 'Share the benchmark result in the channel.'
+vibe hook send --session-id sesk8m4q2p7x --prompt 'The export finished. Share the summary.'
+vibe hook send --session-id sesk8m4q2p7x --post-to channel --prompt 'Share the benchmark result in the channel.'
 ```
 
 Use this when you want one delayed or background follow-up without persisting a task in `scheduled_tasks.json`.
@@ -196,13 +199,13 @@ stdout and delivers it through the chosen session as a follow-up message.
 
 ```bash
 vibe watch add \
-  --session-key 'slack::channel::C123' \
+  --session-id sesk8m4q2p7x \
   --prefix 'Test run finished. Summarize the failures and propose next steps.' \
   -- ./scripts/run_tests.sh
 
 # Alternative: pass the command through a shell with --shell
 vibe watch add \
-  --session-key 'slack::channel::C123' \
+  --session-id sesk8m4q2p7x \
   --prefix 'Build done. Summarize.' \
   --shell 'make build && ./scripts/post_build.sh'
 
@@ -218,7 +221,7 @@ string via `--shell`). Use `vibe watch add --help` for the full surface,
 including `--timeout` (per-cycle timeout in seconds), `--lifetime-timeout`
 (total wall-clock limit), `--forever`, `--retry-exit-code`, `--retry-delay`,
 `--post-to channel`, `--deliver-key`, and `--name`. Watches share
-`--session-key`, `--post-to`, and `--deliver-key` semantics with `vibe task`
+`--session-id`, `--post-to`, and `--deliver-key` semantics with `vibe task`
 and `vibe hook send`. Prefer `vibe watch` over ad-hoc `nohup` jobs when the
 user wants a managed background task with a guaranteed follow-up message.
 
@@ -348,12 +351,12 @@ The web UI (`http://127.0.0.1:5123`) provides the same controls:
 | Path | Description |
 |------|-------------|
 | `~/.vibe_remote/config/config.json` | Main configuration |
-| `~/.vibe_remote/state/vibe.sqlite` | Internal database managed by Vibe Remote — opaque; manage state through the Web UI or `vibe` CLI, never read or write this file directly |
+| `~/.vibe_remote/state/vibe.sqlite` | Internal database managed by Vibe Remote; stores settings, sessions, scheduled tasks, watches, and background run records |
 | `~/.vibe_remote/state/discovered_chats.json` | Discovered IM chats/channels surfaced by platform adapters |
 | `~/.vibe_remote/state/settings.json` | Legacy JSON snapshot of channel routing settings |
-| `~/.vibe_remote/state/scheduled_tasks.json` | Persisted scheduled task definitions |
-| `~/.vibe_remote/state/watches.json` | Persisted managed watch definitions |
-| `~/.vibe_remote/state/task_requests/` | Queued task run and hook execution requests |
+| `~/.vibe_remote/state/scheduled_tasks.json` | Legacy scheduled task definitions imported into SQLite on startup |
+| `~/.vibe_remote/state/watches.json` | Legacy managed watch definitions imported into SQLite on startup |
+| `~/.vibe_remote/state/task_requests/` | Legacy queued task/hook requests imported into SQLite on startup |
 | `~/.vibe_remote/state/user_preferences.md` | Shared long-term user preference notes |
 | `~/.vibe_remote/state/backups/` | Automatic state backups taken before migrations |
 | `~/.vibe_remote/runtime/remote-access-cloudflared.pid` | cloudflared tunnel PID for Vibe Cloud remote access |

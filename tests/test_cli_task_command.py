@@ -92,7 +92,7 @@ def test_task_add_rejects_disabled_platform_even_with_credentials_present() -> N
     assert payload["details"]["configured_platforms"] == ["slack"]
 
 
-def test_task_help_describes_session_key_guidance(capsys) -> None:
+def test_task_help_describes_session_id_guidance(capsys) -> None:
     parser = cli.build_parser()
 
     with pytest.raises(SystemExit) as exc:
@@ -101,7 +101,7 @@ def test_task_help_describes_session_key_guidance(capsys) -> None:
     assert exc.value.code == 0
     captured = capsys.readouterr()
     assert "Create, inspect, and control scheduled prompts for Vibe Remote." in captured.out
-    assert "vibe task add --session-key 'slack::channel::C123'" in captured.out
+    assert "vibe task add --session-id sesk8m4q2p7x" in captured.out
     assert "{add,update,list,show,pause,resume,run,remove}" in captured.out
     assert "rm (remove)" not in captured.out
     assert "\n    ls" not in captured.out
@@ -116,7 +116,7 @@ def test_task_add_help_includes_examples_and_threadless_guidance(capsys) -> None
     assert exc.value.code == 0
     captured = capsys.readouterr()
     assert "If this is your first time using this command, read this whole help entry before creating a task." in captured.out
-    assert "`--session-key` chooses which session Vibe Remote will continue using when the task runs." in captured.out
+    assert "`--session-id` chooses which Agent Session Vibe Remote will continue using when the task runs." in captured.out
     assert "--post-to" in captured.out
     assert "--deliver-key" in captured.out
 
@@ -133,8 +133,8 @@ def test_hook_send_help_describes_runtime_effects(capsys) -> None:
     assert "`vibe hook send` queues one asynchronous turn without persisting a scheduled task." in captured.out
     assert "`--post-to channel` changes where the message is posted, not which session is continued." in captured.out
     assert "`--prompt` and `--prompt-file` provide the one-shot async content that will be queued immediately." in captured.out
-    assert "<platform>::channel::<channel_id>" in captured.out
-    assert "vibe hook send --session-key 'slack::channel::C123'" in captured.out
+    assert "--session-id" in captured.out
+    assert "vibe hook send --session-id sesk8m4q2p7x" in captured.out
 
 
 def test_task_list_help_mentions_completed_one_shots_hidden_by_default(capsys) -> None:
@@ -174,8 +174,8 @@ def test_hook_send_help_includes_examples_and_threadless_guidance(capsys) -> Non
     assert "`vibe hook send` queues one asynchronous turn" in captured.out
     assert "--post-to" in captured.out
     assert "--deliver-key" in captured.out
-    assert "<platform>::channel::<channel_id>" in captured.out
-    assert "vibe hook send --session-key 'slack::channel::C123'" in captured.out
+    assert "--session-id" in captured.out
+    assert "vibe hook send --session-id sesk8m4q2p7x" in captured.out
 
 
 def test_task_add_parse_error_is_structured_json(capsys) -> None:

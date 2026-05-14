@@ -24,11 +24,22 @@ from config.v2_settings import SettingsState, load_settings_state_from_json
 from storage.db import create_sqlite_engine
 from storage.lock import MigrationFileLock
 from storage.migrations import run_migrations
-from storage.models import agent_sessions, auth_codes, imported_state_tables, runtime_records, scope_settings, scopes, state_meta
+from storage.models import (
+    agent_sessions,
+    auth_codes,
+    background_runs,
+    background_tasks,
+    imported_state_tables,
+    runtime_records,
+    scope_settings,
+    scopes,
+    state_meta,
+)
 from storage.sessions_service import SESSIONS_LAST_ACTIVITY_KEY, SQLiteSessionsService
 from storage.settings_service import SQLiteSettingsService, upsert_scope
 
 JSON_IMPORT_MARKER = "json_import_completed_at"
+BACKGROUND_IMPORT_MARKER = "background_json_import_completed_at"
 logger = logging.getLogger(__name__)
 
 
@@ -61,12 +72,26 @@ def ensure_sqlite_state(
         run_migrations(target_db)
         engine = create_sqlite_engine(target_db)
         try:
+            backup_path: Path | None = None
             with engine.begin() as conn:
                 if _has_import_marker(conn):
+                    imported_background = False
+                    background_counts: dict[str, int] = {}
+                    if not _has_background_import_marker(conn):
+                        backup_path = _backup_json_state(target_state_dir)
+                        background_counts = _import_background_state(conn, target_state_dir)
+                        _set_background_import_marker(conn)
+                        _validate_import(conn, _current_counts(conn))
+                        imported_background = bool(
+                            background_counts.get("background_scheduled_tasks")
+                            or background_counts.get("background_watches")
+                            or background_counts.get("background_runs_imported")
+                        )
                     return MigrationImportReport(
                         db_path=target_db,
-                        imported=False,
-                        counts=_current_counts(conn),
+                        imported=imported_background,
+                        backup_path=backup_path,
+                        counts=_current_counts(conn) | background_counts,
                     )
 
                 _clear_imported_state(conn)
@@ -77,18 +102,22 @@ def ensure_sqlite_state(
 
             with engine.begin() as conn:
                 discovered_count = _import_discovered_chats(conn, parsed.discovered)
+                background_counts = _import_background_state(conn, target_state_dir)
                 counts = _current_counts(conn)
                 counts["discovered_scopes"] = discovered_count
+                counts.update(background_counts)
                 if parsed.discovered_skipped:
                     counts["discovered_chats_skipped"] = 1
                 _validate_import(conn, counts)
                 _set_import_marker(conn)
+                _set_background_import_marker(conn)
                 return MigrationImportReport(
                     db_path=target_db,
                     imported=True,
                     backup_path=backup_path,
                     counts=_current_counts(conn)
                     | {"discovered_scopes": discovered_count}
+                    | background_counts
                     | ({"discovered_chats_skipped": 1} if parsed.discovered_skipped else {}),
                 )
         finally:
@@ -155,11 +184,34 @@ def _has_import_marker(conn: Connection) -> bool:
     )
 
 
+def _has_background_import_marker(conn: Connection) -> bool:
+    return (
+        conn.execute(
+            select(state_meta.c.value_json).where(state_meta.c.key == BACKGROUND_IMPORT_MARKER)
+        ).scalar_one_or_none()
+        is not None
+    )
+
+
 def _set_import_marker(conn: Connection) -> None:
     now = _utc_now_iso()
     conn.execute(
         state_meta.insert().values(
             key=JSON_IMPORT_MARKER,
+            value_json=_json_dumps(now),
+            updated_at=now,
+        )
+    )
+
+
+def _set_background_import_marker(conn: Connection) -> None:
+    now = _utc_now_iso()
+    conn.execute(
+        state_meta.delete().where(state_meta.c.key == BACKGROUND_IMPORT_MARKER),
+    )
+    conn.execute(
+        state_meta.insert().values(
+            key=BACKGROUND_IMPORT_MARKER,
             value_json=_json_dumps(now),
             updated_at=now,
         )
@@ -178,7 +230,13 @@ def _backup_json_state(state_dir: Path) -> Path:
     backup_path.mkdir(parents=True)
 
     manifest: dict[str, Any] = {"created_at": _utc_now_iso(), "files": {}}
-    for name in ("settings.json", "sessions.json", "discovered_chats.json"):
+    for name in (
+        "settings.json",
+        "sessions.json",
+        "discovered_chats.json",
+        "scheduled_tasks.json",
+        "watches.json",
+    ):
         source = state_dir / name
         if not source.exists():
             manifest["files"][name] = {"present": False}
@@ -191,6 +249,12 @@ def _backup_json_state(state_dir: Path) -> Path:
             "size": stat.st_size,
             "mtime_ns": stat.st_mtime_ns,
         }
+    task_requests = state_dir / "task_requests"
+    if task_requests.exists():
+        shutil.copytree(task_requests, backup_path / "task_requests")
+        manifest["files"]["task_requests"] = {"present": True}
+    else:
+        manifest["files"]["task_requests"] = {"present": False}
 
     (backup_path / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return backup_path
@@ -305,6 +369,7 @@ def _clear_imported_state(conn: Connection) -> None:
     for table in imported_state_tables:
         conn.execute(table.delete())
     conn.execute(state_meta.delete().where(state_meta.c.key == JSON_IMPORT_MARKER))
+    conn.execute(state_meta.delete().where(state_meta.c.key == BACKGROUND_IMPORT_MARKER))
     conn.execute(state_meta.delete().where(state_meta.c.key == SESSIONS_LAST_ACTIVITY_KEY))
 
 
@@ -344,6 +409,185 @@ def _import_discovered_chats(conn: Connection, discovered: DiscoveredChatsStore)
     return count
 
 
+def _import_background_state(conn: Connection, state_dir: Path) -> dict[str, int]:
+    task_count = _import_scheduled_tasks(conn, state_dir / "scheduled_tasks.json")
+    watch_count = _import_watches(conn, state_dir / "watches.json")
+    request_count = _import_task_requests(conn, state_dir / "task_requests")
+    runtime_count = _import_watch_runtime(conn, state_dir / "watch_runtime.json")
+    return {
+        "background_scheduled_tasks": task_count,
+        "background_watches": watch_count,
+        "background_runs_imported": request_count + runtime_count,
+    }
+
+
+def _import_scheduled_tasks(conn: Connection, source: Path) -> int:
+    payload = _read_json_object(source)
+    count = 0
+    for item in payload.get("tasks", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        conn.execute(
+            background_tasks.insert().values(
+                id=str(item.get("id") or ""),
+                task_type="scheduled",
+                name=item.get("name"),
+                session_id=item.get("session_id"),
+                legacy_session_key=item.get("session_key") or None,
+                prompt=item.get("prompt") or "",
+                schedule_type=item.get("schedule_type") or "",
+                cron=item.get("cron"),
+                run_at=item.get("run_at"),
+                timezone=item.get("timezone") or "UTC",
+                command_json=None,
+                shell_command=None,
+                prefix=None,
+                cwd=None,
+                mode=None,
+                timeout_seconds=None,
+                lifetime_timeout_seconds=None,
+                retry_exit_codes_json=None,
+                retry_delay_seconds=None,
+                post_to=item.get("post_to"),
+                deliver_key=item.get("deliver_key"),
+                enabled=1 if item.get("enabled", True) else 0,
+                created_at=item.get("created_at") or _utc_now_iso(),
+                updated_at=item.get("updated_at") or item.get("created_at") or _utc_now_iso(),
+                last_started_at=None,
+                last_finished_at=None,
+                last_event_at=None,
+                last_run_at=item.get("last_run_at"),
+                last_error=item.get("last_error"),
+                last_exit_code=None,
+                metadata_json=_json_dumps({}),
+            )
+        )
+        count += 1
+    return count
+
+
+def _import_watches(conn: Connection, source: Path) -> int:
+    payload = _read_json_object(source)
+    count = 0
+    for item in payload.get("watches", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        conn.execute(
+            background_tasks.insert().values(
+                id=str(item.get("id") or ""),
+                task_type="watch",
+                name=item.get("name"),
+                session_id=item.get("session_id"),
+                legacy_session_key=item.get("session_key") or None,
+                prompt=None,
+                schedule_type=None,
+                cron=None,
+                run_at=None,
+                timezone=None,
+                command_json=_json_dumps(item.get("command") or []),
+                shell_command=item.get("shell_command"),
+                prefix=item.get("prefix"),
+                cwd=item.get("cwd"),
+                mode=item.get("mode") or "once",
+                timeout_seconds=float(item.get("timeout_seconds", 21600.0)),
+                lifetime_timeout_seconds=float(item.get("lifetime_timeout_seconds", 0.0)),
+                retry_exit_codes_json=_json_dumps(item.get("retry_exit_codes") or []),
+                retry_delay_seconds=float(item.get("retry_delay_seconds", 30.0)),
+                post_to=item.get("post_to"),
+                deliver_key=item.get("deliver_key"),
+                enabled=1 if item.get("enabled", True) else 0,
+                created_at=item.get("created_at") or _utc_now_iso(),
+                updated_at=item.get("updated_at") or item.get("created_at") or _utc_now_iso(),
+                last_started_at=item.get("last_started_at"),
+                last_finished_at=item.get("last_finished_at"),
+                last_event_at=item.get("last_event_at"),
+                last_run_at=None,
+                last_error=item.get("last_error"),
+                last_exit_code=item.get("last_exit_code"),
+                metadata_json=_json_dumps({}),
+            )
+        )
+        count += 1
+    return count
+
+
+def _import_task_requests(conn: Connection, root: Path) -> int:
+    count = 0
+    for status_dir, status in (("pending", "pending"), ("processing", "pending"), ("completed", "completed")):
+        directory = root / status_dir
+        if not directory.exists():
+            continue
+        for path in sorted(directory.glob("*.json")):
+            item = _read_json_object(path)
+            if not item:
+                continue
+            ok = item.get("ok")
+            run_status = "failed" if status == "completed" and ok is False else status
+            created_at = item.get("created_at") or item.get("completed_at") or _utc_now_iso()
+            conn.execute(
+                background_runs.insert().values(
+                    id=str(item.get("id") or path.stem),
+                    task_id=item.get("task_id"),
+                    run_type=item.get("request_type") or "hook_send",
+                    status=run_status,
+                    session_id=item.get("session_id"),
+                    legacy_session_key=item.get("session_key"),
+                    post_to=item.get("post_to"),
+                    deliver_key=item.get("deliver_key"),
+                    prompt=item.get("prompt"),
+                    pid=None,
+                    exit_code=None,
+                    error=item.get("error"),
+                    stdout=None,
+                    stderr=None,
+                    created_at=created_at,
+                    started_at=None,
+                    completed_at=item.get("completed_at"),
+                    updated_at=item.get("completed_at") or created_at,
+                    metadata_json=_json_dumps({"ok": ok} if ok is not None else {}),
+                )
+            )
+            count += 1
+    return count
+
+
+def _import_watch_runtime(conn: Connection, source: Path) -> int:
+    payload = _read_json_object(source)
+    watches = payload.get("watches", {}) if isinstance(payload, dict) else {}
+    if not isinstance(watches, dict):
+        return 0
+    count = 0
+    for watch_id, item in watches.items():
+        if not isinstance(item, dict):
+            continue
+        now = item.get("updated_at") or _utc_now_iso()
+        conn.execute(
+            background_runs.insert().values(
+                id=f"runtime:{watch_id}",
+                task_id=str(watch_id),
+                run_type="watch_runtime",
+                status="running" if item.get("running") else "completed",
+                session_id=None,
+                legacy_session_key=None,
+                post_to=None,
+                deliver_key=None,
+                prompt=None,
+                pid=item.get("pid"),
+                exit_code=None,
+                error=None,
+                stdout=None,
+                stderr=None,
+                created_at=item.get("started_at") or now,
+                started_at=item.get("started_at"),
+                completed_at=None,
+                updated_at=now,
+                metadata_json=_json_dumps(item),
+            )
+        )
+        count += 1
+    return count
+
+
 def _validate_import(conn: Connection, _counts: dict[str, int]) -> None:
     integrity = conn.exec_driver_sql("PRAGMA integrity_check").scalar_one()
     if integrity != "ok":
@@ -357,8 +601,23 @@ def _current_counts(conn: Connection) -> dict[str, int]:
         "auth_codes": auth_codes,
         "agent_sessions": agent_sessions,
         "runtime_records": runtime_records,
+        "background_tasks": background_tasks,
+        "background_runs": background_runs,
     }
     return {key: int(conn.execute(select(func.count()).select_from(table)).scalar_one()) for key, table in tables.items()}
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Skipping invalid background JSON state %s: %s", path, exc)
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 
 
 def _json_dumps(value: Any) -> str:

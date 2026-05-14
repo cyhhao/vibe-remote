@@ -316,6 +316,14 @@ class SessionsStore:
             self.state.session_mappings[user_id][agent_name] = agent_map
         return agent_map
 
+    def get_agent_session_row_id(self, user_id: str, agent_name: str, thread_id: str) -> Optional[str]:
+        self._ensure_service()
+        return self._service.get_agent_session_row_id(
+            scope_key=user_id,
+            agent_name=agent_name,
+            session_anchor=thread_id,
+        )
+
     def get_thread_map(self, user_id: str, channel_id: str) -> Dict[str, float]:
         self._ensure_user_namespace(user_id)
         channel_map = self.state.active_slack_threads[user_id].get(channel_id)

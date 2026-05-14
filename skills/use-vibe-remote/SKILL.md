@@ -753,30 +753,27 @@ Use scheduled tasks and watches when the user wants Vibe Remote to inject a prom
 
 Preferred CLI shape:
 
-- recurring task: `vibe task add --session-key '<key>' --cron '<expr>' --prompt '...'`
-- one-off task: `vibe task add --session-key '<key>' --at '<ISO-8601>' --prompt '...'`
+- recurring task: `vibe task add --session-id '<session-id>' --cron '<expr>' --prompt '...'`
+- one-off task: `vibe task add --session-id '<session-id>' --at '<ISO-8601>' --prompt '...'`
 - immediate rerun: `vibe task run <id>`
-- one-shot async hook: `vibe hook send --session-key '<key>' --prompt '...'`
-- managed background watch: `vibe watch add --session-key '<key>' --prefix '...' -- <cmd>` (or `--shell '<cmd>'` to pass a single shell string)
+- one-shot async hook: `vibe hook send --session-id '<session-id>' --prompt '...'`
+- managed background watch: `vibe watch add --session-id '<session-id>' --prefix '...' -- <cmd>` (or `--shell '<cmd>'` to pass a single shell string)
 
 Delivery controls (apply to `vibe task add`, `vibe hook send`, and `vibe watch add`):
 
-- `session_key` controls which session Vibe Remote continues using
-- when you want to keep the current session, keep using the current `session_key`
-- when you do not want to keep the current thread session and instead want to start or reuse the higher-level session, switch to the higher-level key
-- example: `slack::channel::C123::thread::171717.123` keeps the current thread session, while `slack::channel::C123` creates or reuses the channel-scoped session
-- use `--post-to channel` when the task, hook, or watch should keep the session chosen by `session_key` but publish to the parent channel
-- use `--deliver-key '<key>'` only when delivery must go to a different explicit target than `session_key`
+- `session_id` controls which Agent Session Vibe Remote continues using
+- when you want to keep the current session, use the current Agent Session ID shown in the prompt
+- if the current turn does not expose a usable Agent Session ID, ask the user to retry from an active Vibe Remote session instead of guessing
+- use `--post-to channel` when the task, hook, or watch should keep the same Agent Session but publish to the parent channel
+- use `--deliver-key '<key>'` only when delivery must go to a different explicit target than the continued session
 - do not combine `--post-to` and `--deliver-key` in the same command
 - `vibe task add` stores the text from `--prompt` or `--prompt-file` and injects it each time the task runs
 - `vibe hook send` queues the text from `--prompt` or `--prompt-file` once without storing a task
 - `vibe watch add` uses `--prefix` as follow-up instruction text; on a successful cycle Vibe Remote prepends it before waiter stdout, joined with a blank line when both exist
 
-Session key format:
+Legacy compatibility:
 
-- channel scope: `<platform>::channel::<channel_id>`
-- DM scope: `<platform>::user::<user_id>`
-- exact thread target: append `::thread::<thread_id>` when the user explicitly wants the task bound to that thread
+- `--session-key` is still accepted for old scripts; do not use it in new examples or instructions unless the user explicitly asks for legacy targeting
 
 Operational guidance:
 
@@ -943,7 +940,7 @@ Watches:
 
 - `vibe watch add`, `vibe watch list [--brief]`, `vibe watch show <id>`, `vibe watch pause <id>`, `vibe watch resume <id>`, `vibe watch remove <id>`
 
-For any subcommand, prefer `<command> --help` before composing a new invocation. The delivery flags shared by all three commands are `--session-key`, `--post-to`, and `--deliver-key`. The remaining surface differs: `vibe task add` and `vibe hook send` take `--prompt` / `--prompt-file`; `vibe task add` and `vibe watch add` take `--name`; only `vibe task add` takes `--cron` / `--at` / `--timezone`; and `vibe watch add` takes its own set (`--prefix`, `--shell` or a positional command after `--`, `--cwd`, `--timeout`, `--forever`, `--lifetime-timeout`, `--retry-exit-code`, `--retry-delay`). Do not copy task or hook flags into a watch invocation, and do not pass `--name` to `vibe hook send`.
+For any subcommand, prefer `<command> --help` before composing a new invocation. The delivery flags shared by all three commands are `--session-id`, `--post-to`, and `--deliver-key`. The remaining surface differs: `vibe task add` and `vibe hook send` take `--prompt` / `--prompt-file`; `vibe task add` and `vibe watch add` take `--name`; only `vibe task add` takes `--cron` / `--at` / `--timezone`; and `vibe watch add` takes its own set (`--prefix`, `--shell` or a positional command after `--`, `--cwd`, `--timeout`, `--forever`, `--lifetime-timeout`, `--retry-exit-code`, `--retry-delay`). Do not copy task or hook flags into a watch invocation, and do not pass `--name` to `vibe hook send`.
 
 ## Troubleshooting
 

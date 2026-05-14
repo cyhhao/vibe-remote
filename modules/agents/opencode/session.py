@@ -176,6 +176,15 @@ class OpenCodeSessionManager:
                         composite_session_key,
                         session_id,
                     )
+                    agent_session_id = sessions.get_agent_session_row_id(
+                        request.session_key,
+                        composite_session_key,
+                        self._agent_name,
+                    )
+                    if agent_session_id:
+                        payload = dict(request.context.platform_specific or {})
+                        payload["agent_session_id"] = agent_session_id
+                        request.context.platform_specific = payload
                     logger.info(f"Created OpenCode session {session_id} for {request.base_session_id}")
             except Exception as e:
                 logger.error(f"Failed to create OpenCode session: {e}", exc_info=True)
@@ -199,6 +208,15 @@ class OpenCodeSessionManager:
                     composite_session_key,
                     new_session_id,
                 )
+                agent_session_id = sessions.get_agent_session_row_id(
+                    request.session_key,
+                    composite_session_key,
+                    self._agent_name,
+                )
+                if agent_session_id:
+                    payload = dict(request.context.platform_specific or {})
+                    payload["agent_session_id"] = agent_session_id
+                    request.context.platform_specific = payload
                 logger.info(f"Recreated OpenCode session {new_session_id} for {request.base_session_id}")
                 return new_session_id
         except Exception as e:

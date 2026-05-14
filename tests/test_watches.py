@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.scheduled_tasks import TaskExecutionStore
 from core.watches import ManagedWatchService, ManagedWatchStore, WatchRuntimeStateStore
+from storage.background import SQLiteBackgroundTaskStore
 
 
 def test_managed_watch_store_round_trip(tmp_path: Path) -> None:
@@ -71,6 +72,57 @@ def test_managed_watch_store_preserves_zero_values_on_reload(tmp_path: Path) -> 
     assert saved.timeout_seconds == 0
     assert saved.lifetime_timeout_seconds == 0
     assert saved.retry_delay_seconds == 0
+
+
+def test_managed_watch_store_uses_sqlite_when_path_is_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    store = ManagedWatchStore()
+    watch = store.add_watch(
+        name="Watch CI",
+        session_key="slack::channel::C123",
+        session_id="sesk8m4q2p7x",
+        command=["python3", "wait.py"],
+        shell_command=None,
+        prefix="CI finished.",
+        cwd=None,
+        mode="forever",
+        timeout_seconds=600,
+        lifetime_timeout_seconds=3600,
+        retry_exit_codes=[75],
+        retry_delay_seconds=45,
+        post_to="channel",
+        deliver_key=None,
+    )
+
+    reloaded = ManagedWatchStore()
+    saved = reloaded.get_watch(watch.id)
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+
+    assert not (tmp_path / "state" / "watches.json").exists()
+    assert saved is not None
+    assert saved.session_id == "sesk8m4q2p7x"
+    assert sqlite.get_watch(watch.id)["command"] == ["python3", "wait.py"]
+
+
+def test_watch_runtime_store_uses_sqlite_when_path_is_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    store = WatchRuntimeStateStore()
+
+    store.write(
+        {
+            "watches": {
+                "watch-1": {
+                    "running": True,
+                    "pid": 1234,
+                    "started_at": "2026-05-15T00:00:00+00:00",
+                    "updated_at": "2026-05-15T00:00:01+00:00",
+                }
+            }
+        }
+    )
+
+    assert not (tmp_path / "runtime" / "watch_runtime.json").exists()
+    assert store.load()["watches"]["watch-1"]["pid"] == 1234
 
 
 def test_managed_watch_service_once_success_enqueues_hook_and_disables(tmp_path: Path) -> None:

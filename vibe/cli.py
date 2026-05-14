@@ -30,7 +30,7 @@ from config.v2_config import (
     SlackConfig,
     V2Config,
 )
-from core.scheduled_tasks import ScheduledTaskStore, TaskExecutionStore, parse_session_key
+from core.scheduled_tasks import ScheduledTaskStore, TaskExecutionStore, parse_session_key, resolve_session_id_target
 from core.watches import (
     DEFAULT_RETRY_EXIT_CODE,
     WATCH_RECONCILE_INTERVAL_SECONDS,
@@ -132,12 +132,11 @@ def _task_examples_text() -> str:
     return dedent(
         """\
         Examples:
-          vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
+          vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --prompt 'Share the hourly summary.'
           vibe task update 12ab34cd56ef --cron '*/30 * * * *' --name 'Half-hour summary'
           vibe task run 12ab34cd56ef
-          vibe task add --session-key 'discord::user::123456789' --at '2026-03-31T09:00:00+08:00' --prompt-file briefing.md
-          vibe task add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --cron '*/5 * * * *' --prompt 'Tell a new joke each time.'
-          vibe task add --session-key 'lark::channel::oc_abc::thread::om_123' --cron '30 9 * * 1-5' --prompt 'Post the daily standup reminder in this thread.'
+          vibe task add --session-id sesk8m4q2p7x --post-to channel --cron '*/5 * * * *' --prompt 'Tell a new joke each time.'
+          vibe task add --session-id sesk8m4q2p7x --at '2026-03-31T09:00:00+08:00' --prompt-file briefing.md
         """
     )
 
@@ -145,19 +144,14 @@ def _task_examples_text() -> str:
 def _task_add_examples_text() -> str:
     return dedent(
         """\
-        Session key format:
-          <platform>::channel::<channel_id>
-          <platform>::user::<user_id>
-          <platform>::channel::<channel_id>::thread::<thread_id>
-          <platform>::user::<user_id>::thread::<thread_id>
+        Session target:
+          Use --session-id with the current Agent Session ID, for example sesk8m4q2p7x.
 
         Guidance:
           If this is your first time using this command, read this whole help entry before creating a task.
-          `--session-key` chooses which session Vibe Remote will continue using when the task runs.
-          Keep the current session key when future runs should stay in the same session.
-          When you want to leave the current thread session and start or reuse the higher-level session instead, use the higher-level key. Example:
-            slack::channel::C123::thread::171717.123  -> keep the current thread session
-            slack::channel::C123                      -> create or reuse the channel-scoped session
+          `--session-id` chooses which Agent Session Vibe Remote will continue using when the task runs.
+          Keep the current session id when future runs should stay in the same session.
+          If no session id is available, trigger this from an active Vibe Remote conversation instead of guessing.
           `--post-to channel` changes where the message is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
           `--prompt` and `--prompt-file` provide the stored task content that will be injected each time the task runs.
@@ -165,11 +159,9 @@ def _task_add_examples_text() -> str:
           --timezone controls how --cron and naive --at timestamps are interpreted.
 
         Examples:
-          vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
-          vibe task add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --cron '*/5 * * * *' --prompt 'Tell a new joke each time.'
-          vibe task add --session-key 'slack::channel::C123::thread::171717.123' --deliver-key 'slack::channel::C999' --cron '0 9 * * *' --prompt 'Post the daily summary in the announcements channel.'
-          vibe task add --session-key 'discord::user::123456789' --at '2026-03-31T09:00:00+08:00' --prompt 'Send the release reminder.'
-          vibe task add --session-key 'lark::channel::oc_abc::thread::om_123' --cron '30 9 * * 1-5' --timezone 'Asia/Shanghai' --prompt-file standup.txt
+          vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --prompt 'Share the hourly summary.'
+          vibe task add --session-id sesk8m4q2p7x --post-to channel --cron '*/5 * * * *' --prompt 'Tell a new joke each time.'
+          vibe task add --session-id sesk8m4q2p7x --deliver-key 'slack::channel::C999' --cron '0 9 * * *' --prompt 'Post the daily summary in the announcements channel.'
         """
     )
 
@@ -183,13 +175,13 @@ def _task_update_examples_text() -> str:
           vibe task update 12ab34cd56ef --name 'Morning summary'
           vibe task update 12ab34cd56ef --cron '*/30 * * * *'
           vibe task update 12ab34cd56ef --prompt 'Send a shorter summary.'
-          vibe task update 12ab34cd56ef --session-key 'slack::channel::C123::thread::171717.123' --post-to channel
+          vibe task update 12ab34cd56ef --session-id sesk8m4q2p7x --post-to channel
           vibe task update 12ab34cd56ef --deliver-key 'slack::channel::C999'
           vibe task update 12ab34cd56ef --reset-delivery
 
         Guidance:
           Unspecified fields keep their existing values.
-          Use --reset-delivery to return to following --session-key directly.
+          Use --reset-delivery to return to following the session target directly.
           When changing schedule fields, pass either --cron or --at.
           Use --clear-name if you want the task to stop storing a custom name.
         """
@@ -199,30 +191,23 @@ def _task_update_examples_text() -> str:
 def _hook_send_examples_text() -> str:
     return dedent(
         """\
-        Session key format:
-          <platform>::channel::<channel_id>
-          <platform>::user::<user_id>
-          <platform>::channel::<channel_id>::thread::<thread_id>
-          <platform>::user::<user_id>::thread::<thread_id>
+        Session target:
+          Use --session-id with the current Agent Session ID, for example sesk8m4q2p7x.
 
         Guidance:
           If this is your first time using this command, read this whole help entry before queuing a hook.
           `vibe hook send` queues one asynchronous turn without persisting a scheduled task.
-          `--session-key` chooses which session Vibe Remote will continue using for that one async turn.
-          Keep the current session key when the hook should continue in the same session.
-          When you want to leave the current thread session and start or reuse the higher-level session instead, use the higher-level key. Example:
-            slack::channel::C123::thread::171717.123  -> keep the current thread session
-            slack::channel::C123                      -> create or reuse the channel-scoped session
+          `--session-id` chooses which Agent Session Vibe Remote will continue using for that one async turn.
+          Keep the current session id when the hook should continue in the same session.
+          If no session id is available, trigger this from an active Vibe Remote conversation instead of guessing.
           `--post-to channel` changes where the message is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
           `--prompt` and `--prompt-file` provide the one-shot async content that will be queued immediately.
 
         Examples:
-          vibe hook send --session-key 'slack::channel::C123' --prompt 'The export finished. Share the summary.'
-          vibe hook send --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prompt 'Share the benchmark result in the channel.'
-          vibe hook send --session-key 'slack::channel::C123' --deliver-key 'slack::channel::C999' --prompt 'Post the deployment summary in announcements.'
-          vibe hook send --session-key 'discord::user::123456789' --prompt-file release-note.txt
-          vibe hook send --session-key 'lark::channel::oc_abc::thread::om_123' --prompt 'Post the benchmark result in this thread.'
+          vibe hook send --session-id sesk8m4q2p7x --prompt 'The export finished. Share the summary.'
+          vibe hook send --session-id sesk8m4q2p7x --post-to channel --prompt 'Share the benchmark result in the channel.'
+          vibe hook send --session-id sesk8m4q2p7x --deliver-key 'slack::channel::C999' --prompt 'Post the deployment summary in announcements.'
         """
     )
 
@@ -231,9 +216,9 @@ def _watch_examples_text() -> str:
     return dedent(
         """\
         Examples:
-          vibe watch add --session-key 'slack::channel::C123' --name 'Wait for export' --shell 'python3 scripts/wait_for_export.py'
-          vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The CI job finished.' -- python3 scripts/wait_for_ci.py --build 42
-          vibe watch add --session-key 'slack::channel::C123' --forever --retry-exit-code 75 --retry-delay 60 --shell 'bash scripts/wait_for_log_pattern.sh'
+          vibe watch add --session-id sesk8m4q2p7x --name 'Wait for export' --shell 'python3 scripts/wait_for_export.py'
+          vibe watch add --session-id sesk8m4q2p7x --post-to channel --prefix 'The CI job finished.' -- python3 scripts/wait_for_ci.py --build 42
+          vibe watch add --session-id sesk8m4q2p7x --forever --retry-exit-code 75 --retry-delay 60 --shell 'bash scripts/wait_for_log_pattern.sh'
           vibe watch list --brief
           vibe watch show 12ab34cd56ef
           vibe watch pause 12ab34cd56ef
@@ -280,20 +265,15 @@ def _print_json(payload: dict) -> None:
 def _watch_add_examples_text() -> str:
     return dedent(
         """\
-        Session key format:
-          <platform>::channel::<channel_id>
-          <platform>::user::<user_id>
-          <platform>::channel::<channel_id>::thread::<thread_id>
-          <platform>::user::<user_id>::thread::<thread_id>
+        Session target:
+          Use --session-id with the current Agent Session ID, for example sesk8m4q2p7x.
 
         Guidance:
           If this is your first time using this command, read this whole help entry before creating a watch.
           Use a watch when a script should wait in the background and send a follow-up when it detects an event or reaches a terminal failure.
-          `--session-key` chooses which session Vibe Remote will continue using for follow-up messages from the watch.
-          Keep the current session key when follow-up should continue in the same session.
-          When you want to leave the current thread session and start or reuse the higher-level session instead, use the higher-level key. Example:
-            slack::channel::C123::thread::171717.123  -> keep the current thread session
-            slack::channel::C123                      -> create or reuse the channel-scoped session
+          `--session-id` chooses which Agent Session Vibe Remote will continue using for follow-up messages from the watch.
+          Keep the current session id when follow-up should continue in the same session.
+          If no session id is available, trigger this from an active Vibe Remote conversation instead of guessing.
           `--post-to channel` changes where the follow-up is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
           `--prefix` becomes the instruction text of the follow-up hook. On a successful cycle, Vibe Remote prepends `--prefix` before waiter stdout and joins them with a blank line when both exist.
@@ -303,9 +283,9 @@ def _watch_add_examples_text() -> str:
           --timeout applies to each cycle. --lifetime-timeout applies only to the whole forever watch lifetime.
 
         Examples:
-          vibe watch add --session-key 'slack::channel::C123' --shell 'python3 scripts/wait_for_export.py'
-          vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The export finished.' -- bash -lc 'sleep 120; echo done'
-          vibe watch add --session-key 'slack::channel::C123' --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 75 --retry-delay 30 -- uv run --no-project scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
+          vibe watch add --session-id sesk8m4q2p7x --shell 'python3 scripts/wait_for_export.py'
+          vibe watch add --session-id sesk8m4q2p7x --post-to channel --prefix 'The export finished.' -- bash -lc 'sleep 120; echo done'
+          vibe watch add --session-id sesk8m4q2p7x --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 75 --retry-delay 30 -- uv run --no-project scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
         """
     )
 
@@ -636,6 +616,7 @@ def _task_payload(task, *, brief: bool = False):
             "next_run_at": derived["next_run_at"],
             "schedule_type": task.schedule_type,
             "schedule_summary": derived["schedule_summary"],
+            "session_id": task.session_id,
             "session_key": task.session_key,
             "post_to": task.post_to,
             "deliver_key": task.deliver_key,
@@ -724,9 +705,71 @@ def _parse_validated_session_key(
     return parsed
 
 
+def _validate_session_id_target(
+    session_id: str,
+    *,
+    help_command: str,
+) -> object:
+    try:
+        resolved = resolve_session_id_target(session_id)
+    except ValueError as exc:
+        raise TaskCliError(
+            str(exc),
+            code="invalid_session_id",
+            hint="Use the current Agent Session ID from the prompt, such as sesk8m4q2p7x.",
+            example="sesk8m4q2p7x",
+            help_command=help_command,
+            details={"session_id": session_id},
+        ) from exc
+
+    supported_platforms = _supported_task_platforms()
+    if resolved.session_key.platform not in supported_platforms:
+        supported_text = ", ".join(sorted(supported_platforms)) or "none"
+        raise TaskCliError(
+            f"unsupported task platform: {resolved.session_key.platform}",
+            code="unsupported_platform",
+            hint="Choose a session whose platform is enabled in Vibe Remote before sending the request.",
+            example="sesk8m4q2p7x",
+            help_command=help_command,
+            details={
+                "requested_platform": resolved.session_key.platform,
+                "configured_platforms": sorted(supported_platforms),
+                "configured_platforms_text": supported_text,
+            },
+        )
+    return resolved.session_key
+
+
+def _resolve_session_target_args(
+    args,
+    *,
+    required: bool,
+    help_command: str,
+) -> tuple[Optional[str], str]:
+    session_id = (getattr(args, "session_id", None) or "").strip()
+    session_key = (getattr(args, "session_key", None) or "").strip()
+    if session_id and session_key:
+        raise TaskCliError(
+            "use either --session-id or --session-key, not both",
+            code="conflicting_session_target",
+            hint="Use --session-id for new commands.",
+            help_command=help_command,
+        )
+    if required and not session_id and not session_key:
+        raise TaskCliError(
+            "one of --session-id or --session-key is required",
+            code="missing_session_target",
+            hint="Use --session-id with the current Agent Session ID.",
+            example="vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --prompt 'Share the hourly summary.'",
+            help_command=help_command,
+        )
+    return session_id or None, session_key
+
+
 def _validate_delivery_args(
     *,
     session_key: str,
+    session_id: Optional[str] = None,
     post_to: Optional[str],
     deliver_key: Optional[str],
     help_command: str,
@@ -739,13 +782,16 @@ def _validate_delivery_args(
             help_command=help_command,
         )
 
-    session_target = _parse_validated_session_key(session_key, help_command=help_command)
+    if session_id:
+        session_target = _validate_session_id_target(session_id, help_command=help_command)
+    else:
+        session_target = _parse_validated_session_key(session_key, help_command=help_command)
     delivery_target = None
     if deliver_key:
         delivery_target = _parse_validated_session_key(deliver_key, help_command=help_command)
         if delivery_target.platform != session_target.platform:
             raise TaskCliError(
-                "--deliver-key must use the same platform as --session-key",
+                "--deliver-key must use the same platform as the session target",
                 code="invalid_delivery_target",
                 hint="Keep session memory and delivery on the same IM platform. Change only the channel, user, or thread target.",
                 help_command=help_command,
@@ -756,46 +802,46 @@ def _validate_delivery_args(
             )
     elif post_to == "thread" and not session_target.thread_id:
         raise TaskCliError(
-            "--post-to thread requires a thread-bound --session-key or an explicit --deliver-key",
+            "--post-to thread requires a thread-bound session target or an explicit --deliver-key",
             code="invalid_delivery_target",
-            hint="Append ::thread::<thread_id> to --session-key, or use --deliver-key with a thread target.",
+            hint="Use a thread-bound Agent Session ID or --deliver-key with a thread target.",
             help_command=help_command,
-            details={"session_key": session_key, "post_to": post_to},
+            details={"session_id": session_id, "session_key": session_key, "post_to": post_to},
         )
     return session_target, delivery_target
 
 
 def _collect_target_warnings(*targets) -> list[dict]:
+    lark_targets = [target for target in targets if target is not None and target.platform == "lark" and target.is_dm]
+    if not lark_targets:
+        return []
     store = SettingsStore.get_instance(paths.get_settings_path())
     warnings: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
 
-    for target in targets:
-        if target is None:
-            continue
+    for target in lark_targets:
         dedupe_key = (target.platform, target.scope_type, target.scope_id)
         if dedupe_key in seen:
             continue
         seen.add(dedupe_key)
 
-        if target.platform == "lark" and target.is_dm:
-            bound_user = store.get_user(target.scope_id, platform="lark")
-            if bound_user is None:
-                warnings.append(
-                    {
-                        "code": "lark_user_not_bound",
-                        "message": "The target Lark user is not bound in Vibe Remote yet; delivery may fail at runtime.",
-                        "details": {"session_key": target.to_key(include_thread=False)},
-                    }
-                )
-            elif not getattr(bound_user, "dm_chat_id", ""):
-                warnings.append(
-                    {
-                        "code": "lark_dm_chat_unbound",
-                        "message": "The target Lark user has no dm_chat_id binding yet; delivery may fail at runtime.",
-                        "details": {"session_key": target.to_key(include_thread=False)},
-                    }
-                )
+        bound_user = store.get_user(target.scope_id, platform="lark")
+        if bound_user is None:
+            warnings.append(
+                {
+                    "code": "lark_user_not_bound",
+                    "message": "The target Lark user is not bound in Vibe Remote yet; delivery may fail at runtime.",
+                    "details": {"session_key": target.to_key(include_thread=False)},
+                }
+            )
+        elif not getattr(bound_user, "dm_chat_id", ""):
+            warnings.append(
+                {
+                    "code": "lark_dm_chat_unbound",
+                    "message": "The target Lark user has no dm_chat_id binding yet; delivery may fail at runtime.",
+                    "details": {"session_key": target.to_key(include_thread=False)},
+                }
+            )
 
     return warnings
 
@@ -865,6 +911,7 @@ def _watch_payload(watch, runtime_entry: Optional[dict[str, object]], *, brief: 
             "display_name": derived["display_name"],
             "state": derived["state"],
             "mode": watch.mode,
+            "session_id": watch.session_id,
             "session_key": watch.session_key,
             "timeout_seconds": watch.timeout_seconds,
             "lifetime_timeout_seconds": watch.lifetime_timeout_seconds,
@@ -960,8 +1007,14 @@ def _wait_for_watch_startup(
 
 def cmd_task_add(args):
     try:
+        session_id, session_key = _resolve_session_target_args(
+            args,
+            required=True,
+            help_command="vibe task add --help",
+        )
         session_target, delivery_target = _validate_delivery_args(
-            session_key=args.session_key,
+            session_id=session_id,
+            session_key=session_key,
             post_to=getattr(args, "post_to", None),
             deliver_key=getattr(args, "deliver_key", None),
             help_command="vibe task add --help",
@@ -969,7 +1022,7 @@ def cmd_task_add(args):
         prompt = _resolve_prompt_input(
             args,
             help_command="vibe task add --help",
-            example_command="vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *'",
+            example_command="vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *'",
         )
         timezone_name = args.timezone or _default_timezone_name()
         try:
@@ -999,7 +1052,8 @@ def cmd_task_add(args):
                 ) from exc
             task = store.add_task(
                 name=_normalize_task_name(getattr(args, "name", None)),
-                session_key=args.session_key,
+                session_key=session_key,
+                session_id=session_id,
                 post_to=args.post_to,
                 deliver_key=args.deliver_key,
                 prompt=prompt,
@@ -1021,7 +1075,8 @@ def cmd_task_add(args):
                 ) from exc
             task = store.add_task(
                 name=_normalize_task_name(getattr(args, "name", None)),
-                session_key=args.session_key,
+                session_key=session_key,
+                session_id=session_id,
                 post_to=args.post_to,
                 deliver_key=args.deliver_key,
                 prompt=prompt,
@@ -1125,7 +1180,13 @@ def cmd_task_update(args):
                 hint="Pass --reset-delivery to clear delivery overrides, or pass --post-to/--deliver-key to replace them.",
                 help_command="vibe task update --help",
             )
-        session_key = args.session_key or task.session_key
+        session_id_update, session_key_update = _resolve_session_target_args(
+            args,
+            required=False,
+            help_command="vibe task update --help",
+        )
+        session_id = session_id_update if session_id_update is not None else task.session_id
+        session_key = session_key_update if session_key_update else ("" if session_id_update else task.session_key)
         if getattr(args, "reset_delivery", False):
             post_to = None
             deliver_key = None
@@ -1143,6 +1204,7 @@ def cmd_task_update(args):
                 deliver_key = task.deliver_key
 
         session_target, delivery_target = _validate_delivery_args(
+            session_id=session_id,
             session_key=session_key,
             post_to=post_to,
             deliver_key=deliver_key,
@@ -1231,6 +1293,7 @@ def cmd_task_update(args):
 
         changes = {
             "name": name,
+            "session_id": session_id,
             "session_key": session_key,
             "prompt": prompt,
             "schedule_type": schedule_type,
@@ -1242,6 +1305,7 @@ def cmd_task_update(args):
         }
         current = {
             "name": task.name,
+            "session_id": task.session_id,
             "session_key": task.session_key,
             "prompt": task.prompt,
             "schedule_type": task.schedule_type,
@@ -1255,7 +1319,7 @@ def cmd_task_update(args):
             raise TaskCliError(
                 "no task fields were changed",
                 code="no_task_changes",
-                hint="Pass at least one field to update, such as --name, --cron, --prompt, --session-key, or --deliver-key.",
+                hint="Pass at least one field to update, such as --name, --cron, --prompt, --session-id, or --deliver-key.",
                 help_command="vibe task update --help",
                 details={"task_id": args.task_id},
             )
@@ -1264,6 +1328,7 @@ def cmd_task_update(args):
             args.task_id,
             name=name,
             session_key=session_key,
+            session_id=session_id,
             prompt=prompt,
             schedule_type=schedule_type,
             post_to=post_to,
@@ -1312,8 +1377,14 @@ def cmd_task_run(task_id: str):
 
 def cmd_hook_send(args):
     try:
+        session_id, session_key = _resolve_session_target_args(
+            args,
+            required=True,
+            help_command="vibe hook send --help",
+        )
         session_target, delivery_target = _validate_delivery_args(
-            session_key=args.session_key,
+            session_id=session_id,
+            session_key=session_key,
             post_to=getattr(args, "post_to", None),
             deliver_key=getattr(args, "deliver_key", None),
             help_command="vibe hook send --help",
@@ -1321,10 +1392,11 @@ def cmd_hook_send(args):
         prompt = _resolve_prompt_input(
             args,
             help_command="vibe hook send --help",
-            example_command="vibe hook send --session-key 'slack::channel::C123'",
+            example_command="vibe hook send --session-id sesk8m4q2p7x",
         )
         request = _task_request_store().enqueue_hook_send(
-            session_key=args.session_key,
+            session_key=session_key,
+            session_id=session_id,
             post_to=args.post_to,
             deliver_key=args.deliver_key,
             prompt=prompt,
@@ -1337,7 +1409,8 @@ def cmd_hook_send(args):
                     "accepted": True,
                     "execution_id": request.id,
                     "request_type": request.request_type,
-                    "session_key": args.session_key,
+                    "session_id": session_id,
+                    "session_key": session_key,
                     "post_to": args.post_to,
                     "deliver_key": args.deliver_key,
                     "warnings": warnings,
@@ -1353,8 +1426,14 @@ def cmd_hook_send(args):
 
 def cmd_watch_add(args):
     try:
+        session_id, session_key = _resolve_session_target_args(
+            args,
+            required=True,
+            help_command="vibe watch add --help",
+        )
         session_target, delivery_target = _validate_delivery_args(
-            session_key=args.session_key,
+            session_id=session_id,
+            session_key=session_key,
             post_to=getattr(args, "post_to", None),
             deliver_key=getattr(args, "deliver_key", None),
             help_command="vibe watch add --help",
@@ -1409,7 +1488,8 @@ def cmd_watch_add(args):
         store = _watch_store()
         watch = store.add_watch(
             name=_normalize_watch_name(getattr(args, "name", None)),
-            session_key=args.session_key,
+            session_key=session_key,
+            session_id=session_id,
             command=command,
             shell_command=shell_command,
             prefix=_normalize_task_name(getattr(args, "prefix", None)),
@@ -2479,16 +2559,19 @@ def build_parser():
         epilog=_task_add_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe task add --help",
-        error_hint="Use --session-key together with exactly one schedule flag and one prompt input flag. Add --post-to or --deliver-key only when delivery must differ from the session target.",
+        error_hint="Use --session-id together with exactly one schedule flag and one prompt input flag. Add --post-to or --deliver-key only when delivery must differ from the session target.",
     )
     task_add_parser.add_argument(
         "--name",
         help="Optional human-friendly task name",
     )
     task_add_parser.add_argument(
+        "--session-id",
+        help="Agent Session ID to continue when the task runs.",
+    )
+    task_add_parser.add_argument(
         "--session-key",
-        required=True,
-        help="Conversation session key to continue when the task runs.",
+        help="Legacy compatibility target; prefer --session-id.",
     )
     delivery_group = task_add_parser.add_mutually_exclusive_group()
     delivery_group.add_argument(
@@ -2524,7 +2607,8 @@ def build_parser():
         action="store_true",
         help="Remove the stored custom task name",
     )
-    task_update_parser.add_argument("--session-key", help="Replace the stored session key")
+    task_update_parser.add_argument("--session-id", help="Replace the stored Agent Session ID")
+    task_update_parser.add_argument("--session-key", help="Legacy compatibility target; prefer --session-id")
     update_delivery_group = task_update_parser.add_mutually_exclusive_group()
     update_delivery_group.add_argument(
         "--post-to",
@@ -2538,7 +2622,7 @@ def build_parser():
     task_update_parser.add_argument(
         "--reset-delivery",
         action="store_true",
-        help="Clear any stored delivery override so delivery follows --session-key directly",
+        help="Clear any stored delivery override so delivery follows the session target directly",
     )
     task_update_parser.add_argument("--cron", help="Replace the schedule with a recurring 5-field crontab")
     task_update_parser.add_argument("--at", help="Replace the schedule with a one-shot ISO 8601 timestamp")
@@ -2631,16 +2715,19 @@ def build_parser():
     hook_send_parser = hook_subparsers.add_parser(
         "send",
         help="Queue one async hook message",
-        description="Queue one asynchronous turn for a session key without storing a scheduled task.",
+        description="Queue one asynchronous turn for an Agent Session ID without storing a scheduled task.",
         epilog=_hook_send_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe hook send --help",
-        error_hint="Use --session-key together with exactly one prompt input flag. Add --post-to or --deliver-key only when delivery must differ from the session target.",
+        error_hint="Use --session-id together with exactly one prompt input flag. Add --post-to or --deliver-key only when delivery must differ from the session target.",
+    )
+    hook_send_parser.add_argument(
+        "--session-id",
+        help="Agent Session ID to continue for this one-shot async turn.",
     )
     hook_send_parser.add_argument(
         "--session-key",
-        required=True,
-        help="Conversation session key to continue for this one-shot async turn.",
+        help="Legacy compatibility target; prefer --session-id.",
     )
     hook_delivery_group = hook_send_parser.add_mutually_exclusive_group()
     hook_delivery_group.add_argument(
@@ -2678,13 +2765,16 @@ def build_parser():
         epilog=_watch_add_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe watch add --help",
-        error_hint="Use --session-key and either --shell or a command after '--'. Add --forever only when the waiter should re-arm after successful cycles and only retry failures for explicit retry exit codes.",
+        error_hint="Use --session-id and either --shell or a command after '--'. Add --forever only when the waiter should re-arm after successful cycles and only retry failures for explicit retry exit codes.",
     )
     watch_add_parser.add_argument("--name", help="Optional human-friendly watch name")
     watch_add_parser.add_argument(
+        "--session-id",
+        help="Agent Session ID to continue for follow-up messages from this watch.",
+    )
+    watch_add_parser.add_argument(
         "--session-key",
-        required=True,
-        help="Conversation session key to continue for follow-up messages from this watch.",
+        help="Legacy compatibility target; prefer --session-id.",
     )
     watch_delivery_group = watch_add_parser.add_mutually_exclusive_group()
     watch_delivery_group.add_argument(

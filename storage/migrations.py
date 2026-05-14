@@ -18,6 +18,7 @@ INITIAL_TABLES = {
     "agent_sessions",
     "runtime_records",
 }
+HEAD_TABLES = INITIAL_TABLES | {"background_tasks", "background_runs"}
 UNRELEASED_OLD_INITIAL_TABLES = [
     "session_messages",
     "chat_sessions",
@@ -56,6 +57,23 @@ def run_migrations(db_path: Path | None = None, *, revision: str = "head") -> No
     command.upgrade(cfg, revision)
 
 
+def background_tables_ready(db_path: Path | None = None) -> bool:
+    target_db = (db_path or paths.get_sqlite_state_path()).expanduser().resolve()
+    if not target_db.exists():
+        return False
+    with sqlite3.connect(target_db) as conn:
+        tables = _table_names(conn)
+    return {"background_tasks", "background_runs"}.issubset(tables)
+
+
+def initialize_background_tables(db_path: Path | None = None) -> None:
+    target_db = db_path or paths.get_sqlite_state_path()
+    cfg = alembic_config(target_db)
+    command.ensure_version(cfg)
+    _stamp_existing_initial_schema(target_db, cfg)
+    command.upgrade(cfg, "head")
+
+
 def _reset_unreleased_initial_schema_drift(db_path: Path) -> None:
     path = db_path.expanduser().resolve()
     if not path.exists():
@@ -91,9 +109,12 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
             return
         if "alembic_version" in tables:
             version = conn.execute("select version_num from alembic_version").fetchone()
-            if version is not None:
+            if version is not None and version[0]:
                 return
-        if not INITIAL_TABLES.issubset(tables):
+        if not (INITIAL_TABLES - {"scopes"}).issubset(tables):
+            return
+        if HEAD_TABLES.issubset(tables):
+            command.stamp(cfg, "head")
             return
 
     command.stamp(cfg, INITIAL_REVISION)

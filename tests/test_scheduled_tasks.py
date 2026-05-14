@@ -17,6 +17,7 @@ from core.scheduled_tasks import (
     parse_session_key,
 )
 from modules.im import MessageContext
+from storage.background import SQLiteBackgroundTaskStore
 
 
 class _StubScheduler:
@@ -88,6 +89,49 @@ def test_build_session_key_for_context_uses_fallback_platform() -> None:
     parsed = build_session_key_for_context(context, fallback_platform="slack")
 
     assert parsed.to_key(include_thread=False) == "slack::channel::C123"
+
+
+def test_scheduled_task_store_uses_sqlite_when_path_is_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    store = ScheduledTaskStore()
+    task = store.add_task(
+        name="Hourly summary",
+        session_key="slack::channel::C123",
+        session_id="sesk8m4q2p7x",
+        prompt="hello",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="UTC",
+    )
+
+    reloaded = ScheduledTaskStore()
+    saved = reloaded.get_task(task.id)
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+
+    assert not (tmp_path / "state" / "scheduled_tasks.json").exists()
+    assert saved is not None
+    assert saved.session_id == "sesk8m4q2p7x"
+    assert sqlite.get_scheduled_task(task.id)["prompt"] == "hello"
+
+
+def test_task_execution_store_uses_sqlite_runs_when_root_is_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    store = TaskExecutionStore()
+    request = store.enqueue_hook_send(
+        session_key="slack::channel::C123",
+        session_id="sesk8m4q2p7x",
+        prompt="hello",
+    )
+
+    claimed = store.claim(request.id)
+    assert claimed is not None
+    store.complete(claimed, ok=True, session_key="slack::channel::C123", session_id="sesk8m4q2p7x")
+
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    saved = sqlite.get_run(request.id)
+    assert not (tmp_path / "state" / "task_requests").exists()
+    assert saved["status"] == "completed"
+    assert saved["session_id"] == "sesk8m4q2p7x"
 
 
 def test_store_round_trip_persists_task(tmp_path: Path) -> None:

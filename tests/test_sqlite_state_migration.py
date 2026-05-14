@@ -31,8 +31,10 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "scope_settings" in tables
         assert "agent_sessions" in tables
         assert "runtime_records" in tables
+        assert "background_tasks" in tables
+        assert "background_runs" in tables
         version = conn.execute("select version_num from alembic_version").fetchone()
-        assert version == ("20260501_0001",)
+        assert version == ("20260515_0002",)
 
 
 def test_initial_migration_is_schema_snapshot() -> None:
@@ -70,7 +72,7 @@ def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260501_0001",)
+    assert version == ("20260515_0002",)
 
 
 def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(tmp_path: Path) -> None:
@@ -90,7 +92,7 @@ def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260501_0001",)
+    assert version == ("20260515_0002",)
 
 
 def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
@@ -168,7 +170,100 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
 
     assert second.imported is False
     assert second.backup_path is None
-    assert second.counts == {key: value for key, value in first.counts.items() if key != "discovered_scopes"}
+    assert second.counts == {
+        key: value
+        for key, value in first.counts.items()
+        if key
+        not in {
+            "discovered_scopes",
+            "background_scheduled_tasks",
+            "background_watches",
+            "background_runs_imported",
+        }
+    }
+
+
+def test_ensure_sqlite_state_imports_background_json(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    (state_dir / "scheduled_tasks.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "name": "Digest",
+                        "session_id": "sesk8m4q2p7x",
+                        "session_key": "slack::channel::C123",
+                        "prompt": "hello",
+                        "schedule_type": "cron",
+                        "cron": "0 * * * *",
+                        "timezone": "UTC",
+                        "enabled": True,
+                        "created_at": "2026-05-15T00:00:00+00:00",
+                        "updated_at": "2026-05-15T00:00:00+00:00",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "watches.json").write_text(
+        json.dumps(
+            {
+                "watches": [
+                    {
+                        "id": "watch-1",
+                        "name": "Watch CI",
+                        "session_id": "sesk8m4q2p7x",
+                        "session_key": "slack::channel::C123",
+                        "command": ["python3", "wait.py"],
+                        "mode": "forever",
+                        "timeout_seconds": 600,
+                        "lifetime_timeout_seconds": 3600,
+                        "retry_exit_codes": [75],
+                        "retry_delay_seconds": 30,
+                        "enabled": True,
+                        "created_at": "2026-05-15T00:00:00+00:00",
+                        "updated_at": "2026-05-15T00:00:00+00:00",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    pending = state_dir / "task_requests" / "pending"
+    pending.mkdir(parents=True)
+    (pending / "hook-1.json").write_text(
+        json.dumps(
+            {
+                "id": "hook-1",
+                "request_type": "hook_send",
+                "created_at": "2026-05-15T00:00:00+00:00",
+                "session_id": "sesk8m4q2p7x",
+                "session_key": "slack::channel::C123",
+                "prompt": "queued",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    assert report.counts["background_scheduled_tasks"] == 1
+    assert report.counts["background_watches"] == 1
+    assert report.counts["background_runs_imported"] == 1
+    with sqlite3.connect(db_path) as conn:
+        tasks = conn.execute(
+            "select task_type, session_id, legacy_session_key from background_tasks order by id"
+        ).fetchall()
+        runs = conn.execute("select run_type, status, session_id from background_runs").fetchall()
+    assert tasks == [
+        ("scheduled", "sesk8m4q2p7x", "slack::channel::C123"),
+        ("watch", "sesk8m4q2p7x", "slack::channel::C123"),
+    ]
+    assert runs == [("hook_send", "pending", "sesk8m4q2p7x")]
 
 
 def test_custom_state_paths_do_not_bootstrap_default_home(tmp_path: Path, monkeypatch) -> None:

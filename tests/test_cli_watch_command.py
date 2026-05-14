@@ -49,7 +49,7 @@ def _startup_ok(store: ManagedWatchStore, runtime_store: WatchRuntimeStateStore,
     return store.get_watch(watch_id), runtime_store.load().get("watches", {}).get(watch_id)
 
 
-def test_watch_help_describes_session_key_guidance(capsys) -> None:
+def test_watch_help_describes_session_id_guidance(capsys) -> None:
     parser = cli.build_parser()
 
     with pytest.raises(SystemExit) as exc:
@@ -58,7 +58,7 @@ def test_watch_help_describes_session_key_guidance(capsys) -> None:
     assert exc.value.code == 0
     captured = capsys.readouterr()
     assert "managed background watchers" in captured.out
-    assert "vibe watch add --session-key 'slack::channel::C123'" in captured.out
+    assert "vibe watch add --session-id sesk8m4q2p7x" in captured.out
     assert "{add,list,show,pause,resume,remove}" in captured.out
 
 
@@ -72,7 +72,7 @@ def test_watch_add_help_mentions_shell_and_lifetime_timeout(capsys) -> None:
     captured = capsys.readouterr()
     assert "Pass either --shell '<command>' or a command after '--'." in captured.out
     assert "--lifetime-timeout" in captured.out
-    assert "vibe watch add --session-key 'slack::channel::C123'" in captured.out
+    assert "vibe watch add --session-id sesk8m4q2p7x" in captured.out
     assert "`--prefix` becomes the instruction text of the follow-up hook." in captured.out
     assert "Terminal failures also send a follow-up and disable the watch." in captured.out
     assert "If this is your first time using this command, read this whole help entry before creating a watch." in captured.out

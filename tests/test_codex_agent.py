@@ -869,6 +869,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
         agent.sessions = SimpleNamespace(
             get_agent_session_id=Mock(return_value="thread-existing"),
+            get_agent_session_row_id=Mock(return_value="sesk8m4q2p7x"),
         )
         request = SimpleNamespace(
             working_path="/tmp/work",
@@ -905,12 +906,11 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["threadId"], "thread-existing")
         developer_instructions = params["developerInstructions"]
         self.assertEqual(developer_instructions.count("Focus on regressions."), 1)
-        self.assertEqual(developer_instructions.count("Current session key:"), 1)
+        self.assertEqual(developer_instructions.count("Current session id:"), 1)
+        self.assertNotIn("Legacy session key:", developer_instructions)
+        self.assertNotIn("--session-key", developer_instructions)
         self.assertEqual(developer_instructions.count("If you generate an image with Codex"), 1)
-        self.assertIn(
-            "Current session key: `slack::channel::C1::thread::171717.123`",
-            developer_instructions,
-        )
+        self.assertIn("Current session id: `sesk8m4q2p7x`", developer_instructions)
         self.assertNotIn("Channel-level session key:", developer_instructions)
 
     async def test_resume_thread_keeps_system_prompt_injection_when_quick_replies_are_disabled(self):
