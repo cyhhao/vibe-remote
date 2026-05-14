@@ -202,6 +202,8 @@ def read_claude_api_key_from_settings(home: Path | None = None) -> Optional[str]
 def build_claude_subprocess_env(
     claude_cfg: Any,
     base_env: Optional[Dict[str, str]] = None,
+    *,
+    force_oauth: bool = False,
 ) -> Dict[str, str]:
     """Build the env dict passed to every Claude subprocess / SDK client.
 
@@ -218,9 +220,18 @@ def build_claude_subprocess_env(
     and ``ANTHROPIC_AUTH_TOKEN`` (header-semantics switch) in OAuth mode
     makes the Settings toggle authoritative.
 
-    Centralising the logic prevents the next env-var path (control
-    client, future MCP launch, etc.) from forgetting the strip and
-    re-introducing the same bug.
+    ``force_oauth=True`` is the escape hatch for callers that ARE the
+    OAuth setup flow (the control-channel SDK client in
+    ``_start_claude_control_flow`` and the test probe's env builder).
+    The flow itself is OAuth semantics by construction — inherited
+    ``ANTHROPIC_API_KEY`` / ``ANTHROPIC_AUTH_TOKEN`` / a relay
+    ``ANTHROPIC_BASE_URL`` would route the OAuth handshake through an
+    api-key gateway and break the login regardless of what
+    ``auth_mode_set`` happens to say. Legacy installs on their first
+    sign-in attempt would otherwise never see the strip — they haven't
+    saved anything through Settings yet, so the marker is still
+    ``False`` — and OAuth would fail silently against inherited API
+    credentials.
     """
 
     env_source = base_env if base_env is not None else os.environ
@@ -229,12 +240,12 @@ def build_claude_subprocess_env(
         if key.startswith("ANTHROPIC_") or key.startswith("CLAUDE_"):
             claude_env[key] = value
 
-    if claude_cfg is None:
+    if claude_cfg is None and not force_oauth:
         return claude_env
 
-    auth_mode = getattr(claude_cfg, "auth_mode", "oauth")
-    configured_key_raw = (getattr(claude_cfg, "api_key", None) or "").strip()
-    configured_base = (getattr(claude_cfg, "base_url", None) or "").strip()
+    auth_mode = getattr(claude_cfg, "auth_mode", "oauth") if claude_cfg is not None else "oauth"
+    configured_key_raw = (getattr(claude_cfg, "api_key", None) or "").strip() if claude_cfg is not None else ""
+    configured_base = (getattr(claude_cfg, "base_url", None) or "").strip() if claude_cfg is not None else ""
     # ``auth_mode_set`` is False on V2 configs that predate the Settings
     # → Backends → Claude page (or that the user has simply never
     # opened). On those installs the user is running on shell-exported
@@ -243,19 +254,22 @@ def build_claude_subprocess_env(
     # choice through Settings (api_key save, OAuth save, Sign out,
     # Remove key), the writer flips this to True and we honor
     # ``auth_mode`` strictly.
-    auth_mode_set = bool(getattr(claude_cfg, "auth_mode_set", False))
+    auth_mode_set = bool(getattr(claude_cfg, "auth_mode_set", False)) if claude_cfg is not None else False
 
     if auth_mode == "oauth":
-        if auth_mode_set:
-            # Explicit OAuth pick from the UI: Claude Code must read
-            # credentials from ``~/.claude/credentials.json``. Strip
-            # any inherited API-key / bearer-token vars so they can't
-            # suppress that path. Covers the "Sign out", "Remove
-            # key", and "save OAuth with cleared fields" flows that
-            # all land here with both ``api_key`` and ``base_url``
-            # already empty.
+        if auth_mode_set or force_oauth:
+            # Explicit OAuth pick from the UI, OR a caller that knows
+            # it IS the OAuth setup flow. Strip every inherited
+            # Anthropic credential header: an ambient
+            # ``ANTHROPIC_API_KEY`` / ``ANTHROPIC_AUTH_TOKEN`` would
+            # suppress ``~/.claude/credentials.json``, and an ambient
+            # ``ANTHROPIC_BASE_URL`` (typically a stale relay URL from
+            # the shell) would route OAuth traffic through an
+            # api-key-only gateway. Both leaks have to be plugged for
+            # the "OAuth in Settings" promise to mean anything.
             claude_env.pop("ANTHROPIC_API_KEY", None)
             claude_env.pop("ANTHROPIC_AUTH_TOKEN", None)
+            claude_env.pop("ANTHROPIC_BASE_URL", None)
         # else: legacy install — preserve inherited env vars verbatim.
     elif auth_mode == "api_key":
         if configured_key_raw:

@@ -867,7 +867,17 @@ class AgentAuthService:
         # still get the key into the control-channel SDK client.
         from vibe.claude_config import build_claude_subprocess_env
 
-        claude_env = build_claude_subprocess_env(self._resolve_backend_config("claude"))
+        # ``force_oauth=True`` because this code path IS the OAuth
+        # setup flow — the control-channel SDK client must run with
+        # OAuth semantics regardless of ``auth_mode_set`` (a legacy
+        # install on its very first sign-in attempt has
+        # ``auth_mode_set=False``, so the default env-preserving path
+        # would leak inherited ``ANTHROPIC_*`` vars into the OAuth
+        # handshake and break the login).
+        claude_env = build_claude_subprocess_env(
+            self._resolve_backend_config("claude"),
+            force_oauth=True,
+        )
 
         should_force_sandbox = getattr(session_handler, "_should_force_claude_sandbox", None)
         if callable(should_force_sandbox) and should_force_sandbox():
