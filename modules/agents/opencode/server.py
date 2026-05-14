@@ -46,6 +46,16 @@ class OpenCodeServerManager:
         self.request_timeout_seconds = request_timeout_seconds
         self.host = DEFAULT_OPENCODE_HOST
         self._process: Optional[Process] = None
+        # The event loop ``_process`` was created on. Subprocess transports
+        # bind their internal Future / wait helpers to the creating loop;
+        # ``process.wait()`` or ``terminate_process_tree(process)`` from a
+        # different loop raises ``RuntimeError: got Future attached to a
+        # different loop``. The singleton outlives ``asyncio.run`` calls
+        # (Flask UI server creates a new loop per request), so any code
+        # that touches ``_process`` from a non-creating loop has to
+        # detach it first. ``_process_loop`` is set alongside every
+        # ``_process`` assignment.
+        self._process_loop: Optional[asyncio.AbstractEventLoop] = None
         self._base_url: Optional[str] = None
         self._http_session: Optional[aiohttp.ClientSession] = None
         self._http_session_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -161,6 +171,7 @@ class OpenCodeServerManager:
 
         self._clear_pid_file()
         self._process = None
+        self._process_loop = None
         self._base_url = None
         self._auth_refresh_pending = False
 
@@ -450,8 +461,33 @@ class OpenCodeServerManager:
         return False
 
     async def _start_server(self) -> None:
-        if self._process and self._process.returncode is None:
+        # ``self._process`` may be a stale subprocess from a previous
+        # ``asyncio.run()`` call (the Flask UI server creates a new loop
+        # per request, while ``OpenCodeServerManager`` is a singleton).
+        # ``terminate_process_tree`` calls ``process.wait()`` which uses
+        # the transport's internal Future — that Future is bound to the
+        # loop that created the subprocess, and awaiting it from any
+        # other loop raises "got Future attached to a different loop".
+        # The OS-level pid signaling below (``_terminate_pid`` via
+        # ``runtime.stop_pid``) is loop-agnostic and is the correct
+        # cleanup path; just detach the dangling Python object first.
+        current_loop = asyncio.get_running_loop()
+        if (
+            self._process
+            and self._process.returncode is None
+            and self._process_loop is current_loop
+        ):
             await terminate_process_tree(self._process, logger, "OpenCode server", terminate_timeout=5)
+        elif self._process and self._process_loop is not current_loop:
+            # Foreign-loop subprocess. Best-effort OS signal then drop
+            # the Python object so we don't await its waiter Future in
+            # the wrong loop. ``_find_opencode_serve_pids`` below picks
+            # up any orphan that doesn't exit on its own.
+            stale_pid = getattr(self._process, "pid", None)
+            if isinstance(stale_pid, int) and self._pid_exists(stale_pid):
+                await self._terminate_pid(stale_pid, reason="foreign-loop cleanup")
+            self._process = None
+            self._process_loop = None
 
         # Ensure any stale pid file is cleared before starting.
         self._clear_pid_file()
@@ -476,6 +512,10 @@ class OpenCodeServerManager:
                 env=env,
                 **isolated_subprocess_kwargs(),
             )
+            # Pair the subprocess object with the loop it was created on
+            # so a future request from another loop can detach it
+            # safely before issuing ``process.wait()``.
+            self._process_loop = current_loop
             if self._process and self._process.pid:
                 self._write_pid_file(self._process.pid)
         except FileNotFoundError:
@@ -494,6 +534,7 @@ class OpenCodeServerManager:
         exit_code = self._process.returncode
         self._clear_pid_file()
         self._process = None
+        self._process_loop = None
         raise RuntimeError(
             f"OpenCode server failed to start within {SERVER_START_TIMEOUT}s. Process exit code: {exit_code}"
         )
@@ -509,6 +550,7 @@ class OpenCodeServerManager:
 
             # Keep pid_file so next instance knows about the running server.
             self._process = None
+            self._process_loop = None
 
     def stop_sync(self) -> None:
         if self._http_session and self._http_session_loop:
@@ -529,6 +571,7 @@ class OpenCodeServerManager:
         # Keep pid_file so next instance knows about the running server.
         # Don't clear _process reference - just let it be garbage collected.
         self._process = None
+        self._process_loop = None
 
     async def restart_for_auth_refresh(self) -> None:
         """Terminate the shared server so the next request reloads refreshed auth."""
