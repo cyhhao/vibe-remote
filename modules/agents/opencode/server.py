@@ -479,13 +479,22 @@ class OpenCodeServerManager:
         ):
             await terminate_process_tree(self._process, logger, "OpenCode server", terminate_timeout=5)
         elif self._process and self._process_loop is not current_loop:
-            # Foreign-loop subprocess. Best-effort OS signal then drop
-            # the Python object so we don't await its waiter Future in
-            # the wrong loop. ``_find_opencode_serve_pids`` below picks
-            # up any orphan that doesn't exit on its own.
+            # Foreign-loop subprocess. We can't trust ``returncode`` here
+            # — the transport callbacks fire on the original (now-closed)
+            # loop, so the cached ``returncode`` stays ``None`` even if
+            # the OS process exited long ago. Worse, the PID may have
+            # been reused by an unrelated process. Only OS-signal when
+            # we can confirm the PID still owns an OpenCode serve
+            # cmdline; otherwise just drop the dangling Python object.
+            # ``_find_opencode_serve_pids`` + ``_cleanup_orphaned_
+            # managed_server`` (called earlier in ``ensure_running``)
+            # pick up any true orphan from a separate, pid-file-backed
+            # path that doesn't rely on this dead reference.
             stale_pid = getattr(self._process, "pid", None)
             if isinstance(stale_pid, int) and self._pid_exists(stale_pid):
-                await self._terminate_pid(stale_pid, reason="foreign-loop cleanup")
+                cmd = self._get_pid_command(stale_pid)
+                if cmd and self._is_opencode_serve_cmd(cmd, self.port):
+                    await self._terminate_pid(stale_pid, reason="foreign-loop cleanup")
             self._process = None
             self._process_loop = None
 
