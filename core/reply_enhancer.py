@@ -9,7 +9,7 @@ Extracts special syntaxes from agent reply text:
    e.g. ``[screenshot](file:///tmp/shot.png)``
 
 3. **Quick-reply buttons** – A ``---`` separator followed by
-   ``[button text]`` or link-formatted ``[button text](<url>)`` tokens separated by ``|``
+   ``[button text]`` tokens separated by ``|``
    e.g. ``---\\n[👌好的] | [✅提交PR] | [先review一下]``
 """
 
@@ -65,15 +65,17 @@ class EnhancedReply:
 _FILE_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\((file://(?:[^()]+|\([^)]*\))+)\)")
 
 # Matches the quick-reply button block at the end of the text.
-# A horizontal rule (``---``) on its own line, followed by bracket buttons or
-# link-formatted buttons separated by ``|`` or full-width ``｜``.
+# A horizontal rule (``---``) on its own line, followed by bracket buttons.
+# Accept link-formatted variants defensively because some agents accidentally
+# wrap a quick-reply label in a Markdown/Slack link.
 _BUTTON_BLOCK_RE = re.compile(
     r"\n-{3,}\s*\n"  # --- separator line
     r"((?:\s*(?:\[[^\]]+\](?:\(<https?://[^)>\n]+>\))?|<https?://[^|>\n]+\|[^>\n]+>)\s*(?:[|｜]\s*)?)+)"  # button tokens
     r"\s*$",  # trailing whitespace / end of string
 )
 
-# Individual button tokens: [button text], [button text](<url>), or Slack-style <url|button text>.
+# Individual button tokens. Link variants are accepted for compatibility only;
+# the button label remains the quick-reply payload.
 _BUTTON_TOKEN_RE = re.compile(r"\[([^\]]+)\](?:\(<https?://[^)>\n]+>\))?|<https?://[^|>\n]+\|([^>\n]+)>")
 
 # Silent output blocks are intentionally simple and model-facing.  They are
