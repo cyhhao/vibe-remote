@@ -28,8 +28,17 @@ export interface UseBackendRuntimeOptions {
 }
 
 export interface BackendRuntimeState {
-  /** Initial V2Config + first detect() call have finished. */
+  /** Initial V2Config load attempt has finished (success or failure). */
   loaded: boolean;
+  /**
+   * ``true`` when the initial ``getConfig()`` rejected. In that state,
+   * ``enabled`` / ``cliPath`` are still their pre-load defaults rather
+   * than reflecting persisted state, so consumers MUST treat
+   * ``loaded && !configError`` — not just ``loaded`` — as the gate for
+   * any side-effect that depends on actual backend state (e.g.
+   * OpenCode's providers fan-out).
+   */
+  configError: boolean;
   enabled: boolean;
   cliPath: string;
   cliStatus: CliStatus;
@@ -77,6 +86,7 @@ export function useBackendRuntime({
   const { t } = useTranslation();
 
   const [loaded, setLoaded] = useState(false);
+  const [configError, setConfigError] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [cliPath, setCliPath] = useState(defaultCli);
   const [savedCliPath, setSavedCliPath] = useState(defaultCli);
@@ -120,11 +130,21 @@ export function useBackendRuntime({
         setEnabled(initialEnabled);
         setCliPath(initialPath);
         setSavedCliPath(initialPath);
+        setConfigError(false);
         setLoaded(true);
         void detect(initialPath);
       })
-      .catch(() => {
-        if (!cancelled) setLoaded(true);
+      .catch((e: any) => {
+        if (cancelled) return;
+        // We still flip ``loaded`` so the page can drop its loading
+        // skeleton, but ``configError`` tells consumers the persisted
+        // state was never read — gate any side-effect that depends on
+        // ``enabled`` on ``!configError`` to avoid acting on a default
+        // we never confirmed (e.g. firing provider fetches when the
+        // backend may actually be disabled).
+        setConfigError(true);
+        setLoaded(true);
+        showToast(e?.message || t('common.saveFailed'), 'error');
       });
     return () => {
       cancelled = true;
@@ -225,6 +245,7 @@ export function useBackendRuntime({
 
   return {
     loaded,
+    configError,
     enabled,
     cliPath,
     cliStatus,

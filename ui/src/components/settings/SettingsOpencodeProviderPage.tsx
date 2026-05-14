@@ -179,6 +179,12 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
   // (matches the original "toggle then reload" UX exactly).
   useEffect(() => {
     if (!runtime.loaded) return;
+    // If the initial getConfig() failed, ``runtime.enabled`` is still
+    // the pre-load default rather than persisted state. Don't trigger
+    // provider fetches in that case — the toast in the runtime hook
+    // already informed the user; firing requests now would just emit
+    // misleading "server stopped" errors.
+    if (runtime.configError) return;
     if (runtime.enabled) {
       setServerStartAttempts(0);
       void loadProviders();
@@ -190,7 +196,7 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtime.enabled, runtime.loaded]);
+  }, [runtime.enabled, runtime.loaded, runtime.configError]);
 
   // Auto-retry server-start failures — common when the user has just
   // enabled the backend. After SERVER_START_MAX_RETRIES the user can hit
