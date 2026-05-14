@@ -126,6 +126,26 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([file.path for file in reply.files], ["/tmp/report.txt"])
         self.assertEqual(reply.buttons, [])
 
+    def test_process_reply_accepts_slack_link_style_quick_reply_button(self):
+        reply = process_reply(
+            "Done.\n\n---\n"
+            "<https://github.com/cyhhao/vibe-remote/pull/298|:eyes: 看 PR> | "
+            "[:rocket: 等评审完合并] | [:test_tube: 先回归测一遍]"
+        )
+
+        self.assertEqual(reply.text, "Done.")
+        self.assertEqual(
+            [button.text for button in reply.buttons],
+            [":eyes: 看 PR", ":rocket: 等评审完合并", ":test_tube: 先回归测一遍"],
+        )
+
+    def test_process_reply_ignores_bare_angle_link_as_quick_reply_button(self):
+        text = "Done.\n\n---\n<https://github.com/cyhhao/vibe-remote/pull/298>"
+        reply = process_reply(text)
+
+        self.assertEqual(reply.text, text)
+        self.assertEqual(reply.buttons, [])
+
     def test_prompt_includes_task_watch_and_hook_usage_with_thread_default_session_key(self):
         context = MessageContext(
             user_id="U1",
@@ -263,6 +283,28 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(controller.im_client.sent_button_messages), 1)
         keyboard = controller.im_client.sent_button_messages[0][3]
         self.assertEqual([[button.text for button in row] for row in keyboard.buttons], [["继续"], ["提交PR"]])
+
+    async def test_slack_link_style_quick_reply_dispatches_label_callbacks(self):
+        controller = _StubController("slack")
+        dispatcher = ConsolidatedMessageDispatcher(controller)
+        context = MessageContext(user_id="U1", channel_id="C1", platform="slack")
+
+        await dispatcher.emit_agent_message(
+            context,
+            "result",
+            "Done.\n---\n"
+            "<https://github.com/cyhhao/vibe-remote/pull/298|:eyes: 看 PR> | "
+            "[:rocket: 等评审完合并]",
+        )
+
+        self.assertEqual(len(controller.im_client.sent_button_messages), 1)
+        keyboard = controller.im_client.sent_button_messages[0][3]
+        buttons = keyboard.buttons[0]
+        self.assertEqual([button.text for button in buttons], [":eyes: 看 PR", ":rocket: 等评审完合并"])
+        self.assertEqual(
+            [button.callback_data for button in buttons],
+            ["quick_reply::eyes: 看 PR", "quick_reply::rocket: 等评审完合并"],
+        )
 
     async def test_lark_log_message_strips_file_links_before_sending(self):
         controller = _StubController("lark")
