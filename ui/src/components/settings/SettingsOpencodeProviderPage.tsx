@@ -8,7 +8,6 @@ import {
   ChevronDown,
   ChevronUp,
   Cpu,
-  Download,
   Info,
   KeyRound,
   Pencil,
@@ -32,15 +31,14 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { SettingsPageShell } from './SettingsPageShell';
-import { BackendLifecycleChip } from './BackendLifecycleChip';
 import { BackendOAuthPanel } from './BackendOAuthPanel';
 import { OpencodeProviderTestPanel } from './OpencodeProviderTestPanel';
-import { ToggleSwitch } from './SettingsPrimitives';
+import { BackendRuntimeCard } from './shared/BackendRuntimeCard';
+import { useBackendRuntime } from './shared/useBackendRuntime';
 import { useApi } from '@/context/ApiContext';
 import type { OpencodeProvider } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
 
-type CliStatus = 'unknown' | 'ok' | 'missing';
 type PermissionState = 'idle' | 'loading' | 'success' | 'error';
 type FilterMode = 'all' | 'configured' | 'oauth' | 'local';
 
@@ -106,23 +104,14 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
   const api = useApi();
   const { showToast } = useToast();
 
-  // Runtime state (mirrors Claude / Codex page conventions).
-  const [loaded, setLoaded] = useState(false);
-  const [enabled, setEnabled] = useState(true);
-  const [cliPath, setCliPath] = useState(DEFAULT_CLI);
-  const [savedCliPath, setSavedCliPath] = useState(DEFAULT_CLI);
-  const [cliStatus, setCliStatus] = useState<CliStatus>('unknown');
-  const [detecting, setDetecting] = useState(false);
-  const [installing, setInstalling] = useState(false);
-  const [installResult, setInstallResult] = useState<{
-    ok: boolean;
-    message: string;
-    output?: string | null;
-  } | null>(null);
-  const [installOutputOpen, setInstallOutputOpen] = useState(false);
+  // Runtime state — shared with Claude / Codex pages via the hook.
+  const runtime = useBackendRuntime({
+    backend: BACKEND_ID,
+    defaultCli: DEFAULT_CLI,
+    fallbackDefaultBackend: BACKEND_ID,
+  });
   const [permissionState, setPermissionState] = useState<PermissionState>('idle');
   const [permissionMessage, setPermissionMessage] = useState('');
-  const [savingRuntime, setSavingRuntime] = useState(false);
 
   // Provider catalog state.
   const [providers, setProviders] = useState<OpencodeProvider[] | null>(null);
@@ -156,24 +145,6 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
   // state update.
   const loadProvidersRef = useRef<(() => Promise<void>) | null>(null);
 
-  const detect = useCallback(
-    async (binary?: string) => {
-      setDetecting(true);
-      try {
-        const result = await api.detectCli(binary || cliPath || DEFAULT_CLI);
-        const nextPath = result.path || cliPath || DEFAULT_CLI;
-        setCliPath(nextPath);
-        setCliStatus(result.found ? 'ok' : 'missing');
-      } catch (e: any) {
-        setCliStatus('missing');
-        showToast(e?.message || t('common.saveFailed'), 'error');
-      } finally {
-        setDetecting(false);
-      }
-    },
-    [api, cliPath, showToast, t]
-  );
-
   const loadProviders = useCallback(async () => {
     setProvidersLoading(true);
     setProvidersError(null);
@@ -201,33 +172,25 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
     loadProvidersRef.current = loadProviders;
   }, [loadProviders]);
 
+  // Runtime initial-load + cli_path/detect/install/save/toggle live in
+  // ``useBackendRuntime``. This page-specific effect just drives the
+  // providers fan-out: load when the runtime is enabled, clear when
+  // it's not. Triggered whenever the optimistic enabled flag changes
+  // (matches the original "toggle then reload" UX exactly).
   useEffect(() => {
-    let cancelled = false;
-    api
-      .getConfig()
-      .then((config) => {
-        if (cancelled) return;
-        const agent = config?.agents?.[BACKEND_ID];
-        const initialEnabled = typeof agent?.enabled === 'boolean' ? agent.enabled : true;
-        const initialPath = agent?.cli_path || DEFAULT_CLI;
-        setEnabled(initialEnabled);
-        setCliPath(initialPath);
-        setSavedCliPath(initialPath);
-        setLoaded(true);
-        void detect(initialPath);
-        if (initialEnabled) {
-          void loadProviders();
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setLoaded(true);
-      });
+    if (!runtime.loaded) return;
+    if (runtime.enabled) {
+      setServerStartAttempts(0);
+      void loadProviders();
+    } else {
+      setProviders(null);
+      setProvidersError(null);
+    }
     return () => {
-      cancelled = true;
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api]);
+  }, [runtime.enabled, runtime.loaded]);
 
   // Auto-retry server-start failures — common when the user has just
   // enabled the backend. After SERVER_START_MAX_RETRIES the user can hit
@@ -238,7 +201,7 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
     }
-    if (!enabled) return;
+    if (!runtime.enabled) return;
     if (!providersError) return;
     if (providersLoading) return;
     if (serverStartAttempts >= SERVER_START_MAX_RETRIES) return;
@@ -252,30 +215,7 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
         retryTimerRef.current = null;
       }
     };
-  }, [enabled, providersError, providersLoading, serverStartAttempts]);
-
-  const install = async () => {
-    setInstalling(true);
-    setInstallResult(null);
-    setInstallOutputOpen(false);
-    try {
-      const result = await api.installAgent(BACKEND_ID);
-      const installedPath = typeof result.path === 'string' && result.path ? result.path : null;
-      setInstallResult({ ok: result.ok, message: result.message, output: result.output });
-      if (result.ok) {
-        if (installedPath) setCliPath(installedPath);
-        await detect(installedPath || cliPath);
-        showToast(result.message || t('agentDetection.installAgent'), 'success');
-      } else {
-        showToast(result.message || t('common.saveFailed'), 'error');
-      }
-    } catch (e: any) {
-      setInstallResult({ ok: false, message: String(e), output: null });
-      showToast(e?.message || String(e), 'error');
-    } finally {
-      setInstalling(false);
-    }
-  };
+  }, [runtime.enabled, providersError, providersLoading, serverStartAttempts]);
 
   const setupPermission = async () => {
     setPermissionState('loading');
@@ -299,61 +239,10 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
     }
   };
 
-  const onSaveRuntime = async () => {
-    setSavingRuntime(true);
-    try {
-      const config = await api.getConfig();
-      const nextAgents = {
-        ...(config?.agents || {}),
-        [BACKEND_ID]: {
-          ...(config?.agents?.[BACKEND_ID] || {}),
-          enabled,
-          cli_path: cliPath || DEFAULT_CLI,
-        },
-      };
-      const defaultBackend =
-        config?.default_backend || config?.agents?.default_backend || BACKEND_ID;
-      await api.saveConfig({ agents: { ...nextAgents, default_backend: defaultBackend } });
-      setSavedCliPath(cliPath);
-      showToast(t('common.saved'), 'success');
-    } catch (e: any) {
-      showToast(e?.message || t('common.saveFailed'), 'error');
-    } finally {
-      setSavingRuntime(false);
-    }
-  };
-
-  const toggleEnabled = () => {
-    const next = !enabled;
-    setEnabled(next);
-    void (async () => {
-      try {
-        const config = await api.getConfig();
-        const nextAgents = {
-          ...(config?.agents || {}),
-          [BACKEND_ID]: {
-            ...(config?.agents?.[BACKEND_ID] || {}),
-            enabled: next,
-          },
-        };
-        const defaultBackend =
-          config?.default_backend || config?.agents?.default_backend || BACKEND_ID;
-        await api.saveConfig({
-          agents: { ...nextAgents, default_backend: defaultBackend },
-        });
-        if (next) {
-          setServerStartAttempts(0);
-          void loadProviders();
-        } else {
-          setProviders(null);
-          setProvidersError(null);
-        }
-      } catch (e: any) {
-        showToast(e?.message || t('common.saveFailed'), 'error');
-        setEnabled(!next);
-      }
-    })();
-  };
+  // ``onSaveRuntime`` and ``toggleEnabled`` are owned by
+  // ``useBackendRuntime``; the providers reload/clear side-effect
+  // that used to live inside the page's toggle handler is now driven
+  // by the ``useEffect([runtime.enabled, runtime.loaded])`` above.
 
   // ---- Expansion / per-provider editing ----
 
@@ -543,8 +432,6 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
     [providers, defaultProvider]
   );
 
-  const runtimeDirty = cliPath !== savedCliPath;
-
   const filterLabel = (mode: FilterMode) => {
     switch (mode) {
       case 'all':
@@ -610,124 +497,27 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
         </Link>
       }
     >
-      {!loaded ? (
+      {!runtime.loaded ? (
         <div className="text-sm text-muted">{t('common.loading')}</div>
       ) : (
         <div className="flex flex-col gap-4">
-          {/* Card 1 — runtime / lifecycle. Mirrors Claude page shape. */}
-          <Card>
-            <CardContent className="flex flex-col gap-5 p-6">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex size-11 shrink-0 items-center justify-center rounded-[10px] bg-violet-soft">
-                    <Terminal size={22} className="text-violet" />
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-[15px] font-semibold text-foreground">OpenCode</span>
-                    <span className="text-[12px] text-muted">
-                      {t('settings.backends.opencodeDescription')}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <BackendLifecycleChip
-                    name={BACKEND_ID}
-                    enabled={enabled}
-                    cliStatus={cliStatus}
-                    onChanged={async (info) => {
-                      const installedPath = info?.installedPath || null;
-                      if (installedPath) setCliPath(installedPath);
-                      await detect(installedPath || cliPath);
-                    }}
-                  />
-                  <ToggleSwitch enabled={enabled} onClick={toggleEnabled} />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="opencode-cli-path" className="text-xs font-medium uppercase text-muted">
-                  {t('agentDetection.cliPath')}
-                </Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="opencode-cli-path"
-                    type="text"
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder={t('agentDetection.cliPathPlaceholder', { name: BACKEND_ID }) as string}
-                    value={cliPath}
-                    onChange={(e) => setCliPath(e.target.value)}
-                    className="font-mono"
-                  />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void detect(cliPath)}
-                    disabled={detecting}
-                  >
-                    {detecting ? <RefreshCw className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
-                    {t('common.detect')}
-                  </Button>
-                </div>
-                <p className="text-[12px] text-muted">{t('settings.backends.cliPathHint')}</p>
-              </div>
-
-              {cliStatus === 'missing' && (
-                <div className="space-y-2 rounded-lg border border-cyan/30 bg-cyan/[0.06] px-3 py-2.5">
-                  <p className="text-[12px] text-cyan">{t('agentDetection.installHint')}</p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button
-                      variant="brand-cyan"
-                      size="xs"
-                      onClick={() => void install()}
-                      disabled={installing}
-                    >
-                      {installing ? (
-                        <RefreshCw className="size-3.5 animate-spin" />
-                      ) : (
-                        <Download className="size-3.5" />
-                      )}
-                      {installing ? t('agentDetection.installing') : t('agentDetection.installAgent')}
-                    </Button>
-                    {installResult?.message && (
-                      <span
-                        className={clsx(
-                          'text-[12px]',
-                          installResult.ok ? 'text-mint' : 'text-destructive'
-                        )}
-                      >
-                        {installResult.message}
-                      </span>
-                    )}
-                  </div>
-                  {installResult?.output && (
-                    <div>
-                      <button
-                        type="button"
-                        onClick={() => setInstallOutputOpen((v) => !v)}
-                        className="inline-flex items-center gap-1 text-[11px] text-cyan transition hover:text-cyan/80"
-                      >
-                        {installOutputOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                        {t('agentDetection.showOutput')}
-                      </button>
-                      {installOutputOpen && (
-                        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-background px-3 py-2 font-mono text-[11px] text-muted">
-                          {installResult.output}
-                        </pre>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Hide the Allow affordance once opencode.json carries
-                  ``permission: "allow"``. Until then show the strong
-                  copy that explains why the agent will stall without
-                  this setting. */}
-              {cliStatus === 'ok' && !permissionAllowed && (
+          <BackendRuntimeCard
+            backend={BACKEND_ID}
+            label="OpenCode"
+            description={t('settings.backends.opencodeDescription')}
+            Icon={Terminal}
+            iconTileClassName="bg-violet-soft"
+            iconClassName="text-violet"
+            runtime={runtime}
+            extraSlot={
+              // ``permission: "allow"`` setup is OpenCode-specific: without
+              // it the daemon prompts on every tool call and Vibe Remote
+              // can't reply. Hidden once opencode.json carries the value.
+              runtime.cliStatus === 'ok' && !permissionAllowed ? (
                 <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-2.5">
-                  <p className="mb-2 text-[12px] text-gold">{t('agentDetection.permissionHintStrong')}</p>
+                  <p className="mb-2 text-[12px] text-gold">
+                    {t('agentDetection.permissionHintStrong')}
+                  </p>
                   <div className="flex flex-wrap items-center gap-3">
                     <Button
                       variant="brand-gold"
@@ -750,23 +540,9 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                     )}
                   </div>
                 </div>
-              )}
-
-              {runtimeDirty && (
-                <div className="flex justify-end">
-                  <Button
-                    variant="brand"
-                    size="default"
-                    onClick={() => void onSaveRuntime()}
-                    disabled={savingRuntime}
-                  >
-                    <Save className="size-3.5" />
-                    {savingRuntime ? t('common.saving') : t('common.save')}
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              ) : null
+            }
+          />
 
           {/* Card 2 — provider catalog. */}
           <Card>
@@ -781,19 +557,19 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                       <span className="text-[15px] font-semibold text-foreground">
                         {t('settings.backends.opencodeProvidersTitle')}
                       </span>
-                      {enabled && providers && (
+                      {runtime.enabled && providers && (
                         <Badge variant={providersError ? 'warning' : 'success'}>
                           {providersError
                             ? t('settings.backends.opencodeServerStopped')
                             : t('settings.backends.opencodeServerRunning')}
                         </Badge>
                       )}
-                      {!enabled && (
+                      {!runtime.enabled && (
                         <Badge variant="secondary">
                           {t('settings.backends.opencodeBackendDisabled')}
                         </Badge>
                       )}
-                      {enabled && providers && providers.length > 0 && (
+                      {runtime.enabled && providers && providers.length > 0 && (
                         <Badge variant="outline">
                           {t('settings.backends.opencodeProvidersCount', {
                             configured: configuredCount,
@@ -816,7 +592,7 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                       setServerStartAttempts(0);
                       void loadProviders();
                     }}
-                    disabled={!enabled || providersLoading}
+                    disabled={!runtime.enabled || providersLoading}
                   >
                     <RefreshCw
                       className={clsx('size-3.5', providersLoading && 'animate-spin')}
@@ -826,13 +602,13 @@ export const SettingsOpencodeProviderPage: React.FC = () => {
                 </div>
               </div>
 
-              {!enabled && (
+              {!runtime.enabled && (
                 <div className="rounded-lg border border-border bg-surface-2/60 px-3 py-2.5 text-[12px] text-muted">
                   {t('settings.backends.opencodeDisabledBanner')}
                 </div>
               )}
 
-              {enabled && (
+              {runtime.enabled && (
                 <>
                   {/* Toolbar — search + filter chips + default-provider pill. */}
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

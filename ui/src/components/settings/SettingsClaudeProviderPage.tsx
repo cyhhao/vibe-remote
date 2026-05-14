@@ -5,20 +5,14 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Download,
   Info,
   KeyRound,
   Pencil,
-  RefreshCw,
   RotateCcw,
   Save,
-  Search,
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import clsx from 'clsx';
 
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -26,84 +20,30 @@ import { Card, CardContent } from '../ui/card';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { SettingsPageShell } from './SettingsPageShell';
-import { BackendLifecycleChip } from './BackendLifecycleChip';
 import { BackendOAuthPanel } from './BackendOAuthPanel';
 import { BackendTestPanel } from './BackendTestPanel';
-import { ToggleSwitch } from './SettingsPrimitives';
+import { BackendRuntimeCard } from './shared/BackendRuntimeCard';
+import { SegmentedRadio } from './shared/SegmentedRadio';
+import { useBackendRuntime } from './shared/useBackendRuntime';
+import { useOAuthFlowLock } from './shared/useOAuthFlowLock';
 import { useApi } from '@/context/ApiContext';
 import type { ClaudeAuthMode, ClaudeAuthState } from '@/context/ApiContext';
 import { useToast } from '@/context/ToastContext';
 
-type CliStatus = 'unknown' | 'ok' | 'missing';
-
 const BACKEND_ID = 'claude';
 const DEFAULT_CLI = 'claude';
-
-// Mirrors the segmented-radio pattern from RoutingConfigPanel / Codex page.
-// Kept inline rather than promoted to ui/* until a third caller appears —
-// see plan doc "Cross-page consistency": SegmentedRadio is cloned for now,
-// promote on Phase D consolidation.
-const SegmentedRadio: React.FC<{
-  value: ClaudeAuthMode;
-  onChange: (next: ClaudeAuthMode) => void;
-  options: ReadonlyArray<{ id: ClaudeAuthMode; label: string }>;
-  ariaLabel: string;
-  disabled?: boolean;
-}> = ({ value, onChange, options, ariaLabel, disabled }) => (
-  <div
-    role="radiogroup"
-    aria-label={ariaLabel}
-    aria-disabled={disabled || undefined}
-    className={clsx(
-      'flex h-9 items-stretch gap-0.5 rounded-md border border-border bg-foreground/[0.03] p-0.5',
-      disabled && 'opacity-60',
-    )}
-  >
-    {options.map((opt) => {
-      const active = value === opt.id;
-      return (
-        <button
-          key={opt.id}
-          type="button"
-          role="radio"
-          aria-checked={active}
-          disabled={disabled}
-          onClick={() => onChange(opt.id)}
-          className={clsx(
-            'flex-1 rounded-[4px] px-3 text-[12px] transition-colors',
-            active
-              ? 'border border-mint/30 bg-mint-soft font-bold text-mint'
-              : 'font-medium text-muted hover:text-foreground',
-            disabled && 'cursor-not-allowed',
-          )}
-        >
-          {opt.label}
-        </button>
-      );
-    })}
-  </div>
-);
 
 export const SettingsClaudeProviderPage: React.FC = () => {
   const { t } = useTranslation();
   const api = useApi();
   const { showToast } = useToast();
 
-  // Runtime state — CLI detection + lifecycle.
-  const [loaded, setLoaded] = useState(false);
-  const [enabled, setEnabled] = useState(true);
-  const [cliPath, setCliPath] = useState(DEFAULT_CLI);
-  const [savedCliPath, setSavedCliPath] = useState(DEFAULT_CLI);
-  const [cliStatus, setCliStatus] = useState<CliStatus>('unknown');
-  const [detecting, setDetecting] = useState(false);
-  const [installing, setInstalling] = useState(false);
-  const [installResult, setInstallResult] = useState<{
-    ok: boolean;
-    message: string;
-    output?: string | null;
-  } | null>(null);
-  const [installOutputOpen, setInstallOutputOpen] = useState(false);
-  const [savingRuntime, setSavingRuntime] = useState(false);
+  // Runtime state — CLI detection + lifecycle. Shared with Codex /
+  // OpenCode pages via the ``useBackendRuntime`` hook.
+  const runtime = useBackendRuntime({
+    backend: BACKEND_ID,
+    defaultCli: DEFAULT_CLI,
+  });
 
   // Auth state — OAuth vs API-key.
   const [authState, setAuthState] = useState<ClaudeAuthState | null>(null);
@@ -123,53 +63,17 @@ export const SettingsClaudeProviderPage: React.FC = () => {
   const [savedAuthMode, setSavedAuthMode] = useState<ClaudeAuthMode>('oauth');
   const [savedBaseUrl, setSavedBaseUrl] = useState('');
   // Freeze the auth-mode segmented radio while the OAuth panel is mid-
-  // handshake. Same iOS Safari issue as the Codex page: a Copy tap
-  // can bounce the radio and tear down the in-flight login. The
-  // ``disabled`` HTML attribute alone isn't enough — the user has
-  // reproduced the flip with the radio rendered disabled, so we
-  // also guard at the setter (the radio click cannot win even if
-  // iOS smuggles the event through whatever quirky path).
-  const [oauthFlowActive, setOauthFlowActive] = useState(false);
-  const oauthFlowActiveRef = React.useRef(oauthFlowActive);
-  oauthFlowActiveRef.current = oauthFlowActive;
-  const guardedSetAuthMode = React.useCallback(
-    (next: ClaudeAuthMode) => {
-      if (oauthFlowActiveRef.current) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          '[claude-auth-mode] rejected change to %s while OAuth flow active',
-          next,
-        );
-        showToast(t('settings.backends.oauthFlowLockedToast'), 'warning');
-        return;
-      }
-      setAuthMode(next);
-    },
-    [showToast, t],
-  );
+  // handshake. Shared with Codex / OpenCode via ``useOAuthFlowLock``.
+  const { oauthFlowActive, setOauthFlowActive, guardedSetAuthMode } =
+    useOAuthFlowLock<ClaudeAuthMode>({
+      setAuthMode,
+      warnTag: 'claude-auth-mode',
+    });
 
   useEffect(() => {
+    // Runtime config (enabled + cli_path + initial detect) is owned by
+    // ``useBackendRuntime``. This effect only loads auth state.
     let cancelled = false;
-
-    // Load runtime config (enabled + cli_path) and kick off CLI detect.
-    api
-      .getConfig()
-      .then((config) => {
-        if (cancelled) return;
-        const agent = config?.agents?.[BACKEND_ID];
-        const initialEnabled = typeof agent?.enabled === 'boolean' ? agent.enabled : true;
-        const initialPath = agent?.cli_path || DEFAULT_CLI;
-        setEnabled(initialEnabled);
-        setCliPath(initialPath);
-        setSavedCliPath(initialPath);
-        setLoaded(true);
-        void detect(initialPath);
-      })
-      .catch(() => {
-        if (!cancelled) setLoaded(true);
-      });
-
-    // Load auth state in parallel — independent of CLI detection.
     api
       .getClaudeAuth()
       .then((data) => {
@@ -201,70 +105,7 @@ export const SettingsClaudeProviderPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
-
-  const detect = async (binary?: string) => {
-    setDetecting(true);
-    try {
-      const result = await api.detectCli(binary || cliPath || DEFAULT_CLI);
-      const nextPath = result.path || cliPath || DEFAULT_CLI;
-      setCliPath(nextPath);
-      setCliStatus(result.found ? 'ok' : 'missing');
-    } catch (e: any) {
-      setCliStatus('missing');
-      showToast(e?.message || t('common.saveFailed'), 'error');
-    } finally {
-      setDetecting(false);
-    }
-  };
-
-  const install = async () => {
-    setInstalling(true);
-    setInstallResult(null);
-    setInstallOutputOpen(false);
-    try {
-      const result = await api.installAgent(BACKEND_ID);
-      const installedPath = typeof result.path === 'string' && result.path ? result.path : null;
-      setInstallResult({ ok: result.ok, message: result.message, output: result.output });
-      if (result.ok) {
-        if (installedPath) setCliPath(installedPath);
-        await detect(installedPath || cliPath);
-        showToast(result.message || t('agentDetection.installAgent'), 'success');
-      } else {
-        showToast(result.message || t('common.saveFailed'), 'error');
-      }
-    } catch (e: any) {
-      setInstallResult({ ok: false, message: String(e), output: null });
-      showToast(e?.message || String(e), 'error');
-    } finally {
-      setInstalling(false);
-    }
-  };
-
-  const onSaveRuntime = async () => {
-    setSavingRuntime(true);
-    try {
-      const config = await api.getConfig();
-      const nextAgents = {
-        ...(config?.agents || {}),
-        [BACKEND_ID]: {
-          ...(config?.agents?.[BACKEND_ID] || {}),
-          enabled,
-          cli_path: cliPath || DEFAULT_CLI,
-        },
-      };
-      const defaultBackend =
-        config?.default_backend || config?.agents?.default_backend || 'opencode';
-      await api.saveConfig({ agents: { ...nextAgents, default_backend: defaultBackend } });
-      setSavedCliPath(cliPath);
-      showToast(t('common.saved'), 'success');
-    } catch (e: any) {
-      showToast(e?.message || t('common.saveFailed'), 'error');
-    } finally {
-      setSavingRuntime(false);
-    }
-  };
 
   const modeOptions = useMemo(
     () =>
@@ -358,8 +199,6 @@ export const SettingsClaudeProviderPage: React.FC = () => {
     }
   };
 
-  const runtimeDirty = cliPath !== savedCliPath;
-
   return (
     <SettingsPageShell
       activeTab="backends"
@@ -372,159 +211,19 @@ export const SettingsClaudeProviderPage: React.FC = () => {
         </Link>
       }
     >
-      {!loaded ? (
+      {!runtime.loaded ? (
         <div className="text-sm text-muted">{t('common.loading')}</div>
       ) : (
         <div className="flex flex-col gap-4">
-          <Card>
-            <CardContent className="flex flex-col gap-5 p-6">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex size-11 shrink-0 items-center justify-center rounded-[10px] bg-cyan-soft">
-                    <Sparkles size={22} className="text-cyan" />
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-[15px] font-semibold text-foreground">Claude Code</span>
-                    <span className="text-[12px] text-muted">
-                      {t('settings.backends.claudeDescription')}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <BackendLifecycleChip
-                    name={BACKEND_ID}
-                    enabled={enabled}
-                    cliStatus={cliStatus}
-                    onChanged={async (info) => {
-                      const installedPath = info?.installedPath || null;
-                      if (installedPath) setCliPath(installedPath);
-                      await detect(installedPath || cliPath);
-                    }}
-                  />
-                  <ToggleSwitch
-                    enabled={enabled}
-                    onClick={() => {
-                      const next = !enabled;
-                      setEnabled(next);
-                      void (async () => {
-                        try {
-                          const config = await api.getConfig();
-                          const nextAgents = {
-                            ...(config?.agents || {}),
-                            [BACKEND_ID]: {
-                              ...(config?.agents?.[BACKEND_ID] || {}),
-                              enabled: next,
-                            },
-                          };
-                          const defaultBackend =
-                            config?.default_backend ||
-                            config?.agents?.default_backend ||
-                            'opencode';
-                          await api.saveConfig({
-                            agents: { ...nextAgents, default_backend: defaultBackend },
-                          });
-                        } catch (e: any) {
-                          showToast(e?.message || t('common.saveFailed'), 'error');
-                          setEnabled(!next);
-                        }
-                      })();
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="claude-cli-path" className="text-xs font-medium uppercase text-muted">
-                  {t('agentDetection.cliPath')}
-                </Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="claude-cli-path"
-                    type="text"
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder={t('agentDetection.cliPathPlaceholder', { name: BACKEND_ID }) as string}
-                    value={cliPath}
-                    onChange={(e) => setCliPath(e.target.value)}
-                    className="font-mono"
-                  />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void detect(cliPath)}
-                    disabled={detecting}
-                  >
-                    {detecting ? <RefreshCw className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
-                    {t('common.detect')}
-                  </Button>
-                </div>
-                <p className="text-[12px] text-muted">{t('settings.backends.cliPathHint')}</p>
-              </div>
-
-              {cliStatus === 'missing' && (
-                <div className="space-y-2 rounded-lg border border-cyan/30 bg-cyan/[0.06] px-3 py-2.5">
-                  <p className="text-[12px] text-cyan">{t('agentDetection.installHint')}</p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button
-                      variant="brand-cyan"
-                      size="xs"
-                      onClick={() => void install()}
-                      disabled={installing}
-                    >
-                      {installing ? (
-                        <RefreshCw className="size-3.5 animate-spin" />
-                      ) : (
-                        <Download className="size-3.5" />
-                      )}
-                      {installing ? t('agentDetection.installing') : t('agentDetection.installAgent')}
-                    </Button>
-                    {installResult?.message && (
-                      <span
-                        className={clsx(
-                          'text-[12px]',
-                          installResult.ok ? 'text-mint' : 'text-destructive'
-                        )}
-                      >
-                        {installResult.message}
-                      </span>
-                    )}
-                  </div>
-                  {installResult?.output && (
-                    <div>
-                      <button
-                        type="button"
-                        onClick={() => setInstallOutputOpen((v) => !v)}
-                        className="inline-flex items-center gap-1 text-[11px] text-cyan transition hover:text-cyan/80"
-                      >
-                        {installOutputOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                        {t('agentDetection.showOutput')}
-                      </button>
-                      {installOutputOpen && (
-                        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-background px-3 py-2 font-mono text-[11px] text-muted">
-                          {installResult.output}
-                        </pre>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {runtimeDirty && (
-                <div className="flex justify-end">
-                  <Button
-                    variant="brand"
-                    size="default"
-                    onClick={() => void onSaveRuntime()}
-                    disabled={savingRuntime}
-                  >
-                    <Save className="size-3.5" />
-                    {savingRuntime ? t('common.saving') : t('common.save')}
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <BackendRuntimeCard
+            backend={BACKEND_ID}
+            label="Claude Code"
+            description={t('settings.backends.claudeDescription')}
+            Icon={Sparkles}
+            iconTileClassName="bg-cyan-soft"
+            iconClassName="text-cyan"
+            runtime={runtime}
+          />
 
           {authLoading ? (
             <div className="text-sm text-muted">{t('common.loading')}</div>
