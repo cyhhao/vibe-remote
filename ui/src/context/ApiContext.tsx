@@ -1,4 +1,4 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useToast } from './ToastContext';
 import { apiFetch } from '../lib/apiFetch';
@@ -466,7 +466,31 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return res.json();
   };
 
-  const value: ApiContextType = {
+  // ``useMemo`` is load-bearing here, not a perf tweak. Without it,
+  // ``ApiProvider`` produces a fresh ``value`` object on every render
+  // — including the renders triggered by ToastProvider's state
+  // updates above us in the tree. Each new ``value`` flips the
+  // identity of ``api`` for every ``useApi()`` consumer, so any
+  // ``useEffect(..., [api])`` re-runs on every toast.
+  //
+  // Concrete failure that this fix addresses (reported on iOS Safari
+  // for PR #282): clicking "Copy" on the Codex device-code block
+  // calls ``showToast('copied')`` → ToastProvider re-renders →
+  // ApiProvider re-renders → ``value`` identity changes →
+  // SettingsCodexProviderPage's mount effect re-runs → calls
+  // ``getCodexAuth()`` → reads the disk state (still ``apikey``
+  // because the OAuth flow hasn't completed) → ``setAuthMode("api_
+  // key")`` → the segmented radio flips back to API Key mid-login.
+  // Defensive patches at the event boundary (preventDefault,
+  // disabled buttons, setter guards) didn't help because the click
+  // wasn't the trigger — the cascading re-render was.
+  //
+  // ``[showToast, t]`` are intentional deps: ``showToast`` is stable
+  // (``useCallback`` in ToastContext) so it never invalidates by
+  // itself; ``t`` only changes on locale switch — recomputing then
+  // is correct (cached error messages would otherwise stay in the
+  // old language).
+  const value: ApiContextType = useMemo(() => ({
     getConfig: () => getJson('/config'),
     getPlatformCatalog: () => getJson('/platforms'),
     saveConfig: (payload) => postJson('/config', payload),
@@ -568,7 +592,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     stopRemoteAccess: () => postJson('/remote-access/stop', {}),
     getSession: () => getJson('/api/session'),
     signOut: () => postJson('/auth/logout', {}),
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [showToast, t]);
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;
 };
