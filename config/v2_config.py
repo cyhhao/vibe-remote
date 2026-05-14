@@ -5,7 +5,7 @@ import tempfile
 import threading
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from config import paths
 from config.platform_registry import (
@@ -151,6 +151,13 @@ class OpenCodeConfig:
     default_model: Optional[str] = None
     default_reasoning_effort: Optional[str] = None
     error_retry_limit: int = DEFAULT_OPENCODE_ERROR_RETRY_LIMIT  # Max retries on LLM stream errors (0 = no retry)
+    # Provider the user picked in Settings → Backends → OpenCode. The provider
+    # catalog itself lives in ~/.config/opencode/opencode.json (OpenCode's own
+    # state file). Stays ``None`` until the user explicitly chooses so legacy
+    # installs (e.g. Ollama/OpenAI users) keep falling back to OpenCode's own
+    # routing for bare-model strings instead of being silently rerouted to
+    # Anthropic on upgrade.
+    default_provider: Optional[str] = None
 
 
 @dataclass
@@ -159,6 +166,23 @@ class ClaudeConfig:
     cli_path: str = "claude"
     default_model: Optional[str] = None
     idle_timeout_seconds: int = DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
+    # Auth model: "oauth" relies on Claude Code's own credential storage;
+    # "api_key" injects ANTHROPIC_API_KEY (and optionally ANTHROPIC_BASE_URL)
+    # at CLI launch time for API gateway / proxy setups.
+    auth_mode: Literal["oauth", "api_key"] = "oauth"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    # ``True`` once the user has saved a Claude auth choice through the
+    # Settings UI (or removed the API key, or signed out). Legacy installs
+    # — V2 configs that predate the Settings page or have never touched
+    # it — load with ``False`` because the field defaults to ``False`` and
+    # isn't in their on-disk JSON. ``build_claude_subprocess_env`` reads
+    # this to decide whether to honor ``auth_mode`` strictly (strip
+    # inherited ``ANTHROPIC_*`` env in OAuth mode) or preserve the
+    # legacy env-var-only auth path. Without this flag the schema's
+    # ``auth_mode == "oauth"`` default is indistinguishable between
+    # "explicit OAuth pick" and "user has never opened Settings".
+    auth_mode_set: bool = False
 
 
 @dataclass
@@ -167,6 +191,12 @@ class CodexConfig:
     cli_path: str = "codex"
     default_model: Optional[str] = None
     idle_timeout_seconds: int = DEFAULT_AGENT_IDLE_TIMEOUT_SECONDS
+    # Auth model: "oauth" defers to whatever ~/.codex/config.toml already
+    # has (typically `auth.method = "ChatGPT"`); "api_key" writes the
+    # config.toml fields that point Codex at an API key + custom base URL.
+    auth_mode: Literal["oauth", "api_key"] = "oauth"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 @dataclass

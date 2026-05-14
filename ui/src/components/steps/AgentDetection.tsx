@@ -2,22 +2,31 @@ import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
-  Check,
   ChevronDown,
   ChevronUp,
   Download,
+  ExternalLink,
   RefreshCw,
   Search,
   Settings,
-  X,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useApi } from '../../context/ApiContext';
 import { BackendIcon, EyebrowBadge, WizardCard } from '../visual';
 import type { BackendId } from '../visual';
+import { BackendLifecycleChip } from '../settings/BackendLifecycleChip';
 import { CompactField, CompactSelect, ToggleSwitch } from '../settings/SettingsPrimitives';
 import { Button } from '../ui/button';
+
+// Backends that expose a dedicated provider settings page. The link is
+// rendered only when the wizard is hosted inside Settings (``isPage``) —
+// hiding it during initial setup keeps the wizard linear and avoids
+// landing the user on a half-configured Codex with no app-server yet.
+const PROVIDER_PAGE_ROUTES: Record<string, string> = {
+  codex: '/settings/backends/codex',
+};
 
 interface AgentDetectionProps {
   data: any;
@@ -231,7 +240,25 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <StatusBadge status={agent.status || 'unknown'} loading={checking} />
+                <BackendLifecycleChip
+                  name={name}
+                  enabled={agent.enabled}
+                  cliStatus={agent.status || 'unknown'}
+                  onChanged={async (info) => {
+                    // After a successful (re)install the chip hands back the
+                    // path the installer landed at — adopt it before
+                    // detecting, otherwise a stale ``agent.cli_path`` from
+                    // this render keeps the row in a false ``missing`` state.
+                    const installedPath = info?.installedPath || null;
+                    if (installedPath) {
+                      setAgents((prev) => ({
+                        ...prev,
+                        [name]: { ...prev[name], cli_path: installedPath },
+                      }));
+                    }
+                    await detect(name, installedPath || agent.cli_path);
+                  }}
+                />
                 <ToggleSwitch
                   enabled={agent.enabled}
                   onClick={() => toggle(name, !agent.enabled)}
@@ -338,6 +365,18 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
                   </div>
                 </div>
               )}
+
+              {isPage && PROVIDER_PAGE_ROUTES[name] && (
+                <div className="flex justify-end">
+                  <Button asChild variant="ghost" size="sm">
+                    <Link to={PROVIDER_PAGE_ROUTES[name]}>
+                      <Settings className="size-3.5" />
+                      {t('settings.backends.openProviderPage')}
+                      <ExternalLink className="size-3.5" />
+                    </Link>
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -411,26 +450,3 @@ export const AgentDetection: React.FC<AgentDetectionProps> = ({ data, onNext, on
   );
 };
 
-const StatusBadge: React.FC<{ status: 'unknown' | 'ok' | 'missing'; loading: boolean }> = ({ status, loading }) => {
-  const { t } = useTranslation();
-
-  if (loading) {
-    return (
-      <div className="text-muted">
-        <RefreshCw className="size-3.5 animate-spin" />
-      </div>
-    );
-  }
-  if (status === 'unknown') {
-    return <span className="text-[11px] text-muted">{t('common.notChecked')}</span>;
-  }
-  return status === 'ok' ? (
-    <div className="inline-flex items-center gap-1.5 rounded-full border border-mint/30 bg-mint/[0.08] px-2 py-0.5 text-[11px] font-medium text-mint">
-      <Check className="size-3" /> {t('common.found')}
-    </div>
-  ) : (
-    <div className="inline-flex items-center gap-1.5 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger">
-      <X className="size-3" /> {t('common.missing')}
-    </div>
-  );
-};

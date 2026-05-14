@@ -50,8 +50,6 @@ export const SettingsPageShell: React.FC<SettingsPageShellProps> = ({
 
   return (
     <div className="flex flex-col gap-6">
-      {breadcrumb && <div className="font-mono text-[11px] text-muted">{breadcrumb}</div>}
-
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1.5">
           <h1 className="text-[28px] font-bold leading-tight tracking-[-0.4px] text-foreground">{title}</h1>
@@ -83,6 +81,13 @@ export const SettingsPageShell: React.FC<SettingsPageShellProps> = ({
           })}
         </nav>
       </div>
+
+      {/* Breadcrumb lives below the tabs so it reads as sub-navigation
+          *within* the active tab (e.g. "← Back to backends" while on the
+          Backends tab). Placing it above the title/tabs would imply it
+          navigates out of Settings entirely — a hierarchy mismatch
+          flagged in page feedback for /settings/backends/{claude,codex}. */}
+      {breadcrumb && <div className="font-mono text-[11px] text-muted">{breadcrumb}</div>}
 
       <div className="flex flex-col gap-4">{children}</div>
     </div>

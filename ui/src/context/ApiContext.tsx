@@ -1,4 +1,4 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useToast } from './ToastContext';
 import { apiFetch } from '../lib/apiFetch';
@@ -19,6 +19,53 @@ export type ApiContextType = {
   getFirstBindCode: () => Promise<any>;
   detectCli: (binary: string) => Promise<any>;
   installAgent: (name: string) => Promise<InstallResult>;
+  getBackendRuntime: (name: string) => Promise<BackendRuntimeInfo>;
+  restartBackend: (name: string) => Promise<BackendRestartResult>;
+  getCodexAuth: () => Promise<CodexAuthState>;
+  saveCodexAuth: (payload: CodexAuthPayload) => Promise<CodexAuthSaveResult>;
+  getClaudeAuth: () => Promise<ClaudeAuthState>;
+  saveClaudeAuth: (payload: ClaudeAuthPayload) => Promise<ClaudeAuthSaveResult>;
+  startOAuthWeb: (backend: 'claude' | 'codex', forceReset?: boolean) => Promise<OAuthWebStartResult>;
+  startOAuthWebForOpencodeProvider: (
+    providerId: string,
+    forceReset?: boolean,
+  ) => Promise<OAuthWebStartResult>;
+  getOAuthWebStatus: (
+    backend: 'claude' | 'codex' | 'opencode',
+    flowId: string,
+  ) => Promise<OAuthWebStatus>;
+  submitOAuthWebCode: (
+    backend: 'claude' | 'codex' | 'opencode',
+    flowId: string,
+    code: string,
+  ) => Promise<OAuthWebMutationResult>;
+  cancelOAuthWeb: (
+    backend: 'claude' | 'codex' | 'opencode',
+    flowId: string,
+  ) => Promise<OAuthWebMutationResult>;
+  removeBackendAuth: (backend: 'claude' | 'codex') => Promise<OAuthWebMutationResult>;
+  // Selectively clear just the stored API key — leave OAuth credentials
+  // intact. Symmetric to OpenCode's per-provider DELETE: lets the user
+  // drop a stale key without re-signing in. Codex also restarts its
+  // persistent daemon so the cleared key takes effect on the next
+  // request.
+  removeBackendApiKey: (backend: 'claude' | 'codex') => Promise<OAuthWebMutationResult>;
+  testBackendAuth: (
+    backend: 'claude' | 'codex',
+    options?: { model?: string },
+  ) => Promise<BackendAuthTestResult>;
+  testOpencodeProvider: (
+    providerId: string,
+    options?: { model?: string },
+  ) => Promise<BackendAuthTestResult>;
+  getOpencodeProviders: () => Promise<OpencodeProviderListResult>;
+  setOpencodeProviderAuth: (
+    providerId: string,
+    apiKey: string,
+    baseUrl?: string,
+  ) => Promise<OpencodeMutationResult>;
+  deleteOpencodeProviderAuth: (providerId: string) => Promise<OpencodeMutationResult>;
+  setOpencodeDefaultProvider: (providerId: string) => Promise<OpencodeMutationResult>;
   slackAuthTest: (botToken: string, proxyUrl?: string) => Promise<any>;
   slackChannels: (botToken: string, browseAll?: boolean, force?: boolean) => Promise<any>;
   slackManifest: () => Promise<{ ok: boolean; manifest?: string; manifest_compact?: string; error?: string }>;
@@ -95,6 +142,257 @@ export type InstallResult = {
   path?: string | null;
 };
 
+export type BackendRuntimeInfo = {
+  ok: boolean;
+  name?: string;
+  enabled?: boolean;
+  cli_path?: string;
+  resolved_path?: string | null;
+  installed?: boolean;
+  current_version?: string | null;
+  latest_version?: string | null;
+  has_update?: boolean;
+  supports_restart?: boolean;
+  process_status?: 'running' | 'stopped' | 'unknown';
+  error?: string;
+};
+
+export type BackendRestartResult = {
+  ok: boolean;
+  message: string;
+};
+
+export type CodexAuthMode = 'oauth' | 'api_key';
+
+// Mirrors Codex CLI's ``cli_auth_credentials_store`` setting. ``auto`` is
+// Codex's documented default and is treated as keyring-preferred — when
+// the live store is not ``file`` the on-disk ``auth.json`` may not be
+// the source of truth, so the UI must not interpret ``has_api_key=false``
+// as "no key configured" in that case.
+export type CodexCredentialsStore = 'file' | 'keyring' | 'auto' | (string & {});
+
+export type ActiveAuthMode = 'oauth' | 'api_key' | 'none';
+
+// Identity decoded from the ChatGPT JWT inside ``~/.codex/auth.json``.
+// All fields are best-effort — the OAuth bundle may carry partial
+// claims, in which case the panel renders only what's present.
+export type CodexChatGptAccount = {
+  email: string | null;
+  name: string | null;
+  plan_type: string | null;
+  organizations: Array<{
+    id: string | null;
+    title: string | null;
+    role: string | null;
+    is_default: boolean;
+  }> | null;
+};
+
+export type CodexAuthState = {
+  ok: boolean;
+  auth_mode: CodexAuthMode;
+  // What the running Codex CLI is actually using at launch — separate
+  // from ``auth_mode`` which is the user's saved intent. Lets the UI
+  // surface "Currently active: …" so the two-radio choice is no longer
+  // ambiguous about which mode is live.
+  active_auth_mode: ActiveAuthMode;
+  has_api_key: boolean;
+  api_key_length: number;
+  // Server-masked preview (e.g. ``sk-proj-•••••••••H8mN``). Used to
+  // pre-fill the API Key input so the page reflects the saved state
+  // instead of looking empty. Plaintext keys never leave the server.
+  api_key_masked: string | null;
+  base_url: string | null;
+  has_chatgpt_tokens: boolean;
+  chatgpt_account?: CodexChatGptAccount | null;
+  credentials_store: CodexCredentialsStore;
+  file_store_active: boolean;
+  // True when Codex is in keyring-preferred mode and disk shows no
+  // key/tokens — the live auth may live in the OS keychain (we cannot
+  // portably read it). UI must not claim "no key configured" in that
+  // case; it should prompt the user to choose a mode (saving will pin
+  // file storage so subsequent reads work).
+  auth_mode_uncertain?: boolean;
+  message?: string;
+};
+
+export type CodexAuthPayload = {
+  auth_mode: CodexAuthMode;
+  api_key?: string | null;
+  base_url?: string | null;
+};
+
+// Non-fatal warning the server attached to a config-mutation response.
+// Used today for "we cleared a custom relay pointer because OAuth tokens
+// won't validate against your custom base_url"; new codes can be added
+// without touching the type.
+export type BackendNotice = {
+  code: string;
+  provider_id?: string;
+  base_url?: string;
+  detail?: string;
+};
+
+export type CodexAuthSaveResult = CodexAuthState & {
+  restart?: BackendRestartResult;
+  notices?: BackendNotice[];
+};
+
+export type ClaudeAuthMode = 'oauth' | 'api_key';
+
+// Claude's auth surface differs structurally from Codex: V2Config is the
+// sole writer (no disk-side ``apply_claude_auth``) and the CLI inherits
+// env vars per request rather than via a persistent daemon. We still
+// inspect ``~/.claude/settings.json`` so the UI can warn when a
+// hand-edited ``env`` block would override the V2Config-injected key at
+// launch (Claude Code layers settings.json env on top of inherited env).
+// Which on-disk source the live API key came from. ``v2config`` means
+// the user (or a prior save) put it in Vibe Remote's V2Config and we
+// inject it as ``ANTHROPIC_API_KEY`` at launch. ``settings_json`` means
+// ``~/.claude/settings.json``'s ``env`` block already carries the key —
+// the live CLI reads it directly and our V2Config is empty (typically a
+// pre-existing setup that predates our Settings UI). ``null`` = no key.
+export type ClaudeApiKeySource = 'v2config' | 'settings_json' | null;
+
+export type ClaudeAuthState = {
+  ok: boolean;
+  auth_mode: ClaudeAuthMode;
+  // Live source the CLI is actually inheriting at launch (api_key when
+  // V2Config injects ``ANTHROPIC_API_KEY`` and strips OAuth env vars,
+  // oauth when ``~/.claude/credentials.json`` has a usable token).
+  active_auth_mode: ActiveAuthMode;
+  has_api_key: boolean;
+  api_key_length: number;
+  api_key_masked: string | null;
+  api_key_source?: ClaudeApiKeySource;
+  has_oauth_credentials: boolean;
+  base_url: string | null;
+  settings_path: string | null;
+  settings_exists: boolean;
+  settings_env_has_key: boolean;
+  settings_env_key_length: number;
+  settings_env_key_var: 'ANTHROPIC_API_KEY' | 'ANTHROPIC_AUTH_TOKEN' | null;
+  settings_env_base_url: string | null;
+  settings_conflict: boolean;
+  message?: string;
+};
+
+export type ClaudeAuthPayload = {
+  auth_mode: ClaudeAuthMode;
+  api_key?: string | null;
+  base_url?: string | null;
+};
+
+export type ClaudeAuthSaveResult = ClaudeAuthState & {
+  restart?: BackendRestartResult;
+};
+
+// One entry in the OpenCode provider grid. The full catalog is built
+// dynamically on the server by merging ``/provider`` + ``/provider/auth``
+// + ``/config/providers`` — there is **no** hard-coded list in the UI.
+// ``local`` is inferred from the absence of network auth methods (Ollama,
+// LM Studio); the page renders its own "Local" badge for those rows.
+export type OAuthWebState =
+  | 'starting'
+  | 'awaiting_code'
+  | 'verifying'
+  | 'success'
+  | 'failed'
+  | 'cancelled';
+
+export type OAuthWebStartResult = {
+  ok: boolean;
+  flow_id?: string;
+  backend?: 'claude' | 'codex';
+  state?: OAuthWebState;
+  url?: string | null;
+  device_code?: string | null;
+  awaiting_code?: boolean;
+  error?: string;
+  detail?: string;
+};
+
+export type OAuthWebStatus = {
+  ok: boolean;
+  flow_id?: string;
+  backend?: 'claude' | 'codex';
+  state?: OAuthWebState;
+  url?: string | null;
+  device_code?: string | null;
+  awaiting_code?: boolean;
+  error?: string | null;
+};
+
+export type OAuthWebMutationResult = {
+  ok: boolean;
+  error?: string;
+  detail?: string;
+  notices?: BackendNotice[];
+  // ``partial: true`` rides on ``ok: true`` when the V2Config side of
+  // the operation succeeded but the CLI subprocess (``codex logout`` /
+  // ``claude auth logout``) reported a non-zero exit. The caller should
+  // show a warning rather than a green success — credentials may still
+  // be on disk. Pairs with ``warning`` (machine-readable code) and
+  // ``detail`` (human-readable excerpt).
+  partial?: boolean;
+  warning?: string;
+};
+
+export type BackendAuthTestResult = {
+  ok: boolean;
+  duration_ms?: number;
+  excerpt?: string;
+  exit_code?: number;
+  error?: string;
+  detail?: string;
+};
+
+export type OpencodeProvider = {
+  id: string;
+  name: string;
+  description: string;
+  configured: boolean;
+  oauth_available: boolean;
+  local: boolean;
+  models: string[];
+  default_model: string | null;
+  // Optional ``baseURL`` override persisted in opencode.json. Surfaced so
+  // the Settings page can pre-populate the Base URL input with the last
+  // saved value instead of starting empty on every reload.
+  base_url?: string | null;
+  // Server-masked preview of the api-type credential stored in
+  // ``~/.local/share/opencode/auth.json`` (e.g. ``sk-proj-•••H8mN``).
+  // ``null``/missing when the provider uses OAuth or hasn't been
+  // configured yet. Mirrors Claude / Codex's ``api_key_masked`` so the
+  // user can see at a glance which providers have a stored key without
+  // having to expand each card.
+  api_key_masked?: string | null;
+  // ``api`` / ``oauth`` / null — the auth type currently stored for the
+  // provider. OpenCode's ``auth.json`` only carries ONE entry per
+  // provider at a time, so this is also the type that will be used at
+  // launch. Lets the UI badge dual-mode providers (e.g. openai) with
+  // which source is live, instead of leaving the user guessing.
+  active_auth_type?: 'api' | 'oauth' | string | null;
+};
+
+export type OpencodeProviderListResult = {
+  ok: boolean;
+  message?: string;
+  providers?: OpencodeProvider[];
+  default_provider?: string;
+  // True when ``opencode.json`` has ``permission: "allow"`` — the
+  // setting that lets OpenCode skip the interactive tool-call approval
+  // prompt Vibe Remote can't reply to. The Settings page hides the
+  // "Allow tool calls" affordance when this is already true.
+  permission_allowed?: boolean;
+};
+
+export type OpencodeMutationResult = {
+  ok: boolean;
+  message?: string;
+  default_provider?: string;
+};
+
 const ApiContext = createContext<ApiContextType | undefined>(undefined);
 
 export const useApi = () => {
@@ -155,7 +453,44 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return res.json();
   };
 
-  const value: ApiContextType = {
+  // DELETE wrapper that routes 4xx/5xx through ``handleApiError`` so the
+  // global toast and console-error surface stay consistent with
+  // ``getJson``/``postJson``. Legacy callers (removeUser, deleteBindCode)
+  // still call ``apiFetch().then(r => r.json())`` directly — that's a
+  // separate cleanup; new endpoints should use this helper.
+  const deleteJson = async (path: string) => {
+    const res = await apiFetch(path, { method: 'DELETE' });
+    if (!res.ok) {
+      await handleApiError(res, path);
+    }
+    return res.json();
+  };
+
+  // ``useMemo`` is load-bearing here, not a perf tweak. Without it,
+  // ``ApiProvider`` produces a fresh ``value`` object on every render
+  // — including the renders triggered by ToastProvider's state
+  // updates above us in the tree. Each new ``value`` flips the
+  // identity of ``api`` for every ``useApi()`` consumer, so any
+  // ``useEffect(..., [api])`` re-runs on every toast.
+  //
+  // Concrete failure that this fix addresses (reported on iOS Safari
+  // for PR #282): clicking "Copy" on the Codex device-code block
+  // calls ``showToast('copied')`` → ToastProvider re-renders →
+  // ApiProvider re-renders → ``value`` identity changes →
+  // SettingsCodexProviderPage's mount effect re-runs → calls
+  // ``getCodexAuth()`` → reads the disk state (still ``apikey``
+  // because the OAuth flow hasn't completed) → ``setAuthMode("api_
+  // key")`` → the segmented radio flips back to API Key mid-login.
+  // Defensive patches at the event boundary (preventDefault,
+  // disabled buttons, setter guards) didn't help because the click
+  // wasn't the trigger — the cascading re-render was.
+  //
+  // ``[showToast, t]`` are intentional deps: ``showToast`` is stable
+  // (``useCallback`` in ToastContext) so it never invalidates by
+  // itself; ``t`` only changes on locale switch — recomputing then
+  // is correct (cached error messages would otherwise stay in the
+  // old language).
+  const value: ApiContextType = useMemo(() => ({
     getConfig: () => getJson('/config'),
     getPlatformCatalog: () => getJson('/platforms'),
     saveConfig: (payload) => postJson('/config', payload),
@@ -171,6 +506,61 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getFirstBindCode: () => getJson('/api/setup/first-bind-code'),
     detectCli: (binary) => getJson(`/cli/detect?binary=${encodeURIComponent(binary)}`),
     installAgent: (name) => postJson(`/agent/${encodeURIComponent(name)}/install`, {}),
+    getBackendRuntime: (name) => getJson(`/backend/${encodeURIComponent(name)}/runtime`),
+    restartBackend: (name) => postJson(`/backend/${encodeURIComponent(name)}/restart`, {}),
+    getCodexAuth: () => getJson('/backend/codex/auth'),
+    saveCodexAuth: (payload) => postJson('/backend/codex/auth', payload),
+    getClaudeAuth: () => getJson('/backend/claude/auth'),
+    saveClaudeAuth: (payload) => postJson('/backend/claude/auth', payload),
+    startOAuthWeb: (backend, forceReset = true) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/start`, {
+        force_reset: forceReset,
+      }),
+    startOAuthWebForOpencodeProvider: (providerId, forceReset = true) =>
+      postJson(
+        `/backend/opencode/provider/${encodeURIComponent(providerId)}/auth/oauth/start`,
+        { force_reset: forceReset },
+      ),
+    getOAuthWebStatus: (backend, flowId) =>
+      getJson(
+        `/backend/${encodeURIComponent(backend)}/auth/oauth/status/${encodeURIComponent(flowId)}`,
+      ),
+    submitOAuthWebCode: (backend, flowId, code) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/submit-code`, {
+        flow_id: flowId,
+        code,
+      }),
+    cancelOAuthWeb: (backend, flowId) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/cancel`, {
+        flow_id: flowId,
+      }),
+    removeBackendAuth: (backend) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/oauth/remove`, {}),
+    removeBackendApiKey: (backend) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/api-key/remove`, {}),
+    testBackendAuth: (backend, options) =>
+      postJson(`/backend/${encodeURIComponent(backend)}/auth/test`, {
+        ...(options?.model ? { model: options.model } : {}),
+      }),
+    testOpencodeProvider: (providerId, options) =>
+      postJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/test`, {
+        ...(options?.model ? { model: options.model } : {}),
+      }),
+    getOpencodeProviders: () => getJson('/backend/opencode/providers'),
+    setOpencodeProviderAuth: (providerId, apiKey, baseUrl) =>
+      // Forward ``base_url`` only when the caller passed something
+      // (including an explicit empty string for "clear"); omitting it
+      // entirely tells the server to leave the stored value untouched,
+      // which is the right default for callers that don't care about
+      // the base-URL override.
+      postJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`, {
+        api_key: apiKey,
+        ...(baseUrl !== undefined ? { base_url: baseUrl } : {}),
+      }),
+    deleteOpencodeProviderAuth: (providerId) =>
+      deleteJson(`/backend/opencode/provider/${encodeURIComponent(providerId)}/auth`),
+    setOpencodeDefaultProvider: (providerId) =>
+      postJson('/backend/opencode/default-provider', { provider_id: providerId }),
     slackAuthTest: (botToken, proxyUrl) => postJson('/slack/auth_test', { bot_token: botToken, proxy_url: proxyUrl || undefined }),
     slackChannels: (botToken, browseAll, force) => postJson('/slack/channels', { bot_token: botToken, browse_all: browseAll || false, force: force || false }),
     slackManifest: () => getJson('/slack/manifest'),
@@ -202,7 +592,8 @@ export const ApiProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     stopRemoteAccess: () => postJson('/remote-access/stop', {}),
     getSession: () => getJson('/api/session'),
     signOut: () => postJson('/auth/logout', {}),
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [showToast, t]);
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;
 };

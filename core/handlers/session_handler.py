@@ -556,11 +556,12 @@ class SessionHandler(BaseHandler):
             if len(claude_stderr_lines) > 40:
                 del claude_stderr_lines[:-40]
 
-        # Collect Anthropic-related environment variables to pass to Claude
-        claude_env = {}
-        for key in os.environ:
-            if key.startswith("ANTHROPIC_") or key.startswith("CLAUDE_"):
-                claude_env[key] = os.environ[key]
+        # V2Config-driven Anthropic env composition, centralised so the
+        # control-channel client (``agent_auth_service``) cannot drift
+        # away from this site's auth_mode handling.
+        from vibe.claude_config import build_claude_subprocess_env
+
+        claude_env = build_claude_subprocess_env(getattr(self.config, "claude", None))
         if self._should_force_claude_sandbox():
             claude_env["IS_SANDBOX"] = "1"
             logger.info("Detected Claude bypassPermissions running as root; forcing IS_SANDBOX=1 for Claude subprocess")

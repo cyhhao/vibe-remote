@@ -1796,6 +1796,230 @@ def agent_install(name):
     return jsonify(result)
 
 
+_ALLOWED_BACKENDS = {"opencode", "claude", "codex"}
+_BACKENDS_WITH_RESTART = {"opencode", "codex"}
+
+
+@app.route("/backend/<name>/runtime")
+def backend_runtime(name):
+    """Return lifecycle info (version, update, process status) for a backend."""
+    if name not in _ALLOWED_BACKENDS:
+        return jsonify({"ok": False, "error": f"Unknown backend: {name}"}), 400
+
+    from vibe import api
+
+    return jsonify(api.get_backend_runtime(name))
+
+
+@app.route("/backend/<name>/restart", methods=["POST"])
+def backend_restart(name):
+    """Restart a backend's persistent server process (opencode or codex)."""
+    if name not in _BACKENDS_WITH_RESTART:
+        return jsonify({"ok": False, "message": f"Restart is not supported for backend: {name}"}), 400
+
+    from vibe import api
+
+    return jsonify(api.restart_backend(name))
+
+
+@app.route("/backend/codex/auth", methods=["GET"])
+def backend_codex_auth_get():
+    """Read the user-facing Codex auth state (masked secrets)."""
+    from vibe import api
+
+    return jsonify(api.get_codex_auth())
+
+
+@app.route("/backend/codex/auth", methods=["POST"])
+def backend_codex_auth_post():
+    """Persist Codex auth and reload the app-server.
+
+    Body: ``{auth_mode: 'oauth'|'api_key', api_key?: string, base_url?: string}``.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.save_codex_auth(payload))
+
+
+@app.route("/backend/claude/auth", methods=["GET"])
+def backend_claude_auth_get():
+    """Read the user-facing Claude auth state (masked secrets)."""
+    from vibe import api
+
+    return jsonify(api.get_claude_auth())
+
+
+@app.route("/backend/claude/auth", methods=["POST"])
+def backend_claude_auth_post():
+    """Persist Claude auth into V2Config.
+
+    Body: ``{auth_mode: 'oauth'|'api_key', api_key?: string, base_url?: string}``.
+    Claude relaunches per request, so no daemon restart is necessary —
+    the next user message picks up the new env injection automatically.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.save_claude_auth(payload))
+
+
+@app.route("/backend/<backend>/auth/oauth/start", methods=["POST"])
+def backend_oauth_web_start(backend: str):
+    """Kick off a Settings → Backends OAuth flow for Claude or Codex.
+
+    Body: ``{force_reset?: bool}``. Returns ``{flow_id, state, url?,
+    device_code?, awaiting_code?}``. The caller polls ``GET .../status/<flow_id>``
+    while the user completes login externally.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    force_reset = bool(payload.get("force_reset", True))
+    return jsonify(api.start_oauth_web(backend, force_reset=force_reset))
+
+
+@app.route("/backend/<backend>/auth/oauth/status/<flow_id>", methods=["GET"])
+def backend_oauth_web_status(backend: str, flow_id: str):
+    """Poll an in-flight Settings OAuth flow."""
+    from vibe import api
+
+    _ = backend  # backend is encoded in the flow itself; path arg kept for symmetry
+    return jsonify(api.get_oauth_web_status(flow_id))
+
+
+@app.route("/backend/<backend>/auth/oauth/submit-code", methods=["POST"])
+def backend_oauth_web_submit_code(backend: str):
+    """Submit the Claude OAuth callback code (Codex device-auth ignores this)."""
+    from vibe import api
+
+    _ = backend
+    payload = request.json or {}
+    flow_id = str(payload.get("flow_id") or "").strip()
+    code = str(payload.get("code") or "")
+    return jsonify(api.submit_oauth_web_code(flow_id, code))
+
+
+@app.route("/backend/<backend>/auth/oauth/cancel", methods=["POST"])
+def backend_oauth_web_cancel(backend: str):
+    """Cancel an in-flight Settings OAuth flow."""
+    from vibe import api
+
+    _ = backend
+    payload = request.json or {}
+    flow_id = str(payload.get("flow_id") or "").strip()
+    return jsonify(api.cancel_oauth_web(flow_id))
+
+
+@app.route("/backend/<backend>/auth/oauth/remove", methods=["POST"])
+def backend_oauth_web_remove(backend: str):
+    """Clear stored credentials for a Claude/Codex backend."""
+    from vibe import api
+
+    return jsonify(api.remove_backend_auth(backend))
+
+
+@app.route("/backend/<backend>/auth/api-key/remove", methods=["POST"])
+def backend_auth_api_key_remove(backend: str):
+    """Clear the stored API key (V2Config + Codex auth.json) without
+    touching OAuth credentials. Per-backend symmetry of OpenCode's
+    per-provider DELETE."""
+    from vibe import api
+
+    return jsonify(api.remove_backend_api_key(backend))
+
+
+@app.route("/backend/<backend>/auth/test", methods=["POST"])
+def backend_auth_test(backend: str):
+    """Send a single-token probe through the backend CLI to verify auth."""
+    from vibe import api
+
+    payload = request.json or {}
+    raw_model = payload.get("model")
+    model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
+    return jsonify(api.test_backend_auth(backend, model=model))
+
+
+@app.route("/backend/opencode/providers", methods=["GET"])
+def backend_opencode_providers():
+    """Return the merged OpenCode provider catalog for the Settings UI.
+
+    Fans out to the live OpenCode daemon's ``/provider``, ``/provider/auth``,
+    and ``/config/providers`` endpoints and merges them into a list of
+    ``{id, name, configured, oauth_available, local, models, default_model}``.
+    """
+    from vibe import api
+
+    return jsonify(api.get_opencode_providers())
+
+
+@app.route(
+    "/backend/opencode/provider/<provider_id>/auth/oauth/start",
+    methods=["POST"],
+)
+def backend_opencode_provider_oauth_start(provider_id: str):
+    """Kick off a Settings → Backends OAuth flow for a single OpenCode provider.
+
+    Body: ``{force_reset?: bool}``. Returns ``{flow_id, state, url?,
+    device_code?}``. The status/cancel endpoints are the same generic
+    ``/backend/opencode/auth/oauth/status/<flow_id>`` etc.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    force_reset = bool(payload.get("force_reset", True))
+    return jsonify(api.start_oauth_web("opencode", force_reset=force_reset, provider_id=provider_id))
+
+
+@app.route("/backend/opencode/provider/<provider_id>/auth", methods=["POST"])
+def backend_opencode_provider_auth_post(provider_id: str):
+    """Persist an API key for a single OpenCode provider.
+
+    Body: ``{api_key: string}``. The key is forwarded to OpenCode via
+    its ``PUT /auth/<id>`` endpoint.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.save_opencode_provider_auth(provider_id, payload))
+
+
+@app.route("/backend/opencode/provider/<provider_id>/auth", methods=["DELETE"])
+def backend_opencode_provider_auth_delete(provider_id: str):
+    """Drop the stored API key for a single OpenCode provider."""
+    from vibe import api
+
+    return jsonify(api.delete_opencode_provider_auth(provider_id))
+
+
+@app.route("/backend/opencode/provider/<provider_id>/test", methods=["POST"])
+def backend_opencode_provider_test(provider_id: str):
+    """Run a per-provider connectivity probe through OpenCode's HTTP API.
+
+    Body: ``{model?: string}``. The model id is wrapped server-side
+    into the ``{providerID, modelID}`` shape OpenCode expects.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    raw_model = payload.get("model")
+    model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
+    return jsonify(api.test_opencode_provider(provider_id, model=model))
+
+
+@app.route("/backend/opencode/default-provider", methods=["POST"])
+def backend_opencode_default_provider():
+    """Persist the user's default OpenCode provider into V2Config.
+
+    Body: ``{provider_id: string}``. No daemon contact — the default
+    is consulted at session-routing time, not by OpenCode itself.
+    """
+    from vibe import api
+
+    payload = request.json or {}
+    return jsonify(api.set_opencode_default_provider(payload))
+
+
 @app.route("/browse", methods=["POST"])
 def browse_directory():
     """List sub-directories of a given path for the directory picker UI."""

@@ -210,6 +210,18 @@ class OpenCodeAgent(OpenCodeMessageProcessorMixin, BaseAgent):
                 parts = model_str.split("/", 1)
                 if len(parts) == 2:
                     model_dict = {"providerID": parts[0], "modelID": parts[1]}
+                else:
+                    # Bare model id (no ``provider/`` prefix): only inject
+                    # ``providerID`` when the user has explicitly chosen a
+                    # default provider in Settings → Backends → OpenCode.
+                    # Otherwise leave ``model_dict`` unset so OpenCode keeps
+                    # using its own routing — silently forcing every legacy
+                    # install onto Anthropic on upgrade breaks Ollama/OpenAI
+                    # users who never visited the new settings page.
+                    opencode_cfg = getattr(self.controller.config, "opencode", None)
+                    default_provider = getattr(opencode_cfg, "default_provider", None)
+                    if isinstance(default_provider, str) and default_provider.strip():
+                        model_dict = {"providerID": default_provider.strip(), "modelID": model_str}
 
             reasoning_effort = override_reasoning
             if not reasoning_effort:

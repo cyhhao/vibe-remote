@@ -479,3 +479,204 @@ def remove_opencode_provider_api_key(
     probe.path.parent.mkdir(parents=True, exist_ok=True)
     probe.path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return probe.path
+
+
+def upsert_opencode_provider_base_url(
+    provider_id: str,
+    base_url: str,
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Path:
+    """Persist a provider's custom ``baseURL`` into ``opencode.json``.
+
+    OpenCode's own auth endpoint (``PUT /auth/{provider_id}``) only stores
+    the API key; the per-provider ``baseURL`` lives in the user config
+    under ``provider.<id>.options.baseURL`` (the standard Vercel AI SDK
+    field name, capital URL). The Settings UI surfaces a Base URL input,
+    so we mirror the api-key helper to write that field through.
+    """
+
+    active_logger = logger_instance or logger
+    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
+
+    if probe.path is not None and probe.config is not None:
+        config = probe.config
+        target_path = probe.path
+    elif probe.existing_paths:
+        raise ValueError("Existing OpenCode config could not be parsed")
+    else:
+        config = {}
+        target_path = get_opencode_config_paths(home)[0]
+
+    provider_map = config.setdefault("provider", {})
+    if not isinstance(provider_map, dict):
+        raise ValueError("OpenCode config field 'provider' is not an object")
+
+    provider_config = provider_map.setdefault(provider_id, {})
+    if not isinstance(provider_config, dict):
+        raise ValueError(f"OpenCode provider '{provider_id}' config is not an object")
+
+    options = provider_config.setdefault("options", {})
+    if not isinstance(options, dict):
+        raise ValueError(f"OpenCode provider '{provider_id}' options are not an object")
+
+    options["baseURL"] = base_url
+    if "$schema" not in config:
+        config["$schema"] = "https://opencode.ai/config.json"
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return target_path
+
+
+def remove_opencode_provider_base_url(
+    provider_id: str,
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Optional[Path]:
+    """Drop a provider's custom ``baseURL`` from ``opencode.json``.
+
+    Mirrors :func:`remove_opencode_provider_api_key`: prunes empty
+    ``options`` / provider / ``provider`` blocks so the file does not
+    accumulate empty scaffolding once every override is cleared.
+    """
+
+    active_logger = logger_instance or logger
+    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
+
+    if probe.path is None or probe.config is None:
+        return None
+
+    config = probe.config
+    provider_map = config.get("provider")
+    if not isinstance(provider_map, dict):
+        return probe.path
+
+    provider_config = provider_map.get(provider_id)
+    if not isinstance(provider_config, dict):
+        return probe.path
+
+    options = provider_config.get("options")
+    if isinstance(options, dict):
+        options.pop("baseURL", None)
+        if not options:
+            provider_config.pop("options", None)
+
+    if not provider_config:
+        provider_map.pop(provider_id, None)
+
+    if not provider_map:
+        config.pop("provider", None)
+
+    probe.path.parent.mkdir(parents=True, exist_ok=True)
+    probe.path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return probe.path
+
+
+def get_opencode_auth_path(home: Path | None = None) -> Path:
+    """Return the absolute path to OpenCode's per-provider auth bundle.
+
+    OpenCode stores ``{providerId: {type: "api"|"oauth", key?, ...}}`` at
+    ``~/.local/share/opencode/auth.json``. The Settings UI uses this to
+    render a masked preview ("``sk-proj-•••H8mN``") for each configured
+    cloud provider — mirroring the Claude / Codex pages so the user can
+    see at a glance which providers carry a stored key without having to
+    expand each card.
+    """
+    resolved_home = home or Path.home()
+    return resolved_home / ".local" / "share" / "opencode" / "auth.json"
+
+
+def read_opencode_provider_keys(
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Dict[str, Optional[str]]:
+    """Return ``{provider_id: plaintext_key | None}`` from auth.json.
+
+    Plaintext keys never leave the server: ``vibe.api.get_opencode_providers``
+    pipes each value through ``_mask_api_key`` before forwarding to the
+    Settings UI. ``None`` entries mark OAuth-type providers (or any
+    other ``type`` that doesn't carry a static key) — the UI can use
+    presence-vs-None to decide whether to show a masked preview vs the
+    "signed in via OAuth" affordance.
+
+    A missing or unparseable file returns an empty dict; callers should
+    not treat that as an error since OpenCode lazily creates the file
+    on first ``PUT /auth/<id>`` call.
+    """
+    entries = read_opencode_provider_auth_entries(
+        home=home, logger_instance=logger_instance
+    )
+    out: Dict[str, Optional[str]] = {}
+    for provider_id, entry in entries.items():
+        if entry.get("type") == "api":
+            key = entry.get("key")
+            out[provider_id] = key if isinstance(key, str) and key else None
+        else:
+            out[provider_id] = None
+    return out
+
+
+def read_opencode_provider_auth_entries(
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Return the raw ``auth.json`` entries keyed by provider_id.
+
+    Useful when callers need both the ``type`` (``"api"`` / ``"oauth"`` /
+    other) AND the optional key — the Settings UI surfaces "currently
+    active: OAuth" / "API key" badges from the ``type`` field. Plaintext
+    secrets stay in process; ``vibe.api.get_opencode_providers`` masks
+    or strips before serialising.
+    """
+    active_logger = logger_instance or logger
+    path = get_opencode_auth_path(home)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        active_logger.debug("OpenCode auth.json read failed: %s", exc)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for provider_id, entry in data.items():
+        if not isinstance(provider_id, str) or not isinstance(entry, dict):
+            continue
+        out[provider_id] = entry
+    return out
+
+
+def read_opencode_provider_base_url(
+    provider_id: str,
+    *,
+    home: Path | None = None,
+    logger_instance: Optional[logging.Logger] = None,
+) -> Optional[str]:
+    """Return the persisted ``baseURL`` for a provider, if any.
+
+    Used by the providers-listing endpoint so the Settings UI can
+    pre-populate the Base URL input with the user's last saved value
+    instead of starting empty on every reload.
+    """
+
+    active_logger = logger_instance or logger
+    probe = load_first_opencode_user_config(home=home, logger_instance=active_logger)
+    if probe.config is None:
+        return None
+    provider_map = probe.config.get("provider")
+    if not isinstance(provider_map, dict):
+        return None
+    provider_config = provider_map.get(provider_id)
+    if not isinstance(provider_config, dict):
+        return None
+    options = provider_config.get("options")
+    if not isinstance(options, dict):
+        return None
+    value = options.get("baseURL")
+    return value if isinstance(value, str) and value.strip() else None

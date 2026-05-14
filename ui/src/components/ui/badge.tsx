@@ -31,3 +31,5 @@ export type BadgeProps = React.HTMLAttributes<HTMLSpanElement> & VariantProps<ty
 export const Badge = ({ className, variant, ...props }: BadgeProps) => (
   <span className={cn(badgeVariants({ variant }), className)} {...props} />
 );
+
+export { badgeVariants };
