@@ -754,7 +754,6 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_thread_requests_danger_full_access(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=False))
-        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
         agent.codex_config = SimpleNamespace(default_model=None)
         agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
         agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
@@ -790,7 +789,6 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_thread_includes_codex_agent_developer_instructions(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=False))
-        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
         agent.codex_config = SimpleNamespace(default_model=None)
         agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
         agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
@@ -835,7 +833,6 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_thread_adds_codex_generated_image_prompt_to_thread_instructions(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
-        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
         agent.codex_config = SimpleNamespace(default_model=None)
         agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
         agent.sessions = SimpleNamespace(set_agent_session_mapping=Mock())
@@ -868,7 +865,6 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
     async def test_resume_thread_refreshes_developer_instructions_without_appending(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
-        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
         agent.codex_config = SimpleNamespace(default_model=None)
         agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
         agent.sessions = SimpleNamespace(
@@ -920,7 +916,6 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
     async def test_resume_thread_keeps_system_prompt_injection_when_quick_replies_are_disabled(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=False))
-        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
         agent.codex_config = SimpleNamespace(default_model=None)
         agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
         agent.sessions = SimpleNamespace(
@@ -965,7 +960,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_turn_uses_sandbox_policy_object(self):
         agent = object.__new__(CodexAgent)
-        agent.settings_manager = SimpleNamespace(get_channel_settings=lambda session_key: None)
+        agent.controller = SimpleNamespace(get_codex_overrides=Mock(return_value=(None, None, None)))
         agent.codex_config = SimpleNamespace(default_model=None)
         agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
         agent._turn_registry = SimpleNamespace(
@@ -995,22 +990,15 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
                 "sandboxPolicy": {"type": "dangerFullAccess"},
             },
         )
+        agent.controller.get_codex_overrides.assert_not_called()
 
-    async def test_start_turn_uses_context_specific_settings_manager_for_routing(self):
+    async def test_start_turn_uses_controller_codex_overrides(self):
         agent = object.__new__(CodexAgent)
         agent.settings_manager = SimpleNamespace(
-            get_channel_settings=lambda settings_key: SimpleNamespace(
-                routing=SimpleNamespace(codex_model="wrong-model", codex_reasoning_effort="low")
-            )
-        )
-        context_manager = SimpleNamespace(
-            get_channel_settings=lambda settings_key: SimpleNamespace(
-                routing=SimpleNamespace(codex_model="gpt-5.4", codex_reasoning_effort="high")
-            )
+            get_channel_settings=Mock(side_effect=AssertionError("Codex must use controller routing overrides"))
         )
         agent.controller = SimpleNamespace(
-            _get_settings_key=lambda context: "U123",
-            get_settings_manager_for_context=lambda context: context_manager,
+            get_codex_overrides=Mock(return_value=(None, "gpt-5.4", "high")),
         )
         agent.codex_config = SimpleNamespace(default_model="fallback-model")
         agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
@@ -1032,6 +1020,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
 
         await agent._start_turn(transport, request, "thread-1")
 
+        agent.controller.get_codex_overrides.assert_called_once_with(request.context)
         transport.send_request.assert_awaited_once_with(
             "turn/start",
             {
@@ -1044,17 +1033,13 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_start_turn_does_not_fall_back_to_primary_platform_when_context_manager_has_no_settings(self):
+    async def test_start_turn_uses_codex_dm_user_effort_from_shared_overrides(self):
         agent = object.__new__(CodexAgent)
         agent.settings_manager = SimpleNamespace(
-            get_channel_settings=lambda settings_key: SimpleNamespace(
-                routing=SimpleNamespace(codex_model="wrong-model", codex_reasoning_effort="low")
-            )
+            get_channel_settings=Mock(side_effect=AssertionError("Codex must not read scope storage directly"))
         )
-        context_manager = SimpleNamespace(get_channel_settings=lambda settings_key: None)
         agent.controller = SimpleNamespace(
-            _get_settings_key=lambda context: "U123",
-            get_settings_manager_for_context=lambda context: context_manager,
+            get_codex_overrides=Mock(return_value=(None, "gpt-5.5", "xhigh")),
         )
         agent.codex_config = SimpleNamespace(default_model="fallback-model")
         agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
@@ -1077,6 +1062,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
 
         await agent._start_turn(transport, request, "thread-1")
 
+        agent.controller.get_codex_overrides.assert_called_once_with(request.context)
         transport.send_request.assert_awaited_once_with(
             "turn/start",
             {
@@ -1084,20 +1070,15 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
                 "input": [{"type": "text", "text": "hello"}],
                 "approvalPolicy": "never",
                 "sandboxPolicy": {"type": "dangerFullAccess"},
-                "model": "fallback-model",
+                "model": "gpt-5.5",
+                "effort": "xhigh",
             },
         )
 
     async def test_start_turn_uses_codex_agent_defaults_when_routing_selects_agent(self):
         agent = object.__new__(CodexAgent)
-        agent.settings_manager = SimpleNamespace(
-            get_channel_settings=lambda settings_key: SimpleNamespace(
-                routing=SimpleNamespace(
-                    codex_agent="reviewer",
-                    codex_model=None,
-                    codex_reasoning_effort=None,
-                )
-            )
+        agent.controller = SimpleNamespace(
+            get_codex_overrides=Mock(return_value=("reviewer", None, None)),
         )
         agent.codex_config = SimpleNamespace(default_model="fallback-model")
         agent._build_input = Mock(return_value=[{"type": "text", "text": "hello"}])
@@ -1110,6 +1091,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
             session_key="channel-1",
             base_session_id="session-1",
             composite_session_id="slack:C1:T1",
+            context=SimpleNamespace(platform="slack", platform_specific={"is_dm": False}),
             working_path="/tmp/work",
             subagent_name=None,
             subagent_model=None,

@@ -5,7 +5,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from config.v2_settings import SettingsStore, UserSettings
+from config.v2_settings import RoutingSettings, SettingsStore, UserSettings
+from core.controller import Controller
+from modules.im import MessageContext
+from modules.settings_manager import SettingsManager
 from vibe import api
 
 
@@ -49,3 +52,42 @@ def test_toggle_admin_is_scoped_per_platform(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert store.get_user("U1", platform="slack").is_admin is False
     assert store.get_user("U1", platform="wechat").is_admin is True
+
+
+def test_controller_codex_overrides_resolve_dm_user_scope(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    SettingsStore.reset_instance()
+    store = SettingsStore.get_instance()
+    store.set_users_for_platform(
+        "slack",
+        {
+            "U1": UserSettings(
+                display_name="Alex",
+                routing=RoutingSettings(
+                    agent_backend="codex",
+                    codex_model="gpt-5.5",
+                    codex_reasoning_effort="xhigh",
+                ),
+            )
+        },
+    )
+    store.save()
+
+    controller = Controller.__new__(Controller)
+    controller.primary_platform = "slack"
+    controller.platform_settings_managers = {
+        "slack": SettingsManager(platform="slack"),
+    }
+    context = MessageContext(
+        platform="slack",
+        user_id="U1",
+        channel_id="D1",
+        platform_specific={"is_dm": True},
+    )
+
+    assert Controller._get_settings_key(controller, context) == "U1"
+    assert Controller.get_codex_overrides(controller, context) == (
+        None,
+        "gpt-5.5",
+        "xhigh",
+    )
