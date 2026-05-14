@@ -171,6 +171,61 @@ def test_apply_preserves_user_owned_model_provider(tmp_path: Path) -> None:
     assert parsed["model_providers"]["OpenAI"]["base_url"] == "https://relay.example/v1"
 
 
+def test_apply_api_key_with_base_url_pins_supports_websockets_off(tmp_path: Path) -> None:
+    """Custom relays don't speak Codex's WSS responses protocol.
+
+    Newer Codex versions otherwise dispatch the WebSocket transport via
+    the built-in OpenAI provider's default ``wss://api.openai.com/...``
+    URL — silently bypassing the configured relay and producing 401s.
+    """
+    home = tmp_path
+    (home / ".codex").mkdir()
+
+    codex_config.apply_codex_auth(
+        auth_mode="api_key",
+        api_key="sk-relay-key",
+        base_url="https://relay.example.com",
+        home=home,
+    )
+
+    parsed = tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    managed = parsed["model_providers"][codex_config.MANAGED_PROVIDER_ID]
+    assert managed["base_url"] == "https://relay.example.com"
+    assert managed["supports_websockets"] is False
+
+
+def test_apply_api_key_without_base_url_strips_supports_websockets(tmp_path: Path) -> None:
+    """Clearing a previously-set relay must remove our WSS pin.
+
+    Otherwise a user who switches back to the official OpenAI endpoint
+    would stay on the HTTP path forever, losing the WSS transport that
+    works correctly against ``api.openai.com``.
+    """
+    home = tmp_path
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    seed = (
+        f'model_provider = "{codex_config.MANAGED_PROVIDER_ID}"\n'
+        "\n"
+        f"[model_providers.{codex_config.MANAGED_PROVIDER_ID}]\n"
+        'base_url = "https://relay.example.com"\n'
+        "supports_websockets = false\n"
+    )
+    (codex_home / "config.toml").write_text(seed, encoding="utf-8")
+
+    codex_config.apply_codex_auth(
+        auth_mode="api_key",
+        api_key="sk-no-relay",
+        base_url=None,
+        home=home,
+    )
+
+    parsed = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
+    managed = parsed["model_providers"][codex_config.MANAGED_PROVIDER_ID]
+    assert "base_url" not in managed
+    assert "supports_websockets" not in managed
+
+
 def test_round_trip_datetime_scalars() -> None:
     """``tomllib`` returns datetime/date/time for temporal TOML values; the
     emitter must round-trip them unquoted instead of crashing on the
