@@ -87,6 +87,35 @@ export const SettingsCodexProviderPage: React.FC = () => {
   // accidental tap (iOS Safari emits one after the "Copy" tap in
   // testing) tears down the in-progress login.
   const [oauthFlowActive, setOauthFlowActive] = useState(false);
+  // We need to read the latest value of ``oauthFlowActive`` from
+  // inside the guarded setter without rebuilding the setter on every
+  // render — a ref keeps it stable for callbacks. The button's
+  // ``disabled`` attribute alone is NOT enough on iOS Safari: the
+  // user has reproduced the tab flipping while the radio is rendered
+  // disabled. We do not know the exact event path that smuggles the
+  // click through (URL-bar collapse reflow, fastclick coordinate
+  // drift, synthetic gesture), so the only bulletproof defense is
+  // rejecting the state mutation at its source.
+  const oauthFlowActiveRef = React.useRef(oauthFlowActive);
+  oauthFlowActiveRef.current = oauthFlowActive;
+  const guardedSetAuthMode = React.useCallback(
+    (next: CodexAuthMode) => {
+      if (oauthFlowActiveRef.current) {
+        // Visible warning in devtools so any future regression is
+        // attributable. The toast is for users who happen to be
+        // staring at the screen when this rejects.
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[codex-auth-mode] rejected change to %s while OAuth flow active',
+          next,
+        );
+        showToast(t('settings.backends.oauthFlowLockedToast'), 'warning');
+        return;
+      }
+      setAuthMode(next);
+    },
+    [showToast, t],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -300,7 +329,7 @@ export const SettingsCodexProviderPage: React.FC = () => {
               </div>
               <SegmentedRadio
                 value={authMode}
-                onChange={setAuthMode}
+                onChange={guardedSetAuthMode}
                 options={modeOptions}
                 ariaLabel={t('settings.backends.codexAuthModeLabel') as string}
                 disabled={oauthFlowActive}

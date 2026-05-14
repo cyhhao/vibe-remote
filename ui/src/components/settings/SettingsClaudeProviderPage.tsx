@@ -124,8 +124,29 @@ export const SettingsClaudeProviderPage: React.FC = () => {
   const [savedBaseUrl, setSavedBaseUrl] = useState('');
   // Freeze the auth-mode segmented radio while the OAuth panel is mid-
   // handshake. Same iOS Safari issue as the Codex page: a Copy tap
-  // can bounce the radio and tear down the in-flight login.
+  // can bounce the radio and tear down the in-flight login. The
+  // ``disabled`` HTML attribute alone isn't enough — the user has
+  // reproduced the flip with the radio rendered disabled, so we
+  // also guard at the setter (the radio click cannot win even if
+  // iOS smuggles the event through whatever quirky path).
   const [oauthFlowActive, setOauthFlowActive] = useState(false);
+  const oauthFlowActiveRef = React.useRef(oauthFlowActive);
+  oauthFlowActiveRef.current = oauthFlowActive;
+  const guardedSetAuthMode = React.useCallback(
+    (next: ClaudeAuthMode) => {
+      if (oauthFlowActiveRef.current) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[claude-auth-mode] rejected change to %s while OAuth flow active',
+          next,
+        );
+        showToast(t('settings.backends.oauthFlowLockedToast'), 'warning');
+        return;
+      }
+      setAuthMode(next);
+    },
+    [showToast, t],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -534,7 +555,7 @@ export const SettingsClaudeProviderPage: React.FC = () => {
                   </div>
                   <SegmentedRadio
                     value={authMode}
-                    onChange={setAuthMode}
+                    onChange={guardedSetAuthMode}
                     options={modeOptions}
                     ariaLabel={t('settings.backends.claudeAuthModeLabel') as string}
                     disabled={oauthFlowActive}
