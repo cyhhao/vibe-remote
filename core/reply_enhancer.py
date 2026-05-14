@@ -69,12 +69,12 @@ _FILE_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\((file://(?:[^()]+|\([^)]*\))+)\)"
 # link-formatted buttons separated by ``|`` or full-width ``｜``.
 _BUTTON_BLOCK_RE = re.compile(
     r"\n-{3,}\s*\n"  # --- separator line
-    r"((?:\s*(?:\[[^\]]+\](?:\(<[^)>\n]+>\)|\([^)>\n]+\))?|<[^|>\n]+\|[^>\n]+>)\s*(?:[|｜]\s*)?)+)"  # button tokens
+    r"((?:\s*(?:\[[^\]]+\](?:\(<https?://[^)>\n]+>\))?|<https?://[^|>\n]+\|[^>\n]+>)\s*(?:[|｜]\s*)?)+)"  # button tokens
     r"\s*$",  # trailing whitespace / end of string
 )
 
 # Individual button tokens: [button text], [button text](<url>), or Slack-style <url|button text>.
-_BUTTON_TOKEN_RE = re.compile(r"\[([^\]]+)\](?:\(<[^)>\n]+>\)|\([^)>\n]+\))?|<[^|>\n]+\|([^>\n]+)>")
+_BUTTON_TOKEN_RE = re.compile(r"\[([^\]]+)\](?:\(<https?://[^)>\n]+>\))?|<https?://[^|>\n]+\|([^>\n]+)>")
 
 # Silent output blocks are intentionally simple and model-facing.  They are
 # stripped before any reply enhancement parsing so hidden text cannot create

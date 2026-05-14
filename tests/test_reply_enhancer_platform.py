@@ -159,6 +159,13 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply.text, text)
         self.assertEqual(reply.buttons, [])
 
+    def test_process_reply_preserves_plain_markdown_reference_link_block(self):
+        text = "Done.\n\n---\n[Release notes](https://example.com)"
+        reply = process_reply(text)
+
+        self.assertEqual(reply.text, text)
+        self.assertEqual(reply.buttons, [])
+
     def test_prompt_includes_task_watch_and_hook_usage_with_thread_default_session_key(self):
         context = MessageContext(
             user_id="U1",
