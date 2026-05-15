@@ -58,6 +58,59 @@ def _write_fake_uv(path: Path, uv_log: Path) -> None:
     )
 
 
+def _write_fake_file(path: Path, mapping: dict[Path, str]) -> None:
+    cases = "\n".join(
+        f'        "{target}") echo "${{prefix}}{description}" ;;' for target, description in mapping.items()
+    )
+    _write_executable(
+        path,
+        f"""\
+        #!/usr/bin/env bash
+        prefix=""
+        if [ "${{1:-}}" = "-b" ]; then
+          shift
+        else
+          prefix="${{1:-}}: "
+        fi
+        case "${{1:-}}" in
+{cases}
+          *) echo "${{1:-}}: POSIX shell script text executable" ;;
+        esac
+        """,
+    )
+
+
+def _write_fake_uname(path: Path, machine: str = "x86_64") -> None:
+    _write_executable(
+        path,
+        f"""\
+        #!/usr/bin/env bash
+        if [ "${{1:-}}" = "-s" ]; then
+          echo Darwin
+        elif [ "${{1:-}}" = "-m" ]; then
+          echo {machine}
+        else
+          echo Darwin
+        fi
+        """,
+    )
+
+
+def _write_fake_sysctl(path: Path, arm64: bool = True) -> None:
+    value = "1" if arm64 else "0"
+    _write_executable(
+        path,
+        f"""\
+        #!/usr/bin/env bash
+        if [ "${{1:-}}" = "-n" ] && [ "${{2:-}}" = "hw.optional.arm64" ]; then
+          echo {value}
+        else
+          exit 1
+        fi
+        """,
+    )
+
+
 def _install(env: dict[str, str], *, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
     return _run(f'bash "{INSTALL_SCRIPT}"', cwd=cwd, env=env)
 
@@ -284,3 +337,174 @@ def test_install_script_requires_path_export_when_install_dir_not_on_original_pa
     assert 'export PATH="' in install_result.stdout
     assert str(home_dir / ".local" / "bin") in install_result.stdout
     assert version_result.returncode != 0
+
+
+def test_install_script_reinstalls_when_existing_uv_is_x86_on_apple_silicon(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    existing_uv = path_dir / "uv"
+    native_uv = home_dir / ".local" / "bin" / "uv"
+    native_uv.parent.mkdir(parents=True)
+    _write_fake_uv(existing_uv, uv_log)
+    _write_fake_uv(native_uv, uv_log)
+    _write_fake_uname(path_dir / "uname")
+    _write_fake_sysctl(path_dir / "sysctl", arm64=True)
+    _write_fake_file(
+        path_dir / "file",
+        {
+            existing_uv: "Mach-O 64-bit executable x86_64",
+            native_uv: "Mach-O 64-bit executable arm64",
+        },
+    )
+    _write_executable(
+        path_dir / "curl",
+        f"""\
+        #!/usr/bin/env bash
+        cat <<'EOF'
+        #!/usr/bin/env sh
+        mkdir -p "$HOME/.local/bin"
+        exit 0
+        EOF
+        """,
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(path_dir), "/usr/bin", "/bin"])
+
+    install_result = _install(env, cwd=tmp_path)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert "Found x86_64 uv on Apple Silicon" in install_result.stdout
+    assert uv_log.read_text(encoding="utf-8") == str(path_dir)
+
+
+def test_install_script_accepts_universal_uv_with_arm64e_slice_on_apple_silicon(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    uv_path = path_dir / "uv"
+    _write_fake_uv(uv_path, uv_log)
+    _write_fake_uname(path_dir / "uname")
+    _write_fake_sysctl(path_dir / "sysctl", arm64=True)
+    _write_fake_file(
+        path_dir / "file",
+        {
+            uv_path: "Mach-O universal binary with 2 architectures: [x86_64] [arm64e]",
+        },
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(path_dir), "/usr/bin", "/bin"])
+
+    install_result = _install(env, cwd=tmp_path)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert "Found x86_64 uv on Apple Silicon" not in install_result.stdout
+    assert "uv is already installed" in install_result.stdout
+    assert uv_log.read_text(encoding="utf-8") == str(path_dir)
+
+
+def test_install_script_checks_uv_symlink_target_architecture_on_apple_silicon(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    cellar_dir = tmp_path / "Cellar" / "uv" / "bin"
+    cellar_dir.mkdir(parents=True)
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    uv_link = path_dir / "uv"
+    uv_target = cellar_dir / "uv"
+    native_uv = home_dir / ".local" / "bin" / "uv"
+    native_uv.parent.mkdir(parents=True)
+    _write_fake_uv(uv_target, uv_log)
+    _write_fake_uv(native_uv, uv_log)
+    uv_link.symlink_to(uv_target)
+    _write_fake_uname(path_dir / "uname")
+    _write_fake_sysctl(path_dir / "sysctl", arm64=True)
+    _write_fake_file(
+        path_dir / "file",
+        {
+            uv_link: "symbolic link to Cellar/uv/bin/uv",
+            uv_target: "Mach-O 64-bit executable x86_64",
+            native_uv: "Mach-O 64-bit executable arm64",
+        },
+    )
+    _write_executable(
+        path_dir / "curl",
+        """\
+        #!/usr/bin/env bash
+        cat <<'EOF'
+        #!/usr/bin/env sh
+        mkdir -p "$HOME/.local/bin"
+        exit 0
+        EOF
+        """,
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(path_dir), "/usr/bin", "/bin"])
+
+    install_result = _install(env, cwd=tmp_path)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert "Found x86_64 uv on Apple Silicon" in install_result.stdout
+    assert uv_log.read_text(encoding="utf-8") == str(path_dir)
+
+
+def test_install_script_ignores_arch_tokens_in_uv_path_prefix(tmp_path):
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    uv_target_dir = tmp_path / "arm64-prefix" / "uv" / "bin"
+    uv_target_dir.mkdir(parents=True)
+    uv_log = tmp_path / "uv-tool-bin-dir.txt"
+
+    existing_uv = path_dir / "uv"
+    uv_target = uv_target_dir / "uv"
+    native_uv = home_dir / ".local" / "bin" / "uv"
+    native_uv.parent.mkdir(parents=True)
+    _write_fake_uv(uv_target, uv_log)
+    _write_fake_uv(native_uv, uv_log)
+    existing_uv.symlink_to(uv_target)
+    _write_fake_uname(path_dir / "uname")
+    _write_fake_sysctl(path_dir / "sysctl", arm64=True)
+    _write_fake_file(
+        path_dir / "file",
+        {
+            uv_target: "Mach-O 64-bit executable x86_64",
+            native_uv: "Mach-O 64-bit executable arm64",
+        },
+    )
+    _write_executable(
+        path_dir / "curl",
+        """\
+        #!/usr/bin/env bash
+        cat <<'EOF'
+        #!/usr/bin/env sh
+        mkdir -p "$HOME/.local/bin"
+        exit 0
+        EOF
+        """,
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PATH"] = os.pathsep.join([str(path_dir), "/usr/bin", "/bin"])
+
+    install_result = _install(env, cwd=tmp_path)
+
+    assert install_result.returncode == 0, install_result.stdout + install_result.stderr
+    assert "Found x86_64 uv on Apple Silicon" in install_result.stdout
+    assert uv_log.read_text(encoding="utf-8") == str(path_dir)

@@ -181,6 +181,84 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+is_apple_silicon_macos() {
+    [ "$(detect_os)" = "macos" ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = "1" ]
+}
+
+resolve_binary_path() {
+    local path="$1"
+    local dir=""
+    local target=""
+    local depth=0
+
+    if [ -z "$path" ]; then
+        return 1
+    fi
+
+    while [ -L "$path" ] && [ "$depth" -lt 20 ] && command_exists readlink; do
+        target="$(readlink "$path" 2>/dev/null || true)"
+        if [ -z "$target" ]; then
+            break
+        fi
+        case "$target" in
+            /*) path="$target" ;;
+            *)
+                dir="$(dirname "$path")"
+                path="$dir/$target"
+                ;;
+        esac
+        depth=$((depth + 1))
+    done
+
+    printf '%s\n' "$path"
+}
+
+binary_architecture() {
+    local path="$1"
+    path="$(resolve_binary_path "$path" || true)"
+
+    if [ -z "$path" ] || [ ! -e "$path" ] || ! command_exists file; then
+        return 1
+    fi
+
+    file -b "$path" 2>/dev/null || true
+}
+
+is_arm64_binary() {
+    local path="$1"
+    binary_architecture "$path" | grep -Eq '(^|[^[:alnum:]_])(arm64e?|aarch64)([^[:alnum:]_]|$)'
+}
+
+is_x86_64_binary() {
+    local path="$1"
+    binary_architecture "$path" | grep -Eq '(^|[^[:alnum:]_])x86_64([^[:alnum:]_]|$)'
+}
+
+uv_binary_is_acceptable() {
+    local uv_path="$1"
+
+    if [ -z "$uv_path" ]; then
+        return 1
+    fi
+
+    if is_apple_silicon_macos && is_x86_64_binary "$uv_path" && ! is_arm64_binary "$uv_path"; then
+        return 1
+    fi
+
+    return 0
+}
+
+uv_is_native_for_host() {
+    local uv_path
+
+    uv_path="$(command -v uv 2>/dev/null || true)"
+    if [ -z "$uv_path" ]; then
+        return 1
+    fi
+
+    uv_binary_is_acceptable "$uv_path"
+}
+
 uv_tool_install() {
     if [ -n "$VIBE_TOOL_BIN_DIR" ]; then
         UV_TOOL_BIN_DIR="$VIBE_TOOL_BIN_DIR" uv tool install "$@"
@@ -217,9 +295,17 @@ is_vibe_immediately_available() {
 
 # Install uv if not present
 install_uv() {
-    if command_exists uv; then
+    local existing_uv=""
+    existing_uv="$(command -v uv 2>/dev/null || true)"
+
+    if [ -n "$existing_uv" ] && uv_is_native_for_host; then
         success "uv is already installed"
         return 0
+    fi
+
+    if [ -n "$existing_uv" ] && is_apple_silicon_macos && is_x86_64_binary "$existing_uv" && ! is_arm64_binary "$existing_uv"; then
+        warn "Found x86_64 uv on Apple Silicon: $existing_uv"
+        info "Installing native arm64 uv for this Mac..."
     fi
     
     info "Installing uv (will also manage Python automatically)..."
@@ -241,16 +327,18 @@ install_uv() {
             ;;
     esac
     
-    if command_exists uv; then
+    if command_exists uv && uv_is_native_for_host; then
         success "uv installed successfully"
     else
         # Try to find it in common locations
-        if [ -f "$HOME/.local/bin/uv" ]; then
+        if [ -f "$HOME/.local/bin/uv" ] && uv_binary_is_acceptable "$HOME/.local/bin/uv"; then
             export PATH="$HOME/.local/bin:$PATH"
             success "uv installed successfully"
-        elif [ -f "$HOME/.cargo/bin/uv" ]; then
+        elif [ -f "$HOME/.cargo/bin/uv" ] && uv_binary_is_acceptable "$HOME/.cargo/bin/uv"; then
             export PATH="$HOME/.cargo/bin:$PATH"
             success "uv installed successfully"
+        elif [ -n "$existing_uv" ] && command_exists uv; then
+            error "uv is installed, but it does not match this Mac's native architecture. Please install native arm64 uv or remove the x86_64 uv from PATH."
         else
             error "Failed to install uv. Please install it manually: https://docs.astral.sh/uv/"
         fi

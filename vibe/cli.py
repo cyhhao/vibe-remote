@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import platform
 import shlex
 import shutil
 import signal
@@ -239,6 +240,96 @@ def _watch_examples_text() -> str:
           vibe watch pause 12ab34cd56ef
         """
     )
+
+
+def _is_apple_silicon_host() -> bool:
+    if platform.system().lower() != "darwin":
+        return False
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.optional.arm64"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except Exception:
+        return platform.machine().lower() in {"arm64", "aarch64"}
+    return (result.stdout or "").strip() == "1"
+
+
+def _binary_architecture(path: str | None) -> str | None:
+    if not path:
+        return None
+    resolved_path = str(Path(path).resolve())
+    try:
+        result = subprocess.run(
+            ["file", "-b", resolved_path],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except Exception:
+        return None
+    output = (result.stdout or result.stderr or "").strip()
+    return output or None
+
+
+def _architecture_token(text: str | None) -> str | None:
+    normalized = (text or "").lower()
+    if "arm64" in normalized or "arm64e" in normalized or "aarch64" in normalized:
+        return "arm64"
+    if "x86_64" in normalized or "x86-64" in normalized or "amd64" in normalized:
+        return "x86_64"
+    return None
+
+
+def _runtime_architecture_items() -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    is_apple_silicon = _is_apple_silicon_host()
+    host_arch = "Apple Silicon" if is_apple_silicon else platform.machine() or "unknown"
+    python_arch = platform.machine() or "unknown"
+    python_status = "warn" if is_apple_silicon and _architecture_token(python_arch) == "x86_64" else "pass"
+
+    python_item = {
+        "status": python_status,
+        "message": f"Python runtime architecture: {python_arch} ({sys.executable})",
+    }
+    if python_status == "warn":
+        python_item["action"] = "Reinstall Vibe Remote with native arm64 uv/Python"
+    items.append(python_item)
+
+    uv_path = shutil.which("uv")
+    if uv_path:
+        uv_arch_output = _binary_architecture(uv_path)
+        uv_arch = _architecture_token(uv_arch_output) or "unknown"
+        uv_status = "warn" if is_apple_silicon and uv_arch in {"x86_64", "unknown"} else "pass"
+        uv_item = {
+            "status": uv_status,
+            "message": f"uv architecture: {uv_arch} ({uv_path})",
+        }
+        if is_apple_silicon and uv_arch == "x86_64":
+            uv_item["action"] = "Install native arm64 uv, then reinstall Vibe Remote"
+        elif is_apple_silicon and uv_arch == "unknown":
+            uv_item["action"] = "Check whether this uv wrapper launches native arm64 uv"
+        items.append(uv_item)
+    else:
+        items.append(
+            {
+                "status": "warn",
+                "message": "uv command not found on PATH",
+                "action": "Install uv or add its bin directory to PATH",
+            }
+        )
+
+    items.append(
+        {
+            "status": "pass",
+            "message": f"Host architecture: {host_arch}",
+        }
+    )
+    return items
 
 
 def _remote_examples_text() -> str:
@@ -1793,6 +1884,12 @@ def _doctor():
             }
         )
         summary["pass"] += 1
+
+    for item in _runtime_architecture_items():
+        runtime_items.append(item)
+        status = item.get("status")
+        if status in summary:
+            summary[status] += 1
 
     groups.append({"name": "Runtime", "items": runtime_items})
 
