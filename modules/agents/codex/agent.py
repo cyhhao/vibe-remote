@@ -731,12 +731,17 @@ class CodexAgent(BaseAgent):
         if cached == (thread_id, developer_instructions):
             return
 
+        resume_params: Dict[str, Any] = {
+            "threadId": thread_id,
+            "developerInstructions": developer_instructions,
+        }
+        model_provider = await self._resolve_resume_model_provider_override(transport, request, thread_id)
+        if model_provider:
+            resume_params["modelProvider"] = model_provider
+
         await transport.send_request(
             "thread/resume",
-            {
-                "threadId": thread_id,
-                "developerInstructions": developer_instructions,
-            },
+            resume_params,
         )
         self._remember_thread_developer_instructions(
             request.base_session_id,

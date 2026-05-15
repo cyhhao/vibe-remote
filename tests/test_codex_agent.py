@@ -1256,6 +1256,7 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
         agent.codex_config = SimpleNamespace(default_model=None)
         agent.sessions = SimpleNamespace(ensure_agent_session_id=Mock(return_value="sesk8m4q2p7x"))
+        agent._resolve_resume_model_provider_override = AsyncMock(return_value=None)
         agent._thread_developer_instructions = {}
         request = SimpleNamespace(
             working_path="/tmp/work",
@@ -1281,8 +1282,46 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         method, params = transport.send_request.await_args.args
         self.assertEqual(method, "thread/resume")
         self.assertEqual(params["threadId"], "thread-existing")
+        self.assertNotIn("modelProvider", params)
         self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
         self.assertIn("# Vibe Remote", params["developerInstructions"])
+
+    async def test_refresh_thread_developer_instructions_preserves_resume_model_provider_override(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent.sessions = SimpleNamespace(ensure_agent_session_id=Mock(return_value="sesk8m4q2p7x"))
+        agent._resolve_resume_model_provider_override = AsyncMock(return_value="openai-managed")
+        agent._thread_developer_instructions = {}
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            session_key="slack::channel::C1::thread::171717.123",
+            base_session_id="session-1",
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={"is_dm": False},
+                user_id="U1",
+                channel_id="C1",
+                thread_id="171717.123",
+            ),
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-existing"}}))
+
+        await agent._refresh_thread_developer_instructions_if_needed(transport, request, "thread-existing")
+
+        agent._resolve_resume_model_provider_override.assert_awaited_once_with(
+            transport,
+            request,
+            "thread-existing",
+        )
+        method, params = transport.send_request.await_args.args
+        self.assertEqual(method, "thread/resume")
+        self.assertEqual(params["threadId"], "thread-existing")
+        self.assertEqual(params["modelProvider"], "openai-managed")
+        self.assertIn("Current session id: `sesk8m4q2p7x`", params["developerInstructions"])
 
     async def test_start_turn_uses_sandbox_policy_object(self):
         agent = object.__new__(CodexAgent)
