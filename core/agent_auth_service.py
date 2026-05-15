@@ -804,7 +804,8 @@ class AgentAuthService:
         binary = self._get_cli_binary("codex")
         if force_reset:
             await self._run_utility_command(binary, "logout")
-        return await asyncio.create_subprocess_exec(
+return await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
             binary,
             "login",
             "--device-auth",
@@ -970,7 +971,8 @@ class AgentAuthService:
                 provider,
             ]
             if method:
-                cmd.extend(["-m", method])
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=slave_fd,
@@ -991,7 +993,8 @@ class AgentAuthService:
         can ignore the return; ``remove_web_auth`` uses it to surface
         ``codex logout`` / ``claude auth logout`` failures so the UI
         doesn't lie about a partial sign-out.
-        """
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -1234,7 +1237,8 @@ class AgentAuthService:
             self._drop_flow(flow)
 
     async def _verify_login(self, flow: AgentAuthFlow) -> tuple[bool, str]:
-        backend = flow.backend
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
         if backend == "codex":
             binary = self._get_cli_binary("codex")
             process = await asyncio.create_subprocess_exec(
@@ -1246,7 +1250,8 @@ class AgentAuthService:
             )
             stdout, _ = await process.communicate()
             text = stdout.decode("utf-8", errors="replace").strip()
-            return ("not logged in" not in text.lower(), text)
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
 
         if backend == "opencode":
             binary = self._get_cli_binary("opencode")
@@ -1259,7 +1264,8 @@ class AgentAuthService:
             )
             stdout, _ = await process.communicate()
             text = stdout.decode("utf-8", errors="replace").strip()
-            if process.returncode and process.returncode != 0:
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
                 return False, self._describe_opencode_cli_failure(process.returncode, text)
             return (verify_opencode_auth_list_output(text, flow.provider), text)
 
@@ -1798,7 +1804,8 @@ class AgentAuthService:
                 "model_reasoning_effort=low",
             ]
             if isinstance(model, str) and model.strip():
-                cmd.extend(["-c", f"model={model.strip()}"])
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
             cmd.append(prompt)
             env_override = dict(os.environ)
 

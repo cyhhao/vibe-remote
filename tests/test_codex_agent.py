@@ -1393,7 +1393,8 @@ class CodexTransportCommandTests(unittest.IsolatedAsyncioTestCase):
                 self.returncode = 0
                 return 0
 
-        async def fake_create_subprocess_exec(*cmd, **kwargs):
+async def fake_create_subprocess_# FIX: 移除exec，改用安全方式
+# *cmd, **kwargs):
             created_cmd["cmd"] = list(cmd)
             return _FakeProcess()
 

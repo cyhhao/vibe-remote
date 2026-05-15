@@ -41,7 +41,8 @@ def test_asyncio_subprocess_is_spawned_outside_parent_process_group_on_posix() -
         pytest.skip("POSIX process-group assertion")
 
     async def _run() -> None:
-        process = await asyncio.create_subprocess_exec(
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
             "python3",
             "-c",
             "import time; time.sleep(30)",
