@@ -525,6 +525,12 @@ class SessionHandler(BaseHandler):
         from core.system_prompt_injection import build_system_prompt_injection
 
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
+        self.attach_agent_session_id(
+            context,
+            session_key=session_key,
+            agent_name="claude",
+            session_anchor=base_session_id,
+        )
 
         system_prompt_injection = build_system_prompt_injection(
             include_quick_replies=quick_replies_on and platform != "wechat",
