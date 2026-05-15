@@ -471,7 +471,8 @@ class ManagedWatchService:
                 **isolated_subprocess_kwargs(),
             )
         else:
-            process = await asyncio.create_subprocess_exec(
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
                 *watch.command,
                 cwd=watch.cwd or None,
                 stdout=asyncio.subprocess.PIPE,
