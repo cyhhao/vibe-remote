@@ -186,6 +186,69 @@ def test_cmd_vibe_uses_restart_compatibility_default(monkeypatch):
     assert calls == [("restart", 0.0)]
 
 
+def test_runtime_architecture_items_warn_for_x86_uv_on_apple_silicon(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(cli, "_is_apple_silicon_host", lambda: True)
+    monkeypatch.setattr(cli.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(cli.shutil, "which", lambda binary: "/usr/local/bin/uv" if binary == "uv" else None)
+    monkeypatch.setattr(
+        cli,
+        "_binary_architecture",
+        lambda path: calls.append(path) or "/usr/local/bin/uv: Mach-O 64-bit executable x86_64",
+    )
+
+    items = cli._runtime_architecture_items()
+
+    assert calls == ["/usr/local/bin/uv"]
+    assert any(item["status"] == "warn" and "uv architecture: x86_64" in item["message"] for item in items)
+    assert any(item["status"] == "pass" and "Python runtime architecture: arm64" in item["message"] for item in items)
+
+
+def test_runtime_architecture_items_warn_for_x86_python_on_apple_silicon(monkeypatch):
+    monkeypatch.setattr(cli, "_is_apple_silicon_host", lambda: True)
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(cli.shutil, "which", lambda binary: None)
+
+    items = cli._runtime_architecture_items()
+
+    assert any(
+        item["status"] == "warn" and item.get("action") == "Reinstall Vibe Remote with native arm64 uv/Python"
+        for item in items
+    )
+
+
+def test_runtime_architecture_items_warn_for_unknown_uv_on_apple_silicon(monkeypatch):
+    monkeypatch.setattr(cli, "_is_apple_silicon_host", lambda: True)
+    monkeypatch.setattr(cli.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(cli.shutil, "which", lambda binary: "/usr/local/bin/uv" if binary == "uv" else None)
+    monkeypatch.setattr(cli, "_binary_architecture", lambda path: "/usr/local/bin/uv: POSIX shell script")
+
+    items = cli._runtime_architecture_items()
+
+    assert any(
+        item["status"] == "warn"
+        and "uv architecture: unknown" in item["message"]
+        and item.get("action") == "Check whether this uv wrapper launches native arm64 uv"
+        for item in items
+    )
+
+
+def test_runtime_architecture_items_pass_for_arm64e_universal_uv_on_apple_silicon(monkeypatch):
+    monkeypatch.setattr(cli, "_is_apple_silicon_host", lambda: True)
+    monkeypatch.setattr(cli.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(cli.shutil, "which", lambda binary: "/usr/local/bin/uv" if binary == "uv" else None)
+    monkeypatch.setattr(
+        cli,
+        "_binary_architecture",
+        lambda path: "Mach-O universal binary with 2 architectures: [x86_64] [arm64e]",
+    )
+
+    items = cli._runtime_architecture_items()
+
+    assert any(item["status"] == "pass" and "uv architecture: arm64" in item["message"] for item in items)
+
+
 def test_cmd_start_ensures_services_without_stopping(monkeypatch):
     calls = []
     config = SimpleNamespace(
