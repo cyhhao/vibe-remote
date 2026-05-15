@@ -102,20 +102,40 @@ def _is_executable_file(path: Path) -> bool:
     return path.exists() and path.is_file() and os.access(path, os.X_OK)
 
 
+_NVM_VERSION_RE = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)$")
+
+
+def _nvm_version_sort_key(entry: Path) -> tuple[int, int, int, str]:
+    m = _NVM_VERSION_RE.match(entry.name)
+    if not m:
+        return (-1, -1, -1, entry.name)
+    major = int(m.group(1))
+    minor = int(m.group(2)) if m.group(2) else 0
+    patch = int(m.group(3)) if m.group(3) else 0
+    # Released versions ("") must outrank pre-release tags like "-rc.1".
+    # "~" is high-ASCII, so empty suffix maps to it and sorts last lexically,
+    # which after reverse=True puts released versions ahead of pre-releases.
+    suffix = m.group(4) or "~"
+    return (major, minor, patch, suffix)
+
+
 def _nvm_binary_candidates(binary: str) -> list[Path]:
     versions_dir = Path.home() / ".nvm" / "versions" / "node"
     if not versions_dir.exists():
         return []
 
-    def _version_sort_key(path: Path) -> tuple:
-        parts = str(path.name).lstrip("v").split(".")
-        key: list[int | str] = []
-        for part in parts:
-            key.append(int(part) if part.isdigit() else part)
-        return tuple(key)
+    valid: list[Path] = []
+    for entry in versions_dir.iterdir():
+        # Skip non-directory entries (e.g. macOS .DS_Store) and non-version
+        # dirs (e.g. nvm's "system" alias) before sorting.
+        if not entry.is_dir():
+            continue
+        if not _NVM_VERSION_RE.match(entry.name):
+            continue
+        valid.append(entry)
 
     candidates: list[Path] = []
-    for version_dir in sorted(versions_dir.glob("*"), key=_version_sort_key, reverse=True):
+    for version_dir in sorted(valid, key=_nvm_version_sort_key, reverse=True):
         candidate = version_dir / "bin" / binary
         if candidate not in candidates:
             candidates.append(candidate)

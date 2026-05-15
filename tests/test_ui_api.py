@@ -135,6 +135,58 @@ def test_detect_cli_finds_npm_in_nvm(monkeypatch, tmp_path):
     assert result["path"] == str(npm_path)
 
 
+def test_detect_cli_skips_non_version_entries_in_nvm(monkeypatch, tmp_path):
+    # Real-world nvm dir on macOS can contain a .DS_Store file (Finder/iCloud)
+    # and a "system" alias dir, alongside real vX.Y.Z version directories.
+    # Mixed-type sort keys used to crash with TypeError; this regression test
+    # locks in that we filter and sort robustly.
+    nvm_node = tmp_path / ".nvm" / "versions" / "node"
+    nvm_node.mkdir(parents=True, exist_ok=True)
+    (nvm_node / ".DS_Store").write_bytes(b"\x00\x01")
+    (nvm_node / "system").mkdir()
+    (nvm_node / "v18.20.0" / "bin").mkdir(parents=True)
+    older_npm = nvm_node / "v18.20.0" / "bin" / "npm"
+    older_npm.write_text("#!/bin/sh\n")
+    older_npm.chmod(0o755)
+    newer_npm = nvm_node / "v22.18.0" / "bin" / "npm"
+    newer_npm.parent.mkdir(parents=True)
+    newer_npm.write_text("#!/bin/sh\n")
+    newer_npm.chmod(0o755)
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(api.shutil, "which", lambda binary: None)
+
+    result = api.detect_cli("npm")
+
+    assert result["found"] is True
+    # Newer version must win over older one after filtering out junk entries.
+    assert result["path"] == str(newer_npm)
+
+
+def test_detect_cli_prefers_released_over_prerelease_in_nvm(monkeypatch, tmp_path):
+    # When both a released and a pre-release of the same major.minor.patch exist,
+    # the released version must win. Locks in the suffix-priority logic in
+    # _nvm_version_sort_key (empty suffix maps to "~" so released > "-rc.1").
+    nvm_node = tmp_path / ".nvm" / "versions" / "node"
+    nvm_node.mkdir(parents=True, exist_ok=True)
+    rc_npm = nvm_node / "v22.0.0-rc.1" / "bin" / "npm"
+    rc_npm.parent.mkdir(parents=True)
+    rc_npm.write_text("#!/bin/sh\n")
+    rc_npm.chmod(0o755)
+    released_npm = nvm_node / "v22.0.0" / "bin" / "npm"
+    released_npm.parent.mkdir(parents=True)
+    released_npm.write_text("#!/bin/sh\n")
+    released_npm.chmod(0o755)
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(api.shutil, "which", lambda binary: None)
+
+    result = api.detect_cli("npm")
+
+    assert result["found"] is True
+    assert result["path"] == str(released_npm)
+
+
 def test_detect_cli_finds_codex_in_npm_global_prefix(monkeypatch, tmp_path):
     npm_path = tmp_path / "tools" / "npm"
     npm_path.parent.mkdir(parents=True, exist_ok=True)
