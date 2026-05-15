@@ -14,6 +14,7 @@ from modules.agents.codex.event_handler import CodexEventHandler
 from modules.agents.codex.session import CodexSessionManager
 from modules.agents.codex.transport import CodexTransport
 from modules.agents.codex.turn_state import CodexTurnRegistry
+from vibe.codex_config import read_active_model_provider
 
 logger = logging.getLogger(__name__)
 
@@ -563,6 +564,9 @@ class CodexAgent(BaseAgent):
                     "threadId": persisted,
                     "developerInstructions": self._build_thread_developer_instructions(request),
                 }
+                model_provider = read_active_model_provider(cwd=getattr(request, "working_path", None))
+                if model_provider:
+                    resume_params["modelProvider"] = model_provider
                 resp = await transport.send_request(
                     "thread/resume",
                     resume_params,

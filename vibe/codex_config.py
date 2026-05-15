@@ -40,6 +40,7 @@ _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # ``LEGACY_MANAGED_PROVIDER_IDS`` and the migration in ``apply_codex_auth``.
 MANAGED_PROVIDER_ID = "openai-managed"
 LEGACY_MANAGED_PROVIDER_IDS = ("openai",)
+DEFAULT_PROVIDER_ID = "openai"
 
 # Codex's top-level ``cli_auth_credentials_store`` controls where the CLI
 # reads/writes cached credentials: ``file`` → ``~/.codex/auth.json``,
@@ -73,6 +74,62 @@ def get_codex_config_paths(home: Path | None = None) -> tuple[Path, Path]:
     """Return ``(config.toml, auth.json)`` paths under ``~/.codex``."""
     codex_home = get_codex_home(home)
     return codex_home / "config.toml", codex_home / "auth.json"
+
+
+def read_active_model_provider(
+    home: Path | None = None,
+    cwd: str | Path | None = None,
+) -> str:
+    """Return the provider id Codex will use for a thread in ``cwd``.
+
+    Codex persists a thread's provider in session metadata and reuses it on
+    resume unless the caller passes an explicit ``modelProvider`` override.
+    Vibe Remote uses this helper to migrate resumed threads after the user
+    switches Codex auth/provider settings, for example OAuth -> API key relay.
+    Project-scoped settings take precedence over the top-level provider, which
+    matches Codex's normal ``thread/start`` resolution for a request ``cwd``.
+    If no top-level provider is configured, Codex falls back to its built-in
+    OpenAI provider, whose id is ``openai``.
+    """
+    config_path, _ = get_codex_config_paths(home)
+    toml_data = _load_toml(config_path)
+    if cwd is not None:
+        project_provider = _project_model_provider(toml_data, Path(cwd).expanduser())
+        if project_provider:
+            return project_provider
+    model_provider = toml_data.get("model_provider")
+    if isinstance(model_provider, str) and model_provider.strip():
+        return model_provider.strip()
+    return DEFAULT_PROVIDER_ID
+
+
+def _project_model_provider(toml_data: Dict[str, Any], cwd: Path) -> str | None:
+    """Return the nearest project-scoped provider for ``cwd`` if configured."""
+    projects = toml_data.get("projects")
+    if not isinstance(projects, dict):
+        return None
+
+    try:
+        resolved_cwd = cwd.resolve(strict=False)
+    except OSError:
+        resolved_cwd = cwd.absolute()
+
+    best_match: tuple[int, str] | None = None
+    for raw_path, settings in projects.items():
+        if not isinstance(raw_path, str) or not isinstance(settings, dict):
+            continue
+        provider = settings.get("model_provider")
+        if not isinstance(provider, str) or not provider.strip():
+            continue
+        try:
+            project_path = Path(raw_path).expanduser().resolve(strict=False)
+        except OSError:
+            project_path = Path(raw_path).expanduser().absolute()
+        if resolved_cwd == project_path or project_path in resolved_cwd.parents:
+            score = len(project_path.parts)
+            if best_match is None or score > best_match[0]:
+                best_match = (score, provider.strip())
+    return best_match[1] if best_match else None
 
 
 def _load_toml(path: Path) -> Dict[str, Any]:

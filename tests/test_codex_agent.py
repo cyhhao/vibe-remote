@@ -913,6 +913,40 @@ class CodexAgentPayloadTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("Channel-level session key:", developer_instructions)
 
+    async def test_resume_thread_overrides_stale_session_model_provider(self):
+        agent = object.__new__(CodexAgent)
+        agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=True))
+        agent.codex_config = SimpleNamespace(default_model=None)
+        agent._session_mgr = SimpleNamespace(set_thread_id=Mock())
+        agent.sessions = SimpleNamespace(
+            get_agent_session_id=Mock(return_value="thread-existing"),
+        )
+        request = SimpleNamespace(
+            working_path="/tmp/work",
+            context=SimpleNamespace(
+                platform="slack",
+                platform_specific={"is_dm": False},
+                user_id="U1",
+                channel_id="C1",
+                thread_id="171717.123",
+            ),
+            base_session_id="session-1",
+            session_key="slack::channel::C1::thread::171717.123",
+            subagent_name=None,
+            subagent_model=None,
+            subagent_reasoning_effort=None,
+        )
+        transport = SimpleNamespace(send_request=AsyncMock(return_value={"thread": {"id": "thread-existing"}}))
+
+        with patch.object(_MODULE, "read_active_model_provider", return_value="openai-managed") as read_provider:
+            thread_id = await agent._start_or_resume_thread(transport, request)
+
+        self.assertEqual(thread_id, "thread-existing")
+        read_provider.assert_called_once_with(cwd="/tmp/work")
+        method, params = transport.send_request.await_args.args
+        self.assertEqual(method, "thread/resume")
+        self.assertEqual(params["modelProvider"], "openai-managed")
+
     async def test_resume_thread_keeps_system_prompt_injection_when_quick_replies_are_disabled(self):
         agent = object.__new__(CodexAgent)
         agent.controller = SimpleNamespace(config=SimpleNamespace(platform="slack", reply_enhancements=False))

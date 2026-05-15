@@ -374,6 +374,65 @@ def test_apply_oauth_mode_clears_managed_base_url(tmp_path: Path) -> None:
     assert "model_providers" not in parsed
 
 
+def test_read_active_model_provider_falls_back_to_builtin_openai_after_oauth(tmp_path: Path) -> None:
+    """OAuth mode clears Vibe Remote's managed provider pointer.
+
+    Resuming an old API-key thread must still override its persisted
+    ``openai-managed`` provider back to Codex's built-in ``openai`` provider.
+    """
+    home = tmp_path
+    codex_config.apply_codex_auth(
+        auth_mode="api_key",
+        api_key="sk-test",
+        base_url="https://relay.example/v1",
+        home=home,
+    )
+    codex_home = home / ".codex"
+    auth_path = codex_home / "auth.json"
+    auth_data = json.loads(auth_path.read_text(encoding="utf-8"))
+    auth_data["tokens"] = {"id_token": "abc"}
+    auth_path.write_text(json.dumps(auth_data), encoding="utf-8")
+
+    codex_config.apply_codex_auth(auth_mode="oauth", api_key=None, base_url=None, home=home)
+
+    parsed = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
+    assert "model_provider" not in parsed
+    assert codex_config.read_active_model_provider(home=home) == codex_config.DEFAULT_PROVIDER_ID
+
+
+def test_read_active_model_provider_prefers_nearest_project_scope(tmp_path: Path) -> None:
+    home = tmp_path
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    project_root = tmp_path / "work"
+    nested_project = project_root / "nested"
+    cwd = nested_project / "src"
+    cwd.mkdir(parents=True)
+    seed = (
+        'model_provider = "top-level"\n'
+        "\n"
+        f'[projects."{project_root}"]\n'
+        'model_provider = "project-provider"\n'
+        "\n"
+        f'[projects."{nested_project}"]\n'
+        'model_provider = "nested-provider"\n'
+    )
+    (codex_home / "config.toml").write_text(seed, encoding="utf-8")
+
+    assert (
+        codex_config.read_active_model_provider(home=home, cwd=cwd)
+        == "nested-provider"
+    )
+    assert (
+        codex_config.read_active_model_provider(home=home, cwd=project_root / "other")
+        == "project-provider"
+    )
+    assert (
+        codex_config.read_active_model_provider(home=home, cwd=tmp_path / "elsewhere")
+        == "top-level"
+    )
+
+
 def test_apply_oauth_clears_user_owned_relay_pointer_with_base_url(tmp_path: Path) -> None:
     """OAuth tokens don't validate against custom relays — clear the pointer.
 
