@@ -258,7 +258,11 @@ def test_install_agent_returns_resolved_path(monkeypatch):
     assert result["path"] == "/Users/test/.opencode/bin/opencode"
 
 
-def test_install_codex_uses_resolved_npm(monkeypatch):
+def test_install_codex_fresh_install_uses_resolved_npm(monkeypatch):
+    # Fresh-install path: codex is not yet on disk, but npm is resolvable.
+    # install_agent must shell out to `npm install -g @openai/codex` and
+    # prepend the resolved npm's directory to PATH so the post-install
+    # resolve_cli_path can locate the freshly placed binary.
     calls = []
 
     class CompletedProcess:
@@ -270,9 +274,46 @@ def test_install_codex_uses_resolved_npm(monkeypatch):
         calls.append((cmd, kwargs.get("env", {})))
         return CompletedProcess()
 
+    # Codex is missing before install, present after.
+    codex_resolve = iter([None, "/Users/test/.nvm/versions/node/v22.18.0/bin/codex"])
+
     def fake_resolve(binary):
         if binary == "npm":
             return "/Users/test/.nvm/versions/node/v22.18.0/bin/npm"
+        if binary == "codex":
+            return next(codex_resolve)
+        return None
+
+    monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setattr(api, "resolve_cli_path", fake_resolve)
+
+    result = api.install_agent("codex")
+
+    assert result["ok"] is True
+    assert len(calls) == 1
+    assert calls[0][0] == ["/Users/test/.nvm/versions/node/v22.18.0/bin/npm", "install", "-g", "@openai/codex"]
+    assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == "/Users/test/.nvm/versions/node/v22.18.0/bin"
+    assert result["path"] == "/Users/test/.nvm/versions/node/v22.18.0/bin/codex"
+
+
+def test_install_codex_when_already_installed_runs_self_update(monkeypatch):
+    # Upgrade path: when codex is already on disk, install_agent must defer
+    # to `codex update` (which internally re-runs npm install -g @openai/codex)
+    # rather than calling npm directly. Locks in the self-update branch in
+    # install_agent so we don't regress to npm-bootstrap and orphan native
+    # installs.
+    calls = []
+
+    class CompletedProcess:
+        returncode = 0
+        stdout = "updated"
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("env", {})))
+        return CompletedProcess()
+
+    def fake_resolve(binary):
         if binary == "codex":
             return "/Users/test/.nvm/versions/node/v22.18.0/bin/codex"
         return None
@@ -284,7 +325,9 @@ def test_install_codex_uses_resolved_npm(monkeypatch):
 
     assert result["ok"] is True
     assert len(calls) == 1
-    assert calls[0][0] == ["/Users/test/.nvm/versions/node/v22.18.0/bin/npm", "install", "-g", "@openai/codex"]
+    assert calls[0][0] == ["/Users/test/.nvm/versions/node/v22.18.0/bin/codex", "update"]
+    # PATH still gets the codex binary's dir prepended so any child npm it
+    # spawns picks up the same node toolchain.
     assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == "/Users/test/.nvm/versions/node/v22.18.0/bin"
     assert result["path"] == "/Users/test/.nvm/versions/node/v22.18.0/bin/codex"
 
@@ -303,7 +346,10 @@ def test_discord_list_channels_rejects_empty_guild_id(monkeypatch):
     assert result["error"] == "Discord guild_id is required"
 
 
-def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
+def test_install_codex_detects_existing_install_via_npm_prefix_and_self_updates(monkeypatch, tmp_path):
+    # Codex already installed under the npm global prefix; resolve_cli_path
+    # must discover it (via `npm config get prefix`) and install_agent must
+    # then defer to `codex update` instead of re-bootstrapping through npm.
     npm_path = tmp_path / "node" / "bin" / "npm"
     npm_path.parent.mkdir(parents=True, exist_ok=True)
     npm_path.write_text("#!/bin/sh\n")
@@ -325,10 +371,10 @@ def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
 
     def fake_run(cmd, **kwargs):
         calls.append((cmd, kwargs.get("env", {})))
-        if cmd == [str(npm_path), "install", "-g", "@openai/codex"]:
-            return CompletedProcess(stdout="installed")
         if cmd == [str(npm_path), "config", "get", "prefix"]:
             return CompletedProcess(stdout=f"{prefix_path}\n")
+        if cmd == [str(codex_path), "update"]:
+            return CompletedProcess(stdout="updated")
         raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
@@ -339,8 +385,11 @@ def test_install_codex_detects_binary_via_npm_prefix(monkeypatch, tmp_path):
 
     assert result["ok"] is True
     assert result["path"] == str(codex_path)
-    assert calls[0][0] == [str(npm_path), "install", "-g", "@openai/codex"]
-    assert calls[0][1]["PATH"].split(api.os.pathsep)[0] == str(npm_path.parent)
+    update_calls = [c for c in calls if c[0] == [str(codex_path), "update"]]
+    assert len(update_calls) == 1
+    # PATH for the update call must have codex's bin dir first so npm /
+    # node spawned by `codex update` use the same toolchain.
+    assert update_calls[0][1]["PATH"].split(api.os.pathsep)[0] == str(codex_path.parent)
 
 def test_claude_models_merge_catalog_and_settings(monkeypatch, tmp_path):
     claude_dir = tmp_path / ".claude"
