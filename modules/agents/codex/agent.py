@@ -46,6 +46,8 @@ class CodexAgent(BaseAgent):
 
         # base_session_id → asyncio.Lock (serialize turn lifecycle per session)
         self._session_locks: Dict[str, asyncio.Lock] = {}
+        # base_session_id → (thread_id, developer_instructions)
+        self._thread_developer_instructions: Dict[str, tuple[str, str]] = {}
 
     # ------------------------------------------------------------------
     # BaseAgent interface
@@ -123,6 +125,7 @@ class CodexAgent(BaseAgent):
                     if interrupted_request:
                         await self._remove_ack_reaction(interrupted_request)
 
+                await self._refresh_thread_developer_instructions_if_needed(transport, request, thread_id)
                 thread_id = await self._start_turn(transport, request, thread_id)
 
             except Exception as e:
@@ -152,6 +155,7 @@ class CodexAgent(BaseAgent):
                         e,
                     )
                     self._session_mgr.invalidate_thread(request.base_session_id)
+                    self._clear_thread_developer_instructions(request.base_session_id)
                     self._turn_registry.clear_session(request.base_session_id)
                     self.sessions.clear_agent_session_mapping(
                         request.session_key,
@@ -226,6 +230,7 @@ class CodexAgent(BaseAgent):
         for bid in to_clear:
             self._turn_registry.clear_session(bid)
             self._session_locks.pop(bid, None)
+            self._clear_thread_developer_instructions(bid)
 
         return count
 
@@ -246,6 +251,7 @@ class CodexAgent(BaseAgent):
         for base_session_id in self._session_mgr.all_base_sessions():
             self._session_mgr.invalidate_thread(base_session_id)
             self._turn_registry.clear_session(base_session_id)
+            self._clear_thread_developer_instructions(base_session_id)
 
         logger.info("Refreshed Codex auth state across %d transport(s)", len(transports))
 
@@ -282,6 +288,7 @@ class CodexAgent(BaseAgent):
         self._transport_last_activity.pop(working_path, None)
         self._session_mgr.invalidate_thread(base_session_id)
         self._turn_registry.clear_session(base_session_id)
+        self._clear_thread_developer_instructions(base_session_id)
         logger.info("Prepared Codex runtime for resumed session %s", base_session_id)
 
     async def shutdown_runtime(self) -> None:
@@ -309,6 +316,7 @@ class CodexAgent(BaseAgent):
                 self.sessions.clear_agent_session_mapping(session_key, self.name, base_session_id)
             self._session_mgr.clear(base_session_id)
             self._turn_registry.clear_session(base_session_id)
+            self._clear_thread_developer_instructions(base_session_id)
 
         self._session_locks.clear()
         logger.info("Stopped Codex runtime across %d transport(s)", len(transports))
@@ -368,6 +376,7 @@ class CodexAgent(BaseAgent):
                     self._session_mgr.invalidate_thread(base_session_id)
                     self._turn_registry.clear_session(base_session_id)
                     self._session_locks.pop(base_session_id, None)
+                    self._clear_thread_developer_instructions(base_session_id)
 
                 evicted += 1
 
@@ -415,9 +424,11 @@ class CodexAgent(BaseAgent):
                     if base_session_id == request.base_session_id:
                         continue
                     self._session_mgr.invalidate_thread(base_session_id)
+                    self._clear_thread_developer_instructions(base_session_id)
                     self._turn_registry.clear_session(base_session_id)
 
         self._session_mgr.invalidate_thread(request.base_session_id)
+        self._clear_thread_developer_instructions(request.base_session_id)
         self._turn_registry.clear_session(request.base_session_id)
 
     async def _get_or_create_transport(self, cwd: str) -> CodexTransport:
@@ -442,6 +453,7 @@ class CodexAgent(BaseAgent):
                 affected = self._session_mgr.sessions_for_cwd(cwd)
                 for bid in affected:
                     self._session_mgr.invalidate_thread(bid)
+                    self._clear_thread_developer_instructions(bid)
                     self._turn_registry.clear_session(bid)
                 if affected:
                     logger.info(
@@ -498,6 +510,7 @@ class CodexAgent(BaseAgent):
         self._session_mgr.set_thread_id(request.base_session_id, thread_id)
         # Also persist for resume support
         self.bind_agent_session_id(request, thread_id)
+        self._remember_thread_developer_instructions(request.base_session_id, thread_id, developer_instructions)
         return thread_id
 
     def _resolve_codex_agent_settings(
@@ -578,6 +591,11 @@ class CodexAgent(BaseAgent):
                         thread_id = thread_obj.get("id", "")
                 if thread_id:
                     self._session_mgr.set_thread_id(request.base_session_id, thread_id)
+                    self._remember_thread_developer_instructions(
+                        request.base_session_id,
+                        thread_id,
+                        resume_params.get("developerInstructions"),
+                    )
                     logger.info("Resumed Codex thread %s for session %s", thread_id, request.base_session_id)
                     return thread_id
             except Exception as e:
@@ -694,6 +712,54 @@ class CodexAgent(BaseAgent):
 
         return "\n\n".join(part for part in instruction_parts if part) or None
 
+    async def _refresh_thread_developer_instructions_if_needed(
+        self,
+        transport: CodexTransport,
+        request: AgentRequest,
+        thread_id: str,
+    ) -> None:
+        """Refresh thread-level instructions for already-cached Codex threads."""
+        self.ensure_agent_session_id(request)
+        developer_instructions = self._build_thread_developer_instructions(request)
+        if not developer_instructions:
+            return
+
+        if not hasattr(self, "_thread_developer_instructions"):
+            self._thread_developer_instructions = {}
+
+        cached = self._thread_developer_instructions.get(request.base_session_id)
+        if cached == (thread_id, developer_instructions):
+            return
+
+        await transport.send_request(
+            "thread/resume",
+            {
+                "threadId": thread_id,
+                "developerInstructions": developer_instructions,
+            },
+        )
+        self._remember_thread_developer_instructions(
+            request.base_session_id,
+            thread_id,
+            developer_instructions,
+        )
+
+    def _remember_thread_developer_instructions(
+        self,
+        base_session_id: str,
+        thread_id: str,
+        developer_instructions: Optional[str],
+    ) -> None:
+        if not developer_instructions:
+            return
+        if not hasattr(self, "_thread_developer_instructions"):
+            self._thread_developer_instructions = {}
+        self._thread_developer_instructions[base_session_id] = (thread_id, developer_instructions)
+
+    def _clear_thread_developer_instructions(self, base_session_id: str) -> None:
+        if hasattr(self, "_thread_developer_instructions"):
+            self._thread_developer_instructions.pop(base_session_id, None)
+
     async def _start_turn(
         self,
         transport: CodexTransport,
@@ -701,6 +767,7 @@ class CodexAgent(BaseAgent):
         thread_id: str,
     ) -> str:
         """Build input, configure overrides, and send turn/start to Codex."""
+        self.ensure_agent_session_id(request)
         input_items = self._build_input(request)
         _, effective_model, effective_effort, _ = self._resolve_codex_agent_settings(request)
 
