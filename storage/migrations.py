@@ -138,7 +138,11 @@ def _stamp_existing_initial_schema(db_path: Path, cfg: Config) -> None:
             version = conn.execute("select version_num from alembic_version").fetchone()
             if version is not None and version[0]:
                 return
-        if not (INITIAL_TABLES - {"scopes"}).issubset(tables):
+        missing_initial_tables = INITIAL_TABLES - tables
+        if missing_initial_tables and (tables & INITIAL_TABLES):
+            missing = ", ".join(sorted(missing_initial_tables))
+            raise RuntimeError(f"existing SQLite schema is incomplete; missing initial tables: {missing}")
+        if not INITIAL_TABLES.issubset(tables):
             return
         if HEAD_TABLES.issubset(tables):
             command.stamp(cfg, "head")

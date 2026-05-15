@@ -102,6 +102,83 @@ def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(
     assert version == ("20260515_0002",)
 
 
+def test_run_migrations_does_not_stamp_partial_schema_missing_scopes(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            create table state_meta (
+                key varchar primary key,
+                value_json text not null,
+                updated_at varchar not null
+            );
+            create table scope_settings (
+                scope_id varchar primary key,
+                enabled integer not null,
+                role varchar,
+                workdir text,
+                agent_backend varchar,
+                agent_variant varchar,
+                model varchar,
+                reasoning_effort varchar,
+                require_mention integer,
+                settings_version integer not null,
+                settings_json text not null,
+                created_at varchar not null,
+                updated_at varchar not null
+            );
+            create table auth_codes (
+                code varchar primary key,
+                type varchar not null,
+                is_active integer not null,
+                expires_at varchar,
+                used_by_json text not null,
+                created_at varchar not null,
+                updated_at varchar not null
+            );
+            create table agent_sessions (
+                id varchar primary key,
+                scope_id varchar,
+                agent_backend varchar not null,
+                agent_variant varchar not null,
+                model varchar,
+                reasoning_effort varchar,
+                session_anchor varchar not null,
+                workdir text,
+                native_session_id text not null,
+                title text,
+                status varchar not null,
+                metadata_json text not null,
+                created_at varchar not null,
+                updated_at varchar not null,
+                last_active_at varchar
+            );
+            create table runtime_records (
+                id varchar primary key,
+                record_type varchar not null,
+                record_key varchar not null,
+                scope_id varchar,
+                session_anchor varchar,
+                workdir text,
+                payload_json text not null,
+                expires_at varchar,
+                created_at varchar not null,
+                updated_at varchar not null
+            );
+            create table alembic_version (version_num varchar(32) not null);
+            """
+        )
+        conn.commit()
+
+    with pytest.raises(Exception, match="scopes"):
+        run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        assert version is None
+        assert conn.execute("select name from sqlite_master where name = 'scopes'").fetchone() is None
+
+
 def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()

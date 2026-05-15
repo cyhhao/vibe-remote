@@ -59,6 +59,19 @@ class OpenCodeSessionManager:
                 matches[base_id] = info
         return matches
 
+    def _attach_agent_session_id(self, request: AgentRequest, composite_session_key: str) -> Optional[str]:
+        sessions = getattr(self._settings_manager, "sessions", self._settings_manager)
+        getter = getattr(sessions, "get_agent_session_row_id", None)
+        if not callable(getter):
+            return None
+        agent_session_id = getter(request.session_key, composite_session_key, self._agent_name)
+        if not agent_session_id:
+            return None
+        payload = dict(request.context.platform_specific or {})
+        payload["agent_session_id"] = agent_session_id
+        request.context.platform_specific = payload
+        return agent_session_id
+
     def mark_initialized(self, opencode_session_id: str) -> bool:
         """Return True if this session was newly marked initialized."""
 
@@ -155,6 +168,7 @@ class OpenCodeSessionManager:
                         legacy_id,
                         request.base_session_id,
                     )
+                    self._attach_agent_session_id(request, composite_session_key)
                     return legacy_id
                 else:
                     logger.info(
@@ -176,15 +190,7 @@ class OpenCodeSessionManager:
                         composite_session_key,
                         session_id,
                     )
-                    agent_session_id = sessions.get_agent_session_row_id(
-                        request.session_key,
-                        composite_session_key,
-                        self._agent_name,
-                    )
-                    if agent_session_id:
-                        payload = dict(request.context.platform_specific or {})
-                        payload["agent_session_id"] = agent_session_id
-                        request.context.platform_specific = payload
+                    self._attach_agent_session_id(request, composite_session_key)
                     logger.info(f"Created OpenCode session {session_id} for {request.base_session_id}")
             except Exception as e:
                 logger.error(f"Failed to create OpenCode session: {e}", exc_info=True)
@@ -193,6 +199,7 @@ class OpenCodeSessionManager:
 
         existing = await server.get_session(session_id, request.working_path)
         if existing:
+            self._attach_agent_session_id(request, composite_session_key)
             return session_id
 
         try:
@@ -208,15 +215,7 @@ class OpenCodeSessionManager:
                     composite_session_key,
                     new_session_id,
                 )
-                agent_session_id = sessions.get_agent_session_row_id(
-                    request.session_key,
-                    composite_session_key,
-                    self._agent_name,
-                )
-                if agent_session_id:
-                    payload = dict(request.context.platform_specific or {})
-                    payload["agent_session_id"] = agent_session_id
-                    request.context.platform_specific = payload
+                self._attach_agent_session_id(request, composite_session_key)
                 logger.info(f"Recreated OpenCode session {new_session_id} for {request.base_session_id}")
                 return new_session_id
         except Exception as e:
