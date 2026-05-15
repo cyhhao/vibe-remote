@@ -103,20 +103,38 @@ def _is_executable_file(path: Path) -> bool:
 
 
 _NVM_VERSION_RE = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)$")
+_NVM_SUFFIX_TOKEN_RE = re.compile(r"\d+|\D+")
 
 
-def _nvm_version_sort_key(entry: Path) -> tuple[int, int, int, str]:
+def _nvm_suffix_tokens(suffix: str) -> tuple[tuple[int, int, str], ...]:
+    # Tokenize the prerelease suffix into (kind, num, text) triples so all
+    # tokens are structurally identical and comparable. kind=0 marks numeric
+    # tokens (compared by num) and kind=1 marks alphanumeric tokens (compared
+    # by text). Numeric tokens compare numerically, so "-rc.10" beats
+    # "-rc.2"; cross-kind tokens never compare int-vs-str, ruling out
+    # TypeError for arbitrary suffix shapes.
+    triples: list[tuple[int, int, str]] = []
+    for tok in _NVM_SUFFIX_TOKEN_RE.findall(suffix):
+        if tok.isdigit():
+            triples.append((0, int(tok), ""))
+        else:
+            triples.append((1, 0, tok))
+    return tuple(triples)
+
+
+def _nvm_version_sort_key(entry: Path) -> tuple:
+    # Returns (major, minor, patch, is_released, suffix_tokens). is_released
+    # is True for plain "vX.Y.Z" and False for any "-suffix"; with reverse=True
+    # released versions outrank pre-releases of the same triple. Within
+    # pre-releases, suffix_tokens compares numerically where digits appear.
     m = _NVM_VERSION_RE.match(entry.name)
     if not m:
-        return (-1, -1, -1, entry.name)
+        return (-1, -1, -1, False, ())
     major = int(m.group(1))
     minor = int(m.group(2)) if m.group(2) else 0
     patch = int(m.group(3)) if m.group(3) else 0
-    # Released versions ("") must outrank pre-release tags like "-rc.1".
-    # "~" is high-ASCII, so empty suffix maps to it and sorts last lexically,
-    # which after reverse=True puts released versions ahead of pre-releases.
-    suffix = m.group(4) or "~"
-    return (major, minor, patch, suffix)
+    suffix = m.group(4) or ""
+    return (major, minor, patch, not suffix, _nvm_suffix_tokens(suffix))
 
 
 def _nvm_binary_candidates(binary: str) -> list[Path]:

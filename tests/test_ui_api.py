@@ -165,8 +165,8 @@ def test_detect_cli_skips_non_version_entries_in_nvm(monkeypatch, tmp_path):
 
 def test_detect_cli_prefers_released_over_prerelease_in_nvm(monkeypatch, tmp_path):
     # When both a released and a pre-release of the same major.minor.patch exist,
-    # the released version must win. Locks in the suffix-priority logic in
-    # _nvm_version_sort_key (empty suffix maps to "~" so released > "-rc.1").
+    # the released version must win. Locks in the released > prerelease ranking
+    # in _nvm_version_sort_key (released maps to is_released=True).
     nvm_node = tmp_path / ".nvm" / "versions" / "node"
     nvm_node.mkdir(parents=True, exist_ok=True)
     rc_npm = nvm_node / "v22.0.0-rc.1" / "bin" / "npm"
@@ -185,6 +185,31 @@ def test_detect_cli_prefers_released_over_prerelease_in_nvm(monkeypatch, tmp_pat
 
     assert result["found"] is True
     assert result["path"] == str(released_npm)
+
+
+def test_detect_cli_sorts_prerelease_numerically_in_nvm(monkeypatch, tmp_path):
+    # "-rc.10" > "-rc.2" numerically, but lexicographic string comparison
+    # would put "-rc.10" before "-rc.2" (because "1" < "2"). Locks in that
+    # suffix tokens are split and the numeric segment compares as int.
+    nvm_node = tmp_path / ".nvm" / "versions" / "node"
+    nvm_node.mkdir(parents=True, exist_ok=True)
+    rc2 = nvm_node / "v22.0.0-rc.2" / "bin" / "npm"
+    rc2.parent.mkdir(parents=True)
+    rc2.write_text("#!/bin/sh\n")
+    rc2.chmod(0o755)
+    rc10 = nvm_node / "v22.0.0-rc.10" / "bin" / "npm"
+    rc10.parent.mkdir(parents=True)
+    rc10.write_text("#!/bin/sh\n")
+    rc10.chmod(0o755)
+
+    monkeypatch.setattr(api.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(api.shutil, "which", lambda binary: None)
+
+    result = api.detect_cli("npm")
+
+    assert result["found"] is True
+    # rc.10 must beat rc.2 even though "10" < "2" lexicographically.
+    assert result["path"] == str(rc10)
 
 
 def test_detect_cli_finds_codex_in_npm_global_prefix(monkeypatch, tmp_path):
