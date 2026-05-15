@@ -672,13 +672,13 @@ vibe upgrade
 ### `vibe task add`
 
 ```bash
-vibe task add --session-key <key> (--cron <表达式> | --at <时间戳>) (--prompt <文本> | --prompt-file <文件>) [options]
+vibe task add --session-id <session_id> (--cron <表达式> | --at <时间戳>) (--prompt <文本> | --prompt-file <文件>) [options]
 ```
 
 重要参数：
 
 - `--name`
-- `--session-key` 必填
+- `--session-id`，新任务应使用 Agent Session ID
 - `--post-to {thread,channel}`
 - `--deliver-key`
 - `--cron`
@@ -697,7 +697,7 @@ vibe task update <task_id> [options]
 
 - `--name`
 - `--clear-name`
-- `--session-key`
+- `--session-id`
 - `--post-to {thread,channel}`
 - `--deliver-key`
 - `--reset-delivery`
@@ -750,12 +750,12 @@ vibe task remove <task_id>
 ### 语法
 
 ```bash
-vibe hook send --session-key <key> (--prompt <文本> | --prompt-file <文件>) [options]
+vibe hook send --session-id <session_id> (--prompt <文本> | --prompt-file <文件>) [options]
 ```
 
 重要参数：
 
-- `--session-key` 必填
+- `--session-id`，新 hook 应使用 Agent Session ID
 - `--post-to {thread,channel}`
 - `--deliver-key`
 - `--prompt`
@@ -795,5 +795,5 @@ vibe
 vibe status
 vibe doctor
 vibe task list --brief
-vibe hook send --session-key 'slack::channel::C123' --prompt 'Share the latest build summary.'
+vibe hook send --session-id sesk8m4q2p7x --prompt 'Share the latest build summary.'
 ```

@@ -27,7 +27,7 @@ Prefer `vibe watch` when the wait should be inspectable, pausable, resumable, or
 
 - `vibe watch add`
   Main entrypoint. Starts a managed background watch and sends a follow-up hook after the waiter succeeds or reaches a terminal failure.
-- `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, `vibe watch remove`
+- `vibe watch list`, `vibe watch show`, `vibe watch update`, `vibe watch pause`, `vibe watch resume`, `vibe watch remove`
   Use these to inspect and manage the watch after creation.
 - `scripts/wait_pr.py`
   Bundled waiter example for one common case: GitHub PR review activity.
@@ -36,7 +36,7 @@ Prefer `vibe watch` when the wait should be inspectable, pausable, resumable, or
 
 Use `vibe watch add` first. Most tasks only need:
 
-1. the target `session_key`
+1. the target Agent Session ID
 2. a short action-oriented prefix
 3. a blocking waiter command
 
@@ -44,7 +44,7 @@ Generic shape:
 
 ```bash
 vibe watch add \
-  --session-key "<session-key>" \
+  --session-id "<session-id>" \
   --prefix "<what the next turn should do>" \
   --name "<optional label>" \
   -- \
@@ -62,7 +62,7 @@ Use `--forever` when the same waiter should re-arm after each detected event ins
 
 ## `vibe watch` Parameters To Remember
 
-- `--session-key`: where the follow-up should go
+- `--session-id`: which Agent Session the follow-up should continue
 - `--prefix`: the instruction text prepended before waiter stdout in the follow-up; when both exist they are joined with a blank line
 - `--name`: optional label for later management
 - `--forever`: re-arm after each detected event
@@ -73,9 +73,10 @@ Management commands:
 
 - `vibe watch list`
 - `vibe watch show <watch-id>`
+- `vibe watch update <watch-id> --name '...'`
 - `vibe watch pause <watch-id>`
 - `vibe watch resume <watch-id>`
-- `vibe watch remove <watch-id>`
+- `vibe watch remove <watch-id>` hides the watch while keeping prior run history
 
 ## Waiter Contract
 
@@ -96,7 +97,7 @@ Delay:
 
 ```bash
 vibe watch add \
-  --session-key "slack::channel::C123::thread::171717.123" \
+  --session-id "sesk8m4q2p7x" \
   --name "Delay callback" \
   --prefix "The delayed check completed. Continue from the result below." \
   -- \
@@ -107,7 +108,7 @@ File appears:
 
 ```bash
 vibe watch add \
-  --session-key "slack::channel::C123::thread::171717.123" \
+  --session-id "sesk8m4q2p7x" \
   --name "Wait for export file" \
   --prefix "The export file is ready. Inspect it and continue." \
   -- \
@@ -118,7 +119,7 @@ Log match:
 
 ```bash
 vibe watch add \
-  --session-key "slack::channel::C123::thread::171717.123" \
+  --session-id "sesk8m4q2p7x" \
   --name "Watch app log" \
   --prefix "The expected log pattern appeared. Inspect the event and continue." \
   --forever \
@@ -130,13 +131,10 @@ vibe watch add \
 
 Use the current Vibe Remote context:
 
-- `session_key` controls which session Vibe Remote will continue using
-- keep the current session key when the follow-up should continue the same session
-- when you do not want to keep the current thread session and instead want to start or reuse the higher-level session, use the higher-level key
-- example: `slack::channel::C123::thread::171717.123` keeps the current thread session, while `slack::channel::C123` creates or reuses the channel-scoped session
-- `--post-to channel` only when the follow-up should keep the session chosen by `session_key` but publish in the parent channel
-
-If the current turn does not expose a usable target, ask instead of guessing.
+- `session_id` controls which Agent Session Vibe Remote will continue using
+- use the current Agent Session ID when the follow-up should continue the same session
+- if the current turn does not expose a usable Agent Session ID, ask the user to retry from an active Vibe Remote session instead of guessing
+- `--post-to channel` only when the follow-up should keep the same Agent Session but publish in the parent channel
 
 ## Timeout And Lifecycle
 
@@ -174,7 +172,7 @@ One-shot watch:
 
 ```bash
 vibe watch add \
-  --session-key "slack::channel::C123::thread::171717.123" \
+  --session-id "sesk8m4q2p7x" \
   --name "Watch PR 151 reviews" \
   --prefix "PR #151 has new review activity. Fetch the latest review state, summarize actionable items, and continue handling them if needed." \
   -- \
@@ -188,7 +186,7 @@ Catch up on existing activity first:
 
 ```bash
 vibe watch add \
-  --session-key "slack::channel::C123::thread::171717.123" \
+  --session-id "sesk8m4q2p7x" \
   --name "Catch up PR 151 reviews" \
   --prefix "PR #151 already has review activity. Fetch the latest review state and continue handling it if needed." \
   -- \
@@ -202,7 +200,7 @@ Stay armed for future activity:
 
 ```bash
 vibe watch add \
-  --session-key "slack::channel::C123::thread::171717.123" \
+  --session-id "sesk8m4q2p7x" \
   --name "Monitor PR 151 reviews" \
   --forever \
   --timeout 21600 \
@@ -228,7 +226,7 @@ New PRs in a repository:
 
 ```bash
 vibe watch add \
-  --session-key "slack::channel::C123::thread::171717.123" \
+  --session-id "sesk8m4q2p7x" \
   --name "Watch new PRs" \
   --prefix "The repository has new pull requests. Review the new PRs and continue as needed." \
   -- \
@@ -249,7 +247,7 @@ GitHub Actions for a pushed commit:
 
 ```bash
 vibe watch add \
-  --session-key "slack::channel::C123::thread::171717.123" \
+  --session-id "sesk8m4q2p7x" \
   --name "Watch CI" \
   --prefix "GitHub Actions finished. Inspect the result below and continue with the deployment or fix failures." \
   -- \

@@ -31,7 +31,7 @@ from config.v2_config import (
     SlackConfig,
     V2Config,
 )
-from core.scheduled_tasks import ScheduledTaskStore, TaskExecutionStore, parse_session_key
+from core.scheduled_tasks import ScheduledTaskStore, TaskExecutionStore, parse_session_key, resolve_session_id_target
 from core.watches import (
     DEFAULT_RETRY_EXIT_CODE,
     WATCH_RECONCILE_INTERVAL_SECONDS,
@@ -60,6 +60,23 @@ class VibeArgumentParser(argparse.ArgumentParser):
         self.error_help_command = kwargs.pop("error_help_command", None)
         self.error_hint = kwargs.pop("error_hint", None)
         super().__init__(*args, **kwargs)
+
+    def parse_args(self, args=None, namespace=None):
+        parsed_args = list(sys.argv[1:] if args is None else args)
+        watch_update_waiter_command = None
+        if self.prog == "vibe" and len(parsed_args) >= 4 and parsed_args[:2] == ["watch", "update"]:
+            try:
+                separator_index = parsed_args.index("--", 3)
+            except ValueError:
+                separator_index = -1
+            if separator_index >= 0:
+                watch_update_waiter_command = ["--", *parsed_args[separator_index + 1 :]]
+                parsed_args = [*parsed_args[:separator_index]]
+
+        parsed = super().parse_args(parsed_args, namespace)
+        if watch_update_waiter_command is not None:
+            setattr(parsed, "waiter_command", watch_update_waiter_command)
+        return parsed
 
     def error(self, message):
         payload = {
@@ -133,12 +150,11 @@ def _task_examples_text() -> str:
     return dedent(
         """\
         Examples:
-          vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
+          vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --prompt 'Share the hourly summary.'
           vibe task update 12ab34cd56ef --cron '*/30 * * * *' --name 'Half-hour summary'
           vibe task run 12ab34cd56ef
-          vibe task add --session-key 'discord::user::123456789' --at '2026-03-31T09:00:00+08:00' --prompt-file briefing.md
-          vibe task add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --cron '*/5 * * * *' --prompt 'Tell a new joke each time.'
-          vibe task add --session-key 'lark::channel::oc_abc::thread::om_123' --cron '30 9 * * 1-5' --prompt 'Post the daily standup reminder in this thread.'
+          vibe task add --session-id sesk8m4q2p7x --post-to channel --cron '*/5 * * * *' --prompt 'Tell a new joke each time.'
+          vibe task add --session-id sesk8m4q2p7x --at '2026-03-31T09:00:00+08:00' --prompt-file briefing.md
         """
     )
 
@@ -146,19 +162,14 @@ def _task_examples_text() -> str:
 def _task_add_examples_text() -> str:
     return dedent(
         """\
-        Session key format:
-          <platform>::channel::<channel_id>
-          <platform>::user::<user_id>
-          <platform>::channel::<channel_id>::thread::<thread_id>
-          <platform>::user::<user_id>::thread::<thread_id>
+        Session target:
+          Use --session-id with the current Agent Session ID, for example sesk8m4q2p7x.
 
         Guidance:
           If this is your first time using this command, read this whole help entry before creating a task.
-          `--session-key` chooses which session Vibe Remote will continue using when the task runs.
-          Keep the current session key when future runs should stay in the same session.
-          When you want to leave the current thread session and start or reuse the higher-level session instead, use the higher-level key. Example:
-            slack::channel::C123::thread::171717.123  -> keep the current thread session
-            slack::channel::C123                      -> create or reuse the channel-scoped session
+          `--session-id` chooses which Agent Session Vibe Remote will continue using when the task runs.
+          Keep the current session id when future runs should stay in the same session.
+          If no session id is available, trigger this from an active Vibe Remote conversation instead of guessing.
           `--post-to channel` changes where the message is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
           `--prompt` and `--prompt-file` provide the stored task content that will be injected each time the task runs.
@@ -166,11 +177,9 @@ def _task_add_examples_text() -> str:
           --timezone controls how --cron and naive --at timestamps are interpreted.
 
         Examples:
-          vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *' --prompt 'Share the hourly summary.'
-          vibe task add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --cron '*/5 * * * *' --prompt 'Tell a new joke each time.'
-          vibe task add --session-key 'slack::channel::C123::thread::171717.123' --deliver-key 'slack::channel::C999' --cron '0 9 * * *' --prompt 'Post the daily summary in the announcements channel.'
-          vibe task add --session-key 'discord::user::123456789' --at '2026-03-31T09:00:00+08:00' --prompt 'Send the release reminder.'
-          vibe task add --session-key 'lark::channel::oc_abc::thread::om_123' --cron '30 9 * * 1-5' --timezone 'Asia/Shanghai' --prompt-file standup.txt
+          vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --prompt 'Share the hourly summary.'
+          vibe task add --session-id sesk8m4q2p7x --post-to channel --cron '*/5 * * * *' --prompt 'Tell a new joke each time.'
+          vibe task add --session-id sesk8m4q2p7x --deliver-key 'slack::channel::C999' --cron '0 9 * * *' --prompt 'Post the daily summary in the announcements channel.'
         """
     )
 
@@ -184,13 +193,13 @@ def _task_update_examples_text() -> str:
           vibe task update 12ab34cd56ef --name 'Morning summary'
           vibe task update 12ab34cd56ef --cron '*/30 * * * *'
           vibe task update 12ab34cd56ef --prompt 'Send a shorter summary.'
-          vibe task update 12ab34cd56ef --session-key 'slack::channel::C123::thread::171717.123' --post-to channel
+          vibe task update 12ab34cd56ef --session-id sesk8m4q2p7x --post-to channel
           vibe task update 12ab34cd56ef --deliver-key 'slack::channel::C999'
           vibe task update 12ab34cd56ef --reset-delivery
 
         Guidance:
           Unspecified fields keep their existing values.
-          Use --reset-delivery to return to following --session-key directly.
+          Use --reset-delivery to return to following the session target directly.
           When changing schedule fields, pass either --cron or --at.
           Use --clear-name if you want the task to stop storing a custom name.
         """
@@ -200,30 +209,23 @@ def _task_update_examples_text() -> str:
 def _hook_send_examples_text() -> str:
     return dedent(
         """\
-        Session key format:
-          <platform>::channel::<channel_id>
-          <platform>::user::<user_id>
-          <platform>::channel::<channel_id>::thread::<thread_id>
-          <platform>::user::<user_id>::thread::<thread_id>
+        Session target:
+          Use --session-id with the current Agent Session ID, for example sesk8m4q2p7x.
 
         Guidance:
           If this is your first time using this command, read this whole help entry before queuing a hook.
           `vibe hook send` queues one asynchronous turn without persisting a scheduled task.
-          `--session-key` chooses which session Vibe Remote will continue using for that one async turn.
-          Keep the current session key when the hook should continue in the same session.
-          When you want to leave the current thread session and start or reuse the higher-level session instead, use the higher-level key. Example:
-            slack::channel::C123::thread::171717.123  -> keep the current thread session
-            slack::channel::C123                      -> create or reuse the channel-scoped session
+          `--session-id` chooses which Agent Session Vibe Remote will continue using for that one async turn.
+          Keep the current session id when the hook should continue in the same session.
+          If no session id is available, trigger this from an active Vibe Remote conversation instead of guessing.
           `--post-to channel` changes where the message is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
           `--prompt` and `--prompt-file` provide the one-shot async content that will be queued immediately.
 
         Examples:
-          vibe hook send --session-key 'slack::channel::C123' --prompt 'The export finished. Share the summary.'
-          vibe hook send --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prompt 'Share the benchmark result in the channel.'
-          vibe hook send --session-key 'slack::channel::C123' --deliver-key 'slack::channel::C999' --prompt 'Post the deployment summary in announcements.'
-          vibe hook send --session-key 'discord::user::123456789' --prompt-file release-note.txt
-          vibe hook send --session-key 'lark::channel::oc_abc::thread::om_123' --prompt 'Post the benchmark result in this thread.'
+          vibe hook send --session-id sesk8m4q2p7x --prompt 'The export finished. Share the summary.'
+          vibe hook send --session-id sesk8m4q2p7x --post-to channel --prompt 'Share the benchmark result in the channel.'
+          vibe hook send --session-id sesk8m4q2p7x --deliver-key 'slack::channel::C999' --prompt 'Post the deployment summary in announcements.'
         """
     )
 
@@ -232,9 +234,9 @@ def _watch_examples_text() -> str:
     return dedent(
         """\
         Examples:
-          vibe watch add --session-key 'slack::channel::C123' --name 'Wait for export' --shell 'python3 scripts/wait_for_export.py'
-          vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The CI job finished.' -- python3 scripts/wait_for_ci.py --build 42
-          vibe watch add --session-key 'slack::channel::C123' --forever --retry-exit-code 75 --retry-delay 60 --shell 'bash scripts/wait_for_log_pattern.sh'
+          vibe watch add --session-id sesk8m4q2p7x --name 'Wait for export' --shell 'python3 scripts/wait_for_export.py'
+          vibe watch add --session-id sesk8m4q2p7x --post-to channel --prefix 'The CI job finished.' -- python3 scripts/wait_for_ci.py --build 42
+          vibe watch add --session-id sesk8m4q2p7x --forever --retry-exit-code 75 --retry-delay 60 --shell 'bash scripts/wait_for_log_pattern.sh'
           vibe watch list --brief
           vibe watch show 12ab34cd56ef
           vibe watch pause 12ab34cd56ef
@@ -371,20 +373,15 @@ def _print_json(payload: dict) -> None:
 def _watch_add_examples_text() -> str:
     return dedent(
         """\
-        Session key format:
-          <platform>::channel::<channel_id>
-          <platform>::user::<user_id>
-          <platform>::channel::<channel_id>::thread::<thread_id>
-          <platform>::user::<user_id>::thread::<thread_id>
+        Session target:
+          Use --session-id with the current Agent Session ID, for example sesk8m4q2p7x.
 
         Guidance:
           If this is your first time using this command, read this whole help entry before creating a watch.
           Use a watch when a script should wait in the background and send a follow-up when it detects an event or reaches a terminal failure.
-          `--session-key` chooses which session Vibe Remote will continue using for follow-up messages from the watch.
-          Keep the current session key when follow-up should continue in the same session.
-          When you want to leave the current thread session and start or reuse the higher-level session instead, use the higher-level key. Example:
-            slack::channel::C123::thread::171717.123  -> keep the current thread session
-            slack::channel::C123                      -> create or reuse the channel-scoped session
+          `--session-id` chooses which Agent Session Vibe Remote will continue using for follow-up messages from the watch.
+          Keep the current session id when follow-up should continue in the same session.
+          If no session id is available, trigger this from an active Vibe Remote conversation instead of guessing.
           `--post-to channel` changes where the follow-up is posted, not which session is continued.
           Use --deliver-key only when delivery must go to a different explicit target.
           `--prefix` becomes the instruction text of the follow-up hook. On a successful cycle, Vibe Remote prepends `--prefix` before waiter stdout and joins them with a blank line when both exist.
@@ -394,9 +391,9 @@ def _watch_add_examples_text() -> str:
           --timeout applies to each cycle. --lifetime-timeout applies only to the whole forever watch lifetime.
 
         Examples:
-          vibe watch add --session-key 'slack::channel::C123' --shell 'python3 scripts/wait_for_export.py'
-          vibe watch add --session-key 'slack::channel::C123::thread::171717.123' --post-to channel --prefix 'The export finished.' -- bash -lc 'sleep 120; echo done'
-          vibe watch add --session-key 'slack::channel::C123' --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 75 --retry-delay 30 -- uv run --no-project scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
+          vibe watch add --session-id sesk8m4q2p7x --shell 'python3 scripts/wait_for_export.py'
+          vibe watch add --session-id sesk8m4q2p7x --post-to channel --prefix 'The export finished.' -- bash -lc 'sleep 120; echo done'
+          vibe watch add --session-id sesk8m4q2p7x --forever --timeout 600 --lifetime-timeout 86400 --retry-exit-code 75 --retry-delay 30 -- uv run --no-project scripts/wait_pr.py --repo cyhhao/vibe-remote --pr 153
         """
     )
 
@@ -617,7 +614,7 @@ def _normalize_task_name(value: Optional[str], *, allow_none: bool = True) -> Op
     return normalized
 
 
-def _normalize_watch_name(value: Optional[str]) -> Optional[str]:
+def _normalize_watch_name(value: Optional[str], *, help_command: str = "vibe watch add --help") -> Optional[str]:
     if value is None:
         return None
     normalized = value.strip()
@@ -626,9 +623,65 @@ def _normalize_watch_name(value: Optional[str]) -> Optional[str]:
             "watch name cannot be empty",
             code="empty_watch_name",
             hint="Pass a short non-empty name, or omit --name.",
-            help_command="vibe watch add --help",
+            help_command=help_command,
         )
     return normalized
+
+
+def _resolve_watch_cwd(value: Optional[str], *, help_command: str) -> Optional[str]:
+    if not value:
+        return None
+    resolved = Path(value).expanduser().resolve()
+    if not resolved.exists() or not resolved.is_dir():
+        raise TaskCliError(
+            f"watch cwd does not exist: {value}",
+            code="invalid_watch_cwd",
+            hint="Point --cwd to an existing directory, or omit it to inherit the service working directory.",
+            help_command=help_command,
+            details={"cwd": value},
+        )
+    return str(resolved)
+
+
+def _validate_watch_timing(
+    *,
+    timeout_seconds: float,
+    retry_delay_seconds: float,
+    lifetime_timeout_seconds: float,
+    mode: str,
+    help_command: str,
+) -> None:
+    if timeout_seconds < 0:
+        raise TaskCliError(
+            "--timeout must be >= 0",
+            code="invalid_watch_timeout",
+            hint="Use 0 for no per-cycle timeout, or a positive number of seconds.",
+            help_command=help_command,
+            details={"timeout": timeout_seconds},
+        )
+    if retry_delay_seconds < 0:
+        raise TaskCliError(
+            "--retry-delay must be >= 0",
+            code="invalid_watch_retry_delay",
+            hint="Use 0 to retry immediately, or a positive number of seconds.",
+            help_command=help_command,
+            details={"retry_delay": retry_delay_seconds},
+        )
+    if lifetime_timeout_seconds < 0:
+        raise TaskCliError(
+            "--lifetime-timeout must be >= 0",
+            code="invalid_watch_lifetime_timeout",
+            hint="Use 0 for no overall lifetime limit, or a positive number of seconds.",
+            help_command=help_command,
+            details={"lifetime_timeout": lifetime_timeout_seconds},
+        )
+    if lifetime_timeout_seconds and mode != "forever":
+        raise TaskCliError(
+            "--lifetime-timeout requires --forever",
+            code="invalid_watch_lifetime_timeout",
+            hint="Use --lifetime-timeout only on forever watches.",
+            help_command=help_command,
+        )
 
 
 def _task_prompt_preview(prompt: str, *, max_chars: int = 72) -> str:
@@ -727,6 +780,7 @@ def _task_payload(task, *, brief: bool = False):
             "next_run_at": derived["next_run_at"],
             "schedule_type": task.schedule_type,
             "schedule_summary": derived["schedule_summary"],
+            "session_id": task.session_id,
             "session_key": task.session_key,
             "post_to": task.post_to,
             "deliver_key": task.deliver_key,
@@ -815,9 +869,71 @@ def _parse_validated_session_key(
     return parsed
 
 
+def _validate_session_id_target(
+    session_id: str,
+    *,
+    help_command: str,
+) -> object:
+    try:
+        resolved = resolve_session_id_target(session_id)
+    except ValueError as exc:
+        raise TaskCliError(
+            str(exc),
+            code="invalid_session_id",
+            hint="Use the current Agent Session ID from the prompt, such as sesk8m4q2p7x.",
+            example="sesk8m4q2p7x",
+            help_command=help_command,
+            details={"session_id": session_id},
+        ) from exc
+
+    supported_platforms = _supported_task_platforms()
+    if resolved.session_key.platform not in supported_platforms:
+        supported_text = ", ".join(sorted(supported_platforms)) or "none"
+        raise TaskCliError(
+            f"unsupported task platform: {resolved.session_key.platform}",
+            code="unsupported_platform",
+            hint="Choose a session whose platform is enabled in Vibe Remote before sending the request.",
+            example="sesk8m4q2p7x",
+            help_command=help_command,
+            details={
+                "requested_platform": resolved.session_key.platform,
+                "configured_platforms": sorted(supported_platforms),
+                "configured_platforms_text": supported_text,
+            },
+        )
+    return resolved.session_key
+
+
+def _resolve_session_target_args(
+    args,
+    *,
+    required: bool,
+    help_command: str,
+) -> tuple[Optional[str], str]:
+    session_id = (getattr(args, "session_id", None) or "").strip()
+    session_key = (getattr(args, "session_key", None) or "").strip()
+    if session_id and session_key:
+        raise TaskCliError(
+            "use either --session-id or --session-key, not both",
+            code="conflicting_session_target",
+            hint="Use --session-id for new commands.",
+            help_command=help_command,
+        )
+    if required and not session_id and not session_key:
+        raise TaskCliError(
+            "one of --session-id or --session-key is required",
+            code="missing_session_target",
+            hint="Use --session-id with the current Agent Session ID.",
+            example="vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *' --prompt 'Share the hourly summary.'",
+            help_command=help_command,
+        )
+    return session_id or None, session_key
+
+
 def _validate_delivery_args(
     *,
     session_key: str,
+    session_id: Optional[str] = None,
     post_to: Optional[str],
     deliver_key: Optional[str],
     help_command: str,
@@ -830,13 +946,16 @@ def _validate_delivery_args(
             help_command=help_command,
         )
 
-    session_target = _parse_validated_session_key(session_key, help_command=help_command)
+    if session_id:
+        session_target = _validate_session_id_target(session_id, help_command=help_command)
+    else:
+        session_target = _parse_validated_session_key(session_key, help_command=help_command)
     delivery_target = None
     if deliver_key:
         delivery_target = _parse_validated_session_key(deliver_key, help_command=help_command)
         if delivery_target.platform != session_target.platform:
             raise TaskCliError(
-                "--deliver-key must use the same platform as --session-key",
+                "--deliver-key must use the same platform as the session target",
                 code="invalid_delivery_target",
                 hint="Keep session memory and delivery on the same IM platform. Change only the channel, user, or thread target.",
                 help_command=help_command,
@@ -847,46 +966,46 @@ def _validate_delivery_args(
             )
     elif post_to == "thread" and not session_target.thread_id:
         raise TaskCliError(
-            "--post-to thread requires a thread-bound --session-key or an explicit --deliver-key",
+            "--post-to thread requires a thread-bound session target or an explicit --deliver-key",
             code="invalid_delivery_target",
-            hint="Append ::thread::<thread_id> to --session-key, or use --deliver-key with a thread target.",
+            hint="Use a thread-bound Agent Session ID or --deliver-key with a thread target.",
             help_command=help_command,
-            details={"session_key": session_key, "post_to": post_to},
+            details={"session_id": session_id, "session_key": session_key, "post_to": post_to},
         )
     return session_target, delivery_target
 
 
 def _collect_target_warnings(*targets) -> list[dict]:
+    lark_targets = [target for target in targets if target is not None and target.platform == "lark" and target.is_dm]
+    if not lark_targets:
+        return []
     store = SettingsStore.get_instance(paths.get_settings_path())
     warnings: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
 
-    for target in targets:
-        if target is None:
-            continue
+    for target in lark_targets:
         dedupe_key = (target.platform, target.scope_type, target.scope_id)
         if dedupe_key in seen:
             continue
         seen.add(dedupe_key)
 
-        if target.platform == "lark" and target.is_dm:
-            bound_user = store.get_user(target.scope_id, platform="lark")
-            if bound_user is None:
-                warnings.append(
-                    {
-                        "code": "lark_user_not_bound",
-                        "message": "The target Lark user is not bound in Vibe Remote yet; delivery may fail at runtime.",
-                        "details": {"session_key": target.to_key(include_thread=False)},
-                    }
-                )
-            elif not getattr(bound_user, "dm_chat_id", ""):
-                warnings.append(
-                    {
-                        "code": "lark_dm_chat_unbound",
-                        "message": "The target Lark user has no dm_chat_id binding yet; delivery may fail at runtime.",
-                        "details": {"session_key": target.to_key(include_thread=False)},
-                    }
-                )
+        bound_user = store.get_user(target.scope_id, platform="lark")
+        if bound_user is None:
+            warnings.append(
+                {
+                    "code": "lark_user_not_bound",
+                    "message": "The target Lark user is not bound in Vibe Remote yet; delivery may fail at runtime.",
+                    "details": {"session_key": target.to_key(include_thread=False)},
+                }
+            )
+        elif not getattr(bound_user, "dm_chat_id", ""):
+            warnings.append(
+                {
+                    "code": "lark_dm_chat_unbound",
+                    "message": "The target Lark user has no dm_chat_id binding yet; delivery may fail at runtime.",
+                    "details": {"session_key": target.to_key(include_thread=False)},
+                }
+            )
 
     return warnings
 
@@ -956,6 +1075,7 @@ def _watch_payload(watch, runtime_entry: Optional[dict[str, object]], *, brief: 
             "display_name": derived["display_name"],
             "state": derived["state"],
             "mode": watch.mode,
+            "session_id": watch.session_id,
             "session_key": watch.session_key,
             "timeout_seconds": watch.timeout_seconds,
             "lifetime_timeout_seconds": watch.lifetime_timeout_seconds,
@@ -1051,8 +1171,14 @@ def _wait_for_watch_startup(
 
 def cmd_task_add(args):
     try:
+        session_id, session_key = _resolve_session_target_args(
+            args,
+            required=True,
+            help_command="vibe task add --help",
+        )
         session_target, delivery_target = _validate_delivery_args(
-            session_key=args.session_key,
+            session_id=session_id,
+            session_key=session_key,
             post_to=getattr(args, "post_to", None),
             deliver_key=getattr(args, "deliver_key", None),
             help_command="vibe task add --help",
@@ -1060,7 +1186,7 @@ def cmd_task_add(args):
         prompt = _resolve_prompt_input(
             args,
             help_command="vibe task add --help",
-            example_command="vibe task add --session-key 'slack::channel::C123' --cron '0 * * * *'",
+            example_command="vibe task add --session-id sesk8m4q2p7x --cron '0 * * * *'",
         )
         timezone_name = args.timezone or _default_timezone_name()
         try:
@@ -1090,7 +1216,8 @@ def cmd_task_add(args):
                 ) from exc
             task = store.add_task(
                 name=_normalize_task_name(getattr(args, "name", None)),
-                session_key=args.session_key,
+                session_key=session_key,
+                session_id=session_id,
                 post_to=args.post_to,
                 deliver_key=args.deliver_key,
                 prompt=prompt,
@@ -1112,7 +1239,8 @@ def cmd_task_add(args):
                 ) from exc
             task = store.add_task(
                 name=_normalize_task_name(getattr(args, "name", None)),
-                session_key=args.session_key,
+                session_key=session_key,
+                session_id=session_id,
                 post_to=args.post_to,
                 deliver_key=args.deliver_key,
                 prompt=prompt,
@@ -1216,7 +1344,20 @@ def cmd_task_update(args):
                 hint="Pass --reset-delivery to clear delivery overrides, or pass --post-to/--deliver-key to replace them.",
                 help_command="vibe task update --help",
             )
-        session_key = args.session_key or task.session_key
+        session_id_update, session_key_update = _resolve_session_target_args(
+            args,
+            required=False,
+            help_command="vibe task update --help",
+        )
+        if session_id_update is not None:
+            session_id = session_id_update
+            session_key = ""
+        elif session_key_update:
+            session_id = None
+            session_key = session_key_update
+        else:
+            session_id = task.session_id
+            session_key = task.session_key
         if getattr(args, "reset_delivery", False):
             post_to = None
             deliver_key = None
@@ -1234,6 +1375,7 @@ def cmd_task_update(args):
                 deliver_key = task.deliver_key
 
         session_target, delivery_target = _validate_delivery_args(
+            session_id=session_id,
             session_key=session_key,
             post_to=post_to,
             deliver_key=deliver_key,
@@ -1322,6 +1464,7 @@ def cmd_task_update(args):
 
         changes = {
             "name": name,
+            "session_id": session_id,
             "session_key": session_key,
             "prompt": prompt,
             "schedule_type": schedule_type,
@@ -1333,6 +1476,7 @@ def cmd_task_update(args):
         }
         current = {
             "name": task.name,
+            "session_id": task.session_id,
             "session_key": task.session_key,
             "prompt": task.prompt,
             "schedule_type": task.schedule_type,
@@ -1346,7 +1490,7 @@ def cmd_task_update(args):
             raise TaskCliError(
                 "no task fields were changed",
                 code="no_task_changes",
-                hint="Pass at least one field to update, such as --name, --cron, --prompt, --session-key, or --deliver-key.",
+                hint="Pass at least one field to update, such as --name, --cron, --prompt, --session-id, or --deliver-key.",
                 help_command="vibe task update --help",
                 details={"task_id": args.task_id},
             )
@@ -1355,6 +1499,7 @@ def cmd_task_update(args):
             args.task_id,
             name=name,
             session_key=session_key,
+            session_id=session_id,
             prompt=prompt,
             schedule_type=schedule_type,
             post_to=post_to,
@@ -1403,8 +1548,14 @@ def cmd_task_run(task_id: str):
 
 def cmd_hook_send(args):
     try:
+        session_id, session_key = _resolve_session_target_args(
+            args,
+            required=True,
+            help_command="vibe hook send --help",
+        )
         session_target, delivery_target = _validate_delivery_args(
-            session_key=args.session_key,
+            session_id=session_id,
+            session_key=session_key,
             post_to=getattr(args, "post_to", None),
             deliver_key=getattr(args, "deliver_key", None),
             help_command="vibe hook send --help",
@@ -1412,10 +1563,11 @@ def cmd_hook_send(args):
         prompt = _resolve_prompt_input(
             args,
             help_command="vibe hook send --help",
-            example_command="vibe hook send --session-key 'slack::channel::C123'",
+            example_command="vibe hook send --session-id sesk8m4q2p7x",
         )
         request = _task_request_store().enqueue_hook_send(
-            session_key=args.session_key,
+            session_key=session_key,
+            session_id=session_id,
             post_to=args.post_to,
             deliver_key=args.deliver_key,
             prompt=prompt,
@@ -1428,7 +1580,8 @@ def cmd_hook_send(args):
                     "accepted": True,
                     "execution_id": request.id,
                     "request_type": request.request_type,
-                    "session_key": args.session_key,
+                    "session_id": session_id,
+                    "session_key": session_key,
                     "post_to": args.post_to,
                     "deliver_key": args.deliver_key,
                     "warnings": warnings,
@@ -1444,68 +1597,41 @@ def cmd_hook_send(args):
 
 def cmd_watch_add(args):
     try:
+        session_id, session_key = _resolve_session_target_args(
+            args,
+            required=True,
+            help_command="vibe watch add --help",
+        )
         session_target, delivery_target = _validate_delivery_args(
-            session_key=args.session_key,
+            session_id=session_id,
+            session_key=session_key,
             post_to=getattr(args, "post_to", None),
             deliver_key=getattr(args, "deliver_key", None),
             help_command="vibe watch add --help",
         )
         command, shell_command = _resolve_watch_command(args, help_command="vibe watch add --help")
 
-        if args.timeout < 0:
-            raise TaskCliError(
-                "--timeout must be >= 0",
-                code="invalid_watch_timeout",
-                hint="Use 0 for no per-cycle timeout, or a positive number of seconds.",
-                help_command="vibe watch add --help",
-                details={"timeout": args.timeout},
-            )
-        if args.retry_delay < 0:
-            raise TaskCliError(
-                "--retry-delay must be >= 0",
-                code="invalid_watch_retry_delay",
-                hint="Use 0 to retry immediately, or a positive number of seconds.",
-                help_command="vibe watch add --help",
-                details={"retry_delay": args.retry_delay},
-            )
-        if args.lifetime_timeout < 0:
-            raise TaskCliError(
-                "--lifetime-timeout must be >= 0",
-                code="invalid_watch_lifetime_timeout",
-                hint="Use 0 for no overall lifetime limit, or a positive number of seconds.",
-                help_command="vibe watch add --help",
-                details={"lifetime_timeout": args.lifetime_timeout},
-            )
-        if args.lifetime_timeout and not args.forever:
-            raise TaskCliError(
-                "--lifetime-timeout requires --forever",
-                code="invalid_watch_lifetime_timeout",
-                hint="Use --lifetime-timeout only on forever watches.",
-                help_command="vibe watch add --help",
-            )
-        cwd = args.cwd
-        if cwd:
-            resolved = Path(cwd).expanduser().resolve()
-            if not resolved.exists() or not resolved.is_dir():
-                raise TaskCliError(
-                    f"watch cwd does not exist: {cwd}",
-                    code="invalid_watch_cwd",
-                    hint="Point --cwd to an existing directory, or omit it to inherit the service working directory.",
-                    help_command="vibe watch add --help",
-                    details={"cwd": cwd},
-                )
-            cwd = str(resolved)
+        mode = "forever" if args.forever else "once"
+        _validate_watch_timing(
+            timeout_seconds=float(args.timeout),
+            retry_delay_seconds=float(args.retry_delay),
+            lifetime_timeout_seconds=float(args.lifetime_timeout),
+            mode=mode,
+            help_command="vibe watch add --help",
+        )
+        cwd = _resolve_watch_cwd(args.cwd, help_command="vibe watch add --help")
 
         retry_exit_codes = sorted(set(args.retry_exit_code or [DEFAULT_RETRY_EXIT_CODE]))
         store = _watch_store()
         watch = store.add_watch(
             name=_normalize_watch_name(getattr(args, "name", None)),
-            session_key=args.session_key,
+            session_key=session_key,
+            session_id=session_id,
             command=command,
             shell_command=shell_command,
             prefix=_normalize_task_name(getattr(args, "prefix", None)),
             cwd=cwd,
-            mode="forever" if args.forever else "once",
+            mode=mode,
             timeout_seconds=float(args.timeout),
             lifetime_timeout_seconds=float(args.lifetime_timeout),
             retry_exit_codes=retry_exit_codes,
@@ -1575,6 +1701,179 @@ def cmd_watch_set_enabled(watch_id: str, enabled: bool):
     runtime_entry = _watch_runtime_store().load().get("watches", {}).get(updated.id)
     print(json.dumps({"ok": True, "watch": _watch_payload(updated, runtime_entry)}, indent=2))
     return 0
+
+
+def cmd_watch_update(args):
+    try:
+        store = _watch_store()
+        watch = store.get_watch(args.watch_id)
+        if watch is None:
+            raise TaskCliError(
+                f"watch '{args.watch_id}' not found",
+                code="watch_not_found",
+                hint="Use 'vibe watch list' to find a valid watch ID before calling update.",
+                help_command="vibe watch list",
+                details={"watch_id": args.watch_id},
+            )
+
+        if getattr(args, "reset_delivery", False) and (
+            getattr(args, "post_to", None) is not None or getattr(args, "deliver_key", None) is not None
+        ):
+            raise TaskCliError(
+                "use either --reset-delivery or a new delivery flag, not both",
+                code="conflicting_delivery_target",
+                hint="Pass --reset-delivery to clear delivery overrides, or pass --post-to/--deliver-key to replace them.",
+                help_command="vibe watch update --help",
+            )
+        if getattr(args, "name", None) is not None and getattr(args, "clear_name", False):
+            raise TaskCliError(
+                "use either --name or --clear-name, not both",
+                code="conflicting_name_update",
+                hint="Pass a new name with --name, or remove the stored name with --clear-name.",
+                help_command="vibe watch update --help",
+            )
+        if getattr(args, "clear_name", False):
+            name = None
+        elif getattr(args, "name", None) is not None:
+            name = _normalize_watch_name(args.name, help_command="vibe watch update --help")
+        else:
+            name = watch.name
+
+        session_id_update, session_key_update = _resolve_session_target_args(
+            args,
+            required=False,
+            help_command="vibe watch update --help",
+        )
+        if session_id_update is not None:
+            session_id = session_id_update
+            session_key = ""
+        elif session_key_update:
+            session_id = None
+            session_key = session_key_update
+        else:
+            session_id = watch.session_id
+            session_key = watch.session_key
+        if getattr(args, "reset_delivery", False):
+            post_to = None
+            deliver_key = None
+        else:
+            requested_post_to = getattr(args, "post_to", None)
+            requested_deliver_key = getattr(args, "deliver_key", None)
+            if requested_post_to is not None:
+                post_to = requested_post_to
+                deliver_key = None
+            elif requested_deliver_key is not None:
+                post_to = None
+                deliver_key = requested_deliver_key
+            else:
+                post_to = watch.post_to
+                deliver_key = watch.deliver_key
+
+        session_target, delivery_target = _validate_delivery_args(
+            session_id=session_id,
+            session_key=session_key,
+            post_to=post_to,
+            deliver_key=deliver_key,
+            help_command="vibe watch update --help",
+        )
+
+        command = list(watch.command)
+        shell_command = watch.shell_command
+        waiter_command = getattr(args, "waiter_command", None)
+        if waiter_command == ["--"]:
+            waiter_command = []
+        if getattr(args, "shell", None) is not None or waiter_command:
+            command, shell_command = _resolve_watch_command(args, help_command="vibe watch update --help")
+        prefix = (
+            None
+            if getattr(args, "clear_prefix", False)
+            else (
+                _normalize_task_name(getattr(args, "prefix", None))
+                if getattr(args, "prefix", None) is not None
+                else watch.prefix
+            )
+        )
+        cwd = (
+            None
+            if getattr(args, "clear_cwd", False)
+            else (
+                _resolve_watch_cwd(getattr(args, "cwd", None), help_command="vibe watch update --help")
+                if getattr(args, "cwd", None) is not None
+                else watch.cwd
+            )
+        )
+        mode = "forever" if getattr(args, "forever", False) else ("once" if getattr(args, "once", False) else watch.mode)
+        timeout_seconds = float(args.timeout) if getattr(args, "timeout", None) is not None else watch.timeout_seconds
+        lifetime_timeout_seconds = (
+            float(args.lifetime_timeout)
+            if getattr(args, "lifetime_timeout", None) is not None
+            else watch.lifetime_timeout_seconds
+        )
+        retry_delay_seconds = (
+            float(args.retry_delay) if getattr(args, "retry_delay", None) is not None else watch.retry_delay_seconds
+        )
+        retry_exit_codes = (
+            sorted(set(args.retry_exit_code))
+            if getattr(args, "retry_exit_code", None) is not None
+            else list(watch.retry_exit_codes)
+        )
+        _validate_watch_timing(
+            timeout_seconds=timeout_seconds,
+            retry_delay_seconds=retry_delay_seconds,
+            lifetime_timeout_seconds=lifetime_timeout_seconds,
+            mode=mode,
+            help_command="vibe watch update --help",
+        )
+
+        changes = {
+            "name": name,
+            "session_id": session_id,
+            "session_key": session_key,
+            "command": command,
+            "shell_command": shell_command,
+            "prefix": prefix,
+            "cwd": cwd,
+            "mode": mode,
+            "timeout_seconds": timeout_seconds,
+            "lifetime_timeout_seconds": lifetime_timeout_seconds,
+            "retry_exit_codes": retry_exit_codes,
+            "retry_delay_seconds": retry_delay_seconds,
+            "post_to": post_to,
+            "deliver_key": deliver_key,
+        }
+        current = {
+            "name": watch.name,
+            "session_id": watch.session_id,
+            "session_key": watch.session_key,
+            "command": watch.command,
+            "shell_command": watch.shell_command,
+            "prefix": watch.prefix,
+            "cwd": watch.cwd,
+            "mode": watch.mode,
+            "timeout_seconds": watch.timeout_seconds,
+            "lifetime_timeout_seconds": watch.lifetime_timeout_seconds,
+            "retry_exit_codes": watch.retry_exit_codes,
+            "retry_delay_seconds": watch.retry_delay_seconds,
+            "post_to": watch.post_to,
+            "deliver_key": watch.deliver_key,
+        }
+        if changes == current:
+            raise TaskCliError(
+                "no watch fields were changed",
+                code="no_watch_changes",
+                hint="Pass at least one field to update, such as --name, --shell, --timeout, --session-id, or --deliver-key.",
+                help_command="vibe watch update --help",
+                details={"watch_id": args.watch_id},
+            )
+
+        updated = store.update_watch(args.watch_id, **changes)
+        runtime_entry = _watch_runtime_store().load().get("watches", {}).get(updated.id)
+        warnings = _collect_target_warnings(session_target, delivery_target)
+        print(json.dumps({"ok": True, "watch": _watch_payload(updated, runtime_entry), "warnings": warnings}, indent=2))
+        return 0
+    except Exception as exc:
+        _print_task_error(exc, help_command="vibe watch update --help")
+        return 1
 
 
 def cmd_watch_remove(watch_id: str):
@@ -2576,16 +2875,19 @@ def build_parser():
         epilog=_task_add_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe task add --help",
-        error_hint="Use --session-key together with exactly one schedule flag and one prompt input flag. Add --post-to or --deliver-key only when delivery must differ from the session target.",
+        error_hint="Use --session-id together with exactly one schedule flag and one prompt input flag. Add --post-to or --deliver-key only when delivery must differ from the session target.",
     )
     task_add_parser.add_argument(
         "--name",
         help="Optional human-friendly task name",
     )
     task_add_parser.add_argument(
+        "--session-id",
+        help="Agent Session ID to continue when the task runs.",
+    )
+    task_add_parser.add_argument(
         "--session-key",
-        required=True,
-        help="Conversation session key to continue when the task runs.",
+        help="Legacy compatibility target; prefer --session-id.",
     )
     delivery_group = task_add_parser.add_mutually_exclusive_group()
     delivery_group.add_argument(
@@ -2621,7 +2923,8 @@ def build_parser():
         action="store_true",
         help="Remove the stored custom task name",
     )
-    task_update_parser.add_argument("--session-key", help="Replace the stored session key")
+    task_update_parser.add_argument("--session-id", help="Replace the stored Agent Session ID")
+    task_update_parser.add_argument("--session-key", help="Legacy compatibility target; prefer --session-id")
     update_delivery_group = task_update_parser.add_mutually_exclusive_group()
     update_delivery_group.add_argument(
         "--post-to",
@@ -2635,7 +2938,7 @@ def build_parser():
     task_update_parser.add_argument(
         "--reset-delivery",
         action="store_true",
-        help="Clear any stored delivery override so delivery follows --session-key directly",
+        help="Clear any stored delivery override so delivery follows the session target directly",
     )
     task_update_parser.add_argument("--cron", help="Replace the schedule with a recurring 5-field crontab")
     task_update_parser.add_argument("--at", help="Replace the schedule with a one-shot ISO 8601 timestamp")
@@ -2707,7 +3010,7 @@ def build_parser():
     task_rm_parser = task_subparsers.add_parser(
         "remove",
         help="Remove a scheduled task",
-        description="Delete one scheduled task permanently.",
+        description="Remove one scheduled task from active management while preserving existing run history.",
         epilog="Find task IDs with: vibe task list",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe task remove --help",
@@ -2728,16 +3031,19 @@ def build_parser():
     hook_send_parser = hook_subparsers.add_parser(
         "send",
         help="Queue one async hook message",
-        description="Queue one asynchronous turn for a session key without storing a scheduled task.",
+        description="Queue one asynchronous turn for an Agent Session ID without storing a scheduled task.",
         epilog=_hook_send_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe hook send --help",
-        error_hint="Use --session-key together with exactly one prompt input flag. Add --post-to or --deliver-key only when delivery must differ from the session target.",
+        error_hint="Use --session-id together with exactly one prompt input flag. Add --post-to or --deliver-key only when delivery must differ from the session target.",
+    )
+    hook_send_parser.add_argument(
+        "--session-id",
+        help="Agent Session ID to continue for this one-shot async turn.",
     )
     hook_send_parser.add_argument(
         "--session-key",
-        required=True,
-        help="Conversation session key to continue for this one-shot async turn.",
+        help="Legacy compatibility target; prefer --session-id.",
     )
     hook_delivery_group = hook_send_parser.add_mutually_exclusive_group()
     hook_delivery_group.add_argument(
@@ -2764,7 +3070,7 @@ def build_parser():
     )
     watch_subparsers = watch_parser.add_subparsers(
         dest="watch_command",
-        metavar="{add,list,show,pause,resume,remove}",
+        metavar="{add,update,list,show,pause,resume,remove}",
     )
     watch_subparsers.required = True
 
@@ -2775,13 +3081,16 @@ def build_parser():
         epilog=_watch_add_examples_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe watch add --help",
-        error_hint="Use --session-key and either --shell or a command after '--'. Add --forever only when the waiter should re-arm after successful cycles and only retry failures for explicit retry exit codes.",
+        error_hint="Use --session-id and either --shell or a command after '--'. Add --forever only when the waiter should re-arm after successful cycles and only retry failures for explicit retry exit codes.",
     )
     watch_add_parser.add_argument("--name", help="Optional human-friendly watch name")
     watch_add_parser.add_argument(
+        "--session-id",
+        help="Agent Session ID to continue for follow-up messages from this watch.",
+    )
+    watch_add_parser.add_argument(
         "--session-key",
-        required=True,
-        help="Conversation session key to continue for follow-up messages from this watch.",
+        help="Legacy compatibility target; prefer --session-id.",
     )
     watch_delivery_group = watch_add_parser.add_mutually_exclusive_group()
     watch_delivery_group.add_argument(
@@ -2839,11 +3148,74 @@ def build_parser():
         help="Waiter command to run after '--'. Example: vibe watch add ... -- python3 script.py --flag value",
     )
 
+    watch_update_parser = watch_subparsers.add_parser(
+        "update",
+        help="Update one background watch",
+        description="Update stored watch metadata, target, delivery, command, or runtime options.",
+        epilog="Find watch IDs with: vibe watch list",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        error_help_command="vibe watch update --help",
+        error_hint="Pass at least one field to update, such as --name, --shell, --timeout, --session-id, or --deliver-key.",
+    )
+    watch_update_parser.add_argument("watch_id", help="Watch ID from 'vibe watch list'")
+    watch_update_parser.add_argument("--name", help="Set a human-friendly watch name")
+    watch_update_parser.add_argument("--clear-name", action="store_true", help="Clear the stored watch name")
+    watch_update_parser.add_argument(
+        "--session-id",
+        help="Agent Session ID to continue for follow-up messages from this watch.",
+    )
+    watch_update_parser.add_argument(
+        "--session-key",
+        help="Legacy compatibility target; prefer --session-id.",
+    )
+    watch_update_delivery_group = watch_update_parser.add_mutually_exclusive_group()
+    watch_update_delivery_group.add_argument(
+        "--post-to",
+        choices=("thread", "channel"),
+        help="Delivery location override. This changes where the follow-up is posted, not which session is continued.",
+    )
+    watch_update_delivery_group.add_argument(
+        "--deliver-key",
+        help="Explicit delivery target key. Use this only when delivery must go to a different target than the continued session.",
+    )
+    watch_update_delivery_group.add_argument(
+        "--reset-delivery",
+        action="store_true",
+        help="Clear any stored delivery override and deliver back to the continued session target.",
+    )
+    watch_update_parser.add_argument(
+        "--prefix",
+        help="Set follow-up instruction text prepended before waiter stdout.",
+    )
+    watch_update_parser.add_argument("--clear-prefix", action="store_true", help="Clear the stored follow-up prefix")
+    watch_update_parser.add_argument("--cwd", help="Set working directory for the waiter process")
+    watch_update_parser.add_argument("--clear-cwd", action="store_true", help="Clear the stored waiter working directory")
+    watch_update_parser.add_argument("--timeout", type=float, help="Set per-cycle timeout in seconds")
+    watch_update_mode_group = watch_update_parser.add_mutually_exclusive_group()
+    watch_update_mode_group.add_argument("--forever", action="store_true", help="Switch this watch to forever mode")
+    watch_update_mode_group.add_argument("--once", action="store_true", help="Switch this watch to one-shot mode")
+    watch_update_parser.add_argument(
+        "--lifetime-timeout",
+        type=float,
+        help="Set overall forever-watch lifetime timeout in seconds. Use 0 for no lifetime limit.",
+    )
+    watch_update_parser.add_argument(
+        "--retry-exit-code",
+        dest="retry_exit_code",
+        action="append",
+        type=int,
+        default=None,
+        help="Replace retryable forever-mode exit codes. Repeat to add more.",
+    )
+    watch_update_parser.add_argument("--retry-delay", type=float, help="Set retry delay in seconds")
+    watch_update_parser.add_argument("--shell", help="Replace waiter with a shell command")
+    watch_update_parser.set_defaults(waiter_command=None)
+
     watch_list_parser = watch_subparsers.add_parser(
         "list",
         help="List background watches",
         description="List stored managed background watches.",
-        epilog="Use the returned watch IDs with 'vibe watch show', 'vibe watch pause', 'vibe watch resume', or 'vibe watch remove'.",
+        epilog="Use the returned watch IDs with 'vibe watch show', 'vibe watch update', 'vibe watch pause', 'vibe watch resume', or 'vibe watch remove'.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe watch list --help",
     )
@@ -2887,7 +3259,7 @@ def build_parser():
     watch_remove_parser = watch_subparsers.add_parser(
         "remove",
         help="Remove one background watch",
-        description="Delete one managed background watch permanently.",
+        description="Remove one managed background watch from active management while preserving existing run history.",
         epilog="Find watch IDs with: vibe watch list",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         error_help_command="vibe watch remove --help",
@@ -2957,6 +3329,8 @@ def main():
     if args.command == "watch":
         if args.watch_command == "add":
             sys.exit(cmd_watch_add(args))
+        if args.watch_command == "update":
+            sys.exit(cmd_watch_update(args))
         if args.watch_command in {"list", "ls"}:
             sys.exit(cmd_watch_list(brief=getattr(args, "brief", False)))
         if args.watch_command == "show":

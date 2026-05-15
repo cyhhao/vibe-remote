@@ -188,6 +188,44 @@ def test_session_handler_disallows_remote_unsafe_claude_tools(monkeypatch, tmp_p
     assert captured["options"].disallowed_tools == ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"]
 
 
+def test_session_handler_attaches_persisted_agent_session_id_before_prompt(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _PromptSessions(_Sessions):
+        @staticmethod
+        def get_agent_session_row_id(settings_key, base_session_id, agent_name):
+            assert settings_key == "test::C123"
+            assert base_session_id == "slack_C123"
+            assert agent_name == "claude"
+            return "sesk8m4q2p7x"
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            captured["options"] = options
+
+        async def connect(self) -> None:
+            captured["connected"] = True
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    controller.settings_manager.sessions = _PromptSessions()
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+
+    _run_session(handler, context)
+
+    prompt_value = captured["options"].system_prompt
+    prompt = prompt_value["append"] if isinstance(prompt_value, dict) else prompt_value
+    assert captured["connected"] is True
+    assert "Current session id: `sesk8m4q2p7x`" in prompt
+    assert "--session-id sesk8m4q2p7x" in prompt
+    assert "--session-key" not in prompt
+
+
 def test_session_handler_forces_bypass_mode_and_auto_approves_claude_tool_permissions(
     monkeypatch, tmp_path: Path
 ) -> None:

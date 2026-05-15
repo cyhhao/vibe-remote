@@ -693,13 +693,13 @@ vibe upgrade
 ### `vibe task add`
 
 ```bash
-vibe task add --session-key <key> (--cron <expr> | --at <timestamp>) (--prompt <text> | --prompt-file <file>) [options]
+vibe task add --session-id <session_id> (--cron <expr> | --at <timestamp>) (--prompt <text> | --prompt-file <file>) [options]
 ```
 
 Important options:
 
 - `--name`
-- `--session-key` required
+- `--session-id` required for new tasks
 - `--post-to {thread,channel}`
 - `--deliver-key`
 - `--cron`
@@ -718,7 +718,7 @@ Important options:
 
 - `--name`
 - `--clear-name`
-- `--session-key`
+- `--session-id`
 - `--post-to {thread,channel}`
 - `--deliver-key`
 - `--reset-delivery`
@@ -771,12 +771,12 @@ Queue one asynchronous turn without creating a stored task definition.
 ### Syntax
 
 ```bash
-vibe hook send --session-key <key> (--prompt <text> | --prompt-file <file>) [options]
+vibe hook send --session-id <session_id> (--prompt <text> | --prompt-file <file>) [options]
 ```
 
 Important options:
 
-- `--session-key` required
+- `--session-id` required for new hooks
 - `--post-to {thread,channel}`
 - `--deliver-key`
 - `--prompt`
@@ -816,5 +816,5 @@ vibe
 vibe status
 vibe doctor
 vibe task list --brief
-vibe hook send --session-key 'slack::channel::C123' --prompt 'Share the latest build summary.'
+vibe hook send --session-id sesk8m4q2p7x --prompt 'Share the latest build summary.'
 ```

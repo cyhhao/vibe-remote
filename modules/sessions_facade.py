@@ -50,6 +50,18 @@ class SessionsFacade:
         agent_map = self.sessions_store.get_agent_map(user_key, agent_name)
         return agent_map.get(thread_id)
 
+    def get_agent_session_row_id(
+        self,
+        user_id: Union[int, str],
+        thread_id: str,
+        agent_name: str,
+    ) -> Optional[str]:
+        user_key = self._normalize_user_id(user_id)
+        getter = getattr(self.sessions_store, "get_agent_session_row_id", None)
+        if not callable(getter):
+            return None
+        return getter(user_key, agent_name, thread_id)
+
     def clear_agent_session_mapping(
         self,
         user_id: Union[int, str],

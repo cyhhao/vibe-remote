@@ -10,7 +10,7 @@ import pytest
 from config import paths
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
 from storage.importer import ensure_sqlite_state
-from storage.migrations import run_migrations
+from storage.migrations import background_tables_ready, run_migrations
 from storage.models import metadata
 
 
@@ -31,8 +31,17 @@ def test_run_migrations_creates_initial_schema(tmp_path: Path) -> None:
         assert "scope_settings" in tables
         assert "agent_sessions" in tables
         assert "runtime_records" in tables
+        assert "background_tasks" in tables
+        assert "background_runs" in tables
+        background_columns = {
+            row[1]
+            for row in conn.execute(
+                "pragma table_info(background_tasks)",
+            )
+        }
+        assert "deleted_at" in background_columns
         version = conn.execute("select version_num from alembic_version").fetchone()
-        assert version == ("20260501_0001",)
+        assert version == ("20260515_0002",)
 
 
 def test_initial_migration_is_schema_snapshot() -> None:
@@ -70,7 +79,7 @@ def test_run_migrations_stamps_existing_initial_schema(tmp_path: Path) -> None:
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260501_0001",)
+    assert version == ("20260515_0002",)
 
 
 def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(tmp_path: Path) -> None:
@@ -90,7 +99,126 @@ def test_run_migrations_stamps_existing_initial_schema_with_empty_version_table(
 
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("select version_num from alembic_version").fetchone()
-    assert version == ("20260501_0001",)
+    assert version == ("20260515_0002",)
+
+
+def test_run_migrations_repairs_head_columns_before_stamping_head(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    engine = create_sqlite_engine(db_path)
+    try:
+        metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+    with sqlite3.connect(db_path) as conn:
+        columns = [
+            row
+            for row in conn.execute("pragma table_info(background_tasks)").fetchall()
+            if row[1] != "deleted_at"
+        ]
+        column_defs = []
+        for _cid, name, column_type, not_null, default_value, primary_key in columns:
+            definition = f'"{name}" {column_type or "TEXT"}'
+            if primary_key:
+                definition += " PRIMARY KEY"
+            if not_null:
+                definition += " NOT NULL"
+            if default_value is not None:
+                definition += f" DEFAULT {default_value}"
+            column_defs.append(definition)
+        conn.execute('alter table "background_tasks" rename to "background_tasks_old"')
+        conn.execute(f'create table "background_tasks" ({", ".join(column_defs)})')
+        conn.execute('drop table "background_tasks_old"')
+        conn.execute("create table alembic_version (version_num varchar(32) not null)")
+        conn.commit()
+
+    assert background_tables_ready(db_path) is False
+
+    run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        background_columns = {row[1] for row in conn.execute("pragma table_info(background_tasks)")}
+    assert version == ("20260515_0002",)
+    assert "deleted_at" in background_columns
+    assert background_tables_ready(db_path) is True
+
+
+def test_run_migrations_does_not_stamp_partial_schema_missing_scopes(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            create table state_meta (
+                key varchar primary key,
+                value_json text not null,
+                updated_at varchar not null
+            );
+            create table scope_settings (
+                scope_id varchar primary key,
+                enabled integer not null,
+                role varchar,
+                workdir text,
+                agent_backend varchar,
+                agent_variant varchar,
+                model varchar,
+                reasoning_effort varchar,
+                require_mention integer,
+                settings_version integer not null,
+                settings_json text not null,
+                created_at varchar not null,
+                updated_at varchar not null
+            );
+            create table auth_codes (
+                code varchar primary key,
+                type varchar not null,
+                is_active integer not null,
+                expires_at varchar,
+                used_by_json text not null,
+                created_at varchar not null,
+                updated_at varchar not null
+            );
+            create table agent_sessions (
+                id varchar primary key,
+                scope_id varchar,
+                agent_backend varchar not null,
+                agent_variant varchar not null,
+                model varchar,
+                reasoning_effort varchar,
+                session_anchor varchar not null,
+                workdir text,
+                native_session_id text not null,
+                title text,
+                status varchar not null,
+                metadata_json text not null,
+                created_at varchar not null,
+                updated_at varchar not null,
+                last_active_at varchar
+            );
+            create table runtime_records (
+                id varchar primary key,
+                record_type varchar not null,
+                record_key varchar not null,
+                scope_id varchar,
+                session_anchor varchar,
+                workdir text,
+                payload_json text not null,
+                expires_at varchar,
+                created_at varchar not null,
+                updated_at varchar not null
+            );
+            create table alembic_version (version_num varchar(32) not null);
+            """
+        )
+        conn.commit()
+
+    with pytest.raises(Exception, match="scopes"):
+        run_migrations(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()
+        assert version is None
+        assert conn.execute("select name from sqlite_master where name = 'scopes'").fetchone() is None
 
 
 def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
@@ -168,7 +296,100 @@ def test_ensure_sqlite_state_imports_json_once(tmp_path: Path) -> None:
 
     assert second.imported is False
     assert second.backup_path is None
-    assert second.counts == {key: value for key, value in first.counts.items() if key != "discovered_scopes"}
+    assert second.counts == {
+        key: value
+        for key, value in first.counts.items()
+        if key
+        not in {
+            "discovered_scopes",
+            "background_scheduled_tasks",
+            "background_watches",
+            "background_runs_imported",
+        }
+    }
+
+
+def test_ensure_sqlite_state_imports_background_json(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "vibe.sqlite"
+    (state_dir / "scheduled_tasks.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "name": "Digest",
+                        "session_id": "sesk8m4q2p7x",
+                        "session_key": "slack::channel::C123",
+                        "prompt": "hello",
+                        "schedule_type": "cron",
+                        "cron": "0 * * * *",
+                        "timezone": "UTC",
+                        "enabled": True,
+                        "created_at": "2026-05-15T00:00:00+00:00",
+                        "updated_at": "2026-05-15T00:00:00+00:00",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "watches.json").write_text(
+        json.dumps(
+            {
+                "watches": [
+                    {
+                        "id": "watch-1",
+                        "name": "Watch CI",
+                        "session_id": "sesk8m4q2p7x",
+                        "session_key": "slack::channel::C123",
+                        "command": ["python3", "wait.py"],
+                        "mode": "forever",
+                        "timeout_seconds": 600,
+                        "lifetime_timeout_seconds": 3600,
+                        "retry_exit_codes": [75],
+                        "retry_delay_seconds": 30,
+                        "enabled": True,
+                        "created_at": "2026-05-15T00:00:00+00:00",
+                        "updated_at": "2026-05-15T00:00:00+00:00",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    pending = state_dir / "task_requests" / "pending"
+    pending.mkdir(parents=True)
+    (pending / "hook-1.json").write_text(
+        json.dumps(
+            {
+                "id": "hook-1",
+                "request_type": "hook_send",
+                "created_at": "2026-05-15T00:00:00+00:00",
+                "session_id": "sesk8m4q2p7x",
+                "session_key": "slack::channel::C123",
+                "prompt": "queued",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = ensure_sqlite_state(db_path=db_path, state_dir=state_dir, primary_platform="slack")
+
+    assert report.counts["background_scheduled_tasks"] == 1
+    assert report.counts["background_watches"] == 1
+    assert report.counts["background_runs_imported"] == 1
+    with sqlite3.connect(db_path) as conn:
+        tasks = conn.execute(
+            "select task_type, session_id, legacy_session_key from background_tasks order by id"
+        ).fetchall()
+        runs = conn.execute("select run_type, status, session_id from background_runs").fetchall()
+    assert tasks == [
+        ("scheduled", "sesk8m4q2p7x", "slack::channel::C123"),
+        ("watch", "sesk8m4q2p7x", "slack::channel::C123"),
+    ]
+    assert runs == [("hook_send", "pending", "sesk8m4q2p7x")]
 
 
 def test_custom_state_paths_do_not_bootstrap_default_home(tmp_path: Path, monkeypatch) -> None:

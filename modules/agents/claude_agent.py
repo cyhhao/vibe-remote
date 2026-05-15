@@ -336,7 +336,7 @@ class ClaudeAgent(BaseAgent):
                     touch_session_activity = getattr(self.session_handler, "touch_session_activity", None)
                     if callable(touch_session_activity):
                         touch_session_activity(composite_key)
-                    claude_session_id = self._maybe_capture_session_id(message, base_session_id, session_key)
+                    claude_session_id = self._maybe_capture_session_id(message, base_session_id, session_key, context)
                     if claude_session_id:
                         logger.info(f"Captured Claude session id {claude_session_id} for {base_session_id}")
 
@@ -696,6 +696,7 @@ class ClaudeAgent(BaseAgent):
         message,
         base_session_id: str,
         session_key: str,
+        context: MessageContext,
     ) -> Optional[str]:
         """Capture session id from system init messages."""
         if (
@@ -706,7 +707,11 @@ class ClaudeAgent(BaseAgent):
         ):
             session_id = message.data.get("session_id")
             if session_id:
-                self.session_handler.capture_session_id(base_session_id, session_id, session_key)
+                agent_session_id = self.session_handler.capture_session_id(base_session_id, session_id, session_key)
+                if agent_session_id:
+                    payload = dict(context.platform_specific or {})
+                    payload["agent_session_id"] = agent_session_id
+                    context.platform_specific = payload
                 return session_id
         return None
 

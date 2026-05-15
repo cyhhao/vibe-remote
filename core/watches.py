@@ -15,6 +15,7 @@ from uuid import uuid4
 from config import paths
 from core.process_isolation import isolated_subprocess_kwargs, terminate_and_communicate
 from core.scheduled_tasks import TaskExecutionStore
+from storage.background import SQLiteBackgroundTaskStore
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class ManagedWatch:
     id: str
     name: Optional[str]
     session_key: str
+    session_id: Optional[str] = None
     command: list[str] = field(default_factory=list)
     shell_command: Optional[str] = None
     prefix: Optional[str] = None
@@ -74,6 +76,7 @@ class ManagedWatch:
             id=str(payload.get("id") or uuid4().hex[:12]),
             name=(str(payload["name"]).strip() if payload.get("name") is not None else None) or None,
             session_key=str(payload.get("session_key") or ""),
+            session_id=(str(payload["session_id"]).strip() if payload.get("session_id") else None),
             command=list(payload.get("command") or []),
             shell_command=(str(payload["shell_command"]).strip() if payload.get("shell_command") else None) or None,
             prefix=(str(payload["prefix"]).strip() if payload.get("prefix") else None) or None,
@@ -99,11 +102,18 @@ class ManagedWatch:
 class ManagedWatchStore:
     def __init__(self, path: Optional[Path] = None):
         self.path = path or paths.get_watches_path()
+        self._sqlite = SQLiteBackgroundTaskStore() if path is None else None
         self._signature: Optional[tuple[int, int, int]] = None
         self._watches: dict[str, ManagedWatch] = {}
         self.load()
 
     def load(self) -> None:
+        if self._sqlite is not None:
+            self._watches = {
+                item["id"]: ManagedWatch.from_dict(item)
+                for item in self._sqlite.list_watches()
+            }
+            return
         if not self.path.exists():
             self._watches = {}
             self._signature = None
@@ -127,6 +137,11 @@ class ManagedWatchStore:
         self._signature = _path_signature(self.path)
 
     def maybe_reload(self) -> bool:
+        if self._sqlite is not None:
+            changed = self._sqlite.maybe_reload()
+            if changed:
+                self.load()
+            return changed
         signature = _path_signature(self.path)
         if signature == self._signature:
             return False
@@ -134,6 +149,8 @@ class ManagedWatchStore:
         return True
 
     def _save(self) -> None:
+        if self._sqlite is not None:
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"watches": [watch.to_dict() for watch in self.list_watches()]}
         with tempfile.NamedTemporaryFile(
@@ -157,6 +174,9 @@ class ManagedWatchStore:
     def upsert_watch(self, watch: ManagedWatch) -> ManagedWatch:
         watch.updated_at = _utc_now_iso()
         self._watches[watch.id] = watch
+        if self._sqlite is not None:
+            self._sqlite.upsert_watch(watch.to_dict())
+            return watch
         self._save()
         return watch
 
@@ -176,11 +196,13 @@ class ManagedWatchStore:
         retry_delay_seconds: float,
         post_to: Optional[str],
         deliver_key: Optional[str],
+        session_id: Optional[str] = None,
     ) -> ManagedWatch:
         watch = ManagedWatch(
             id=uuid4().hex[:12],
             name=name,
             session_key=session_key,
+            session_id=session_id,
             command=command,
             shell_command=shell_command,
             prefix=prefix,
@@ -199,6 +221,9 @@ class ManagedWatchStore:
         if watch_id not in self._watches:
             return False
         del self._watches[watch_id]
+        if self._sqlite is not None:
+            self._sqlite.remove_task(watch_id)
+            return True
         self._save()
         return True
 
@@ -206,6 +231,50 @@ class ManagedWatchStore:
         watch = self._watches[watch_id]
         watch.enabled = enabled
         watch.updated_at = _utc_now_iso()
+        if self._sqlite is not None:
+            self._sqlite.upsert_watch(watch.to_dict())
+            return watch
+        self._save()
+        return watch
+
+    def update_watch(
+        self,
+        watch_id: str,
+        *,
+        name: Optional[str],
+        session_key: str,
+        session_id: Optional[str],
+        command: list[str],
+        shell_command: Optional[str],
+        prefix: Optional[str],
+        cwd: Optional[str],
+        mode: str,
+        timeout_seconds: float,
+        lifetime_timeout_seconds: float,
+        retry_exit_codes: list[int],
+        retry_delay_seconds: float,
+        post_to: Optional[str],
+        deliver_key: Optional[str],
+    ) -> ManagedWatch:
+        watch = self._watches[watch_id]
+        watch.name = name
+        watch.session_key = session_key
+        watch.session_id = session_id
+        watch.command = command
+        watch.shell_command = shell_command
+        watch.prefix = prefix
+        watch.cwd = cwd
+        watch.mode = mode
+        watch.timeout_seconds = timeout_seconds
+        watch.lifetime_timeout_seconds = lifetime_timeout_seconds
+        watch.retry_exit_codes = retry_exit_codes
+        watch.retry_delay_seconds = retry_delay_seconds
+        watch.post_to = post_to
+        watch.deliver_key = deliver_key
+        watch.updated_at = _utc_now_iso()
+        if self._sqlite is not None:
+            self._sqlite.upsert_watch(watch.to_dict())
+            return watch
         self._save()
         return watch
 
@@ -217,6 +286,9 @@ class ManagedWatchStore:
         watch.last_started_at = _utc_now_iso()
         watch.last_error = None
         watch.updated_at = _utc_now_iso()
+        if self._sqlite is not None:
+            self._sqlite.upsert_watch(watch.to_dict())
+            return True
         self._save()
         return True
 
@@ -241,6 +313,9 @@ class ManagedWatchStore:
         if disable:
             watch.enabled = False
         watch.updated_at = _utc_now_iso()
+        if self._sqlite is not None:
+            self._sqlite.upsert_watch(watch.to_dict())
+            return True
         self._save()
         return True
 
@@ -248,8 +323,12 @@ class ManagedWatchStore:
 class WatchRuntimeStateStore:
     def __init__(self, path: Optional[Path] = None):
         self.path = path or paths.get_watch_runtime_path()
+        self._sqlite = SQLiteBackgroundTaskStore() if path is None else None
 
     def write(self, payload: dict[str, Any]) -> None:
+        if self._sqlite is not None:
+            self._sqlite.write_watch_runtime(payload, updated_at=_utc_now_iso())
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -263,6 +342,8 @@ class WatchRuntimeStateStore:
         tmp_path.replace(self.path)
 
     def load(self) -> dict[str, Any]:
+        if self._sqlite is not None:
+            return self._sqlite.load_watch_runtime()
         if not self.path.exists():
             return {"watches": {}}
         try:
@@ -516,6 +597,7 @@ class ManagedWatchService:
             return
         self.request_store.enqueue_hook_send(
             session_key=watch.session_key,
+            session_id=watch.session_id,
             post_to=watch.post_to,
             deliver_key=watch.deliver_key,
             prompt=final_prompt,

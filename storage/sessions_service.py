@@ -11,7 +11,7 @@ from sqlalchemy import Connection, select
 from config.v2_sessions import ActivePollInfo, SessionState
 from config.v2_settings import _split_scoped_key
 from storage.db import SqliteInvalidationProbe, create_sqlite_engine
-from storage.models import agent_sessions, runtime_records, scopes, state_meta
+from storage.models import agent_sessions, metadata, runtime_records, scopes, state_meta
 from storage.settings_service import make_scope_id, upsert_scope
 
 SESSIONS_LAST_ACTIVITY_KEY = "sessions_last_activity"
@@ -23,6 +23,7 @@ class SQLiteSessionsService:
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.engine = create_sqlite_engine(db_path)
+        metadata.create_all(self.engine)
         self._probe = SqliteInvalidationProbe(self.engine)
 
     def close(self) -> None:
@@ -31,6 +32,25 @@ class SQLiteSessionsService:
 
     def has_external_write(self) -> bool:
         return self._probe.has_external_write()
+
+    def get_agent_session_row_id(
+        self,
+        *,
+        scope_key: str,
+        agent_name: str,
+        session_anchor: str,
+    ) -> str | None:
+        with self.engine.begin() as conn:
+            scope_id = resolve_scope_from_legacy_key(conn, str(scope_key), now=_utc_now_iso())
+            if scope_id is None:
+                return None
+            return conn.execute(
+                select(agent_sessions.c.id)
+                .where(agent_sessions.c.scope_id == scope_id)
+                .where(agent_sessions.c.agent_variant == (str(agent_name) or "default"))
+                .where(agent_sessions.c.session_anchor == str(session_anchor))
+                .limit(1)
+            ).scalar_one_or_none()
 
     def load_state(self) -> SessionState:
         with self.engine.connect() as conn:
@@ -44,9 +64,10 @@ class SQLiteSessionsService:
 
     def save_state(self, state: SessionState) -> None:
         with self.engine.begin() as conn:
+            existing_session_ids = self._load_existing_session_ids(conn)
             self._clear(conn)
             now = _utc_now_iso()
-            used_session_ids: set[str] = set()
+            used_session_ids: set[str] = set(existing_session_ids.values())
 
             for scope_key, agent_maps in state.session_mappings.items():
                 if not isinstance(agent_maps, dict):
@@ -57,9 +78,16 @@ class SQLiteSessionsService:
                         continue
                     for thread_id, native_session_id in thread_map.items():
                         thread_key = str(thread_id)
+                        encoded_session_id = encode_session_value(native_session_id)
+                        row_key = _session_row_key(
+                            scope_id=scope_id,
+                            agent_variant=str(agent_name) or "default",
+                            session_anchor=thread_key,
+                            native_session_id=encoded_session_id,
+                        )
                         conn.execute(
                             agent_sessions.insert().values(
-                                id=_new_session_id(used_session_ids),
+                                id=existing_session_ids.get(row_key) or _new_session_id(used_session_ids),
                                 scope_id=scope_id,
                                 agent_backend=_agent_backend(str(agent_name)),
                                 agent_variant=str(agent_name) or "default",
@@ -67,7 +95,7 @@ class SQLiteSessionsService:
                                 reasoning_effort=None,
                                 session_anchor=thread_key,
                                 workdir=_workdir_from_anchor(thread_key),
-                                native_session_id=encode_session_value(native_session_id),
+                                native_session_id=encoded_session_id,
                                 title=None,
                                 status="active",
                                 metadata_json=_json_dumps({"legacy_scope_key": str(scope_key)}),
@@ -182,6 +210,28 @@ class SQLiteSessionsService:
         conn.execute(agent_sessions.delete())
         conn.execute(runtime_records.delete())
         conn.execute(state_meta.delete().where(state_meta.c.key == SESSIONS_LAST_ACTIVITY_KEY))
+
+    def _load_existing_session_ids(self, conn: Connection) -> dict[tuple[str | None, str, str, str], str]:
+        rows = conn.execute(
+            select(
+                agent_sessions.c.id,
+                agent_sessions.c.scope_id,
+                agent_sessions.c.agent_variant,
+                agent_sessions.c.session_anchor,
+                agent_sessions.c.native_session_id,
+            )
+        ).mappings()
+        result: dict[tuple[str | None, str, str, str], str] = {}
+        for row in rows:
+            result[
+                _session_row_key(
+                    scope_id=row["scope_id"],
+                    agent_variant=str(row["agent_variant"] or "default"),
+                    session_anchor=str(row["session_anchor"] or ""),
+                    native_session_id=str(row["native_session_id"] or ""),
+                )
+            ] = str(row["id"])
+        return result
 
     def _load_session_mappings(self, conn: Connection) -> dict[str, dict[str, dict[str, Any]]]:
         rows = conn.execute(
@@ -326,6 +376,16 @@ def _new_session_id(used: set[str]) -> str:
         if value not in used:
             used.add(value)
             return value
+
+
+def _session_row_key(
+    *,
+    scope_id: str | None,
+    agent_variant: str,
+    session_anchor: str,
+    native_session_id: str,
+) -> tuple[str | None, str, str, str]:
+    return (scope_id, agent_variant, session_anchor, native_session_id)
 
 
 def _workdir_from_anchor(anchor: str) -> str | None:

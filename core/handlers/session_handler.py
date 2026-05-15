@@ -525,6 +525,12 @@ class SessionHandler(BaseHandler):
         from core.system_prompt_injection import build_system_prompt_injection
 
         platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
+        self.attach_agent_session_id(
+            context,
+            session_key=session_key,
+            agent_name="claude",
+            session_anchor=base_session_id,
+        )
 
         system_prompt_injection = build_system_prompt_injection(
             include_quick_replies=quick_replies_on and platform != "wechat",
@@ -989,6 +995,26 @@ class SessionHandler(BaseHandler):
         self.sessions.set_session_mapping(session_key, base_session_id, claude_session_id)
 
         logger.info(f"Captured Claude session_id: {claude_session_id} for {base_session_id}")
+        return self.sessions.get_agent_session_row_id(session_key, base_session_id, "claude")
+
+    def attach_agent_session_id(
+        self,
+        context: MessageContext,
+        *,
+        session_key: str,
+        agent_name: str,
+        session_anchor: str,
+    ) -> Optional[str]:
+        getter = getattr(self.sessions, "get_agent_session_row_id", None)
+        if not callable(getter):
+            return None
+        agent_session_id = getter(session_key, session_anchor, agent_name)
+        if not agent_session_id:
+            return None
+        payload = dict(context.platform_specific or {})
+        payload["agent_session_id"] = agent_session_id
+        context.platform_specific = payload
+        return agent_session_id
 
     def restore_session_mappings(self):
         """Restore session mappings from settings on startup"""

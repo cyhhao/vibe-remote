@@ -17,6 +17,7 @@ from core.scheduled_tasks import (
     parse_session_key,
 )
 from modules.im import MessageContext
+from storage.background import SQLiteBackgroundTaskStore
 
 
 class _StubScheduler:
@@ -88,6 +89,135 @@ def test_build_session_key_for_context_uses_fallback_platform() -> None:
     parsed = build_session_key_for_context(context, fallback_platform="slack")
 
     assert parsed.to_key(include_thread=False) == "slack::channel::C123"
+
+
+def test_scheduled_task_store_uses_sqlite_when_path_is_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    store = ScheduledTaskStore()
+    task = store.add_task(
+        name="Hourly summary",
+        session_key="slack::channel::C123",
+        session_id="sesk8m4q2p7x",
+        prompt="hello",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="UTC",
+    )
+
+    reloaded = ScheduledTaskStore()
+    saved = reloaded.get_task(task.id)
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+
+    assert not (tmp_path / "state" / "scheduled_tasks.json").exists()
+    assert saved is not None
+    assert saved.session_id == "sesk8m4q2p7x"
+    assert sqlite.get_scheduled_task(task.id)["prompt"] == "hello"
+
+
+def test_sqlite_update_task_persists_changes(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    store = ScheduledTaskStore()
+    task = store.add_task(
+        name="Hourly summary",
+        session_key="slack::channel::C123",
+        session_id="sesk8m4q2p7x",
+        prompt="hello",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="UTC",
+    )
+
+    store.update_task(
+        task.id,
+        name="Morning summary",
+        session_key="slack::channel::C456",
+        session_id=None,
+        prompt="updated",
+        schedule_type="cron",
+        post_to=None,
+        deliver_key=None,
+        cron="*/30 * * * *",
+        run_at=None,
+        timezone_name="Asia/Shanghai",
+    )
+    reloaded = ScheduledTaskStore()
+    saved = reloaded.get_task(task.id)
+
+    assert saved is not None
+    assert saved.name == "Morning summary"
+    assert saved.session_id is None
+    assert saved.session_key == "slack::channel::C456"
+    assert saved.prompt == "updated"
+    assert saved.cron == "*/30 * * * *"
+
+
+def test_task_execution_store_uses_sqlite_runs_when_root_is_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    store = TaskExecutionStore()
+    request = store.enqueue_hook_send(
+        session_key="slack::channel::C123",
+        session_id="sesk8m4q2p7x",
+        prompt="hello",
+    )
+
+    claimed = store.claim(request.id)
+    assert claimed is not None
+    store.complete(claimed, ok=True, session_key="slack::channel::C123", session_id="sesk8m4q2p7x")
+
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    saved = sqlite.get_run(request.id)
+    assert not (tmp_path / "state" / "task_requests").exists()
+    assert saved["status"] == "completed"
+    assert saved["session_id"] == "sesk8m4q2p7x"
+    assert saved["session_key"] == "slack::channel::C123"
+
+
+def test_sqlite_complete_persists_resolved_run_target(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    store = TaskExecutionStore(tmp_path / "task_requests")
+    store._sqlite = sqlite
+    request = store.enqueue_hook_send(
+        session_key="slack::channel::C123",
+        session_id=None,
+        prompt="hello",
+    )
+
+    claimed = store.claim(request.id)
+    assert claimed is not None
+    store.complete(
+        claimed,
+        ok=True,
+        task_id="task-1",
+        session_key="slack::channel::C456",
+        session_id="sesk8m4q2p7x",
+    )
+
+    saved = sqlite.get_run(request.id)
+    assert saved is not None
+    assert saved["status"] == "completed"
+    assert saved["task_id"] == "task-1"
+    assert saved["session_key"] == "slack::channel::C456"
+    assert saved["session_id"] == "sesk8m4q2p7x"
+
+
+def test_sqlite_claim_only_claims_pending_runs_once(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    first_store = TaskExecutionStore(tmp_path / "task_requests")
+    second_store = TaskExecutionStore(tmp_path / "task_requests-other")
+    first_store._sqlite = sqlite
+    second_store._sqlite = sqlite
+    request = first_store.enqueue_hook_send(
+        session_key="slack::channel::C123",
+        prompt="hello",
+    )
+
+    first_claim = first_store.claim(request.id)
+    second_claim = second_store.claim(request.id)
+
+    assert first_claim is not None
+    assert first_claim.request_type == "hook_send"
+    assert second_claim is None
+    assert sqlite.get_run(request.id)["status"] == "processing"
 
 
 def test_store_round_trip_persists_task(tmp_path: Path) -> None:
@@ -183,6 +313,42 @@ def test_mark_task_result_skips_deleted_task_after_reload(tmp_path: Path) -> Non
 
     assert updated is False
     assert reloaded.get_task(task.id) is None
+
+
+def test_sqlite_remove_task_soft_deletes_task_but_keeps_runs(tmp_path: Path) -> None:
+    sqlite = SQLiteBackgroundTaskStore(tmp_path / "state" / "vibe.sqlite")
+    store = ScheduledTaskStore(tmp_path / "scheduled_tasks.json")
+    store._sqlite = sqlite
+    task = store.add_task(
+        session_key="slack::channel::C123",
+        session_id="sesk8m4q2p7x",
+        prompt="send digest",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+    sqlite.enqueue_run(
+        {
+            "id": "run-1",
+            "request_type": "task_run",
+            "status": "completed",
+            "task_id": task.id,
+            "session_id": "sesk8m4q2p7x",
+            "created_at": "2026-05-15T00:00:00+00:00",
+            "updated_at": "2026-05-15T00:00:00+00:00",
+            "completed_at": "2026-05-15T00:01:00+00:00",
+        }
+    )
+
+    assert store.remove_task(task.id) is True
+
+    reloaded = ScheduledTaskStore(tmp_path / "scheduled_tasks-reloaded.json")
+    reloaded._sqlite = sqlite
+    reloaded.load()
+
+    assert reloaded.get_task(task.id) is None
+    assert sqlite.get_scheduled_task(task.id) is None
+    assert sqlite.get_run("run-1")["task_id"] == task.id
 
 
 def test_store_reload_uses_size_when_mtime_does_not_change(tmp_path: Path) -> None:

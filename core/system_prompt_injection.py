@@ -73,13 +73,14 @@ _SCHEDULED_TASKS_PROMPT = """\
 ## 3. Scheduled tasks, watches, and hooks
 Use `vibe task add` for saved work that should run later on a schedule or at one exact time.
 Use `vibe watch add` for managed background waiters that should keep running until a condition is met and then send a follow-up.
-Use `vibe hook send --session-key ... --prompt ...` for one-shot asynchronous sends without saving a task or watch.
+Use `vibe hook send --session-id ... --prompt ...` for one-shot asynchronous sends without saving a task or watch.
 
 Current conversation targeting:
-- Current session key: `{default_session_key}`
+- Current session id: `{default_session_id}`
 
 Rules:
-- `session_key` controls the conversation scope that Vibe Remote will continue using.
+- Use `--session-id {default_session_id}` when scheduling work; it targets the exact Vibe Remote agent session to continue.
+- If the current session id is not available yet, do not guess a target; ask the user to retry from an active Vibe Remote session.
 - `--post-to` changes the delivery target, not the session scope. Use `--post-to channel` when the session should stay thread-scoped but the follow-up message should be posted to the parent channel.
 - Use `--cron "<expr>"` for recurring tasks or `--at "<ISO-8601>"` for one-off stored tasks.
 - Use `vibe watch list`, `vibe watch show`, `vibe watch pause`, `vibe watch resume`, and `vibe watch remove` to manage background work after creation.
@@ -107,31 +108,11 @@ Keep entries short, deduplicated, and free of secrets unless the user explicitly
 """
 
 
-def _build_prompt_session_key(
-    context: MessageContext,
-    *,
-    include_thread: bool,
-    fallback_platform: Optional[str] = None,
-) -> str:
-    platform_specific = context.platform_specific or {}
-    platform = context.platform or platform_specific.get("platform") or fallback_platform or "<platform>"
-    is_dm = bool(platform_specific.get("is_dm", False))
-    scope_type = "user" if is_dm else "channel"
-    scope_id = context.user_id if is_dm else context.channel_id
-    base = f"{platform}::{scope_type}::{scope_id}"
-    if include_thread and context.thread_id:
-        return f"{base}::thread::{context.thread_id}"
-    return base
-
-
 def _build_scheduled_tasks_prompt(context: MessageContext, *, fallback_platform: Optional[str] = None) -> str:
-    default_key = _build_prompt_session_key(
-        context,
-        include_thread=True,
-        fallback_platform=fallback_platform,
-    )
+    platform_specific = context.platform_specific or {}
+    default_session_id = str(platform_specific.get("agent_session_id") or "<not available yet>")
     return _SCHEDULED_TASKS_PROMPT.format(
-        default_session_key=default_key,
+        default_session_id=default_session_id,
     )
 
 

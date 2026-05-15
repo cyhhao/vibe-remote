@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from sqlalchemy import select
+
 from config import paths
 from config.v2_sessions import ActivePollInfo, SessionState, SessionsStore
+from storage.db import create_sqlite_engine
+from storage.models import agent_sessions
 from storage.sessions_service import SQLiteSessionsService
 
 
@@ -95,6 +99,63 @@ def test_sessions_store_reloads_external_sqlite_writes(tmp_path: Path) -> None:
     finally:
         external.close()
         store.close()
+
+
+def test_sqlite_sessions_service_preserves_agent_session_ids_on_save(tmp_path: Path) -> None:
+    db_path = tmp_path / "vibe.sqlite"
+    service = SQLiteSessionsService(db_path)
+    try:
+        state = SessionState(
+            session_mappings={
+                "slack::C123": {
+                    "codex": {
+                        "slack_171717.123": "thread-native-1",
+                    }
+                }
+            }
+        )
+        service.save_state(state)
+
+        engine = create_sqlite_engine(db_path)
+        try:
+            with engine.connect() as conn:
+                original_id = conn.execute(select(agent_sessions.c.id)).scalar_one()
+        finally:
+            engine.dispose()
+
+        service.save_state(
+            SessionState(
+                session_mappings={
+                    "slack::C123": {
+                        "codex": {
+                            "slack_171717.123": "thread-native-1",
+                        }
+                    }
+                },
+                active_polls={
+                    "oc-1": ActivePollInfo(
+                        opencode_session_id="oc-1",
+                        base_session_id="base",
+                        channel_id="C123",
+                        thread_id="171717.123",
+                        settings_key="C123",
+                        working_path="/repo",
+                        platform="slack",
+                    ).to_dict()
+                },
+            )
+        )
+
+        engine = create_sqlite_engine(db_path)
+        try:
+            with engine.connect() as conn:
+                saved_id = conn.execute(select(agent_sessions.c.id)).scalar_one()
+        finally:
+            engine.dispose()
+
+        assert saved_id == original_id
+    finally:
+        service.close()
 
 
 def test_sessions_store_bootstrap_uses_config_primary_platform(tmp_path: Path, monkeypatch) -> None:
