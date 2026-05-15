@@ -230,6 +230,54 @@ def test_session_handler_ensures_agent_session_id_before_prompt(
     assert "--session-key" not in prompt
 
 
+def test_session_handler_recreates_cached_claude_client_when_prompt_changes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, Any] = {"clients": []}
+
+    class _PromptSessions(_Sessions):
+        current_id = "sesold"
+
+        @classmethod
+        def ensure_agent_session_id(cls, settings_key, agent_name, base_session_id):
+            assert settings_key == "test::C123"
+            assert agent_name == "claude"
+            assert base_session_id == "slack_C123"
+            return cls.current_id
+
+    class _StubClaudeSDKClient:
+        def __init__(self, options):
+            self.options = options
+            self.disconnects = 0
+            captured["clients"].append(self)
+
+        async def connect(self) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            self.disconnects += 1
+
+    monkeypatch.setattr(session_handler_module, "ClaudeAgentOptions", _StubClaudeAgentOptions)
+    monkeypatch.setattr(session_handler_module, "ClaudeSDKClient", _StubClaudeSDKClient)
+
+    controller = _Controller(tmp_path)
+    controller.settings_manager.sessions = _PromptSessions()
+    handler = SessionHandler(controller)
+    context = MessageContext(user_id="U123", channel_id="C123")
+    composite_key = f"slack_C123:{tmp_path}"
+
+    first_client = _run_session(handler, context)
+    _PromptSessions.current_id = "sesnew"
+    second_client = _run_session(handler, context)
+
+    assert first_client is not second_client
+    assert first_client.disconnects == 1
+    assert controller.claude_sessions[composite_key] is second_client
+    assert len(captured["clients"]) == 2
+    assert "Current session id: `sesold`" in first_client.options.system_prompt["append"]
+    assert "Current session id: `sesnew`" in second_client.options.system_prompt["append"]
+
+
 def test_session_handler_forces_bypass_mode_and_auto_approves_claude_tool_permissions(
     monkeypatch, tmp_path: Path
 ) -> None:

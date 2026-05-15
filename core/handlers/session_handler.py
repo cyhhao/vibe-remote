@@ -50,8 +50,10 @@ class SessionHandler(BaseHandler):
         self.stored_session_mappings = controller.stored_session_mappings
         self.session_last_activity = getattr(controller, "session_last_activity", {})
         self.active_sessions = getattr(controller, "claude_active_sessions", set())
+        self.claude_system_prompts = getattr(controller, "claude_system_prompts", {})
         controller.session_last_activity = self.session_last_activity
         controller.claude_active_sessions = self.active_sessions
+        controller.claude_system_prompts = self.claude_system_prompts
 
     def touch_session_activity(self, composite_key: str) -> None:
         if composite_key:
@@ -75,6 +77,7 @@ class SessionHandler(BaseHandler):
             return
         self.active_sessions.discard(composite_key)
         self.session_last_activity.pop(composite_key, None)
+        self.claude_system_prompts.pop(composite_key, None)
 
     def bind_claude_runtime_session(self, client: ClaudeSDKClient, base_session_id: str, composite_key: str) -> None:
         """Attach the resolved Claude runtime keys to the connected client."""
@@ -431,16 +434,31 @@ class SessionHandler(BaseHandler):
             # Claude SDK model changes are control requests; only send one when
             # the effective model actually changes.
             current_model = explicit_model or self.config.claude.default_model
-            try:
-                await self._set_claude_model_if_needed(client, current_model)
-            except Exception as e:
-                logger.warning(f"Failed to update model on cached Claude session: {e}")
-            logger.info(
-                f"Using existing Claude SDK client for {base_session_id} at {working_path} (model={current_model})"
+            next_session_prompt = self._build_claude_system_prompt(
+                context=context,
+                session_key=session_key,
+                agent_name="claude",
+                session_anchor=base_session_id,
+                agent_system_prompt=None,
             )
-            self.bind_claude_runtime_session(client, base_session_id, composite_key)
-            self.touch_session_activity(composite_key)
-            return client
+            cached_session_prompt = self.claude_system_prompts.get(composite_key)
+            if cached_session_prompt != next_session_prompt:
+                logger.info(
+                    "Recreating cached Claude SDK client for %s because Vibe Remote system prompt changed",
+                    composite_key,
+                )
+                await self.cleanup_session(composite_key)
+            else:
+                try:
+                    await self._set_claude_model_if_needed(client, current_model)
+                except Exception as e:
+                    logger.warning(f"Failed to update model on cached Claude session: {e}")
+                logger.info(
+                    f"Using existing Claude SDK client for {base_session_id} at {working_path} (model={current_model})"
+                )
+                self.bind_claude_runtime_session(client, base_session_id, composite_key)
+                self.touch_session_activity(composite_key)
+                return client
 
         if effective_agent:
             cached_base = f"{base_session_id}:{effective_agent}"
@@ -519,33 +537,13 @@ class SessionHandler(BaseHandler):
         # Always append Vibe Remote system prompt injection so transport
         # capabilities remain available; reply_enhancements only controls
         # quick-reply button instructions.
-        base_prompt = agent_system_prompt or self.config.claude.system_prompt
-        quick_replies_on = getattr(self.config, "reply_enhancements", True)
-
-        from core.system_prompt_injection import build_system_prompt_injection
-
-        platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
-        self.ensure_agent_session_id(
+        final_system_prompt = self._build_claude_system_prompt(
             context,
             session_key=session_key,
             agent_name="claude",
             session_anchor=base_session_id,
+            agent_system_prompt=agent_system_prompt,
         )
-
-        system_prompt_injection = build_system_prompt_injection(
-            include_quick_replies=quick_replies_on and platform != "wechat",
-            context=context,
-            fallback_platform=platform,
-        )
-
-        if base_prompt:
-            final_system_prompt = f"{base_prompt}\n\n{system_prompt_injection}"
-        else:
-            final_system_prompt = {
-                "type": "preset",
-                "preset": "claude_code",
-                "append": system_prompt_injection,
-            }
 
         # Create extra_args for CLI passthrough (fallback for model)
         extra_args: Dict[str, str | None] = {}
@@ -646,12 +644,49 @@ class SessionHandler(BaseHandler):
             raise
 
         self.claude_sessions[composite_key] = client
+        self.claude_system_prompts[composite_key] = final_system_prompt
         setattr(client, "_vibe_current_model", effective_model)
         self.bind_claude_runtime_session(client, base_session_id, composite_key)
         self.touch_session_activity(composite_key)
         logger.info(f"Created new Claude SDK client for {base_session_id} at {working_path}")
 
         return client
+
+    def _build_claude_system_prompt(
+        self,
+        context: MessageContext,
+        *,
+        session_key: str,
+        agent_name: str,
+        session_anchor: str,
+        agent_system_prompt: Optional[str],
+    ) -> str | Dict[str, str]:
+        base_prompt = agent_system_prompt or self.config.claude.system_prompt
+        quick_replies_on = getattr(self.config, "reply_enhancements", True)
+        platform = context.platform or (context.platform_specific or {}).get("platform") or self.config.platform
+
+        self.ensure_agent_session_id(
+            context,
+            session_key=session_key,
+            agent_name=agent_name,
+            session_anchor=session_anchor,
+        )
+
+        from core.system_prompt_injection import build_system_prompt_injection
+
+        system_prompt_injection = build_system_prompt_injection(
+            include_quick_replies=quick_replies_on and platform != "wechat",
+            context=context,
+            fallback_platform=platform,
+        )
+
+        if base_prompt:
+            return f"{base_prompt}\n\n{system_prompt_injection}"
+        return {
+            "type": "preset",
+            "preset": "claude_code",
+            "append": system_prompt_injection,
+        }
 
     async def _prepare_backend_for_resume(
         self,
