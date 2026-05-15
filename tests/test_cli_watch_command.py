@@ -556,6 +556,40 @@ def test_watch_update_renames_and_retargets_watch(tmp_path: Path, capsys) -> Non
     assert payload["watch"]["shell_command"] == "python3 wait_deploy.py"
 
 
+def test_watch_update_session_key_clears_previous_session_id(tmp_path: Path, capsys) -> None:
+    store = ManagedWatchStore(tmp_path / "watches.json")
+    runtime_store = WatchRuntimeStateStore(tmp_path / "watch_runtime.json")
+    watch = store.add_watch(
+        name="Watch CI",
+        session_key="",
+        session_id="sesk8m4q2p7x",
+        command=["python3", "wait.py"],
+        shell_command=None,
+        prefix=None,
+        cwd=None,
+        mode="once",
+        timeout_seconds=600,
+        lifetime_timeout_seconds=0,
+        retry_exit_codes=[75],
+        retry_delay_seconds=30,
+        post_to=None,
+        deliver_key=None,
+    )
+    args = _parse_watch_update([watch.id, "--session-key", "slack::channel::C456"])
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._watch_store", return_value=store),
+        patch("vibe.cli._watch_runtime_store", return_value=runtime_store),
+    ):
+        result = cli.cmd_watch_update(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["watch"]["session_id"] is None
+    assert payload["watch"]["session_key"] == "slack::channel::C456"
+
+
 def test_watch_update_no_changes_returns_structured_error(tmp_path: Path) -> None:
     store = ManagedWatchStore(tmp_path / "watches.json")
     watch = store.add_watch(

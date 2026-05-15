@@ -416,6 +416,9 @@ class ScheduledTaskStore:
         task.run_at = run_at
         task.timezone = timezone_name
         task.updated_at = _utc_now_iso()
+        if self._sqlite is not None:
+            self._sqlite.upsert_scheduled_task(task.to_dict())
+            return task
         self._save()
         return task
 

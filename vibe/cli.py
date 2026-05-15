@@ -1241,8 +1241,15 @@ def cmd_task_update(args):
             required=False,
             help_command="vibe task update --help",
         )
-        session_id = session_id_update if session_id_update is not None else task.session_id
-        session_key = session_key_update if session_key_update else ("" if session_id_update else task.session_key)
+        if session_id_update is not None:
+            session_id = session_id_update
+            session_key = ""
+        elif session_key_update:
+            session_id = None
+            session_key = session_key_update
+        else:
+            session_id = task.session_id
+            session_key = task.session_key
         if getattr(args, "reset_delivery", False):
             post_to = None
             deliver_key = None
@@ -1629,8 +1636,15 @@ def cmd_watch_update(args):
             required=False,
             help_command="vibe watch update --help",
         )
-        session_id = session_id_update if session_id_update is not None else watch.session_id
-        session_key = session_key_update if session_key_update else ("" if session_id_update else watch.session_key)
+        if session_id_update is not None:
+            session_id = session_id_update
+            session_key = ""
+        elif session_key_update:
+            session_id = None
+            session_key = session_key_update
+        else:
+            session_id = watch.session_id
+            session_key = watch.session_key
         if getattr(args, "reset_delivery", False):
             post_to = None
             deliver_key = None

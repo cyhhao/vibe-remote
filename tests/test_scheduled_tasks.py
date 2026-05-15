@@ -114,6 +114,43 @@ def test_scheduled_task_store_uses_sqlite_when_path_is_default(tmp_path: Path, m
     assert sqlite.get_scheduled_task(task.id)["prompt"] == "hello"
 
 
+def test_sqlite_update_task_persists_changes(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
+    store = ScheduledTaskStore()
+    task = store.add_task(
+        name="Hourly summary",
+        session_key="slack::channel::C123",
+        session_id="sesk8m4q2p7x",
+        prompt="hello",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="UTC",
+    )
+
+    store.update_task(
+        task.id,
+        name="Morning summary",
+        session_key="slack::channel::C456",
+        session_id=None,
+        prompt="updated",
+        schedule_type="cron",
+        post_to=None,
+        deliver_key=None,
+        cron="*/30 * * * *",
+        run_at=None,
+        timezone_name="Asia/Shanghai",
+    )
+    reloaded = ScheduledTaskStore()
+    saved = reloaded.get_task(task.id)
+
+    assert saved is not None
+    assert saved.name == "Morning summary"
+    assert saved.session_id is None
+    assert saved.session_key == "slack::channel::C456"
+    assert saved.prompt == "updated"
+    assert saved.cron == "*/30 * * * *"
+
+
 def test_task_execution_store_uses_sqlite_runs_when_root_is_default(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("VIBE_REMOTE_HOME", str(tmp_path))
     store = TaskExecutionStore()

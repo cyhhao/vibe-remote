@@ -581,6 +581,32 @@ def test_task_update_modifies_existing_task_without_changing_id(tmp_path: Path, 
     assert payload["task"]["prompt"] == "updated"
 
 
+def test_task_update_session_key_clears_previous_session_id(tmp_path: Path, capsys) -> None:
+    store_path = tmp_path / "scheduled_tasks.json"
+    store = cli.ScheduledTaskStore(store_path)
+    task = store.add_task(
+        session_key="",
+        session_id="sesk8m4q2p7x",
+        prompt="hello",
+        schedule_type="cron",
+        cron="0 * * * *",
+        timezone_name="Asia/Shanghai",
+    )
+    parser = cli.build_parser()
+    args = parser.parse_args(["task", "update", task.id, "--session-key", "slack::channel::C456"])
+
+    with (
+        patch("vibe.cli._ensure_config", return_value=_configured_v2({"slack"})),
+        patch("vibe.cli._task_store", return_value=store),
+    ):
+        result = cli.cmd_task_update(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["task"]["session_id"] is None
+    assert payload["task"]["session_key"] == "slack::channel::C456"
+
+
 def test_task_update_replaces_post_to_with_deliver_key(tmp_path: Path, capsys) -> None:
     store_path = tmp_path / "scheduled_tasks.json"
     store = cli.ScheduledTaskStore(store_path)
