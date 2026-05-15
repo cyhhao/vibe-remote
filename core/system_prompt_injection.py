@@ -138,6 +138,7 @@ def build_system_prompt_injection(
     *,
     include_quick_replies: bool = True,
     include_codex_generated_images: bool = False,
+    include_user_preferences: bool = True,
     context: Optional[MessageContext] = None,
     fallback_platform: Optional[str] = None,
 ) -> str:
@@ -150,7 +151,8 @@ def build_system_prompt_injection(
         prompt += _QUICK_REPLIES_PROMPT
     if context is not None:
         prompt += _build_scheduled_tasks_prompt(context, fallback_platform=fallback_platform)
-    prompt += _build_user_preferences_prompt(context, fallback_platform=fallback_platform)
+    if include_user_preferences:
+        prompt += _build_user_preferences_prompt(context, fallback_platform=fallback_platform)
     return prompt
 
 

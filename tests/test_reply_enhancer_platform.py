@@ -107,6 +107,26 @@ class ReplyEnhancerPlatformTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("file:///Users/test/.codex/generated_images/thread-id/image-file.png", prompt)
         self.assertIn("Never emit variables, placeholder paths, or sandbox paths like `/mnt/data/...`", prompt)
 
+    def test_prompt_can_exclude_user_preferences(self):
+        context = MessageContext(
+            user_id="U1",
+            channel_id="C1",
+            platform="slack",
+            platform_specific={"agent_session_id": "sesk8m4q2p7x"},
+        )
+
+        with patch.object(paths, "get_user_preferences_path", return_value=Path("/tmp/user_preferences.md")):
+            prompt = build_system_prompt_injection(
+                include_quick_replies=False,
+                include_user_preferences=False,
+                context=context,
+            )
+
+        self.assertIn("Current session id: `sesk8m4q2p7x`", prompt)
+        self.assertNotIn("## 4. User Context and Preferences", prompt)
+        self.assertNotIn("/tmp/user_preferences.md", prompt)
+        self.assertNotIn("slack/U1", prompt)
+
     def test_process_reply_strips_silent_blocks_before_enhancements(self):
         reply = process_reply(
             "Visible\n<silent>skip [secret](file:///tmp/secret.txt)\n---\n[Hidden]</silent>\nDone"
