@@ -102,20 +102,58 @@ def _is_executable_file(path: Path) -> bool:
     return path.exists() and path.is_file() and os.access(path, os.X_OK)
 
 
+_NVM_VERSION_RE = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)$")
+_NVM_SUFFIX_TOKEN_RE = re.compile(r"\d+|\D+")
+
+
+def _nvm_suffix_tokens(suffix: str) -> tuple[tuple[int, int, str], ...]:
+    # Tokenize the prerelease suffix into (kind, num, text) triples so all
+    # tokens are structurally identical and comparable. kind=0 marks numeric
+    # tokens (compared by num) and kind=1 marks alphanumeric tokens (compared
+    # by text). Numeric tokens compare numerically, so "-rc.10" beats
+    # "-rc.2"; cross-kind tokens never compare int-vs-str, ruling out
+    # TypeError for arbitrary suffix shapes.
+    triples: list[tuple[int, int, str]] = []
+    for tok in _NVM_SUFFIX_TOKEN_RE.findall(suffix):
+        if tok.isdigit():
+            triples.append((0, int(tok), ""))
+        else:
+            triples.append((1, 0, tok))
+    return tuple(triples)
+
+
+def _nvm_version_sort_key(entry: Path) -> tuple:
+    # Returns (major, minor, patch, is_released, suffix_tokens). is_released
+    # is True for plain "vX.Y.Z" and False for any "-suffix"; with reverse=True
+    # released versions outrank pre-releases of the same triple. Within
+    # pre-releases, suffix_tokens compares numerically where digits appear.
+    m = _NVM_VERSION_RE.match(entry.name)
+    if not m:
+        return (-1, -1, -1, False, ())
+    major = int(m.group(1))
+    minor = int(m.group(2)) if m.group(2) else 0
+    patch = int(m.group(3)) if m.group(3) else 0
+    suffix = m.group(4) or ""
+    return (major, minor, patch, not suffix, _nvm_suffix_tokens(suffix))
+
+
 def _nvm_binary_candidates(binary: str) -> list[Path]:
     versions_dir = Path.home() / ".nvm" / "versions" / "node"
     if not versions_dir.exists():
         return []
 
-    def _version_sort_key(path: Path) -> tuple:
-        parts = str(path.name).lstrip("v").split(".")
-        key: list[int | str] = []
-        for part in parts:
-            key.append(int(part) if part.isdigit() else part)
-        return tuple(key)
+    valid: list[Path] = []
+    for entry in versions_dir.iterdir():
+        # Skip non-directory entries (e.g. macOS .DS_Store) and non-version
+        # dirs (e.g. nvm's "system" alias) before sorting.
+        if not entry.is_dir():
+            continue
+        if not _NVM_VERSION_RE.match(entry.name):
+            continue
+        valid.append(entry)
 
     candidates: list[Path] = []
-    for version_dir in sorted(versions_dir.glob("*"), key=_version_sort_key, reverse=True):
+    for version_dir in sorted(valid, key=_nvm_version_sort_key, reverse=True):
         candidate = version_dir / "bin" / binary
         if candidate not in candidates:
             candidates.append(candidate)
