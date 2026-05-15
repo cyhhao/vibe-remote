@@ -564,7 +564,7 @@ class CodexAgent(BaseAgent):
                     "threadId": persisted,
                     "developerInstructions": self._build_thread_developer_instructions(request),
                 }
-                model_provider = read_active_model_provider(cwd=getattr(request, "working_path", None))
+                model_provider = await self._resolve_resume_model_provider_override(transport, request, persisted)
                 if model_provider:
                     resume_params["modelProvider"] = model_provider
                 resp = await transport.send_request(
@@ -588,6 +588,47 @@ class CodexAgent(BaseAgent):
                 logger.warning("Failed to resume Codex thread %s: %s, starting new", persisted, e)
 
         return await self._start_thread(transport, request)
+
+    async def _resolve_resume_model_provider_override(
+        self,
+        transport: CodexTransport,
+        request: AgentRequest,
+        thread_id: str,
+    ) -> Optional[str]:
+        """Return a provider override only when a persisted thread is stale.
+
+        Codex preserves a thread's latest model / reasoning effort on resume
+        unless the client sends a model/provider override. Vibe Remote only
+        needs to override the provider after the user changes Codex auth mode
+        or project provider settings, so inspect the stored thread first and
+        leave normal resumes on Codex's persisted fallback path.
+        """
+        current_provider = read_active_model_provider(cwd=getattr(request, "working_path", None))
+        if not current_provider:
+            return None
+
+        try:
+            resp = await transport.send_request(
+                "thread/read",
+                {
+                    "threadId": thread_id,
+                    "includeTurns": False,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Failed to read Codex thread %s provider before resume: %s", thread_id, exc)
+            return None
+
+        thread_obj = resp.get("thread") if isinstance(resp, dict) else None
+        if not isinstance(thread_obj, dict) and isinstance(resp, dict) and resp.get("id") == thread_id:
+            thread_obj = resp
+        stored_provider = thread_obj.get("modelProvider") if isinstance(thread_obj, dict) else None
+        if not isinstance(stored_provider, str) or not stored_provider.strip():
+            return None
+
+        if stored_provider.strip() == current_provider:
+            return None
+        return current_provider
 
     def _build_thread_developer_instructions(self, request: AgentRequest) -> Optional[str]:
         """Build Codex thread-level developer instructions for start/resume.
